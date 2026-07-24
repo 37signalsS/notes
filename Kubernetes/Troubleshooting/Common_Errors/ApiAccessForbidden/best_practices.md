@@ -1,119 +1,109 @@
-# Api Access Forbidden: Best Practices
+# Ошибки доступа к API: лучшие практики и превентивные меры
 
-## Definitions
+## Определения
 
-**RBAC Best Practices** — набор рекомендаций для предотвращения ошибок 401/403 и минимизации поверхности атаки при управлении доступом к Kubernetes API.
+**Лучшие практики RBAC** — комплекс мер по настройке прав доступа и механизмов аутентификации, направленный на минимизацию рисков возникновения ошибок 401/403 и ограничение "радиуса поражения" в случае компрометации субъекта.
+
+**Принцип наименьших привилегий (Least Privilege)** — предоставление только тех прав, которые минимально необходимы для выполнения конкретной задачи.
 
 > Общие лучшие практики RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
 
-## Basic Concepts
+## Основные концепции
 
-### Ключевые принципы предотвращения 403
+### Ключевые принципы безопасности API
 
-| Принцип | Что предотвращает | Как реализовать |
-|---------|-------------------|-----------------|
-| **Наименьшие привилегии** | Избыточные права, эскалацию | Конкретные `resources` + `verbs`, не `*` |
-| **Namespace изоляция** | Доступ к чужим namespace | `Role` вместо `ClusterRole` |
-| **Отключение automount** | Утечка токена из пода | `automountServiceAccountToken: false` |
-| **Регулярный аудит** | Накопление лишних прав | `kubectl auth can-i --list`, `kubectl auth reconcile` |
-| **Выделенные ServiceAccount** | Использование `default` SA | Создать SA для каждого приложения |
+| Принцип | Что предотвращает | Способ реализации |
+|---------|-------------------|-------------------|
+| **Минимизация Verbs** | Случайное удаление или изменение | Использование `get`, `list` вместо `*` или `update` |
+| **Bound Tokens** | Бессрочное использование украденных токенов | Использование `ServiceAccountTokenProjection` |
+| **Изоляция Namespace** | Межпроектное влияние | Использование `Role` вместо `ClusterRole` везде, где это возможно |
+| **Запрет на default SA** | Неконтролируемый доступ | Создание уникального `ServiceAccount` для каждого приложения |
+| **Аудит на основе рисков**| Накопление "мертвых" прав | Использование инструментов анализа (rbac-lookup, Krane) |
 
-### Почему `default` ServiceAccount — риск
+### Почему автоматическое монтирование токенов опасно
 
-Каждый namespace имеет SA `default`, который автоматически монтируется в поды без явного указания. Злоумышленник, получивший доступ к такому поду, наследует все права `default` SA.
+По умолчанию Kubernetes монтирует токен `ServiceAccount` в каждый под. Если приложению не нужно обращаться к API, наличие этого токена в файловой системе — лишняя уязвимость. С версии 1.22 рекомендуется использовать кратковременные токены с привязкой к поду (Bound Service Account Tokens).
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий 1: Отключение автомонтирования токенов
+### Сценарий 1: Использование проецируемых токенов (Bound Tokens)
 
-**Проблема:** Токен ServiceAccount автоматически монтируется во все поды, даже если они не обращаются к API.
+Вместо использования стандартного секрета, который живет вечно, используйте токены с ограниченным сроком жизни и привязкой к аудитории.
 
-**Решение на уровне ServiceAccount:**
-
+**Манифест пода (YAML):**
 ```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: default
-  namespace: default
-automountServiceAccountToken: false
-```
-
-**Решение на уровне Pod:**
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-pod
 spec:
-  automountServiceAccountToken: false
+  containers:
+  - name: my-app
+    volumeMounts:
+    - mountPath: /var/run/secrets/tokens
+      name: vault-token
   serviceAccountName: my-sa
+  volumes:
+  - name: vault-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: vault
+          expirationSeconds: 3600 # Токен протухнет через час
+          path: vault-token
 ```
 
-> Подробно в SSoT: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md#3-отключение-автомонтирования-токенов)
+### Сценарий 2: Аудит избыточных прав
 
-### Сценарий 2: Аудит RBAC — поиск опасных привязок
+Регулярно проверяйте, кто в кластере имеет опасные права (например, доступ к секретам или возможность создавать поды).
 
-**Проблема:** Со временем накапливаются избыточные права, binding'и с `cluster-admin`, доступ для `system:unauthenticated`.
-
-**Диагностика:**
-
+**Инструменты и команды:**
 ```bash
-# Поиск всех binding с cluster-admin
-kubectl get clusterrolebinding -o yaml | \
-  grep -B 10 "name: cluster-admin"
+# Поиск всех субъектов, имеющих права cluster-admin
+kubectl get clusterrolebinding -o json | jq '.items[] | select(.roleRef.name=="cluster-admin") | .subjects'
 
-# Поиск binding для system:unauthenticated
-kubectl get clusterrolebinding -o yaml | \
-  grep -B 5 "system:unauthenticated"
+# Использование rbac-lookup (сторонний инструмент) для поиска прав конкретного пользователя
+rbac-lookup <user-name> --output wide
 
-# Проверка прав конкретного ServiceAccount
-kubectl auth can-i --list --as=system:serviceaccount:<namespace>:<sa-name>
-
-# Синхронизация манифеста с кластером (удаление лишних прав)
-kubectl auth reconcile -f my-rbac-rules.yaml \
-  --remove-extra-subjects --remove-extra-permissions
+# Проверка: может ли SA 'default' в текущем namespace читать секреты
+kubectl auth can-i get secrets --as=system:serviceaccount:$(kubectl config view --minify -o jsonpath='{..namespace}'):default
 ```
 
-### Сценарий 3: Мониторинг и алерты на 401/403
+### Сценарий 3: Серверный мониторинг ошибок доступа
 
-**Проблема:** Ошибки аутентификации/авторизации обнаруживаются постфактум.
+Настройте алертинг на основе метрик API-сервера для обнаружения попыток несанкционированного доступа или ошибок в конфигурации приложений.
 
-**Решение — Prometheus-алерты:**
-
+**Prometheus Rule (YAML):**
 ```yaml
-- alert: KubernetesAPIForbidden
-  expr: sum(rate(rest_client_requests_total{code="403"}[5m])) > 0
+- alert: KubernetesAPIServerHighForbiddenErrors
+  # Используем apiserver_request_total для серверного мониторинга
+  expr: sum(rate(apiserver_request_total{code="403"}[5m])) by (resource, subresource) > 0.5
   for: 5m
   labels:
     severity: warning
   annotations:
-    summary: "Обнаружены 403 ошибки к Kubernetes API"
+    summary: "Высокий уровень 403 ошибок на API-сервере"
+    description: "Ресурс {{ $labels.resource }} отклоняет запросы по причине Forbidden."
 
-- alert: KubernetesAPIUnauthorized
-  expr: sum(rate(rest_client_requests_total{code="401"}[5m])) > 0
+- alert: KubernetesAPIServerAuthFailures
+  expr: sum(rate(apiserver_request_total{code="401"}[5m])) > 0.1
   for: 5m
   labels:
-    severity: warning
+    severity: critical
   annotations:
-    summary: "Обнаружены 401 ошибки к Kubernetes API"
+    summary: "Ошибки аутентификации (401) к API-серверу"
 ```
 
-## Additional Information
+## Дополнительная информация
 
-### Чек-лист при создании нового ServiceAccount
+### Чек-лист безопасной настройки доступа
 
-1. Создать выделенный SA (не использовать `default`)
-2. Установить `automountServiceAccountToken: false`
-3. Создать Role с минимальными правами
-4. Создать RoleBinding/ClusterRoleBinding
-5. Проверить права: `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<sa>`
+1.  **Индивидуальные SA:** Одно приложение — один ServiceAccount. Никогда не используйте `default`.
+2.  **Явное отключение:** Если приложению не нужен доступ к API, установите `automountServiceAccountToken: false` в манифесте SA или Pod.
+3.  **Ограничение по ресурсам:** Вместо `resources: ["*"]` перечисляйте только нужные: `["pods", "configmaps"]`.
+4.  **Ограничение по именам:** Используйте `resourceNames` для защиты критических конфигураций.
+5.  **Аудит:** Минимум раз в квартал проводите ревизию `ClusterRoleBinding` на наличие устаревших записей.
+6.  **Инструментарий:** Интегрируйте `kube-bench` или `checkov` в CI/CD для автоматической проверки RBAC-манифестов.
 
 ### Связанные ресурсы
 
-- SSoT — лучшие практики RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
-- Пошаговая диагностика: [diagnostics.md](diagnostics.md)
-- Методы аутентификации и 401: [authentication_methods.md](authentication_methods.md)
-- Расширенные сценарии 403: [advanced.md](advanced.md)
-- RBAC объекты: [rbac_objects.md](rbac_objects.md)
+- [Алгоритм диагностики ошибок 401/403](diagnostics.md)
+- [Распространенные ошибки (RBAC)](common.md)
+- [Определения и модель безопасности API](definitions.md)
+- [Официальный гайд по безопасности RBAC](https://kubernetes.io/docs/concepts/security/rbac-good-practices/)

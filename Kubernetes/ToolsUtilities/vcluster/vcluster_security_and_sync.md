@@ -1,121 +1,121 @@
-# vCluster — Безопасность и синхронизация
+# vCluster — безопасность и синхронизация
 
 ## Определения
 
-**ResourceQuota** — Kubernetes-ресурс, ограничивающий суммарное потребление ресурсов CPU (Central Processing Unit), памяти и количество объектов внутри namespace (пространства имен) vCluster в хост-кластере.
+**ResourceQuota (Ресурсные квоты)** — объект Kubernetes в хост-кластере, ограничивающий суммарное потребление ресурсов (процессорное время, память) и общее количество объектов (Pods, Services, Secrets) внутри пространства имен, выделенного под виртуальный кластер.
 
-**LimitRange** — Kubernetes-ресурс, задающий значения ресурсов по умолчанию и ограничения для отдельных подов и контейнеров внутри vCluster.
+**LimitRange (Диапазоны ограничений)** — ресурс внутри виртуального кластера, устанавливающий значения по умолчанию (requests/limits) и допустимые пороги для контейнеров. Позволяет контролировать "раздувание" ресурсов внутри vCluster.
 
-**Rootless Mode (Безрутовый режим)** — режим запуска компонентов vCluster от имени не-привилегированного пользователя, что исключает наличие прав root внутри контейнеров и повышает общую безопасность системы.
+**Rootless Mode (Безрутовый режим)** — конфигурация эксплуатации, при которой процессы API-сервера и синхронизатора запускаются с UID/GID не-привилегированного пользователя. Это предотвращает возможность атаки типа Container Escape с получением прав root на узле хоста.
 
-**Syncer (Синхронизатор)** — ключевой компонент vCluster, отвечающий за двустороннюю синхронизацию ресурсов (Pods, Services, PVC (PersistentVolumeClaim) и др.) между виртуальным и хостовым кластерами.
+**Generic Sync (Универсальная синхронизация)** — механизм v0.20+, позволяющий синхронизировать Custom Resource Definitions (CRD) и их объекты между виртуальным и хостовым кластерами без написания кастомного кода.
 
 ## Основные концепции
 
 ### Направления синхронизации
 
-| Направление | Описание | Типы ресурсов |
-| :--- | :--- | :--- |
-| **toHost** (vCluster → Host) | Экспорт рабочих нагрузок в хост-кластер для исполнения | Pods, Services, Endpoints, Secrets, ConfigMaps, PVC, Ingresses |
-| **fromHost** (Host → vCluster) | Импорт инфраструктурных объектов хост-кластера | StorageClasses, IngressClasses, Nodes, PersistentVolumes |
+Синхронизатор (Syncer) работает по двум основным векторам:
 
-### Ресурсы, синхронизируемые по умолчанию
+1. **toHost (vCluster → Host):** репликация рабочих нагрузок. Syncer создает "теневые" поды в хост-кластере, которые фактически выполняются на узлах.
+2. **fromHost (Host → vCluster):** импорт ресурсов окружения. Позволяет виртуальному кластеру видеть системные объекты хоста (StorageClasses, Nodes).
 
-Базовые ресурсы Kubernetes (Pods, Services, Endpoints, Secrets, ConfigMaps, PersistentVolumeClaims) синхронизируются автоматически. Расширенные ресурсы (Ingresses, StorageClasses, IngressClasses) требуют явной активации в конфигурационном файле `values.yaml`.
+### Изоляция Control Plane
 
-### Потребление ресурсов Control Plane
+В версии v0.20+ усилена сетевая изоляция. Параметр `isolatedControlPlane` блокирует прямой доступ подов виртуального кластера к API-серверу хост-кластера, заставляя их взаимодействовать только с локальным API-сервером vCluster.
 
-При настройке **ResourceQuota** в хост-кластере необходимо учитывать ресурсы, потребляемые компонентами самого vCluster. Типовые запросы для дистрибутива Kubernetes (vanilla):
+### Механизм патчей ресурсов (Resource Patching)
 
-| Компонент | CPU Request | Memory Request |
-| :--- | :--- | :--- |
-| **API Server** | 200m | 256Mi |
-| **etcd** | 100m | 128Mi |
-| **Syncer** | 100m | 128Mi |
-| **CoreDNS** | 50m | 32Mi |
-
-Полная таблица ресурсов для различных дистрибутивов приведена в [vCluster — Обзор и архитектура](./vcluster_overview.md).
+vCluster позволяет модифицировать объекты "на лету" при синхронизации. Это используется для добавления специфических аннотаций, меток (labels) или изменения конфигурации ресурсов (например, добавление Sidecar-контейнеров) при их переносе в хост-кластер.
 
 ## Практические сценарии
 
-### Настройка ResourceQuota и LimitRange
+### Настройка политик и квот в vcluster.yaml
 
-Пример ограничения ресурсов для namespace vCluster через `values.yaml`:
+В новом формате конфигурации управление ресурсами централизовано:
 
 ```yaml
-# values.yaml
+# vcluster.yaml
 policies:
   resourceQuota:
-    hard:
-      requests.cpu: "4"
-      requests.memory: 8Gi
-      pods: "20"
-      services: "10"
-      secrets: "50"
-      configmaps: "50"
+    enabled: true
+    quota:
+      requests.cpu: "8"
+      requests.memory: 16Gi
+      pods: "100"
   limitRange:
+    enabled: true
     default:
-      memory: 512Mi
-      cpu: 500m
+      cpu: 1000m
+      memory: 1Gi
     defaultRequest:
+      cpu: 200m
       memory: 256Mi
-      cpu: 250m
 ```
 
-### Запуск в Rootless Mode
+### Реализация сетевой изоляции и Rootless Mode
 
-Настройка запуска от не-root пользователя (UID 10000) для повышения безопасности:
+Настройка максимального уровня безопасности для Control Plane:
 
 ```yaml
-# values.yaml
+# vcluster.yaml
 controlPlane:
   statefulSet:
-    security:
+    securityContext:
       runAsUser: 10000
-      runAsGroup: 10000
-      fsGroup: 10000
       runAsNonRoot: true
+  
+networking:
+  # Полная изоляция от API хост-кластера
+  isolatedControlPlane:
+    enabled: true
 ```
 
-### Синхронизация инфраструктурных ресурсов из host-кластера
+### Синхронизация Custom Resources (Generic Sync)
 
-Включение импорта классов хранилищ и узлов для использования в виртуальном кластере:
+Пример синхронизации объектов Cert-Manager из виртуального кластера в хостовый:
 
 ```yaml
-# values.yaml
+# vcluster.yaml
 sync:
-  fromHost:
-    storageClasses:
-      enabled: true
-    ingressClasses:
-      enabled: true
-    nodes:
-      enabled: true
-      selector:
-        matchLabels:
-          vcluster-ready: "true"
-    persistentVolumes:
-      enabled: true
+  generic:
+    config: |-
+      - apiVersion: cert-manager.io/v1
+        kind: Certificate
+        # Синхронизировать объекты этого типа в хост-кластер
 ```
+
+### Использование патчей ресурсов
+
+Пример автоматического добавления метки ко всем подам, синхронизируемым в хост-кластер:
+
+```yaml
+# vcluster.yaml
+sync:
+  toHost:
+    pods:
+      enabled: true
+      patches:
+        - op: add
+          path: metadata.labels.vcluster-instance
+          value: "team-alpha-prod"
+```
+
+## Лучшие практики безопасности
+
+- **Минимизация Syncer прав:** по умолчанию vCluster требует широких прав в своем namespace. Используйте `controlPlane.serviceAccount.name` для подключения SA с минимально необходимым набором RBAC-ролей.
+- **Поддержка Pod Security Standards:** используйте `podSecurityStandard: baseline` или `restricted` в конфигурации vCluster для автоматического применения политик безопасности Kubernetes к виртуальным нагрузкам.
+- **Изоляция хранилищ:** при импорте `PersistentVolumes` через `fromHost` убедитесь, что политики доступа запрещают одному vCluster монтировать тома, принадлежащие другому виртуальному кластеру.
 
 ## Дополнительная информация
 
-### Лучшие практики
-
-- **Изоляция:** используйте один vCluster на команду или проект для минимизации радиуса поражения.
-- **Квотирование:** всегда устанавливайте ResourceQuota для предотвращения истощения ресурсов хост-кластера.
-- **Безопасность:** предпочитайте Rootless Mode для всех production-инсталляций.
-- **Мониторинг:** настройте сбор метрик с компонентов Control Plane и Syncer.
-
 ### Внутренние ссылки
 
-- [vCluster — Обзор и архитектура](./vcluster_overview.md)
-- [vCluster — Установка и развертывание](./vcluster_installation.md)
-- [vCluster — Подключение и доступ](./vcluster_connectivity.md)
-- [Основы namespace'ов](../Base/namespace.md)
-- [Управление доступом (RBAC)](../Security/rbac/rbac_overview.md)
+- [vCluster — обзор и архитектура](./vcluster_overview.md)
+- [vCluster — установка и развертывание](./vcluster_installation.md)
+- [vCluster — подключение и доступ](./vcluster_connectivity.md)
 
 ### Внешние ссылки
 
-- [vCluster Security Documentation](https://www.vcluster.com/docs/architecture/security)
-- [Syncer Resource Syncing](https://www.vcluster.com/docs/architecture/syncer)
+- [vCluster Security Official Docs](https://www.vcluster.com/docs/architecture/security)
+- [Generic Resource Sync Guide](https://www.vcluster.com/docs/config/sync/generic-resources)
+- [Network Isolation Features](https://www.vcluster.com/docs/features/network-isolation)

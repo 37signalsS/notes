@@ -2,11 +2,11 @@
 
 ## Определения
 
-**pc-inet** — узел с доступом к интернету, используемый для предварительной загрузки артефактов Kubespray (образы, бинарные файлы, Helm-чарты) и подготовки архивов для переноса.
+**pc-inet** — узел с доступом к интернету, выполняющий роль станции сбора (Gateway). Используется для предварительной загрузки всех артефактов Kubespray (образы контейнеров, бинарные файлы, Helm-чарты) и формирования архивов для переноса в закрытую сеть.
 
-**download_localhost** — переменная Kubespray, указывающая Ansible загружать артефакты на управляющую машину (в данном случае pc-inet) вместо целевых узлов кластера.
+**download_localhost** — специальный параметр Ansible в Kubespray, который заставляет систему загружать все внешние зависимости на управляющую машину (Ansible Control Node, в данном сценарии — pc-inet) вместо того, чтобы пытаться скачать их на целевые узлы кластера.
 
-**Артефакты Kubespray** — полный набор зависимостей (бинарные файлы, образы, чарты), необходимых для работы установщика. Общее определение приведено в **[определениях offline-установки](./offline_definitions.md)**.
+**Артефакты (Artifacts)** — полный набор внешних зависимостей, необходимых для успешного развертывания без интернета: Python-пакеты, бинарные компоненты Kubernetes (kubeadm, kubectl), исполняемые файлы рантайма (containerd/nerdctl) и образы системных сервисов.
 
 ---
 
@@ -14,121 +14,145 @@
 
 ### Цель этапа
 
-Создание полной копии всех необходимых ресурсов на машине с интернетом. Это критически важный этап, так как отсутствие даже одного образа в закрытом контуре может остановить процесс развертывания.
+Создание автономного бандла (bundle), содержащего 100% необходимых ресурсов. Ошибка или отсутствие даже одного образа на этом этапе приведет к сбою установки в закрытом контуре.
 
-**Загружаемые компоненты:**
+**Ключевые группы ресурсов:**
 
-- **Python-зависимости:** библиотеки, необходимые для работы Ansible и Kubespray.
-- **Бинарные файлы:** компоненты Kubernetes (kubeadm, kubectl), инструменты контейнеризации (nerdctl, crictl) и менеджер чартов (helm).
-- **Образы контейнеров:** системные компоненты K8s, сетевой плагин Cilium и дополнительные аддоны.
-- **Helm-чарты:** шаблоны развертывания для Cilium и других сервисов.
+- **Python-окружение:** все зависимости из `requirements.txt` для корректной работы Ansible.
+- **Инфраструктурные бинарные файлы:** `kubeadm`, `kubectl`, `kubelet`, `helm`, `etcd`, `cni-plugins`.
+- **Контейнерные образы:** образы Kubernetes (apiserver, scheduler и др.), сетевые плагины (Cilium), системные аддоны (CoreDNS, Local Path Provisioner).
+- **Helm-чарты:** шаблоны для развертывания Cilium и других компонентов через Helm-контроллер.
 
-### Структура рабочих директорий
+### Архитектура хранения артефактов
 
-Для удобства упаковки и переноса используется следующая структура на pc-inet:
+На узле `pc-inet` используется стандартизированная структура директорий для упрощения последующей упаковки:
 
 ```text
 /opt/
-├── kuber_off/              # Основная рабочая директория
-│   └── kubespray/          # Клонированный репозиторий установщика
-├── kubespray-cache/        # Локальный кэш Kubespray
-│   ├── images/             # Сохранённые образы контейнеров в формате .tar
-│   └── kubeadm-*           # Бинарные файлы Kubernetes
-└── kubespray-releases/     # Дополнительные бинарные файлы (helm, nerdctl)
+├── kuber_off/              # Корневая директория проекта
+│   └── kubespray/          # Исходный код установщика (git)
+├── kubespray-cache/        # Локальный кэш артефактов (создается автоматически)
+│   ├── images/             # Образы контейнеров в формате .tar
+│   └── kubeadm-v*          # Бинарные файлы K8s
+└── kubespray-releases/     # Дополнительные инструменты (helm, nerdctl)
 ```
 
-Версии всех используемых компонентов зафиксированы в **[SSoT: Определения](./offline_definitions.md#версии-компонентов-базовый-гайд)**.
+Версии компонентов должны соответствовать матрице совместимости, указанной в **[определениях offline-установки](./offline_definitions.md#версии-компонентов-базовый-гайд)**.
 
 ---
 
 ## Практические сценарии
 
-### 1. Подготовка окружения и клонирование Kubespray
+### 1. Подготовка системы и клонирование репозитория
+
+Выполняется на узле `pc-inet` под управлением Ubuntu 24.04.
 
 ```bash
-mkdir /opt/kuber_off && cd /opt/kuber_off
+sudo mkdir -p /opt/kuber_off && sudo chown $USER:$USER /opt/kuber_off
+cd /opt/kuber_off
 
-# Установка виртуального окружения Python
-sudo apt update -y && sudo apt install python3.12-venv -y
+# Создание изолированного окружения Python 3.12
+sudo apt update && sudo apt install python3.12-venv python3-pip -y
 python3.12 -m venv venv
 source venv/bin/activate
+# → (venv) admin@pc-inet:/opt/kuber_off$
 
-# Клонирование стабильной версии (v2.29.1)
-git clone --branch v2.29.1 --single-branch https://github.com/kubernetes-sigs/kubespray.git
+# Клонирование стабильной ветки Kubespray (v2.31.0)
+git clone --branch v2.31.0 --single-branch https://github.com/kubernetes-sigs/kubespray.git
 cd kubespray
+# → Checking out files: 100% (2105/2105), done.
 ```
 
-### 2. Настройка конфигурации для загрузки (download)
-
-Для загрузки артефактов создается временный inventory, где pc-inet выступает во всех ролях.
-
-**Создание inventory:**
+### 2. Установка зависимостей и настройка инвентаря
 
 ```bash
+# Установка Ansible и необходимых библиотек
+pip install -r requirements.txt
+# → Successfully installed ansible-core-2.17.x ...
+
+# Создание конфигурации кластера на основе шаблона
 cp -r inventory/sample inventory/offline_cluster
 ```
 
-**Редактирование inventory.ini:**
-Укажите IP-адрес pc-inet для всех групп узлов.
+**Настройка `inventory/offline_cluster/inventory.ini`:**
+Для этапа загрузки укажите IP-адрес `pc-inet` (192.168.1.99) во всех группах. Это позволит Ansible «думать», что он настраивает кластер на этой машине, и скачивать образы локально.
 
-**Настройка переменных offline-режима:**
-В файле `inventory/offline_cluster/group_vars/all/offline.yml` необходимо установить параметры кэширования, описанные в **[основных концепциях](./offline_concepts.md#справочник-переменных-kubespray-для-offline-режима)**.
+### 3. Конфигурация переменных offline-загрузки
 
-### 3. Загрузка артефактов через Ansible
+Создайте файл `inventory/offline_cluster/group_vars/all/offline.yml` со следующим содержимым:
 
-**Установка зависимостей:**
+```yaml
+---
+# Режим загрузки артефактов на локальную машину
+download_run_once: true
+download_localhost: true
+download_format: "tarball"
 
-```bash
-pip install -r requirements.txt
+# Пути для сохранения (согласуются со структурой /opt)
+local_release_dir: "/opt/kubespray-releases"
+download_cache_dir: "/opt/kubespray-cache"
+
+# Версии и специфические настройки (пример для Cilium)
+cilium_version: "v1.19.6"
+cilium_install_with_helm: true
 ```
 
-**Запуск процесса загрузки:**
+### 4. Запуск процесса загрузки
+
+Этот шаг может занять значительное время (от 15 до 40 минут) в зависимости от скорости интернет-канала.
 
 ```bash
 ansible-playbook -i inventory/offline_cluster/inventory.ini cluster.yml \
-  -e local_release_dir=/opt/kubespray-releases \
   --tags download \
   --skip-tags upload,upgrade \
+  -e "@inventory/offline_cluster/group_vars/all/offline.yml" \
   -b -u admin
+# → PLAY RECAP ***************** localhost : ok=145 changed=89 ...
 ```
 
-### 4. Докачка недостающих образов и чартов
+### 5. Ручная загрузка дополнительных компонентов
 
-Некоторые образы (например, специфичные для Cilium или текущей версии kubeadm) могут не скачаться автоматически.
-
-**Загрузка образов K8s через скрипт:**
-Используйте `kubeadm config images list` для получения списка и `nerdctl save` для сохранения их в `/opt/kubespray-cache/images/`.
+Некоторые специфические ресурсы (Helm-чарты и дополнительные утилиты) надежнее скачать вручную.
 
 **Загрузка Helm-чарта Cilium:**
 
 ```bash
 helm repo add cilium https://helm.cilium.io
 helm repo update
-helm pull cilium/cilium --version 1.18.5
-mv cilium-1.18.5.tgz /opt/
+helm pull cilium/cilium --version 1.19.6
+# → /opt/kuber_off/kubespray/cilium-1.19.6.tgz
+mv cilium-1.19.6.tgz /opt/kubespray-releases/
 ```
 
-### 5. Упаковка для переноса
+**Проверка наличия образов:**
+Убедитесь, что в директории `/opt/kubespray-cache/images/` присутствуют основные образы (kube-apiserver, etcd, coredns, cilium).
 
-После завершения загрузки все данные упаковываются в архивы для передачи в закрытый контур.
+### 6. Формирование финальных архивов
+
+После завершения всех проверок упакуйте данные для физического переноса (на USB или через SCP).
 
 ```bash
+# Упаковка кода Kubespray (включая venv)
 tar -C /opt -czf kubespray-code.tar.gz kuber_off
+
+# Упаковка кэша и бинарных файлов
 tar -C /opt -czf kubespray-offline-bundle.tar.gz \
-  kubespray-cache kubespray-releases cilium-1.18.5.tgz
+  kubespray-cache kubespray-releases
+# → Проверьте размер: du -sh *.tar.gz (ожидается ~2-4 ГБ)
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Типовые проблемы
+### Типовые проблемы и решения
 
-- **Ошибка nerdctl:** если бинарный файл не найден, убедитесь, что он скопирован в `/usr/local/bin` и создана символьная ссылка на `ctr`.
-- **Изменение Digest:** при переносе образов в локальный реестр SHA-хеш может измениться. Решение описано в **[Troubleshooting: Проблема Cilium digest](./troubleshooting.md#2-проблема-cilium-несовпадение-sha-digest)**.
+- **Ошибка 'python3-apt' missing:** на некоторых версиях Ubuntu Ansible требует `python3-apt` внутри venv. Решение: `pip install python-apt` или использовать системный Python с параметром `--system-site-packages`.
+- **Недостаточно места в /opt:** Убедитесь, что раздел `/opt` имеет минимум 10 ГБ свободного места перед началом загрузки.
+- **Блокировки реестров:** Если `gcr.io` или `quay.io` недоступны, используйте зеркала или VPN на этапе `pc-inet`.
 
-### Связанные темы
+### См. также
 
-- **[Шаг 1: Подготовка VM](./step1_vm_preparation.md)** — предыдущий этап.
-- **[Шаг 3: Подготовка закрытого контура](./step3_offline_env.md)** — следующий этап (развертывание Harbor).
-- **[Базовые концепции Kubespray](../kubespray_install/basic_concepts.md)** — общая логика работы инструмента.
+- **[Шаг 1: Подготовка VM](./step1_vm_preparation.md)** — SSH-доступ и настройка ОС.
+- **[Шаг 3: Подготовка закрытого контура](./step3_offline_env.md)** — развертывание Harbor и импорт бандла.
+- **[Базовые концепции Kubespray](../kubespray_install/basic_concepts.md)** — как работает установщик под капотом.

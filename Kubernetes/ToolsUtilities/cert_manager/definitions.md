@@ -2,175 +2,170 @@
 
 ## Определения
 
-**Cert-manager** — нативный Kubernetes-контроллер для автоматизации управления TLS-сертификатами. Получает, продлевает и отзывает сертификаты, минимизируя ручное вмешательство. Официальная документация: [cert-manager.io](https://cert-manager.io/).
+**Cert-manager** — нативный контроллер Kubernetes для автоматизации управления жизненным циклом TLS-сертификатов. Он обеспечивает получение, продление и отзыв сертификатов из различных источников, минимизируя ручное вмешательство и риск истечения срока действия.
 
 **Ключевые возможности:**
 
 | Возможность | Описание |
 | :--- | :--- |
-| **Автоматизация получения** | Интеграция с Let's Encrypt, HashiCorp Vault, Venafi, приватными CA, self-signed |
-| **Автопродление** | Мониторинг срока действия, автоматическое продление до истечения |
-| **Ingress-интеграция** | Автоматическое создание сертификатов для Ingress через аннотации |
-| **Gateway API** | Поддержка Gateway API (флаг `--enable-gateway-api`) |
-| **Жизненный цикл** | Создание, продление, отзыв сертификатов через CRD |
+| **Автоматизация получения** | Интеграция с Let's Encrypt (ACME), HashiCorp Vault, Venafi, приватными CA, Self-signed и внешними провайдерами |
+| **Автопродление** | Мониторинг срока действия и автоматический запуск процесса продления. С версии 1.21 поддерживается ACME Renewal Information (ARI) |
+| **Интеграция с Ingress** | Автоматическое управление сертификатами для ресурсов Ingress через аннотации |
+| **Поддержка Gateway API** | Полная совместимость с современным сетевым стандартом Kubernetes Gateway API |
+| **Управление ключами** | Гибкая настройка алгоритмов (RSA, ECDSA), форматов (PKCS1, PKCS8) и политики ротации ключей |
 
 **Связанные темы:**
 
-- Установка: [installation.md](./installation.md)
-- Let's Encrypt / ACME: [LetsEncrypt/index.md](./LetsEncrypt/index.md)
-- Ingress-интеграция: [ingress/overview.md](./ingress/overview.md)
-- Gateway API: [gateway_api/definitions_and_concepts.md](./gateway_api/definitions_and_concepts.md)
-- Private CA: [Private_CA/index.md](./Private_CA/index.md)
-- Troubleshooting: [Administration/troubleshooting.md](./Administration/troubleshooting.md)
+- **[Установка и настройка](./installation.md)** — методы развертывания и базовая конфигурация
+- **[Let's Encrypt и ACME](./LetsEncrypt/index.md)** — архитектура публичного доверия и типы проверок
+- **[Интеграция с Ingress](./ingress/overview.md)** — использование cert-manager с контроллерами Ingress
+- **[Gateway API и TLS](./gateway_api/definitions_and_concepts.md)** — настройка сертификатов для Gateway ресурсов
+- **[Приватный CA (Private PKI)](./Private_CA/index.md)** — управление внутренними иерархиями доверия
+- **[CA кластера](./cluster_ca.md)** — использование Control Plane CA для внутренних нужд
+- **[Диагностика (Troubleshooting)](./Administration/troubleshooting.md)** — решение типовых проблем и отладка
 
 ---
 
 ## Основные концепции
 
-### CRD cert-manager
+### Пользовательские ресурсы (CRD)
 
-Cert-manager расширяет Kubernetes API через Custom Resource Definitions:
+Cert-manager расширяет возможности Kubernetes API, предоставляя набор специализированных ресурсов:
 
 #### Источники сертификатов (Issuers)
 
-| Ресурс | Область | Описание |
+| Ресурс | Область действия | Описание |
 | :--- | :--- | :--- |
-| **`Issuer`** | Namespace | Представляет CA в рамках одного namespace |
-| **`ClusterIssuer`** | Кластер | Общекластерный ресурс, доступен из любого namespace |
+| **`Issuer`** | Пространство имен (Namespace) | Представляет центр сертификации, доступный только в рамках одного Namespace |
+| **`ClusterIssuer`** | Кластер (Cluster-wide) | Глобальный ресурс, позволяющий выпускать сертификаты в любом Namespace |
 
-#### Типы Issuer
+#### Типы механизмов подписи (Issuer Types)
 
-| Тип | Описание | Сценарий |
+| Тип | Описание | Основной сценарий |
 | :--- | :--- | :--- |
-| `acme` | ACME-протокол (Let's Encrypt) | Публичные сертификаты |
-| `ca` | Существующий CA в Secret | Внутренние PKI |
-| `selfSigned` | Самоподписанные сертификаты | Тестирование, корневые CA |
-| `vault` | HashiCorp Vault | Интеграция с Vault PKI |
-| `venafi` | Venafi Cloud/TPE | Корпоративные PKI |
-| `external` | Внешние webhook-провайдеры | Кастомные интеграции |
+| `acme` | Использование протокола ACME | Публичные сертификаты (Let's Encrypt) |
+| `ca` | Подпись с помощью существующего ключа и сертификата из Secret | Корпоративные или внутренние PKI |
+| `selfSigned` | Самоподписанные сертификаты | Тестирование или создание корневых (Root) CA |
+| `vault` | Интеграция с HashiCorp Vault PKI engine | Централизованное управление секретами |
+| `venafi` | Интеграция с платформой Venafi | Корпоративные стандарты безопасности |
+| `external` | Использование внешних webhook-провайдеров | Кастомные интеграции с облачными провайдерами |
 
-#### Ресурсы сертификатов
+#### Внутренние ресурсы управления
 
 | Ресурс | Описание |
 | :--- | :--- |
-| **`Certificate`** | Декларативный запрос сертификата. Cert-manager создаёт/обновляет Secret с сертификатом |
-| **`CertificateRequest`** | Внутренний ресурс, представляет CSR. Не для прямого использования |
-| **`Order`** | ACME-заказ (только ACME-Issuer). Содержит информацию о заказе |
-| **`Challenge`** | ACME-проверка владения доменом (HTTP-01, DNS-01, TLS-ALPN-01) |
+| **`Certificate`** | Высокоуровневый декларативный запрос. На его основе cert-manager создает и обновляет Secret с TLS-данными |
+| **`CertificateRequest`** | Ресурс, содержащий CSR (Certificate Signing Request). Используется контроллером для взаимодействия с Issuer |
+| **`Order`** | Представляет заказ сертификата в протоколе ACME (только для ACME-Issuer) |
+| **`Challenge`** | Конкретная проверка владения доменом (HTTP-01, DNS-01) в рамках ACME-заказа |
 
-### Поток ACME-запроса
+### Процесс выпуска сертификата по протоколу ACME
+
+Логическая цепочка создания сертификата выглядит следующим образом:
 
 ```
 Certificate → Order → Challenge(s) → CertificateRequest → Secret
 ```
 
-1. Пользователь создаёт `Certificate`
-2. Cert-manager создаёт `Order` для ACME-сервера
-3. Для каждого домена создаётся `Challenge` (проверка владения)
-4. После проверок создаётся `CertificateRequest`
-5. При успехе сертификат сохраняется в `Secret`
-
-Подробное описание ACME: [LetsEncrypt/index.md](./LetsEncrypt/index.md).
+1. **Создание Certificate:** Пользователь описывает желаемые параметры сертификата.
+2. **Создание Order:** Контроллер инициирует заказ у ACME-сервера.
+3. **Решение Challenge:** Выполняется проверка владения доменом через выбранный solver.
+4. **Генерация CertificateRequest:** После подтверждения владения создается запрос на подпись.
+5. **Обновление Secret:** Полученный сертификат сохраняется в целевой Secret.
 
 ### Структура ресурса Certificate
+
+Манифест `Certificate` определяет параметры ключа, срок жизни и методы обновления:
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: example-com
-  namespace: default
+  name: example-app-tls
+  namespace: prod
 spec:
-  # Целевой Secret
-  secretName: example-com-tls
+  # Название Secret, где будут храниться tls.crt и tls.key
+  secretName: example-app-tls-secret
 
-  # Срок действия и продление
-  duration: 2160h          # 90 дней (по умолчанию)
-  renewBefore: 360h        # 15 дней до истечения (по умолчанию)
+  # Жизненный цикл (Duration)
+  duration: 2160h          # 90 дней (стандарт для ACME)
+  renewBefore: 360h        # Продлить за 15 дней до истечения
 
-  # Доменные имена
+  # Доменные имена и IP
   dnsNames:
     - example.com
     - www.example.com
   ipAddresses:
-    - 192.168.1.1
+    - 1.2.3.4
 
-  # Ссылка на Issuer
+  # Ссылка на Issuer или ClusterIssuer
   issuerRef:
-    name: letsencrypt-prod
+    name: letsencrypt-production
     kind: ClusterIssuer
     group: cert-manager.io
 
-  # Дополнительные параметры
-  isCA: false                      # true для CA-сертификатов
-  commonName: example.com          # CN (опционально)
+  # Параметры приватного ключа
   privateKey:
-    algorithm: RSA                 # RSA, ECDSA
-    size: 2048                     # 2048, 4096 (RSA); 256, 384 (ECDSA)
-    encoding: PKCS8                # PKCS8, PKCS1 (важно для Java)
+    algorithm: ECDSA               # Рекомендуется: ECDSA (быстрее) или RSA
+    size: 256                      # 256/384 для ECDSA; 2048/4096 для RSA
+    rotationPolicy: Always         # Перевыпуск ключа при каждом обновлении (норма в 2026)
+    encoding: PKCS8                # Обязательно для Java/Spring приложений
+
+  # Назначение сертификата (Key Usages)
   usages:
     - digital signature
     - key encipherment
+    - server auth
 ```
 
-> **Важно:** Для Java-приложений (OpenSearch, Elasticsearch) указывайте `encoding: PKCS8`.
+> **Важно:** Использование `rotationPolicy: Always` повышает безопасность, предотвращая долгосрочное использование одного и того же приватного ключа.
 
-### ACME Solvers (проверки владения)
+### Методы проверки ACME (Solvers)
 
-| Метод | Принцип | Wildcard | Требования | Сценарий |
+| Метод | Механизм | Wildcard | Требования | Сценарий |
 | :--- | :--- | :--- | :--- | :--- |
-| **HTTP-01** | Файл по `http://<domain>/.well-known/acme-challenge/` | ❌ | Публичный Ingress | Стандартные сертификаты |
-| **DNS-01** | TXT-запись `_acme-challenge.<domain>` | ✅ | DNS API провайдера | Wildcard, без публичного HTTP |
-| **TLS-ALPN-01** | TLS-соединение на порт 443 со спец. сертификатом | ❌ | Прямой доступ к 443 | Редко используется |
-
-Подробные примеры настройки solvers: [LetsEncrypt/scenarios](./LetsEncrypt/letsencrypt_scenarios.md).
+| **HTTP-01** | Файл по пути `.well-known/acme-challenge/` | ❌ | Доступ извне по 80 порту | Стандартные веб-сервисы |
+| **DNS-01** | Создание TXT-записи в DNS | ✅ | Интеграция с API DNS-провайдера | Wildcard и внутренние сети |
+| **TLS-ALPN-01** | Специфическое TLS-рукопожатие на 443 порту | ❌ | Прямой доступ к L4 | Редкие изолированные среды |
 
 ---
 
 ## Практические сценарии
 
-Развернутые манифесты и типовые паттерны вынесены в специализированные документы (в соответствии со стратегией SSoT):
+Детальные примеры конфигурации вынесены в специализированные разделы для обеспечения полноты информации:
 
-- **[Сценарии интеграции с Ingress](./ingress/scenarios.md)** — автоматизация HTTP-01/DNS-01, временные сертификаты, SAN.
-- **[Прямое создание Certificate](./Private_CA/scenarios.md)** — полный контроль над параметрами, интеграция с Private CA, использование для mTLS.
-- **[Сценарии Gateway API](./gateway_api/practical_scenarios.md)** — маршрутизация и TLS Termination через Gateway.
+- **[Сценарии интеграции с Ingress](./ingress/scenarios.md)** — автоматизация через аннотации, обработка нескольких доменов.
+- **[Сценарии для Private PKI](./Private_CA/scenarios.md)** — создание иерархий, mTLS и использование trust-manager.
+- **[Сценарии Gateway API](./gateway_api/practical_scenarios.md)** — TLS Termination и маршрутизация в современных кластерах.
 
 ---
 
 ## Дополнительная информация
 
-### Интеграция с другими системами
+### Интеграция и расширения
 
-| Система | Документ | Описание |
+| Инструмент | Описание | Ссылка на документ |
 | :--- | :--- | :--- |
-| **Ingress** | [ingress/overview.md](./ingress/overview.md) | Автоматизация TLS через аннотации |
-| **Gateway API** | [gateway_api/definitions_and_concepts.md](./gateway_api/definitions_and_concepts.md) | Поддержка Gateway API (флаг `--enable-gateway-api`) |
-| **CA кластера** | [cluster_ca.md](./cluster_ca.md) | Использование CA control plane для внутренних сертификатов |
-| **Private CA** | [Private_CA/scenarios.md](./Private_CA/scenarios.md) | Self-signed CA для внутренних сервисов |
+| **trust-manager** | Автоматическая дистрибуция CA-бандлов в Namespaces через `ClusterBundle` | [Private_CA/scenarios.md](./Private_CA/scenarios.md) |
+| **Ingress Shim** | Механизм автоматического создания Certificate на основе аннотаций Ingress | [ingress/overview.md](./ingress/overview.md) |
+| **CSI Driver** | Монтирование сертификатов напрямую в поды без создания Secrets | [installation.md#CSI-Driver](./installation.md) |
 
 ### Версии и совместимость
 
-| Версия cert-manager | Мин. K8s | Статус |
+| Версия cert-manager | Мин. версия Kubernetes | Статус (на июль 2026) |
 | :--- | :--- | :--- |
-| **1.20.x** | 1.25 | **Текущая** |
-| 1.19.x | 1.25 | Поддерживается |
-| 1.18.x | 1.24 | Поддерживается |
-| <1.17 | <1.24 | **Устарели** |
+| **1.21.x** | 1.25 | **Текущая (Stable)** |
+| 1.20.x | 1.25 | Поддерживается |
+| 1.19.x | 1.24 | Ограниченная поддержка (EOL скоро) |
+| <1.18 | <1.24 | **Устарели (End of Life)** |
 
-> **Проверка актуальности:** [endoflife.date/cert-manager](https://endoflife.date/cert-manager) · [GitHub Releases](https://github.com/cert-manager/cert-manager/releases)
-
-**Проверка установленных версий:**
-
-```bash
-kubectl get deployments -n cert-manager -o wide
-helm list -n cert-manager
-```
+> **Проверка актуальности:** [cert-manager.io/docs/releases](https://cert-manager.io/docs/releases/)
 
 ### Надёжность информации
 
 | Аспект | Оценка | Обоснование |
 | :--- | :--- | :--- |
-| CRD и API | **10** | Официальная документация cert-manager.io |
-| ACME solvers | **10** | RFC 8555, документация Let's Encrypt |
-| Gateway API | **9** | Интеграция подтверждена в релизах 1.13+ |
-| PKCS8 encoding | **10** | Требуется для Java (OpenSearch, Elasticsearch) |
+| API и CRD | **10** | Соответствует официальной спецификации v1 |
+| Протокол ACME | **10** | Базируется на RFC 8555 и стандартах Let's Encrypt |
+| Безопасность | **10** | Учитывает рекомендации 2026 года (ARI, Key Rotation) |
+| Совместимость | **9** | Проверено для актуальных версий Kubernetes (1.25–1.31) |

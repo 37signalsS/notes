@@ -2,130 +2,105 @@
 
 ## Определения
 
-**Диагностика Pending-статуса** — процесс выявления причин, по которым Kubernetes Scheduler (Планировщик) не может назначить Pod на подходящий узел кластера.
-
-**Ключевые признаки:**
-
-- `Phase: Pending` в статусе объекта.
-- События `FailedScheduling` в выводе описания пода.
-- Отсутствие назначенного узла (`Node: <none>`).
+**Диагностика Pending-статуса** — процесс выявления причин, по которым Pod не переходит в фазу `Running`. В зависимости от этапа жизненного цикла объекта диагностика разделяется на два типа:
+1.  **Диагностика планирования (Unscheduled):** поиск причин, по которым `kube-scheduler` не может выбрать узел.
+2.  **Диагностика запуска (Scheduled):** поиск причин задержки на конкретном узле после назначения (например, при работе Init-контейнеров).
 
 ## Основные концепции
 
 ### Источники диагностических данных
 
 | Источник | Команда | Что искать |
-|----------|---------|------------|
-| **События (Events)** | `kubectl describe pod <pod>` | Ошибки `FailedScheduling`, `Insufficient CPU` |
-| **Ресурсы узлов** | `kubectl top nodes` | Дефицит ресурсов на уровне всего кластера |
-| **Taints (Изоляция)** | `kubectl describe node <node>` | Метки `Taints`, блокирующие запуск пода |
-| **Статус PVC** | `kubectl get pvc` | Ожидание привязки тома (состояние `Pending`) |
-| **Квоты (Quotas)** | `kubectl describe resourcequota` | Превышение лимитов ресурсов в Namespace |
+|:---|:---|:---|
+| **События (Events)** | `kubectl describe pod <pod>` | Ошибки `FailedScheduling`, `FailedMount`, `BackOff` |
+| **Условия (Conditions)** | `kubectl get pod <pod> -o json` | Статус `PodScheduled`, `Initialized`, `ContainersReady` |
+| **Ресурсы узлов** | `kubectl top nodes` | Дефицит CPU/RAM на уровне кластера или конкретного узла |
+| **Спецификация (Spec)** | `kubectl get pod <pod> -o yaml` | Наличие `schedulingGates`, `nodeSelector`, `affinity` |
+| **Логи планировщика** | `kubectl logs -n kube-system <scheduler-pod>` | Детальная логика отказа в планировании (в сложных случаях) |
 
 ### Алгоритм поиска неисправности
 
-1. **Анализ событий**: получение первичной причины от планировщика через `describe`.
-2. **Проверка ресурсов**: сопоставление `requests` (запросов) пода с доступной емкостью узлов.
-3. **Анализ ограничений**: проверка `nodeSelector`, `affinity` и наличие `taints` на узлах.
-4. **Проверка внешних зависимостей**: состояние `PVC` и выполнение условий `ResourceQuota`.
+1.  **Проверка назначения узла:** если `Node: <none>`, проблема в планировщике. Если узел указан — проблема в инфраструктуре узла или зависимостях.
+2.  **Анализ событий:** изучение последних `Warning` в выводе `describe`.
+3.  **Проверка условий (Conditions):** сопоставление фазы с конкретными флагами готовности.
+4.  **Анализ зависимостей:** проверка состояния `PersistentVolumeClaim` (PVC), `ConfigMap`, `Secret` и `Init-контейнеров`.
 
 ## Практические сценарии
 
-### Пошаговый чек-лист диагностики
+### Вектор 1: Узел не назначен (Unscheduled)
 
-#### Шаг 1: Проверка статуса пода и событий
+Если под застрял на этапе планирования, проверьте следующие аспекты:
 
+#### 1. Ресурсы и квоты
+Проверьте соответствие `requests` пода доступной емкости узлов:
 ```bash
-kubectl describe pod <pod-name>
-```
+# Просмотр причин отказа в планировании
+kubectl describe pod <pod-name> | grep -A 5 Events
 
-**Ищите в разделе `Events` причины неудачного планирования:**
-
-```text
-Type     Reason            Message
-----     ------            -------
-Warning  FailedScheduling  0/3 nodes are available: 3 Insufficient cpu.
-```
-
-#### Шаг 2: Анализ доступных ресурсов
-
-Если причина в `Insufficient cpu/memory`:
-
-```bash
-# Текущее потребление ресурсов узлами
-kubectl top nodes
-
-# Запрошенные ресурсы (Requests/Limits) на узлах
+# Просмотр аллокации ресурсов на узлах
 kubectl describe nodes | grep -A 5 "Allocated resources"
-
-# Общая емкость (Capacity) и доступные ресурсы узлов
-kubectl get nodes -o custom-columns=NAME:.metadata.name,CPU:.status.capacity.cpu,MEM:.status.capacity.memory
 ```
 
-#### Шаг 3: Проверка Taints (Изоляция узлов)
-
-Если планировщик сообщает о наличии `taint`, который под не `tolerate`:
-
+#### 2. Ограничения размещения (Affinity/Taints)
+Проверьте, не блокируют ли правила выбора узлов планирование:
 ```bash
-# Список всех Taints на узлах кластера
-kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
-
-# Детальная проверка Taints конкретного узла
-kubectl describe node <node-name> | grep -A 5 "Taints:"
-```
-
-#### Шаг 4: Проверка Affinity и NodeSelector
-
-Если узел не соответствует правилам привязки (`didn't match Pod's node affinity/selector`):
-
-```bash
-# Проверка требований пода к узлам
-kubectl get pod <pod-name> -o jsonpath='{.spec.nodeSelector}'
-kubectl get pod <pod-name> -o jsonpath='{.spec.affinity}'
-
-# Проверка меток (Labels) на узлах
+# Проверка меток узлов
 kubectl get nodes --show-labels
+
+# Проверка Taints на узлах
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
 ```
 
-#### Шаг 5: Проверка зависимостей (PVC)
-
-Если под ожидает привязки хранилища (`unbound immediate PersistentVolumeClaims`):
-
+#### 3. Врата планирования (Scheduling Gates)
+Если событий `FailedScheduling` нет, проверьте, не удерживается ли под внешним контроллером:
 ```bash
-# Проверка статуса PVC в namespace
-kubectl get pvc -n <namespace>
-
-# Детальная диагностика причины ожидания PVC
-kubectl describe pvc <pvc-name>
-
-# Список доступных PV в кластере
-kubectl get pv
+kubectl get pod <pod-name> -o jsonpath='{.spec.schedulingGates}'
 ```
 
-#### Шаг 6: Проверка квот (ResourceQuota)
+---
 
-Если создание пода блокируется квотами (`failed quota`):
+### Вектор 2: Узел назначен (Scheduled)
 
+Если узел выбран, но фаза остается `Pending`, проверьте процессы подготовки:
+
+#### 1. Инициализация (Init Containers)
+Под остается в `Pending`, пока не завершатся все Init-контейнеры:
 ```bash
-# Проверка текущего использования квот в namespace
-kubectl describe resourcequota -n <namespace>
+# Проверка статуса Init-контейнеров
+kubectl get pod <pod-name> -o jsonpath='{.status.initContainerStatuses[*].state}'
 
-# Проверка лимитов по умолчанию (LimitRange)
-kubectl describe limitrange -n <namespace>
+# Логи зависшего Init-контейнера
+kubectl logs <pod-name> -c <init-container-name>
 ```
 
-## Дополнительная информация
+#### 2. Подключение томов (Volume Mounting)
+Ошибки монтирования часто удерживают под в состоянии подготовки:
+```bash
+# Проверка событий на предмет FailedMount или FailedAttachVolume
+kubectl describe pod <pod-name> | grep -E "MountVolume|AttachVolume"
+```
+
+#### 3. Подготовка сети и образов
+Если `kubelet` не может создать sandbox или скачать образ:
+```bash
+# Проверка условий готовности сетевой среды
+kubectl get pod <pod-name> -o jsonpath='{.status.conditions[?(@.type=="PodReadyToStartContainers")]}'
+```
+
+---
 
 ### Полезные команды для мониторинга
 
 | Задача | Команда |
-|--------|---------|
-| **Все Pending поды в кластере** | `kubectl get pods -A --field-selector status.phase=Pending` |
-| **Сортировка по времени создания** | `kubectl get pods --field-selector status.phase=Pending --sort-by='.metadata.creationTimestamp'` |
-| **Удаление всех зависших подов** | `kubectl delete pods --field-selector status.phase=Pending -A` |
+|:---|:---|
+| **Все Pending поды** | `kubectl get pods -A --field-selector status.phase=Pending` |
+| **Причины по всем подам** | `kubectl get events --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp'` |
+| **Статус PVC для подов** | `kubectl get pvc -n <namespace>` |
 
-### Смотрите также
+## Дополнительная информация
 
-- **[Определения и концепции](./definitions_and_concepts.md)** — базовое описание фазы Pending и работы планировщика.
-- **[Распространенные случаи и решения](./common_cases_and_solutions.md)** — подробные инструкции по исправлению типовых ошибок.
-- **[Advanced Topics](./advanced_topics.md)** — мониторинг, алертинг и сложные сценарии планирования.
+### Связанные ресурсы
+
+- **[Определения и концепции](./definitions_and_concepts.md)** — описание фазы Pending и стадий планирования.
+- **[Распространенные случаи и решения](./common_cases_and_solutions.md)** — инструкции по исправлению типовых ошибок.
+- **[Advanced Topics](./advanced_topics.md)** — мониторинг, Scheduling Framework и Topology Spread.

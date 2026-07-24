@@ -2,108 +2,90 @@
 
 ## Определения
 
-**Netdata** — высокопроизводительная система для мониторинга производительности систем и приложений в реальном времени. Ключевое отличие от Prometheus — детализация метрик **до секунды** и готовые интерактивные дашборды без настройки.
+**Netdata** — высокопроизводительная система для мониторинга производительности систем и приложений в реальном времени. Ключевое отличие от Prometheus — детализация метрик до секунды, встроенное машинное обучение для обнаружения аномалий и готовые интерактивные дашборды.
 
 **Область применения:**
-
-- Отладка производительности в реальном времени
-- Анализ проблем при нагрузочном тестировании
-- Быстрый обзор состояния хоста или контейнера
+- Отладка производительности в реальном времени (high-resolution).
+- Анализ инцидентов и обнаружение аномалий (Anomaly Advisor).
+- Мониторинг системных вызовов и сети через eBPF.
 
 Подробно о концепциях наблюдаемости: **[Observability Definitions](../../Concepts/Observability_and_Monitoring/observability_definitions.md)**.
 
 ## Основные концепции
 
-### Архитектура в Kubernetes
+### Архитектура в Kubernetes (Parent-Child)
+Netdata оптимизирована для работы в Kubernetes по гибридной модели:
+- **Child (DaemonSet)**: Легковесные агенты на каждом узле кластера. Рекомендуется использовать режим `memory_mode = ram` для хранения данных только в оперативной памяти, что исключает нагрузку на диск рабочих узлов. Собирает метрики хоста, контейнеров и приложений.
+- **Parent (Deployment)**: Центральный узел для агрегации данных. Использует `dbengine` для долгосрочного хранения сжатых данных на PersistentVolume. Поддерживает многоуровневое хранение (Tiered Storage) для архивации метрик за месяцы и годы.
 
-Установка через официальный Helm-чарт разворачивает Netdata по модели Parent/Child:
+### Глубокая видимость с eBPF
+Netdata включает нативный коллектор eBPF, который позволяет отслеживать:
+- **Сеть L4**: Пропускная способность TCP/UDP, ретрансмиссии, ошибки на уровне сокетов.
+- **Процессы**: Жизненный цикл (fork/exit), использование CPU потоками, переключение контекста.
+- **Файловая система**: Задержки VFS, операции ввода-вывода.
+Это дает видимость происходящего внутри контейнеров без внедрения агентов (sidecars).
 
-- **Parent `Deployment`** — один главный под агрегирует данные от дочерних агентов, предоставляет централизованный UI (User Interface), хранит историю в `PersistentVolume`.
-- **Child `DaemonSet`** — под-агент на каждом узле собирает метрики хоста (CPU (Central Processing Unit), память, диски, сеть) и из `cgroups` (Control Groups) контейнеров.
-- **Service Discovery** — дочерние агенты автоматически обнаруживают родительский под и отправляют метрики.
+### Машинное обучение и аномалии
+Netdata обучает модели машинного обучения (k-means) для каждой собираемой метрики непосредственно на узлах.
+- **Anomaly Advisor**: Автоматически подсвечивает метрики, поведение которых отклоняется от нормы, помогая коррелировать события во время инцидентов.
+- **Нулевая настройка**: ML-модели не требуют ручной настройки порогов и адаптируются к нагрузке кластера в течение 24–48 часов.
 
 ### Преимущества и недостатки
-
-**Преимущества:**
-
-- **Реальное время** — обновление данных каждую секунду
-- **Авто-обнаружение** — мониторинг сотен сервисов без конфигурации
-- **Нулевая конфигурация** — дашборды доступны сразу
-- **Низкое потребление** — легковесные агенты
-
-**Недостатки:**
-
-- **Дашборды** — встроенные дашборды негибкие, кастомизация ограничена (в отличие от Grafana)
-- **Долгосрочное хранение** — для долгосрочного анализа лучше использовать Prometheus; Netdata может быть источником метрик
-
-### Методологии мониторинга
-
-Netdata покрывает принципы методологий **[USE](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md)** (Utilization, Saturation, Errors) для инфраструктуры и **[RED](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md)** (Rate, Errors, Duration) для сервисов.
+- **Преимущества**: Посекундное разрешение, автоматическое обнаружение сотен сервисов, eBPF из коробки, низкое потребление ресурсов.
+- **Недостатки**: Ограниченная кастомизация дашбордов (в сравнении с Grafana), сложность настройки алертов по сложным составным условиям.
 
 ## Практические сценарии
 
 ### Установка через Helm
+Рекомендуется использовать официальный чарт с настройкой Parent-Child.
 
-Netdata рекомендуется устанавливать через официальный Helm-чарт.
-
-**Шаг 1: Добавление репозитория**
-
+**Шаг 1: Подготовка репозитория**
 ```bash
 helm repo add netdata https://netdata.github.io/helmchart/
 # → "netdata" has been added to your repositories
 helm repo update
-# → Hang tight while we grab the latest from your chart repositories...
 # → ...Successfully got an update from the "netdata" chart repository
 ```
 
-**Шаг 2: Отладка конфигурации (`--dry-run`)**
+**Шаг 2: Настройка и установка**
+Создайте `values.yaml` для оптимизации хранения и включения eBPF:
+```yaml
+parent:
+  database:
+    storageClass: "managed-nfs-storage"
+    volumesize: 10Gi
+  config:
+    dbengine:
+      tier0_expansion: 1
+      tier1_expansion: 10
 
-Перед установкой полезно посмотреть сгенерированные манифесты и переопределить значения по умолчанию:
+child:
+  config:
+    health:
+      enabled: false # Отключаем алерты на child, оставляем на parent
+    memory_mode: ram
+  ebpf:
+    enabled: true
 
-```bash
-helm install netdata netdata/netdata \
-  --namespace monitoring \
-  --set image.pullPolicy=IfNotPresent \
-  --set parent.database.storageClass=managed-nfs-storage \
-  --set child.resources.requests.cpu=100m \
-  --set parent.resources.limits.memory=1Gi \
-  --set ingress.enabled=false \
-  --dry-run --debug
-# → [YAML (Yet Another Markup Language) manifests output for all Netdata resources]
+ingress:
+  enabled: false
 ```
 
-Параметры:
-
-- `--dry-run --debug` — генерация и вывод YAML-манифестов без применения в кластере
-- `parent.database.storageClass` — `StorageClass` для `PersistentVolume` с историческими данными
-- `child.resources.requests.cpu` — запросы CPU для child-агента
-- `parent.resources.limits.memory` — лимиты памяти для parent-пода
-- `ingress.enabled=false` — отключение Ingress для ручной настройки с TLS (Transport Layer Security)
-
-**Шаг 3: Установка релиза**
-
+Установка релиза:
 ```bash
 helm install netdata netdata/netdata \
   --namespace monitoring \
   --create-namespace \
-  --set image.pullPolicy=IfNotPresent \
-  --set parent.database.storageClass=managed-nfs-storage \
-  --set child.resources.requests.cpu=100m \
-  --set parent.resources.limits.memory=1Gi \
-  --set ingress.enabled=false
+  -f values.yaml
 # → NAME: netdata
-# → LAST DEPLOYED: Sat Jun  6 15:30:00 2026
 # → NAMESPACE: monitoring
 # → STATUS: deployed
 # → REVISION: 1
 ```
 
-**Шаг 4: Доступ через Ingress**
-
-Создание `Ingress`-ресурса для доступа к родительскому поду:
-
+### Доступ через Ingress
+Для безопасного доступа к интерфейсу родительского узла:
 ```yaml
-# netdata-ingress.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -112,11 +94,11 @@ metadata:
   annotations:
     cert-manager.io/issuer: "kubernetes-ca-issuer"
 spec:
-  ingressClassName: system-ingress
+  ingressClassName: nginx
   tls:
   - hosts:
     - netdata.k8s.local
-    secretName: internal-services-secret
+    secretName: netdata-tls-certs
   rules:
   - host: netdata.k8s.local
     http:
@@ -129,28 +111,14 @@ spec:
             port:
               name: http
 ```
-
-Настройка cert-manager: **[CA (Certificate Authority) кластера для внутренних сертификатов](../ToolsUtilities/cert_manager/cluster_ca.md)**.
-
-### Удаление Netdata
-
-```bash
-helm uninstall netdata -n monitoring
-# → release "netdata" uninstalled
-```
-
-Helm удаляет все связанные ресурсы (`Deployment`, `DaemonSet`, `Service`, `PVC` (PersistentVolumeClaim)).
-
-> **Примечание:** `PersistentVolume` может сохраниться при `reclaimPolicy: Retain`.
+Настройка сертификатов: **[CA кластера](../ToolsUtilities/cert_manager/cluster_ca.md)**.
 
 ## Дополнительная информация
 
-### Интеграция с Prometheus
-
-Netdata может отдавать метрики в формате Prometheus через настройку в `values.yaml` Helm-чарта. Это позволяет использовать Netdata как источник метрик для существующих Prometheus-инсталляций.
+### Интеграция с OpenTelemetry
+Netdata может выступать в роли бэкенда для OpenTelemetry, принимая данные по протоколу OTLP (gRPC/HTTP). Это позволяет визуализировать метрики приложений, собранные через OpenTelemetry SDK, с использованием аналитики Netdata.
 
 ### Смежные темы
-
-- **[Monitoring and Logging Architecture](./kubernetes-monitoring-logging-architecture.md)** — слои мониторинга в Kubernetes
-- **[Metrics Collection Strategies](../../Concepts/Observability_and_Monitoring/metrics_collection_strategies.md)** — стратегии сбора метрик
-- **[Prometheus Installation](../../../Prometheus/installation/prometheus_server_installation.md)** — долгосрочное хранение и алертинг
+- **[Monitoring and Logging Architecture](./kubernetes-monitoring-logging-architecture.md)** — архитектура мониторинга в Kubernetes.
+- **[Metrics Collection Strategies](../../Concepts/Observability_and_Monitoring/metrics_collection_strategies.md)** — стратегии сбора телеметрии.
+- **[Prometheus Installation](../../../Prometheus/installation/prometheus_server_installation.md)** — долгосрочное хранение и сложные алерты.

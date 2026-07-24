@@ -1,125 +1,134 @@
-# Условная логика в Helm
+# Условная логика и управление контекстом
 
 ---
 
 ## Определения
 
-**Условные конструкции** — директивы `if/else/with/end` для динамического создания ресурсов и добавления полей в зависимости от значений. Синтаксис и базовые примеры — в [Синтаксис Helm-шаблонов](../syntax.md).
+**Условные конструкции** — это управляющие директивы (`if`, `else if`, `else`), которые позволяют включать или исключать фрагменты манифестов на основе значений из `values.yaml` или состояния кластера.
+
+**Управление контекстом (`with`)** — механизм временного переключения «точки» (`.`) на вложенный объект, что упрощает доступ к глубоко вложенным параметрам и делает код чище.
 
 ---
 
-## Основные концепции
+## Базовые концепции
 
-Условная логика применяется в трёх типовых случаях:
+### Понятие истины (Truthiness) в Go Templates
 
-1. **Условное добавление полей** — поле добавляется в манифест только при определённых значениях (например, `nodePort` для Service типа `NodePort`).
-2. **Условное создание ресурсов** — весь файл шаблона оборачивается в `if`, при ложном условии рендерится пустота, ресурс не создаётся.
-3. **Условное добавление аннотаций/меток** — блок `annotations` или `labels` добавляется только при включённом флаге.
+В Helm условие считается **ложным** (false) в следующих случаях:
+- Булево `false`.
+- Числовой `0`.
+- Пустая строка `""`.
+- Пустая коллекция (`list`, `dict`, `slice`).
+- Значение `nil` (null).
 
-Ключевые функции для составных условий:
+Во всех остальных случаях условие считается **истинным** (true).
 
-| Функция | Описание | Пример |
-|---------|----------|--------|
-| `and` | Логическое И | `and .Values.a .Values.b` |
-| `eq` | Равенство | `eq .Values.service.type "NodePort"` |
-| `not` | Отрицание | `not .Values.disabled` |
+### Логические операторы
+
+| Функция | Назначение | Синтаксис |
+|---------|------------|-----------|
+| `and` | Возвращает true, если все аргументы истинны | `{{ if and .val1 .val2 }}` |
+| `or` | Возвращает true, если хотя бы один аргумент истинен | `{{ if or .val1 .val2 }}` |
+| `not` | Инвертирует логическое значение | `{{ if not .val }}` |
+
+### Директива with
+
+Директива `{{ with .Values.app.config }}` переключает текущий контекст. Внутри блока `with` символ `.` ссылается на `.Values.app.config`. Для доступа к глобальным объектам (например, `.Release.Name`) необходимо использовать `$`.
+
+```go
+{{- with .Values.ingress }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $.Release.Name }}-ingress
+spec:
+  {{- if .enabled }}
+  # Логика здесь
+  {{- end }}
+{{- end }}
+```
 
 ---
 
 ## Практические сценарии
 
-### Динамический `nodePort` в Service
+### Условное создание ресурсов (HPA)
 
-Поле `nodePort` добавляется только при типе `NodePort` и заданном значении:
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "myapp.fullname" . }}
-spec:
-  type: {{ .Values.service.type }}
-  ports:
-    - port: {{ .Values.service.port }}
-      targetPort: http
-      protocol: TCP
-      name: http
-    {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
-      nodePort: {{ .Values.service.nodePort }}
-    {{- end }}
-  selector:
-    {{- include "myapp.labels" . | nindent 4 }}
-```
-
-Логика: `and` проверяет два условия — тип сервиса равен `NodePort` **и** значение `.Values.service.nodePort` не пустое.
-
-### Условное создание HPA (Horizontal Pod Autoscaler) для Deployment
-
-**values.yaml:**
+Классический паттерн — создание ресурса только при наличии флага `enabled` и подходящего типа основного приложения.
 
 ```yaml
-kind: Deployment
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 5
-```
-
-**templates/hpa.yaml:**
-
-```yaml
-{{- if and .Values.autoscaling.enabled (eq .Values.kind "Deployment") }}
+{{- if and .Values.autoscaling.enabled (eq .Values.global.type "Deployment") }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: {{ include "myapp.fullname" . }}
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: {{ include "myapp.fullname" . }}
-  minReplicas: {{ .Values.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 80
+  maxReplicas: {{ .Values.autoscaling.maxReplicas | default 10 }}
+  minReplicas: {{ .Values.autoscaling.minReplicas | default 1 }}
 {{- end }}
 ```
 
-При `autoscaling.enabled == false` или `kind != "Deployment"` файл рендерится в пустоту — HPA не создаётся.
+### Обработка необязательных параметров (nodePort)
 
-### Условное добавление аннотаций для Reloader
-
-**values.yaml:**
+Поле должно появляться только если тип сервиса `NodePort` и значение явно задано пользователем.
 
 ```yaml
-reloader:
-  enabled: true
-```
-
-**deployment.yaml:**
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ include "myapp.fullname" . }}
-  {{- if .Values.reloader.enabled }}
-  annotations:
-    reloader.stakater.com/auto: "true"
-  {{- end }}
 spec:
-  # ...
+  type: {{ .Values.service.type }}
+  ports:
+    - port: 80
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
 ```
 
-Аннотация `reloader.stakater.com/auto` появляется только при `reloader.enabled: true`.
+### Работа с вложенными словарями через with
+
+Вместо длинных путей `{{ .Values.deployment.container.resources.limits.cpu }}` используйте `with`:
+
+```yaml
+{{- with .Values.resources }}
+resources:
+  limits:
+    cpu: {{ .limits.cpu | quote }}
+    memory: {{ .limits.memory | quote }}
+  requests:
+    cpu: {{ .requests.cpu | quote }}
+    memory: {{ .requests.memory | quote }}
+{{- end }}
+```
+
+### Сложные условия и тернарный оператор
+
+Функция `ternary` позволяет реализовать краткую запись условия: `{{ .Values.val | ternary "true-val" "false-val" }}`.
+
+```yaml
+# Пример динамического выбора порта
+targetPort: {{ eq .Values.env "prod" | ternary 80 8080 }}
+```
 
 ---
 
 ## Дополнительная информация
 
-Файл посвящён практическим сценариям условной логики. Базовый синтаксис `if/else`, `with`, `range` — в [Синтаксис Helm-шаблонов](../syntax.md). Другие практические сценарии — в [Обзор сценариев](./overview.md).
+### Лучшие практики
+
+1. **whitespace control** — всегда используйте `{{-` и `-}}` для предотвращения появления лишних пустых строк в итоговом YAML после исключения блоков.
+2. **Значения по умолчанию** — комбинируйте `if` с функцией `default`. Например: `{{ .Values.val | default "fallback" }}`.
+3. **Глобальный контекст** — не забывайте, что внутри `range` и `with` точка (`.`) меняется. Используйте `$` для обращения к корню.
+4. **Запрет на deep nesting** — избегайте вложенности условий более 3 уровней. В таких случаях лучше вынести логику в именованный шаблон (`define`).
+
+### Устранение неисправностей
+
+| Ошибка | Причина | Решение |
+|----------|---------|---------|
+| `nil pointer evaluating` | Попытка обратиться к свойству `nil` объекта внутри `if` | Проверьте существование родительского объекта перед обращением к свойству. |
+| Пустые строки в YAML | Отсутствие знаков `-` в конструкциях `{{- if ... }}` | Добавьте дефисы для удаления пробельных символов. |
+| Глобальные переменные недоступны | Смена контекста внутри `with` или `range` | Используйте `$.Values` или `$.Release` вместо `.Values`. |
+| Ресурс не создается при 0 | Helm трактует 0 как `false` | Используйте `{{ if ne .Values.val nil }}` если 0 является валидным значением. |
+
+### См. также
+- [Синтаксис шаблонов](../syntax.md) — базовые конструкции и операторы.
+- [Встроенные объекты](../objects.md) — описание доступных данных.
+- [Функции Helm](../functions.md) — работа с `and`, `or`, `eq`, `ternary`.
+- [Обзор сценариев](./overview.md) — каталог практических примеров.

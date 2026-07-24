@@ -1,156 +1,125 @@
-# Api Access Forbidden: методы аутентификации и 401 Unauthorized
+# Ошибки аутентификации: методы и код 401 Unauthorized
 
 ## Определения
 
-**401 Unauthorized** — состояние, при котором Kubernetes не смог аутентифицировать запрос. Проблема возникает на этапе проверки личности (аутентификации), до передачи запроса на уровень авторизации (**RBAC**).
+**401 Unauthorized** — код состояния HTTP, означающий, что API-сервер Kubernetes не смог подтвердить личность (аутентифицировать) субъекта. Это первый этап обработки запроса: если личность не установлена, проверка прав (**RBAC**) не производится.
 
-> Различие 401 vs 403: [definitions.md](definitions.md).
-> Полное описание методов аутентификации: [../../../../Security/authentication.md](../../../../Security/authentication.md).
+**Аутентификатор (Authenticator)** — модуль API-сервера, ответственный за проверку конкретного типа учетных данных (токены, сертификаты, пароли).
+
+> Различие 401 vs 403: [definitions.md](definitions.md)
+> Полное описание механизмов: [../../../Security/authentication.md](../../../Security/authentication.md)
 
 ## Основные концепции
 
-### Путь запроса при 401
+### Цепочка проверки запроса
 
+Kubernetes использует список аутентификаторов. Запрос проверяется каждым из них до первого успешного совпадения.
+
+```text
+Запрос к API (Token / Cert)
+    ↓
+[ Authenticator List ]
+    ├── X509 (Клиентские сертификаты)
+    ├── ServiceAccount (JWT токены)
+    ├── OIDC (Внешние провайдеры: Google, Keycloak, Dex)
+    └── Webhook (Кастомная проверка)
+    ↓
+Успех: Субъект опознан → Переход к авторизации (RBAC)
+Отказ: 401 Unauthorized
 ```
-Запрос к API
-    ↓
-Аутентификация
-    ↓
-401 — личность не подтверждена
-    ↓
-(запрос отклонён, RBAC не проверяется)
-```
 
-### Частые причины 401
+### Частые причины отказа (401)
 
-| Причина | Симптомы | Когда возникает |
-|---------|----------|-----------------|
-| Истёкший токен ServiceAccount | `Unauthorized: Invalid token` | Токен истёк или отозван |
-| Неверный kubeconfig | `error: You must be logged in to the server` | Смена контекста, устаревшие credentials |
-| Истёкший клиентский сертификат | `x509: certificate has expired` | Сертификат >1 год, не ротируется |
-| Отсутствующий токен в запросе | `Unauthorized` | Pod без mounted SA token |
-
-> **Важно:** С Kubernetes 1.24+ токены ServiceAccount не сохраняются в Secrets по умолчанию. Используйте `kubectl create token`.
+| Причина | Детали | Инструмент проверки |
+|---------|--------|---------------------|
+| **Истекший токен** | JWT токен ServiceAccount имеет ограниченный срок жизни (1.22+) | `kubectl create token` |
+| **Истекший сертификат**| Срок действия клиентского сертификата в kubeconfig истек | `openssl x509` |
+| **Неверный контекст** | Попытка использовать учетные данные одного кластера для другого | `kubectl config current-context` |
+| **Проблемы OIDC** | Ошибка синхронизации времени или некорректная Audience | Логи API-сервера |
 
 ## Практические сценарии
 
-### Сценарий 1: Истёкший токен ServiceAccount
+### Сценарий 1: Проблемы с токенами ServiceAccount (K8s 1.24+)
 
-**Сообщение:**
+В современных версиях Kubernetes токены не хранятся в Secrets бесконечно, а генерируются как проецируемые ресурсы с ограниченным сроком жизни.
 
-```
-Unauthorized: Invalid token
-The token provided has expired
-```
+**Симптомы:** Приложение в поде внезапно начинает получать 401 при обращении к API.
 
-**Диагностика:**
-Общий алгоритм проверки токена приведен в **[диагностике 401](diagnostics.md#шаг-2-диагностика-401-unauthorized)**.
-
-**Решение:**
-
+**Диагностика и решение:**
 ```bash
-# Kubernetes 1.24+: создание нового токена
-kubectl create token <sa-name> -n <namespace>
-...
+# Проверка, монтируется ли токен в под
+kubectl get pod <pod-name> -o yaml | grep -A 10 "serviceAccountToken"
+
+# Ручная генерация нового токена для отладки
+kubectl create token <sa-name> -n <namespace> --duration=1h
+
+# Проверка JWT токена (без установки доп. софта)
+TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+echo $TOKEN | cut -d. -f2 | base64 -d | jq .
 ```
 
-# Для долгосрочного токена (срок до 1 года)
+### Сценарий 2: Истечение срока действия X509 сертификата
 
-kubectl create token <sa-name> -n <namespace> --duration=8760h
+**Симптомы:** Ошибка `x509: certificate has expired or is not yet valid`.
 
-# Обновление kubeconfig новым токеном
-
-kubectl config set-credentials <user> --token=<new-token>
-
-# Если токен хранился в Secret — пересоздание
-
-kubectl delete secret <sa-token-secret> -n <namespace>
-
-# Kubernetes автоматически создаст новый токен
-
-```
-
-### Сценарий 2: Истёкший клиентский сертификат
-
-**Сообщение:**
-
-```
-
-Unable to connect to the server: x509: certificate has expired or is not yet valid
-
-```
-
-**Диагностика:**
-
+**Решение для администратора кластера:**
 ```bash
-# Проверка срока сертификата kubeconfig
-kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -dates
+# Проверка срока действия сертификатов управляющего слоя
+kubeadm certs check-expiration
 
-# Проверка срока сертификата kubelet на узле
-openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -dates
-```
-
-**Решение:**
-
-```bash
-# Для kubeadm-кластера — ротация сертификентов
+# Обновление всех сертификатов (для kubeadm)
 kubeadm certs renew all
 
-# Для kubelet — автоматическая ротация (если enabled)
-# Проверка CSR
-kubectl get csr | grep Pending
-
-# Одобрение ожидающего CSR
-kubectl certificate approve <csr-name>
+# Обновление локального kubeconfig
+cp /etc/kubernetes/admin.conf ~/.kube/config
 ```
 
-### Сценарий 3: Неверный kubeconfig после смены кластера
+### Сценарий 3: Ошибки внешней аутентификации (OIDC)
+
+**Симптомы:** Пользователь успешно прошел SSO, но `kubectl` возвращает 401.
+
+**Возможные причины:**
+1.  **Skew Time:** Разница во времени между API-сервером и OIDC-провайдером более 300 секунд.
+2.  **Audience Mismatch:** API-сервер запущен с `--oidc-client-id`, который не совпадает с полем `aud` в токене.
 
 **Диагностика:**
-Проверьте текущий контекст и доступные учетные записи с помощью **[базовых команд диагностики](diagnostics.md#шаг-2-диагностика-401-unauthorized)**.
-
-**Решение:**
-
+Единственный надежный способ — просмотр логов API-сервера с повышенным уровнем детализации.
 ```bash
-# Переключение контекста
-kubectl config use-context <target-context>
-...
-```
-
-# Обновление токена в kubeconfig
-
-kubectl config set-credentials <user> --token=$(kubectl create token <sa-name> -n <namespace>)
-
-# Обновление сертификата
-
-kubectl config set-credentials <user> \
-  --client-certificate=<path-to-cert> \
-  --client-key=<path-to-key>
-
+# Просмотр логов в реальном времени (на мастере)
+kubectl logs -n kube-system -l component=kube-apiserver -f | grep "authentication"
 ```
 
 ## Дополнительная информация
 
-### Автоматизация проверки аутентификации
+### Метод "Impersonation" для отладки
+
+Если вы не уверены, проходит ли пользователь аутентификацию, попробуйте имитировать его через администратора. Если имитация работает, а прямой запрос — нет, проблема в **аутентификации**.
+
+```bash
+# Проверка прав через имитацию
+kubectl auth can-i list pods --as=my-user@example.com
+```
+
+### Сценарий быстрой проверки токена
 
 ```bash
 #!/bin/bash
-# Проверка аутентификации для ServiceAccount
+# Проверка валидности токена через API
 
-SA=${1:-default}
-NS=${2:-default}
-TOKEN=$(kubectl create token "$SA" -n "$NS")
+TOKEN=$1
+APISERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 
-# Тестовый запрос к API
-curl -k -H "Authorization: Bearer $TOKEN" \
-  https://<api-server>:6443/api/v1/namespaces/$NS/pods
+curl -k -s -H "Authorization: Bearer $TOKEN" "$APISERVER/api" | grep "v1"
+if [ $? -eq 0 ]; then
+    echo "Аутентификация успешна"
+else
+    echo "Ошибка 401: Токен невалиден"
+fi
 ```
 
 ### Связанные ресурсы
 
-- [Определения 401/403](definitions.md)
-- [Пошаговая диагностика](diagnostics.md)
-- [Методы аутентификации](../../../../Security/authentication.md)
-- [Управление kubeconfig](../../../../Operations/kubeconfig_and_connection.md)
-- [Объекты RBAC](rbac_objects.md)
-- [Лучшие практики](best_practices.md)
+- [Пошаговая диагностика (401 и 403)](diagnostics.md)
+- [Определения 401 vs 403](definitions.md)
+- [Объекты RBAC и авторизация](rbac_objects.md)
+- [Управление kubeconfig](../../../Operations/kubeconfig_and_connection.md)

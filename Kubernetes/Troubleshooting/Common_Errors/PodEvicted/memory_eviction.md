@@ -2,11 +2,10 @@
 
 ## Определения
 
-**Выселение при давлении на память (MemoryPressure Eviction)** — принудительное завершение и удаление подов компонентом kubelet при критической нехватке доступной оперативной памяти на узле. Процесс инициируется, когда состояние (condition) узла переходит в `MemoryPressure=True`.
+**Выселение при давлении на память (MemoryPressure Eviction)** — принудительное завершение подов компонентом kubelet для защиты стабильности узла при критическом исчерпании оперативной памяти. В отличие от OOMKilled, выселение является предиктивным механизмом: kubelet убивает поды до того, как ядро Linux начнет хаотично завершать процессы.
 
-**Сообщение в событиях (Events):** `The node was low on resource: memory`.
-
-**Причина:** Суммарное потребление памяти подами и системными процессами превышает доступную память узла с учетом установленных порогов выселения (eviction thresholds).
+**Состояние узла MemoryPressure** — флаг, который устанавливается в `True`, когда доступная память узла падает ниже заданных порогов.
+# → Message: The node was low on resource: memory.
 
 Общие определения и типы выселения: **[Pod Evicted: Определения](./definitions.md)**.
 
@@ -14,113 +13,118 @@
 
 ### Расчет доступной памяти в kubelet
 
-Kubelet рассчитывает доступную память следующим образом:
-`Доступная память = Общий объем - (working set всех подов + системные процессы)`
+Kubelet принимает решение о выселении на основе показателя **Working Set** (рабочий набор). Это не просто занятая память, а объем, который реально необходим приложению для работы прямо сейчас.
 
-Если `Доступная память < evictionHard.memory.available`, активируется **Менеджер выселения (Eviction Manager)**.
+**Формула расчета:**
+`Доступная память = Общий объем - (working_set всех подов + системные процессы)`
 
-**Рабочий набор памяти (Working set memory)** — объем памяти, включающий RSS (Resident Set Size — размер резидентной памяти) и кэш, который не может быть немедленно освобожден (non-reclaimable). Именно этот показатель используется для принятия решения о выселении.
+**Что входит в Working Set:**
+- **RSS (Resident Set Size)** — страницы в физической памяти.
+- **Cache (Page Cache)** — кэш файлов.
+- **Минус Inactive File** — часть кэша, которую ядро может безболезненно сбросить (reclaimable).
 
-### Пороги выселения для памяти
+> **Нюанс:** Если приложение активно использует `mmap` или дисковый кэш, его Working Set будет расти, что может привести к выселению, даже если RSS невелик.
 
-Настройки хранятся в файле конфигурации kubelet (обычно `/var/lib/kubelet/config.yaml`):
+### Пороги выселения (Thresholds)
 
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `evictionHard.memory.available` | Жесткий | Немедленное выселение при достижении порога (например, `200Mi`) |
-| `evictionSoft.memory.available` | Мягкий | Выселение после периода ожидания (grace period), если ситуация не улучшилась |
-| `evictionSoftGracePeriod` | Период | Время (например, `2m`), которое узел может находиться в состоянии превышения мягкого порога |
+Настройки задаются в конфигурации kubelet (`/var/lib/kubelet/config.yaml`):
 
-### Порядок выселения подов
+| Параметр | Описание | Типичное значение |
+|:---|:---|:---|
+| `evictionHard.memory.available` | Мгновенное выселение (SIGKILL) | `100Mi` или `5%` |
+| `evictionSoft.memory.available` | Выселение после ожидания (SIGTERM) | `500Mi` |
+| `evictionSoftGracePeriod` | Сколько времени порог может быть превышен | `2m` |
 
-1. **Обнаружение:** Ресурсы падают ниже порога `evictionHard`.
-2. **Сортировка:** Поды ранжируются по классу QoS (Quality of Service — качество обслуживания) и фактическому потреблению:
-   - **BestEffort:** Выселяются первыми, начиная с самых крупных потребителей.
-   - **Burstable:** Выселяются, если их потребление превышает запросы (`requests`).
-   - **Guaranteed:** Выселяются в последнюю очередь, только если выселение других подов не решило проблему.
-3. **Завершение:** Kubelet отправляет сигнал SIGTERM (Signal Termination), ожидает завершения (grace period) и, при необходимости, отправляет SIGKILL (Signal Kill).
-4. **Проверка:** Если давление на память сохраняется, процесс повторяется для следующего пода.
+### Приоритет выселения и QoS
 
-### Сравнение MemoryPressure и OOMKilled
+Kubelet выбирает "жертву" на основе класса качества обслуживания (QoS) и того, насколько под превысил свои запросы (`requests`):
 
-| Характеристика | MemoryPressure Eviction | OOMKilled |
-|----------------|-------------------------|-----------|
-| **Инициатор** | Менеджер выселения (kubelet) | OOM (Out of Memory) Killer (ядро Linux) |
-| **Уровень** | Узел (Node-level) | Контейнер (Container-level) |
-| **Причина** | Исчерпана вся память узла | Контейнер превысил свой лимит (`limits.memory`) |
-| **Статус пода** | `Evicted` | `OOMKilled` (в поле Last State) |
-| **Влияние QoS** | Определяет порядок выселения | Вторично, ядро убивает процесс по внутренним метрикам (`oom_score_adj`) |
+1. **BestEffort**: Выселяются первыми. У них нет гарантированной памяти.
+2. **Burstable**: Выселяются, если их потребление выше `requests`.
+3. **Guaranteed**: Выселяются последними, только когда на узле не осталось других кандидатов.
+
+Kubelet настраивает `oom_score_adj` для процессов, чтобы ядро Linux при возникновении OOM (Out Of Memory) следовало этой же логике.
 
 ## Практические сценарии
 
 ### Диагностика
 
-#### Шаг 1: Подтверждение состояния узла
+#### Шаг 1: Проверка состояния узла
 
 ```bash
-# Проверка условий (conditions) узла
-kubectl describe node <node_name> | grep -A 5 "MemoryPressure"
-
-# Быстрая проверка всех узлов
-kubectl get nodes -o custom-columns=NAME:.metadata.name,MEMORY_PRESSURE:.status.conditions[?(@.type=="MemoryPressure")].status
+kubectl describe node <node-name> | grep -A 5 "Conditions:"
+# → Type             Status  Reason
+# → MemoryPressure   True    KubeletHasInsufficientMemory
 ```
 
-#### Шаг 2: Анализ потребления ресурсов на узле
+#### Шаг 2: Анализ на уровне операционной системы
 
-Для анализа требуется доступ по протоколу SSH (Secure Shell):
+Необходимо понять, куда уходит память на самом узле (требуется SSH):
 
 ```bash
-# Общая свободная память (RAM — Random Access Memory)
+# Общий статус памяти
 free -h
+# →               total        used        free      shared  buff/cache   available
+# → Mem:           31Gi        28Gi       1.2Gi       1.0Gi       2.1Gi       1.8Gi
 
-# Топ-20 процессов по использованию памяти
-ps aux --sort=-%mem | head -20
+# Топ процессов по памяти
+ps aux --sort=-%mem | head -10
+# → USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+# → root      1234  5.0 12.5 4500000 4000000 ?     Ssl  10:00   5:00 java -jar app.jar
 
-# Статистика контейнеров через CRI (Container Runtime Interface)
-crictl stats --sort-by=memory --descending | head -20
-
-# Поиск событий нехватки памяти (OOM) в системном журнале
-dmesg -T | grep -i "out of memory" | tail -10
+# Статистика контейнеров через CRI
+crictl stats
+# → CONTAINER           CPU %    MEM       DISK      INODES
+# → app-container       2.50     4.2Gi     10Mi      5
 ```
 
-#### Шаг 3: Выявление проблемных подов
+#### Шаг 3: Выявление подов-нарушителей
 
 ```bash
-# Просмотр использования памяти через Metrics Server
-kubectl top pod --all-namespaces --sort-by=memory | head -10
+# Текущее потребление через Metrics Server
+kubectl top pod -A --sort-by=memory | head -10
+# → NAMESPACE     NAME             CPU(cores)   MEMORY(bytes)
+# → prod          java-api-789     150m         4100Mi
 
-# Сравнение текущего потребления с установленными запросами (requests) и лимитами (limits)
-kubectl get pods --all-namespaces -o custom-columns=NAME:.metadata.name,NS:.metadata.namespace,MEM_REQ:.spec.containers[*].resources.requests.memory,MEM_LIM:.spec.containers[*].resources.limits.memory
+# Поиск подов без лимитов (BestEffort)
+kubectl get pods -A -o jsonpath='{range .items[?(@.spec.containers[*].resources.limits.memory=="")]}{.metadata.namespace}{"\t"}{.metadata.name}{"\n"}{end}'
 ```
 
 ### Решение проблемы
 
-#### 1. Оперативные меры
+#### 1. Оперативные меры (Short-term)
 
-- **Очистка дискового кэша (временная мера):** `sync && echo 3 > /proc/sys/vm/drop_caches`
-- **Удаление неиспользуемых образов контейнеров:** `crictl rmi --prune`
-- **Удаление завершенных выселенных подов:** `kubectl delete pods --field-selector status.reason=Evicted -A`
+- **Очистка кэша ОС:** `sync && echo 3 > /proc/sys/vm/drop_caches` (поможет временно, если много Inactive File).
+- **Удаление выселенных подов:** `kubectl delete pods --field-selector status.reason=Evicted -A`.
+- **Рестарт kubelet:** В редких случаях помогает при утечках памяти в самом рантайме.
 
-#### 2. Долгосрочные меры
+#### 2. Долгосрочные меры (Best Practices)
 
-- **Настройка `kubeReserved` и `systemReserved`:** Резервирование памяти для системных компонентов в конфигурации kubelet.
-- **Оптимизация ресурсов:** Приведение `requests` и `limits` в соответствие с реальным потреблением.
-- **Вертикальное масштабирование:** Использование VPA (Vertical Pod Autoscaler — вертикальный автоскейлер подов).
-- **Горизонтальное масштабирование:** Добавление новых узлов в кластер или использование HPA (Horizontal Pod Autoscaler).
+- **Настройка Reserveds:** Установите `kube-reserved` и `system-reserved`, чтобы kubelet знал, сколько памяти оставить для ОС и самого себя.
+  ```yaml
+  # Пример параметров kubelet
+  kubeReserved:
+    memory: "1Gi"
+  systemReserved:
+    memory: "500Mi"
+  ```
+- **Лимиты и запросы:** Все критические поды должны быть в классе **Guaranteed** (`requests == limits`).
+- **VPA (Vertical Pod Autoscaler):** Автоматическая подстройка ресурсов на основе реального потребления.
 
 ## Дополнительная информация
 
-### Рекомендации по настройке ресурсов
+### Различия между MemoryPressure и OOMKilled
 
-| Практика | Описание |
-|----------|----------|
-| **QoS Guaranteed** | Установка `requests == limits` для критически важных приложений минимизирует риск их выселения. |
-| **PDB (Pod Disruption Budget)** | Бюджет прерываний защищает от одновременного выселения слишком большого количества реплик. |
-| **Мониторинг** | Настройка оповещений (alerts) в Prometheus при заполнении памяти узла > 85%. |
+| Признак | MemoryPressure (Eviction) | OOMKilled |
+|:---|:---|:---|
+| **Кто убил** | Kubelet (превентивно) | Kernel OOM Killer (вынужденно) |
+| **Сигнал** | SIGTERM (Soft) / SIGKILL (Hard) | SIGKILL (всегда) |
+| **Причина** | Узел почти пуст | Контейнер съел больше своего лимита |
+| **Статус** | `Evicted` | `OOMKilled` |
 
 ### Смотрите также
 
-- [Pod Evicted: Определения](./definitions.md) — классификация выселений и общая терминология.
-- [Диагностика выселения](./diagnostics.md) — общий алгоритм поиска причин.
-- [Node Resource Pressure](../NodeUnavailability/resource_pressure.md) — диагностика со стороны инфраструктуры узла.
-- [OOMKilled](../oomkilled_pods.md) — детальный разбор ошибок нехватки памяти внутри контейнера.
+- **[Разбор ошибки OOMKilled](../oomkilled_pods.md)** — когда память кончается внутри лимита контейнера.
+- **[Диагностика выселения](./diagnostics.md)** — общий алгоритм поиска причин.
+- **[QoS и выселение](./qos_and_eviction.md)** — детальное описание очередей на вылет.
+- **[Node Resource Pressure](../NodeUnavailability/resource_pressure.md)** — проблемы на уровне железа.

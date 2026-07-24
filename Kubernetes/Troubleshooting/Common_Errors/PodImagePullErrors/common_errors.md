@@ -2,20 +2,24 @@
 
 ## Определения
 
-Базовые термины и концепции загрузки образов описаны в разделе [Определения](./definitions.md).
+В данном разделе рассматриваются конкретные коды ошибок и ситуации, приводящие к состояниям `ErrImagePull` и `ImagePullBackOff`. Базовые термины и жизненный цикл процесса описаны в разделе [Определения](./definitions.md).
 
 ---
 
 ## Основные концепции
 
-### Классификация ошибок
+### Классификация типовых ошибок по кодам ответа
 
-| Код ошибки | Категория | Корневая причина |
+Ошибки загрузки обычно транслируются от реестра через Container Runtime (CRI) в события Kubernetes.
+
+| Код / Сообщение | Категория | Корневая причина |
 | :--- | :--- | :--- |
-| `manifest not found` | Образ или тег | Опечатка, удалённый тег, CI/CD не выполнил push |
-| `unauthorized` | Аутентификация | Отсутствует или некорректный `imagePullSecrets` |
-| `pull access denied` | Авторизация | Пользователь не имеет прав чтения в registry |
-| `404 Not Found` | Путь к образу | Неверный path, образ никогда не загружался в этот репозиторий |
+| `manifest not found` | Образ / Тег | Опечатка в имени или теге. Образ был удален или не был запушен CI/CD пайплайном. |
+| `unauthorized` (401) | Аутентификация | Отсутствует `imagePullSecrets`, неверные учетные данные или истек срок действия токена. |
+| `forbidden` (403) | Авторизация | Учетные данные верны, но у пользователя нет прав на чтение (Pull) данного репозитория. |
+| `not found` (404) | Путь | Неверно указан эндпоинт реестра или путь к проекту/репозиторию. |
+| `too many requests` (429) | Лимиты | Превышена квота на скачивание (Rate Limit) для анонимного или бесплатного пользователя. |
+| `connection refused` | Сеть | Реестр недоступен по сети, неверный порт или блокировка на уровне Firewall/Proxy. |
 
 Подробный алгоритм поиска причин представлен в разделе [Пошаговая диагностика](./diagnostics.md).
 
@@ -23,52 +27,35 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Неверное имя или тег образа
+### Сценарий 1: Неверное имя или тег образа (Manifest Not Found)
 
-**Сообщение:**
+**Симптом:**
+В `kubectl describe pod` отображается ошибка `manifest for <image>:<tag> not found`.
 
-```text
-manifest for my-app:1.1 not found
-manifest unknown: manifest unknown
+**Причина:**
+Указанный тег не существует в реестре. Часто случается при использовании тегов с динамическими версиями (например, хеш коммита), которые еще не были собраны.
+
+**Проверка через внешние инструменты (crane/skopeo):**
+```bash
+# Проверка доступных тегов без скачивания слоев
+crane ls myregistry.io/my-app
+
+# Получение манифеста для проверки существования
+skopeo inspect docker://myregistry.io/my-app:1.2
 ```
-
-**Причина:** Опечатка в имени, тег не существует или был удалён из registry.
 
 **Решение:**
+Исправьте тег в манифесте на существующий или дождитесь завершения CI/CD процесса сборки образа.
 
-```yaml
-# Пример исправления в спецификации Pod
-spec:
-  containers:
-  - name: app
-    image: myregistry.io/my-app:1.2  # Указан существующий тег
-```
+### Сценарий 2: Ошибки аутентификации в приватных реестрах (401 Unauthorized)
 
-**Проверка доступных тегов:**
+**Симптом:**
+Ошибка `unauthorized: authentication required` или `pull access denied`.
 
-```bash
-# Для Docker Hub
-curl -s https://hub.docker.com/v2/repositories/library/nginx/tags
-# → {"count": ..., "next": ..., "results": [...]}
-
-# Для Harbor
-curl -k https://harbor.example.com/api/v2.0/projects/my-proj/repositories/my-app/artifacts
-# → [{"tags": [{"name": "1.2"}, ...], ...}]
-```
-
-### Сценарий 2: Ошибки аутентификации в приватном репозитории
-
-**Сообщение:**
-
-```text
-unauthorized: authentication required
-pull access denied for my-app, repository does not exist or may require 'docker login'
-```
-
-**Причина:** Отсутствует или некорректно настроен `imagePullSecrets`.
+**Причина:**
+`kubelet` не смог предоставить валидные учетные данные реестру.
 
 **Создание секрета (идемпотентный способ):**
-
 ```bash
 kubectl create secret docker-registry regcred \
   --docker-server=https://registry.example.com \
@@ -76,73 +63,49 @@ kubectl create secret docker-registry regcred \
   --docker-password=secret-pass \
   --namespace=my-namespace \
   --dry-run=client -o yaml | kubectl apply -f -
-# → secret/regcred configured
 ```
 
-**Привязка секрета к ServiceAccount:**
-Это позволяет не указывать секрет в каждом манифесте Deployment.
-
+**Рекомендация:**
+Привяжите секрет к `ServiceAccount`, чтобы избежать необходимости указывать `imagePullSecrets` в каждом Deployment:
 ```bash
-kubectl patch serviceaccount default \
-  -p '{"imagePullSecrets": [{"name": "regcred"}]}' \
-  -n my-namespace
-# → serviceaccount/default patched
+kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred"}]}'
 ```
 
-### Сценарий 3: Истёк токен imagePullSecret
+### Сценарий 3: Превышение лимитов Docker Hub (429 Too Many Requests)
 
-**Сообщение:**
+**Симптом:**
+Ошибка `toomanyrequests: You have reached your pull rate limit`.
 
-```text
-unauthorized: authentication required
-```
+**Причина:**
+Docker Hub ограничивает количество анонимных загрузок (100 pull-запросов за 6 часов для IP-адреса). В больших кластерах с общим NAT это происходит быстро.
 
-**Причина:** Токены ECR, GCR и других приватных registry имеют TTL. Secret в кластере не обновился автоматически.
+**Решение:**
+1.  **Авторизация:** Создайте бесплатный аккаунт на Docker Hub и используйте его через `imagePullSecret` (лимит увеличится до 200).
+2.  **Зеркалирование:** Настройте локальный Pull-through Cache (например, в Harbor) для кэширования образов с Docker Hub внутри вашей сети.
 
-**Диагностика:**
+### Сценарий 4: Проблемы с TLS и самоподписанными сертификатами
 
-```bash
-# Дата создания секрета
-kubectl describe secret <regcred>
-# → CreationTimestamp: 2024-01-15 ...
+**Симптом:**
+Ошибка `x509: certificate signed by unknown authority`.
 
-# Проверка событий на наличие ошибок аутентификации
-kubectl get events --sort-by='.lastTimestamp' | grep -i secret
-```
+**Причина:**
+Реестр использует корпоративный или самоподписанный CA, который не входит в доверенное хранилище узлов кластера.
 
-**Решение:** обновить секрет с новым токеном:
+**Решение:**
+- Добавьте CA сертификат в `/usr/local/share/ca-certificates/` на всех узлах и выполните `update-ca-certificates`.
+- Для `containerd` можно настроить доверие конкретному эндпоинту через `hosts.toml`. Подробнее см. в разделе [Air-gapped кластеры](./airgapped.md).
 
-```bash
-kubectl delete secret regcred && \
-kubectl create secret docker-registry regcred \
-  --docker-server=<registry> \
-  --docker-username=<user> \
-  --docker-password=<new-token>
-```
+### Сценарий 5: Использование неизменяемых (Immutable) образов
 
-### Сценарий 4: Образ отсутствует в реестре
+**Проблема:**
+Использование тега `:latest` или изменяемых версий (например, `:stable`) может привести к тому, что разные узлы кластера будут запускать разные версии одного и того же образа из-за кэширования.
 
-**Сообщение:**
-
-```text
-manifest unknown: manifest unknown
-404 Not Found
-```
-
-**Причина:** Образ никогда не загружался в репозиторий или был удалён.
-
-**Проверка наличия образа локально:**
-
-```bash
-docker pull myregistry.io/my-app:1.0
-# → Error response from daemon: manifest for myregistry.io/my-app:1.0 not found
-```
-
-**Рекомендация:** Используйте неизменяемые теги (SHA256 digest) для обеспечения стабильности:
-
+**Рекомендация:**
+Используйте SHA256 digest для гарантированной идентичности:
 ```yaml
 image: myregistry.io/my-app@sha256:45b23dee...
 ```
+Это полностью исключает ошибки `manifest not found` для уже запущенных систем и повышает безопасность.
 
 ---
 
@@ -150,6 +113,8 @@ image: myregistry.io/my-app@sha256:45b23dee...
 
 ### Связанные темы
 
-- [Определения и терминология](./definitions.md) — базовые понятия.
-- [Пошаговая диагностика](./diagnostics.md) — пошаговый план устранения неисправностей.
-- [Лучшие практики](./best_practices.md) — предотвращение ошибок загрузки.
+- [Определения и базовые концепции](./definitions.md) — терминология и жизненный цикл загрузки.
+- [Пошаговая диагностика](./diagnostics.md) — алгоритм поиска неисправностей.
+- [Лучшие практики](./best_practices.md) — предотвращение ошибок загрузки в продакшене.
+- [Сетевые проблемы](./network_issues.md) — диагностика DNS, Proxy и MTU.
+- [Air-gapped кластеры](./airgapped.md) — особенности работы в изолированных средах.

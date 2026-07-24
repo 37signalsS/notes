@@ -2,84 +2,98 @@
 
 ## Определения
 
-**Автоматизация управления секретами** — процесс создания, обновления и распределения `imagePullSecrets` в кластере Kubernetes средствами конвейеров CI/CD (GitLab CI, GitHub Actions) для обеспечения бесперебойного доступа к приватным реестрам.
+**Конвейер CI/CD (Pipeline)** — автоматизированная последовательность шагов сборки, тестирования и развертывания приложения. В контексте Image Pull конвейер отвечает за своевременную публикацию образа и обеспечение кластера правами доступа.
 
-**Переменные окружения CI/CD** — зашифрованные или встроенные параметры (например, `CI_REGISTRY_PASSWORD`), используемые для аутентификации в реестрах контейнеров без хранения паролей в исходном коде.
+**Автоматизация секретов (Secret Management)** — процесс динамического создания и обновления `imagePullSecrets` в кластере. Предотвращает простои из-за истечения токенов или смены паролей к реестру.
+
+**Неизменяемые теги (Immutable Tags)** — практика использования уникальных идентификаторов для каждой сборки (например, короткий SHA коммита Git), исключающая перезапись существующих образов и гарантирующая идентичность среды.
+
+**Workload Identity / OIDC** — механизмы аутентификации в облачных реестрах (ECR, GCR, ACR) без использования статических паролей, основанные на доверии между облачным провайдером и кластером Kubernetes.
 
 ---
 
 ## Основные концепции
 
-### Роль CI/CD в предотвращении ошибок загрузки
+### Взаимосвязь CI/CD и стабильности загрузки образов
 
-| Проблема | Решение через CI/CD | Описание |
+Большинство ошибок загрузки в динамических средах являются следствием рассинхронизации между процессами сборки и развертывания.
+
+| Проблема | Роль CI/CD | Решение |
 | :--- | :--- | :--- |
-| **Unauthorized** | Динамическое обновление секретов | Конвейер обновляет секрет при каждой итерации деплоя, предотвращая использование устаревших данных. |
-| **Manifest not found** | Проверка артефактов (Gate) | Pipeline блокирует деплой, если шаг сборки и пуша образа не был завершен успешно. |
-| **Namespace isolation** | Изолированное создание секретов | Автоматическое создание необходимых секретов в целевом пространстве имен приложения. |
+| **Race Condition** | Deployment стартует до завершения Push образа. | Настройка зависимостей (dependencies/needs) и проверка наличия манифеста перед деплоем. |
+| **Expired Tokens** | Использование токенов с TTL (например, AWS ECR). | Использование Workload Identity или фоновое обновление секрета через CronJob. |
+| **Rate Limiting** | Массовые тесты вызывают блокировку по IP. | Интеграция с локальными кэширующими прокси (Pull-through Cache). |
+| **Tag Overwriting** | Использование `:latest` приводит к запуску неверной версии. | Принудительное использование уникальных тегов на уровне CI-скриптов. |
 
-### Принцип работы конвейера
+### Рекомендуемая стратегия именования (Tagging)
 
-1. **Сборка и пуш:** Создание образа и его загрузка в Registry.
-2. **Подготовка кластера:** Создание или обновление `imagePullSecret` в нужном Namespace.
-3. **Привязка:** (Опционально) Обновление `ServiceAccount` для автоматического подтягивания секрета.
-4. **Развертывание:** Применение манифестов (Deployment, StatefulSet), использующих новый образ.
+Для предотвращения ошибок несоответствия образов в production-средах следует придерживаться стратегии:
+- **Разработка:** Теги на основе номера ветки или MR (например, `feature-login-abc123`).
+- **Стейджинг/Продакшн:** Теги на основе SHA коммита или семантического версионирования (`v1.2.3`).
+- **Запрет на `:latest`**: Использование этого тега скрывает версию и ломает механизм отката (Rollback).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: GitLab CI — создание секрета и деплой
+### Сценарий 1: Использование Workload Identity (GitHub Actions + AWS ECR)
 
-Пример шага деплоя, который гарантирует наличие секрета в кластере перед запуском подов:
+В современных облачных средах от статических `imagePullSecrets` отказываются в пользу временных ролей (IRSA).
+
+**Принцип работы:**
+1. GitHub Actions проходит OIDC-аутентификацию в AWS.
+2. `kubelet` на узле (через IAM роль узла) получает доступ к ECR.
+3. В манифестах K8s секреты не требуются.
+
+**Преимущество:** Полное исключение ошибок `Unauthorized` из-за протухших паролей.
+
+### Сценарий 2: Декларативное управление через External Secrets Operator
+
+В модели GitOps (ArgoCD/Flux) секреты не хранятся в Git в открытом виде.
+
+**Конфигурация (ExternalSecret):**
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: registry-credentials
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: regcred  # Этот секрет будет создан в K8s
+    template:
+      type: kubernetes.io/dockerconfigjson
+  data:
+  - secretKey: .dockerconfigjson
+    remoteRef:
+      key: secret/data/registry/auth
+```
+**Результат:** ArgoCD видит манифест `ExternalSecret`, а оператор автоматически создает `regcred`, необходимый для загрузки образов.
+
+### Сценарий 3: Предотвращение Race Condition в GitLab CI
+
+Обеспечение того, что манифест образа доступен в реестре перед применением `kubectl apply`.
 
 ```yaml
 # .gitlab-ci.yml
-deploy_app:
-  stage: deploy
-  image: bitnami/kubectl:latest
+deploy:
   script:
-    # Идемпотентное создание секрета
-    - kubectl create secret docker-registry regcred \
-        --docker-server=$CI_REGISTRY \
-        --docker-username=$CI_REGISTRY_USER \
-        --docker-password=$CI_REGISTRY_PASSWORD \
-        --namespace=$KUBE_NAMESPACE \
-        --dry-run=client -o yaml | kubectl apply -f -
-    # → secret/regcred configured
-
-    # Привязка к ServiceAccount для упрощения манифестов
-    - kubectl patch serviceaccount default \
-        -p '{"imagePullSecrets": [{"name": "regcred"}]}' \
-        -n $KUBE_NAMESPACE
-    # → serviceaccount/default patched
-
-    # Применение манифестов приложения
-    - kubectl apply -f k8s/deployment.yaml -n $KUBE_NAMESPACE
-    # → deployment.apps/my-app created
+    # Ожидание готовности образа (использование crane)
+    - crane digest $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA || (echo "Image not found" && exit 1)
+    # Применение деплоя с конкретным тегом
+    - helm upgrade --install my-app ./charts --set image.tag=$CI_COMMIT_SHORT_SHA
 ```
 
-### Сценарий 2: GitOps (ArgoCD) и внешние секреты
+### Сценарий 4: Оптимизация через Harbor Pull-through Cache
 
-В GitOps-модели (ArgoCD, Flux) императивные команды `kubectl` запрещены. Секреты должны управляться декларативно.
+Если конвейер CI/CD запускает сотни подов для тестирования, используйте Harbor в качестве зеркала для Docker Hub.
 
-**Рекомендуемый стек:**
-
-- **Sealed Secrets:** Шифрование секретов в Git.
-- **External Secrets Operator:** Получение данных из HashiCorp Vault или AWS Secrets Manager.
-
-Пример манифеста для ручного управления (в составе Helm-чарта):
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: regcred
-  namespace: {{ .Release.Namespace }}
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: {{ .Values.imageCredentials | b64enc }}
-```
+1. Создайте проект-прокси в Harbor (например, `hub-proxy`).
+2. В кластере настройте `containerd` на использование этого зеркала (см. [Сетевые проблемы](./network_issues.md)).
+3. Это исключит ошибку `429 Too Many Requests` во время выполнения CI-тестов.
 
 ---
 
@@ -87,6 +101,7 @@ data:
 
 ### Связанные темы
 
-- [Лучшие практики по управлению образами](./best_practices.md) — рекомендации по привязке секретов к ServiceAccount.
-- [Распространённые ошибки](./common_errors.md) — детальное описание параметров команды `create secret`.
-- [Внешние менеджеры секретов](../../../Kubernetes/Base/secrets/external_managers.md) — интеграция с HashiCorp Vault.
+- [Лучшие практики](./best_practices.md) — стратегии управления тегами и политиками.
+- [Распространённые ошибки](./common_errors.md) — детальный разбор ошибок 401, 403, 429.
+- [Внешние менеджеры секретов](../../Base/secrets/external_managers.md) — глубокая интеграция с Vault и AWS SM.
+- [Сетевые проблемы](./network_issues.md) — настройка прокси и кэширующих реестров.

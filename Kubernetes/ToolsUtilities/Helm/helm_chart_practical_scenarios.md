@@ -1,6 +1,6 @@
 # Практические сценарии Helm-чартов
 
-Рабочие процессы создания, валидации и развёртывания Helm-чартов для production-окружений.
+Рабочие процессы создания, оркестрации и промышленного развёртывания Helm-чартов: от базовой структуры до управления сотнями микросервисов и сложными стеками.
 
 ---
 
@@ -8,48 +8,47 @@
 
 | Термин | Описание |
 |--------|----------|
-| **helm create** | Команда генерации стандартной структуры чарта. См. [Структура Helm-чарта](./helm_chart_structure.md) |
-| **helm lint** | Валидация синтаксиса и структуры чарта. См. [Основные команды](./helm_commands_and_workflow.md) |
-| **helm template** | Локальный рендер шаблонов без кластера. См. [Основные команды](./helm_commands_and_workflow.md) |
-| **helm dependency** | Управление зависимостями чарта. См. [Зависимости и Library Charts](./helm_dependencies_and_library_charts.md) |
+| **helm create** | Команда генерации стандартной структуры чарта (скелета). См. [Структура Helm-чарта](./helm_chart_structure.md). |
+| **Shared Chart (Общий чарт)** | Универсальный чарт с шаблонами, используемый для деплоя множества однотипных сервисов через передачу специфичных `values.yaml`. |
+| **Umbrella Chart (Зонтичный чарт)** | Чарт-агрегатор, который не содержит собственных шаблонов, а объединяет другие чарты как зависимости для деплоя всего стека (например, мониторинга). |
+| **Library Chart (Библиотечный чарт)** | Чарт типа `library`, содержащий только именованные шаблоны (`define`), которые переиспользуются в других чартах через `include`. |
+| **Helm Test** | Встроенный механизм проверки работоспособности релиза после установки/обновления. |
 
 ---
 
 ## Основные концепции
 
-### Команды валидации
+### Валидация и жизненный цикл разработки
 
-Перед развёртыванием выполняется стандартная валидация: `helm lint` проверяет синтаксис, `helm template` рендерит шаблоны локально, `helm install --dry-run --debug` выполняет проверку с имитацией установки. Подробное описание команд — в разделе [основных команд](./helm_commands_and_workflow.md).
+Процесс создания чарта всегда включает три этапа проверки:
+1.  **Синтаксическая:** `helm lint` — проверка корректности `Chart.yaml` и структуры.
+2.  **Локальный рендер:** `helm template` — генерация YAML без кластера для проверки логики шаблонов.
+3.  **Имитация установки:** `helm install --dry-run --debug` — проверка на стороне Kubernetes API (права доступа, схемы ресурсов).
 
-### Команды работы с зависимостями
+### Управление зависимостями
 
-`helm dependency update` скачивает актуальные версии зависимостей в `charts/` и создаёт `Chart.lock`, `helm dependency build` собирает зависимости из зафиксированного `Chart.lock`. Детали — в разделе [зависимости](./helm_dependencies_and_library_charts.md).
+`helm dependency update` скачивает актуальные версии зависимостей (описанных в `Chart.yaml`) в директорию `charts/` и создаёт `Chart.lock`. `helm dependency build` — восстанавливает зависимости строго по версиям из `Chart.lock`. Детали — в разделе [зависимости](./helm_dependencies_and_library_charts.md).
 
 ---
 
 ## Практические сценарии
 
-### Создание нового чарта
+### 1. Структура и создание production-чарта
 
 ```bash
-helm create mychart
-# → Creating mychart
-cd mychart
+helm create my-app
 ```
 
-Команда генерирует чарт с примерами шаблонов и `_helpers.tpl`. См. [Структура Helm-чарта](./helm_chart_structure.md) для деталей организации файлов.
-
-### Структура production-чарта
-
+**Рекомендуемая структура промышленного чарта:**
 ```
 production-chart/
-├── Chart.yaml              # Метаданные
+├── Chart.yaml              # Метаданные (version, appVersion)
 ├── Chart.lock              # Зафиксированные версии зависимостей
-├── values.yaml             # Базовые значения
+├── values.yaml             # Базовые значения (по умолчанию)
 ├── values-production.yaml  # Переопределения для prod
 ├── values-staging.yaml     # Переопределения для staging
 ├── templates/
-│   ├── _helpers.tpl        # Вспомогательные функции
+│   ├── _helpers.tpl        # Вспомогательные функции (named templates)
 │   ├── deployment.yaml
 │   ├── service.yaml
 │   ├── ingress.yaml
@@ -59,184 +58,180 @@ production-chart/
 │   ├── pdb.yaml            # PodDisruptionBudget
 │   └── tests/              # Тесты для helm test
 │       └── test-connection.yaml
-└── charts/                 # Загруженные зависимости (после helm dependency update)
+└── charts/                 # Загруженные зависимости (после dependency update)
     └── postgresql-12.1.0.tgz
 ```
 
-### Многоокружная стратегия через values-файлы
+### 2. Многоокружная стратегия через values-файлы
 
-Для управления конфигурациями в разных окружениях (dev, staging, production) используется несколько `values` файлов.
+Для управления конфигурациями в разных окружениях (dev, staging, production) используется принцип многослойности.
 
-**Подход:**
-
-1. **`values.yaml` (файл по умолчанию):**
-    - Содержит "безопасные" и минимальные значения. Многие функции по умолчанию отключены (`ingress.enabled: false`, `autoscaling.enabled: false`).
-    - Служит основной документацией для чарта. В нем полезно оставлять закомментированные блоки, демонстрирующие структуру сложных параметров (например, `resources` или `affinity`), чтобы пользователи знали, что они могут сконфигурировать.
-
-    ```yaml
-    # values.yaml
-    replicaCount: 1
-
-    ingress:
-      enabled: false
-
-    # Ресурсы по умолчанию не заданы, но показана структура для пользователя
-    # resources:
-    #   limits:
-    #     cpu: 100m
-    #     memory: 128Mi
-    #   requests:
-    #     cpu: 100m
-    #     memory: 128Mi
-    ```
-
-2. **`values-<окружение>.yaml` (файл переопределения):**
-    - Содержит только те значения, которые отличаются от `values.yaml` и специфичны для конкретного окружения.
-
-    ```yaml
-    # values-production.yaml
-    replicaCount: 3
-
-    ingress:
-      enabled: true
-      hosts:
-        - host: myapp.prod.com
-      tls:
-       - secretName: myapp-prod-tls
-         hosts:
-           - myapp.prod.com
-
-    resources:
-      limits:
-        cpu: 2000m
-        memory: 4Gi
-      requests:
-        cpu: 1000m
-        memory: 2Gi
-    ```
-
-**Применение:**
-
-При установке или обновлении чарта флаг `-f` (или `--values`) можно указывать несколько раз. Файлы применяются последовательно, и каждое последующее значение перезаписывает предыдущее.
-
-```bash
-# Сначала загружается values.yaml, затем его значения перезаписываются из values-dev.yaml
-helm install app ./chart -f values.yaml -f values-dev.yaml -n dev
-# → NAME: app
-# → NAMESPACE: dev
-# → STATUS: deployed
-
-# Для production
-helm upgrade app ./chart -f values.yaml -f values-production.yaml -n prod --atomic
-# → Release "app" has been upgraded. Happy Helming!
+**values.yaml (базовый файл):**
+Содержит минимальные значения и служит документацией.
+```yaml
+replicaCount: 1
+ingress:
+  enabled: false
+# resources:  # Оставляем структуру как подсказку
+#   limits:
+#     cpu: 100m
 ```
 
----
+**values-production.yaml (переопределения):**
+```yaml
+replicaCount: 3
+ingress:
+  enabled: true
+  hosts:
+    - host: app.prod.com
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+```
 
-### Организация деплоя 100 микросервисов через один shared-чарт
+**Применение (порядок флагов важен):**
+```bash
+# Значения из values-production.yaml перезапишут значения из values.yaml
+helm upgrade --install app ./chart -f values.yaml -f values-production.yaml -n prod --atomic
+```
 
-Для однотипных микросервисов (единый стек, одинаковые шаблоны Deployment/Service/Ingress) создаётся один **shared-чарт** (не `type: library`, а обычный, с `templates/`). Он публикуется в OCI-регистри (Harbor, ECR, GitLab Container Registry). Каждый сервис поставляет только свой `values.yaml`.
+### 3. Паттерн «Зонтичный чарт» (Umbrella Chart)
+
+Используется для развёртывания целого стека (например, мониторинга) как единого релиза.
+
+**monitoring-stack/Chart.yaml:**
+```yaml
+apiVersion: v2
+name: monitoring-stack
+version: 1.0.0
+dependencies:
+  - name: prometheus
+    version: "25.x.x"
+    repository: "https://prometheus-community.github.io/helm-charts"
+  - name: grafana
+    version: "7.x.x"
+    repository: "https://grafana.github.io/helm-charts"
+```
+
+**monitoring-stack/values.yaml:**
+Управление дочерними чартами через ключи, соответствующие их именам:
+```yaml
+prometheus:
+  server:
+    retention: 30d
+grafana:
+  adminPassword: "admin"
+  ingress:
+    enabled: true
+```
+
+### 4. Shared-чарт для масштабирования (100+ микросервисов)
+
+Для однотипных сервисов создаётся один **shared-чарт** (движок), публикуемый в OCI-реестре.
 
 **Структура репозитория:**
 ```
 infra/
-├── charts/shared/             # один чарт на все сервисы
+├── charts/shared-engine/      # Один чарт на все сервисы
 │   ├── Chart.yaml
-│   ├── templates/
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   ├── ingress.yaml
-│   │   ├── configmap.yaml
-│   │   └── _helpers.tpl
-│   └── values.yaml            # default-значения
+│   ├── templates/ (deployment, service, ingress и т.д.)
+│   └── values.yaml            # Глобальные дефолты
 └── services/
-    ├── svc-auth/values.yaml   # только overrides
-    ├── svc-payment/values.yaml
-    └── svc-notification/values.yaml
+    ├── auth-svc/values.yaml   # Только специфичные настройки сервиса
+    └── pay-svc/values.yaml
 ```
 
-**values.yaml сервиса (только то, что отличается):**
+**values.yaml сервиса (auth-svc):**
 ```yaml
 image:
-  repository: myapp/svc-auth
-  tag: v1.5.2
+  repository: my-org/auth-svc
+  tag: v2.1.0
 resources:
-  requests:
-    cpu: 200m
-    memory: 256Mi
-env:
-  LOG_LEVEL: info
+  requests: { cpu: 200m, memory: 512Mi }
 ```
 
-**Развёртывание отдельного сервиса:**
-```bash
-helm upgrade --install svc-auth oci://harbor.example.com/charts/shared \
-  -f services/svc-auth/values.yaml \
-  -f values-prod.yaml --atomic
-# → Release "svc-auth" has been upgraded. Happy Helming!
-```
-
-**Оркестрация через Helmfile:** каждый релиз — один микросервис с указанием shared-чарта и своего values:
-
-```yaml
-releases:
-  - name: svc-auth
-    chart: oci://harbor.example.com/charts/shared
-    version: "1.2.0"
-    values:
-      - services/svc-auth/values.yaml
-      - values-{{ .Environment.Name }}.yaml
-  - name: svc-payment
-    chart: oci://harbor.example.com/charts/shared
-    version: "1.2.0"
-    values:
-      - services/svc-payment/values.yaml
-      - values-{{ .Environment.Name }}.yaml
-```
-
-**Оркестрация через ArgoCD ApplicationSet (git-generator):** ArgoCD сам находит директории `services/*` и создаёт Application для каждой:
-
+**Оркестрация через ArgoCD ApplicationSet:**
+Автоматически создает приложения для всех папок в `services/`.
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
-metadata:
-  name: microservices
 spec:
   generators:
     - git:
-        repoURL: https://github.com/my-org/infra.git
-        revision: HEAD
-        directories:
-          - path: services/*
+        repoURL: https://github.com/org/infra.git
+        directories: [{path: "services/*"}]
   template:
     metadata:
       name: '{{ path.basename }}'
     spec:
-      project: default
       source:
-        repoURL: https://github.com/my-org/infra.git
-        targetRevision: HEAD
-        path: charts/shared
+        repoURL: https://github.com/org/infra.git
+        path: charts/shared-engine
         helm:
           valueFiles:
-            - services/{{ path.basename }}/values.yaml
-            - values-prod.yaml
+            - ../../services/{{ path.basename }}/values.yaml
+            - ../../values-prod.yaml
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ path.basename }}'
 ```
 
-| Вариант | Когда выбирать |
-|---------|---------------|
-| **Helmfile** | CI/CD-пайплайн, нет ArgoCD, нужен `diff`/`apply` из CLI |
-| **ApplicationSet** | GitOps-подход, ArgoCD уже в кластере, авто-синхронизация |
+### 5. Безопасное хранение секретов (Helm Secrets + SOPS)
 
-**В чём отличие от library chart:** library chart (`type: library`) предоставляет только `define`-блоки для `include` из других чартов — он не устанавливается. Shared-чарт — полноценный чарт с `templates/`, который рендерит ресурсы под каждый сервис. См. [Зависимости и Library Charts](./helm_dependencies_and_library_charts.md) для деталей library-подхода.
+Интеграция с `mozilla/sops` позволяет хранить зашифрованные секреты в Git.
+
+**Использование:**
+1.  Шифруем файл: `sops -e secrets.yaml > secrets.enc.yaml`.
+2.  Деплоим:
+```bash
+# Плагин расшифровывает файл в памяти перед запуском Helm
+helm secrets upgrade --install my-app ./chart -f values.yaml -f secrets.enc.yaml
+```
+
+### 6. Пост-инсталляционное тестирование (Helm Test)
+
+Позволяет убедиться, что приложение не просто "запустилось", но и корректно работает.
+
+**Пример теста (templates/tests/test-api.yaml):**
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "mychart.fullname" . }}-test"
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      command: ['wget']
+      args: ['{{ include "mychart.fullname" . }}:{{ .Values.service.port }}']
+  restartPolicy: Never
+```
+
+**Запуск:**
+```bash
+helm test my-app -n prod
+# → Pod test-connection-test-api started
+# → Test Case test-connection-test-api status: Succeeded
+```
 
 ---
 
 ## Дополнительная информация
 
-- [Зависимости и Library Charts в Helm](./helm_dependencies_and_library_charts.md)
+### Сравнение Shared Chart и Library Chart
+
+| Вариант | Shared Chart | Library Chart (`type: library`) |
+|---------|--------------|---------------------------------|
+| **Развертывание** | Может быть установлен напрямую (`helm install`) | **Не может** быть установлен самостоятельно |
+| **Содержимое** | Полноценные шаблоны в `templates/` | Только `define`-блоки в `templates/` |
+| **Когда использовать** | Деплой сотен идентичных сервисов | Переиспользование общей логики (labeling, annotations) в разных чартах |
+
+### См. также
+
+- [Зависимости и Library Charts](./helm_dependencies_and_library_charts.md)
 - [Основные команды и рабочий процесс Helm](./helm_commands_and_workflow.md)
+- [Скелетный паттерн (Skeleton Pattern)](./helm_skeleton_pattern.md)
 - [Helmfile: декларативный оркестратор](./helmfile_overview.md)

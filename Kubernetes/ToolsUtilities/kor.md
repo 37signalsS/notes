@@ -1,43 +1,50 @@
-# kor
+# Kor — поиск неиспользуемых ресурсов Kubernetes
 
-## Определения
+## Определение
 
-**`kor`** — CLI-инструмент на Go для обнаружения и удаления неиспользуемых ресурсов в кластере Kubernetes. Помогает поддерживать чистоту кластера и сокращать затраты, выявляя ресурсы, не связанные с активными рабочими нагрузками.
+**`kor`** — CLI-инструмент на Go для обнаружения и удаления неиспользуемых (orphaned) ресурсов в кластере Kubernetes. Помогает поддерживать чистоту конфигурации, оптимизировать потребление ресурсов и сокращать затраты, выявляя объекты, которые не связаны с активными рабочими нагрузками.
 
 ## Основные концепции
 
 ### Поддерживаемые типы ресурсов
 
-kor обнаруживает неиспользуемые ресурсы следующих типов:
+Инструмент сканирует кластер на наличие следующих неиспользуемых ресурсов:
 
 | Тип ресурса | Описание |
 | :--- | :--- |
 | **ConfigMaps** | Конфигурационные данные, не используемые подами |
-| **Secrets** | Секреты, не смонтированные в подах |
-| **Services** | Сервисы без активных endpoint'ов |
-| **Deployments** | Деплойменты без подов |
-| **StatefulSets** | StatefulSets без подов |
+| **Secrets** | Секреты, не смонтированные в подах и не используемые как переменные окружения |
+| **Services** | Сервисы без активных endpoint-ов |
+| **Deployments** | Деплойменты без активных подов |
+| **StatefulSets** | StatefulSets без активных подов |
 | **DaemonSets** | DaemonSets без активных подов |
-| **Roles/ClusterRoles** | RBAC-роли без привязок |
-| **RoleBindings/ClusterRoleBindings** | Привязки без соответствующих ролей |
-| **ServiceAccounts** | Учётные записи без привязок |
-| **HPA** | Horizontal Pod Autoscaler без целевых объектов |
-| **Ingress** | Ingress без соответствующих сервисов |
-| **PVC** | PersistentVolumeClaims без привязанных PV |
-| **CRDs** | Custom Resource Definitions без экземпляров |
+| **ReplicaSets** | ReplicaSets с 0 реплик и без владельцев |
+| **Pods** | Поды, находящиеся в статусе **CrashLoopBackOff** (новый функционал) |
+| **Jobs** | Завершенные или "осиротевшие" задания |
+| **Roles / ClusterRoles** | RBAC-роли без соответствующих привязок (RoleBindings) |
+| **RoleBindings / ClusterRoleBindings** | Привязки без соответствующих ролей или субъектов |
+| **ServiceAccounts** | Учетные записи без привязок и не используемые подами |
+| **HPA** | Horizontal Pod Autoscaler без целевых объектов или с отсутствующими метриками |
+| **Ingress** | Ingress без соответствующих бэкенд-сервисов |
+| **PVC** | PersistentVolumeClaims, не привязанные к подам |
+| **PV** | PersistentVolumes, не привязанные к PVC (статус Available или Released) |
+| **StorageClasses** | Классы хранения, не используемые ни одним PV или PVC |
+| **PriorityClasses** | Классы приоритета, не назначенные ни одному поду |
+| **PDB** | PodDisruptionBudgets без целевых подов |
+| **NetworkPolicies** | Сетевые политики, не связанные с существующими подами |
+| **CRDs** | Custom Resource Definitions без созданных экземпляров |
 
 ### Ключевые особенности
 
-- **Широкий охват:** 20+ типов ресурсов Kubernetes
-- **Мульти-namespace:** проверка всех или выбранных namespace'ов
-- **CI/CD-интеграция:** ненулевой код выхода при обнаружении неиспользуемых ресурсов
-- **Форматы вывода:** `table` (по умолчанию), `json`, `yaml`
-- **Helm-установка:** запуск как CronJob или Deployment с метриками Prometheus
-- **Исключения:** фильтрация по namespace'ам через флаги
+- **CrashLoopBackOff Detection:** автоматическое выявление подов, застрявших в цикле перезагрузки, что часто указывает на мусорные или некорректно настроенные ресурсы.
+- **Масштабируемость:** проверка всех (all-namespaces) или конкретных пространств имен.
+- **Prometheus Integration:** возможность развертывания в виде Deployment/CronJob для экспорта метрик неиспользуемых ресурсов, что позволяет создавать алерты и дашборды в Grafana.
+- **KorPro (SaaS):** расширенная версия для управления несколькими кластерами, анализа потенциальной экономии (Cost Analysis) и оценки состояния ресурсов (Health Scores) через веб-интерфейс.
+- **Безопасность (Dry-run):** по умолчанию инструмент только выводит список. Удаление происходит только при явном указании флага `--delete`.
 
 ### Установка
 
-**Через Go:**
+**Через Go (рекомендуется для актуальной версии):**
 
 ```bash
 go install github.com/yonahd/kor@latest
@@ -49,13 +56,13 @@ go install github.com/yonahd/kor@latest
 brew install kor
 ```
 
-**Через krew:**
+**Через krew (как плагин kubectl):**
 
 ```bash
 kubectl krew install kor
 ```
 
-**Через Helm (CronJob/Deployment с метриками):**
+**Через Helm (для мониторинга внутри кластера):**
 
 ```bash
 helm repo add kor https://yonahd.github.io/kor
@@ -72,166 +79,154 @@ docker run --rm -i yonahdissen/kor
 
 ### Поиск неиспользуемых ресурсов
 
-**Все типы ресурсов во всех namespace'ах:**
+**Сканирование всех поддерживаемых типов во всех пространствах имен:**
 
 ```bash
 kor all
 ```
 
-**Конкретные типы ресурсов (подкоманды):**
+**Сканирование конкретных категорий:**
 
 ```bash
-# ConfigMaps и Secrets
+# Только конфигурации и секреты
 kor configmap secret
 
-# Services и ServiceAccounts
-kor service serviceaccount
+# Сетевые ресурсы и сервисные аккаунты
+kor service serviceaccount ingress hpa
 ```
 
-**В конкретном namespace:**
+**Фильтрация по пространству имен:**
 
 ```bash
-kor all -n default
-kor configmap -n kube-system
-```
+# В конкретном namespace
+kor all -n production
 
-**С выводом в JSON:**
-
-```bash
-kor all -o json
-```
-
-### Удаление неиспользуемых ресурсов
-
-**⚠️ Внимание:** перед удалением всегда запускайте без `--delete` для просмотра.
-
-**Предварительный просмотр (без удаления):**
-
-```bash
+# Исключая системные пространства имен
 kor all --exclude-namespaces=kube-system,kube-public,kube-node-lease
 ```
 
-**Удаление с интерактивным подтверждением (по умолчанию):**
+**Вывод в форматах для автоматизации:**
+
+```bash
+# Табличный вывод (по умолчанию)
+kor all --output table
+
+# JSON для обработки через jq
+kor all --output json
+```
+
+### Удаление ресурсов
+
+**Внимание:** всегда делайте запуск без `--delete` для аудита перед очисткой.
+
+**Удаление с подтверждением (интерактивно):**
 
 ```bash
 kor all --delete
 ```
 
-**Удаление без интерактивного подтверждения:**
+**Удаление без подтверждения (для скриптов):**
 
 ```bash
 kor all --delete --no-interactive
 ```
 
-**Удаление конкретных типов:**
+**Точечное удаление по типам:**
 
 ```bash
-kor configmap secret --delete --no-interactive
+kor configmap secret --delete --no-interactive -n dev
 ```
 
 ### Исключение ресурсов
 
-**Исключение namespace'ов:**
+**Исключение по имени:**
 
 ```bash
-kor all --exclude-namespaces=kube-system,kube-public,kube-node-lease
+kor configmap --exclude-resources=my-safe-config,another-one
 ```
 
-**Исключение конкретных ресурсов по имени:**
+**Исключение по меткам (labels):**
 
 ```bash
-kor configmap --exclude-namespaces=kube-system --exclude-resources=my-important-config
+kor all --exclude-labels="maintenance=true,critical=yes"
 ```
 
 ### Интеграция с CI/CD
 
-**GitLab CI:**
+**GitHub Actions (еженедельная проверка):**
 
 ```yaml
-check-unused-resources:
-  image: yonahdissen/kor:latest
-  stage: test
-  script:
-    - kor all --exclude-namespaces=kube-system,kube-public
-  allow_failure: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-```
-
-**GitHub Actions:**
-
-```yaml
-name: Check Unused Resources
+name: K8s Resource Audit
 on:
   schedule:
-    - cron: '0 2 * * 1'
+    - cron: '0 0 * * 1' # Каждый понедельник в полночь
 jobs:
-  check:
+  audit:
     runs-on: ubuntu-latest
     steps:
-      - name: Install kor
+      - name: Install Kor
+        run: go install github.com/yonahd/kor@latest
+      - name: Scan Cluster
         run: |
-          go install github.com/yonahd/kor@latest
-      - name: Check unused resources
-        run: |
-          kor all --exclude-namespaces=kube-system,kube-public,kube-node-lease
+          kor all --exclude-namespaces=kube-system,kube-public --output json
         continue-on-error: true
 ```
 
-### Автоматическая очистка (cron)
+### Автоматизация очистки (Bash + Cron)
 
-**Скрипт для регулярной очистки:**
+**Скрипт для регулярного аудита и логгирования:**
 
 ```bash
 #!/bin/bash
-# /usr/local/bin/kor-cleanup.sh
+# /usr/local/bin/kor-audit.sh
 
-LOG_FILE="/var/log/kor-cleanup.log"
+LOG_FILE="/var/log/kor-audit.log"
 EXCLUDE_NS="kube-system,kube-public,kube-node-lease"
 
-echo "=== Kor cleanup started at $(date) ===" >> $LOG_FILE
+echo "=== Kor audit started: $(date) ===" >> $LOG_FILE
 
-# Просмотр (без удаления)
-kor all --exclude-namespaces=$EXCLUDE_NS -o json >> $LOG_FILE 2>&1
+# Сохранение отчета в JSON для истории
+kor all --exclude-namespaces=$EXCLUDE_NS --output json > "/var/log/kor-report-$(date +%F).json"
 
-# Фактическое удаление (раскомментировать для production)
-# kor all --exclude-namespaces=$EXCLUDE_NS --delete --no-interactive >> $LOG_FILE 2>&1
+# Вывод в лог в табличном виде
+kor all --exclude-namespaces=$EXCLUDE_NS >> $LOG_FILE 2>&1
 
-echo "=== Kor cleanup finished at $(date) ===" >> $LOG_FILE
+echo "=== Kor audit finished: $(date) ===" >> $LOG_FILE
 ```
 
-**Cron job (еженедельно):**
+**Cron job (ежедневно в 03:00):**
 
 ```bash
-0 3 * * 0 /usr/local/bin/kor-cleanup.sh
+0 3 * * * /usr/local/bin/kor-audit.sh
 ```
 
 ## Дополнительная информация
 
-### Требования
+### Требования к среде
 
 | Компонент | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| Kubernetes | 1.20+ | Проверено до 1.32 |
-| kubectl | 1.20+ | Требуется для доступа к кластеру |
-| Go | 1.21+ | Для сборки из исходников |
+| Kubernetes | 1.20+ | Проверено на версиях до 1.32 |
+| kubectl | 1.20+ | Необходим для аутентификации в кластере |
+| Go | 1.21+ | Требуется для установки через go install |
 
-### Ограничения
+### Ограничения и риски
 
-- **Не удаляет ресурсы по умолчанию:** требуется явный флаг `--delete`
-- **Ложные срабатывания:** некоторые ресурсы могут использоваться операторами или внешними системами
-- **Не проверяет вложенные зависимости:** Secret может использоваться Init Container
+- **Динамическое использование:** некоторые секреты могут запрашиваться приложением через API напрямую (без монтирования), что `kor` может ошибочно пометить как неиспользуемые.
+- **Внешние зависимости:** ресурсы могут использоваться внешними инструментами (например, внешними Ingress-контроллерами или скриптами автоматизации вне K8s).
+- **Sidecar-контейнеры:** ресурсы, внедряемые через вебхуки (например, Istio sidecars), могут не всегда корректно учитываться при проверке зависимостей.
 
 ### Лучшие практики
 
-1. Всегда запускать без `--delete` перед фактическим удалением
-2. Исключать системные namespace'ы (`kube-system`, `kube-public`)
-3. Настраивать исключения для критических ресурсов
-4. Запускать регулярно по расписанию для поддержания чистоты
-5. Интегрировать с уведомлениями (Slack, email) для отчётов
+1. **Dry-run First:** никогда не используйте `--delete` в первом запуске на новом кластере.
+2. **Whitelist-подход:** всегда исключайте системные пространства имен (`kube-system`, `kube-public`).
+3. **Метки для защиты:** используйте `--exclude-labels` для пометки ресурсов, которые должны существовать "про запас" или для редких задач.
+4. **Мониторинг:** используйте Helm-чарт для развертывания экспортера и визуализации "мусора" в Grafana.
+5. **Бекап:** перед массовым удалением экспортируйте список ресурсов в JSON.
 
 ### Смотрите также
 
-- [ConfigMap](../Base/ConfigMap/pod_usage.md) — использование ConfigMap в подах.
-- [Secrets](../Security/application_secrets_management.md) — управление секретами.
-- [Официальный репозиторий GitHub: yonahd/kor](https://github.com/yonahd/kor) — исходный код и документация.
+- [ConfigMap](../Base/ConfigMap/pod_usage.md) — использование конфигураций.
+- [Управление секретами](../Security/application_secrets_management.md) — безопасность данных.
+- [GitHub: yonahd/kor](https://github.com/yonahd/kor) — исходный код и обновления.
+- [KorPro](https://korpro.io) — веб-платформа для управления ресурсами.

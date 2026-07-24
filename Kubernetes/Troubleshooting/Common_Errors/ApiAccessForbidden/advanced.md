@@ -1,172 +1,137 @@
-# Ошибка 403 Forbidden (Api Access Forbidden): расширенные сценарии
+# Ошибка 403 Forbidden: расширенные сценарии и контроль допуска
 
 ## Определения
 
-**Доступ к подресурсам API (Application Programming Interface)** — доступ к вложенным ресурсам Kubernetes API (например, `pods/log`, `nodes/metrics`, `nodes/proxy`), который требует отдельного явного разрешения в правилах **RBAC (Role-Based Access Control — управление доступом на основе ролей)**.
+**Доступ к подресурсам API** — права на операции с вложенными объектами Kubernetes API (например, `pods/log`, `pods/exec`, `nodes/proxy`). Эти права не входят в базовый набор прав для основного ресурса и требуют явного перечисления в **RBAC**.
 
-**Кросс-пространственный доступ (Cross-namespace access)** — доступ к ресурсам во всех пространствах имён (namespace) кластера одновременно или к ресурсам вне пространств имён (узлы, **PV (PersistentVolume)**), требующий использования `ClusterRole`.
+**Admission Control (Контроль допуска)** — механизмы API-сервера, которые проверяют запрос ПОСЛЕ успешной авторизации (RBAC). Если запрос нарушает политики безопасности или квоты, возвращается код **403 Forbidden**, даже если у пользователя есть полные права (включая `cluster-admin`).
+
+**Impersonation (Имитация пользователя)** — механизм отладки, позволяющий проверять права доступа от имени другого субъекта, группы или UID.
 
 ## Основные концепции
 
-### Когда требуются расширенные права
+### Источники ошибки 403 Forbidden
 
-Стандартные роли `Role` и привязки `RoleBinding` обеспечивают доступ к основным ресурсам в рамках одного пространства имён. Расширенные сценарии необходимы в следующих случаях:
+| Уровень проверки | Причина отказа | Типичный пример |
+|------------------|----------------|-----------------|
+| **RBAC** | Отсутствие прав в Role/ClusterRole | Нет прав на `list pods` |
+| **PSA (Pod Security Admission)** | Нарушение профиля безопасности | Попытка запустить привилегированный контейнер |
+| **NodeRestriction** | Попытка узла изменить чужой ресурс | Kubelet пытается обновить статус чужого узла |
+| **Resource Quotas** | Превышение лимитов ресурсов | Запрет на создание пода из-за нехватки CPU/MEM |
 
-| Ресурс | Цель доступа | Тип роли |
-|--------|--------------|----------|
-| `pods/log` | Сбор логов (Fluent Bit, Filebeat, Loki) | ClusterRole |
-| `nodes`, `nodes/metrics` | Мониторинг узлов (Prometheus, metrics-server) | ClusterRole |
-| `namespaces` | Получение списка пространств имён кластера | ClusterRole |
+### Продвинутая диагностика (Impersonation)
 
-### Диагностика расширенных прав
+Для выявления сложных проблем доступа используйте флаги имитации. Это позволяет проверить, как API-сервер видит права конкретного ServiceAccount или внешней группы.
 
 ```bash
-# Проверка прав на подресурс
-kubectl auth can-i get pods/log \
-  --as=system:serviceaccount:<namespace>:<sa-name> \
-  -n <namespace>
+# Проверка прав ServiceAccount с имитацией
+kubectl auth can-i list pods \
+  --as=system:serviceaccount:my-ns:my-sa \
+  -n my-ns
 
-# Проверка прав на узлы (Nodes)
-kubectl auth can-i get nodes \
-  --as=system:serviceaccount:<namespace>:<sa-name>
+# Проверка прав группы (например, из OIDC/Azure AD)
+kubectl auth can-i create deployments \
+  --as=dev-user \
+  --as-group=developers \
+  -n project-x
 
-# Проверка прав на пространства имён (Namespaces)
-kubectl auth can-i get namespaces \
-  --as=system:serviceaccount:<namespace>:<sa-name>
+# Проверка от имени конкретного UID (редкие случаи)
+kubectl auth can-i get secrets --as=admin --as-uid=1000
 ```
 
 > Пошаговая диагностика: [diagnostics.md](diagnostics.md)
 
 ## Практические сценарии
 
-### Сценарий 1: Доступ к pods/log (сборщик логов)
+### Сценарий 1: Доступ к подресурсам (exec, logs, port-forward)
 
-**Контекст:** Контейнер-сборщик логов (Fluent Bit, Filebeat, Loki Promtail) пытается читать логи подов во всех пространствах имён.
+**Контокст:** Разработчику или инструменту автоматизации требуется доступ к логам или консоли пода.
 
-**Сообщение об ошибке:**
+**Ошибка:** `User "..." cannot create resource "pods/exec" in API group "" in the namespace "..."`
 
-```
-pods/log is forbidden: User "system:serviceaccount:..."
-cannot get resource "pods/log" in API group "" in the namespace "..."
-```
-
-**Решение:**
-
+**Решение (YAML):**
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
-  name: pod-log-reader
+  name: pod-troubleshooter
+  namespace: debug-ns
 rules:
 - apiGroups: [""]
-  resources: ["pods/log"]
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: fluent-bit-pod-log-reader
-subjects:
-- kind: ServiceAccount
-  name: fluent-bit
-  namespace: monitoring
-roleRef:
-  kind: ClusterRole
-  name: pod-log-reader
-  apiGroup: rbac.authorization.k8s.io
+  resources: ["pods", "pods/log", "pods/exec", "pods/portforward"]
+  verbs: ["get", "list", "create"] # Для exec/portforward нужен 'create'
 ```
 
-### Сценарий 2: Доступ к узлам (Nodes) и метрикам (Мониторинг)
+### Сценарий 2: Pod Security Admission (PSA)
 
-**Контекст:** Prometheus node-exporter, metrics-server или kube-state-metrics нуждаются в доступе к узлам и их метрикам.
+**Контекст:** Пользователь с правами `cluster-admin` не может запустить под в namespace.
 
-**Сообщение об ошибке:**
-
+**Ошибка:**
+```text
+Error from server (Forbidden): pods "my-pod" is forbidden: 
+violates PodSecurity "restricted:latest": allowPrivilegeEscalation != false, 
+unrestricted capabilities, runAsNonRoot != true
 ```
-nodes is forbidden: User "system:serviceaccount:..."
-cannot get resource "nodes" in API group ""
+
+**Анализ:** Это не проблема RBAC. Namespace помечен меткой `pod-security.kubernetes.io/enforce=restricted`.
+**Решение:** Привести манифест пода в соответствие с профилем безопасности (см. [../../Security/Concepts/pod_security_admission.md](../../Security/Concepts/pod_security_admission.md)).
+
+### Сценарий 3: NodeRestriction (Безопасность узлов)
+
+**Контекст:** Специфический ServiceAccount, имитирующий поведение узла, или скомпрометированный kubelet пытается изменить объект, к которому не имеет отношения.
+
+**Ошибка:**
+```text
+Error from server (Forbidden): nodes "other-node" is forbidden: 
+node "this-node" is not allowed to modify node "other-node"
 ```
 
-**Решение:**
+**Анализ:** Плагин `NodeRestriction` ограничивает права `kubelet` так, чтобы он мог изменять только "свои" объекты (Node, Pod, PV).
+**Решение:** Проверить, почему запрос идет не к своему ресурсу. Исправить логику приложения/контроллера.
 
+### Сценарий 4: Доступ к Custom Resource Definitions (CRDs)
+
+**Контекст:** Оператор или CLI-инструмент работает с кастомными ресурсами (например, `PrometheusRule` или `Certificates`).
+
+**Ошибка:** `cannot list resource "certificates" in API group "cert-manager.io"`
+
+**Решение:** Всегда указывайте правильную `apiGroup`.
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: node-reader
 rules:
-- apiGroups: [""]
-  resources: ["nodes"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates", "issuers"]
   verbs: ["get", "list", "watch"]
-- apiGroups: [""]
-  resources: ["nodes/metrics"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: prometheus-node-reader
-subjects:
-- kind: ServiceAccount
-  name: prometheus
-  namespace: monitoring
-roleRef:
-  kind: ClusterRole
-  name: node-reader
-  apiGroup: rbac.authorization.k8s.io
-```
-
-### Сценарий 3: Доступ к пространствам имён (Namespaces)
-
-**Контекст:** Приложение пытается получить список пространств имён или информацию о своём пространстве имён для динамического обнаружения сервисов.
-
-**Сообщение об ошибке:**
-
-```
-namespaces is forbidden: User "system:serviceaccount:..."
-cannot list resource "namespaces" in API group ""
-```
-
-**Решение:**
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: namespace-reader
-rules:
-- apiGroups: [""]
-  resources: ["namespaces"]
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: app-namespace-reader
-subjects:
-- kind: ServiceAccount
-  name: <sa-name>
-  namespace: <namespace>
-roleRef:
-  kind: ClusterRole
-  name: namespace-reader
-  apiGroup: rbac.authorization.k8s.io
 ```
 
 ## Дополнительная информация
 
-### Использование ClusterRole вместо Role
+### Кластерные ресурсы vs Ресурсы неймспейса
 
-Для ресурсов `pods/log` (при доступе ко всем пространствам имён), `nodes` и `namespaces` требуется доступ на уровне кластера. Объект `Role` ограничен одним пространством имён и не может предоставить доступ к:
+Для ресурсов, не привязанных к неймспейсу, использование `Role` невозможно — всегда требуется `ClusterRole` и `ClusterRoleBinding`.
 
-- Узлам кластера (Nodes) — это кластерный ресурс.
-- Пространствам имён (Namespaces) — это кластерный ресурс.
-- Подресурсам или ресурсам в других пространствах имён (например, чтение логов по всему кластеру).
+| Кластерные ресурсы | Ресурсы неймспейса |
+|--------------------|--------------------|
+| Nodes | Pods |
+| Namespaces | Services |
+| PersistentVolumes (PV) | ConfigMaps |
+| PriorityClasses | RoleBindings |
+| StorageClasses | Secrets |
 
-Подробное сравнение `Role` и `ClusterRole` приведено в разделе **[Роли и кластерные роли](../../../Security/rbac/roles.md#sravnenie-role-i-clusterrole)**.
+### Ограничение доступа по именам (ResourceNames)
+
+Для максимальной безопасности (Least Privilege) ограничивайте доступ к критическим объектам по их именам.
+
+```yaml
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["shared-config"] # Только этот ConfigMap
+  verbs: ["get", "update"]
+```
 
 ### Связанные ресурсы
 
-- Распространённые случаи 403 (Namespaced): [common.md](common.md)
+- Распространенные случаи (Namespaced): [common.md](common.md)
 - Пошаговая диагностика: [diagnostics.md](diagnostics.md)
+- Объекты RBAC (Role, Binding): [rbac_objects.md](rbac_objects.md)
 - Роли и кластерные роли: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)

@@ -4,138 +4,126 @@
 
 ## Определения
 
-**NOTES.txt** — специальный шаблон в директории `templates/NOTES.txt`, содержимое которого рендерится и выводится в CLI (Command Line Interface) после выполнения команд `helm install` или `helm upgrade`. Не создаёт ресурсов в Kubernetes.
+**NOTES.txt** — специальный файл в директории `templates/`, содержимое которого рендерится и выводится в консоль (stdout) после завершения операций `helm install` или `helm upgrade`.
+
+**Post-installation notes** — динамически генерируемые инструкции, помогающие пользователю начать работу с приложением (получить URL, пароли, статус сервисов).
 
 ---
 
 ## Базовые концепции
 
-`NOTES.txt` — единственный файл в директории `templates/`, который **не рендерится в YAML (YAML Ain't Markup Language) манифест**. Его вывод отображается пользователю как информационное сообщение.
+### Особенности рендеринга
 
-### Особенности
+- **Текстовый формат:** В отличие от других файлов в `templates/`, `NOTES.txt` не обязан быть валидным YAML. Это произвольный текст, поддерживающий синтаксис Go Templates.
+- **Отсутствие в кластере:** Содержимое файла не сохраняется в Kubernetes как ресурс. Оно хранится только в метаданных релиза (Secret/ConfigMap) и отображается в CLI.
+- **Единственность:** Helm обрабатывает только один файл с именем `NOTES.txt` в корне директории `templates/`.
 
-- **Не создаёт ресурсы** — содержимое выводится в стандартный поток вывода (stdout), а не отправляется в API (Application Programming Interface) Kubernetes.
-- **Полноценный шаблон** — поддерживает все конструкции Helm: `if/else`, `range`, `include`, функции.
-- **Один файл** — Helm ожидает ровно один файл `templates/NOTES.txt`.
-- **Подавление вывода** — пустой файл или флаг `--no-hooks` не влияют на вывод заметок; для управления отображением в субчартах используется флаг `helm install --render-subchart-notes`.
+### Управление выводом
 
-### Когда применять
-
-| Сценарий | Содержание NOTES.txt |
-|----------|---------------------|
-| LoadBalancer | Команда `kubectl get svc -w` для ожидания IP (Internet Protocol) адреса |
-| NodePort | URL (Uniform Resource Locator) с использованием `kubectl port-forward` |
-| ClusterIP | Инструкция по настройке port-forward |
-| Ingress | Список хостов и внешних URL |
-| Многокомпонентный чарт | Предупреждения о дополнительных шагах (миграции баз данных, секреты) |
+| Метод / Флаг | Описание |
+|--------------|----------|
+| `helm status <name>` | Повторный вывод содержимого `NOTES.txt` для существующего релиза. |
+| `--render-subchart-notes` | Включает рендеринг и вывод заметок из зависимых (subcharts) чартов. По умолчанию выключено. |
+| `--no-hooks` | Не влияет на вывод заметок, так как `NOTES.txt` не является хуком. |
+| Пустой файл | Если файл пуст или отсутствует, Helm просто не выводит секцию `NOTES`. |
 
 ---
 
 ## Практические сценарии
 
-### Базовый NOTES.txt с условной логикой
+### Базовый шаблон с условной логикой и форматированием
+
+Использование `printf` позволяет выровнять вывод и сделать его более читабельным.
 
 ```text
-Thank you for installing {{ .Chart.Name }}.
+Благодарим за установку {{ .Chart.Name }}.
 
-Your release is named {{ .Release.Name }}.
-
-To learn more about the release, try:
-
-  $ helm status {{ .Release.Name }}
-  $ helm get all {{ .Release.Name }}
+Статус релиза: {{ .Release.Name }}
+Пространство имен: {{ .Release.Namespace }}
 
 {{- if .Values.ingress.enabled }}
+Доступ к приложению через Ingress:
 {{- range .Values.ingress.hosts }}
-  {{ .name }}:
-    http://{{ .name }}
+  - http://{{ .host }}
 {{- end }}
 {{- else if eq .Values.service.type "LoadBalancer" }}
-  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
-  To watch the status, run:
-
-  $ kubectl get svc -w {{ .Release.Name }}
+Ожидание внешнего IP (может занять несколько минут):
+  $ kubectl get svc {{ include "myapp.fullname" . }} -w
 {{- else if eq .Values.service.type "NodePort" }}
-  To access your application:
-
-  $ export NODE_PORT=$(kubectl get svc {{ .Release.Name }} -o jsonpath='{.spec.ports[0].nodePort}')
+Доступ через NodePort:
+  $ export NODE_PORT=$(kubectl get svc {{ include "myapp.fullname" . }} -o jsonpath='{.spec.ports[0].nodePort}')
   $ export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
   $ echo http://$NODE_IP:$NODE_PORT
 {{- else }}
-  To access your application:
-
-  $ kubectl port-forward svc/{{ .Release.Name }} {{ .Values.service.port }}:{{ .Values.service.port }}
+Локальный доступ через Port-Forward:
+  $ kubectl port-forward svc/{{ include "myapp.fullname" . }} 8080:{{ .Values.service.port }}
 {{- end }}
 ```
 
-### NOTES.txt с извлечением IP из Service через lookup
+### Динамическое получение данных через lookup
 
-Функция `lookup` позволяет прочитать текущее состояние кластера во время рендеринга. Работает только при `helm install`/`upgrade`, не работает при `helm template`.
+**Важно:** Функция `lookup` видит состояние кластера *на момент начала* рендеринга. Если вы устанавливаете сервис впервые, `lookup` не найдет его IP, так как ресурс еще не создан. Этот сценарий эффективен в основном при `helm upgrade`.
 
 ```text
 {{- $svc := lookup "v1" "Service" .Release.Namespace (include "myapp.fullname" .) }}
-{{- if and $svc (eq $svc.spec.type "LoadBalancer") }}
-{{- $ip := index $svc.status.loadBalancer.ingress 0 }}
-  Application URL: http://{{ $ip.ip }}
+{{- if and $svc $svc.status.loadBalancer.ingress }}
+  {{- $ip := index $svc.status.loadBalancer.ingress 0 }}
+Внешний IP адрес: {{ default $ip.ip $ip.hostname }}
 {{- else }}
-  NOTE: LoadBalancer IP not yet assigned. Run:
-  $ kubectl get svc {{ .Release.Name }} -w
+Внешний IP еще не назначен. Проверьте статус позже:
+  $ kubectl get svc {{ include "myapp.fullname" . }}
 {{- end }}
 ```
 
-### NOTES.txt для многокомпонентного чарта
+### Получение секретов и паролей
 
-Вывод информации о компонентах и способах получения паролей из секретов:
+Хорошей практикой является вывод команд для безопасного извлечения сгенерированных паролей.
 
 ```text
 {{- $fullName := include "myapp.fullname" . -}}
 
-Components installed:
-  - Web Application: svc/{{ $fullName }}
-{{- if .Values.redis.enabled }}
-  - Redis: svc/{{ $fullName }}-redis
-{{- end }}
-{{- if .Values.postgresql.enabled }}
-  - PostgreSQL: svc/{{ $fullName }}-postgresql
-{{- end }}
+Команда для получения пароля администратора:
 
-{{- if .Values.postgresql.enabled }}
+  $ kubectl get secret {{ $fullName }}-auth -o jsonpath="{.data.admin-password}" | base64 -d; echo
 
-IMPORTANT: PostgreSQL password is stored in secret "{{ $fullName }}-postgresql".
-Retrieve it with:
-
-  $ kubectl get secret {{ $fullName }}-postgresql -o jsonpath='{.data.postgres-password}' | base64 -d
-{{- end }}
+Инструкции по подключению к БД:
+  $ kubectl exec -it {{ $fullName }}-db-0 -- psql -U {{ .Values.db.user }}
 ```
 
-### NOTES.txt с использованием именованных шаблонов
+### Использование именованных шаблонов для чистоты кода
 
-Определение блока заметок в `_helpers.tpl`:
+Если блок заметок очень большой, его можно вынести в `_helpers.tpl`.
 
+**_helpers.tpl:**
 ```go
-{{- define "myapp.notes" -}}
-{{- if .Values.ingress.enabled -}}
-Access the application via:
-{{- range .Values.ingress.hosts }}
-  - http://{{ .name }}
-{{- end }}
-{{- else }}
-Run `kubectl port-forward svc/{{ include "myapp.fullname" . }} 8080:{{ .Values.service.port }}`
-{{- end }}
-{{- end }}
+{{- define "myapp.securityNotes" -}}
+ВНИМАНИЕ: Используются стандартные учетные данные.
+Смените пароль для пользователя {{ .Values.adminUser }} сразу после входа.
+{{- end -}}
 ```
 
-Использование в файле `NOTES.txt`:
-
+**NOTES.txt:**
 ```text
-{{ include "myapp.notes" . }}
+{{ include "myapp.securityNotes" . }}
 ```
 
 ---
 
 ## Дополнительная информация
 
-- [Синтаксис Helm-шаблонов](../syntax.md) — базовые конструкции `if/else` и `range`
-- [Именованные шаблоны и хелперы](../_helpers.md) — работа с `define` и `include`
-- [Функции Helm](../functions.md) — подробнее о функции `lookup`
-- [Обзор сценариев шаблонизации](./overview.md) — оглавление практических примеров
+### Лучшие практики
+
+1. **Лаконичность:** Не выводите огромные куски документации. Дайте пользователю 2-3 команды для быстрого старта.
+2. **Безопасность:** Никогда не выводите пароли в открытом виде прямо в `NOTES.txt`. Вместо этого выводите `kubectl` команды для их получения из Secret.
+3. **Проверка условий:** Всегда проверяйте `.Values.enabled` для компонентов, чтобы не вводить пользователя в заблуждение командами для неустановленных сервисов.
+4. **Инструкции по удалению:** Иногда полезно напомнить, как удалить чарт и очистить PVC: `helm uninstall {{ .Release.Name }}`.
+
+### Устранение неисправностей
+
+| Проблема | Причина | Решение |
+|----------|---------|---------|
+| Заметки не отображаются | Ошибка синтаксиса в шаблоне | Проверьте через `helm install --dry-run --debug`. Ошибки в `NOTES.txt` прерывают установку чарта. |
+| `lookup` возвращает пустоту | Режим `--dry-run` или первый запуск | `lookup` не работает в `--dry-run` и не видит ресурсы, создаваемые в текущем релизе. |
+| Неверные отступы | Использование `indent` вместо `nindent` | Используйте `nindent` внутри управляющих конструкций для корректного переноса строк. |
+
+[Синтаксис шаблонов](../syntax.md) · [Именованные шаблоны и хелперы](../_helpers.md) · [Функции Helm](../functions.md) · [Обзор сценариев](./overview.md)

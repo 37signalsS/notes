@@ -4,88 +4,127 @@
 
 ## Определения
 
-**NetworkPolicy** — ресурс Kubernetes для управления сетевым трафиком между Pod (подами) на сетевом (L3) и транспортном (L4) уровнях. Подробнее о концепции: [NetworkPolicy: навигатор](../../../../Networking/Networking/Network/network_policy.md).
+**NetworkPolicy** — ресурс Kubernetes, определяющий правила прохождения трафика между группами подов и сетевыми сегментами на уровнях L3 (IP) и L4 (TCP/UDP).
 
-**Ключевая особенность:** NetworkPolicy требует **точного совпадения** селекторов `podSelector` с метками подов. Рассинхронизация меток между Deployment (развертыванием) и NetworkPolicy приводит к тому, что политика либо не применяется, либо блокирует легитимный трафик.
+**Селекторная связность** — принцип работы NetworkPolicy, основанный на точном совпадении меток (labels). В контексте Helm это требует синхронизации меток между манифестами Deployment/StatefulSet и самой политикой.
 
 ---
 
-## Основные концепции
+## Базовые концепции
 
-При шаблонизации NetworkPolicy в Helm возникают две типовые проблемы:
+### Проблема рассинхронизации меток
 
-1. **Рассинхронизация меток** — метки в `podSelector` NetworkPolicy не совпадают с метками в `spec.selector` Deployment.
-2. **Хардкод имён** — имена ресурсов и меток жёстко заданы, что ломает логику при изменении `fullnameOverride` или `nameOverride`.
+NetworkPolicy работает по принципу «белого списка» (allow-list). Если селектор в политике не совпадает с метками пода из-за опечатки или изменения логики именования, политика либо не применится, либо заблокирует весь трафик. 
 
-Решение — использование именованных шаблонов (`include`), определённых в `_helpers.tpl`. Это гарантирует использование общих определений для всех меток. Подробнее: [Именованные шаблоны и хелперы](../_helpers.md).
+При шаблонизации необходимо решить две задачи:
+1. **DRY (Don't Repeat Yourself):** Использование единого источника меток через именованные шаблоны.
+2. **Гибкость:** Возможность включать/выключать политики и настраивать CIDR-блоки через `values.yaml`.
 
-### Почему именно NetworkPolicy
+### Почему использование include обязательно
 
-В отличие от Service и Deployment, где Kubernetes допускает некоторые расхождения, NetworkPolicy работает по принципу **exact match** (точного соответствия):
-
-- `podSelector.matchLabels` должен **в точности** совпадать с `spec.selector.matchLabels` пода.
-- `from[].podSelector.matchLabels` должен совпадать с метками подов-источников.
-- Любая опечатка → политика не применяется или блокирует не тот трафик.
+В отличие от Service, где селектор часто прост, NetworkPolicy может содержать множество правил `from` и `to`. Использование `{{ include "myapp.selectorLabels" . }}` гарантирует, что при изменении структуры меток в `_helpers.tpl` изменения автоматически применятся ко всей сетевой инфраструктуре чарта.
 
 ---
 
 ## Практические сценарии
 
-### NetworkPolicy для sidecar-компонента
+### Стандартная политика для приложения (Ingress)
 
-Политика для mail-relay, разрешающая ingress (входящий трафик) только от подов основного приложения:
+Разрешение входящего трафика на порт приложения только из определенных сегментов.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "myapp.fullname" . }}-mail-relay
+  name: {{ include "myapp.fullname" . }}-allow-ingress
 spec:
   podSelector:
     matchLabels:
-      {{- include "myapp.mail-relay.selectorLabels" . | nindent 6 }}
+      {{- include "myapp.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:
     - from:
+      # Разрешаем трафик от Ingress Controller (по меткам)
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/component: controller
+      # Разрешаем трафик внутри Namespace от определенных подов
       - podSelector:
           matchLabels:
             {{- include "myapp.selectorLabels" . | nindent 12 }}
+            component: frontend
       ports:
         - protocol: TCP
-          port: 25
+          port: {{ .Values.service.port }}
 ```
 
-Использование `include` гарантирует, что:
+### Изоляция (Default Deny)
 
-- `podSelector` совпадает с метками mail-relay Deployment.
-- `from[].podSelector` совпадает с метками основного приложения.
-
-### Условное включение NetworkPolicy
-
-Создание политики только при включённом флаге в `values.yaml`:
+Рекомендуемый паттерн безопасности — блокировка всего трафика по умолчанию с последующим точечным разрешением.
 
 ```yaml
-{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.networkPolicy.defaultDeny }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "myapp.fullname" . }}-default-deny
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels:
+      {{- include "myapp.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
     - Egress
 {{- end }}
 ```
 
-Политика блокирует весь входящий (Ingress) и исходящий (Egress) трафик по умолчанию.
+### Работа с внешними CIDR-блоками
 
-### Разрешение трафика между Namespace (пространствами имен)
+Шаблонизация доступа к внешним системам (например, базам данных вне кластера) через списки IP-адресов.
 
-NetworkPolicy с динамическим `namespaceSelector`:
+**values.yaml:**
+```yaml
+networkPolicy:
+  egress:
+    dbExternal:
+      enabled: true
+      cidrs:
+        - 192.168.1.10/32
+        - 10.0.4.0/24
+```
+
+**templates/networkpolicy-egress.yaml:**
+```yaml
+{{- if .Values.networkPolicy.egress.dbExternal.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "myapp.fullname" . }}-external-db
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "myapp.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+      {{- range .Values.networkPolicy.egress.dbExternal.cidrs }}
+      - ipBlock:
+          cidr: {{ . }}
+      {{- end }}
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+```
+
+### Кросс-пространственное взаимодействие (Monitoring)
+
+Разрешение сбора метрик для Prometheus, находящегося в другом Namespace.
 
 ```yaml
+{{- if .Values.monitoring.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -100,19 +139,27 @@ spec:
     - from:
       - namespaceSelector:
           matchLabels:
-            kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+            kubernetes.io/metadata.name: {{ .Values.monitoring.namespace | default "monitoring" }}
         podSelector:
           matchLabels:
-            app: prometheus
+            app.kubernetes.io/name: prometheus
       ports:
         - protocol: TCP
           port: 9090
+{{- end }}
 ```
 
 ---
 
 ## Дополнительная информация
 
-- [Именованные шаблоны и хелперы](../_helpers.md) — управление метками.
-- [NetworkPolicy: навигатор](../../../../Networking/Networking/Network/network_policy.md) — концептуальный обзор.
-- [Обзор сценариев](./overview.md) — другие примеры шаблонизации.
+### Лучшие практики
+
+1. **Имена шаблонов:** Всегда используйте префикс чарта в именах `define` (например, `myapp.selectorLabels`), чтобы избежать конфликтов при использовании субчартов.
+2. **Валидация CIDR:** При работе с `ipBlock` убедитесь, что в `values.yaml` передаются валидные CIDR-строки, иначе Helm успешно отрендерит манифест, но Kubernetes отклонит его при применении.
+3. **Селектор Namespace:** Помните, что `namespaceSelector` требует наличия соответствующих меток на самих объектах Namespace. В современных версиях K8s метка `kubernetes.io/metadata.name` добавляется автоматически.
+
+### См. также
+- [Именованные шаблоны и хелперы](../_helpers.md) — управление метками и DRY.
+- [Обзор сценариев шаблонизации](./overview.md) — каталог практических примеров.
+- [NetworkPolicy: навигатор](../../../../Networking/Networking/Network/network_policy.md) — подробная теория сетевых политик.

@@ -1,111 +1,99 @@
 # CreateContainerConfigError: Определения
 
-## Definitions
+## Определения
 
-**`CreateContainerConfigError`** — ошибка, возникающая до запуска контейнера, означающая, что `kubelet` не может создать конфигурацию контейнера из-за проблем с зависимостями (ConfigMap, Secret, Volume).
+**CreateContainerConfigError** — критическое состояние пода, возникающее на этапе подготовки к запуску контейнера. Оно означает, что `kubelet` не смог сформировать полную конфигурацию контейнера из-за проблем с внешними зависимостями, такими как ConfigMap, Secret или тома (Volumes).
 
-## Basic Concepts
+В отличие от ошибок времени выполнения, эта проблема блокирует создание контейнера в среде выполнения (Container Runtime). Поскольку контейнер не запущен, логи приложения (`kubectl logs`) отсутствуют, и основным источником информации становятся события пода (`kubectl describe pod`).
 
-### Workflow создания контейнера
+## Основные концепции
 
-```
-Pod создан
-    ↓
-Scheduler выбирает узел
-    ↓
-Kubelet получает задачу
-    ↓
-Проверка зависимостей (ConfigMap, Secret, PV)
-    ↓
-❌ Зависимость не найдена → CreateContainerConfigError
-    ↓
-✅ Все зависимости есть → Create Container → Start
-```
+### Процесс подготовки конфигурации (Workflow)
 
-### Типы зависимостей
+Процесс подготовки к запуску включает следующие этапы:
 
-| Зависимость | Описание | Частая ошибка |
-|-------------|----------|---------------|
-| **ConfigMap** | Конфигурационные данные | `configmap "x" not found` |
-| **Secret** | Секретные данные | `secret "x" not found` |
-| **PersistentVolumeClaim** | Постоянное хранилище | `pvc "x" not found` |
-| **Projected Volume** | Комбинация источников | `projected volume error` |
-| **Downward API** | Метаданные пода | `downward API error` |
+1. Pod создан API-сервером и назначен планировщиком (Scheduler) на узел.
+2. `kubelet` на узле получает спецификацию пода и начинает подготовку к запуску.
+3. **Этап конфигурации:** `kubelet` пытается разрешить все внешние ссылки, указанные в манифесте:
+    - Чтение данных из ConfigMap и Secret для формирования переменных окружения (`env`, `envFrom`).
+    - Подготовка томов для монтирования (PV/PVC, Projected Volumes, Secrets/ConfigMaps как тома).
+    - Получение метаданных через Downward API.
+4. **Результат:**
+    - Ошибка: Если хотя бы одна зависимость отсутствует, недоступна или содержит ошибки — выставляется статус `CreateContainerConfigError`.
+    - Успех: Если все зависимости успешно разрешены — `kubelet` переходит к созданию (Create) и запуску (Start) контейнера.
 
-### Сравнение ошибок
+### Типы зависимостей и причины ошибок
 
-| Ошибка | Когда возникает | Решение |
-|--------|-----------------|---------|
-| **CreateContainerConfigError** | До запуска, проблемы с зависимостями | Создать ConfigMap/Secret/PVC |
-| **ImagePullBackOff** | До запуска, проблемы с образом | Исправить образ/imagePullSecrets |
-| **CrashLoopBackOff** | После запуска, падение приложения | [Решение проблемы](../pod_crash_loop_back_off/definitions_and_concepts.md) |
+| Ресурс | Роль в конфигурации | Типичная причина ошибки |
+| :--- | :--- | :--- |
+| **ConfigMap** | Переменные окружения, файлы конфигурации | Ресурс не существует в данном namespace, отсутствует указанный ключ (key), или ошибка в `valueFrom`. |
+| **Secret** | Пароли, токены, сертификаты | Ресурс не найден, нет прав доступа (RBAC) у ServiceAccount пода, или опечатка в имени. |
+| **PVC** | Постоянное хранилище (Storage) | PersistentVolumeClaim не существует, не привязан к PV (Pending) или возникла ошибка монтирования. |
+| **Projected Volume** | Комбинация источников данных | Ошибка в одном из источников (например, неверный Secret или ConfigMap в составе тома). |
+| **Downward API** | Метаданные пода (UID, имя) | Попытка обратиться к несуществующим или недоступным полям метаданных пода. |
 
-## Practical Scenarios
+### Важные параметры управления (2024-2025)
 
-### Сценарий: Быстрая идентификация типа ошибки
+*   **`optional: true`**: Позволяет игнорировать отсутствие ConfigMap или Secret. Если ресурс помечен как опциональный, запуск пода продолжится даже при его отсутствии (переменные будут пустыми, файлы в томах не создадутся). Это полезно для конфигураций по умолчанию.
+*   **`immutable: true`**: Начиная с Kubernetes 1.21 (GA), ConfigMap и Secret можно пометить как неизменяемые. Это оптимизирует работу `kubelet`, так как он перестает периодически запрашивать обновления этих ресурсов. Ошибка `CreateContainerConfigError` возникнет только если ресурса нет в момент запуска.
+*   **Pod Security Standards (PSS)**: Хотя нарушения PSS чаще вызывают `CreateContainerError` или блокировку на этапе Admission, некорректные настройки `securityContext` в сочетании с монтированием томов могут приводить к сбоям конфигурации.
+
+## Практические сценарии
+
+### Сценарий 1: Быстрая идентификация типа ошибки
+
+Для определения причины ошибки используются стандартные команды диагностики:
 
 ```bash
-# Шаг 1: Проверка статуса пода
-kubectl get pod <pod-name> -n <namespace>
+# Шаг 1: Проверка общего статуса подов
+kubectl get pod -n <namespace>
 
-# Шаг 2: Детальная информация (раздел Events)
+# Шаг 2: Детальное изучение событий (раздел Events)
 kubectl describe pod <pod-name> -n <namespace>
-
-# Шаг 3: Поиск конкретной причины
-kubectl describe pod <pod-name> -n <namespace> | grep -i "Error:"
 ```
 
-**Результат** укажет на тип отсутствующей зависимости:
+Типичные сообщения в разделе **Events**:
+*   `Error: configmap "app-config" not found` — отсутствует ConfigMap.
+*   `Error: secret "db-credentials" not found` — отсутствует Secret.
+*   `Error: couldn't find key "DB_PASSWORD" in Secret "postgres-secret"` — ресурс найден, но ключ в нем отсутствует.
 
-| Сообщение в Events | Тип зависимости | Ссылка на решение |
-|--------------------|-----------------|-------------------|
-| `configmap "x" not found` | ConfigMap | [configmap_issues.md](./configmap_issues.md) |
-| `secret "x" not found` | Secret | [secret_issues.md](./secret_issues.md) |
-| `persistentvolumeclaim "x" not found` | PVC | [pvc_issues.md](./pvc_issues.md) |
-| `projected volume error` | Projected Volume | [volume_issues.md](./volume_issues.md) |
+### Сценарий 2: Проверка прав доступа и ServiceAccount
 
-### Сценарий: Проверка ServiceAccount и RBAC
-
-Если ConfigMap/Secret существуют, но ошибка сохраняется — возможна ограничение прав ServiceAccount.
+Если ресурсы существуют, но ошибка сохраняется, необходимо проверить права доступа ServiceAccount пода.
 
 ```bash
-# Проверка ServiceAccount пода
+# Определение ServiceAccount пода
 kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.spec.serviceAccountName}'
 
-# Проверка прав доступа к Secret
+# Проверка прав на чтение Secret (через impersonation)
 kubectl auth can-i get secret/<secret-name> --as=system:serviceaccount:<namespace>:<sa-name> -n <namespace>
-
-# Проверка прав доступа к ConfigMap
-kubectl auth can-i get configmap/<configmap-name> --as=system:serviceaccount:<namespace>:<sa-name> -n <namespace>
 ```
 
-Подробная диагностика RBAC: [rbac_issues.md](./rbac_issues.md).
+Подробная диагностика RBAC описана в: [rbac_issues.md](./rbac_issues.md).
 
-## Additional Information
+## Дополнительная информация
 
-### Связь с Pod Lifecycle
+### Место в жизненном цикле пода
 
-`CreateContainerConfigError` возникает на этапе **Container Configuration** — до попытки запуска контейнера. Это отличает его от:
+`CreateContainerConfigError` возникает на стадии **Waiting** (ожидание), после планирования, но до создания контейнера в Container Runtime (Docker, containerd, CRI-O).
 
-- `Pending` — Pod ещё не назначен на узел (Scheduling)
-- `Waiting` — Pod на узле, но контейнер не запущен (сюда входит CreateContainerConfigError)
-- `Running` — Контейнер запущен
-- `Terminated` — Контейнер завершён
-
-Подробнее: [Pod Lifecycle](../../../Base/Pod/pod_lifecycle_and_state.md).
+Сравнение с похожими состояниями:
+*   **ImagePullBackOff**: Проблема с образом (не найден, нет доступа к реестру). Возникает на этапе загрузки образа.
+*   **CreateContainerError**: Сбой самого Container Runtime при попытке создать контейнер (например, неверные аргументы `command`, лимиты ОС или несовместимость runtime).
+*   **CrashLoopBackOff**: Контейнер успешно создан и запущен, но процесс внутри него завершился с ошибкой (exit code > 0). [Подробнее](../pod_crash_loop_back_off/definitions_and_concepts.md).
 
 ### Автоматическое восстановление
 
-Kubernetes периодически повторяет проверку зависимостей. При создании отсутствовавшего ресурса Pod перейдёт в `Running` автоматически (задержка ~10–30 сек). Ручной restart обычно не требуется.
+Kubernetes автоматически повторяет попытки запуска пода с экспоненциальной задержкой. Если причина ошибки (например, отсутствие Secret) будет устранена, под перейдет в состояние `Running` автоматически в течение 10–30 секунд. Ручной перезапуск пода обычно не требуется.
 
 ### Связанные ресурсы
 
-- Диагностика: [diagnostics.md](./diagnostics.md)
-- ConfigMap: [configmap_issues.md](./configmap_issues.md)
-- Secrets: [secret_issues.md](./secret_issues.md)
-- PVC: [pvc_issues.md](./pvc_issues.md)
-- Volume: [volume_issues.md](./volume_issues.md)
-- RBAC: [rbac_issues.md](./rbac_issues.md)
-- Профилактика: [prevention.md](./prevention.md)
-- Обзор ошибки: [create_container_config_error.md](../create_container_config_error.md)
-- Troubleshooting overview: [troubleshooting_overview.md](../../troubleshooting_overview.md)
+*   [Диагностика и инструменты](./diagnostics.md)
+*   [Проблемы с ConfigMap](./configmap_issues.md)
+*   [Проблемы с Secret](./secret_issues.md)
+*   [Проблемы с PVC](./pvc_issues.md)
+*   [Проблемы с томами](./volume_issues.md)
+*   [Проблемы с RBAC](./rbac_issues.md)
+*   [Профилактика и мониторинг](./prevention.md)
+*   [Pod Lifecycle (Жизненный цикл)](../../../Base/Pod/pod_lifecycle_and_state.md)
+*   [Обзор troubleshooting в Kubernetes](../../troubleshooting_overview.md)

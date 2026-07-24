@@ -1,8 +1,8 @@
-# Поды, убитые из-за нехватки памяти (OOMKilled)
+# Поды, завершенные из-за нехватки памяти (OOMKilled)
 
 ## Определения
 
-**OOMKilled (Out of Memory Killed)** — причина (`Reason`) завершения контейнера, означающая, что процесс был принудительно завершен ядром ОС узла из-за превышения выделенного лимита памяти. Не является статусом пода.
+**OOMKilled (Out of Memory Killed)** — причина (`Reason`) завершения контейнера, означающая, что процесс был принудительно завершен ядром ОС узла из-за превышения выделенного лимита памяти. Это не статус пода, а индикатор состояния конкретного контейнера.
 
 **Код выхода:** `137` (128 + SIGKILL/9)
 
@@ -10,41 +10,43 @@
 
 ### Механизм OOM Killer в Kubernetes
 
-**OOMKilled** происходит на уровне ядра ОС. Когда процесс (или контейнер через cgroups) достигает лимита памяти, ядро вызывает OOM Killer для немедленного завершения процесса.
+OOMKilled происходит на уровне ядра ОС (через контрольные группы — cgroups). Когда процесс достигает лимита памяти, ядро вызывает OOM Killer для немедленного завершения процесса.
 
 ```
 Приложение потребляет память
     ↓
-Превышен limits.memory
+Превышен limits.memory (cgroups v1/v2)
     ↓
-cgroups сигнализируют ядру
+Ядро вызывает OOM Killer
     ↓
-OOM Killer завершает процесс (SIGKILL)
+Процесс завершается (SIGKILL)
     ↓
 Контейнер перезапускается (RestartCount++)
 ```
 
-**Ключевое отличие от Eviction:**
+**Ключевое отличие от выселения (Eviction):**
 
-- **OOMKilled**: Реакция ядра на превышение лимита *конкретным контейнером* или критическую нехватку памяти на узле. Контейнер просто убивается.
-- **Eviction**: Реакция `kubelet` на нехватку ресурсов *всего узла*. `kubelet` сам выбирает поды для выселения (согласно QoS), корректно завершает их (graceful shutdown) и помечает статус как `Evicted`.
+- **OOMKilled**: Реакция ядра на превышение лимита *конкретным контейнером* или критическую нехватку памяти на узле. Процесс убивается мгновенно.
+- **Eviction**: Реакция `kubelet` на нехватку ресурсов *всего узла*. `kubelet` сам выбирает поды для выселения (согласно QoS), выполняет корректное завершение (graceful shutdown) и помечает статус как `Evicted`.
 
-### Связь с QoS классами
+### Связь с классами QoS и oom_score_adj
 
-| QoS Класс | Условия | Защита от OOM |
-|-----------|---------|---------------|
-| **Guaranteed** | `requests` == `limits` | Максимальная защита от OOM со стороны узла, но **не защищает** от превышения собственного `limits` |
-| **Burstable** | `requests` < `limits` | Средняя защита; может быть завершен при нехватке памяти на узле |
-| **BestEffort** | Нет `requests`/`limits` | Минимальная защита; первый кандидат на OOM |
+Kubernetes управляет приоритетом выживания процессов при нехватке памяти через параметр ядра `oom_score_adj` (от -1000 до 1000).
 
-**Важно:** Даже под с QoS `Guaranteed` будет завершен с `OOMKilled`, если превысит свой собственный `limits.memory`.
+| Класс QoS | Условия | oom_score_adj | Описание |
+|:---|:---|:---|:---|
+| **Guaranteed** | `requests` == `limits` | **-997** | Почти никогда не убивается ядром при OOM на узле, пока не превысит свои лимиты. |
+| **Burstable** | `requests` < `limits` | **2 – 999** | Может быть завершен, если узлу нужна память. Значение зависит от объема `requests`. |
+| **BestEffort** | Нет лимитов/запросов | **1000** | Первый кандидат на OOM при нехватке памяти на узле. |
 
-### Типы OOM событий
+Подробнее о механизмах ядра: [OOM Killer в контейнерах](../../../Linux/Core/processes/oom_killer_containers.md).
 
-| Тип | Описание | Причина |
-|-----|----------|---------|
-| **Container OOM** | Контейнер превысил свой `limits.memory` | Неправильно настроенные лимиты, утечка памяти |
-| **Node OOM** | Узел исчерпал всю доступную память | Eviction Manager активируется, выселяет поды |
+### Типы OOM-событий
+
+| Тип | Описание | Основная причина |
+|:---|:---|:---|
+| **Container OOM** | Контейнер превысил свой `limits.memory` | Недоресурсирование, утечка памяти в приложении. |
+| **Node OOM** | Узел исчерпал всю доступную память | Отсутствие лимитов у подов, нехватка ресурсов узла для системных компонентов. |
 
 ## Практические сценарии
 
@@ -56,95 +58,65 @@ OOM Killer завершает процесс (SIGKILL)
 kubectl describe pod <pod-name>
 ```
 
-Ищите в выводе:
-
-```
+Ищите в секции `Containers` -> `Last State`:
+```text
 Last State:     Terminated
   Reason:       OOMKilled
   Exit Code:    137
+  Finished At:  ...
 ```
 
-#### Шаг 2: Анализ потребления ресурсов
+#### Шаг 2: Анализ потребления в реальном времени
 
 ```bash
-# Текущее потребление
-kubectl top pod <pod-name>
+# Текущее потребление ресурсов
+kubectl top pod <pod-name> --containers
 
-# История потребления (при наличии metrics-server)
-kubectl top pod --containers <pod-name>
-
-# Проверка limits в манифесте
-kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].resources}'
+# Использование kubectl debug для анализа запущенного контейнера
+kubectl debug -it <pod-name> --image=busybox --target=<container-name>
 ```
 
-#### Шаг 3: Проверка событий узла
+#### Шаг 3: Проверка логов ядра и событий
+
+Если `describe` не дает полной картины (например, OOM на уровне узла):
 
 ```bash
-# События на узле, где был запущен под
+# События на узле
 kubectl get events --field-selector involvedObject.kind=Node --sort-by='.lastTimestamp'
 
-# Лог ядра на узле (требуется SSH-доступ)
-ssh <node-name> "dmesg -T | grep -i 'killed process'"
-ssh <node-name> "journalctl -k | grep -i 'oom'"
-```
-
-#### Шаг 4: Проверка QoS класса пода
-
-```bash
-kubectl get pod <pod-name> -o jsonpath='{.status.qosClass}'
+# Логи ядра (требуется доступ к узлу)
+ssh <node-name> "dmesg -T | grep -i 'oom-killer' -C 5"
 ```
 
 ### Распространенные случаи и решения
 
-#### 1. Превышение limits.memory
+#### 1. Превышение лимитов (limits.memory)
 
-**Симптомы:**
+**Симптом:** Приложение падает сразу после достижения пиковой нагрузки.
 
-- `Exit Code: 137`
-- `Reason: OOMKilled`
-- Потребление памяти близко к `limits`
-
-**Решение:**
-
+**Решение:** Увеличьте лимиты, основываясь на данных мониторинга.
 ```yaml
 resources:
   requests:
-    memory: "256Mi"   # Увеличить на основе реального потребления
+    memory: "512Mi"
   limits:
-    memory: "512Mi"   # Увеличить, но с запасом
+    memory: "1Gi" # Запас 20-30% над типичным пиком
 ```
 
-**Best Practice:** Устанавливайте `limits` на 20-30% выше пикового потребления.
+#### 2. Утечка памяти (Memory Leak)
 
-#### 2. Утечка памяти в приложении
-
-**Симптомы:**
-
-- Постепенный рост потребления памяти со временем
-- Регулярные `OOMKilled` через определенные интервалы
-- `OOMKilled` даже при высоких `limits`
+**Симптом:** Постепенный рост потребления памяти (пилообразный график рестартов).
 
 **Диагностика:**
+- Для Go: `pprof`.
+- Для Python: `tracemalloc`, `objgraph`.
+- Для Node.js: `--inspect` и Chrome DevTools.
 
-```bash
-# Непрерывный мониторинг потребления
-watch -n 5 'kubectl top pod <pod-name>'
+#### 3. Настройка JVM в контейнерах (Java 11/17/21+)
 
-# Логи приложения на ошибки
-kubectl logs <pod-name> --previous | grep -i 'memory\|leak\|heap'
-```
+Современные версии Java (начиная с 8u191, 11+) корректно распознают лимиты контейнера.
 
-**Решение:**
-
-- Профилирование приложения (pprof для Go, JFR для Java, tracemalloc для Python)
-- Оптимизация кода, исправление утечек
-- Настройка GC (для JVM: `-XX:MaxRAMPercentage`)
-
-#### 3. Неправильная настройка для JVM-приложений
-
-**Проблема:** JVM до JDK 8u191 не учитывала лимиты контейнера.
-
-**Решение:**
+**Рекомендация:** Используйте процентное управление кучей (Heap), чтобы оставить место для non-heap памяти (Metaspace, Stack, Direct Buffers).
 
 ```yaml
 env:
@@ -152,89 +124,55 @@ env:
   value: "-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0"
 resources:
   limits:
-    memory: "1Gi"
-  requests:
-    memory: "512Mi"
+    memory: "1Gi" # JVM увидит 1Gi и выделит ~768Mi под Heap
 ```
 
-См. также: [Docker Java Best Practices](../../../Docker/Dockerfile/Docker_best_practices/java.md)
+#### 4. OOM при запуске
 
-#### 4. OOM при старте приложения
+**Причина:** Высокое потребление при инициализации бинов (Spring) или загрузке кэшей.
 
-**Причина:** Приложению требуется больше памяти для инициализации, чем для работы.
-
-**Решение:**
-
-```yaml
-# Временное увеличение лимита через HPA с кастомными метриками
-# Или использование Startup Probe для отсрочки проверки liveness
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-  initialDelaySeconds: 60  # Дать время на старт
-  periodSeconds: 10
-```
+**Решение:** Используйте `Startup Probe` для отделения фазы запуска от проверок работоспособности.
 
 ### Профилактика
 
-#### 1. Настройка мониторинга и алертов
+#### 1. Мониторинг и алертинг
 
-Для своевременного обнаружения `OOMKilled` необходимо настроить правила алертинга. Полный перечень правил и инструкций представлен в разделе: [Алерты для Kubernetes в Grafana](../../../Grafana/alerting/kubernetes_alerts.md).
+Настройте алерты на `container_memory_working_set_bytes` в процентах от лимита.
+Инструкции: [Алерты для Kubernetes в Grafana](../../../Grafana/alerting/kubernetes_alerts.md).
 
-#### 2. Использование Vertical Pod Autoscaler (VPA)
+#### 2. Изменение ресурсов "на лету" (In-Place Pod Resize)
 
-VPA автоматически рекомендует или устанавливает `requests` и `limits`. Подробнее: [Vertical Pod Autoscaler](../../Autoscaling/vpa_detailed.md).
-
-#### 3. In-Place Pod Resize (Kubernetes 1.35+ stable)
-
-Изменение ресурсов без пересоздания пода:
+В Kubernetes 1.35+ (Stable) можно менять ресурсы без перезагрузки пода (если `resizePolicy: NotRequired`).
 
 ```bash
-kubectl patch pod <pod-name> -p '{"spec":{"containers":[{"name":"app","resources":{"limits":{"memory":"1Gi"}}}]}}'
+# Пример патча через подресурс resize
+kubectl patch pod <pod-name> --subresource resize --type json \
+  -p '[{"op": "replace", "path": "/spec/containers/0/resources/limits/memory", "value": "2Gi"}]'
 ```
 
-См. также: [In-Place Pod Resize](../../Autoscaling/in_place_pod_resize.md)
+#### 3. Vertical Pod Autoscaler (VPA)
 
-#### 4. Best Practices для настройки ресурсов
+VPA в режиме `Auto` или `Recommender` поможет подобрать оптимальные лимиты. Подробнее: [Vertical Pod Autoscaler](../../Autoscaling/vpa_detailed.md).
+
+#### 4. Лучшие практики настройки ресурсов
 
 | Практика | Описание |
-|----------|----------|
-| **Всегда указывайте requests и limits** | Избегайте QoS `BestEffort` в production |
-| **Используйте Burstable для большинства приложений** | Гибкость + защита |
-| **Guaranteed только для критичных сервисов** | Базы данных, очереди |
-| **Регулярный пересмотр** | Анализируйте реальное потребление через Prometheus/Grafana |
-| **Тестирование под нагрузкой** | Нагрузочные тесты для определения пикового потребления |
+|:---|:---|
+| **Requests ~= Limits** | Для критичных сервисов (QoS Guaranteed), чтобы избежать вытеснения. |
+| **Лимиты > Requests** | Для некритичных нагрузок (Burstable), чтобы эффективно использовать узел. |
+| **Анализ Working Set** | Ориентируйтесь на `working_set_bytes`, а не на `rss`. |
+| **GOMEMLIMIT (Go)** | Для Go 1.19+ всегда задавайте `GOMEMLIMIT` чуть меньше лимита памяти контейнера. |
 
 ## Дополнительная информация
 
-### Связь с Eviction Manager
+### Инструменты анализа
 
-При нехватке памяти на узле (`MemoryPressure`), Eviction Manager выселяет поды в порядке: `BestEffort` → `Burstable` → `Guaranteed`.
-
-### Инструменты анализа памяти
-
-| Язык | Инструмент |
-|------|------------|
-| **Go** | pprof, delve |
-| **Java** | JFR, JMAP, VisualVM |
-| **Python** | tracemalloc, memory_profiler |
-| **Node.js** | Chrome DevTools, clinic.js |
-
-### Типичные значения для приложений
-
-| Приложение | Requests | Limits |
-|------------|----------|--------|
-| Nginx | 64Mi | 128Mi |
-| Node.js API | 128Mi | 256Mi |
-| Java Spring Boot | 512Mi | 1Gi |
-| Python Flask | 128Mi | 256Mi |
-| PostgreSQL | 256Mi | 512Mi |
+- **Goldilocks**: Рекомендации по ресурсам на основе VPA.
+- **Kube-capacity**: Визуализация загрузки кластера.
+- **Popeye**: Сканер ресурсов на предмет несоответствий.
 
 ### См. также
 
 - [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md)
-- [Eviction и выселение подов](./PodEvicted/definitions.md)
+- [Выселение подов (Eviction)](./PodEvicted/definitions.md)
 - [Диагностика проблем Kubernetes](../troubleshooting_overview.md)
-
-Подробнее: [Kubernetes Memory Management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/), [Debug Memory Leaks](https://kubernetes.io/docs/tasks/debug/debug-application/debug-memory-leak/), [JVM in Containers](https://www.oracle.com/java/technologies/javase/8u-release-notes.html#JDK-8u191).

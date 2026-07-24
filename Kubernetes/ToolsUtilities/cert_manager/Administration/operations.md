@@ -1,20 +1,20 @@
-# Операции Cert-manager: мониторинг, backup, обновление
+# Операции cert-manager: мониторинг, backup, обновление
 
 ## Определения
 
-**Операции cert-manager** — регулярные задачи по мониторингу, резервному копированию, обновлению и обеспечению безопасности.
+**Операции cert-manager** — регулярные задачи по мониторингу, резервному копированию, обновлению и обеспечению безопасности контроллера.
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура мониторинга
 
-cert-manager экспортирует метрики Prometheus на порту `9402` (по умолчанию — `metrics` ServiceMonitor). Ключевые компоненты для мониторинга: статус готовности Certificate, время истечения, ACME-запросы и ошибки.
+cert-manager экспортирует метрики Prometheus на порту `9402` (по умолчанию — `metrics` ServiceMonitor). Ключевые показатели для мониторинга: статус готовности Certificate, время истечения, ACME-запросы и ошибки контроллера.
 
 ### Стратегия обновления
 
-Обновление cert-manager должно выполняться последовательно, пропуская минорные версии. Прямой переход через несколько минорных версий может привести к несовместимости CRD. Всегда проверяйте [release notes](https://github.com/cert-manager/cert-manager/releases) на breaking changes. Актуальные поддерживаемые версии — на [endoflife.date/cert-manager](https://endoflife.date/cert-manager).
+Обновление cert-manager должно выполняться последовательно, пропуская минорные версии только при подтверждении совместимости. Прямой переход через несколько минорных версий может привести к несовместимости CRD. Всегда проверяйте [release notes](https://github.com/cert-manager/cert-manager/releases) на наличие критических изменений. Актуальные поддерживаемые версии доступны на [endoflife.date/cert-manager](https://endoflife.date/cert-manager).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Мониторинг и алертинг
 
@@ -55,11 +55,11 @@ groups:
 
 #### Grafana Dashboard
 
-Официальный [dashboard](https://github.com/cert-manager/cert-manager/tree/master/contrib/prometheus-metrics) доступен в репозитории cert-manager.
+Официальный дашборд доступен в репозитории проекта. Рекомендуется использовать ID `11001` или `14595` из Grafana Labs для базового мониторинга.
 
 ### Резервное копирование и восстановление
 
-#### Backup CA-секретов
+#### Резервное копирование CA-секретов
 
 **Критичные Secret:**
 
@@ -77,23 +77,23 @@ kubectl get secret letsencrypt-prod-key -o yaml > acme-key-backup.yaml
 kubectl apply -f ca-secret-backup.yaml
 ```
 
-> **Важно:** Храните backup в защищённом месте — Secret содержат приватные ключи.
+> **Важно:** Храните бэкапы в защищённом месте, так как Secret содержат приватные ключи.
 
 #### Миграция между кластерами
 
-1. Экспортировать все Certificate и Issuer ресурсы:
+1. Экспортируйте все Certificate и Issuer ресурсы:
 
    ```bash
    kubectl get certificates,issuers,clusterissuers --all-namespaces -o yaml > cert-manager-resources.yaml
    ```
 
-2. Экспортировать CA-секреты и ACME-ключи.
+2. Экспортируйте CA-секреты и ACME-ключи.
 
-3. Установить cert-manager в новом кластере (см. [установка](../installation.md)).
+3. Установите cert-manager в новом кластере (см. [установка](../installation.md)).
 
-4. Восстановить CA-секреты.
+4. Восстановите CA-секреты.
 
-5. Применить ресурсы:
+5. Примените ресурсы:
 
    ```bash
    kubectl apply -f cert-manager-resources.yaml
@@ -101,7 +101,7 @@ kubectl apply -f ca-secret-backup.yaml
 
 ### Обновление cert-manager
 
-#### Helm
+#### Через Helm (рекомендуемый способ)
 
 ```bash
 # Проверка доступных версий
@@ -110,11 +110,11 @@ helm search repo jetstack/cert-manager --versions
 # Обновление
 helm upgrade cert-manager jetstack/cert-manager \
   --namespace cert-manager \
-  --version v1.19.0 \
+  --version v1.20.0 \
   --reuse-values
 ```
 
-#### kubectl
+#### Через kubectl
 
 ```bash
 # Удалить старую версию
@@ -124,13 +124,13 @@ kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.0/cert-manager.yaml
 ```
 
-> **Важно:** Обновляйте CRD отдельно при переходе между минорными версиями: `kubectl apply -f <crd.yaml>`.
+> **Важно:** При использовании `kubectl` убедитесь, что CRD обновлены корректно.
 
 ### Безопасность
 
 #### RBAC для cert-manager
 
-cert-manager требует широкие права для управления Certificate и Secret. Ограничивайте доступ к Secret через `resourceNames`:
+cert-manager требует расширенных прав для управления Certificate и Secret. Ограничивайте доступ к Secret через `resourceNames` в специфичных Role:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -148,22 +148,29 @@ rules:
   verbs: ["get"]
 ```
 
-#### Best Practices
+#### Лучшие практики (Best Practices)
 
 | Практика | Описание |
 | :--- | :--- |
-| **Изоляция namespace** | Устанавливать cert-manager в отдельный namespace |
-| **Ограниченный доступ** | RBAC на чтение Secret только для администраторов |
-| **Мониторинг** | Алерты на истечение сертификатов (см. выше) |
-| **Rotation ключей** | Регулярная ротация ACME-ключей и CA |
-| **Audit логи** | Включить аудит Kubernetes API для cert-manager namespace |
+| **Изоляция namespace** | Установка cert-manager в выделенный namespace (обычно `cert-manager`) |
+| **Ограниченный доступ** | RBAC на чтение Secret только для администраторов и контроллера |
+| **Мониторинг** | Обязательная настройка алертов на истечение сертификатов |
+| **Ротация ключей** | Использование `rotationPolicy: Always` для автоматической смены ключей |
+| **Audit логи** | Включение аудита Kubernetes API для отслеживания изменений в Secret |
 
 ## Дополнительная информация
 
-Данные о надёжности информации — в обзоре администрирования.
+### Надёжность информации
+
+| Аспект | Оценка | Обоснование |
+| :--- | :--- | :--- |
+| Prometheus-метрики | **10** | Встроены в cert-manager, стабильный API |
+| Backup/Restore | **10** | Стандартные манипуляции с ресурсами K8s |
+| Обновление Helm | **10** | Официальный и рекомендуемый метод установки |
+| RBAC | **9** | Требует тщательной настройки под конкретную среду |
 
 ### Смотрите также
 
 - **[Cert-manager: Администрирование](./index.md)** — концепции и управление жизненным циклом
-- **[Cert-manager: Установка](../installation.md)** — параметры установки
-- **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов
+- **[Cert-manager: Установка](../installation.md)** — параметры установки и первоначальная настройка
+- **[Cert-manager: Определения](../definitions.md)** — базовая структура и ресурсы

@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Траблшутинг (Troubleshooting) Kubernetes** — систематический процесс диагностики и устранения неисправностей в работе подов (Pods), сервисов (Services), узлов (Nodes) и контроллеров кластера.
+**Траблшутинг (Troubleshooting) Kubernetes** — систематический процесс диагностики и устранения неисправностей в работе подов (Pods), сервисов (Services), узлов (Nodes) и компонентов управления (Control Plane).
 
-**Распространенные ошибки** — типичные состояния подов и узлов, указывающие на проблемы с планированием, конфигурацией, ресурсами или доступностью компонентов кластера.
+**Распространенные ошибки** — типичные состояния подов и узлов, указывающие на проблемы с планированием, конфигурацией, ресурсами или доступностью компонентов инфраструктуры.
 
 ## Основные концепции
 
@@ -19,108 +19,143 @@
 | **Безопасность** | `Forbidden`, `Unauthorized` | [Ошибки доступа (RBAC)](./Common_Errors/ApiAccessForbidden/definitions.md) |
 | **Завершение** | `Terminating` | [Проблемы удаления подов](./Common_Errors/PodTerminating/definitions.md) |
 
-### Рабочий процесс диагностики (Workflow)
+### Рабочий процесс диагностики
 
-Для эффективного поиска причины рекомендуется следовать стандартной цепочке действий:
+Для эффективного поиска причины рекомендуется последовательно проверять уровни абстракции:
 
-1. **kubectl get pods --show-labels** — проверка общего статуса и меток.
-2. **kubectl describe pod <pod-name>** — анализ раздела `Events` (события). **Это основной источник информации о проблемах инфраструктуры.**
-3. **kubectl logs <pod-name> [--previous]** — изучение логов приложения. Флаг `--previous` позволяет увидеть логи контейнера до его последнего падения.
-4. **kubectl exec -it <pod-name> -- /bin/sh** — интерактивная проверка окружения внутри запущенного контейнера.
-5. **kubectl debug -it <pod-name>** — использование эфемерных контейнеров для отладки образов без встроенного шелла (shell).
+1. **kubectl get pods -o wide** — проверка статуса, меток, IP-адреса и узла (Node).
+   ```bash
+   kubectl get pods -o wide
+   # → NAME  READY  STATUS   RESTARTS  AGE  IP           NODE
+   # → app   1/1    Running  0         5m   10.244.1.5   worker-1
+   ```
+2. **kubectl get events --sort-by='.lastTimestamp'** — хронологический список событий. Часто информативнее, чем `describe`.
+   ```bash
+   kubectl get events --sort-by='.lastTimestamp'
+   # → 45s  Warning  FailedScheduling  pod/app  0/3 nodes are available: 3 Insufficient cpu.
+   ```
+3. **kubectl describe pod <pod-name>** — детальный анализ жизненного цикла пода и раздел `Events`.
+4. **kubectl logs <pod-name> --tail=100 -f** — просмотр логов в реальном времени. Флаг `--previous` (`-p`) нужен, если контейнер перезапустился.
+   ```bash
+   kubectl logs my-app -p
+   # → panic: runtime error: invalid memory address or nil pointer dereference
+   ```
+5. **kubectl debug -it <pod-name> --image=nicolaka/netshoot** — использование специализированных отладочных образов (например, `netshoot`) для сетевой диагностики.
 
 ### Быстрая диагностика по статусу
 
 | Статус пода | Рекомендуемая команда | Вероятная причина |
 |:---|:---|:---|
-| `Pending` | `kubectl describe pod` | Нехватка ресурсов, Taints, Affinity |
-| `ContainerCreating` | `kubectl describe pod` | Проблемы с образом, PV (Persistent Volume), сетью |
-| `ImagePullBackOff` | `kubectl describe pod` | Ошибка имени образа, нет доступа к Registry |
-| `CrashLoopBackOff` | `kubectl logs --previous` | Ошибка приложения, конфигурации или зависимостей |
-| `OOMKilled` | `kubectl describe pod` + `kubectl top pod` | Превышен `limits.memory`, утечка памяти |
-| `Evicted` | `kubectl describe node` | Давление на ресурсы узла (память или диск) |
-| `Terminating` | `kubectl get pod -o yaml` | Наличие Finalizers, проблемы с размонтированием Volume |
+| `Pending` | `kubectl describe pod` | Нехватка ресурсов, Taints, Affinity, ошибки PVC |
+| `ContainerCreating` | `kubectl describe pod` | Проблемы монтирования Volume, загрузки образа, CNI |
+| `ImagePullBackOff` | `kubectl logs` (если возможно) | Неверные `imagePullSecrets`, ошибка в имени образа |
+| `CrashLoopBackOff` | `kubectl logs --previous` | Ошибка приложения (exit code > 0), отсутствие конфигов |
+| `OOMKilled` | `kubectl top pod` | Превышение лимитов (Limits). Exit Code: 137 |
+| `Evicted` | `kubectl describe node` | DiskPressure (нехватка места) или MemoryPressure на узле |
+| `Terminating` | `kubectl get pod -o yaml` | Finalizers в метаданных, зависшие процессы в контейнере |
 
-### Сетевые ошибки и 502 Bad Gateway
+### Диагностика сетевого взаимодействия
 
-Ошибка **502 Bad Gateway**, возникающая при доступе через Ingress, обычно указывает на проблемы с "бэкендом" (подом).
+Проблемы с сетью часто проявляются как ошибки **502 Bad Gateway** или **Connection Timeout**.
 
 **Цепочка проверок:**
 
-1. **Логи Ingress-контроллера:** `kubectl logs -n ingress-nginx <pod-name>`. Проверьте, куда Ingress пытается направить трафик и какой ответ получает.
-2. **Сетевая доступность пода:** Проверьте, запущен ли под и слушает ли он нужный порт.
-3. **Состояние Service и Endpoints:** Убедитесь, что `Service` имеет правильные селекторы и `Endpoints` содержит IP-адреса подов.
-
+1. **Состояние Service и Endpoints:** Убедитесь, что селекторы Service совпадают с метками подов.
    ```bash
    kubectl get endpoints <service-name>
+   # → NAME      ENDPOINTS            AGE
+   # → my-svc    10.244.1.5:8080      1h
    ```
+2. **DNS внутри кластера:** Проверьте разрешение имен через `CoreDNS`.
+   ```bash
+   kubectl exec -it <pod-name> -- nslookup kubernetes.default
+   # → Server: 10.96.0.10
+   # → Address: 10.96.0.10#53
+   # → Name: kubernetes.default.svc.cluster.local
+   # → Address: 10.96.0.1
+   ```
+3. **NetworkPolicy:** Проверьте, не блокирует ли трафик объект `NetworkPolicy`.
+   ```bash
+   kubectl get networkpolicy -A
+   ```
+4. **Пробы готовности (Readiness Probes):** Если под не прошел пробу, он удаляется из Endpoints, и трафик на него не идет.
 
-4. **Пробы готовности (Readiness Probes):** Если под не прошел пробу, он исключается из `Endpoints`, и Ingress не сможет направить на него трафик.
+### Диагностика уровня узла (Node)
 
-### Основные инструменты командной строки
+Если проблема не в подах, необходимо проверить состояние `Kubelet` и системные ресурсы узла.
+
+- **Статус узла:** `kubectl describe node <node-name>`. Обратите внимание на раздел `Conditions` (MemoryPressure, DiskPressure, PIDPressure).
+- **Логи Kubelet:**
+  ```bash
+  # Выполняется на узле
+  journalctl -u kubelet -f
+  ```
+- **Проверка контейнерного рантайма (CRI):**
+  ```bash
+  # Использование crictl (универсальный инструмент)
+  crictl ps
+  crictl logs <container-id>
+  ```
+
+### Диагностика компонентов управления (Control Plane)
+
+Проблемы с API-сервером, планировщиком (Scheduler) или контроллерами обычно влияют на весь кластер.
+
+1. **Проверка подов системы:** `kubectl get pods -n kube-system`.
+2. **Логи статических подов:** Если кластер развернут через `kubeadm`, логи компонентов находятся в `/var/log/pods/` или проверяются через `docker ps`/`crictl ps`.
+3. **Состояние etcd:** Проверка доступности хранилища и свободного места (quota).
+
+## Основные инструменты командной строки
 
 #### kubectl describe: Детальный статус ресурсов
 
-Команда предоставляет текущее состояние, лимиты, назначенные ресурсы и хронологический список событий.
-
-- **Reason/Exit Code:** показывают причину завершения (например, `137` для OOMKilled).
-- **Restart Count:** количество перезапусков (рост счетчика указывает на нестабильность).
+Предоставляет текущее состояние, лимиты, назначенные ресурсы и хронологический список событий.
+- **Exit Code 137:** процесс убит по OOM (Out Of Memory).
+- **Exit Code 143:** корректное завершение по сигналу SIGTERM.
 
 #### kubectl logs: Анализ вывода приложения
 
-Позволяет просматривать `stdout` и `stderr` процессов внутри контейнеров.
+Позволяет просматривать `stdout` и `stderr`.
+- `-l app=nginx`: логи всех подов с определенной меткой.
+- `--all-containers`: для подов с sidecar-контейнерами.
 
-- `--previous` (`-p`): логи до последнего перезапуска.
-- `--all-containers`: если в поде несколько контейнеров.
-- `--since=<время>`: логи за конкретный период (например, `10m`).
+#### kubectl auth can-i: Проверка разрешений
 
-#### kubectl exec: Интерактивный доступ
-
-Выполнение команд внутри контейнера. Требует наличия шелла (sh/bash) в образе.
-
+Незаменимо для отладки проблем с RBAC (Role-Based Access Control).
 ```bash
-kubectl exec -it <pod-name> -c <container-name> -- /bin/sh
+kubectl auth can-i create deployments --as system:serviceaccount:default:my-sa
+# → yes
 ```
 
-#### kubectl port-forward: Проверка сети
+#### kubectl top: Мониторинг ресурсов
 
-Проброс локального порта на порт пода для отладки сервисов без необходимости создания внешнего балансировщика.
-
+Требует установленного `Metrics Server`.
 ```bash
-kubectl port-forward pod/<pod-name> 8080:80
+kubectl top node
+# → NAME    CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+# → node-1  150m         4%     1200Mi          15%
 ```
 
 #### kubectl debug: Эфемерные контейнеры
 
-Позволяет подключать отладочные инструменты к работающему поду без его перезапуска. Незаменимо для образов типа Distroless.
-
-Подробное руководство: [Эфемерные контейнеры](../Base/Pod/ephemeral_containers.md).
-
-### Связь с QoS (Quality of Service) классами
-
-Kubernetes выселяет поды при нехватке ресурсов на основе их приоритета. Подробности см. в разделе: [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md).
-
-1. **BestEffort** — без лимитов/запросов, выселяются первыми.
-2. **Burstable** — запросы меньше лимитов, средний приоритет.
-3. **Guaranteed** — запросы равны лимитам, максимальная защита.
+Позволяет подключать инструменты к "тонким" образам (distroless).
+```bash
+kubectl debug -it <pod-name> --image=nicolaka/netshoot --target=<container-name>
+```
 
 ## Практические сценарии
 
 ### Изоляция пода для отладки
 
-Удаление меток (labels) позволяет временно "спрятать" под от трафика Service, сохраняя его запущенным для диагностики.
-
+Удаление меток (labels) позволяет временно "спрятать" под от трафика Service для детального изучения.
 ```bash
-# Удаление метки (минус в конце ключа)
 kubectl label pod <pod-name> app-
+# → pod/my-app labeled (метка 'app' удалена)
 ```
-
-После этого Service перестанет направлять трафик на этот под, но вы сможете изучить его состояние с помощью `exec` или `debug`.
 
 ### Предотвращение перезагрузки падающего пода
 
-При `CrashLoopBackOff` можно временно изменить команду запуска на `sleep`, чтобы под перешел в состояние `Running` и позволил подключил к нему.
-
+Если под постоянно падает, можно изменить `entrypoint` на `sleep`, чтобы войти внутрь и проверить конфигурацию.
 ```bash
 kubectl patch deployment <deploy-name> \
   -p '{"spec":{"template":{"spec":{"containers":[{"name":"app","command":["sleep","3600"]}]}}}}'
@@ -130,9 +165,11 @@ kubectl patch deployment <deploy-name> \
 
 ### Продвинутые методы отладки
 
-- **Сбор Core Dumps:** настройка `initContainer` для изменения `kernel.core_pattern` и сохранения дампов памяти в Persistent Volume. Подробное описание методов анализа и настройки см. в разделе **[Отладка через Coredump в Linux](../../Linux/Diagnostics/Troubleshooting/coredump_debugging.md)**.
-- **Удаленная отладка (Remote Debugging):** использование инструментов вроде Delve (для Go) или JDWP (для Java) через `kubectl port-forward`.
-- **Трассировка системных вызовов:** использование `strace` через `kubectl debug` (требует профиля `sysadmin` или соответствующих capabilities).
+- **Трассировка системных вызовов:** использование `strace` или `tcpdump` через привилегированные контейнеры или `kubectl debug`.
+- **Remote Debugging:** проброс портов для подключения IDE к процессу внутри контейнера.
+  ```bash
+  kubectl port-forward pod/<pod-name> 5005:5005
+  ```
 
 ### См. также
 
@@ -140,3 +177,5 @@ kubectl patch deployment <deploy-name> \
 - [Пробы (Probes) в Kubernetes](../Base/probes.md)
 - [Классификация типичных ошибок](./Common_Errors/)
 - [Эфемерные контейнеры](../Base/Pod/ephemeral_containers.md)
+- [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md)
+

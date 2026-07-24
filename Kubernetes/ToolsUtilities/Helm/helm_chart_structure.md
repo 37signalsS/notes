@@ -1,180 +1,142 @@
 # Структура Helm-чарта
 
-Стандартная файловая структура Helm-чарта организует шаблоны, конфигурацию и метаданные для воспроизводимого развёртывания в Kubernetes.
+Стандартная файловая структура Helm-чарта обеспечивает организацию шаблонов, конфигураций и метаданных для воспроизводимого развёртывания приложений в Kubernetes. Чёткое следование структуре необходимо для корректной работы инструментов автоматизации и предсказуемости рендеринга.
 
 ---
 
-## Definitions
+## Определения
 
 | Термин | Описание |
 |--------|----------|
-| **Chart** | Пакет Helm, содержащий шаблоны Kubernetes и конфигурацию. См. [Обзор Helm](./helm_overview.md) для общих концепций |
-| **Chart.yaml** | Метаданные чарта: имя, версия, зависимости. Подробнее о версионировании см. [Управление версиями релизов](./helm_release_versioning.md) |
-| **values.yaml** | Значения по умолчанию для шаблонов |
-| **templates/** | Директория с Go-шаблонами манифестов Kubernetes. См. [Шаблонизация в Helm](./helm_templating.md) |
-| **_helpers.tpl** | Вспомогательный файл для переиспользуемых именованных шаблонов |
-| **Chart.lock** | Файл с зафиксированными версиями зависимостей |
-| **.helmignore**| Файлы для исключения из пакета (аналог .gitignore) |
+| **Chart (Чарт)** | Пакет Helm, содержащий все необходимые ресурсы для запуска приложения в Kubernetes |
+| **Chart.yaml** | Манифест метаданных: имя, версия, тип приложения и список зависимостей |
+| **values.yaml** | Файл со значениями параметров по умолчанию, используемыми при рендеринге шаблонов |
+| **templates/** | Директория с шаблонами манифестов на языке Go templates |
+| **_helpers.tpl** | Вспомогательный файл, содержащий именованные шаблоны (partials) для повторного использования |
+| **crds/** | Специальная директория для Custom Resource Definitions, которые Helm устанавливает перед основными ресурсами |
+| **Chart.lock** | Файл фиксации версий зависимостей (генерируется автоматически) |
+| **.helmignore** | Файлы для исключения из пакета (аналог .gitignore) |
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
-### Обязательная структура
+### Обязательная и расширенная структура
+
+Современный Helm-чарт (Helm v3+) объединяет обязательные компоненты и дополнительные инструменты для тестирования и валидации:
 
 ```
 mychart/
-├── .helmignore         # Файлы для исключения из пакета
-├── Chart.yaml          # Метаданные чарта (обязательно)
-├── values.yaml         # Значения по умолчанию (обязательно)
-├── charts/             # Директория для зависимых чартов
-└── templates/          # Шаблоны манифестов (обязательно)
-    ├── _helpers.tpl    # Вспомогательные функции
+├── .helmignore          # Файлы для исключения из пакета
+├── Chart.yaml           # Метаданные чарта (обязательно)
+├── values.yaml          # Значения по умолчанию (обязательно)
+├── values.schema.json   # (Опционально) JSON-схема для валидации значений
+├── README.md            # Описание чарта для Artifact Hub или пользователей
+├── charts/              # Директория для зависимых чартов
+├── crds/                # Custom Resource Definitions
+├── files/               # Статические файлы (скрипты, конфиги), доступные через .Files
+└── templates/           # Шаблоны манифестов (обязательно)
+    ├── _helpers.tpl     # Вспомогательные функции
+    ├── NOTES.txt        # Инструкция после установки
+    ├── tests/           # Тесты работоспособности (helm test)
     └── *.yaml          # Манифесты Kubernetes
 ```
 
 ### Файл Chart.yaml
 
-Содержит ключевые метаданные, описывающие чарт.
+Определяет ключевые метаданные и зависимости.
 
 ```yaml
-apiVersion: v2           # v2 для Helm 3. Обязательное поле.
-name: my-application
-description: A Helm chart for Kubernetes
-
-# Тип чарта: 'application' (по умолчанию) или 'library' (не устанавливается, только для переиспользования шаблонов).
-type: application
-
-# Версия самого чарта. Должна соответствовать SemVer 2.0.0.
-version: 1.2.3
-
-# Версия приложения, развёртываемого этим чартом. Не обязана быть SemVer.
-appVersion: "2.0.0"
-
-# Ограничение на совместимые версии Kubernetes (SemVer).
-kubeVersion: ">= 1.19.0-0"
+apiVersion: v2           # v2 используется для Helm 3
+name: my-application     # Имя чарта
+version: 1.2.3           # Версия чарта (SemVer 2.0.0)
+appVersion: "2.5.0"      # Версия приложения
+description: "A Helm chart for Kubernetes"
+type: application        # 'application' или 'library' (только шаблоны)
 
 dependencies:
   - name: postgresql
     version: "12.x.x"
-    repository: https://charts.bitnami.com/bitnami
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
 ```
 
-### Файл values.yaml
+### Файл values.yaml и централизация конфигурации
 
-Определяет параметры для шаблонизации. Используется с [Go templates](./helm_templating.md).
-
-**Централизация конфигурации в `values.yaml`**
-
-Файл `values.yaml` служит центральным местом для управления всеми изменяемыми параметрами чарта. Такой подход решает ключевые проблемы:
+`values.yaml` служит единым источником истины для всех изменяемых параметров. Это решает проблему рассинхронизации ресурсов.
 
 | Проблема без централизации | Решение через values.yaml |
 |-----------------------------|---------------------------------------------------------|
-| Дублирование значений в разных манифестах | Одно значение → использование в нескольких шаблонах |
-| Риск рассинхронизации (порт в Deployment ≠ порт в Service) | Синхронизация через одну переменную |
-| Ручные правки в шаблонах | Параметризация через плейсхолдеры |
-| Сложность поддержки при масштабировании | Централизованное управление конфигурацией. |
+| Дублирование значений в разных манифестах | Одно значение используется во всех нужных шаблонах |
+| Ошибки связки (порт в Deployment ≠ порт в Service) | Синхронизация через одну общую переменную |
+| Ручные правки в сложных YAML-блоках | Параметризация через плейсхолдеры и функции |
+| Сложность поддержки при масштабировании | Быстрое изменение конфигурации всей системы в одном месте |
 
-**Пример организации:**
+---
 
+## Практические сценарии
+
+### Синхронизация ресурсов через значения
+
+Пример показывает, как одно изменение в `values.yaml` обновляет порт во всех связанных ресурсах.
+
+**Файл `values.yaml`:**
 ```yaml
-# values.yaml — централизованная конфигурация
 app:
-  name: kosms-zero-to-hero
-  replicas: 3
+  name: my-service
   port: 8080
-  domain: app.example.com
-
 image:
   repository: nginx
   tag: latest
-  pullPolicy: IfNotPresent
-
-service:
-  type: ClusterIP
-
-ingress:
-  enabled: true
 ```
 
-**Использование в шаблонах:**
-
+**Шаблон `templates/deployment.yaml`:**
 ```yaml
-# templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.app.name }}-web
+  name: {{ .Values.app.name }}
 spec:
-  replicas: {{ .Values.app.replicas }}
   template:
     spec:
       containers:
-        - ports:
+        - name: web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
             - containerPort: {{ .Values.app.port }}
+```
 
-# templates/service.yaml
+**Шаблон `templates/service.yaml`:**
+```yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.app.name }}-service
+  name: {{ .Values.app.name }}
 spec:
-  type: {{ .Values.service.type }}
   ports:
-    - targetPort: {{ .Values.app.port }}  # То же значение, что в Deployment
-
-# templates/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: {{ .Values.app.name }}-ingress
-spec:
-  rules:
-    - host: {{ .Values.app.domain }}
-      http:
-        paths:
-          - backend:
-              service:
-                name: {{ .Values.app.name }}-service
-                port:
-                  number: {{ .Values.app.port }}
+    - port: 80
+      targetPort: {{ .Values.app.port }} # Синхронизация с Deployment
 ```
 
-При изменении порта в `values.yaml` все ресурсы автоматически используют новое значение без риска рассинхронизации.
+### Динамическая генерация имен через .Chart.Name
 
-### Директория templates/
-
-Содержит Go-шаблоны, которые Helm рендерит в манифесты Kubernetes. Поддерживает встроенные объекты: `.Values`, `.Release`, `.Chart`, `.Capabilities`, `.Files`.
-
-**Встроенная переменная `.Chart.Name`:**
-
-Используется для динамической генерации имён ресурсов на основе названия чарта:
+Использование встроенных переменных позволяет делать чарты универсальными.
 
 ```yaml
-# templates/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
 metadata:
   name: {{ .Chart.Name }}-web
   labels:
     app: {{ .Chart.Name }}
 ```
 
-При имени чарта `kosms-zero-to-hero` ресурс получит имя `kosms-zero-to-hero-web`.
+### Локальные переменные в шаблонах
 
-**Локальные переменные в шаблонах:**
-
-Для упрощения повторяющихся конструкций можно объявлять локальные переменные в начале файла шаблона:
+Для улучшения читаемости длинных путей к значениям рекомендуется использовать локальные переменные в начале файла:
 
 ```yaml
-# templates/ingress.yaml
-{{- $domain := .Values.app.domain }}
-{{- $port := .Values.app.port }}
+{{- $domain := .Values.global.ingress.domain }}
+{{- $port := .Values.app.service.port }}
 
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: {{ .Chart.Name }}-ingress
 spec:
   rules:
     - host: {{ $domain }}
@@ -182,21 +144,54 @@ spec:
         paths:
           - backend:
               service:
-                name: {{ .Chart.Name }}-service
                 port:
                   number: {{ $port }}
 ```
 
-Локальные переменные действуют только в пределах одного файла, но делают код чище и проще в поддержке.
+### Валидация через values.schema.json
 
-### Файл _helpers.tpl
+Позволяет наложить ограничения на вводимые данные, обеспечивая безопасность и корректность.
 
-Определяет именованные шаблоны для переиспользования. Использует синтаксис `{{ define }}` и `{{ include }}`.
+```json
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "app": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "required": ["port"]
+    }
+  }
+}
+```
+
+### Инструкции NOTES.txt и работа с .Files
+
+`NOTES.txt` предоставляет пользователю информацию о доступе к приложению после установки, используя ту же логику шаблонов. Директория `files/` позволяет вставлять статический контент:
+
+```yaml
+# configmap.yaml
+data:
+  setup.sh: |
+{{ .Files.Get "files/setup.sh" | indent 4 }}
+```
+
+### Тестирование (templates/tests/)
+
+Helm-тесты позволяют убедиться, что приложение запущено корректно. Обычно это `Pod` с аннотацией `"helm.sh/hook": test`.
 
 ---
 
 ## Дополнительная информация
 
-- **[Шаблонизация в Helm](./helm_templating.md)** — подробное руководство по функциям, объектам и именованным шаблонам в `_helpers.tpl`.
-- **[Зависимости и Library Charts](./helm_dependencies_and_library_charts.md)** — создание переиспользуемых библиотечных чартов.
-- **[Helm Skeleton Pattern](./helm_skeleton_pattern.md)** — паттерн для стандартизации и масштабирования множества однотипных сервисов.
+- **[Шаблонизация в Helm](./helm_templating.md)** — глубокое погружение в функции и объекты.
+- **[Зависимости и Library Charts](./helm_dependencies_and_library_charts.md)** — создание общих библиотек.
+- **[Helm Skeleton Pattern](./helm_skeleton_pattern.md)** — стандартизация структуры для множества сервисов.
+- **[Управление версиями релизов](./helm_release_versioning.md)** — SemVer и жизненный цикл версий.

@@ -1,37 +1,46 @@
 # Kubespray: Развертывание HA-кластера
 
-Индекс документов по развертыванию высокодоступного (HA) кластера Kubernetes с помощью Kubespray.
+Индекс документов и обзор методов развертывания высокодоступного (HA) кластера Kubernetes с использованием Kubespray.
 
 ## Определения
 
-**HA-кластер (High Availability)** — конфигурация Kubernetes с несколькими узлами Control Plane для обеспечения отказоустойчивости.
+**HA-кластер (High Availability)** — конфигурация Kubernetes с несколькими узлами Control Plane (обычно 3, 5 или более), предназначенная для устранения единой точки отказа (SPoF) и обеспечения непрерывной работы API-сервера и etcd.
 
-**Kubespray HA** — автоматизация развертывания HA-кластера через Ansible с использованием Keepalived и HAProxy.
+**Kubespray HA** — встроенные механизмы автоматизации Ansible-ролей Kubespray для настройки балансировки трафика и отказоустойчивости компонентов Control Plane.
 
 ## Основные концепции
+
+Kubespray поддерживает три основных архитектурных подхода к обеспечению высокой доступности API-сервера:
+
+1.  **Keepalived + HAProxy (L2 VIP):** Классический метод. Keepalived управляет виртуальным IP (VIP) через протокол VRRP, а HAProxy балансирует трафик между локальными API-серверами.
+2.  **kube-vip:** Современное cloud-native решение. Один компонент (запускаемый как Static Pod) обеспечивает работу VIP и балансировку. Поддерживает режимы L2 (ARP) и L3 (BGP).
+3.  **Локальный nginx-proxy:** Упрощенный метод для тестовых сред. На каждой worker-ноде запускается nginx, который проксирует запросы к списку master-нод. Не обеспечивает единую точку входа (VIP).
 
 ### Документы раздела
 
 | Документ | Описание |
 | :--- | :--- |
-| **[Основные концепции](./kubespray_ha_concepts.md)** | Архитектура HA, компоненты Keepalived + HAProxy, отличия от ручного kubeadm |
-| **[Развертывание HA-кластера](./kubespray_ha_deployment.md)** | Требования, конфигурация inventory, переменные, процесс установки |
-| **[Дополнительные темы](./kubespray_ha_advanced.md)** | Тестирование отказоустойчивости, конфигурационные файлы, troubleshooting |
+| **[Основные концепции](./kubespray_ha_concepts.md)** | Детальный разбор архитектур, сравнение методов (HAProxy vs kube-vip vs nginx-proxy) |
+| **[Развертывание HA-кластера](./kubespray_ha_deployment.md)** | Практическое руководство: инвентарь, переменные, запуск playbook для разных методов |
+| **[Дополнительные темы](./kubespray_ha_advanced.md)** | Тестирование отказоустойчивости, тюнинг параметров, решение проблем (troubleshooting) |
 
 ## Практические сценарии
 
-Подробное руководство по развертыванию представлено в файле [kubespray_ha_deployment.md](./kubespray_ha_deployment.md).
+Краткий алгоритм выбора метода:
+- **Production (Bare-metal, одна сеть):** Keepalived + HAProxy или kube-vip (L2).
+- **Production (Сложная сеть, BGP):** kube-vip (BGP).
+- **Тестовые/учебные среды:** Локальный nginx-proxy.
+
+Инструкции по настройке и примеры конфигураций приведены в файле **[Развертывание HA-кластера](./kubespray_ha_deployment.md)**.
 
 ## Дополнительная информация
 
 **См. также:**
-
-- [Обзор Kubespray](../overview.md)
-- [Базовая установка](../kubespray_install/basic_concepts.md)
-- [Развертывание в закрытом контуре](../offline_installation/offline_definitions.md)
+- [Обзор Kubespray](../overview.md) — общие сведения об инструменте
+- [Базовая установка](../kubespray_install/basic_concepts.md) — требования к узлам и ОС
+- [Развертывание в закрытом контуре](../offline_installation/offline_definitions.md) — особенности установки без доступа к интернету
 
 **Внешние ресурсы:**
-
-- [Документация Kubespray](https://kubespray.io/)
-- [GitHub проекта](https://github.com/kubernetes-sigs/kubespray)
-- [VRRP RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798)
+- [Kubespray HA Documentation](https://kubespray.io/#/docs/ha-mode)
+- [kube-vip Official Site](https://kube-vip.io/)
+- [GitHub: Kubernetes-sigs/Kubespray](https://github.com/kubernetes-sigs/kubespray)

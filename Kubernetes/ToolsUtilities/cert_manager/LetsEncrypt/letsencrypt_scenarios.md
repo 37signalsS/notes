@@ -1,51 +1,55 @@
 # Let's Encrypt: Практические сценарии
 
-## Definitions
+## Определения
 
-**ClusterIssuer** — общекластерный ресурс cert-manager, представляющий ACME-аккаунт Let's Encrypt. Доступен из любого namespace.
+**ClusterIssuer** — общекластерный ресурс cert-manager, представляющий учетную запись ACME на сервере сертификации. В отличие от `Issuer`, он не привязан к конкретному пространству имен и может использоваться для выпуска сертификатов в любом namespace.
 
-**Certificate** — запрос на выпуск сертификата. Cert-manager автоматически создаёт Order, проходит Challenges и обновляет Secret.
+**Certificate** — абстракция Kubernetes, описывающая желаемое состояние TLS-сертификата. Контроллер cert-manager использует этот ресурс для генерации запроса (CSR), прохождения проверок (Challenges) и сохранения итогового сертификата в Secret.
 
-> **Базовые концепции:** [index.md](../index.md) | **CRD-спецификация:** [definitions.md](../../definitions.md)
+**API Token (Cloudflare)** — современный и безопасный метод аутентификации в API Cloudflare с использованием принципа наименьших привилегий (вместо использования Global API Key).
+
+> **Базовые концепции:** [index.md](./index.md) | **Спецификация CRD:** [definitions.md](../../definitions.md)
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Структура ClusterIssuer
 
-```
+Ресурс `ClusterIssuer` определяет, как именно контроллер будет взаимодействовать с Let's Encrypt.
+
+```yaml
 ClusterIssuer
-├── acme.server          # ACME-сервер (production/staging)
-├── acme.email           # Уведомления об истечении
-├── acme.privateKeySecretRef  # ACME Account Key (хранить в backup!)
-└── acme.solvers         # Методы проверки владения (http01, dns01)
+├── acme.server          # URL сервера (production или staging)
+├── acme.email           # Email для технических уведомлений
+├── acme.privateKeySecretRef  # Секрет с ключом аккаунта ACME
+└── acme.solvers         # Список методов проверки (HTTP-01, DNS-01)
 ```
 
-### Параметры Certificate
+### Параметры Certificate и ARI
 
-| Поле | Значение (45 дней) | Значение (90 дней, legacy) |
+С появлением протокола ARI (ACME Renewal Information) в cert-manager 1.15+, жесткое указание времени продления становится менее критичным, так как контроллер может следовать рекомендациям центра сертификации.
+
+| Поле | Значение (45 дней, 2026+) | Значение (90 дней, стандарт) |
 | :--- | :--- | :--- |
-| `duration` | `1080h` (45 дней) | `2160h` (90 дней) |
+| `duration` | `1080h` | `2160h` |
 | `renewBefore` | `168h` (7 дней) | `360h` (15 дней) |
 
-> **Важно:** Let's Encrypt переходит на 45-дневные сертификаты в 2026. cert-manager 1.15+ с поддержкой ARI обновит `renewBefore` автоматически. Подробнее: [letsencrypt_concepts](./letsencrypt_concepts.md).
+### Сравнение Solvers для сценариев
 
-### Сравнение solvers для сценариев
-
-| Сценарий | Solver | Wildcard | Требование |
+| Сценарий | Метод (Solver) | Wildcard | Требования |
 | :--- | :--- | :--- | :--- |
-| Публичный Ingress | HTTP-01 | ❌ | Доступность порта 80 извне |
-| Wildcard / нет HTTP | DNS-01 | ✅ | API-ключ DNS-провайдера |
-| Внутренний сервис | DNS-01 | ✅ | DNS webhook |
+| Публичный веб-сайт | HTTP-01 | Нет | Доступ к порту 80/TCP из интернета |
+| Wildcard-сертификаты | DNS-01 | Да | Доступ к API DNS-провайдера |
+| Внутренние ресурсы | DNS-01 | Да | Публичная DNS-зона (даже для серых IP) |
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий 1: ClusterIssuer с HTTP-01
+### Сценарий 1: Базовый HTTP-01 для Ingress
 
-**Применение:** Публичный сертификат для Ingress (без wildcard).
+Самый распространенный сценарий для публичных сервисов.
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -57,102 +61,106 @@ spec:
     server: https://acme-v02.api.letsencrypt.org/directory
     email: admin@example.com
     privateKeySecretRef:
-      name: letsencrypt-prod-key
+      name: letsencrypt-prod-account-key
     solvers:
     - http01:
         ingress:
           ingressClassName: nginx
 ```
 
-**Запрос сертификата:**
+**Ресурс сертификата:**
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: example-com
-  namespace: default
+  name: site-com-tls
+  namespace: prod
 spec:
-  secretName: example-com-tls
-  duration: 1080h       # 45 дней (2026+)
-  renewBefore: 168h     # 7 дней до истечения
+  secretName: site-com-tls-secret
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
   dnsNames:
-    - example.com
-    - www.example.com
+    - site.com
+    - www.site.com
 ```
 
-### Сценарий 2: DNS-01 (Cloudflare) — Wildcard
+### Сценарий 2: DNS-01 (Cloudflare) с использованием API Token
 
-**Применение:** Wildcard-сертификат `*.example.com`.
+Безопасный метод выпуска Wildcard-сертификатов.
 
-**1. Создать Secret с API-ключом:**
+**1. Создание секрета с API токеном:**
 
 ```bash
-kubectl create secret generic cloudflare-api-key \
-  --from-literal=api-key=YOUR_CLOUDFLARE_API_KEY \
+kubectl create secret generic cloudflare-api-token \
+  --from-literal=api-token=YOUR_CLOUDFLARE_API_TOKEN \
   -n cert-manager
 ```
 
-**2. Создать ClusterIssuer:**
+**2. Настройка ClusterIssuer:**
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: letsencrypt-prod
+  name: letsencrypt-dns-prod
 spec:
   acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
     email: admin@example.com
+    server: https://acme-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
-      name: letsencrypt-prod-key
+      name: letsencrypt-dns-account-key
     solvers:
     - dns01:
         cloudflare:
-          email: admin@example.com
-          apiKeySecretRef:
-            name: cloudflare-api-key
-            key: api-key
+          apiTokenSecretRef:
+            name: cloudflare-api-token
+            key: api-token
 ```
 
-**3. Запрос wildcard-сертификата:**
+### Сценарий 3: Интеграция с Gateway API
+
+Использование современных стандартов Kubernetes для автоматизации TLS.
 
 ```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
-  name: example-wildcard
-  namespace: default
+  name: my-app-route
+  namespace: apps
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
-  secretName: example-wildcard-tls
-  duration: 1080h       # 45 дней
-  renewBefore: 168h     # 7 дней
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-  dnsNames:
-    - example.com
-    - "*.example.com"
+  parentRefs:
+  - name: my-gateway
+  hostnames:
+  - "app.example.com"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: my-service
+      port: 80
 ```
 
-### Сценарий 3: DNS-01 (Yandex Cloud DNS)
+### Сценарий 4: DNS-01 (Yandex Cloud DNS)
 
-**Применение:** Wildcard для доменов в Yandex Cloud.
+Использование внешнего вебхука для интеграции с облаком Яндекс.
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: letsencrypt-prod
+  name: letsencrypt-yandex
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
     email: admin@example.com
     privateKeySecretRef:
-      name: letsencrypt-prod-key
+      name: letsencrypt-yandex-key
     solvers:
     - dns01:
         webhook:
@@ -165,11 +173,9 @@ spec:
               key: service-account-key
 ```
 
-> **Требуется:** cert-manager Webhook для Yandex Cloud DNS (отдельный Helm-чарт).
+### Сценарий 5: Тестирование через Staging
 
-### Сценарий 4: Staging для тестирования
-
-**Применение:** Отладка конфигурации без риска превысить лимиты production.
+Обязательный этап перед запуском в продакшен для проверки конфигурации solvers.
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -188,88 +194,29 @@ spec:
           ingressClassName: nginx
 ```
 
-> **Важно:** Создайте отдельный `ClusterIssuer` для staging, не переиспользуйте production. Staging-сертификаты не доверяются браузерами.
-
-### Сценарий 5: Несколько Issuer (разделение окружений)
-
-**Применение:** Раздельные production/staging Issuer для разных доменов.
-
-```yaml
-# Production Issuer
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod-main
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@main.com
-    privateKeySecretRef:
-      name: letsencrypt-prod-main-key
-    solvers:
-    - http01:
-        ingress:
-          ingressClassName: nginx
----
-# Staging Issuer
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-staging-test
-spec:
-  acme:
-    server: https://acme-staging-v02.api.letsencrypt.org/directory
-    email: test@example.com
-    privateKeySecretRef:
-      name: letsencrypt-staging-test-key
-    solvers:
-    - http01:
-        ingress:
-          ingressClassName: nginx
-```
-
-**Использование:**
-
-```yaml
-# Production Certificate
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: main-domain
-spec:
-  secretName: main-domain-tls
-  issuerRef:
-    name: letsencrypt-prod-main
-    kind: ClusterIssuer
-  dnsNames:
-    - main.com
-
-# Staging Certificate
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: test-domain
-spec:
-  secretName: test-domain-tls
-  issuerRef:
-    name: letsencrypt-staging-test
-    kind: ClusterIssuer
-  dnsNames:
-    - test.example.com
-```
-
 ---
 
 ## Дополнительная информация
 
-Данные о надёжности информации — в обзоре концепции.
+### Рекомендации по эксплуатации
+
+1. **Staging-first**: Всегда проверяйте новые конфигурации DNS-01 на staging-сервере, чтобы избежать блокировок (Rate Limits) со стороны основного API Let's Encrypt.
+2. **Безопасность ключей**: Регулярно делайте бэкап Secret-ов, указанных в `privateKeySecretRef`, так как их потеря означает потерю доступа к аккаунту ACME.
+3. **Мониторинг**: Используйте метрику `cert_manager_certificate_ready_status` для отслеживания проблем с выпуском сертификатов в системе мониторинга.
 
 ### Смотрите также
 
-- **[Углублённые концепции ACME](./letsencrypt_concepts.md)** — CT-логи, аккаунты, ARI
-- **[Cert-manager: Troubleshooting](./letsencrypt_advanced.md)** — отладка ошибок ACME
-- **[Cert-manager: Определения](../../definitions.md)** — базовая спецификация ресурсов
-45-дневные duration | **10** | [letsencrypt.org 2026-02-24](https://letsencrypt.org/2026/02/24/rate-limits-45-day-certs) |
+- **[Углублённые концепции ACME](./letsencrypt_concepts.md)** — подробности ARI, CT-логи и типы аккаунтов
+- **[Cert-manager: Диагностика](./letsencrypt_advanced.md)** — решение проблем с прохождением проверок
+- **[Cert-manager: Определения](../../definitions.md)** — детальное описание параметров ресурсов
 
-**Связанные документы:** [углублённые концепции](./letsencrypt_concepts.md), [диагностика](./letsencrypt_advanced.md), [cert_manager CRD](../../definitions.md).
-ions.md).
+---
+
+### Достоверность информации
+
+| Предмет | Оценка | Источник |
+| :--- | :--- | :--- |
+| Параметры ARI (1.15+) | **10** | Официальная документация cert-manager.io |
+| Планы Let's Encrypt на 2026 | **9** | ISRG / Let's Encrypt official blog |
+| Интеграция с Gateway API | **10** | Kubernetes Gateway API SIG / cert-manager docs |
+| Cloudflare API Tokens | **10** | Cloudflare API Documentation |

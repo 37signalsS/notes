@@ -2,105 +2,90 @@
 
 ## Определения
 
-**Air-gapped кластер (Offline)** — кластер Kubernetes, развёртываемый в изолированной среде без доступа к интернету. Все образы контейнеров должны быть предварительно загружены в локальный реестр внутри закрытого контура.
+**Air-gapped кластер (Offline)** — инфраструктура Kubernetes, развернутая в полностью изолированной сетевой среде без прямого или косвенного доступа к публичным сетям и внешним реестрам образов.
 
-**Закрытый контур** — изолированная сеть без прямого доступа к внешним registry (Docker Hub, GCR, ECR). Требует использования локальных реестров (Harbor, Docker Registry) и зеркал пакетов.
+**Закрытый контур** — периметр безопасности, ограничивающий сетевые взаимодействия только внутренними доверенными ресурсами. Требует наличия локальных сервисов для всех внешних зависимостей (образы, пакеты ОС, Helm-чарты).
 
-**Локальный registry** — внутренний реестр контейнерных образов, доступный внутри закрытого контура (например, `local-registry:5000`).
+**Локальный реестр (Internal Registry)** — служба хранения образов внутри контура (например, Harbor, Nexus, Docker Distribution). Является единственным легитимным источником образов для узлов кластера.
+
+**Зеркалирование образов (Image Mirroring)** — процесс синхронизации образов между внешним и внутренним реестрами с сохранением структуры слоев и метаданных.
+
+**Перехват реестра (Registry Redirection)** — конфигурация рантайма контейнеров (containerd, CRI-O), позволяющая прозрачно перенаправлять запросы с публичных адресов (например, `docker.io`) на локальные зеркала без изменения манифестов подов.
 
 ---
 
 ## Основные концепции
 
-### Специфика ошибок Image Pull в air-gapped средах
+### Специфика ошибок Image Pull в изолированных средах
 
-В air-gapped кластерах стандартные ошибки загрузки образов (`ErrImagePull`, `ImagePullBackOff`) возникают по следующим причинам:
+В air-gapped кластерах ошибки загрузки практически всегда связаны с конфигурацией инфраструктуры или отсутствием данных, а не с временными сетевыми сбоями.
 
-| Причина | Симптом | Решение |
+| Корневая причина | Сообщение об ошибке | Особенности в Air-gapped |
 | :--- | :--- | :--- |
-| Образ отсутствует в локальном registry | `manifest not found` | Загрузить образ через `docker save/load` |
-| Некорректный URL локального registry | `dial tcp: lookup failed` | Проверить DNS и доступность registry |
-| `imagePullPolicy: Always` для локального образа | Излишние попытки pull | Использовать `IfNotPresent` или `Never` |
-| Отсутствует TLS-сертификат registry | `x509: certificate signed by unknown authority` | Настроить доверие к CA registry |
+| **Отсутствие образа** | `manifest not found` / `404 Not Found` | Образ не был синхронизирован или загружен в локальный реестр. |
+| **Проблемы DNS** | `no such host` / `lookup failed` | Узлы кластера не могут разрешить имя локального реестра. |
+| **TLS/SSL ошибки** | `x509: certificate signed by unknown authority` | Отсутствие корневого CA локального реестра в доверенном хранилище узла. |
+| **Ошибка маршрутизации** | `connection timed out` | Сетевые политики (NetworkPolicies) или firewall блокируют доступ к реестру. |
 
-### Принцип работы с образами
+### Механизм переноса образов (Image Delivery Pipeline)
 
-```text
-Машина с интернетом          Закрытый контур
-┌─────────────────┐         ┌──────────────────────────┐
-│ docker pull     │         │  docker load             │
-│ docker save     │  ────►  │  docker tag              │
-│ Сохранение .tar │  SCP    │  docker push → Registry  │
-└─────────────────┘         └──────────────────────────┘
-                                      │
-                                      ▼
-                              Kubernetes Pod
-                              (image: local-registry:5000/...)
+Процесс доставки образов в закрытый контур требует промежуточного звена (Jump Host или переносной носитель):
+
+1. **Экспорт (External):** Скачивание образа на хосте с интернетом. Использование `skopeo copy` предпочтительнее `docker save`, так как позволяет копировать образы напрямую между реестрами или в промежуточный формат без участия Docker-демона.
+2. **Транспортировка:** Физический перенос данных в контур.
+3. **Импорт (Internal):** Загрузка образа в локальный реестр.
+4. **Потребление:** `kubelet` запрашивает образ из локального источника.
+
+### Конфигурация рантайма (containerd)
+
+Современные кластеры используют `containerd`. Для работы в air-gapped среде необходимо настроить зеркала в `/etc/containerd/config.toml` или через `hosts.toml` (для новых версий).
+
+Пример настройки зеркалирования для `docker.io`:
+```toml
+[plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+  endpoint = ["https://harbor.local/v2/proxy-docker-io"]
 ```
-
-### Политика imagePullPolicy для air-gapped
-
-| Политика | Применение |
-| :--- | :--- |
-| `IfNotPresent` | **Рекомендуется** — использует локальный кэш узла |
-| `Never` | Допустимо — только локальные образы, без pull |
-| `Always` | **Не рекомендуется** — попытка pull вызовет ошибку |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий: Перенос образа в air-gapped кластер
+### Сценарий 1: Синхронизация образов через Skopeo
 
-#### Шаг 1: Скачать образы на машине с доступом в интернет
+`skopeo` — более эффективный инструмент, чем связка `docker save/load`, так как он работает с манифестами напрямую.
 
+**На хосте с интернетом:**
 ```bash
-docker pull my-app:1.0
-docker save -o my-app.tar my-app:1.0
+# Сохранение образа в локальную директорию в формате OCI
+skopeo copy docker://docker.io/library/nginx:1.25 dir:/tmp/nginx-image
 ```
 
-#### Шаг 2: Передать архив в offline-кластер
-
+**В закрытом контуре:**
 ```bash
-scp my-app.tar admin@offline-node:/tmp/
+# Загрузка из директории в локальный Harbor
+skopeo copy --dest-tls-verify=false dir:/tmp/nginx-image docker://harbor.local/library/nginx:1.25
 ```
 
-#### Шаг 3: Загрузить в локальный registry
+### Сценарий 2: Добавление CA сертификата реестра на узлы
 
-```bash
-# На узле закрытого контура
-docker load -i /tmp/my-app.tar
-docker tag my-app:1.0 local-registry:5000/my-app:1.0
-docker push local-registry:5000/my-app:1.0
+Если локальный реестр использует самоподписанный сертификат, загрузка образа завершится ошибкой `x509`.
+
+**Действия на каждом узле кластера:**
+1. Скопировать сертификат в `/usr/local/share/ca-certificates/registry.crt`.
+2. Обновить хранилище: `update-ca-certificates`.
+3. Перезапустить рантайм: `systemctl restart containerd`.
+
+**Альтернатива для containerd (без изменения системного хранилища):**
+Создать файл `/etc/containerd/certs.d/harbor.local/hosts.toml`:
+```toml
+server = "https://harbor.local"
+[host."https://harbor.local"]
+  ca = "/etc/containerd/certs.d/harbor.local/ca.crt"
 ```
 
-#### Шаг 4: Использование в манифесте
+### Сценарий 3: Использование ImagePolicyWebhook
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-app
-spec:
-  containers:
-  - name: app
-    image: local-registry:5000/my-app:1.0
-    imagePullPolicy: IfNotPresent
-```
-
-### Диагностика проблем
-
-```bash
-# Проверить доступность registry с узла
-curl -k https://local-registry:5000/v2/_catalog
-
-# Проверить наличие образа в registry
-crane digest local-registry:5000/my-app:1.0
-# → sha256:abc123... (если образ доступен)
-
-# Проверить события pod
-kubectl describe pod my-app | grep -A5 Events
-```
+В крупных организациях для автоматической подмены путей к образам (например, с `docker.io/nginx` на `internal-registry.io/nginx`) используется **ImagePolicyWebhook** или мутирующие Admission-контроллеры (Kyverno, Gatekeeper). Это позволяет разработчикам использовать стандартные манифесты, которые автоматически корректируются под инфраструктуру air-gapped.
 
 ---
 
@@ -108,8 +93,8 @@ kubectl describe pod my-app | grep -A5 Events
 
 ### Связанные темы
 
-- [Kubespray: Offline установка](../../../Installation/Kubespray/offline_installation/offline_definitions.md) — полное руководство по offline-развёртыванию.
-- [Определения и терминология](./definitions.md) — базовые понятия ошибок загрузки.
-- [Harbor: Обзор](../../../../Docker/Docker_registries/Harbor/overview.md) — настройка локального реестра.
-- [Распространённые ошибки](./common_errors.md) — типовые проблемы и их решения.
-- [Пошаговая диагностика](./diagnostics.md) — алгоритм поиска неисправностей.
+- [Kubespray: Offline установка](../../Installation/Kubespray/offline_installation/offline_definitions.md) — особенности развертывания кластера в изоляции.
+- [Определения и терминология](./definitions.md) — базовые статусы `ErrImagePull` и `ImagePullBackOff`.
+- [Harbor: Обзор](../../../../Docker/Docker_registries/Harbor/overview.md) — настройка и эксплуатация корпоративного реестра.
+- [Пошаговая диагностика](./diagnostics.md) — общий алгоритм поиска причин ошибок загрузки.
+- [Сетевые проблемы](./network_issues.md) — отладка DNS и прокси в Kubernetes.

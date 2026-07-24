@@ -2,187 +2,123 @@
 
 ## Определения
 
-**Volume-related CreateContainerConfigError** — ошибка, возникающая когда Pod не может создать конфигурацию контейнера из-за проблем с эфемерными томами (Projected Volume, emptyDir, hostPath), не связанными с PVC.
+**Volume-related CreateContainerConfigError** — состояние пода, при котором запуск контейнера блокируется на этапе подготовки конфигурации из-за проблем с эфемерными или статическими томами (Projected Volume, emptyDir, hostPath, ConfigMap/Secret), не связанными с механизмом PVC.
 
-## Базовые концепции
+Подробные определения ошибки: [definitions.md](./definitions.md).
+Общие концепции томов в Kubernetes: [Типы томов](../../../Base/Pod/volume_types/volume_types.md).
 
-### Типы томов, вызывающие ошибку
+## Основные концепции
 
-| Тип тома | Назначение | Типичная ошибка |
-|----------|------------|-----------------|
-| **Projected Volume** | Объединение ConfigMap + Secret + DownwardAPI в одну директорию | `projected volume error: configmap "x" not found` |
-| **emptyDir** | Временное хранилище, обмен между контейнерами | `quota exceeded`, `sizeLimit exceeded` |
-| **hostPath** | Файл/директория с хоста (dev/test) | `hostPath path not accessible` |
-| **configMap/Secret (отдельный том)** | Монтирование одного ресурса | `configmap/secret not found` |
+### Типы томов и причины блокировки
 
-> Общие концепции томов: [Тома в Kubernetes](../../../Base/Pod/volume_types/volume_types.md).
-> Projected volumes: [projected_volumes.md](../../../Base/Pod/volume_types/projected_volumes.md).
+| Тип тома | Характер ошибки | Типичное сообщение в Events |
+|:---|:---|:---|
+| **Projected Volume** | Отсутствует один из источников данных | `projected volume error: configmap "x" not found` |
+| **emptyDir** | Превышение лимитов или квот узла | `failed to create emptyDir: quota exceeded` |
+| **hostPath** | Несоответствие типа или отсутствие пути | `hostPath path not accessible` |
+| **ConfigMap/Secret** | Ресурс не найден (при монтировании томом) | `configmap/secret "x" not found` |
+| **Generic Ephemeral** | Ошибки провижининга инлайн-тома | `failed to provision ephemeral volume` |
 
-### Механизм ошибки
+### Механизм возникновения ошибки
 
-```
-Pod определён с volumes
-         ↓
-kubelet проверяет каждый источник тома
-         ↓
-❌ Один из источников недоступен
-         ↓
-CreateContainerConfigError
-```
+1.  **Обнаружение спецификации:** `kubelet` считывает секцию `volumes` в PodSpec.
+2.  **Проверка источников:** Перед созданием контейнера `kubelet` обязан убедиться, что все источники данных для томов доступны.
+3.  **Остановка процесса:** Если хотя бы один ConfigMap, Secret или путь `hostPath` недоступен, формирование спецификации контейнера прерывается.
+4.  **Статус:** Поду присваивается статус `CreateContainerConfigError`.
 
 ## Практические сценарии
 
-### Сценарий 1: Projected Volume — источник не найден
+### Сценарий 1: Ошибки в Projected Volume
 
-**Сообщение:**
+`Projected Volume` объединяет несколько источников (Secret, ConfigMap, Downward API, ServiceAccountToken) в одну директорию. Если хоть один из них отсутствует — под не запустится.
 
-```
-Error: projected volume error: configmap "cm1" not found
-```
-
-**Причина:** Projected volume объединяет несколько источников, один из которых отсутствует.
-
-**Диагностика:** Проверить каждый источник из `sources`:
-
+**Диагностика:**
 ```bash
-# Проверка ConfigMap
-kubectl get configmap app-config -n <namespace>
+# Проверка событий пода
+kubectl describe pod <pod-name> | grep -A 2 "Events:"
+# → Warning  Failed  ...  Error: projected volume error: secret "db-pass" not found
 
-# Проверка Secret
-kubectl get secret db-credentials -n <namespace>
+# Проверка наличия всех источников, указанных в манифесте
+kubectl get cm,secret -n <namespace>
+# → Error from server (NotFound): secrets "db-pass" not found
 ```
 
-**Решение:** Создать недостающий ресурс или исправить имя в манифесте.
+**Решение:** Создайте отсутствующий ресурс или исправьте опечатку в имени источника.
 
-```yaml
-volumes:
-- name: all-in-one
-  projected:
-    sources:
-    - configMap:
-        name: app-config      # ✅ Должен существовать
-    - secret:
-        name: db-credentials  # ✅ Должен существовать
-    - downwardAPI:
-        items:
-        - path: "labels"
-          fieldRef:
-            fieldPath: metadata.labels
-```
+### Сценарий 2: emptyDir и лимиты Ephemeral Storage
 
-### Сценарий 2: emptyDir — превышение квоты
+Если в кластере включены лимиты на эфемерное хранилище (`ephemeral-storage`), `emptyDir` может вызвать ошибку еще на этапе создания, если запрашиваемый объем превышает квоту Namespace.
 
-**Сообщение:**
-
-```
-Error: failed to create emptyDir volume "cache": quota exceeded
-```
-
-**Причина:** ResourceQuota namespace ограничивает объём emptyDir или `sizeLimit` превышен.
-
-**Решение:** Указать `sizeLimit` явно и убедиться, что он в пределах квоты.
-
-```yaml
-volumes:
-- name: cache
-  emptyDir:
-    sizeLimit: 1Gi
-```
-
-Проверка квоты:
-
+**Диагностика:**
 ```bash
+# Проверка квот в Namespace
 kubectl describe resourcequota -n <namespace>
+# → Resource           Used  Hard
+# → ephemeral-storage  8Gi   10Gi
 ```
 
-### Сценарий 3: emptyDir — переполнение диска на узле
-
-**Симптом:** Pod эвиктится с `Evicted: The node had condition: [DiskPressure]`.
-
-**Причина:** emptyDir без `sizeLimit` заполняет ephemeral storage узла.
-
-**Решение:**
-
+**Решение:** Ограничьте размер `emptyDir` через `sizeLimit`. Это поможет планировщику корректно выбирать узлы и предотвратит `DiskPressure`.
 ```yaml
 volumes:
-- name: cache
+- name: scratch-pad
   emptyDir:
-    sizeLimit: 500Mi  # Ограничение предотвращает заполнение узла
+    sizeLimit: 500Mi
 ```
 
-Диагностика disk eviction: [disk_eviction.md](../../PodEvicted/disk_eviction.md).
+### Сценарий 3: hostPath — ограничения безопасности и типы
 
-### Сценарий 4: hostPath — путь недоступен
+Часто ошибка возникает, когда в манифесте указан тип `Directory` (обязательное существование), но директория на узле отсутствует.
 
-**Сообщение:**
-
-```
-Error: MountVolume.SetUp failed for volume "host-data" :
-hostPath type check failed: /data/app is not a directory
-```
-
-**Причина:** Указанный путь не существует на узле или не совпадает `type`.
-
-**Решение:**
-
-```yaml
-volumes:
-- name: host-data
-  hostPath:
-    path: /data/app
-    type: DirectoryOrCreate  # Создаст директорию, если не существует
+**Диагностика:**
+```bash
+kubectl describe pod <pod-name>
+# → message: hostPath type check failed: /var/logs/app is not a directory
 ```
 
-| `type` | Поведение |
-|--------|-----------|
-| `""` (пусто) | Без проверки (по умолчанию) |
-| `DirectoryOrCreate` | Создаст директорию при отсутствии |
-| `Directory` | Должна существовать, иначе ошибка |
-| `FileOrCreate` | Создаст файл при отсутствии |
-| `Socket` | Должен существовать как socket |
-| `CharDevice` | Должен существовать как char device |
-| `BlockDevice` | Должен существовать как block device |
+**Решение:** Используйте `DirectoryOrCreate`, если допустимо автоматическое создание директории kubelet-ом. 
+**Внимание:** Использование `hostPath` в Production не рекомендуется по соображениям безопасности.
 
-### Сценарий 5: Конфликт имён томов
+### Сценарий 4: Generic Ephemeral Volumes (K8s 1.23+)
 
-**Симптом:** `Error: volume "config" already exists` или `mountPath conflicts`.
+Это "инлайн" PVC, жизненный цикл которых привязан к поду. Ошибки здесь часто связаны с некорректным `storageClassName`.
 
-**Причина:** Два тома с одинаковым именем или два volumeMount с одинаковым `mountPath`.
-
-**Решение:** Убедиться в уникальности имён томов и путей монтирования.
-
-```yaml
-# ✅ Корректно: уникальные имена и mountPath
-volumes:
-- name: app-config
-  configMap:
-    name: app-config
-- name: db-credentials
-  secret:
-    secretName: db-credentials
-volumeMounts:
-- name: app-config
-  mountPath: /etc/config
-- name: db-credentials
-  mountPath: /etc/secrets
+**Диагностика:**
+```bash
+kubectl get pvc
+# Ищите PVC с именем <pod-name>-<volume-name>
+kubectl describe pvc <ephemeral-pvc-name>
 ```
+
+Подробнее о проблемах с PVC: [pvc_issues.md](./pvc_issues.md).
+
+### Сценарий 5: Права доступа на тома (fsGroup)
+
+Иногда под переходит в `CreateContainerConfigError`, если `kubelet` не может применить `fsGroup` (изменение владельца файлов) из-за ограничений файловой системы узла.
+
+**Решение:** Проверьте `securityContext` пода и параметры монтирования.
+
+## Список проверок (Checklist)
+
+1.  **Existence:** Все ConfigMap и Secret, указанные в томах, созданы в том же Namespace.
+2.  **Typo:** Проверьте имена томов в `volumes` и их соответствие в `volumeMounts`.
+3.  **hostPath Type:** Если используете `hostPath`, убедитесь, что путь существует на узле или используйте `*OrCreate` типы.
+4.  **Storage Quota:** Проверьте `ResourceQuota` на предмет ограничений `ephemeral-storage`.
+5.  **CSI Status:** Если используются CSI-драйверы для эфемерных томов, убедитесь, что соответствующие поды драйверов запущены.
 
 ## Дополнительная информация
 
-### Отличие от PVC-проблем
+### Сравнение с PVC-проблемами
 
-| Характеристика | Эфемерные тома (данный файл) | PVC (pvc_issues.md) |
-|----------------|------------------------------|---------------------|
-| **Жизненный цикл** | Совпадает с Pod | Независимый от Pod |
-| **Персистентность** | Данные теряются при удалении Pod | Данные сохраняются |
-| **Типичные причины** | Ресурс не найден в projected, quota | PV не привязан, StorageClass |
-| **Файл решения** | Этот файл | [pvc_issues.md](./pvc_issues.md) |
+| Аспект | Эфемерные тома | Persistent Volume Claims (PVC) |
+|:---|:---|:---|
+| **Уровень ресурса** | Описываются внутри PodSpec | Отдельный объект API |
+| **Жизненный цикл** | Удаляются вместе с подом | Независимы от пода |
+| **Хранилище** | Диск узла (обычно) | Сетевое хранилище / Облачные диски |
+| **Типичный статус** | `CreateContainerConfigError` | `ContainerCreating` / `Pending` |
 
 ### Связанные ресурсы
 
-- Определения: [definitions.md](./definitions.md)
-- Диагностика: [diagnostics.md](./diagnostics.md)
-- Типы томов: [Тома в Kubernetes](../../../Base/Pod/volume_types/volume_types.md)
-- Projected volumes: [projected_volumes.md](../../../Base/Pod/volume_types/projected_volumes.md)
-- PVC issues: [pvc_issues.md](./pvc_issues.md)
-- Disk eviction: [disk_eviction.md](../../PodEvicted/disk_eviction.md)
+- [Общая диагностика CreateContainerConfigError](./diagnostics.md)
+- [Проблемы с PVC](./pvc_issues.md)
+- [Projected Volumes — детальный обзор](../../../Base/Pod/volume_types/projected_volumes.md)
+- [Диагностика эвикции (DiskPressure)](../../PodEvicted/disk_eviction.md)

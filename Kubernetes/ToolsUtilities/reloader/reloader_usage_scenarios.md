@@ -2,169 +2,183 @@
 
 ## Определения
 
-**Сценарии использования Reloader** — типовые конфигурации и примеры применения контроллера Reloader для автоматического обновления подов (Pods) при изменении ConfigMap и Secret.
+**Сценарии использования Reloader** — типовые конфигурации и примеры применения контроллера Reloader для автоматического обновления рабочих нагрузок (Deployments, StatefulSets, Rollouts) при изменении связанных с ними ресурсов `ConfigMap` и `Secret`.
 
-**Основные источники:** [Обзор и концепции Reloader](./reloader_overview.md) · [Мониторинг и отладка](./reloader_monitoring_and_best_practices.md)
+**Основной источник:** [Обзор и концепции Reloader](./reloader_overview.md)
 
 ---
 
 ## Основные концепции
 
-### Конфигурация через аннотации
+### Механизмы активации
 
-Reloader управляется с помощью аннотаций в метаданных объектов `Deployment`, `StatefulSet` или `DaemonSet`. Контроллер поддерживает как автоматическое обнаружение всех зависимых ресурсов, так и явное указание конкретных файлов конфигурации или секретов.
+Reloader управляется через аннотации в метаданных объектов. Основные способы отслеживания:
 
-Полный список доступных аннотаций и способов подключения ресурсов (Volumes, ENV) приведён в основном файле:
-[Обзор Reloader: Аннотации и механизмы](./reloader_overview.md#основные-концепции)
+-   **Явное указание:** Аннотации `configmap.reloader.stakater.com/reload` или `secret.reloader.stakater.com/reload`.
+-   **Автоматическое обнаружение:** Аннотация `reloader.stakater.com/auto: "true"`.
+-   **Стратегия обновления:** В 2026 году рекомендуется использовать `--reload-strategy=annotations` для совместимости с GitOps (ArgoCD/Flux), чтобы избежать состояния OutOfSync.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Веб-сервер с конфигурацией в ConfigMap
+### Сценарий 1: Веб-сервер с динамическим контентом (subPath)
 
-**Задача:** Автоматический перезапуск OpenResty при обновлении HTML (HyperText Markup Language) контента, хранящегося в ConfigMap.
-
-**Шаг 1: Создание ресурсов**
-
-Ниже представлен пример манифеста в формате YAML (язык разметки данных):
+**Задача:** Перезапуск OpenResty при обновлении HTML-файла, смонтированного через `subPath`.
+**Особенность:** Без Reloader изменения в `subPath` не синхронизируются внутри контейнера без перезапуска пода (ограничение ядра Linux).
 
 ```yaml
-# openresty-app.yaml
-
+# openresty-deployment.yaml
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: openresty-index-html
-  namespace: default
+  name: web-content
 data:
-  index.html: |
-    <html>
-      <body>
-        <h1>Версия 1</h1>
-        <p>Последнее обновление: 2026-06-01</p>
-      </body>
-    </html>
+  index.html: "<h1>Version 1.0</h1>"
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: openresty-deployment
-  namespace: default
+  name: openresty
   annotations:
-    # Reloader будет следить за этим ConfigMap
-    configmap.reloader.stakater.com/reload: "openresty-index-html"
+    # Отслеживаем конкретный ConfigMap
+    configmap.reloader.stakater.com/reload: "web-content"
 spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: openresty
   template:
-    metadata:
-      labels:
-        app: openresty
     spec:
       containers:
         - name: openresty
-          image: openresty/openresty:latest
-          ports:
-            - containerPort: 80
+          image: openresty/openresty:alpine
           volumeMounts:
-            - name: index-volume
+            - name: html
               mountPath: /usr/local/openresty/nginx/html/index.html
               subPath: index.html
       volumes:
-        - name: index-volume
+        - name: html
           configMap:
-            name: openresty-index-html
+            name: web-content
 ```
 
-**Шаг 2: Обновление ConfigMap**
-
-После внесения изменений в файл `openresty-app-v2.yaml` примените его:
-
-```bash
-kubectl apply -f openresty-app-v2.yaml
-```
-
-**Шаг 3: Наблюдение за результатом**
-
-```bash
-# Отслеживание состояния подов в реальном времени
-kubectl get pods -w
-```
-
-Ожидаемый результат: старый под завершается (`Terminating`), новый запускается с обновлённым контентом. Подробнее о мониторинге: [Мониторинг и отладка](./reloader_monitoring_and_best_practices.md).
+**Проверка срабатывания:**
+1.  Обновите ConfigMap: `kubectl patch configmap web-content -p '{"data":{"index.html":"<h1>Version 2.0</h1>"}}'`.
+2.  Наблюдайте за перезапуском: `kubectl get pods -w`.
+3.  # → result: Старые поды переходят в `Terminating`, новые запускаются.
 
 ---
 
-### Сценарий 2: TLS-сертификаты через Secret
+### Сценарий 2: Ротация секретов через Secrets Store CSI Driver
 
-**Задача:** Перезапуск nginx-ingress при обновлении TLS (Transport Layer Security — протокол защиты транспортного уровня) сертификата.
+**Задача:** Автоматический перезапуск приложения при обновлении секрета во внешнем хранилище (Vault/AWS/Azure).
+**Требование:** Reloader запущен с флагом `--enable-csi-integration=true`.
 
 ```yaml
+# app-with-csi.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-ingress
+  name: business-app
   annotations:
-    secret.reloader.stakater.com/reload: "nginx-tls-secret"
+    # Reloader следит за SecretProviderClass
+    secret.reloader.stakater.com/reload: "vault-db-creds"
 spec:
   template:
     spec:
       containers:
-        - name: nginx
-          image: nginx:latest
+        - name: app
+          image: my-app:latest
           volumeMounts:
-            - name: tls
-              mountPath: /etc/nginx/ssl
+            - name: secrets-store-inline
+              mountPath: "/mnt/secrets-store"
               readOnly: true
       volumes:
-        - name: tls
-          secret:
-            secretName: nginx-tls-secret
+        - name: secrets-store-inline
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "vault-db-creds"
 ```
+
+**Принцип работы:** Когда CSI-драйвер обнаруживает изменение в Vault и обновляет статус `SecretProviderClassPodStatus`, Reloader инициирует Rolling Update.
 
 ---
 
-### Сценарий 3: Автоматическое обнаружение всех ресурсов
+### Сценарий 3: Интеграция с Argo Rollouts (Canary)
 
-**Задача:** Использование режима `auto`, при котором Reloader самостоятельно находит все ConfigMap и Secret, используемые подом.
+**Задача:** При изменении секрета запускать не обычный перезапуск, а Canary-развёртывание через Argo Rollouts.
+**Требование:** Reloader запущен с флагом `--is-argo-rollouts=true`.
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
+# argo-rollout-example.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
-  name: myapp
+  name: canary-app
   annotations:
     reloader.stakater.com/auto: "true"
 spec:
+  replicas: 5
+  strategy:
+    canary:
+      steps:
+        - setWeight: 20
+        - pause: { duration: 10m }
   template:
     spec:
       containers:
-        - name: myapp
-          image: myapp:latest
+        - name: app
+          image: my-app:latest
           envFrom:
-            - configMapRef:
-                name: app-config
             - secretRef:
-                name: app-secrets
+                name: api-keys
 ```
 
-**Предупреждение:** Режим `auto: "true"` менее предсказуем, так как любое изменение любого связанного ресурса вызовет перезапуск всего приложения.
+**Результат:** При обновлении секрета `api-keys` Reloader обновит `Rollout`, что запустит постепенный перевод трафика (20% на новые поды), вместо мгновенного перезапуска всех реплик.
+
+---
+
+### Сценарий 4: Оптимизация для GitOps (Стратегия аннотаций)
+
+**Задача:** Использование Reloader в кластере под управлением ArgoCD без возникновения конфликтов "OutOfSync".
+
+Если Reloader добавляет переменные окружения (`env-vars`), ArgoCD видит расхождение с Git. Решение — использовать аннотации.
+
+**Настройка контроллера:** `--reload-strategy=annotations`.
+
+**Манифест приложения:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitops-app
+  annotations:
+    reloader.stakater.com/auto: "true"
+    # Reloader будет записывать хеш сюда:
+    # reloader.stakater.com/last-reloaded-from: "..."
+spec:
+  # ...
+```
 
 ---
 
 ## Дополнительная информация
 
-### Ограничения и особенности
+### Рекомендации по выбору режима
 
-При использовании Reloader важно учитывать специфику работы с `subPath` и масштабируемость в больших кластерах. Подробное описание ограничений доступно в разделе:
-[Обзор Reloader: Ограничения](./reloader_overview.md#ограничения)
+| Режим | Плюсы | Минусы |
+| :--- | :--- | :--- |
+| **Явный (Explicit)** | Максимальный контроль, отсутствие лишних перезапусков. | Требует ручного перечисления всех ресурсов в аннотациях. |
+| **Автоматический (`auto`)** | "Поставил и забыл", работает для всех ENV и Volumes. | Может вызвать каскадный перезапуск при случайном изменении общего ConfigMap. |
 
-**См. также:**
+### Группировка обновлений (Debounce)
 
-- [Мониторинг и отладка Reloader](./reloader_monitoring_and_best_practices.md)
+Для предотвращения множественных перезапусков при массовом обновлении секретов используйте аннотацию паузы:
+`deployment.reloader.stakater.com/pause-period: "2m"`
+# → result: Reloader подождет 2 минуты после первого изменения, соберет все остальные и выполнит один перезапуск.
+
+### См. также
 - [Установка и настройка Reloader](./reloader_installation.md)
+- [Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)
+- [Официальные примеры (GitHub)](https://github.com/stakater/Reloader/tree/master/examples)

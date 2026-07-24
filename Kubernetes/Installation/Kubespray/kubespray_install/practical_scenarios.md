@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Сценарий развертывания** — последовательность действий по подготовке инфраструктуры, конфигурации Ansible и запуску плейбуков для создания функционирующего кластера Kubernetes.
+**Сценарий развертывания** — последовательная последовательность действий по подготовке инфраструктуры, конфигурации Ansible и запуску плейбуков для создания функционирующего кластера Kubernetes.
 
 **Кастомизация переменных** — процесс адаптации стандартных шаблонов Kubespray под конкретные требования (выбор сетевого плагина, версии компонентов, параметров безопасности).
 
@@ -12,11 +12,9 @@
 
 Практическая работа с Kubespray строится на жизненном цикле "Подготовка → Конфигурация → Применение":
 
-1. **Подготовка:** настройка машины управления и обеспечение сетевой связности.
-2. **Конфигурация:** описание топологии в инвентаре и параметров в `group_vars`.
-3. **Применение:** запуск основного плейбука `cluster.yml`.
-
-Успешность сценария зависит от точности описания целевых узлов и соответствия версий ПО.
+1. **Подготовка:** настройка машины управления и обеспечение сетевой связности с целевыми узлами.
+2. **Конфигурация:** декларативное описание топологии в инвентаре и параметров кластера в `group_vars`.
+3. **Применение:** запуск основного плейбука `cluster.yml` для развертывания или специфических плейбуков для управления жизненным циклом.
 
 ---
 
@@ -24,37 +22,39 @@
 
 ### Сценарий 1: Подготовка окружения и зависимостей
 
-1. **Настройка машины управления** (с которой запускается Ansible):
+1. **Установка системных пакетов** на машине управления (Ubuntu/Debian):
 
    ```bash
    sudo apt update
-   sudo apt install -y git python3-pip software-properties-common
+   sudo apt install -y git python3-pip python3-venv software-properties-common
    ```
 
-2. **Клонировать репозиторий** (от имени обычного пользователя):
+2. **Клонирование репозитория** Kubespray:
 
    ```bash
    git clone https://github.com/kubernetes-sigs/kubespray.git
    cd kubespray
    ```
 
-3. **Установка Ansible и библиотек:**
+3. **Создание и активация виртуального окружения** (рекомендуемый метод):
 
    ```bash
-   # Рекомендуется использовать виртуальное окружение Python
-   python3 -m pip install -r requirements.txt
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install --upgrade pip
+   pip install -r requirements.txt
    ```
 
 ### Сценарий 2: Обеспечение сетевой связности (SSH)
 
-Машина управления должна подключаться к узлам по SSH без пароля.
+Машина управления должна подключаться к узлам по SSH с правами `sudo` без ввода пароля.
 
 ```bash
-# Генерация ключа (если отсутствует)
-ssh-keygen -t rsa -b 4096
+# Генерация ключа на машине управления
+ssh-keygen -t ed25519
 
-# Распространение ключа на целевые узлы
-ssh-copy-id user@target-node-ip
+# Копирование ключа на все целевые узлы
+ssh-copy-id -i ~/.ssh/id_ed25519.pub user@target-node-ip
 ```
 
 ### Сценарий 3: Настройка топологии кластера (Inventory)
@@ -62,39 +62,49 @@ ssh-copy-id user@target-node-ip
 1. **Создание инвентаря на основе шаблона:**
 
    ```bash
-   cp -rfp inventory/sample inventory/my-cluster
+   cp -rfp inventory/sample inventory/my_cluster
    ```
 
-2. **Генерация списка хостов** (использование встроенного скрипта):
+2. **Генерация инвентаря** с помощью скрипта-строителя:
 
    ```bash
-   IPS="10.128.0.2 10.128.0.35 10.128.0.1"
-   CONFIG_FILE=inventory/my-cluster/hosts.yaml python3 contrib/inventory_builder/inventory.py ${IPS[@]}
+   # Список IP-адресов будущих узлов кластера
+   IPS=(10.128.0.10 10.128.0.11 10.128.0.12 10.128.0.13)
+   CONFIG_FILE=inventory/my_cluster/hosts.yaml python3 contrib/inventory_builder/inventory.py ${IPS[@]}
    ```
 
-3. **Ручная корректировка ролей** в `inventory/my-cluster/hosts.yaml`:
-   Убедитесь, что узлы распределены по группам `kube_control_plane`, `etcd` и `kube_node`. Для отказоустойчивости (HA) требуется минимум 3 узла в группах `kube_control_plane` и `etcd`.
+3. **Верификация ролей** в `inventory/my_cluster/hosts.yaml`:
+   Убедитесь, что группы `kube_control_plane` и `etcd` содержат нечетное количество узлов (минимум 3 для обеспечения отказоустойчивости в Production).
 
 ### Сценарий 4: Кастомизация параметров (group_vars)
 
-#### Настройка базовых параметров (`all/all.yml`)
+#### Файл `inventory/my_cluster/group_vars/all/all.yml`
 
-- `etcd_kubeadm_enabled: true` — управление etcd через kubeadm.
-- `loadbalancer_apiserver_localhost: true` — запуск локального LB для API на воркерах.
+- `bin_dir: /usr/local/bin` — путь для установки бинарных файлов.
+- `http_proxy` / `https_proxy` — настроить при работе через прокси.
+- `kubeconfig_localhost: true` — автоматически копировать `admin.conf` на машину управления.
 
-#### Настройка кластера (`k8s_cluster/k8s-cluster.yml`)
+#### Файл `inventory/my_cluster/group_vars/k8s_cluster/k8s-cluster.yml`
 
-- `kube_version: v1.31.0` — целевая версия Kubernetes.
-- `container_manager: containerd` — среда выполнения.
-- `kube_network_plugin: calico` — выбор сетевого плагина.
-- `kubeconfig_localhost: true` — копирование конфига доступа на машину управления.
+- `kube_version: v1.32.1` — целевая версия Kubernetes.
+- `kube_network_plugin: calico` — сетевой плагин (варианты: calico, cilium, flannel).
+- `container_manager: containerd` — современный стандарт среды выполнения.
+- `dns_mode: coredns` — основной сервис разрешения имен.
 
 ### Сценарий 5: Запуск развертывания
 
-Выполнение плейбука с правами суперпользователя на целевых узлах:
+Запуск основного плейбука. Флаг `--become` необходим для выполнения задач с правами `root`.
 
 ```bash
-ansible-playbook -i inventory/my-cluster/hosts.yaml --become --become-user=root cluster.yml
+ansible-playbook -i inventory/my_cluster/hosts.yaml --become cluster.yml
+```
+
+### Сценарий 6: Очистка узлов (Сброс кластера)
+
+Если требуется полностью удалить компоненты Kubernetes и вернуть узлы в исходное состояние:
+
+```bash
+ansible-playbook -i inventory/my_cluster/hosts.yaml --become reset.yml
 ```
 
 ---
@@ -103,14 +113,12 @@ ansible-playbook -i inventory/my-cluster/hosts.yaml --become --become-user=root 
 
 ### Действия после установки
 
-После завершения плейбука необходимо выполнить верификацию кластера и настроить доступ.
-
-1. **Проверка работоспособности:** детальные инструкции по проверке узлов, системных подов и сетевой связности — в разделе **[Проверка работоспособности кластера](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_verification.md)**.
-2. **Настройка доступа (kubeconfig):** информация о расположении `admin.conf` и методах подключения — в **[Дополнительной информации](./additional_info.md)** и общем руководстве **[Kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)**.
-3. **Низкоуровневая диагностика:** работа с контейнерами через `crictl` описана в **[Диагностике Runtime](../../Troubleshooting/Common_Errors/NodeUnavailability/runtime_issues.md)**.
+1. **Верификация:** детальные инструкции по проверке статуса узлов и системных подов — в руководстве **[Проверка работоспособности кластера](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_verification.md)**.
+2. **Настройка доступа:** методы подключения через `kubectl` и работа с артефактами описаны в **[Дополнительной информации](./additional_info.md)** и **[Kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)**.
+3. **Диагностика:** инструменты низкоуровневой отладки (crictl) — в разделе **[Диагностика Runtime](../../Troubleshooting/Common_Errors/NodeUnavailability/runtime_issues.md)**.
 
 ### См. также
 
-- **[Определения](./definitions.md)** — глоссарий терминов.
-- **[Основные концепции](./basic_concepts.md)** — требования и архитектура.
-- **[Обзор Kubespray](../overview.md)** — общие возможности инструмента.
+- **[Определения](./definitions.md)** — глоссарий и описание плейбуков.
+- **[Основные концепции](./basic_concepts.md)** — архитектурные требования и системные параметры.
+- **[Обзор Kubespray](../overview.md)** — матрица совместимости и возможности.

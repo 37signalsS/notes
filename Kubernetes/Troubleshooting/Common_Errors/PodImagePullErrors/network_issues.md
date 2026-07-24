@@ -2,102 +2,97 @@
 
 ## Определения
 
-**Сетевые проблемы (в контексте Image Pull)** — класс ошибок, при которых агент `kubelet` не может установить соединение с реестром образов (Registry) из-за некорректной настройки DNS, блокировок Firewall, отсутствия параметров Proxy, проблем с TLS-сертификатами или ограничений NetworkPolicy.
+**Сетевые проблемы (в контексте Image Pull)** — совокупность факторов на уровне сетевой инфраструктуры узла или кластера, препятствующих успешному обмену данными между агентом `kubelet` (через Container Runtime) и реестром образов.
 
-**Rate Limiting** — механизм ограничения частоты запросов к реестру (например, Docker Hub). При превышении лимита реестр возвращает ошибку `toomanyrequests`.
+**MTU (Maximum Transmission Unit)** — максимальный размер полезного блока данных одного пакета. Несоответствие MTU (например, из-за оверхеда инкапсуляции VXLAN/Geneve) часто приводит к "зависанию" загрузки больших слоев образа.
 
-**NetworkPolicy** — объект Kubernetes, определяющий правила прохождения трафика между подами и внешними ресурсами. В контексте загрузки образов важны правила Egress (исходящий трафик).
+**Egress Traffic** — исходящий трафик от узлов кластера. Загрузка образов инициируется на уровне ОС узла, поэтому правила фильтрации должны учитывать доступ к внешним эндпоинтам реестра.
 
 ---
 
 ## Основные концепции
 
-### Классификация сетевых проблем
+### Классификация сетевых сбоев
 
-| Категория | Симптом в событиях (Events) | Корневая причина |
+| Категория | Сообщение об ошибке | Корневая причина |
 | :--- | :--- | :--- |
-| **DNS** | `dial tcp: lookup registry.example.com: no such host` | Ошибка в `/etc/resolv.conf`, недоступность DNS-сервера |
-| **Firewall** | `connection timed out` | Порт 443 заблокирован на сетевом оборудовании или узле |
-| **Proxy** | `connection refused`, `proxy error` | Не настроены переменные `HTTP_PROXY` / `HTTPS_PROXY` для среды выполнения |
-| **TLS** | `x509: certificate signed by unknown authority` | Self-signed сертификат реестра не добавлен в доверенные на узле |
-| **Rate Limit** | `toomanyrequests: pull rate limit exceeded` | Превышен лимит анонимных скачиваний с Docker Hub |
-| **NetworkPolicy** | `dial tcp <ip>:443: i/o timeout` | Правила Egress блокируют доступ пода к реестру |
+| **DNS** | `no such host` | Неверные upstream DNS на узле или проблемы с резолвом внешних имен. |
+| **Маршрутизация** | `no route to host` | Отсутствие маршрута к сети реестра или некорректная таблица маршрутизации. |
+| **Таймауты** | `connection timed out` | Блокировка порта 443 на внешнем Firewall или некорректный MTU. |
+| **Proxy** | `503 Service Unavailable` | Ошибки на стороне прокси-сервера или отсутствие настроек прокси в рантайме. |
+| **TLS/SSL** | `x509: certificate expired` | Просроченный сертификат реестра или рассинхронизация времени на узле. |
 
-### Настройки Proxy для среды выполнения
+### Особенности сетевого пути загрузки
 
-Важно учитывать, что `kubelet` и контейнерный рантайм (containerd/docker) игнорируют системные переменные окружения пользователя. Настройки должны быть заданы в конфигурации соответствующих системных служб.
+Важно понимать, что процесс **Image Pull происходит вне сетевого пространства имен пода (Pod Network Namespace)**. Запрос выполняется процессом рантайма (containerd/CRI-O) в сетевом пространстве имен хоста.
+- `NetworkPolicy` уровня пода **не влияет** на возможность загрузки образа самим `kubelet`.
+- Влияние оказывают только `GlobalNetworkPolicy` (если используется Calico/Cilium) или правила `iptables`/`nftables` самого хоста.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Диагностика соединения с узла
+### Сценарий 1: Диагностика MTU Mismatch (Зависание загрузки)
 
-Если в событиях пода наблюдаются таймауты или ошибки DNS, проверьте доступность реестра напрямую с проблемного узла:
+**Симптом:** Маленькие слои скачиваются, но на больших загрузка "зависает" и обрывается по таймауту.
 
+**Диагностика:**
+Проверьте прохождение больших пакетов с флагом запрета фрагментации (DF):
 ```bash
-# Проверка разрешения имени
-nslookup registry.example.com
-# → Server: 127.0.0.53, Address: 127.0.0.53#53, Non-authoritative answer: Name: registry.example.com...
-
-# Проверка доступности порта реестра
-curl -v telnet://registry.example.com:443
-# → * Connected to registry.example.com (IP) port 443 (#0)
-
-# Проверка TLS-сертификата
-curl -v https://registry.example.com/v2/
-# → HTTP/1.1 200 OK (или 401 Unauthorized, что подтверждает сетевую связность)
+ping -s 1472 -M do registry.example.com
+# Если пакеты не проходят, попробуйте уменьшить размер:
+ping -s 1400 -M do registry.example.com
 ```
 
-### Сценарий 2: Настройка Proxy для kubelet (Systemd)
+**Решение:**
+Установите корректный MTU на сетевых интерфейсах узлов или настройте MSS Clamping на сетевом оборудовании.
 
-Создайте drop-in файл для настройки прокси-сервера:
+### Сценарий 2: Настройка Proxy для containerd
 
+Большинство ошибок настройки прокси связано с тем, что переменные задаются только для `kubelet`, в то время как скачиванием занимается рантайм.
+
+**Настройка через Systemd (для containerd):**
+Создайте директорию и файл конфигурации:
+```bash
+mkdir -p /etc/systemd/system/containerd.service.d/
+```
+
+Файл `/etc/systemd/system/containerd.service.d/http-proxy.conf`:
 ```ini
-# /etc/systemd/system/kubelet.service.d/http-proxy.conf
 [Service]
-Environment="HTTP_PROXY=http://proxy.example.com:3128"
-Environment="HTTPS_PROXY=http://proxy.example.com:3128"
-Environment="NO_PROXY=localhost,127.0.0.1,.cluster.local"
+Environment="HTTP_PROXY=http://proxy.local:3128"
+Environment="HTTPS_PROXY=http://proxy.local:3128"
+Environment="NO_PROXY=localhost,127.0.0.1,10.96.0.0/12,192.168.0.0/16,.svc,.cluster.local"
 ```
 
-Примените изменения:
+**Применение:**
+```bash
+systemctl daemon-reload && systemctl restart containerd
+```
+
+### Сценарий 3: Проверка DNS-резолва (IPv4 vs IPv6)
+
+Если реестр поддерживает IPv6, но сеть кластера настроена некорректно, `kubelet` может пытаться подключиться по нерабочему IPv6 адресу.
+
+**Диагностика:**
+```bash
+# Проверка типов записей
+dig A registry.example.com +short
+dig AAAA registry.example.com +short
+```
+
+**Решение:**
+Если IPv6 не поддерживается инфраструктурой, убедитесь, что в `/etc/resolv.conf` или настройках рантайма не стоит приоритет на IPv6 (`precedence ::ffff:0:0/96 100` в `gai.conf`).
+
+### Сценарий 4: Тестирование связности через crictl
+
+Для проверки того, как именно рантайм видит сеть, используйте `crictl`:
 
 ```bash
-systemctl daemon-reload
-systemctl restart kubelet
-# → (перезапуск службы kubelet)
+# Попытка пулла через CRI с замером времени
+time crictl pull registry.example.com/my-app:1.0
 ```
-
-### Сценарий 3: Настройка NetworkPolicy для доступа к реестру
-
-Если в кластере используется политика "deny-all" по умолчанию, необходимо явно разрешить исходящий трафик к реестру:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-registry-egress
-  namespace: my-namespace
-spec:
-  podSelector: {}
-  policyTypes:
-  - Egress
-  egress:
-  - to:
-    - ipBlock:
-        cidr: 1.2.3.4/32  # IP адрес вашего реестра
-    ports:
-    - protocol: TCP
-      port: 443
-```
-
-Проверка применения политики:
-
-```bash
-kubectl describe networkpolicy allow-registry-egress -n my-namespace
-# → Name: allow-registry-egress, Namespace: my-namespace, ... Egress rules: ...
-```
+Если команда завершается успешно, но поды в K8s не стартуют — проблема может быть в `imagePullSecrets` или правах доступа, а не в сети.
 
 ---
 
@@ -107,4 +102,6 @@ kubectl describe networkpolicy allow-registry-egress -n my-namespace
 
 - [Пошаговая диагностика](./diagnostics.md) — общий алгоритм поиска причин ошибок.
 - [Air-gapped кластеры](./airgapped.md) — работа в полностью изолированных средах.
-- [Best Practices: NetworkPolicy](../../../Networking/Network/NetworkPolicy/best_practices.md) — общие рекомендации по сетевой безопасности.
+- [Распространённые ошибки](./common_errors.md) — разбор кодов 401, 403, 429.
+- [Определения](./definitions.md) — базовые термины Image Pull.
+- [Сетевой Troubleshooting](../../../Networking/Troubleshooting/networking_troubleshooting_guide.md) — общие методы отладки сетевых соединений.

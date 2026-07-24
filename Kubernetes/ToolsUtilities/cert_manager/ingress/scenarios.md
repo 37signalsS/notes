@@ -2,7 +2,9 @@
 
 ## Определения
 
-**Сценарии интеграции** — практические примеры использования cert-manager с Ingress для автоматического получения и продления TLS-сертификатов. Каждый сценарий демонстрирует конкретный паттерн конфигурации.
+**Сценарии интеграции** — практические примеры использования cert-manager с Ingress для автоматического получения и продления TLS-сертификатов. Каждый сценарий демонстрирует конкретный паттерн конфигурации в зависимости от требований к безопасности и доменам.
+
+**ingress-shim** — встроенный контроллер cert-manager, который отслеживает объекты Ingress и автоматически создаёт ресурсы `Certificate` на основе аннотаций.
 
 > **См. также:** [Обзор интеграции](./overview.md) — концепции, аннотации, поток работы, диагностика.
 
@@ -10,24 +12,17 @@
 
 ## Основные концепции
 
-Все сценарии используют один и тот же принцип:
+Все сценарии базируются на автоматизации жизненного цикла:
 
-```
-Ingress с аннотацией cert-manager
-       ↓
-Автоматическое создание Certificate
-       ↓
-ACME-проверка (HTTP-01 / DNS-01)
-       ↓
-Сертификат в Secret → Ingress использует для TLS
-```
+1. **Обнаружение:** Ingress с аннотацией `cert-manager.io/cluster-issuer` или `cert-manager.io/issuer`.
+2. **Генерация:** Автоматическое создание ресурса `Certificate`.
+3. **Валидация:** Выполнение ACME-проверки (HTTP-01 или DNS-01).
+4. **Применение:** Сохранение сертификата в Secret, который используется Ingress-контроллером.
 
-**Типы сценариев:**
-
-| Тип | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| Через аннотации | cert-manager автоматически создаёт Certificate | Быстрая настройка, стандартные случаи |
-| Прямой Certificate | Ручное создание Certificate без аннотаций | Тонкий контроль параметров, не-Ingress сценарии |
+**Стандарты 2026 года:**
+*   **Срок действия:** Let's Encrypt перешел на 45-дневные сертификаты (`duration: 1080h`).
+*   **ARI (ACME Renewal Information):** cert-manager 1.15+ поддерживает ARI, позволяя CA рекомендовать точное время продления.
+*   **Безопасность:** Рекомендуется политика ротации ключей `Always`.
 
 ---
 
@@ -35,7 +30,7 @@ ACME-проверка (HTTP-01 / DNS-01)
 
 ### Сценарий 1: Базовый Ingress с HTTP-01
 
-**Цель:** Автоматически получить сертификат для одного домена.
+**Цель:** Автоматическое получение сертификата для одного домена через стандартную проверку.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -45,6 +40,8 @@ metadata:
   namespace: default
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Стандарт безопасности 2026 года
+    cert-manager.io/private-key-rotation-policy: "Always"
 spec:
   ingressClassName: nginx
   tls:
@@ -64,18 +61,15 @@ spec:
               number: 80
 ```
 
-**Процесс:**
-
-1. cert-manager создаёт `Certificate` с именем `myapp-tls`
-2. Выполняется HTTP-01 проверка через Ingress
-3. Secret `myapp-tls` создаётся с сертификатом
-4. Ingress использует Secret для TLS
+**Особенности:**
+- cert-manager автоматически создаст `Certificate` с `duration: 1080h` (45 дней) для Let's Encrypt.
+- HTTP-01 проверка требует доступности порта 80 из интернета.
 
 ---
 
 ### Сценарий 2: Несколько доменов в одном Ingress (SAN)
 
-**Цель:** Один сертификат для нескольких доменов.
+**Цель:** Использование одного сертификата (Subject Alternative Name) для группы доменов.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -84,6 +78,7 @@ metadata:
   name: multi-domain-ingress
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Явное указание CN (необязательно, но полезно для логов)
     cert-manager.io/common-name: "example.com"
 spec:
   ingressClassName: nginx
@@ -95,16 +90,6 @@ spec:
     secretName: example-com-multi-tls
   rules:
   - host: example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: main-service
-            port:
-              number: 80
-  - host: www.example.com
     http:
       paths:
       - path: /
@@ -130,7 +115,7 @@ spec:
 
 ### Сценарий 3: Временный сертификат до ACME-проверки
 
-**Цель:** Избежать ошибок TLS во время ACME-проверки.
+**Цель:** Обеспечить работу TLS немедленно (через самоподписанный сертификат), пока идет процесс проверки ACME.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -159,16 +144,11 @@ spec:
               number: 80
 ```
 
-**Поведение:**
-
-- cert-manager создаёт self-signed сертификат немедленно
-- После прохождения ACME-проверки заменяется на настоящий
-
 ---
 
-### Сценарий 4: DNS-01 для wildcard-доменов
+### Сценарий 4: DNS-01 для Wildcard-доменов
 
-**Цель:** Wildcard-сертификат `*.example.com`.
+**Цель:** Получение wildcard-сертификата `*.example.com`, когда HTTP-проверка невозможна или неудобна.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -177,7 +157,8 @@ metadata:
   name: wildcard-ingress
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    cert-manager.io/acme-challenge-type: "dns01"
+    # Тип проверки через аннотацию поддерживается не всеми версиями,
+    # чаще настраивается в самом Issuer.
 spec:
   ingressClassName: nginx
   tls:
@@ -196,28 +177,18 @@ spec:
             name: app-service
             port:
               number: 80
-  - host: api.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: api-service
-            port:
-              number: 80
 ```
 
-> **Важно:** Требуется настроенный DNS-01 solver в ClusterIssuer. HTTP-01 не поддерживает wildcard-сертификаты.
+> **Важно:** HTTP-01 проверка **не поддерживает** wildcard-сертификаты. Требуется настроенный DNS-01 solver в ClusterIssuer.
 
 ---
 
-### Сценарий 5: Прямое создание Certificate (без аннотаций)
+### Сценарий 5: Прямое создание Certificate (Полный контроль)
 
-**Цель:** Полный контроль над параметрами сертификата.
+**Цель:** Тонкая настройка параметров (алгоритмы, сроки), недоступных через аннотации Ingress.
 
 ```yaml
-# 1. Certificate ресурс
+# 1. Ресурс Certificate
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -225,8 +196,8 @@ metadata:
   namespace: default
 spec:
   secretName: my-domain-tls
-  duration: 2160h       # 90 дней
-  renewBefore: 360h     # 15 дней
+  duration: 1080h       # 45 дней (стандарт 2026)
+  renewBefore: 168h     # 7 дней
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
@@ -236,20 +207,19 @@ spec:
   privateKey:
     algorithm: ECDSA
     size: 256
-    encoding: PKCS8     # Обязательно для Java-приложений
+    rotationPolicy: Always
+    encoding: PKCS8
 ---
-# 2. Ingress без аннотаций cert-manager
+# 2. Ingress ссылается на уже существующий Secret
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: my-domain-ingress
-  namespace: default
 spec:
   ingressClassName: nginx
   tls:
   - hosts:
     - my-domain.com
-    - www.my-domain.com
     secretName: my-domain-tls
   rules:
   - host: my-domain.com
@@ -264,27 +234,25 @@ spec:
               number: 80
 ```
 
-**Преимущества:**
-
-- Полный контроль над `duration`, `renewBefore`, `privateKey`
-- Можно использовать для не-Ingress сценариев (mTLS, Secret для приложений)
-
 ---
 
 ## Дополнительная информация
 
 ### Диагностика
 
-Диагностика cert-manager описана в [Обзоре интеграции](./overview.md#диагностика).
+Диагностика cert-manager подробно описана в [Обзоре интеграции](./overview.md#диагностика-через-cmctl).
 
-Краткие команды для проверки сценариев:
+Краткие команды для проверки объектов выпуска:
 
 ```bash
-# Проверить статус Certificate, созданного через аннотации
+# Проверка статуса сертификата
 kubectl get certificate -n <namespace>
 
-# Посмотреть связанный Challenge (ACME-проверка)
+# Проверка процесса ACME-вызова (Challenge)
 kubectl get challenge -n <namespace>
+
+# Просмотр статуса заказа (Order)
+kubectl get order -n <namespace>
 ```
 
 ### Смотрите также
@@ -292,3 +260,4 @@ kubectl get challenge -n <namespace>
 - **[Обзор интеграции](./overview.md)** — концепции, аннотации, диагностика, частые ошибки
 - **[Cert-manager: Определения](../definitions.md)** — CRD, Issuer, ACME Solvers
 - **[Let's Encrypt](../LetsEncrypt/index.md)** — публичные сертификаты через ACME
+- **[Gateway API: Сценарии](../gateway_api/practical_scenarios.md)** — современный подход к TLS в Kubernetes

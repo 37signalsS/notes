@@ -3,20 +3,22 @@
 > **Навигация по руководству:**
 >
 > - **[Предварительные требования и подготовка окружения](./lgtm_otel_minikube_prerequisites_environment.md)**
-> - **[Развертывание вспомогательных компонентов](./lgtm_otel_minikube_auxiliary_components.md)** ← текущий
+> - **[Развертывание вспомогательных компонентов](./lgtm_otel_minikube_auxiliary_components.md)** (текущий)
 > - **[Развертывание стека LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)**
 > - **[Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)**
 > - **[Тестирование и верификация](./lgtm_otel_minikube_test_app_verification.md)**
 
+---
+
 ## Определения
 
-**Cert-manager** — контроллер Kubernetes для автоматизации управления TLS-сертификатами. Подробнее: **[Cert-manager: Определения](../../ToolsUtilities/cert_manager/definitions.md)**.
+**Cert-manager** — нативный Kubernetes-контроллер для автоматизации управления TLS-сертификатами. В данном стеке обеспечивает выпуск сертификатов для Ingress. Подробнее: **[Cert-manager: Определения](../../ToolsUtilities/cert_manager/definitions.md)**.
 
-**Docker Registry** — сервис хранения и распространения образов. В данном руководстве разворачивается локально. Подробнее: **[Docker Registries](../../../Docker/docker_registries.md)**.
+**Docker Registry** — сервис хранения и распространения образов. Используется для хранения локально собранных образов приложений и компонентов. Подробнее: **[Docker Registries](../../../Docker/docker_registries.md)**.
 
-**ClusterIssuer** — ресурс cert-manager, представляющий центр сертификации (CA) на уровне кластера.
+**ClusterIssuer** — ресурс cert-manager, представляющий центр сертификации (CA), доступный на уровне всего кластера.
 
-**Самоподписанный сертификат** — сертификат, подписанный собственным CA кластера. Используется для тестирования.
+**Самоподписанный сертификат (Self-signed)** — сертификат, выпущенный внутренним CA кластера. Применяется для шифрования трафика в тестовых окружениях без использования публичных доверенных центров.
 
 ---
 
@@ -24,13 +26,13 @@
 
 ### Архитектура вспомогательных компонентов
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     Minikube Cluster                        │
 │                                                             │
 │  ┌─────────────────┐         ┌─────────────────────────┐   │
 │  │  Cert-manager   │         │   Docker Registry       │   │
-│  │                 │         │   (twuni/chart)         │   │
+│  │                 │         │   (twuni chart)         │   │
 │  │  - CA Issuer    │         │   Port: 30000           │   │
 │  │  - Certificate  │         │   Host: registry.test   │   │
 │  │  - TLS Secret   │         │   TLS: self-signed      │   │
@@ -49,15 +51,15 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Поток выпуска сертификатов
+### Жизненный цикл выпуска сертификатов
 
-1. Установка **cert-manager**.
-2. Создание **ClusterIssuer** (self-signed CA).
-3. Создание ресурса **Certificate** для каждого сервиса.
-4. Выпуск TLS-сертификата и сохранение в **Secret**.
-5. Использование Secret в **Ingress** для HTTPS.
+1. Развертывание оператора **cert-manager**.
+2. Настройка **ClusterIssuer** (создание локального CA).
+3. Определение ресурсов **Certificate** для сервисов стека.
+4. Генерация TLS-секретов и их автоматическое обновление.
+5. Подключение секретов в конфигурацию **Ingress** для терминирования TLS.
 
-### Требования к ресурсам
+### Распределение ресурсов
 
 | Компонент | CPU (request/limit) | Memory (request/limit) |
 | :--- | :--- | :--- |
@@ -68,13 +70,13 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Установка Cert-manager и настройка CA
+### Сценарий 1: Установка Cert-manager и настройка внутреннего CA
 
-**Цель:** Развернуть cert-manager и создать самоподписанный CA.
+**Цель:** Развернуть инфраструктуру управления сертификатами и подготовить доверенный источник для кластера.
 
 #### Шаг 1: Установка cert-manager
 
-Подробная инструкция: **[Установка cert-manager](../../ToolsUtilities/cert_manager/installation.md)**.
+Используется актуальная версия (на июль 2026 г. — v1.20.2). Подробности в SSoT: **[Установка cert-manager](../../ToolsUtilities/cert_manager/installation.md)**.
 
 ```bash
 helm repo add jetstack https://charts.jetstack.io
@@ -84,21 +86,20 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   --namespace cert-manager \
   --create-namespace \
   --set installCRDs=true \
-  --version v1.15.0
+  --version v1.20.2
 ```
 
 #### Шаг 2: Создание ClusterIssuer
 
-```bash
-# Создание ClusterIssuer
+```yaml
+# Создание ClusterIssuer (self-signed)
 kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: minikube-ca
 spec:
-  ca:
-    secretName: minikube-ca-secret
+  selfSigned: {}
 EOF
 
 # Создание корневого CA-сертификата
@@ -106,30 +107,46 @@ kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: minikube-ca-secret
+  name: minikube-ca-root
   namespace: cert-manager
 spec:
   isCA: true
-  duration: 8760h
-  secretName: minikube-ca-secret
-  privateKey:
-    algorithm: RSA
-    size: 2048
   commonName: "minikube-ca"
+  secretName: minikube-ca-secret
   issuerRef:
     name: minikube-ca
     kind: ClusterIssuer
     group: cert-manager.io
 EOF
+
+# Создание ClusterIssuer на базе созданного CA
+kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: minikube-ca-issuer
+spec:
+  ca:
+    secretName: minikube-ca-secret
+EOF
 ```
 
 ---
 
-### Сценарий 2: Развёртывание локального Docker Registry
+### Сценарий 2: Развертывание локального Docker Registry
 
-**Цель:** Развернуть реестр с TLS внутри кластера.
+**Цель:** Обеспечить хранилище для артефактов внутри кластера с поддержкой TLS.
 
-#### Шаг 1: Установка Docker Registry
+#### Шаг 1: Настройка Helm-репозитория
+
+В 2025 году репозиторий twuni был перенесен.
+
+```bash
+helm repo add twuni https://twuni.github.io/docker-registry.helm
+helm repo update
+```
+
+#### Шаг 2: Установка реестра
 
 ```bash
 helm upgrade --install docker-registry twuni/docker-registry \
@@ -138,25 +155,23 @@ helm upgrade --install docker-registry twuni/docker-registry \
   --set service.type=NodePort \
   --set service.nodePort=30000 \
   --set ingress.enabled=true \
-  --set ingress.host=registry.test \
-  --set ingress.tls.enabled=true \
-  --set ingress.tls.secretName=registry-tls \
-  --set ingress.tls.issuerName=minikube-ca \
-  --set ingress.tls.issuerKind=ClusterIssuer
+  --set ingress.hosts[0]=registry.test \
+  --set ingress.tls[0].secretName=registry-tls \
+  --set ingress.annotations."cert-manager.io/cluster-issuer"=minikube-ca-issuer
 ```
 
-#### Шаг 2: Настройка DNS и Docker Daemon
+#### Шаг 3: Настройка окружения
 
 ```bash
-# Добавление записи в /etc/hosts
+# Добавление записи в локальный hosts
 echo "$(minikube ip) registry.test" | sudo tee -a /etc/hosts
 
-# Настройка insecure registry в Minikube
+# Настройка доверия к реестру в Minikube
 minikube ssh "sudo tee /etc/docker/daemon.json <<< '{\"insecure-registries\": [\"registry.test:30000\"]}'"
 minikube ssh "sudo systemctl restart docker"
 ```
 
-#### Шаг 3: Настройка доступа (ImagePullSecrets)
+#### Шаг 4: Настройка аутентификации в Kubernetes
 
 ```bash
 kubectl create secret docker-registry regcred \
@@ -165,6 +180,7 @@ kubectl create secret docker-registry regcred \
   --docker-password=admin \
   --namespace default
 
+# Автоматическое использование секрета для всех подов
 kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred"}]}'
 ```
 
@@ -172,43 +188,45 @@ kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred
 
 ## Дополнительная информация
 
-### Поиск и устранение неисправностей
+### Устранение неисправностей
 
-| Проблема | Причина | Решение |
+| Симптом | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| **Pod в Pending** | Недостаточно ресурсов | Увеличить лимиты Minikube |
-| **Certificate в Pending** | Ошибка в ClusterIssuer | Проверить `kubectl describe certificate` |
-| **Registry недоступен** | Ошибка TLS Secret | Проверить наличие секрета `registry-tls` |
+| **Pod завис в Pending** | Дефицит ресурсов ноды | Проверить лимиты Minikube через `minikube status` |
+| **Certificate не готов (False)** | Ошибка в Issuer или ресурсе | Изучить статус: `kubectl describe certificate -n <namespace>` |
+| **Registry возвращает 502/503** | Ingress не видит сервис | Проверить готовность пода в `docker-registry` namespace |
+| **Docker push fail (x509)** | Недоверенный сертификат | Проверить `insecure-registries` в конфиге докера или импортировать CA |
 
-### Диагностика
+### Диагностические команды
 
 ```bash
-# Логи
-kubectl logs -n cert-manager -l app=cert-manager --tail=100
+# Проверка работы контроллера
+kubectl logs -n cert-manager -l app=cert-manager --tail=50
 
-# Статус сертификатов
+# Статус всех сертификатов в кластере
 kubectl get certificate -A
 ```
 
-### Связанные темы
+### Связанные материалы
 
 - **[Cert-manager: Администрирование](../../ToolsUtilities/cert_manager/Administration/index.md)**
 - **[Minikube: Практические сценарии](../../Installation/minikube/minikube_practical_scenarios.md)**
-- **[Docker Registry: Обзор](../../../Docker/docker_registries.md)**
+- **[Реестры Docker: Обзор](../../../Docker/docker_registries.md)**
 
-### Безопасность
+### Безопасность и масштабирование
 
-> **Внимание:** Конфигурация только для тестовых окружений.
+> **Внимание:** Данная конфигурация предназначена исключительно для разработки и тестирования.
 
-| Аспект | Текущая конфигурация | Production |
+| Параметр | Текущий (Dev) | Production (рекомендация) |
 | :--- | :--- | :--- |
-| **TLS** | Самоподписанные | Let's Encrypt / Корпоративный CA |
-| **Аутентификация** | Basic (admin/admin) | OIDC / Harbor |
-| **Изоляция** | Отсутствует | NetworkPolicies |
+| **Тип сертификатов** | Self-signed | Let's Encrypt или Enterprise PKI |
+| **Хранилище реестра** | Local PV (emptyDir) | S3-совместимое хранилище (MinIO, AWS S3) |
+| **Аутентификация** | Basic (упрощенная) | OIDC / Интеграция с LDAP |
+| **Изоляция** | Отсутствует | Ограничение доступа через NetworkPolicies |
 
 ---
 
 **Навигация по руководству:**
 
-- **[← Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)**
-- **[Развертывание стека LGTM →](./lgtm_otel_minikube_lgtm_stack_deployment.md)**
+- **[Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)** (назад)
+- **[Развертывание стека LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)** (вперед)

@@ -1,7 +1,5 @@
 # Инициализация кластера через kubeadm
 
-> **Надежность: 10** (Подтверждено SSoT по развёртыванию Kubernetes и актуальными данными на июнь 2026)
-
 ## Определения
 
 **kubeadm init** — команда для инициализации первого узла Control Plane и создания управляющих компонентов кластера.
@@ -54,7 +52,7 @@
 | `--service-cidr` | Сеть для сервисов | `10.96.0.0/12` |
 | `--apiserver-advertise-address` | IP, на котором API-сервер будет доступен другим узлам | `192.168.1.10` |
 | `--cri-socket` | Путь к сокету Runtime | `unix:///run/containerd/containerd.sock` |
-| `--kubernetes-version` | Выбор конкретной версии Kubernetes | `v1.35.0` |
+| `--kubernetes-version` | Выбор конкретной версии Kubernetes | `v1.36.0` |
 
 ### Планирование сетевых диапазонов (CIDR)
 
@@ -120,7 +118,7 @@ sudo kubeadm join 192.168.1.100:7443 --token <token> \
 
 ```bash
 # Скачивание манифеста
-curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/calico.yaml -o calico.yaml
+curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/calico.yaml -o calico.yaml
 
 # Проверка/замена CIDR (должен совпадать с --pod-network-cidr)
 sed -i 's|192.168.0.0/16|10.244.0.0/16|g' calico.yaml

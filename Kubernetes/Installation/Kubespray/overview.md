@@ -2,63 +2,76 @@
 
 ## Определения
 
-**Kubespray** — проект с открытым исходным кодом для автоматизации установки и управления жизненным циклом кластеров Kubernetes с помощью [Ansible](../../../Ansible/ansible_introduction.md) и [kubeadm](../kubeadm/index.md).
+**Kubespray** — проект с открытым исходным кодом под эгидой Kubernetes SIG Cluster Lifecycle, предназначенный для автоматизации развертывания и управления жизненным циклом кластеров Kubernetes (LCPM) в различных средах: bare metal, публичные и частные облака.
 
-**Принцип работы:** Kubespray автоматизирует выполнение команд `kubeadm` на всех хостах (control plane и worker узлах) через Ansible-плейбуки. Это позволяет декларативно описывать желаемое состояние кластера и применять его к целевым серверам.
+**Принцип работы:** инструмент использует мощь [Ansible](../../../Ansible/ansible_introduction.md) для декларативного описания конфигурации и [kubeadm](../kubeadm/index.md) для низкоуровневой инициализации компонентов кластера. Это позволяет стандартизировать процесс установки при сохранении высокой степени гибкости.
 
 ## Основные концепции
 
-### Ключевые возможности
+### Совместимость версий (2024–2025)
 
-| Возможность | Описание |
-| :--- | :--- |
-| **Автоматизация** | Полностью автоматизированное развертывание, масштабирование и обновление |
-| **Гибкость** | Поддержка множества ОС: Ubuntu, CentOS, Rocky Linux, Debian, AlmaLinux |
-| **Настраиваемость** | Настройка CNI, DNS, runtime-компонентов через переменные |
-| **Отказоустойчивость (HA)** | Встроенная поддержка HA [Control Plane](../../Concepts/control_plane_architecture.md) и [etcd](../../Concepts/etcd_overview.md) |
+Kubespray поддерживает широкий диапазон версий Kubernetes. Ниже приведена матрица соответствия последних релизов:
+
+| Версия Kubespray | Версия Kubernetes (Default) | Диапазон поддерживаемых версий K8s |
+| :--- | :--- | :--- |
+| **v2.29** | v1.32.x | v1.31 – v1.33 |
+| **v2.28** | v1.31.x | v1.30 – v1.32 |
+| **v2.27** | v1.30.x | v1.29 – v1.31 |
+| **v2.26** | v1.29.x | v1.28 – v1.30 |
+| **v2.25** | v1.28.x | v1.27 – v1.29 |
+
+### Технические требования
+
+*   **Машина управления (Control Node):** Ansible 2.14+, Python 3.10+.
+*   **Целевые узлы (Target Nodes):**
+    *   **ОС:** Ubuntu (22.04, 24.04), Debian 11/12, Rocky Linux 8/9, AlmaLinux 8/9, RHEL 8/9, Flatcar.
+    *   **Память:** минимум 2 ГБ RAM (рекомендуется 4 ГБ+ для Control Plane).
+    *   **Сеть:** IPv4 (Dual-stack IPv4/IPv6 поддерживается), доступ по SSH, отключенный SWAP.
+    *   **Cgroups:** полная поддержка Cgroup v2 (стандарт для современных дистрибутивов).
 
 ### Поддерживаемые компоненты
 
-* **CNI-плагины:** Calico, Cilium, Flannel, Weave Net. Подробнее: [CNI и kube-proxy: навигатор](../../Networking/Network/cni_kube_proxy_roles.md)
-* **DNS-провайдеры:** [CoreDNS](../../Networking/dns_deep_dive.md), NodeLocal DNSCache
-* **Container Runtime:** containerd (рекомендуется), CRI-O, Docker (устарел)
-* **Ingress:** NGINX Ingress Controller
-* **LoadBalancer:** [MetalLB](../../Networking/metallb.md) (для bare-metal)
-* **Мониторинг:** Prometheus, Grafana (опционально)
+| Компонент | Варианты реализации |
+| :--- | :--- |
+| **Container Runtime** | **containerd** (рекомендуется), CRI-O, Docker (deprecated) |
+| **CNI-плагины** | Calico (default), **Cilium** (рекомендуется для eBPF), Flannel, Weave Net, Kube-OVN |
+| **DNS** | [CoreDNS](../../Networking/dns_deep_dive.md), NodeLocal DNSCache |
+| **HA (Control Plane)** | **Kube-Vip** (современный стандарт), Keepalived + HAProxy, External LB |
+| **Ingress** | NGINX Ingress Controller (поддержка Gateway API в разработке) |
+| **LoadBalancer** | [MetalLB](../../Networking/metallb.md) (для bare-metal), Kube-Vip |
+| **Storage** | CSI-драйверы для AWS, Azure, GCP, OpenStack, vSphere, Ceph, Rook |
 
 ### Особенности эксплуатации
 
-| Аспект | Описание |
-| :--- | :--- |
-| **Скорость** | Применение изменений занимает 15+ минут (последовательное выполнение задач Ansible) |
-| **Масштабируемость** | Оптимально для кластеров до 50–100 узлов без частых изменений конфигурации |
-| **База на kubeadm** | Использует стандартный механизм `kubeadm`, обеспечивая предсказуемость результата |
-| **Модульность** | Дополнительные компоненты (Ingress, мониторинг) можно устанавливать отдельно |
-| **Обновления** | Плейбуки `upgrade-cluster.yml` позволяют проводить rolling-обновления узлов |
+*   **Декларативность:** все настройки хранятся в `group_vars`, что позволяет версионировать конфигурацию кластера в Git (GitOps подход).
+*   **Идемпотентность:** плейбуки гарантируют, что повторный запуск не приведет к нежелательным изменениям, если текущее состояние соответствует описанному.
+*   **Масштабируемость:** оптимален для кластеров среднего размера (до 100-200 узлов). Для экстремально больших кластеров требуется оптимизация параметров запуска Ansible.
+*   **Управление жизненным циклом:** отдельные плейбуки для добавления (`scale.yml`), удаления (`remove-node.yml`) узлов и бесшовного обновления (`upgrade-cluster.yml`).
 
 ## Практические сценарии
 
-| Сценарий | Файл |
+| Сценарий | Описание и ссылка |
 | :--- | :--- |
-| Развертывание кластера | **[Установка кластера](./kubespray_install/basic_concepts.md)** |
-| Масштабирование и обновление | **[Управление кластером](./cluster_management.md)** |
-| **HA-кластер (Keepalived + HAProxy)** | **[HA через Kubespray](./HA/index.md)** |
-| **Offline-кластер (Air-gapped)** | **[Offline установка](./offline_installation/offline_definitions.md)** |
-| Примеры конфигураций | **[Примеры](./examples.md)** |
-| Альтернатива: ручная установка | **[kubeadm: Быстрый старт](../kubeadm/index.md)** |
+| **Базовая установка** | Подготовка окружения, инвентаря и первый запуск: **[Установка кластера](./kubespray_install/basic_concepts.md)** |
+| **Управление узлами** | Масштабирование, замена узлов и обновление версии: **[Управление кластером](./cluster_management.md)** |
+| **Высокая доступность** | Настройка HA Control Plane через Kube-Vip или HAProxy: **[HA через Kubespray](./HA/index.md)** |
+| **Offline (Air-gapped)** | Развертывание в изолированных сетях без доступа к интернету: **[Offline установка](./offline_installation/offline_definitions.md)** |
+| **Примеры конфигураций** | Готовые наборы переменных для различных сценариев: **[Примеры](./examples.md)** |
+| **Ручная альтернатива** | Если автоматизация Ansible не требуется: **[kubeadm: Быстрый старт](../kubeadm/index.md)** |
 
 ## Дополнительная информация
 
-См. также:
+### См. также
 
-* [Ansible: Введение](../../../Ansible/ansible_introduction.md)
-* [kubeadm: Быстрый старт](../kubeadm/index.md)
-* [HA с kubeadm](../kubeadm/ha_concepts.md)
-* [Control Plane: Архитектура](../../Concepts/control_plane_architecture.md)
-* [etcd: Обзор](../../Concepts/etcd_overview.md)
-* [CNI и kube-proxy](../../Networking/Network/cni_kube_proxy_roles.md)
+*   [Ansible: Введение](../../../Ansible/ansible_introduction.md) — основы работы с инструментом автоматизации.
+*   [kubeadm: Быстрый старт](../kubeadm/index.md) — базовый механизм, используемый Kubespray.
+*   [HA с kubeadm](../kubeadm/ha_concepts.md) — концепции отказоустойчивости.
+*   [Control Plane: Архитектура](../../Concepts/control_plane_architecture.md) — внутреннее устройство Kubernetes.
+*   [etcd: Обзор](../../Concepts/etcd_overview.md) — работа распределенного хранилища.
+*   [CNI и kube-proxy](../../Networking/Network/cni_kube_proxy_roles.md) — сетевая подсистема.
 
-Внешние ресурсы:
+### Внешние ресурсы
 
-* [Официальный репозиторий](https://github.com/kubernetes-sigs/kubespray)
-* [Документация Kubespray](https://kubespray.io/)
+*   [Официальный репозиторий GitHub](https://github.com/kubernetes-sigs/kubespray) — исходный код и issues.
+*   [Документация Kubespray](https://kubespray.io/) — подробное описание всех переменных.
+*   [Ansible Documentation](https://docs.ansible.com/) — справочник по модулям и синтаксису.

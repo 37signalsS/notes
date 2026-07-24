@@ -2,154 +2,96 @@
 
 ## Определения
 
-**Сценарии Pending-статуса** — типичные ситуации, при которых планировщик (kube-scheduler) не может назначить Pod на узел из-за ограничений конфигурации или нехватки мощностей кластера.
+**Сценарии Pending-статуса** — типичные конфигурационные или инфраструктурные ситуации, при которых планировщик (kube-scheduler) или внешние контроллеры не позволяют Pod перейти в фазу `Running`.
 
 **Вытеснение (Preemption)** — механизм освобождения ресурсов узла путём удаления низкоприоритетных подов для запуска высокоприоритетного объекта.
 
-> Базовая теория: **[Определения и концепции](./definitions_and_concepts.md)**
+> Теоретическая база: **[Определения и концепции](./definitions_and_concepts.md)**
 
 ## Основные концепции
 
-Для устранения состояния `Pending` необходимо выявить, на какой стадии фильтрации планировщика происходит отказ. Информация об этом содержится в событиях объекта (`Events`).
-
-Типичный процесс исправления:
-
-1. Определение причины через `kubectl describe`.
-2. Сопоставление требований Pod (Requests, Affinity, PVC) с состоянием кластера.
-3. Корректировка манифеста или инфраструктуры.
+Для устранения состояния `Pending` необходимо сопоставить требования Pod (Requests, Affinity, PVC) с текущим состоянием кластера. Большинство решений сводится к трем направлениям:
+1.  **Оптимизация нагрузки:** снижение требований Pod (requests) или корректировка ограничений (affinity/selector).
+2.  **Масштабирование инфраструктуры:** добавление ресурсов или узлов в кластер.
+3.  **Корректировка зависимостей:** исправление ошибок в PVC, StorageClass или внешних контроллерах (Scheduling Gates).
 
 ## Практические сценарии
 
-### 1. Нехватка ресурсов (`Insufficient cpu/memory`)
+### 1. Нехватка ресурсов (Standard and Extended Resources)
 
-**Симптом (Events):**
-
-```text
-Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 Insufficient cpu.
-```
+**Симптом:** события `FailedScheduling` с сообщением `Insufficient cpu`, `Insufficient memory` или `Insufficient nvidia.com/gpu`.
 
 **Решение:**
-
-| Метод | Действие |
-|-------|----------|
-| **Оптимизация requests** | Уменьшить запрашиваемые ресурсы в `spec.containers[].resources.requests`. |
-| **Масштабирование** | Добавить узлы в кластер (вручную или через Cluster Autoscaler). |
-| **Очистка ресурсов** | Удалить неиспользуемые поды в кластере. |
-| **Вертикальный рост** | Увеличить параметры CPU/RAM на существующих инстансах узлов. |
+*   **Оптимизация requests:** проверьте реальное потребление через `kubectl top pods` и уменьшите `requests` в манифесте, если они завышены.
+*   **Вертикальное масштабирование:** если используется `VerticalPodAutoscaler` (VPA), убедитесь, что он не устанавливает запросы выше емкости узлов.
+*   **Extended Resources:** при нехватке GPU или HugePages убедитесь, что соответствующие драйверы/плагины (например, NVIDIA Device Plugin) запущены и узлы имеют нужные `Capacity`.
 
 ---
 
-### 2. Несоответствие меток (`nodeSelector` / `nodeAffinity`)
+### 2. Ограничения размещения (Affinity и Topology Spread)
 
-**Симптом (Events):**
-
-```text
-Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 node(s) didn't match Pod's node affinity/selector.
-```
+**Симптом:** сообщение `node(s) didn't match Pod's node affinity/selector` или `node(s) had topology spread constraint slack conflict`.
 
 **Решение:**
-
-1. Посмотреть текущие метки узлов:
-
-   ```bash
-   kubectl get nodes --show-labels
-   ```
-
-2. Если метка отсутствует, добавить её на узел:
-
-   ```bash
-   kubectl label node <node-name> disktype=ssd
-   ```
-
-3. Или привести `nodeSelector`/`affinity` в манифесте Pod в соответствие с существующими метками.
+*   **Смягчение правил:** замените `requiredDuringSchedulingIgnoredDuringExecution` на `preferredDuringSchedulingIgnoredDuringExecution`, если жесткая привязка не критична.
+*   **Topology Spread:** если под застрял из-за `maxSkew`, проверьте распределение подов по зонам. Решением может быть добавление узлов в пустую зону или изменение `whenUnsatisfiable` на `ScheduleAnyway`.
 
 ---
 
-### 3. Изоляция узлов (Taints) без разрешений (Tolerations)
+### 3. Изоляция узлов (Taints и Tolerations)
 
-**Симптом (Events):**
-
-```text
-Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 node(s) had taint {dedicated: master}, that the pod didn't tolerate.
-```
+**Симптом:** сообщение `node(s) had taint {key: value}, that the pod didn't tolerate`.
 
 **Решение:**
-Добавить блок `tolerations` в спецификацию Pod:
-
-```yaml
-spec:
-  tolerations:
-  - key: "dedicated"
-    operator: "Equal"
-    value: "master"
-    effect: "NoSchedule"
-```
+*   **Добавление Tolerations:** добавьте соответствующий блок в `spec.tolerations` пода.
+*   **Проверка системных Taints:** узлы могут иметь временные отметки `node.kubernetes.io/not-ready` или `node.kubernetes.io/unreachable` при проблемах с сетью. В этом случае нужно чинить узел, а не добавлять допуски.
 
 ---
 
-### 4. Ожидание привязки хранилища (PVC)
+### 4. Проблемы с хранилищем (PVC и Binding Mode)
 
-**Симптом (Events):**
-
-```text
-Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 pod has unbound immediate PersistentVolumeClaims.
-```
+**Симптом:** сообщение `pod has unbound immediate PersistentVolumeClaims` или `waiting for first consumer`.
 
 **Решение:**
-
-1. Проверить состояние PVC:
-
-   ```bash
-   kubectl describe pvc <pvc-name>
-   ```
-
-2. Убедиться, что существует подходящий `PersistentVolume` (PV) или работает динамический provisioner (CSI driver).
-
-> Подробная диагностика проблем с хранилищем: **[CreateContainerConfigError: Проблемы с PVC](../CreateContainerConfigError/pvc_issues.md)**.
+*   **Volume Binding Mode:** если в StorageClass установлено `volumeBindingMode: WaitForFirstConsumer`, PVC останется в `Pending` до тех пор, пока планировщик не выберет узел. Если планировщик не может выбрать узел по другим причинам (например, Affinity), PVC никогда не привяжется.
+*   **Зональность:** в облаках PVC часто привязаны к зоне. Убедитесь, что у пода нет `nodeSelector`, который принуждает его запускаться в другой зоне.
 
 ---
 
-### 5. Превышение квот в Namespace (ResourceQuota)
+### 5. Врата планирования (Scheduling Gates)
 
-**Симптом (Events):**
-
-```text
-Warning  FailedCreate  replicaset-controller  Error creating: pods "my-app-x" is forbidden: exceeded quota: team-a-quota, requested: requests.cpu=1, used: requests.cpu=10, limited: requests.cpu=10
-```
+**Симптом:** под находится в `Pending`, но в `Events` отсутствуют сообщения от `default-scheduler`.
 
 **Решение:**
-
-1. Проверить текущее использование квот:
-
-   ```bash
-   kubectl describe resourcequota -n <namespace>
-   ```
-
-2. Увеличить лимиты в объекте `ResourceQuota` или уменьшить потребление ресурсов в данном пространстве имен.
+*   Проверьте поле `spec.schedulingGates`. Если оно не пустое, под ожидает внешнего подтверждения.
+*   Убедитесь, что контроллер (например, Kyverno или кастомный admission controller), ответственный за удаление ворот, функционирует нормально.
 
 ---
 
-### 6. Ожидание вытеснения (PriorityClass)
+### 6. Квоты и лимиты (ResourceQuota)
 
-**Сценарий:** Pod с высоким приоритетом остается в `Pending`, пока планировщик инициирует процедуру вытеснения для освобождения ресурсов.
-
-**Диагностика:**
-
-```bash
-# Проверка PriorityClass пода
-kubectl get pod <pod-name> -o jsonpath='{.spec.priorityClassName}'
-```
+**Симптом:** сообщение `exceeded quota: <name>, requested: <resource>=<value>`.
 
 **Решение:**
+*   **ResourceQuota:** увеличьте квоту в Namespace или удалите неиспользуемые объекты.
+*   **LimitRange:** если под отклоняется из-за несоответствия `LimitRange`, приведите его `requests/limits` в соответствие с политикой Namespace.
 
-- Убедиться, что в кластере есть поды с более низким приоритетом, которые *могут* быть вытеснены.
-- Проверить, не установлена ли политика `preemptionPolicy: Never` в объекте `PriorityClass`.
+---
+
+### 7. Приоритеты и вытеснение (Preemption)
+
+**Симптом:** под с высоким приоритетом ожидает в `Pending`, пока завершатся поды, помеченные на удаление для освобождения места.
+
+**Решение:**
+*   Проверьте, не блокируют ли `PodDisruptionBudgets` (PDB) удаление низкоприоритетных подов.
+*   Убедитесь, что у подов, которые должны быть вытеснены, нет `priorityClassName` выше или равного текущему поду.
 
 ## Дополнительная информация
 
 ### Связанные ресурсы
 
-- **[Диагностика](./diagnostics.md)** — пошаговый чек-лист команд.
+- **[Диагностика](./diagnostics.md)** — пошаговый чек-лист команд для выявления причин.
 - **[Advanced Topics](./advanced_topics.md)** — глубокий анализ планирования и мониторинг.
 - **[Управление ресурсами](../../Scheduling/qos_limit_and_requests.md)** — подробнее о лимитах, запросах и квотах.
-- **[Affinity и Anti-Affinity](../../Scheduling/affinity.md)** — механизмы привязки к узлам и подам.
+- **[Affinity и Anti-Affinity](../../Scheduling/affinity.md)** — механизмы гибкой привязки к узлам.
+- **[PriorityClass — приоритеты подов](../../../Concepts/priorityclass.md)** — подробнее о вытеснении и очередях.

@@ -1,24 +1,22 @@
-# kubeconform
+# Kubeconform
 
-## Definitions
+## Определения
 
-**`kubeconform`** — высокопроизводительный валидатор манифестов Kubernetes, проверяющий соответствие официальным схемам JSON Schema API Kubernetes. Написан на Go, работает в 10–100 раз быстрее kubeval.
+**Kubeconform** — это высокопроизводительный инструмент для валидации манифестов Kubernetes. Он проверяет соответствие YAML и JSON файлов официальным схемам JSON Schema API Kubernetes. Инструмент написан на языке Go, использует параллельную обработку и работает в десятки раз быстрее своего предшественника `kubeval`.
 
----
-
-## Basic Concepts
+## Основные концепции
 
 ### Ключевые особенности
 
 | Особенность | Описание |
 | :--- | :--- |
-| **Производительность** | Параллельная обработка, кэширование схем |
-| **CI/CD-интеграция** | Ненулевой код выхода при ошибках, форматы TAP/JUnit/JSON |
-| **Поддержка CRD** | Валидация Custom Resources через OpenAPI-схемы |
-| **Офлайн-режим** | Работа с локально загруженными схемами |
-| **Гибкость ввода** | Файлы, директории, stdin, Helm-чарты, Kustomize |
+| **Производительность** | Реализован на Go с поддержкой параллельной валидации файлов и кэширования схем. |
+| **CI/CD-интеграция** | Возвращает ненулевой код выхода при обнаружении ошибок; поддерживает форматы TAP, JUnit и JSON. |
+| **Поддержка CRD** | Позволяет валидировать Custom Resources при указании путей к соответствующим OpenAPI-схемам. |
+| **Офлайн-режим** | Может работать полностью автономно, используя предварительно загруженные локальные схемы. |
+| **Гибкость ввода** | Поддерживает чтение из файлов, директорий, стандартного ввода (stdin), а также работу с результатами Helm и Kustomize. |
 
-### Архитектура
+### Архитектура процесса
 
 ```text
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
@@ -36,214 +34,184 @@
 
 ### Установка
 
-**Go:** `go install github.com/yannh/kubeconform/cmd/kubeconform@latest`
+**Go (сборка из исходников):**
+```bash
+go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+# → инструмент будет установлен в $GOPATH/bin
+```
 
-**Homebrew:** `brew install kubeconform`
+**Homebrew (macOS/Linux):**
+```bash
+brew install kubeconform
+# → "kubeconform" is now available in your PATH
+```
 
-**Docker:** `docker run --rm -i ghcr.io/yannh/kubeconform:latest - -summary`
+**Docker:**
+```bash
+docker run --rm -i ghcr.io/yannh/kubeconform:latest - -summary < deployment.yaml
+# → Summary: 1 resource found in 1 file - Valid
+```
 
-**Бинарный файл:** скачать с [GitHub Releases](https://github.com/yannh/kubeconform/releases) и поместить в `$PATH`.
+**Бинарный файл:**
+Скачайте актуальный релиз со страницы [GitHub Releases](https://github.com/yannh/kubeconform/releases) и переместите его в директорию, указанную в переменной `$PATH`.
 
 ### Флаги командной строки
 
 | Флаг | Описание |
 | :--- | :--- |
-| `-R` | Рекурсивная проверка директорий |
-| `-summary` | Краткая сводка в конце вывода |
-| `-verbose` | Подробный вывод по каждому файлу |
-| `-strict` | Запрет дополнительных полей в манифестах |
-| `-output <format>` | Формат: text, json, tap, junit |
-| `-kubernetes-version <ver>` | Версия K8s для схем (например, `1.31.0`, `master`) |
-| `-schema-location <url>` | Путь к схемам с поддержкой шаблонов `{{ .ResourceKind }}` |
-| `-ignore-missing-schemas` | Пропуск ресурсов без схем |
-| `-skip-tls` | Отключение проверки TLS для удалённых схем |
-| `-cache <dir>` | Директория кэширования схем |
+| `-R` | Рекурсивный поиск манифестов в поддиректориях. |
+| `-summary` | Вывод краткой статистики (количество файлов, ресурсов, ошибок) в конце работы. |
+| `-verbose` | Подробный отчет по каждому проверенному ресурсу. |
+| `-strict` | Строгий режим: отклонять манифесты с полями, отсутствующими в схеме. |
+| `-output <format>` | Формат вывода: `text`, `json`, `tap`, `junit`. |
+| `-kubernetes-version <ver>` | Версия Kubernetes для выбора схем (например, `1.32.0`, `master`). |
+| `-schema-location <url>` | Путь к схемам. Поддерживает шаблоны `{{ .ResourceKind }}`, `{{ .Group }}`. |
+| `-ignore-missing-schemas` | Игнорировать ресурсы, для которых не найдена схема (полезно для CRD). |
+| `-skip-tls` | Отключить проверку TLS-сертификатов при загрузке схем по HTTPS. |
+| `-cache <dir>` | Директория для локального кэширования загруженных схем. |
 
-### Форматы вывода для CI/CD
+### Форматы вывода для автоматизации
 
 | Формат | Флаг | Описание |
 | :--- | :--- | :--- |
-| **TAP** | `-output tap` | Test Anything Protocol, парсится в CI |
-| **JUnit** | `-output junit` | JUnit XML для Jenkins/GitLab |
-| **JSON** | `-output json` | Программная обработка |
-| **Text** | `-output text` | Человекочитаемый (по умолчанию) |
+| **TAP** | `-output tap` | Test Anything Protocol — стандарт для интеграции с тестовыми системами. |
+| **JUnit** | `-output junit` | XML-отчёт, который нативно поддерживается Jenkins, GitLab CI и Azure DevOps. |
+| **JSON** | `-output json` | Машиночитаемый формат для интеграции с кастомными скриптами обработки. |
+| **Text** | `-output text` | Человекочитаемый формат (используется по умолчанию). |
 
 ### Сравнение с аналогами
 
-| Инструмент | Производительность | CRD | Офлайн | CI/CD форматы |
+| Инструмент | Производительность | Поддержка CRD | Офлайн | CI/CD форматы |
 | :--- | :--- | :--- | :--- | :--- |
 | **kubeconform** | Высокая (Go, параллелизм) | Да | Да | TAP, JUnit, JSON |
-| **kubeval** | Низкая | Нет | Нет | Text |
+| **kubeval** | Низкая (Deprecated) | Нет | Нет | Text |
 | **kube-linter** | Средняя | Да | Да | SARIF, JSON |
 
----
-
-## Practical Scenarios
+## Практические сценарии
 
 ### Локальная валидация
 
-**Отдельные файлы:**
-
+**Проверка отдельных файлов:**
 ```bash
 kubeconform deployment.yaml service.yaml configmap.yaml
+# → deployment.yaml - Deployment is valid
 ```
 
 **Рекурсивная проверка директории:**
-
 ```bash
 kubeconform -R ./manifests/
+# → [выводит список проверенных файлов]
 ```
 
-**Подробный вывод:**
-
-```bash
-kubeconform -verbose ./manifests/
-# → результат с деталями для каждого файла
-```
-
-**Валидация из stdin:**
-
+**Валидация потока из stdin:**
 ```bash
 cat deployment.yaml | kubeconform -
+# → stdin - Deployment is valid
 ```
 
-### Строгая валидация
+### Строгая валидация под конкретную версию
 
-**Режим strict (отклонение неизвестных полей):**
-
-```bash
-kubeconform -strict deployment.yaml
-```
-
-**Против конкретной версии K8s:**
+Режим `strict` критически важен для обнаружения опечаток в названиях полей (например, `replicas` vs `replications`).
 
 ```bash
-kubeconform -kubernetes-version 1.31.0 manifests/
-kubeconform -kubernetes-version master manifests/
+# Проверка против версии 1.32.0
+kubeconform -strict -kubernetes-version 1.32.0 manifests/
+# → [выводит ошибки при наличии неизвестных полей]
 ```
 
 ### Интеграция в CI/CD
 
 **GitLab CI:**
-
 ```yaml
-validate-k8s-manifests:
+validate-manifests:
   image: ghcr.io/yannh/kubeconform:latest
   stage: test
   script:
-    - kubeconform -summary -output tap 'manifests/**/*.yaml'
-  rules:
-    - changes:
-        - manifests/**/*.yaml
+    - kubeconform -summary -strict -output tap 'manifests/**/*.yaml'
+# → [TAP отчет будет отображен в логах джобы]
 ```
 
 **GitHub Actions:**
-
 ```yaml
-name: Validate Kubernetes Manifests
-on:
-  push:
-    paths:
-      - 'manifests/**/*.yaml'
-  pull_request:
-    paths:
-      - 'manifests/**/*.yaml'
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run kubeconform
-        uses: yannh/kubeconform-action@v1
-        with:
-          manifest_path: manifests/
-          output_format: tap
-          strict: true
+steps:
+  - uses: actions/checkout@v4
+  - name: Run kubeconform
+    uses: yannh/kubeconform-action@v1
+    with:
+      manifest_path: manifests/
+      output_format: tap
+      strict: true
 ```
 
-### Валидация Helm-чартов
+### Валидация Helm и Kustomize
 
+Инструменты шаблонизации часто генерируют манифесты, которые нужно проверять в "отрендеренном" виде.
+
+**Helm:**
 ```bash
-helm template my-chart | kubeconform -
-helm template my-chart --values values-prod.yaml | kubeconform -summary -
-helm template my-chart | kubeconform -kubernetes-version 1.31.0 -
-helm lint my-chart && helm template my-chart | kubeconform -summary -
+helm template my-chart | kubeconform -summary -strict
+# → Summary: 12 resources found in 1 file - Valid
 ```
 
-### Валидация Kustomize
-
+**Kustomize:**
 ```bash
-kubectl kustomize overlays/production | kubeconform -summary -
-```
-
-**Конвейер kustomize → kubeconform:**
-
-```bash
-#!/bin/bash
-set -e
-kubectl kustomize overlays/production > /tmp/manifests.yaml
-kubeconform -summary -strict /tmp/manifests.yaml
+kubectl kustomize overlays/production | kubeconform -summary -strict
+# → Summary: 20 resources found in 1 file - Valid
 ```
 
 ### Офлайн-валидация
 
-**Подготовка локального кэша схем:**
+Для работы в изолированных окружениях необходимо заранее подготовить локальный кэш схем.
 
+**Скрипт для подготовки локального кэша:**
 ```bash
+#!/bin/bash
 mkdir -p ~/kubeconform-schemas
-kubeconform -list-schemas > schemas.txt
+# Список базовых схем (пример)
+schemas=("deployment" "service" "configmap" "ingress")
 
-while read schema; do
-  curl -L "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/master/${schema}" \
-    -o "~/kubeconform-schemas/${schema}"
-done < schemas.txt
+for schema in "${schemas[@]}"; do
+  curl -L "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/master/${schema}-v1.json" \
+    -o "~/kubeconform-schemas/${schema}.json"
+done
+# → Схемы загружены в локальную директорию
 ```
 
-**Использование:**
-
+**Использование локальных схем:**
 ```bash
-kubeconform -schema-location '~/kubeconform-schemas/{{ .ResourceKind }}.yaml' manifests/
+kubeconform -schema-location '~/kubeconform-schemas/{{ .ResourceKind }}.json' manifests/
 ```
 
-### Валидация CRD
+### Валидация CRD (Custom Resources)
 
-**Удалённые схемы (datree CRDs catalog):**
+Для проверки ресурсов операторов (например, Cert-Manager или Prometheus) необходимо подключить внешние каталоги схем.
 
+**Использование каталога Datree:**
 ```bash
 kubeconform \
   -schema-location default \
   -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{ .Group }}/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json' \
   manifests/
+# → [Валидация системных ресурсов K8s + CRD]
 ```
 
-**Локальные CRD-схемы:**
-
-```bash
-kubeconform \
-  -schema-location default \
-  -schema-location './crd-schemas/{{ .ResourceKind }}.json' \
-  manifests/
-```
-
----
-
-## Additional Information
+## Дополнительная информация
 
 ### Лучшие практики
 
-1. Интеграция в pre-commit хуки для раннего обнаружения ошибок.
-2. Кэширование схем для ускорения CI/CD.
-3. Валидация против версии K8s целевого кластера.
-4. Использование `-strict` для предотвращения опечаток.
-5. Настройка `-schema-location` для CRD.
+1.  **Strict Mode в CI:** Всегда используйте `-strict`, чтобы не пропускать опечатки, которые Kubernetes может проигнорировать при `apply`.
+2.  **Версионность:** Указывайте `-kubernetes-version`, соответствующую версии вашего кластера, чтобы избежать использования устаревших API.
+3.  **Кэширование:** В CI-пайплайнах настраивайте кэширование директории схем (`-cache`), чтобы ускорить выполнение и уменьшить нагрузку на внешние репозитории.
+4.  **Комбинация с Dry-run:** Используйте `kubeconform` совместно с `kubectl apply --dry-run=client` для максимальной надежности.
 
 ### Связанные инструменты
 
-- [Kustomize](../kustomize/kustomize_overview.md) — валидация результатов `kubectl kustomize`
-- [Helm](../Helm/helm_overview.md) — валидация отрендеренных чартов
-- [GitOps](../../../GitOps/GitOps_overview.md) — интеграция в GitOps-пайплайны
+- **[Kustomize](../kustomize/kustomize_overview.md)** — генерация манифестов через оверлеи.
+- **[Helm](../Helm/helm_overview.md)** — управление пакетными конфигурациями.
+- **[GitOps](../../../GitOps/GitOps_overview.md)** — методология непрерывной доставки манифестов.
 
 ### Ресурсы
 
 - [GitHub: yannh/kubeconform](https://github.com/yannh/kubeconform)
 - [Схемы Kubernetes JSON](https://github.com/yannh/kubernetes-json-schema)
+- [Каталог схем CRD (Datree)](https://github.com/datreeio/CRDs-catalog)

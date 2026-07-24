@@ -1,157 +1,125 @@
 # CreateContainerConfigError: Проблемы с PVC
 
-## Definitions
+## Определения
 
-**PVC-related CreateContainerConfigError** — ошибка, возникающая когда Pod ссылается на PersistentVolumeClaim, который не существует, не привязан (Pending) или не может быть смонтирован.
+**PVC-related CreateContainerConfigError** — состояние пода, при котором он не может запустить контейнер из-за проблем с `PersistentVolumeClaim` (PVC). Хотя чаще проблемы с томами приводят к статусу `ContainerCreating` (ошибки монтирования), в некоторых конфигурациях и версиях Kubernetes некорректная ссылка на PVC или его отсутствие может блокировать генерацию конфигурации контейнера.
 
-## Basic Concepts
+Подробные определения ошибки и жизненный цикл пода: [definitions.md](./definitions.md).
+Общие концепции хранилища (PV, PVC, StorageClass): [pv_and_pvc.md](../../../../Storage/pv_and_pvc.md).
 
-### Типичные сообщения об ошибке
+## Основные концепции
 
-| Сообщение | Причина |
-|-----------|---------|
-| `persistentvolumeclaim "x" not found` | PVC с указанным именем не существует в namespace |
-| `unable to provision volume` | StorageClass не может динамически создать PV |
-| `volume "x" not found` | PVC существует, но не Bound |
+### Типичные причины и сообщения об ошибках
 
-### Основные причины PVC в статусе Pending
+| Сообщение в Events | Причина | Состояние ресурса |
+|-----------|---------|-------------------|
+| `persistentvolumeclaim "x" not found` | PVC с указанным именем не существует в данном Namespace | **Missing** |
+| `failed to provision volume` | Ошибка на стороне StorageClass или CSI-драйвера | **Pending** |
+| `No matching volume found` | Нет PV, удовлетворяющего требованиям PVC (AccessMode, Size, SC) | **Pending** |
+| `Multi-Attach error` | Том ReadWriteOnce уже примонтирован к другому узлу | **Bound** (но ошибка монтирования) |
+| `volume node affinity conflict` | Том находится в другой зоне доступности (AZ), чем узел пода | **Bound** |
 
-| Причина | Диагностика | Решение |
-|---------|-------------|---------|
-| **Нет подходящего PV** (static) | `kubectl get pv` | Создать PV с matching StorageClassName и accessMode |
-| **Нет StorageClass** | `kubectl get storageclass` | Создать StorageClass с provisioner |
-| **Provisioner недоступен** | `kubectl get pods -n kube-system \| grep provisioner` | Проверить доступность provisioner (NFS, CSI driver) |
-| **AccessMode несовместим** | `kubectl describe pvc` | Изменить accessMode в PVC или создать PV с нужным режимом |
-| **Нехватка квоты** | `kubectl describe resourcequota` | Увеличить quota или запросить меньший объём |
-| **Topology mismatch** | `kubectl describe pvc` | Использовать `volumeBindingMode: WaitForFirstConsumer` |
+### Причины застревания PVC в статусе Pending
 
-> Базовые концепции PV/PVC/StorageClass: [pv_and_pvc.md](../../../../Storage/pv_and_pvc.md).
+1.  **Отсутствие подходящего PV (Static Provisioning):** Если используется статическое выделение, ни один PV не соответствует параметрам `storageClassName`, `accessModes` и `capacity` запроса PVC.
+2.  **Ошибки динамического провижинера:** CSI-драйвер (например, AWS EBS, GCE PD, Longhorn) не может создать физический диск из-за лимитов облака, проблем с правами (IAM) или недоступности API.
+3.  **Проблемы топологии (AZ mismatch):** В мультизональных кластерах `StorageClass` с `volumeBindingMode: Immediate` может создать диск в Зоне А, в то время как планировщик отправит под в Зону Б.
+4.  **Resource Quotas:** В Namespace достигнут лимит на количество PVC или суммарный объем запрашиваемого хранилища.
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий 1: PVC не существует
+### Сценарий 1: PVC не найден (Namespace mismatch)
 
-**Сообщение:**
-
-```
-Error: persistentvolumeclaim "data-pvc" not found
-```
+Одна из самых частых причин — манифест пода ссылается на PVC, который создан в другом Namespace или еще не применен.
 
 **Диагностика:**
-
 ```bash
-kubectl get pvc data-pvc -n <namespace>
+# Проверка наличия PVC в нужном namespace
+kubectl get pvc -n <namespace>
+# → No resources found in <namespace> namespace.
 ```
 
-**Решение:** Создать PVC.
+**Решение:** Убедитесь, что PVC создан в том же Namespace, что и Pod. В Kubernetes тома являются ресурсами уровня Namespace.
 
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: data-pvc
-  namespace: default
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: standard
-  resources:
-    requests:
-      storage: 10Gi
-```
+### Сценарий 2: Ошибки динамического создания (CSI Driver)
 
-### Сценарий 2: PVC в статусе Pending (dynamic provisioning)
+Если PVC долго находится в статусе `Pending`, необходимо проверить события самого PVC.
 
 **Диагностика:**
-
 ```bash
-# Статус PVC
-kubectl describe pvc data-pvc
-
-# Проверка StorageClass
-kubectl get storageclass
-
-# Проверка provisioner
-kubectl get pods -n kube-system | grep -E "nfs|csi|ebs|provisioner"
+kubectl describe pvc <pvc-name>
 ```
 
-**Частые причины:**
+**Ожидаемый вывод при ошибке прав:**
+```text
+Events:
+  Type     Reason              Age                From                         Message
+  ----     ------              ----               ----                         -------
+  Warning  VpcIdNotSpecified   2m (x5 over 10m)   ebs.csi.aws.com              Failed to create volume: VpcId not specified
+  Warning  ProvisioningFailed  1m (x10 over 15m)  persistentvolume-controller  Failed to provision volume with StorageClass "ebs-sc": IAM permission denied
+```
 
-- **StorageClass не существует** — создать или исправить имя в PVC
-- **Provisioner не установлен** — установить NFS subdir external provisioner, CSI driver
-- **Quota exceeded** — проверить ResourceQuota namespace
+**Решение:** Проверьте логи CSI-контроллера (обычно в `kube-system`) и наличие необходимых IAM-ролей/секретов.
 
-### Сценарий 3: PVC в статусе Pending (static provisioning)
+### Сценарий 3: Конфликт топологии (Topology / Multi-AZ)
+
+Проблема возникает, когда PV привязан к конкретной зоне (например, `us-east-1a`), а под пытается запуститься на узле в `us-east-1b`.
 
 **Диагностика:**
-
 ```bash
-# Проверка доступных PV
-kubectl get pv
-
-# Проверка совместимости PV и PVC
-kubectl describe pvc data-pvc
-# Events: "No matching volume" — PV не подходит по размеру, режиму или StorageClass
+kubectl get nodes -L topology.kubernetes.io/zone
+kubectl describe pv <pv-name> | grep nodeAffinity
 ```
 
-**Решение:** Создать PV, matching требованиям PVC.
+**Решение:** Используйте `volumeBindingMode: WaitForFirstConsumer` в вашем `StorageClass`. Это заставит Kubernetes подождать, пока под не будет назначен на узел, и только потом создавать диск в той же зоне.
 
-```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: data-pv
-spec:
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: manual
-  hostPath:
-    path: "/mnt/data"
-```
+### Сценарий 4: Несовместимость режимов доступа (AccessMode)
 
-### Сценарий 4: AccessMode несовместим
-
-**Симптом:** PVC Pending, в Events — `could not find information about volume`.
-
-**Причина:** PVC запрашивает режим, который PV или StorageClass не поддерживает.
+PVC запрашивает `ReadWriteMany` (RWX), но StorageClass поддерживает только `ReadWriteOnce` (RWO).
 
 **Диагностика:**
-
 ```bash
-# Режимы доступа PV
-kubectl get pv <pv-name> -o jsonpath='{.spec.accessModes}'
-
-# Режимы доступа PVC
-kubectl get pvc <pvc-name> -o jsonpath='{.spec.accessModes}'
+kubectl get storageclass <sc-name> -o yaml
+# Проверьте параметры и возможности провижинера
 ```
 
-**Решение:** Привести accessMode PVC в соответствие с доступными PV или StorageClass.
+**Решение:**
+- Если нужны общие данные для многих подов, используйте СХД с поддержкой RWX (NFS, CephFS, Azure Files).
+- Для блочных устройств (EBS, GCP PD) используйте только RWO.
 
-| Хранилище | Поддерживаемые режимы |
-|-----------|----------------------|
-| Local Path, EBS, RBD | `ReadWriteOnce` |
-| NFS, CephFS | `ReadWriteMany`, `ReadOnlyMany`, `ReadWriteOnce` |
+### Сценарий 5: Превышение квот ресурсов
 
-### Сценарий 5: PVC привязан, но ошибка сохраняется
-
-**Причина:** Pod запущен до того, как PVC перешёл в Bound.
-
-**Решение:** После перехода PVC в Bound Kubernetes автоматически восстановит Pod (~10–30 сек). При необходимости — перезапустить:
-
+**Диагностика:**
 ```bash
-kubectl rollout restart deployment/<deployment-name> -n <namespace>
+kubectl describe resourcequota -n <namespace>
 ```
 
-## Additional Information
+**Ожидаемый вывод:**
+```text
+Resource Quotas
+ Name:            storage-quota
+ Resource         Used  Hard
+ --------         ---   ---
+ requests.storage 90Gi  100Gi
+ persistentvolumeclaims 10  10
+```
+
+**Решение:** Удалите неиспользуемые тома или запросите увеличение квоты у администратора кластера.
+
+## Список проверок (Troubleshooting Checklist)
+
+1.  **Namespace:** PVC и Pod находятся в одном и том же пространстве имен.
+2.  **Events:** Выполнен `kubectl describe pvc <name>` для поиска сообщений от провижинера.
+3.  **StorageClass:** Указано корректное имя `storageClassName`. Если не указано — проверьте наличие `default` StorageClass.
+4.  **CSI Health:** Проверьте, что поды CSI-драйвера в `kube-system` запущены и не имеют ошибок.
+5.  **Selector/Labels:** Если используется статическое выделение, убедитесь, что метки на PV и селектор в PVC совпадают.
+
+## Дополнительная информация
 
 ### Связанные ресурсы
 
-- Определения: [definitions.md](./definitions.md)
-- Диагностика: [diagnostics.md](./diagnostics.md)
-- PV/PVC концепции: [pv_and_pvc.md](../../../../Storage/pv_and_pvc.md)
-- StorageClass: [storageclass.md](../../../../Storage/storageclass.md)
-- CSI: [csi_overview.md](../../../../Storage/CSI/csi_overview.md)
-- PVC Pending (Pod Pending context): [pod_pending/common_cases_and_solutions.md](../../pod_pending/common_cases_and_solutions.md)
+- [Обзор всех ошибок CreateContainerConfigError](../create_container_config_error.md)
+- [Диагностика зависимостей пода](./diagnostics.md)
+- [Подробно о PV/PVC](../../../../Storage/pv_and_pvc.md)
+- [Настройка StorageClass](../../../../Storage/storageclass.md)
+- [CSI Driver — архитектура](../../../../Storage/CSI/csi_overview.md)

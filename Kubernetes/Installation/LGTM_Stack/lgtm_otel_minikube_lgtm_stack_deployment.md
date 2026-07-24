@@ -4,31 +4,33 @@
 >
 > - **[Предварительные требования и подготовка окружения](./lgtm_otel_minikube_prerequisites_environment.md)**
 > - **[Развертывание вспомогательных компонентов](./lgtm_otel_minikube_auxiliary_components.md)**
-> - **[Развертывание стека LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)** ← текущий
+> - **[Развертывание стека LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)** (текущий)
 > - **[Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)**
 > - **[Тестирование и верификация](./lgtm_otel_minikube_test_app_verification.md)**
 
+---
+
 ## Определения
 
-**Стек LGTM** — интегрированный набор компонентов [наблюдаемости](../../../Concepts/Observability_and_Monitoring/observability_definitions.md) от Grafana Labs: **L**oki (логи), **G**rafana (визуализация), **T**empo (трассировки), **M**imir/Prometheus (метрики). В данном руководстве используется Prometheus.
+**Стек LGTM** — это интегрированное решение для реализации [наблюдаемости (observability)](../../../Concepts/Observability_and_Monitoring/observability_definitions.md) от Grafana Labs. Название образовано от первых букв компонентов: **L**oki (логи), **G**rafana (визуализация), **T**empo (трассировки), **M**imir (метрики). В данном руководстве для работы с метриками используется Prometheus как более легковесная альтернатива для Minikube.
 
-**kube-prometheus-stack** — Helm-чарт для развёртывания системы мониторинга на базе Prometheus в Kubernetes. Подробнее: **[kube-prometheus-stack overview](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md)**.
+**kube-prometheus-stack** — основной Helm-чарт для развертывания экосистемы мониторинга на базе Prometheus Operator в Kubernetes. Подробнее: **[kube-prometheus-stack: Обзор](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md)**.
 
-**Loki** — система агрегации логов с индексацией метаданных. Подробнее: **[Loki overview](../../../Loki/loki_overview.md)**.
+**Loki** — система сбора и хранения логов, оптимизированная по стоимости за счет индексации только метаданных. Подробнее: **[Loki: Обзор](../../../Loki/loki_overview.md)**.
 
-**Tempo** — распределённое хранилище трассировок. Подробнее: **[Tempo overview](../../../Tempo/index.md)**.
+**Tempo** — высокомасштабируемое распределенное хранилище трассировок. Подробнее: **[Tempo: Обзор](../../../Tempo/index.md)**.
 
-**Grafana** — платформа визуализации и анализа данных. Подробнее: **[Grafana overview](../../../Grafana/grafana_overview.md)**.
+**Grafana** — универсальная платформа для визуализации всех типов сигналов телеметрии (метрики, логи, трейсы). Подробнее: **[Grafana: Обзор](../../../Grafana/grafana_overview.md)**.
 
-**Кросс-сигнальная корреляция** — связывание сигналов: перехода от метрик к трассировкам (**Exemplars**), извлечение ID трассировки из логов (**Derived Fields**) и поиск логов по спанам (**Traces to Logs**).
+**Кросс-сигнальная корреляция** — механизм связывания различных типов данных: переход от метрик к трассировкам (**Exemplars**), извлечение TraceID из логов (**Derived Fields**) и поиск логов, соответствующих конкретным спанам (**Traces to Logs**).
 
 ---
 
 ## Основные концепции
 
-### Архитектура стека LGTM
+### Архитектура стека LGTM в Minikube
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Minikube Cluster                         │
 │                                                                 │
@@ -43,7 +45,6 @@
 │  │  ┌───────────┐  │     │  Kube-State-    │                   │
 │  │  │   Tempo   │  │     │    Metrics      │                   │
 │  │  │ (Traces)  │  │     └─────────────────┘                   │
-│  │  └───────────┘  │                                           │
 │  └────────┬────────┘                                           │
 │           │                                                     │
 │           ▼                                                     │
@@ -58,46 +59,42 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Компоненты kube-prometheus-stack
+### Состав и версии компонентов (на июль 2026 г.)
 
-| Компонент | Назначение | Тип workload |
-| :--- | :--- | :--- |
-| **Prometheus Server** | Сбор и хранение метрик | StatefulSet |
-| **Alertmanager** | Маршрутизация алертов | StatefulSet |
-| **Grafana** | Визуализация | Deployment |
-| **Node Exporter** | Метрики хостов | DaemonSet |
-| **Kube-State-Metrics** | Метрики объектов K8s | Deployment |
-| **Prometheus Operator** | Управление через CRD | Deployment |
+| Компонент | Helm-чарт | Версия чарта | Репозиторий |
+| :--- | :--- | :--- | :--- |
+| **K8s Monitoring** | `kube-prometheus-stack` | 87.19.0 | `prometheus-community` |
+| **Loki** | `loki` | 18.5.1 | `grafana-community` |
+| **Tempo** | `tempo` | 2.2.2 | `grafana-community` |
+| **Grafana** | `grafana` (в составе стека) | 12.8.0 | `grafana` |
 
-### Требования к ресурсам (Minikube)
+### Ресурсные требования
+
+Для стабильной работы всего стека на Minikube рекомендуются следующие параметры:
 
 | Компонент | CPU (request/limit) | Memory (request/limit) |
 | :--- | :--- | :--- |
-| **Prometheus** | 500m / 1000m | 512Mi / 2Gi |
-| **Grafana** | 100m / 500m | 128Mi / 512Mi |
-| **Loki** | 100m / 500m | 128Mi / 512Mi |
+| **Prometheus** | 200m / 1000m | 512Mi / 2Gi |
+| **Grafana** | 100m / 500m | 256Mi / 512Mi |
+| **Loki** | 100m / 500m | 256Mi / 512Mi |
 | **Tempo** | 100m / 500m | 128Mi / 512Mi |
 
-**Минимальные требования кластера:** `--cpus 4 --memory 8192mb`
-
-### Поток данных
-
-1. **Метрики:** Экспортеры собирают данные → Prometheus скрейпит цели → данные в TSDB → Grafana визуализирует.
-2. **Логи:** Приложения отправляют логи → Loki сохраняет чанки → Grafana запрашивает через LogQL.
-3. **Трассировки:** Приложения экспортируют трейсы → Tempo принимает по OTLP → Grafana отображает.
+**Минимальные параметры Minikube:** `--cpus 4 --memory 8192mb`
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Развёртывание Grafana, Prometheus и Alertmanager
+### Сценарий 1: Развертывание ядра мониторинга (Prometheus + Grafana)
 
-**Цель:** Установить базовый стек мониторинга с преднастроенными data sources.
+**Цель:** Установить Prometheus Operator и Grafana с преднастроенными источниками данных и корреляцией.
 
-#### Шаг 1: Создание namespace
+#### Шаг 1: Подготовка репозиториев
 
 ```bash
-kubectl create namespace monitoring
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
 ```
 
 #### Шаг 2: Установка kube-prometheus-stack
@@ -106,15 +103,20 @@ kubectl create namespace monitoring
 helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
   --create-namespace \
-  --set grafana.enabled=true \
-  --set grafana.ingress.enabled=true \
-  --set grafana.ingress.hosts[0]=grafana.test \
-  --set grafana.ingress.tls[0].hosts[0]=grafana.test \
-  --set grafana.ingress.tls[0].secretName=grafana-tls \
-  --set grafana.ingress.ingressClassName=nginx \
-  --set grafana.adminPassword=prom-operator \
+  --version 87.19.0 \
   -f - <<EOF
 grafana:
+  enabled: true
+  adminPassword: prom-operator
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.test
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - grafana.test
   additionalDataSources:
     - name: Loki
       type: loki
@@ -122,7 +124,7 @@ grafana:
       jsonData:
         derivedFields:
           - datasourceUid: tempo
-            matcherRegex: "traceID=(\\w+)"
+            matcherRegex: "traceID=(\\\\w+)"
             name: TraceID
             url: '\${__value.raw}'
     - name: Tempo
@@ -141,106 +143,108 @@ grafana:
 EOF
 ```
 
-#### Шаг 3: Настройка доступа
+---
+
+### Сценарий 2: Развертывание Loki и Tempo
+
+**Цель:** Дополнить стек системами хранения логов и трассировок.
+
+#### Шаг 1: Подготовка репозитория сообщества
+
+С 2026 года OSS-чарты Loki и Tempo переехали в `grafana-community`.
 
 ```bash
-echo "$(minikube ip) grafana.test" | sudo tee -a /etc/hosts
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
+helm repo update
 ```
 
-#### Шаг 4: Проверка установки
+#### Шаг 2: Установка Loki
 
 ```bash
-# Пароль Grafana (по умолчанию prom-operator)
-kubectl get secret --namespace monitoring prometheus-grafana \
-  -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+helm upgrade --install loki grafana-community/loki \
+  --namespace loki \
+  --create-namespace \
+  --version 18.5.1 \
+  --set service.port=3100 \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0]=loki.test \
+  --set ingress.annotations."cert-manager.io/cluster-issuer"=minikube-ca-issuer
+```
 
-# Статус подов
-kubectl get pods -n monitoring
+#### Шаг 3: Установка Tempo
+
+```bash
+helm upgrade --install tempo grafana-community/tempo \
+  --namespace tempo \
+  --create-namespace \
+  --version 2.2.2 \
+  --set service.port=3200
 ```
 
 ---
 
-### Сценарий 2: Развёртывание Loki и Tempo
+### Сценарий 3: Настройка доступа и проверка корреляции
 
-**Цель:** Установить системы сбора логов и трассировок.
-
-#### Шаг 1: Установка Loki
+#### Шаг 1: Настройка локального DNS
 
 ```bash
-helm upgrade --install loki grafana/loki \
-  --namespace loki \
-  --create-namespace \
-  --set service.port=3100 \
-  --set ingress.enabled=true \
-  --set ingress.host=loki.test \
-  --set ingress.tls.enabled=true \
-  --set ingress.tls.secretName=loki-tls \
-  --set ingress.tls.issuerName=minikube-ca \
-  --set ingress.tls.issuerKind=ClusterIssuer
-```
-
-#### Шаг 2: Установка Tempo
-
-```bash
-helm upgrade --install tempo grafana/tempo \
-  --namespace tempo \
-  --create-namespace \
-  --set service.port=3200
-```
-
-#### Шаг 3: Настройка доступа
-
-```bash
+echo "$(minikube ip) grafana.test" | sudo tee -a /etc/hosts
 echo "$(minikube ip) loki.test" | sudo tee -a /etc/hosts
-echo "$(minikube ip) tempo.test" | sudo tee -a /etc/hosts
 ```
+
+#### Шаг 2: Валидация Data Sources
+
+1. Зайти в Grafana (`grafana.test`, логин `admin`, пароль `prom-operator`).
+2. Перейти в **Connections -> Data Sources**.
+3. Нажать **Save & Test** для Loki и Tempo.
+4. Убедиться, что в настройках Loki включены **Derived Fields** для связи с Tempo.
 
 ---
 
 ## Дополнительная информация
 
-### Поиск и устранение неисправностей
+### Устранение неисправностей
 
-| Проблема | Причина | Решение |
+| Проблема | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| **Pod в Pending** | Недостаточно памяти | Увеличить лимиты (requests.memory) |
-| **Prometheus OOMKilled** | Мало памяти для TSDB | Увеличить лимиты до 2Gi |
-| **Loki недоступен** | Ошибка URL | Проверить `http://loki.loki:3100` |
-| **Нет корреляции** | Ошибка `derivedFields` | Проверить `matcherRegex` в Grafana |
+| **Prometheus OOMKilled** | Высокая интенсивность метрик | Увеличить memory limits до 2.5Gi в values.yaml |
+| **Loki 404/502 в Grafana** | Неверный внутренний URL | Проверить доступность: `http://loki.loki:3100` (формат `<svc>.<ns>:<port>`) |
+| **Нет ссылок на трейсы в логах** | Ошибка в `matcherRegex` | Проверить экранирование обратных слешей в YAML-конфигурации (нужно `\\\\w+`) |
+| **Ingress не работает** | Аддон nginx не включен | Выполнить `minikube addons enable ingress` |
 
-### Диагностика
+### Диагностические команды
 
 ```bash
-# Логи
-kubectl logs -n monitoring -l app.kubernetes.io/name=grafana --tail=50
-kubectl logs -n loki -l app.kubernetes.io/name=loki --tail=50
+# Проверка статуса всех компонентов стека
+kubectl get all -n monitoring
+kubectl get all -n loki
+kubectl get all -n tempo
 
-# Проверка Ingress
-kubectl get ingress -A
+# Просмотр логов Grafana для отладки Data Sources
+kubectl logs -n monitoring -l app.kubernetes.io/name=grafana --tail=100
 ```
 
-### Ссылки на SSoT
+### Связанные материалы SSoT
 
-- **[kube-prometheus-stack](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md)**
-- **[Loki overview](../../../Loki/loki_overview.md)**
-- **[Tempo overview](../../../Tempo/index.md)**
-- **[Grafana overview](../../../Grafana/grafana_overview.md)**
+- **[kube-prometheus-stack: Конфигурация](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md)**
+- **[Loki: Практические сценарии](../../../Loki/loki_overview.md)**
+- **[Tempo: Операции и TraceQL](../../../Tempo/index.md)**
+- **[Grafana: Визуализация](../../../Grafana/grafana_overview.md)**
 
-### Безопасность
+### Безопасность и хранение данных
 
-> **Внимание:** Конфигурация только для тестовых окружений.
+> **Внимание:** Текущая конфигурация использует эфемерное хранилище (emptyDir). После перезапуска Minikube данные будут потеряны.
 
-| Аспект | Конфигурация | Production |
+| Аспект | Данное руководство | Production |
 | :--- | :--- | :--- |
-| **TLS** | Самоподписанные | Let's Encrypt |
-| **Аутентификация** | Базовая | OAuth2/OIDC |
-| **Хранение** | Ephemeral | PersistentVolume / S3 |
+| **Persistence** | Отключена (emptyDir) | PersistentVolumes (SSD) или S3-бакеты |
+| **Метрики** | Prometheus (single) | Grafana Mimir (Distributed) |
+| **Auth** | Базовая (admin/pass) | OIDC (Keycloak, Okta, Google) |
+| **Сбор данных** | Скрейпинг Prometheus | **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** |
 
-### Альтернативы для production
+---
 
-| Компонент | Minikube | Production |
-| :--- | :--- | :--- |
-| **Метрики** | Prometheus | Grafana Mimir, VictoriaMetrics |
-| **Логи** | Loki (single-binary) | Loki (микросервисы) |
-| **Трассировки** | Tempo (single-binary) | Tempo (микросервисы) |
-| **Хранилище** | ephemeral | S3, GCS, Azure Blob |
+**Навигация по руководству:**
+
+- **[Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)** (назад)
+- **[Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)** (вперед)

@@ -124,16 +124,7 @@ spec:
           path: /var/lib/containerd
 ```
 
-**Конфигурация Fluent Bit (Parser для containerd/cri):**
-
-```ini
-[PARSER]
-    Name        cri
-    Format      regex
-    Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]+) (?<log>.*)$
-    Time_Key    time
-    Time_Format %Y-%m-%dT%H:%M:%S.%L%z
-```
+Подробная конфигурация парсеров приведена в основном разделе: [Парсинг логов во Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/parsing.md).
 
 ### Сценарий 2: Корреляция логов с трассировками (OpenTelemetry)
 

@@ -8,42 +8,42 @@
 > - **[Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)** (текущий)
 > - **[Тестирование и верификация](./lgtm_otel_minikube_test_app_verification.md)**
 
+---
+
 ## Определения
 
-**OpenTelemetry (OTel)** — стандарт для сбора телеметрии. Подробнее: **[OpenTelemetry: Обзор](../../../OpenTelemetry/opentelemetry_overview.md)**.
+**OpenTelemetry (OTel)** — это открытый стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных (метрик, логов и трассировок). Подробнее: **[OpenTelemetry: Обзор](../../../OpenTelemetry/opentelemetry_overview.md)**.
 
-**OpenTelemetry Operator** — контроллер Kubernetes для управления OTel Collector и автоматической инструментации. Управляет CRD `OpenTelemetryCollector` и `Instrumentation`.
+**OpenTelemetry Operator** — Kubernetes-контроллер, автоматизирующий управление жизненным циклом OTel Collector и процессом инструментации приложений. Управляет ресурсами через CRD `OpenTelemetryCollector` и `Instrumentation`.
 
-**OTel Collector** — компонент для обработки данных. Архитектура описана в **[OpenTelemetry: Сигналы](../../../OpenTelemetry/architecture_signals.md)**.
+**OTel Collector** — центральный компонент для обработки данных, работающий по принципу конвейера (Receivers -> Processors -> Exporters). Подробнее: **[Архитектура и сигналы](../../../OpenTelemetry/architecture_signals.md)**.
 
-**Автоматическая инструментация** — процесс внедрения SDK без изменения кода. Подробнее: **[OpenTelemetry: SDK](../../../OpenTelemetry/instrumentation_sdk.md)**.
+**Автоматическая инструментация** — механизм внедрения OTel SDK в среду выполнения приложения (например, через Java Agent) без изменения исходного кода. Подробнее: **[Инструментация и SDK](../../../OpenTelemetry/instrumentation_sdk.md)**.
 
-**OTLP** — протокол передачи данных. Спецификация: **[OpenTelemetry: OTLP](../../../OpenTelemetry/otlp_protocol.md)**.
-
-**Spanmetrics** — процессор Collector для генерации RED-метрик из трассировок.
+**OTLP (OpenTelemetry Line Protocol)** — универсальный протокол передачи телеметрии, используемый для взаимодействия всех компонентов OTel. Подробнее: **[Протокол OTLP](../../../OpenTelemetry/otlp_protocol.md)**.
 
 ---
 
 ## Основные концепции
 
-### Архитектура OTel в Kubernetes
+### Архитектура OpenTelemetry в кластере
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Minikube Cluster                            │
 │                                                                 │
 │  ┌─────────────────┐     ┌─────────────────────────────────┐   │
 │  │   Приложение    │     │   OpenTelemetry Operator        │   │
-│  │   (Java/OTel)   │     │   (контроллер K8s)              │   │
+│  │   (Java/OTel)   │     │   (v0.156.0)                    │   │
 │  │                 │     │                                 │   │
 │  │  ┌───────────┐  │     │  ┌───────────────────────────┐  │   │
 │  │  │ OTel SDK  │──┼─────┼─▶│  OpenTelemetryCollector   │  │   │
-│  │  └───────────┘  │OTLP │  │  (Collector Deployment)   │  │   │
+│  │  └───────────┘  │OTLP │  │  (v0.155.0)               │  │   │
 │  └─────────────────┘     │  └─────────────┬─────────────┘  │   │
 │                          │                │                 │   │
 │                          │  ┌─────────────▼─────────────┐  │   │
 │                          │  │    Instrumentation CRD    │  │   │
-│                          │  │  (auto-injection config)  │  │   │
+│                          │  │  (Auto-instrumentation)   │  │   │
 │                          │  └───────────────────────────┘  │   │
 │                          └─────────────────────────────────┘   │
 │                                           │                     │
@@ -52,34 +52,28 @@
 │                    ▼                      ▼                  ▼ │
 │            ┌──────────────┐      ┌──────────────┐   ┌────────┐│
 │            │    Tempo     │      │   Loki       │   │Prometheus│
-│            │  (трейсы)    │      │   (логи)     │   │(метрики)│
+│            │  (traces)    │      │   (logs)     │   │(metrics)│
 │            │  :4317       │      │  :3100       │   │ :9090  │
 │            └──────────────┘      └──────────────┘   └────────┘│
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Компоненты OTel Collector
+### Основные компоненты Collector
 
-| Компонент | Назначение | Примеры |
+| Группа | Назначение | Используемые в Minikube |
 | :--- | :--- | :--- |
-| **Receivers** | Приём данных | `otlp`, `jaeger`, `zipkin`, `prometheus` |
-| **Processors** | Обработка данных | `batch`, `attributes`, `spanmetrics`, `memory_limiter` |
-| **Exporters** | Отправка данных | `otlp`, `loki`, `prometheus` |
+| **Receivers** | Прием входящих данных | `otlp` (gRPC/HTTP) |
+| **Processors** | Преобразование и фильтрация | `batch`, `spanmetrics`, `memory_limiter`, `resourcedetection` |
+| **Exporters** | Отправка в системы хранения | `otlp` (Tempo), `loki`, `prometheus` |
 
-### Конвейеры обработки (Pipelines)
-
-1. **Трассировки:** `otlp/receiver → batch/spanmetrics → otlp/exporter → Tempo`
-2. **Метрики:** `otlp/receiver → batch → prometheus/exporter → Prometheus`
-3. **Логи:** `otlp/receiver → batch/attributes → loki/exporter → Loki`
-
-### Требования к ресурсам
+### Ресурсные профили (Minikube)
 
 | Компонент | CPU (request/limit) | Memory (request/limit) |
 | :--- | :--- | :--- |
 | **OTel Operator** | 100m / 500m | 128Mi / 512Mi |
-| **OTel Collector** | 100m / 500m | 128Mi / 512Mi |
-| **Авто-инструментация** | 100m / 200m (на Pod) | 128Mi / 256Mi (на Pod) |
+| **OTel Collector** | 100m / 500m | 256Mi / 1024Mi |
+| **Java Agent** | 50m / 200m (на Pod) | 128Mi / 512Mi (на Pod) |
 
 ---
 
@@ -87,7 +81,7 @@
 
 ### Сценарий 1: Установка OpenTelemetry Operator
 
-**Цель:** Развернуть оператор для управления коллектором и инструментацией.
+**Цель:** Подготовить кластер к управлению ресурсами OpenTelemetry.
 
 #### Шаг 1: Добавление репозитория Helm
 
@@ -98,39 +92,33 @@ helm repo update
 
 #### Шаг 2: Установка оператора
 
+На июль 2026 г. используется версия чарта v0.120.0 (Operator v0.156.0).
+
 ```bash
 helm upgrade --install opentelemetry-operator \
   open-telemetry/opentelemetry-operator \
   --namespace opentelemetry-operator \
-  --create-namespace
+  --create-namespace \
+  --set admissionWebhooks.certManager.enabled=true
 ```
 
 ---
 
-### Сценарий 2: Развертывание OTel Collector
+### Сценарий 2: Развертывание и настройка OTel Collector
 
-**Цель:** Настройка Collector для экспорта в Loki, Tempo и Prometheus.
+**Цель:** Настройка конвейера обработки сигналов для передачи в стек LGTM.
 
-#### Шаг 1: Создание манифеста коллектора
-
-Создайте файл `otel-collector.yaml`:
+#### Шаг 1: Применение конфигурации Collector
 
 ```yaml
 apiVersion: opentelemetry.io/v1alpha1
 kind: OpenTelemetryCollector
 metadata:
-  name: default
+  name: otel-collector
   namespace: opentelemetry
 spec:
   mode: deployment
   replicas: 1
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 100m
-      memory: 128Mi
   config: |
     receivers:
       otlp:
@@ -139,75 +127,83 @@ spec:
             endpoint: 0.0.0.0:4317
           http:
             endpoint: 0.0.0.0:4318
+    
     processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      
       batch:
         timeout: 1s
         send_batch_size: 1024
-      attributes:
-        actions:
-          - key: service.name
-            from_attribute: k8s.pod.name
-            action: upsert
+      
+      resourcedetection:
+        detectors: [env, system, k8snode]
+      
       spanmetrics:
         metrics_exporter: prometheus
         dimensions:
+          - name: service.name
           - name: span.name
-            default: "unspecified"
-        histogram:
-          explicit_bounds: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
-      memory_limiter:
-        check_interval: 1s
-        limit_mib: 400
-        spike_limit_mib: 100
+    
     exporters:
       otlp:
-        endpoint: "tempo.tempo:4317"
+        endpoint: tempo.tempo:4317
         tls:
           insecure: true
+      
       loki:
-        endpoint: "http://loki.loki:3100/loki/api/v1/push"
+        endpoint: http://loki.loki:3100/loki/api/v1/push
+      
       prometheus:
-        endpoint: "0.0.0.0:8889"
+        endpoint: 0.0.0.0:8889
+    
     service:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch, spanmetrics]
+          processors: [memory_limiter, resourcedetection, spanmetrics, batch]
           exporters: [otlp]
         metrics:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
+          processors: [memory_limiter, resourcedetection, batch]
           exporters: [prometheus]
         logs:
           receivers: [otlp]
-          processors: [memory_limiter, batch, attributes]
+          processors: [memory_limiter, resourcedetection, batch]
           exporters: [loki]
 ```
 
-#### Шаг 2: Применение конфигурации
+#### Шаг 2: Применение манифеста
 
 ```bash
-kubectl apply -f otel-collector.yaml
+kubectl apply -f - <<EOF
+# (вставить содержимое yaml выше)
+EOF
 ```
 
 ---
 
 ### Сценарий 3: Настройка автоматической инструментации
 
-**Цель:** Включение автоматической инъекции SDK для Java-приложений.
+**Цель:** Подготовка глобального профиля инструментации для Java-приложений.
 
 #### Шаг 1: Создание ресурса Instrumentation
+
+Используется актуальный агент v2.29.0.
 
 ```yaml
 apiVersion: opentelemetry.io/v1alpha1
 kind: Instrumentation
 metadata:
-  name: default
+  name: java-instrumentation
   namespace: opentelemetry
 spec:
   exporter:
-    endpoint: http://default-collector.opentelemetry:4317
+    endpoint: http://otel-collector.opentelemetry:4317
   java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:2.29.0
     env:
       - name: OTEL_LOGS_EXPORTER
         value: otlp
@@ -217,63 +213,52 @@ spec:
         value: otlp
 ```
 
-#### Шаг 2: Активация в приложении
-
-Добавьте аннотацию к Deployment приложения:
-
-```yaml
-metadata:
-  annotations:
-    instrumentation.opentelemetry.io/inject-java: "opentelemetry/default"
-```
-
 ---
 
 ## Дополнительная информация
 
-### Поиск и устранение неисправностей (Troubleshooting)
+### Поиск и устранение неисправностей
 
-| Проблема | Причина | Решение |
+| Проблема | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| **Нет телеметрии** | Ошибка эндпоинта | Проверить сервисы `loki` и `tempo` в кластере |
-| **Агент не внедряется** | Ошибка аннотации | Проверить имя ресурса `Instrumentation` и пространство имен |
-| **OOM Collector** | Высокая нагрузка | Увеличить лимиты памяти или количество реплик |
+| **Collector в CrashLoopBackOff** | Ошибка в YAML-конфигурации | Проверить логи: `kubectl logs -n opentelemetry -l app.kubernetes.io/name=opentelemetry-collector` |
+| **Нет трейсов в Tempo** | Неверный эндпоинт экспортера | Проверить доступность `tempo.tempo:4317` внутри кластера |
+| **Метрики не доходят до Prometheus** | Ошибка скрейпинга | Проверить порт `8889` и наличие аннотаций Prometheus в сервисе коллектора |
+| **Агент не внедряется** | Отсутствует cert-manager | Убедиться, что cert-manager установлен (необходим для webhooks оператора) |
 
 ### Диагностика
 
 ```bash
-# Логи коллектора
-kubectl logs -n opentelemetry -l app.kubernetes.io/name=opentelemetry-collector --tail=100
+# Статус ресурсов оператора
+kubectl get otelcol,instrumentation -n opentelemetry
 
-# Проверка статуса CRD
-kubectl get otelcol -A
-kubectl get instrumentation -A
+# Внутренние метрики коллектора (длина очередей, батчи)
+kubectl port-forward -n opentelemetry svc/otel-collector-monitoring 8888:8888
+# curl localhost:8888/metrics
 ```
 
 ### Связанные темы
 
 - **[OpenTelemetry: Обзор](../../../OpenTelemetry/opentelemetry_overview.md)**
-- **[OpenTelemetry: Сигналы](../../../OpenTelemetry/architecture_signals.md)**
-- **[OpenTelemetry: SDK](../../../OpenTelemetry/instrumentation_sdk.md)**
+- **[Архитектура и сигналы](../../../OpenTelemetry/architecture_signals.md)**
+- **[Инструментация и SDK](../../../OpenTelemetry/instrumentation_sdk.md)**
+- **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** — современная альтернатива для экосистемы Grafana.
 
-### Безопасность
+### Безопасность и Production
 
-> **Внимание:** Данная конфигурация предназначена только для тестовых окружений.
+> **Внимание:** Данная конфигурация оптимизирована для Minikube.
 
-| Аспект | Рекомендация для Production |
-| :--- | :--- |
-| **TLS** | Обязательное использование TLS для всех экспортеров |
-| **Аутентификация** | Внедрение mTLS и токенов доступа |
-| **Изоляция** | Настройка NetworkPolicies для ограничения трафика |
+| Аспект | Minikube (Dev) | Production (рекомендация) |
+| :--- | :--- | :--- |
+| **TLS** | Insecure (отключен) | mTLS между всеми компонентами |
+| **Режим Collector** | Deployment | DaemonSet (Agent) + Deployment (Gateway) |
+| **Сэмплирование** | 100% (без сэмплирования) | Tail-based sampling для снижения нагрузки |
+| **Хранение** | Эфемерное | S3/GCS для Tempo/Loki, EBS для Prometheus |
 
-### Альтернативы для эксплуатации (Production)
+---
 
-| Компонент | Описание |
-| :--- | :--- |
-| **Режим Collector** | Использование `daemonset` для сбора локальных метрик узла |
-| **Агент** | Рассмотреть **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** для экосистемы Grafana |
+**Навигация по руководству:**
 
-### Полезные ресурсы
+- **[Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)** (назад)
+- **[Тестирование и верификация](./lgtm_otel_minikube_test_app_verification.md)** (вперед)
 
-- **[Официальная документация OpenTelemetry](https://opentelemetry.io/docs/)**
-- **[Репозиторий OTel Helm Charts](https://github.com/open-telemetry/opentelemetry-helm-charts)**

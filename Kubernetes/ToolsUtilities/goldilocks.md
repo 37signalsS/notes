@@ -8,35 +8,41 @@
 
 ### Принцип работы
 
-1. **Развёртывание в кластере:** Goldilocks устанавливается как контроллер в кластер Kubernetes (обычно через Helm).
-2. **Сбор метрик:** Контроллер анализирует метрики потребления CPU и памяти подов через Metrics Server или Prometheus.
-3. **Генерация рекомендаций:** На основе исторических данных генерируются предложения для `resources.limits` и `resources.requests`.
-4. **Визуализация:** Рекомендации отображаются в веб-интерфейсе или через `kubectl`.
+1. **Развёртывание в кластере:** Goldilocks устанавливается как контроллер (через Helm или манифесты).
+2. **Сбор метрик:** Контроллер анализирует метрики потребления CPU и памяти подов через Metrics Server или Prometheus (с адаптером).
+3. **Генерация рекомендаций:** На основе исторических данных VPA в режиме `Recommendation Mode` (UpdateMode: "Off") генерирует предложения для `resources.limits` и `resources.requests`.
+4. **Визуализация:** Рекомендации отображаются в веб-интерфейсе, разделяясь на типы QoS-классов (Guaranteed и Burstable), или доступны через `kubectl`.
 
 ### Режимы работы (UpdateMode)
 
+Хотя Goldilocks чаще всего используется в режиме визуализации, он позволяет управлять поведением VPA:
+
 | Режим | Описание | Когда использовать |
 | :--- | :--- | :--- |
-| **`Off`** | Только сбор рекомендаций без применения | Начальный этап анализа, production-системы |
-| **`Initial`** | Применение рекомендаций только при создании новых подов | Постепенное внедрение |
-| **`Recreate`** | Применение рекомендаций с перезапуском существующих подов | Тестовые окружения, maintenance windows |
+| **`Off`** | Только сбор рекомендаций без изменения подов | Стандарт для Goldilocks и production-систем |
+| **`Initial`** | Применение рекомендаций только при создании новых подов | Постепенное внедрение без перезапуска живых подов |
+| **`Recreate`** | Применение рекомендаций с перезапуском существующих подов | Тестовые окружения или окна обслуживания |
+
+### QoS-классы в рекомендациях
+
+Инструмент предоставляет рекомендации для двух стратегий управления ресурсами:
+- **Guaranteed (Гарантированный):** Устанавливает `requests` равными `limits`. Это предотвращает вытеснение подов и гарантирует выделение ресурсов, что критично для высоконагруженных приложений.
+- **Burstable (С возможностью всплесков):** Устанавливает `requests` ниже, чем `limits`. Это позволяет экономить ресурсы кластера за счет более плотной упаковки (overcommitting), но несет риск троттлинга при нехватке физических ресурсов на узле.
 
 ### Интеграция с VPA
 
-Goldilocks использует VPA как источник рекомендаций, но предоставляет более удобный интерфейс:
+Goldilocks использует VPA как вычислительный движок, предоставляя над ним удобную абстракцию и UI.
 
-- **VPA** — низкоуровневый API, требует ручной настройки
-- **Goldilocks** — высокоуровневая абстракция с веб-UI и упрощённым управлением
-
-**Важно:** Не используйте Goldilocks и прямой VPA одновременно для одних и тех же workload'ов — это вызовет конфликты.
+**Важные нюансы:**
+- **Раздельное управление:** Рекомендуется устанавливать VPA отдельно от Goldilocks. Это гарантирует, что при удалении или обновлении панели управления данные и объекты VPA сохранятся.
+- **Конфликты:** Запрещено использовать Goldilocks и прямой (ручной) VPA для одного и того же workload — это приведет к непредсказуемому поведению и конфликтам в API.
 
 ### Фильтрация и выборочный анализ
 
-Поддерживается фильтрация по:
-
-- **Namespace** — анализ конкретных пространств имён
-- **Labels** — выборочный анализ по лейблам (например, `app=frontend`)
-- **Workload type** — фильтрация по типу рабочей нагрузки
+Goldilocks позволяет гибко настраивать область анализа:
+- **Namespace:** Активируется только в тех пространствах имен, где установлен соответствующий лейбл.
+- **Labels:** Можно настроить фильтрацию конкретных объектов внутри namespace.
+- **Workload type:** Анализирует Deployment, StatefulSet, DaemonSet и другие стандартные типы контроллеров.
 
 ## Практические сценарии
 
@@ -45,21 +51,31 @@ Goldilocks использует VPA как источник рекомендац
 ```bash
 # Добавление репозитория
 helm repo add fairwinds-stable https://charts.fairwinds.com/stable
-helm repo update
+# → "fairwinds-stable" has been added to your repositories
 
-# Установка Goldilocks
+helm repo update
+# → Hang tight while we grab the latest from your chart repositories...
+# → ...Successfully got an update from the "fairwinds-stable" chart repository
+
+# Установка Goldilocks (без встроенного VPA, если он уже есть в кластере)
 helm install goldilocks fairwinds-stable/goldilocks \
   --namespace goldilocks \
   --create-namespace \
   --set controller.rbac.clusterRoleName=goldilocks-clusterrole
+# → NAME: goldilocks
+# → STATUS: deployed
+# → NAMESPACE: goldilocks
 ```
+
+**Примечание:** С версии v4.15.0 образы перемещены в Google Artifact Registry: `us-docker.pkg.dev/fairwinds-ops/oss/goldilocks`.
 
 ### Включение анализа для namespace
 
-Для активации сбора рекомендаций в конкретном namespace добавьте лейбл:
+Для активации сбора данных добавьте лейбл на пространство имен:
 
 ```bash
 kubectl label namespace my-namespace goldilocks.fairwinds.com/enabled=true
+# → namespace/my-namespace labeled
 ```
 
 ### Просмотр рекомендаций
@@ -69,36 +85,48 @@ kubectl label namespace my-namespace goldilocks.fairwinds.com/enabled=true
 ```bash
 # Проброс порта для доступа к UI
 kubectl port-forward svc/goldilocks-dashboard -n goldilocks 8080:80
+# → Forwarding from 127.0.0.1:8080 -> 80
 ```
-
-Откройте `http://localhost:8080` в браузере.
+После этого интерфейс доступен по адресу `http://localhost:8080`.
 
 **Через kubectl:**
 
 ```bash
-# Просмотр VPA объектов, созданных Goldilocks
+# Просмотр всех VPA объектов, созданных инструментом
 kubectl get vpa --all-namespaces -o wide
+# → NAMESPACE      NAME                MODE   CPU    MEM       AGE
+# → my-namespace   myapp-goldilocks    Off    150m   512Mi     12h
 
-# Детальная информация по рекомендациям
-kubectl describe vpa <vpa-name> -n <namespace>
+# Детальное изучение рекомендаций конкретного объекта
+kubectl describe vpa myapp-goldilocks -n my-namespace
+# → Target: CPU: 120m, Memory: 300Mi
+# → Uncapped Target: CPU: 120m, Memory: 300Mi
+# → Lower Bound: CPU: 100m, Memory: 250Mi
+# → Upper Bound: CPU: 500m, Memory: 1Gi
 ```
 
 ### Применение рекомендаций
 
-**Автоматическое применение (для тестовых окружений):**
+**Автоматическое применение (только для Dev/Test):**
+
+Добавьте аннотации в спецификацию Deployment:
 
 ```yaml
-# annotations в Deployment
-annotations:
-  goldilocks.fairwinds.com/enabled: "true"
-  goldilocks.fairwinds.com/update-mode: "Recreate"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  annotations:
+    goldilocks.fairwinds.com/enabled: "true"
+    goldilocks.fairwinds.com/update-mode: "Recreate" # Включает авто-обновление
+spec:
+  # ... остальная часть манифеста
 ```
 
-**Ручное применение (рекомендуется для production):**
+**Ручное применение (рекомендуется для Production):**
 
-1. Просмотрите рекомендации в UI или через `kubectl describe vpa`
-2. Скопируйте рекомендованные значения
-3. Обновите манифест Deployment:
+1. Ознакомьтесь с `Target` значениями в UI или через `describe vpa`.
+2. Обновите манифест приложения:
 
 ```yaml
 spec:
@@ -108,21 +136,32 @@ spec:
       - name: myapp
         resources:
           requests:
-            cpu: 100m      # из рекомендаций Goldilocks
-            memory: 256Mi  # из рекомендаций Goldilocks
+            cpu: 120m      # Значение из Goldilocks Target
+            memory: 300Mi  # Значение из Goldilocks Target
           limits:
-            cpu: 200m      # из рекомендаций Goldilocks
-            memory: 512Mi  # из рекомендаций Goldilocks
+            cpu: 500m      # Значение из Goldilocks Upper Bound или ваша политика
+            memory: 1Gi    # Значение из Goldilocks Upper Bound или ваша политика
 ```
 
-### Исключение namespace'ов
+### Исключение и тонкая настройка
 
-Для исключения системных namespace'ов из анализа:
-
+**Исключение namespace:**
+Удалите лейбл, если анализ больше не требуется:
 ```bash
-# Исключение kube-system
 kubectl label namespace kube-system goldilocks.fairwinds.com/enabled-
+# → namespace/kube-system unlabeled
 ```
+
+**Исключение контейнеров:**
+Если в поде есть служебные контейнеры (sidecars), их можно исключить из анализа через аннотацию:
+`goldilocks.fairwinds.com/exclude-containers: "istio-proxy,linkerd-proxy"`.
+
+## Лучшие практики
+
+1. **Правило 24 часов:** VPA требуется время для накопления статистики. Не принимайте решений на основе данных, собранных менее чем за полные сутки работы приложения под нагрузкой.
+2. **Конфликт с HPA:** Если Horizontal Pod Autoscaler настроен на масштабирование по CPU или памяти, VPA/Goldilocks **обязательно** должен быть в режиме `UpdateMode: "Off"`. Совместное автоматическое масштабирование ресурсов (Vertical) и количества реплик (Horizontal) по одним и тем же метрикам приведет к нестабильности.
+3. **Staging перед Production:** Всегда проверяйте новые лимиты в тестовой среде. Занижение ресурсов может привести к OOM (Out of Memory) или деградации производительности.
+4. **Регулярный аудит:** Профили нагрузки меняются с выходом новых версий кода. Проводите ревизию рекомендаций Goldilocks раз в квартал.
 
 ## Дополнительная информация
 
@@ -130,36 +169,37 @@ kubectl label namespace kube-system goldilocks.fairwinds.com/enabled-
 
 | Компонент | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| Kubernetes | 1.20+ | Проверено до 1.32 |
-| Metrics Server | 0.6+ | Обязателен для сбора метрик |
-| Helm | 3.0+ | Для установки через Helm |
+| Kubernetes | 1.25+ | Полная поддержка до 1.32 включительно |
+| Metrics Server | 0.6+ | Критически важен для передачи метрик в VPA |
+| Helm | 3.0+ | Для стандартной установки |
+| VPA | 0.8+ | Должен быть предварительно развернут в кластере |
 
-### Ресурсы контроллера
+### Ресурсы контроллера (рекомендуемые)
 
+Для стабильной работы самого Goldilocks в средних кластерах:
 ```yaml
 resources:
   requests:
-    cpu: 50m
-    memory: 64Mi
+    cpu: 100m
+    memory: 128Mi
   limits:
-    cpu: 200m
-    memory: 256Mi
+    cpu: 300m
+    memory: 512Mi
 ```
 
 ### Безопасность
 
-- Не вносит изменения в манифесты без явного указания режима `Recreate` или `Initial`
-- Требует RBAC-права на чтение метрик и создание VPA объектов
-- Рекомендуется запускать в отдельном namespace
+- **RBAC:** Контроллер требует прав на чтение метрик, ресурсов (deployments, pods) и управление объектами `verticalpodautoscalers.autoscaling.k8s.io`.
+- **Изоляция:** Рекомендуется запускать в выделенном namespace `goldilocks` с ограниченными сетевыми политиками.
+- **Immutable:** По умолчанию инструмент не изменяет существующие поды, работая как пассивный аудитор.
 
 ### Ограничения
 
-- Не работает с подами, управляемыми другими операторами авто scaling'а
-- Требует установленного Metrics Server или Prometheus
-- Рекомендации основаны на исторических данных (24 часа по умолчанию)
+- **Batch Workloads:** Плохо подходит для короткоживущих задач (Jobs/CronJobs), так как VPA не успевает собрать репрезентативные данные.
+- **Зависимость от метрик:** При сбоях Metrics Server или Prometheus рекомендации перестают обновляться.
 
 ### Смотрите также
 
-- [VPA](../Autoscaling/vpa_detailed.md) — подробная информация о Vertical Pod Autoscaler.
-- [Metrics Server](../MonitoringLogging/metrics-server.md) — источник метрик для VPA/Goldilocks.
-- [Официальная документация Fairwinds](https://goldilocks.docs.fairwinds.com/) — полная документация и GitHub-репозиторий.
+- [VPA](../Autoscaling/vpa_detailed.md) — глубокое погружение в механизмы Vertical Pod Autoscaler.
+- [Metrics Server](../MonitoringLogging/metrics-server.md) — установка и настройка источника данных.
+- [Официальная документация Fairwinds](https://goldilocks.docs.fairwinds.com/) — актуальные параметры конфигурации и Roadmap.

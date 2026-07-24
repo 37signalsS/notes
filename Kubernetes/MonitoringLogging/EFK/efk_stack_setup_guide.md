@@ -1,48 +1,45 @@
 # Стек EFK в Kubernetes
 
-<!--
-Reliability: 10 (Основано на стандартных Helm-чартах Elastic и Fluent)
-Freshness: 10 (Актуально для версий Elasticsearch 8.x и Fluent Bit 3.x)
--->
+> **Примечание:** Данный файл является основным руководством по развертыванию стека EFK в среде Kubernetes. Для решения возникающих проблем используйте [Устранение неполадок EFK](./efk_stack_troubleshooting.md).
 
 ## Определения
 
-**Стек EFK (Elasticsearch, Fluent Bit, Kibana)** — комплексное решение для сбора, хранения и визуализации логов в среде Kubernetes.
+**Стек EFK (Elasticsearch, Fluent Bit, Kibana)** — интегрированное решение для централизованного сбора, долговременного хранения и анализа логов в кластере Kubernetes.
 
-**Elasticsearch** — распределенный поисковый и аналитический движок, используемый как централизованное хранилище логов.
+**Elasticsearch** — ядро стека; распределенная база данных, оптимизированная для полнотекстового поиска и аналитики. Начиная с версии 8.x, функции безопасности (TLS и аутентификация) включены по умолчанию.
 
-**Fluent Bit** — легковесный агент сбора и обработки логов (Log Shipper), оптимизированный для работы в контейнеризированных средах.
+**Fluent Bit** — высокопроизводительный агент (Log Shipper). В стеке EFK отвечает за сбор логов с узлов, их парсинг, обогащение метаданными и отправку в хранилище.
 
-**Kibana** — веб-интерфейс для визуализации данных и выполнения поисковых запросов к Elasticsearch.
+**Kibana** — платформа визуализации. Используется для поиска по логам (инструмент **Discover**), создания дашбордов и управления жизненным циклом данных.
 
-**Helm** — менеджер пакетов для Kubernetes, используемый для автоматизации развертывания компонентов стека.
+**ECK (Elastic Cloud on Kubernetes)** — (рекомендуемый в 2026 г.) оператор для управления стеком Elastic в K8s, обеспечивающий автоматизацию обновлений, ротацию сертификатов и масштабирование.
 
 ## Основные концепции
 
-### Архитектура сбора логов
+### Архитектура сбора данных
 
-В кластере Kubernetes Fluent Bit развертывается как **DaemonSet** (один под на каждый узел). Он собирает стандартные потоки вывода (`STDOUT`/`STDERR`) контейнеров, обогащает их метаданными Kubernetes (имена подов, пространств имен, меток) и пересылает в Elasticsearch.
+Fluent Bit развертывается как **DaemonSet**. Это гарантирует запуск одного агента на каждом рабочем узле кластера.
+*   **Input**: Чтение файлов `/var/log/containers/*.log`.
+*   **Filter (Kubernetes)**: Обращение к API-серверу K8s для сопоставления лога с конкретным подом, контейнером и его метками.
+*   **Output**: Пересылка структурированного JSON в Elasticsearch.
 
-### Управление индексами
+### Управление жизненным циклом (ILM)
 
-Логи в Elasticsearch группируются в **индексы**. Для эффективного управления данными используется:
+В промышленной эксплуатации логи не могут храниться вечно. Используются следующие механизмы:
+*   **Hot-Warm-Cold архитектура**: Перемещение старых логов с быстрых SSD на дешевые HDD.
+*   **Data Streams**: (введено в ES 7.9+) современный способ работы с временными рядами (логами), упрощающий автоматическую ротацию и управление индексами.
 
-* **Ротация индексов**: создание новых индексов по времени (например, ежедневно).
-* **ILM (Index Lifecycle Management)** — управление жизненным циклом индексов (автоматическое перемещение на дешевые диски или удаление старых данных).
-* **Data Views (Index Patterns)** — шаблоны в Kibana, объединяющие группу индексов для поиска (например, `kube-logs-*`).
+### Безопасность по умолчанию
 
-### Оптимизация ресурсов
-
-* **JVM (Java Virtual Machine)**: Elasticsearch требует настройки параметров памяти `Xms` и `Xmx`. Рекомендуется устанавливать их в значение, равное 50% от доступной оперативной памяти пода.
-* **Backpressure**: механизм Fluent Bit для приостановки чтения логов при переполнении буферов или недоступности хранилища.
+В Elasticsearch 8.x передача данных без TLS и без пароля заблокирована на уровне ядра. При развертывании через Helm необходимо:
+1. Сгенерировать или задать пароль для пользователя `elastic`.
+2. Настроить Fluent Bit на использование HTTPS и проверку CA-сертификата (или временное игнорирование проверки для self-signed сертификатов).
 
 ## Практические сценарии
 
-### Развертывание стека EFK через Helm
+### Развертывание через Helm
 
 #### 1. Подготовка окружения
-
-Создайте пространство имен для логирования и добавьте репозитории чартов.
 
 ```bash
 kubectl create ns logging
@@ -51,54 +48,65 @@ helm repo add fluent https://fluent.github.io/helm-charts
 helm repo update
 ```
 
-#### 2. Установка Elasticsearch
+#### 2. Установка Elasticsearch (с безопасностью)
 
-Для обеспечения отказоустойчивости рекомендуется использовать минимум 3 реплики.
+Для 8.x важно явно задать пароль или знать, как его извлечь после установки.
 
 ```bash
+# Пример установки с фиксированным паролем (для демонстрации)
 helm upgrade --install elasticsearch elastic/elasticsearch \
   --namespace logging \
   --set replicas=3 \
-  --set esJavaOpts="-Xmx1g -Xms1g" \
-  --set resources.requests.cpu="100m" \
-  --set resources.requests.memory="2Gi" \
-  --set resources.limits.cpu="1000m" \
-  --set resources.limits.memory="2Gi" \
-  --set volumeClaimTemplate.resources.requests.storage="10Gi"
+  --set secret.password="YourSecurePass123!" \
+  --set esJavaOpts="-Xmx2g -Xms2g" \
+  --set resources.requests.memory="4Gi" \
+  --set volumeClaimTemplate.resources.requests.storage="20Gi"
 ```
+> **Важно:** Если пароль не задан, извлеките его командой:
+> `kubectl get secret elasticsearch-master-credentials -n logging -o jsonpath="{.data.password}" | base64 -d`
 
 #### 3. Установка Fluent Bit
 
-Настройте толерантности (`tolerations`), чтобы агент работал на всех узлах, включая мастер-ноды.
+Для работы с Elasticsearch 8.x необходимо добавить параметр `Suppress_Type_Name On` (так как типы индексов удалены).
 
 ```bash
-helm upgrade --install fluent-bit fluent/fluent-bit \
-  --namespace logging \
-  --set tolerations[0].operator="Exists" \
-  --set tolerations[0].effect="NoSchedule"
+# values.yaml для Fluent Bit
+config:
+  outputs: |
+    [OUTPUT]
+        Name            es
+        Match           *
+        Host            elasticsearch-master.logging.svc
+        Port            9200
+        HTTP_User       elastic
+        HTTP_Passwd     YourSecurePass123!
+        TLS             On
+        TLS.Verify      Off
+        Suppress_Type_Name On
+        Logstash_Format On
+        Logstash_Prefix kube-logs
 ```
 
 #### 4. Установка Kibana
 
-Для доступа к интерфейсу настройте `Ingress`.
-
 ```bash
 helm upgrade --install kibana elastic/kibana \
   --namespace logging \
+  --set elasticsearchHosts="https://elasticsearch-master:9200" \
   --set ingress.enabled=true \
-  --set ingress.hosts[0].host="kibana.example.com" \
-  --set ingress.hosts[0].paths[0].path="/"
+  --set ingress.hosts[0].host="kibana.example.com"
 ```
 
-### Настройка парсинга и фильтрации
+### Оптимизация производительности
 
-* **JSON (JavaScript Object Notation)**: Для автоматического разбора структурированных логов включите `Merge_Log On` в конфигурации Fluent Bit.
-* **Системные логи**: Для сбора логов Kubelet или Docker Engine используйте плагин `systemd`.
+*   **Resources**: Всегда устанавливайте `requests` равными `limits` для памяти в Elasticsearch, чтобы избежать OOM Killer при всплесках нагрузки.
+*   **Buffers**: Если Fluent Bit не успевает отправлять логи (Backpressure), настройте `Mem_Buf_Limit` в секции Input, чтобы предотвратить переполнение памяти агента.
+*   **Disk**: Используйте `StorageClass` с быстрым SSD (например, `gp3` в AWS или `ssd-persistent-disk` в GCP).
 
 ## Дополнительная информация
 
-* [Конфигурация Fluent Bit](./fluentbit/fluentbit_configuration.md) — детальное описание настройки секций INPUT, FILTER и OUTPUT.
-* [Парсинг логов во Fluent Bit](./fluentbit/parsing.md) — работа с регулярными выражениями и многострочными логами.
-* [Практическое руководство по Kibana](./kibana_guide.md) — поиск логов и создание дашбордов.
-* [Устранение неполадок EFK](./efk_stack_troubleshooting.md) — решение типичных проблем при развертывании и эксплуатации.
-* [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md) — выбор между агентом и агрегатором.
+*   [Конфигурация Fluent Bit](./fluentbit/fluentbit_configuration.md) — детальная настройка фильтров и парсеров.
+*   [Парсинг логов во Fluent Bit](./fluentbit/parsing.md) — разбор JSON и многострочных записей (Java/Python).
+*   [Практическое руководство по Kibana](./kibana_guide.md) — как искать логи и строить дашборды.
+*   [Устранение неполадок EFK](./efk_stack_troubleshooting.md) — типичные ошибки при подключении и запуске.
+*   [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md) — почему Fluent Bit предпочтительнее для K8s.

@@ -1,27 +1,21 @@
-# kubeswitches
+# Kubeswitch
 
-## Definitions
+## Определения
 
-**`kubeswitches`** — утилита CLI для управления несколькими файлами `kubeconfig` и быстрого переключения между контекстами кластеров Kubernetes. Организует конфигурационные файлы для различных кластеров (например, `development`, `staging`, `production`) в отдельных подкаталогах, упрощая переключение активного `kubeconfig`.
+**Kubeswitch** — это концепция и набор инструментов для эффективного управления множеством файлов `kubeconfig` и быстрого переключения между контекстами Kubernetes. Инструмент может быть представлен как простыми bash-скриптами (`kubeswitches`), так и продвинутыми утилитами (`switcher`), обеспечивающими изоляцию сессий терминала и интеграцию с внешними хранилищами секретов.
 
----
+## Основные концепции
 
-## Basic Concepts
+### Принцип работы
 
-### Архитектура и принцип работы
-
-`kubeswitches` работает по принципу хранения контекстов в отдельных файлах и их копирования:
-
-1. **Хранение:** Каждый кластер хранится в отдельном файле `config` в своей поддиректории (например, `~/.kube/contexts/<name>/config`).
-2. **Переключение:** При переключении контекста файл копируется в `~/.kube/config`.
-3. **Изоляция:** Конфигурации кластеров не смешиваются, что снижает риск случайных ошибок при работе с кластерами.
-4. **Совместимость:** Стандартные утилиты (`kubectl`, `helm`) продолжают работать с `~/.kube/config` без изменений.
+Основная идея заключается в декомпозиции монолитного файла `~/.kube/config` на отдельные конфигурации:
+1.  **Хранение:** Каждый кластер или группа контекстов хранится в отдельном файле в структурированной директории (например, `~/.kube/contexts/`).
+2.  **Переключение:** При смене контекста инструмент либо копирует нужный файл в `~/.kube/config`, либо динамически обновляет переменную окружения `KUBECONFIG` для текущей сессии.
+3.  **Изоляция:** Это предотвращает "смешивание" конфигураций и минимизирует риск случайного выполнения команд в `production` вместо `development`.
 
 ### Структура каталогов
 
-Требуется централизованная директория с подкаталогами для каждого контекста Kubernetes.
-
-**Пример структуры:**
+Для ручного управления или использования простых скриптов рекомендуется следующая структура:
 
 ```text
 ~/.kube/contexts/
@@ -32,152 +26,72 @@
 └── prod
     └── config
 ```
+# → Каждый подкаталог содержит автономный файл конфигурации.
 
-Каждый подкаталог содержит файл `config` с полным kubeconfig для соответствующего кластера.
+### Изоляция терминалов (Advanced)
 
-### Переменная окружения
+Современные версии (например, `danielfoehrKn/kubeswitch`) поддерживают изоляцию на уровне сессии:
+- При выполнении `switch` создается временный файл в `/tmp/` или `KUBESWITCH_CONTEXT_DIR`.
+- Переменная `KUBECONFIG` обновляется только для текущего процесса shell.
+- Это позволяет одновременно работать с разными кластерами в разных вкладках терминала.
 
-Необходимо определить переменную окружения `KUBESWITCH_CONTEXT_DIR`, указывающую на основную директорию с контекстами.
-
-**Добавление в ~/.bashrc или ~/.zshrc:**
-
-```bash
-export KUBESWITCH_CONTEXT_DIR="$HOME/.kube/contexts"
-```
-
-**Применение изменений:**
-
-```bash
-source ~/.bashrc  # или source ~/.zshrc
-```
-
-### Необходимые компоненты
-
-| Компонент | Минимальная версия | Примечание |
-| :--- | :--- | :--- |
-| **kubectl** | 1.20+ | Для работы с кластерами |
-| **Bash/Zsh** | 4.0+ | Для скриптов интеграции |
-
-### Сравнение с альтернативами и ограничения
-
-| Инструмент | Подход | Преимущества | Недостатки и ограничения |
-| :--- | :--- | :--- | :--- |
-| **kubeswitches** | Отдельные файлы на кластер | Полная изоляция, простота | Копирование файлов (медленнее), нет синхронизации облачных конфигов, нет управления внутри одного файла |
-| **kubectl config** | Единый файл с контекстами | Встроен в kubectl | Смешивание конфигураций, риск случайных изменений |
-| **kubectx** | Управление контекстами в одном файле | Быстрое переключение | Риск случайных изменений |
-
----
-
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка
 
-> ⚠️ **Примечание:** Проект `kubeswitches` малоизвестен. URL и команды могут требовать верификации перед использованием. Альтернатива — [kubectx](https://github.com/ahmetb/kubectx).
-
-**Ручная установка (Linux/macOS):**
-
+**Вариант 1: Современная утилита (switcher/switch):**
 ```bash
-curl -LO <актуальный_URL_бинарного_файла>
-chmod +x kubeswitches
-sudo mv kubeswitches /usr/local/bin/
+# macOS
+brew install danielfoehrkn/switch/switch
+
+# Linux (Binary)
+curl -L https://github.com/danielfoehrKn/kubeswitch/releases/latest/download/switcher_linux_amd64 -o switcher
+chmod +x switcher
+sudo mv switcher /usr/local/bin/
+# → switcher установлен в /usr/local/bin/
 ```
 
-**Сборка из исходников:**
-
+**Вариант 2: Ручной скрипт (kubeswitches):**
 ```bash
-git clone <актуальный_URL_репозитория>
+git clone <URL_репозитория_скриптов>
 cd kubeswitches
 go build -o kubeswitches ./cmd/kubeswitches
 sudo mv kubeswitches /usr/local/bin/
 ```
 
-### Первоначальная настройка
+### Первоначальная настройка и переменные
 
-После установки:
-
+Добавьте в `~/.bashrc` или `~/.zshrc`:
 ```bash
-# Создание директории для контекстов
-mkdir -p ~/.kube/contexts
+# Директория для хранения контекстов
+export KUBESWITCH_CONTEXT_DIR="$HOME/.kube/contexts"
 
-# Резервное копирование существующего kubeconfig
-cp ~/.kube/config ~/.kube/config.backup
-
-# Создание первого контекста
-mkdir -p ~/.kube/contexts/dev
-cp ~/.kube/config ~/.kube/contexts/dev/config
+# Инициализация switcher (если используется)
+source <(switcher init zsh) # или bash
 ```
 
-### Защита файлов kubeconfig
+### Защита конфигурационных файлов
 
-`config` файлы содержат чувствительные данные (токены, сертификаты).
-
+Файлы `kubeconfig` содержат чувствительные данные (токены, сертификаты).
 ```bash
-chmod 600 ~/.kube/contexts/*/config
+# Установка прав доступа
 chmod 700 ~/.kube/contexts
+chmod 600 ~/.kube/contexts/*/config
+# → Права доступа ограничены только текущим пользователем
 ```
-
-> **Изоляция production-контекстов:** Production kubeconfig следует хранить на зашифрованных носителях или использовать менеджеры секретов (HashiCorp Vault, AWS Secrets Manager) вместо хранения в виде простых файлов.
-
-### Основные команды
-
-| Команда | Описание |
-| :--- | :--- |
-| `kubeswitches list` | Список доступных контекстов |
-| `kubeswitches set <name>` | Переключение на контекст (копирует файл конфигурации) |
-| `kubectl config current-context` | Проверка текущего контекста |
-| `kubectl config view` | Просмотр конфигурации |
 
 ### Добавление нового кластера
 
+**Из текущего конфига:**
 ```bash
-# Экспорт конфигурации из существующего kubeconfig
-kubectl config view --raw --minify > new-cluster-config.yaml
-
-# Создание контекста
-mkdir -p ~/.kube/contexts/new-cluster
-cp new-cluster-config.yaml ~/.kube/contexts/new-cluster/config
-
-# Переключение
-kubeswitches set new-cluster
+# Экспорт текущего активного контекста в отдельный файл
+kubectl config view --raw --minify > ~/.kube/contexts/new-cluster/config
+# → Файл создан в директории контекста
 ```
 
-### Интеграция с оболочкой
-
-**Bash/Zsh алиасы:**
-
+**Через облачные провайдеры:**
 ```bash
-alias ks='kubeswitches'
-alias ksl='kubeswitches list'
-alias kss='kubeswitches set'
-
-# Функция для быстрого переключения
-ksw() {
-  kubeswitches set "$1"
-  echo "Switched to: $(kubectl config current-context)"
-}
-```
-
-**Отображение текущего контекста в prompt (bash):**
-
-```bash
-parse_kube_context() {
-  if [ -f ~/.kube/config ]; then
-    local context=$(kubectl config current-context 2>/dev/null)
-    if [ -n "$context" ]; then
-      echo " [$context]"
-    fi
-  fi
-}
-
-PS1='\u@\h:\w$(parse_kube_context)$ '
-```
-
-### Обновление credentials (синхронизация с cloud-провайдерами)
-
-При ротации credentials в облачных провайдерах (GKE, EKS, AKS) требуется вручную обновить файлы `config` в директориях контекстов, так как автоматической синхронизации нет:
-
-```bash
-# GKE
+# GKE (Google Cloud)
 gcloud container clusters get-credentials cluster-name --zone zone
 cp ~/.kube/config ~/.kube/contexts/gke-prod/config
 
@@ -186,16 +100,66 @@ yc managed-kubernetes cluster get-credentials --name cluster-name
 cp ~/.kube/config ~/.kube/contexts/yandex-prod/config
 ```
 
----
+### Интеграция с оболочкой (Bash/Zsh)
 
-## Additional Information
+**Функция для быстрого переключения (ручной метод):**
+```bash
+ksw() {
+  local target_dir="$HOME/.kube/contexts/$1"
+  if [ -d "$target_dir" ]; then
+    cp "$target_dir/config" ~/.kube/config
+    echo "Switched to: $1"
+    echo "Current context: $(kubectl config current-context)"
+  else
+    echo "Context $1 not found in $HOME/.kube/contexts/"
+  fi
+}
+```
 
-### Связанные документы
+**Отображение контекста в Prompt (Bash):**
+```bash
+parse_kube_context() {
+  if [ -f ~/.kube/config ]; then
+    local context=$(kubectl config current-context 2>/dev/null)
+    [ -n "$context" ] && echo " [$context]"
+  fi
+}
+PS1='\u@\h:\w$(parse_kube_context)$ '
+```
 
-- **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — структура и использование kubeconfig
-- **[Lens](../lens/definitions_and_concepts.md)** — GUI для управления несколькими кластерами
+### Интеграция с HashiCorp Vault
 
-### Репозиторий и документация
+`switcher` позволяет подтягивать конфиги напрямую из Vault без сохранения на диск:
+```yaml
+# ~/.kube/switch-config.yaml
+vault:
+  address: https://vault.example.com
+  stores:
+    - path: "kubernetes/clusters"
+      kind: "kv2"
+```
 
-- [GitHub: поиск kubeswitches](https://github.com/search?q=kubeswitches)
-- Альтернатива: **[kubectx](https://github.com/ahmetb/kubectx)** — более популярный инструмент для управления контекстами.
+## Дополнительная информация
+
+### Сравнение подходов
+
+| Параметр | Ручной (скрипты) | switcher (Advanced) |
+| :--- | :--- | :--- |
+| **Механизм** | Копирование файлов | Динамический KUBECONFIG |
+| **Изоляция** | Глобальная (на все окна) | На уровне сессии терминала |
+| **Источники** | Только локальные папки | Vault, GKE, EKS, AKS, Хуки |
+| **Скорость** | Зависит от FS | Индексация и кэширование |
+
+### Требования
+
+| Компонент | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| **kubectl** | 1.20+ | Обязателен |
+| **fzf** | Последняя | Для интерактивного поиска в switch |
+| **Bash/Zsh** | 4.0+ | Для скриптов интеграции |
+
+### Смотрите также
+
+- **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — детальное описание структуры файлов конфигурации.
+- **[Lens](../lens/definitions_and_concepts.md)** — графический интерфейс для управления множеством кластеров.
+- **[Official Kubeswitch Repo](https://github.com/danielfoehrKn/kubeswitch)** — документация по расширенным Store и кастомным хукам.

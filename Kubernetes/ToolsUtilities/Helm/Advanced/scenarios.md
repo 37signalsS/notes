@@ -1,86 +1,128 @@
-# Сценарии Helm: репозитории, Kustomize, адаптивные шаблоны
+# Сценарии Helm: OCI-реестры, пост-рендеринг и адаптивные шаблоны
 
 ## Определения
 
-**Сценарии Helm** — практические случаи использования Helm для решения сложных задач: создания кастомных репозиториев, интеграции с внешними инструментами конфигурации (Kustomize) и построения универсальных шаблонов.
+**Сценарии Helm** — практические методики применения Helm для решения сложных инфраструктурных задач, включая управление артефактами в OCI-реестрах, гибридную конфигурацию с внешними инструментами и построение динамических систем шаблонизации.
 
 ---
 
 ## Основные концепции
 
-### Области применения продвинутых сценариев
+### Эволюция подходов (Helm v4+)
 
-1. **Публикация чартов**: создание инфраструктуры для распространения пакетов внутри организации или в open-source.
-2. **Гибридная конфигурация**: разделение ответственности между Helm (как шаблонизатором) и Kustomize (как инструментом наложения патчей).
-3. **Универсальность (Adaptive Templates)**: разработка чартов, корректно работающих в различных кластерах независимо от версии Kubernetes или доступных API (Application Programming Interface).
+1.  **OCI-First**: Переход от статических HTTP-индексов (`index.yaml`) к реестрам артефактов (OCI), обеспечивающим безопасность, версионирование и единое хранилище с образами контейнеров.
+2.  **Декларативная мутация (Post-rendering)**: Использование Helm как базового генератора с последующей коррекцией манифестов через специализированные инструменты без изменения исходного кода чарта.
+3.  **Модульность через библиотеки**: Вынос общей логики в `library`-чарты для обеспечения консистентности сотен микросервисов.
 
 ---
 
 ## Практические сценарии
 
-### 1. Создание собственного HTTP (HyperText Transfer Protocol) репозитория
+### 1. Работа с OCI (Open Container Initiative) реестрами
 
-Helm-репозиторий представляет собой статический HTTP-сервер, содержащий индексный файл `index.yaml` и упакованные чарты в формате `.tgz`.
+В современных средах OCI-реестр является основным способом дистрибуции. Helm v4 оптимизирован для работы с реестрами (Harbor, ECR, Artifact Registry) без использования промежуточных плагинов.
 
-**Требования:**
+**Публикация чарта:**
 
-- HTTP-сервер (Nginx, Apache, S3 (Simple Storage Service)-bucket, GitHub Pages), поддерживающий GET-запросы.
-- Файл `index.yaml` с метаданными всех доступных чартов.
-- Дополнительно: файлы `.prov` для проверки подлинности (Provenance files).
+```bash
+# 1. Авторизация (только домен)
+helm registry login registry.example.com -u robot-user
 
-**Алгоритм создания:**
+# 2. Упаковка и пуш
+helm package ./my-chart
+helm push my-chart-1.2.3.tgz oci://registry.example.com/charts
+```
 
-1. **Упаковка чарта**:
+**Установка по дигесту (Immutable Infrastructure):**
+Использование дигеста (хеша) гарантирует, что в кластер будет установлена именно та версия чарта, которая прошла аутентификацию, исключая риски подмены тега.
 
-    ```bash
-    helm package ./my-chart
+```bash
+helm install my-release oci://registry.example.com/charts/my-chart@sha256:7f... --atomic
+```
+
+### 2. Гибридное использование через Пост-рендеринг
+
+Если Helm-чарт не поддерживает нужный параметр (например, специфическую аннотацию безопасности), используйте `--post-renderer` для наложения патчей Kustomize на лету.
+
+**Алгоритм:**
+
+1.  **Создайте kustomization.yaml** в директории `scripts/`:
+    ```yaml
+    resources:
+      - all.yaml # Временный файл, генерируемый Helm
+    patches:
+      - target: { kind: Deployment }
+        patch: |-
+          - op: add
+            path: /metadata/annotations/security
+            value: strictly-enforced
     ```
 
-2. **Генерация индекса**:
-
+2.  **Скрипт-обертка (`scripts/kustomize.sh`):**
     ```bash
-    # Создает или обновляет index.yaml в текущей директории
-    helm repo index . --url https://my-repo.com/charts
+    #!/bin/bash
+    cat <&0 > scripts/all.yaml
+    kustomize build scripts/
     ```
 
-3. **Публикация**: загрузка `.tgz` и `index.yaml` на сервер.
+3.  **Запуск Helm:**
+    ```bash
+    helm upgrade --install my-app ./my-chart --post-renderer ./scripts/kustomize.sh
+    ```
 
-Для современных рабочих процессов также рекомендуется использование OCI (Open Container Initiative) реестров. См. **[OCI-реестры в Helm](../helm_overview.md#работа-с-oci-реестрами)**.
+### 3. Использование библиотечных чартов (Library Charts)
 
-### 2. Гибридное использование с Kustomize
+Для исключения дублирования `_helpers.tpl` создайте общий чарт с типом `library`.
 
-В сложных проектах эффективно разделение: Helm генерирует базовые манифесты, а Kustomize накладывает патчи для конкретных окружений (dev, prod).
-
-**Рабочий процесс:**
-
-1. **Рендеринг базы**: `helm template my-app ./chart > base/resources.yaml`.
-2. **Применение патчей**: `kubectl apply -k overlays/prod`.
-
-Подробное описание гибридного подхода, включая декларативное использование Helm внутри `kustomization.yaml` (YAML Ain't Markup Language), см. в разделе **[Интеграция Helm + Kustomize](../../kustomize/kustomize_advanced_features.md#38-интеграция-helm--kustomize)**.
-
-### 3. Создание адаптивных («умных») шаблонов
-
-Адаптивные шаблоны используют логику для автоматической подстройки под окружение. Это критично для создания переиспользуемых чартов.
-
-**Ключевые механизмы:**
-
-- **Проверка API и версий**: использование `.Capabilities` и `semverCompare` для выбора `apiVersion` или полей манифеста (например, `ingressClassName`). Подробные примеры кода см. в разделе **[Проверка API версий](../templating/scenarios/api_versions.md)**.
-- **Манипуляция строками**: использование функций `printf` и `include` для динамического формирования имён ресурсов.
-
-**Пример формирования имени сервиса:**
-
+**В библиотечном чарте (`common-lib/Chart.yaml`):**
 ```yaml
-{{- $fullName := include "mychart.fullname" . -}}
-{{- $svcName := printf "%s-svc" $fullName -}}
+apiVersion: v2
+name: common-lib
+type: library
+version: 1.0.0
+```
+
+**В целевом чарте (`app-chart/Chart.yaml`):**
+```yaml
+dependencies:
+  - name: common-lib
+    version: 1.0.0
+    repository: "oci://registry.example.com/charts"
+```
+
+**Использование шаблона:**
+```yaml
 metadata:
-  name: {{ $svcName }}
+  labels:
+    {{- include "common-lib.standardLabels" . | nindent 4 }}
+```
+
+### 4. Адаптивные шаблоны и проверка API
+
+Для создания универсальных чартов используйте проверки доступности ресурсов в кластере.
+
+**Пример выбора API-версии Ingress:**
+```yaml
+{{- $apiVersion := "networking.k8s.io/v1" -}}
+{{- if not (.Capabilities.APIVersions.Has "networking.k8s.io/v1") -}}
+  {{- $apiVersion = "networking.k8s.io/v1beta1" -}}
+{{- end -}}
+apiVersion: {{ $apiVersion }}
+kind: Ingress
+```
+
+**Проверка версии Kubernetes:**
+```yaml
+{{- if semverCompare ">=1.24-0" .Capabilities.KubeVersion.GitVersion -}}
+# Логика для новых версий K8s (например, изменение полей Service)
+{{- end -}}
 ```
 
 ---
 
 ## Дополнительная информация
 
-- **[Обзор Helm](../helm_overview.md)** — базовые определения и концепции
-- **[Плагины Helm](../helm_plugins.md)** — расширение функционала CLI (Command Line Interface)
-- **[Шаблонизация в Helm](../helm_templating.md)** — подробное руководство по функциям и синтаксису
-- **[Kustomize — Обзор и основные концепции](../../kustomize/kustomize_overview.md)** — основы работы с Kustomize
+- **[Обзор Helm](../helm_overview.md)** — архитектура v4, SSA и работа с OCI.
+- **[Зависимости и библиотеки](../helm_dependencies_and_library_charts.md)** — детальный разбор типов чартов.
+- **[Сравнение версий](../helm_v2_vs_v3.md)** — изменения в стратегиях слияния (Three-way merge vs SSA).
+- **[Шаблонизация в Helm](../helm_templating.md)** — полный список функций (semverCompare, include и др.).

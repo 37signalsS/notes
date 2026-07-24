@@ -1,233 +1,131 @@
 # Сценарии приватного CA
 
-## Definitions
+## Определения
 
-**Сценарии приватного CA** — практические случаи использования cert-manager для создания внутренних центров сертификации. Полный обзор — в [index.md](./index.md).
+**Сценарии приватного CA** — набор практических конфигураций cert-manager для развертывания внутренних центров сертификации и управления доверием в кластере. Полный архитектурный обзор представлен в [index.md](./index.md).
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
-### Ключевые параметры Certificate для приватного CA
+### Ключевые параметры Certificate для Private CA
 
-| Параметр | Назначение | Критичность |
+При настройке внутренних сертификатов рекомендуется использовать современные стандарты безопасности и совместимости:
+
+| Параметр | Назначение | Рекомендация |
 | :--- | :--- | :--- |
-| `isCA: true` | Разрешает сертификату подписывать другие сертификаты | Обязательно для корневого CA |
-| `privateKey.encoding: PKCS8` | Формат кодирования закрытого ключа | Обязательно для Java (OpenSearch, Elasticsearch) |
-| `privateKey.algorithm: ECDSA` | Алгоритм ключа (ECDSA vs RSA) | Рекомендуется ECDSA (меньше размер, быстрее) |
-| `duration` | Срок действия сертификата | CA: 2–5 лет, сервисы: 1 год |
-| `renewBefore` | Окно начала продления до истечения | 30 дней для сервисов, 90 дней для CA |
-| `dnsNames` | SAN (Subject Alternative Names) | Обязательно для Kubernetes: `svc`, `svc.namespace.svc`, `svc.namespace.svc.cluster.local` |
-
-### Issuer vs ClusterIssuer
-
-| Тип | Область | Namespace Secret | Когда использовать |
-| :--- | :--- | :--- | :--- |
-| **Issuer** | Один namespace | Тот же namespace | Изолированные сервисы, multi-tenant |
-| **ClusterIssuer** | Весь кластер | Namespace CA-сертификата | Общекластерный CA, единый trust |
-
-**Важно:** при использовании ClusterIssuer CA-сертификат должен находиться в том же namespace, где создан ClusterIssuer (обычно `cert-manager`). Сертификаты сервисов могут запрашиваться из любого namespace.
+| `isCA: true` | Позволяет использовать сертификат для подписи других сертификатов | Обязательно для Root и Intermediate CA |
+| `rotationPolicy: Always` | Генерирует новый закрытый ключ при каждом обновлении сертификата | **Обязательно** для повышения безопасности |
+| `privateKey.algorithm: ECDSA` | Современный алгоритм (P-256/P-384) | Рекомендуется вместо RSA (быстрее, меньше размер) |
+| `privateKey.encoding: PKCS8` | Формат хранения закрытого ключа | Обязательно для Java-стека (Spring, Elasticsearch, Kafka) |
+| `duration` | Срок жизни сертификата | CA: 2–5 лет, Сервисы: 90 дней – 1 год |
+| `dnsNames` | Список имен (SAN) | Для K8s: `svc`, `svc.ns.svc`, `svc.ns.svc.cluster.local` |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Базовый приватный CA
+### Сценарий 1: Базовый локальный CA (Namespace-scoped)
 
-**Цель:** Создать CA для выпуска сертификатов внутри namespace.
+**Цель:** Создать изолированный центр сертификации для сервисов в одном пространстве имен.
 
-#### Шаг 1: Создание self-signed Issuer
+#### 1. Создание самоподписанного Issuer (Self-signed)
+
+Этот Issuer используется только один раз — для подписи самого корневого сертификата.
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: selfsigned-ca-issuer
-  namespace: default
+  namespace: my-app
 spec:
   selfSigned: {}
 ```
 
-#### Шаг 2: Создание корневого CA-сертификата
+#### 2. Выпуск корневого сертификата (Root CA)
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: my-root-ca
-  namespace: default
+  namespace: my-app
 spec:
   isCA: true
   commonName: "my-root-ca"
   secretName: my-root-ca-secret
+  duration: 43800h # 5 лет
+  renewBefore: 2160h # 90 дней
   privateKey:
     algorithm: ECDSA
     size: 256
     encoding: PKCS8
+    rotationPolicy: Always
   issuerRef:
     name: selfsigned-ca-issuer
     kind: Issuer
-    group: cert-manager.io
 ```
 
-**Параметры:**
+#### 3. Создание рабочего CA Issuer
 
-| Поле | Значение | Описание |
-| :--- | :--- | :--- |
-| `isCA` | `true` | Сертификат может подписывать другие сертификаты |
-| `commonName` | `my-root-ca` | Имя CA |
-| `privateKey.encoding` | `PKCS8` | **Важно для Java-приложений** |
-
-#### Шаг 3: Создание CA Issuer
+Этот Issuer будет подписывать сертификаты приложений, используя секрет от Root CA.
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: my-ca-issuer
-  namespace: default
+  namespace: my-app
 spec:
   ca:
     secretName: my-root-ca-secret
 ```
 
-#### Шаг 4: Выпуск сертификата для сервиса
+#### 4. Выпуск сертификата сервиса
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: my-service-cert
-  namespace: default
+  name: my-service-tls
+  namespace: my-app
 spec:
-  secretName: my-service-tls
-  duration: 8760h  # 1 год
-  renewBefore: 720h  # 30 дней
+  secretName: my-service-tls-secret
+  duration: 2160h # 90 дней
+  renewBefore: 360h # 15 дней
+  privateKey:
+    rotationPolicy: Always
+    encoding: PKCS8
   issuerRef:
     name: my-ca-issuer
     kind: Issuer
   commonName: "my-service"
   dnsNames:
     - my-service
-    - my-service.default.svc
-    - my-service.default.svc.cluster.local
-  privateKey:
-    encoding: PKCS8
+    - my-service.my-app.svc.cluster.local
 ```
 
 ---
 
-### Сценарий 2: Приватный CA для OpenSearch/Elasticsearch
+### Сценарий 2: Глобальный ClusterIssuer с дистрибуцией доверия
 
-**Особенности:**
+**Цель:** Создать единый CA для всего кластера и автоматически распространить его публичный ключ (CA Bundle) во все Namespace через **trust-manager**.
 
-- Требуется `encoding: PKCS8` для Java
-- Отдельные сертификаты для нод и администратора
-- `nodes_dn` и `admin_dn` в конфигурации безопасности
+#### 1. Иерархия ClusterIssuer
 
-```yaml
-# 1. Self-signed Issuer
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: selfsigned-ca-issuer
-  namespace: opensearch
-spec:
-  selfSigned: {}
----
-# 2. CA Certificate
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: opensearch-ca
-  namespace: opensearch
-spec:
-  isCA: true
-  commonName: "opensearch-ca"
-  secretName: opensearch-ca-secret
-  privateKey:
-    algorithm: ECDSA
-    size: 256
-    encoding: PKCS8
-  issuerRef:
-    name: selfsigned-ca-issuer
-    kind: Issuer
-    group: cert-manager.io
----
-# 3. CA Issuer
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: opensearch-ca-issuer
-  namespace: opensearch
-spec:
-  ca:
-    secretName: opensearch-ca-secret
----
-# 4. Сертификат для нод
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: opensearch-nodes-cert
-  namespace: opensearch
-spec:
-  secretName: opensearch-nodes-cert
-  duration: 8760h
-  issuerRef:
-    name: opensearch-ca-issuer
-    kind: Issuer
-  commonName: "nodes"
-  dnsNames:
-    - opensearch-cluster-master
-    - "*.opensearch-cluster-master"
-    - "*.opensearch-nodes"
-  privateKey:
-    encoding: PKCS8
----
-# 5. Сертификат администратора
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: opensearch-admin-cert
-  namespace: opensearch
-spec:
-  secretName: opensearch-admin-cert
-  duration: 8760h
-  issuerRef:
-    name: opensearch-ca-issuer
-    kind: Issuer
-  commonName: "admin"
-  organization:
-    - "CN=Admin,O=opensearch"
-  privateKey:
-    encoding: PKCS8
-```
-
-**Использование в securityconfig.yml:**
+Все ресурсы создаются в системном пространстве имен (например, `cert-manager`).
 
 ```yaml
-nodes_dn:
-  - "CN=nodes"
-admin_dn:
-  - "CN=admin"
-```
-
----
-
-### Сценарий 3: ClusterIssuer для общекластерного CA
-
-**Цель:** Создать CA, доступный из всех namespace.
-
-```yaml
-# 1. Self-signed ClusterIssuer
+# 1. Самоподписанный ClusterIssuer для Root CA
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: selfsigned-cluster-ca
+  name: cluster-selfsigned-issuer
 spec:
   selfSigned: {}
 ---
-# 2. CA Certificate (в namespace cert-manager)
+# 2. Корневой сертификат (Root CA) в системном namespace
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -239,49 +137,86 @@ spec:
   secretName: cluster-root-ca-secret
   privateKey:
     algorithm: ECDSA
-    size: 256
-    encoding: PKCS8
+    rotationPolicy: Always
   issuerRef:
-    name: selfsigned-cluster-ca
+    name: cluster-selfsigned-issuer
     kind: ClusterIssuer
-    group: cert-manager.io
 ---
-# 3. ClusterIssuer на основе CA
+# 3. Глобальный CA Issuer для приложений
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: cluster-ca-issuer
+  name: global-ca-issuer
 spec:
   ca:
     secretName: cluster-root-ca-secret
 ```
 
-**Использование из любого namespace:**
+#### 2. Дистрибуция доверия через trust-manager
+
+Чтобы приложения доверяли этому CA, его публичную часть нужно доставить в каждый Namespace.
+
+```yaml
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: global-trust-bundle
+spec:
+  sources:
+  - secret:
+      name: cluster-root-ca-secret
+      key: ca.crt
+  target:
+    configMap:
+      key: "ca-certificates.crt" # Будет создан во всех namespaces
+```
+
+---
+
+### Сценарий 3: Private CA для Java-приложений (Elasticsearch/Kafka)
+
+Для систем на базе JVM критически важен формат **PKCS8** и наличие полной цепочки.
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: my-app-cert
-  namespace: production
+  name: elasticsearch-node-tls
+  namespace: database
 spec:
-  secretName: my-app-tls
+  secretName: elasticsearch-node-tls
+  duration: 8760h
+  privateKey:
+    algorithm: RSA # Некоторые старые версии Java требуют RSA
+    size: 2048
+    encoding: PKCS8 # Обязательно для Java
+    rotationPolicy: Always
   issuerRef:
-    name: cluster-ca-issuer
+    name: global-ca-issuer
     kind: ClusterIssuer
+  commonName: "elasticsearch-node-1"
+  subject:
+    organizations:
+      - "Database-Cluster"
   dnsNames:
-    - my-app.production.svc
+    - elasticsearch-node-1.database.svc
 ```
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Данные о надёжности информации и ссылки на связанные темы — в [index.md](./index.md).
-цепции.
+### Сравнение подходов
+
+| Сценарий | Преимущества | Недостатки |
+| :--- | :--- | :--- |
+| **Namespace Issuer** | Максимальная изоляция, безопасность | Трудно управлять доверием между разными NS |
+| **ClusterIssuer** | Простота использования для всего кластера | Единая точка отказа при компрометации ключа |
+| **trust-manager** | Автоматизация доставки доверия (SSoT) | Требует установки дополнительного компонента |
 
 ### Смотрите также
 
-- **[Приватный CA: Обзор](./index.md)** — архитектура, сравнение с CA кластера
-- **[Приватный CA: Операции](./operations.md)** — проверка и устранение ошибок
-- **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов
+- **[Приватный CA: Обзор](./index.md)** — архитектура и выбор типа Issuer
+- **[Приватный CA: Операции](./operations.md)** — ротация корневого CA и отладка
+- **[trust-manager: Документация](./trust-manager.md)** — детальная настройка дистрибуции
+- **[Cert-manager: Troubleshooting](../Administration/troubleshooting.md)** — решение проблем выпуска

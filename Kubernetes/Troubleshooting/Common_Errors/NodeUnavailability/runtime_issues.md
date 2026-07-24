@@ -1,166 +1,124 @@
 # Недоступность узла: Проблемы среды выполнения (Runtime)
 
-## Определения
+## Основные определения
 
 **Среда выполнения контейнеров (Container Runtime)** — низкоуровневое программное обеспечение, отвечающее за запуск и управление жизненным циклом контейнеров на узле. Kubernetes взаимодействует со средой выполнения через стандартный интерфейс **CRI (Container Runtime Interface)**.
 
-**Сбой CRI (CRI Failure)** — критическая ситуация, при которой агент `kubelet` теряет возможность подключения к среде выполнения (containerd, CRI-O). Это приводит к невозможности управления подами и переходу узла в статус `NotReady`.
+**Сбой CRI (CRI Failure)** — критическое состояние, при котором агент `kubelet` теряет связь со средой выполнения (containerd, CRI-O) или рантайм сообщает о внутренней ошибке. Это приводит к невозможности запуска новых подов и остановке обновления статуса существующих, в результате чего узел переходит в статус `NotReady`.
 
 ## Основные концепции
 
-### Поддерживаемые среды выполнения
+### Актуальные среды выполнения
+
+С версии Kubernetes 1.24 поддержка Docker Engine (через dockershim) удалена. Современные кластеры используют прямые реализации CRI:
 
 | Runtime | Статус | Примечание |
-|:--------|:-------|:-----------|
-| **containerd** | По умолчанию (с K8s 1.24+) | Стандарт de facto после удаления dockershim. |
-| **CRI-O** | Поддерживается | Легковесная альтернатива, ориентированная на Kubernetes. |
-| **Docker Engine** | Устарел (Deprecated) | Удален из состава Kubernetes начиная с версии 1.24. |
+| :--- | :--- | :--- |
+| **containerd** | Стандарт (рекомендуется) | Отраслевой стандарт. Используется в большинстве облачных и bare-metal инсталляций. |
+| **CRI-O** | Альтернатива | Облегчённый рантайм, разработанный специально для Kubernetes. |
 
-### Взаимодействие Kubelet и Runtime
+### Взаимодействие и диагностика
 
-| Компонент | Сокет (Socket) | Назначение |
-|:----------|:---------------|:-----------|
-| **containerd** | `/run/containerd/containerd.sock` | Интерфейс CRI для kubelet. |
-| **CRI-O** | `/run/crio/crio.sock` | Интерфейс CRI для kubelet. |
-| **crictl** | — | CLI-утилита для диагностики сред выполнения через CRI. |
+| Компонент | Путь / Сокет | Назначение |
+| :--- | :--- | :--- |
+| **containerd** | `/run/containerd/containerd.sock` | Unix-сокет для взаимодействия с `kubelet`. |
+| **CRI-O** | `/run/crio/crio.sock` | Unix-сокет для взаимодействия с `kubelet`. |
+| **`crictl`** | `/usr/local/bin/crictl` | CLI-утилита для прямой отладки CRI (не зависит от API-сервера). |
 
-### Типичные причины сбоев
+**Важно:** Для работы `crictl` необходимо настроить путь к сокету в `/etc/crictl.yaml`:
+```yaml
+runtime-endpoint: unix:///run/containerd/containerd.sock
+image-endpoint: unix:///run/containerd/containerd.sock
+```
 
-| Сбой | Причина | Симптом |
-|:-----|:--------|:--------|
-| Остановка процесса | Crash, OOM (Out of Memory) | Ошибка `failed to connect to containerd`. |
-| Ошибка конфигурации | Опечатки в `config.toml` | Runtime не запускается после рестарта. |
-| Проблемы с сертификатами | TLS для приватных реестров | Ошибка `x509: certificate has expired`. |
-| Недоступен Sandbox image | Проблемы с сетью или зеркалом | Поды зависают в статусе `ContainerCreating`. |
+### Критические точки отказа
 
-### Диагностические команды
-
-| Команда | Назначение |
-|:--------|:-----------|
-| `systemctl status containerd` | Проверка статуса системной службы containerd. |
-| `crictl info` | Получение информации о состоянии рантайма. |
-| `crictl ps` | Список работающих контейнеров через CRI. |
-| `crictl pods` | Просмотр состояния sandbox-подов. |
-| `journalctl -u containerd -f` | Просмотр логов containerd в реальном времени. |
+1.  **Несоответствие драйвера Cgroups**: Если `kubelet` и рантайм настроены на разные драйверы (`systemd` vs `cgroupfs`), запуск контейнеров будет невозможен.
+2.  **Зависание `runc`**: Сбои на уровне ядра или дефицит ресурсов могут привести к зависанию процессов `runc`, что блокирует создание новых контейнеров.
+3.  ** Sandbox Image (pause-контейнер)**: Отсутствие доступа к образу `pause` (используется как сетевой фундамент пода) блокирует переход подов в статус `Running`.
 
 ## Практические сценарии
 
-### Сценарий 1: containerd не отвечает или остановлен
+### Сценарий 1: containerd не отвечает или падает
 
-**Симптомы:**
+**Симптомы**: Узел `NotReady`, в логах `kubelet` ошибки `failed to connect to cri: ... connection refused`.
 
-- `kubelet` не может запускать или удалять контейнеры.
-- В логах `kubelet` фиксируются ошибки `failed to connect to containerd`.
-- Узел находится в статусе `NotReady`.
-
-**Диагностика:**
-
+**Диагностика**:
 ```bash
-# Проверка статуса службы
+# 1. Проверка системного юнита
 systemctl status containerd
+# → Active: failed (или постоянно перезагружается)
 
-# Анализ системного журнала
+# 2. Анализ логов на предмет OOM или ошибок плагинов
 journalctl -u containerd -n 100 --no-pager
 
-# Проверка доступности сокета
-ls -la /run/containerd/containerd.sock
-
-# Проверка отклика через crictl
+# 3. Проверка отклика через CRI API
 crictl info
+# → Ошибка соединения, если сокет недоступен
 ```
 
-**Решение:**
-
+**Решение**:
 ```bash
-# Перезапуск службы
 sudo systemctl restart containerd
+```
+*Если не помогает, проверьте наличие свободных PID на узле (`cat /proc/sys/kernel/pid_max`) и дисковое пространство в `/var/lib/containerd`.*
 
-# Проверка статуса после перезапуска
-crictl info
-kubectl get nodes
+### Сценарий 2: Ошибка «SystemdCgroup» (Cgroups v2)
+
+**Симптомы**: `containerd` запущен, но поды не стартуют. В логах `kubelet`: `Failed to create pod sandbox: rpc error: code = Unknown desc = failed to create containerd task: ... failed to create shim task: OCI runtime create failed`.
+
+**Причина**: На современных дистрибутивах (Ubuntu 22.04+, RHEL 9) используется Cgroups v2, требующая настройки `SystemdCgroup = true`.
+
+**Диагностика**:
+```bash
+# Проверка текущей конфигурации
+containerd config dump | grep SystemdCgroup
+# → SystemdCgroup = false (если это причина сбоя)
 ```
 
-### Сценарий 2: Ошибка в конфигурации containerd
-
-**Симптомы:**
-
-- Служба containerd не запускается (`systemctl status` показывает `failed`).
-- В логах присутствуют ошибки синтаксиса или парсинга файла конфигурации.
-
-**Диагностика:**
-
-```bash
-# Проверка содержимого файла конфигурации
-cat /etc/containerd/config.toml
-
-# Валидация текущей конфигурации (containerd 1.6+)
-containerd config dump | head -n 50
+**Решение**:
+Отредактируйте `/etc/containerd/config.toml`:
+```toml
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+  SystemdCgroup = true
 ```
+Затем перезапустите: `sudo systemctl restart containerd`.
 
-**Решение:**
+### Сценарий 3: Проблемы с Sandbox-образом (pause)
 
-1. Восстановите конфигурацию из бэкапа или сгенерируйте дефолтную:
+**Симптомы**: Поды «зависают» в `ContainerCreating`. В событиях `kubectl describe pod`: `Failed to pull image "registry.k8s.io/pause:3.10"`.
 
-   ```bash
-   sudo cp /etc/containerd/config.toml /etc/containerd/config.toml.bak
-   sudo containerd config default | sudo tee /etc/containerd/config.toml
-   ```
-
-2. Убедитесь в наличии критических настроек для Kubernetes:
-   - `SystemdCgroup = true` (обязательно для интеграции с cgroups v2).
-   - Корректный путь к `sandbox_image` (например, `registry.k8s.io/pause:3.9`).
-   - При необходимости — `Rlimits` для лимита файловых дескрипторов всех контейнеров:
-     ```toml
-     [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-       Rlimits = [
-         { type = "RLIMIT_NOFILE", hard = 1048576, soft = 1048576 }
-       ]
-     ```
-3. Перезапустите службу: `sudo systemctl restart containerd`.
-
-### Сценарий 3: Проблемы с Sandbox (pause) контейнерами
-
-**Симптомы:**
-
-- Поды зависают в статусе `ContainerCreating`.
-- В событиях (Events) пода отображается ошибка `Failed to create sandbox`.
-
-**Диагностика:**
-
+**Диагностика**:
 ```bash
-# Проверка наличия pause-образов в локальном хранилище
-crictl images | grep pause
-
-# Проверка настроенного sandbox_image в конфигурации
+# Проверка настроенного пути к образу
 containerd config dump | grep sandbox_image
+# → sandbox_image = "registry.k8s.io/pause:3.10"
 ```
 
-**Решение:**
+**Решение**:
+1.  Принудительно скачайте образ: `crictl pull registry.k8s.io/pause:3.10`.
+2.  Если кластер находится в изолированной сети (air-gapped), убедитесь, что образ доступен в локальном реестре и путь в `config.toml` скорректирован.
 
-1. Принудительно загрузите актуальный образ паузы:
+### Сценарий 4: Очистка зависших ресурсов рантайма
 
-   ```bash
-   crictl pull registry.k8s.io/pause:3.9
-   ```
+**Симптомы**: Узел переполнен «зомби-контейнерами» или sandbox-ами, которые не удаляются через `kubectl`.
 
-2. Если проблема вызвана "осиротевшими" sandbox-контейнерами, выполните их очистку:
+**Решение (с осторожностью)**:
+```bash
+# Список всех подов в рантайме
+crictl pods
 
-   ```bash
-   crictl rmp -fa
-   ```
-
-3. Перезапустите рантайм: `sudo systemctl restart containerd`.
+# Принудительное удаление всех неиспользуемых подов (sandbox)
+crictl rmp -fa
+```
 
 ## Дополнительная информация
 
-### Смежные разделы по диагностике
-
-- [Чек-лист диагностики](./diagnostics.md) — общая процедура проверки узла.
+### Смежные разделы
 - [Проблемы Kubelet](./kubelet_issues.md) — зависимость агента от CRI.
-- [Давление на ресурсы](./resource_pressure.md) — очистка диска от неиспользуемых образов.
+- [Диагностика узла](./diagnostics.md) — общие шаги проверки.
+- [Давление ресурсов](./resource_pressure.md) — очистка образов (`crictl rmi --prune`).
 
 ### Полезные ссылки
-
-- [Документация containerd по началу работы](https://github.com/containerd/containerd/blob/main/docs/getting-started.md)
-- [Проект CRI-O](https://cri-o.io/)
-- [Удаление dockershim в Kubernetes 1.24](https://kubernetes.io/blog/2022/02/17/dockershim-faq/)
+- [Документация containerd (CRI)](https://github.com/containerd/containerd/blob/main/docs/cri/config.md)
+- [Проект CRI-O: Руководство по отладке](https://cri-o.io/)

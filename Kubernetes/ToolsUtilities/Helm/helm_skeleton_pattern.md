@@ -1,79 +1,73 @@
 # Паттерн Helm Skeleton
 
-Использование единого шаблона (Skeleton) для всех микросервисов позволяет избежать дублирования манифестов, стандартизировать нейминг и упростить поддержку инфраструктуры при росте количества сервисов.
+Паттерн Helm Skeleton (скелет чарта) — это методология стандартизации развёртывания множества однотипных микросервисов путём создания единого эталонного шаблона. Использование скелета позволяет избежать фрагментации конфигураций, обеспечить единообразие именования ресурсов и ускорить запуск новых компонентов системы.
 
 ---
 
-## Definitions
+## Определения
 
 | Термин | Описание |
 |--------|----------|
-| **Helm Skeleton** | Набор базовых шаблонов (`_template/`), на основе которых создаются чарты для конкретных сервисов |
-| **_helpers.tpl** | Файл с общими функциями для генерации имён, меток и переменных окружения |
-| **Probes** | Механизмы проверки готовности (`readinessProbe`) и работоспособности (`livenessProbe`) контейнера |
+| **Helm Skeleton** | Эталонная структура чарта, используемая как основа для создания новых сервисов |
+| **Boilerplate** | Повторяющийся "шаблонный" код манифестов, который выносится в общие шаблоны для минимизации ручного труда |
+| **Shared Chart** | (Общий чарт) Один полноценный чарт, который используется для деплоя множества разных приложений путём передачи различных `values.yaml` |
+| **Library Chart** | Библиотечный чарт (`type: library`), содержащий только именованные шаблоны и логику, но не имеющий собственных манифестов |
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
-### Когда использовать
+### Цели использования паттерна
 
-Паттерн Skeleton рекомендуется внедрять, когда количество однотипных микросервисов превышает 5–10 штук. Это решает проблему "разъезжающегося" нейминга, портов и конфигураций.
+1.  **Стандартизация:** Гарантирует, что все сервисы имеют одинаковый набор меток (labels), аннотаций, настроек безопасности (SecurityContext) и политик обновления.
+2.  **Скорость разработки:** Разработчику не нужно писать YAML-манифесты с нуля — достаточно скопировать скелет и заполнить параметры в `values.yaml`.
+3.  **Простота поддержки:** Обновление глобальных стандартов (например, добавление обязательных меток для мониторинга) происходит путём обновления скелета и его последующего распространения.
 
-### Структура шаблона
+### Сравнение подходов к масштабированию
 
-Типовая структура директории `charts/_template/`:
+| Подход | Механизм | Плюсы | Минусы |
+|--------|----------|-------|--------|
+| **Skeleton** | Копирование эталона | Полная автономность каждого сервиса, простота отладки | Дублирование кода, сложность массового обновления |
+| **Shared Chart** | Один чарт для всех | Нет дублирования шаблонов, мгновенное обновление всех сервисов | Высокая сложность чарта (много условий), риск сломать всё сразу |
+| **Library Chart** | Подключение логики | Чистые шаблоны в сервисах, централизованная логика | Требует понимания механизмов `include` и передачи контекста |
 
-```text
-charts/_template/
-├── Chart.yaml              # Метаданные (имя шаблона)
-├── values.yaml               # Значения по умолчанию для всех сервисов
-├── values-dev.yaml           # Специфичные настройки для dev-окружения
-├── values-prod.yaml          # Специфичные настройки для prod-окружения
-├── templates/
-│   ├── _helpers.tpl          # Логика именования и общие блоки
-│   ├── deployment.yaml       # Шаблон развёртывания
-│   ├── service.yaml          # Шаблон сервиса
-│   ├── serviceaccount.yaml   # Управление правами
-│   ├── role.yaml             # RBAC: Роль
-│   ├── rolebinding.yaml      # RBAC: Привязка роли
-│   ├── hpa.yaml              # Горизонтальное масштабирование
-│   ├── ingress.yaml          # Внешний доступ
-│   ├── secret.yaml           # Секреты (через sops или внешние хранилища)
-│   └── configmap.yaml        # Конфигурация
-└── README.md                 # Документация по использованию шаблона
+### Создание базы скелета
+
+Для создания скелета рекомендуется использовать стандартную команду, предварительно очистив результат от ненужных комментариев:
+
+```bash
+helm create _template
 ```
 
-При создании нового сервиса достаточно скопировать эту структуру и заполнить `values.yaml`.
+После этого в `_template/templates` оставляются только необходимые компоненты (Deployment, Service, Ingress, HPA), а логика именования выносится в `_helpers.tpl`.
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### 1. Стандартизация нейминга через _helpers.tpl
+### 1. Единый стандарт метаданных (_helpers.tpl)
 
-Использование функций вместо жёстких имён позволяет устанавливать несколько экземпляров чарта в разные namespace без конфликтов.
-
-**_helpers.tpl:**
+Скелет должен содержать функции, генерирующие стандартный набор меток для всех ресурсов. Это критично для корректной работы мониторинга и сбора логов.
 
 ```go
-{{- define "my-service.fullname" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- define "skeleton.labels" -}}
+helm.sh/chart: {{ include "skeleton.chart" . }}
+{{ include "skeleton.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
-
-{{- define "my-service.labels" -}}
-helm.sh/chart: {{ include "my-service.chart" . }}
-app.kubernetes.io/name: {{ include "my-service.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- if .Values.additionalLabels }}
+{{ toYaml .Values.additionalLabels }}
+{{- end }}
 {{- end }}
 ```
 
-### 2. Параметризация Probes (функция omit)
+### 2. Динамическая очистка манифестов (omit)
 
-В Kubernetes поле `enabled` внутри `livenessProbe` недопустимо. Оно используется только Helm'ом для управления логикой шаблона. Чтобы передать чистый YAML в API Kubernetes, используется функция `omit`.
+В Kubernetes некоторые поля (например, в Probes или Resources) являются взаимоисключающими или имеют строгие правила валидации. Функция `omit` позволяет Helm управлять логикой включения полей через флаги, не передавая эти флаги в финальный YAML.
 
 **deployment.yaml:**
-
 ```yaml
 {{- if .Values.livenessProbe.enabled }}
 livenessProbe:
@@ -82,53 +76,53 @@ livenessProbe:
 ```
 
 **values.yaml:**
-
 ```yaml
 livenessProbe:
   enabled: true
   httpGet:
-    path: /actuator/health
-    port: 8080
-  initialDelaySeconds: 60
-  periodSeconds: 20
+    path: /health
+    port: http
+  initialDelaySeconds: 15
 ```
 
-### 3. Слияние переменных окружения (mergeOverwrite)
+### 3. Обработка сложных переменных окружения
 
-Для поддержки общих и специфичных для окружения (dev/prod) переменных используется функция `mergeOverwrite`.
-
-**_helpers.tpl:**
-
-```go
-{{- define "my-service.env" -}}
-{{- $merged := mergeOverwrite (dict) .Values.env.common .Values.env.dev .Values.env.prod }}
-{{- range $key, $val := $merged }}
-- name: {{ $key }}
-  value: {{ $val | quote }}
-{{- end }}
-{{- end }}
-```
-
-**values.yaml:**
+Скелет должен поддерживать удобную передачу переменных окружения разных типов (прямые значения, из Secret, из ConfigMap).
 
 ```yaml
 env:
-  common:
-    JAVA_OPTS: "-Xmx512m"
-    SPRING_PROFILES_ACTIVE: "k8s"
-  dev:
-    LOGGING_LEVEL: "DEBUG"
-  prod:
-    LOGGING_LEVEL: "INFO"
-    JAVA_OPTS: "-Xmx2g"
+{{- range $name, $value := .Values.env }}
+  - name: {{ $name }}
+    value: {{ $value | quote }}
+{{- end }}
+{{- range .Values.envFromSecret }}
+  - name: {{ .name }}
+    valueFrom:
+      secretKeyRef:
+        name: {{ .secretName }}
+        key: {{ .secretKey }}
+{{- end }}
+```
+
+### 4. Стандартизация ресурсов (Resources)
+
+Часто в компании устанавливаются минимальные и максимальные лимиты. Скелет может содержать "заглушки" с рекомендуемыми значениями.
+
+```yaml
+resources:
+  requests:
+    cpu: {{ .Values.resources.requests.cpu | default "100m" }}
+    memory: {{ .Values.resources.requests.memory | default "128Mi" }}
+  limits:
+    cpu: {{ .Values.resources.limits.cpu | default "500m" }}
+    memory: {{ .Values.resources.limits.memory | default "512Mi" }}
 ```
 
 ---
 
 ## Дополнительная информация
 
-### См. также
-
-- [Структура Helm-чарта](./helm_chart_structure.md) — базовые компоненты чарта
-- [Функции шаблонов](./templating/functions.md) — подробнее об `omit` и `mergeOverwrite`
-- [Зависимости и Library Charts](./helm_dependencies_and_library_charts.md) — альтернативный подход через библиотечные чарты
+- **[Структура Helm-чарта](./helm_chart_structure.md)** — описание базовых файлов.
+- **[Шаблонизация в Helm](./helm_templating.md)** — руководство по функциям `omit`, `toYaml` и другим.
+- **[Зависимости и Library Charts](./helm_dependencies_and_library_charts.md)** — когда скелета становится недостаточно.
+- **[Обзор Helmfile](./helmfile_overview.md)** — оркестрация множества чартов, созданных по шаблону.

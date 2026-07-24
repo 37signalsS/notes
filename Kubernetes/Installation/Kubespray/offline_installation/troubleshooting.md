@@ -4,7 +4,7 @@
 
 **Диагностика (Troubleshooting)** — процесс идентификации, анализа и устранения технических неисправностей, возникающих на различных этапах развёртывания и эксплуатации кластера в закрытом контуре.
 
-**Конфликт Digest** — несовпадение контрольной суммы образа **SHA (Secure Hash Algorithm)** при его переносе между реестрами, что часто блокирует запуск подов в offline-режиме.
+**Конфликт Digest** — несовпадение контрольной суммы образа **SHA (Secure Hash Algorithm)** при его переносе между реестрами. Поскольку Kubespray по умолчанию проверяет целостность через digest, любые изменения при push в локальный Harbor могут блокировать запуск.
 
 Общие определения ошибок Kubernetes приведены в **[глоссарии ошибок подов](../../../Troubleshooting/Common_Errors/PodImagePullErrors/definitions.md)**.
 
@@ -14,78 +14,92 @@
 
 ### Специфика диагностики в закрытом контуре
 
-Большинство проблем при offline-установке связано с недоступностью ресурсов. Если в online-режиме отсутствующий компонент просто скачивается, то в закрытом контуре это приводит к критической остановке процесса.
+В изолированной среде отсутствие доступа к интернету превращает мелкие недочеты (например, забытый образ) в блокирующие ошибки.
 
-**Основные зоны риска:**
-
-- **Реестр образов (Harbor):** ошибки авторизации, неправильное тегирование, отсутствие проекта.
-- **Сетевая связность (Cilium):** блокировки трафика на уровне ядра или гипервизора (MTU, инкапсуляция).
-- **Разрешение имен DNS (Domain Name System):** попытки подов обратиться к внешним серверам вместо локальных.
-- **Инвентарь (Ansible):** несоответствие IP-адресов в конфигурации реальному состоянию сети.
+**Ключевые зоны риска:**
+- **Доверие TLS:** отсутствие корневого сертификата Harbor на узлах кластера.
+- **Синхронизация времени:** рассинхрон NTP приводит к невалидности сертификатов K8s и Harbor.
+- **Сетевая инкапсуляция:** проблемы с MTU при использовании VXLAN/Geneve поверх виртуальных сетей (VMware/Proxmox).
+- **Python окружение:** отсутствие системных библиотек (например, `python3-apt`) внутри venv на pc-inet.
 
 ---
 
 ## Практические сценарии
 
-### 1. Ошибки ImagePullBackOff в изолированной среде
+### 1. Ошибки ImagePullBackOff (Реестр и Сертификаты)
 
-Наиболее частая проблема, связанная с реестром.
+Самая распространенная группа ошибок в offline-режиме.
 
-**Симптом:** Поды не запускаются с ошибкой `Failed to pull image`.
-**Диагностика:** `kubectl describe pod <pod-name> -n kube-system`.
-**Решения:**
+**Симптом:** `kubectl describe pod` показывает `x509: certificate signed by unknown authority`.
+**Решение:**
+1. Убедитесь, что CA-сертификат Harbor добавлен на все узлы в `/usr/local/share/ca-certificates/`.
+2. Выполните `sudo update-ca-certificates` и перезапустите containerd: `sudo systemctl restart containerd`.
 
-- **Публичный доступ:** Убедитесь, что проект `k8s` в Harbor помечен как **Public**. Containerd на начальных этапах может не использовать учетные данные из конфигов.
-- **Проверка тега:** Сверьте путь в ошибке с реальным путем в Harbor. По умолчанию Kubespray ожидает структуру `harbor.domain.local/k8s/registry.k8s.io/...`.
+**Симптом:** `Failed to pull image ... project not found`.
+**Решение:** Убедитесь, что проект `k8s` в Harbor помечен как **Public**. Если проект приватный, необходимо настроить `containerd_registry_auth` в `group_vars/all/containerd.yml`.
 
 ### 2. Проблема Cilium: несовпадение SHA Digest
 
-Cilium по умолчанию проверяет digest (хэш) образа. При импорте в Harbor хэш часто меняется, что блокирует запуск.
-
-**Симптом:** Ошибка `rpc error: code = NotFound desc = failed to pull and unpack image` при наличии образа в реестре.
-**Решение:** Отключите проверку digest в файле `group_vars/k8s_cluster/k8s-net-cilium.yml`:
-
-```yaml
-cilium_extra_values:
-  image:
-    useDigest: false
-    digest: ""
-  operator:
-    image: { useDigest: false, digest: "" }
-  # Примените аналогично для envoy, relay и hubble-ui
-```
-
-**Применение:** Запустите плейбук с тегом: `ansible-playbook -i ... cluster.yml --tags cilium`.
-
-### 3. Низкая сетевая связность в виртуальной среде (VMware)
-
-Проблемы с инкапсуляцией трафика Cilium на виртуальных портах.
-
-**Симптом:** `Cluster health: 1/N reachable`.
-**Причина:** Некорректный **MTU (Maximum Transmission Unit)** или блокировка **VXLAN (Virtual Extensible LAN)** / Geneve трафика гипервизором.
-**Решение:** Переключитесь на протокол Geneve и уменьшите MTU в `group_vars/k8s_cluster/k8s-net-cilium.yml`:
+**Симптом:** Образ есть в Harbor, но Cilium-pod висит в `ImagePullBackOff`.
+**Причина:** Kubespray прописывает жесткие digest для образов Cilium в ролях.
+**Решение:** Отключите использование digest в `group_vars/all/offline.yml`:
 
 ```yaml
-cilium_tunnel_mode: geneve
-cilium_mtu: "1450"
+cilium_deploy_with_digest: false
+# Также для Hubble и Operator
+hubble_ui_deploy_with_digest: false
+cilium_operator_deploy_with_digest: false
 ```
 
-### 4. Ошибки Ansible при установке
+### 3. Проблемы связности: Cluster health unreachable
 
-**Диагностика:** Запустите плейбук с повышенной вербозностью (`-vvv`) для получения детального вывода ошибки.
-**Частая причина:** Несоответствие `kube_owner: root` в `group_vars/k8s_cluster/k8s-cluster.yml`, что приводит к ошибкам прав доступа при монтировании директорий Cilium.
+**Симптом:** Узлы видят друг друга по SSH, но поды не пингуются между узлами.
+**Диагностика:** Проверьте MTU на интерфейсах: `ip link show`.
+**Решение:** Для виртуальных сред (особенно VMware с MTU 1500) уменьшите MTU Cilium до 1450 в `group_vars/k8s_cluster/k8s-net-cilium.yml`:
+
+```yaml
+cilium_mtu: 1450
+cilium_tunnel_mode: geneve # Geneve эффективнее VXLAN в vSphere
+```
+
+### 4. Ошибки Ansible: "python3-apt not found"
+
+**Симптом:** Плейбук падает на этапе `gathering facts` или установки пакетов.
+**Причина:** Ansible внутри venv не видит системный модуль `apt`.
+**Решение:** Установите `python3-apt` в системе и создайте venv с доступом к системным пакетам:
+```bash
+python3 -m venv --system-site-packages venv
+```
+
+### 5. Рассинхронизация времени (NTP)
+
+**Симптом:** Непонятные ошибки `Unauthorized` или `Expired certificate`.
+**Решение:** Установите и настройте `chrony` или `ntp` на всех узлах, направив их на локальный источник точного времени.
 
 ---
 
 ## Дополнительная информация
 
-### Инструменты диагностики на узлах
+### Команды быстрой диагностики на узле
 
-- **crictl:** используйте `sudo crictl images` и `sudo crictl pods` для проверки состояния на уровне runtime.
-- **journalctl:** логи `kubelet` (`journalctl -u kubelet -f`) — лучший источник информации о проблемах старта узла.
-- **hubble:** используйте **CLI (Command Line Interface)** внутри подов Cilium для анализа отброшенных пакетов (`hubble observe --type drop`).
+**Проверка работы containerd:**
+```bash
+sudo crictl ps        # Список запущенных контейнеров
+sudo crictl images    # Список загруженных образов
+```
 
-### Связанные темы
+**Проверка логов системных сервисов:**
+```bash
+sudo journalctl -u kubelet -f --no-pager
+sudo journalctl -u containerd -f --no-pager
+```
+
+**Анализ сетевых сбросов (Drop) через Cilium:**
+```bash
+kubectl -n kube-system exec ds/cilium -- hubble observe --type drop
+```
+
+### См. также
 
 - **[Проверка кластера](./cluster_verification.md)** — регламент валидации систем.
 - **[План offline-установки](./offline_practical.md)** — дорожная карта проекта.

@@ -2,14 +2,14 @@
 
 ## Определения
 
-**Ingress-интеграция cert-manager** — механизм автоматического создания и обновления TLS-сертификатов для Ingress-ресурсов через добавление специальных аннотаций. Cert-manager обнаруживает аннотации, создаёт ресурс `Certificate`, проходит ACME-проверку и сохраняет сертификат в `Secret`, который используется Ingress для терминации TLS.
+**Ingress-интеграция cert-manager** — механизм автоматического создания и обновления TLS-сертификатов для Ingress-ресурсов. Реализуется компонентом **ingress-shim**, который отслеживает создание и изменение объектов Ingress и, при наличии специальных аннотаций, автоматически создает ресурсы `Certificate`.
 
 **Преимущества:**
 
 - Минимальная конфигурация (только аннотации в Ingress)
-- Автоматическое получение и продление сертификатов
-- Совместимость с любым Ingress-контроллером (nginx, Traefik, HAProxy)
-- Поддержка HTTP-01 и DNS-01 проверок
+- Полная автоматизация жизненного цикла сертификата (от заказа до продления)
+- Совместимость с любым Ingress-контроллером (nginx, Traefik, HAProxy, AWS ALB, GCE)
+- Поддержка различных методов ACME-проверки (HTTP-01, DNS-01)
 
 > **См. также:** [Cert-manager: Определения и основные понятия](../definitions.md) — CRD, типы Issuer, структура ресурсов.
 
@@ -17,12 +17,25 @@
 
 ## Основные концепции
 
+### ingress-shim
+
+**ingress-shim** — это встроенный контроллер в составе cert-manager, отвечающий за интеграцию с Ingress. Он работает по следующему алгоритму:
+1. Сканирует аннотации в Ingress.
+2. Если найдены аннотации выбора Issuer (например, `cert-manager.io/cluster-issuer`), создает объект `Certificate`.
+3. Объект `Certificate` настраивается так, чтобы его `secretName` совпадал с `tls[].secretName` из Ingress, а домены — с `tls[].hosts`.
+4. В дальнейшем cert-manager обрабатывает `Certificate` стандартным образом.
+
+### Использование Issuer по умолчанию
+
+Если при установке cert-manager были настроены флаги `--default-issuer-name` и `--default-issuer-kind`, можно инициировать выпуск сертификата простой аннотацией:
+`kubernetes.io/tls-acme: "true"` — заставляет cert-manager использовать Issuer по умолчанию.
+
 ### Поток работы
 
 ```
 Ingress с аннотацией cert-manager
        ↓
-cert-manager обнаруживает аннотацию
+ingress-shim обнаруживает аннотацию
        ↓
 Автоматически создаётся ресурс Certificate
        ↓
@@ -30,37 +43,50 @@ cert-manager обнаруживает аннотацию
        ↓
 Сертификат сохраняется в указанный Secret
        ↓
-Ingress использует Secret для TLS-терминации
+Ingress-контроллер подхватывает Secret для TLS
 ```
 
-### Аннотации cert-manager для Ingress
+---
 
-Полный список аннотаций и их значений доступен в [Cert-manager: Определения](../definitions.md#интеграция-с-ingress).
+## Аннотации cert-manager для Ingress
 
-**Ключевые аннотации:**
+### Основные (Выбор Issuer)
 
 | Аннотация | Описание | Пример |
 | :--- | :--- | :--- |
 | `cert-manager.io/issuer` | Issuer в том же namespace | `my-issuer` |
 | `cert-manager.io/cluster-issuer` | ClusterIssuer (общекластерный) | `letsencrypt-prod` |
-| `cert-manager.io/issue-temporary-certificate` | Временный сертификат до ACME | `true` |
-| `cert-manager.io/acme-challenge-type` | Принудительный solver | `http01`, `dns01` |
-| `cert-manager.io/common-name` | Переопределение CN | `example.com` |
-| `cert-manager.io/duration` | Срок действия сертификата | `2160h` (90 дней) |
-| `cert-manager.io/renew-before` | Время до начала продления | `360h` (15 дней) |
-| `cert-manager.io/private-key-size` | Размер ключа | `4096` |
-| `cert-manager.io/private-key-algorithm` | Алгоритм ключа | `RSA`, `ECDSA` |
+| `kubernetes.io/tls-acme: "true"` | Использовать Issuer по умолчанию | `"true"` |
 
-### Устаревшие аннотации
+### Настройка параметров сертификата
 
-| Устаревшая | Современная замена |
-| :--- | :--- |
-| `kubernetes.io/tls-acme: "true"` | `cert-manager.io/cluster-issuer` |
-| `certmanager.k8s.io/issuer` | `cert-manager.io/issuer` |
+| Аннотация | Описание | Значение |
+| :--- | :--- | :--- |
+| `cert-manager.io/common-name` | Установка Common Name (CN) | `example.com` |
+| `cert-manager.io/duration` | Срок действия | `1080h` (45 дней) |
+| `cert-manager.io/renew-before` | За сколько до конца продлевать | `168h` (7 дней) |
+| `cert-manager.io/usages` | Использование ключа (через запятую) | `server auth, client auth` |
+| `cert-manager.io/certificate-name` | Явное имя ресурса Certificate | `my-app-cert` |
+| `cert-manager.io/issue-temporary-certificate` | Временный сертификат до ACME | `"true"` |
 
-> **Важно:** Используйте только аннотации с префиксом `cert-manager.io`. Устаревшие префиксы `certmanager.k8s.io` и `kubernetes.io/tls-acme` не поддерживаются в актуальных версиях.
+### Параметры приватного ключа (Стандарты 2026)
 
-### Базовый пример Ingress
+| Аннотация | Описание | Пример |
+| :--- | :--- | :--- |
+| `cert-manager.io/private-key-algorithm` | Алгоритм | `RSA`, `ECDSA`, `Ed25519` |
+| `cert-manager.io/private-key-size` | Размер | `2048`, `4096`, `256`, `384` |
+| `cert-manager.io/private-key-rotation-policy` | Политика ротации ключа | `Always` (рекомендуется) |
+
+### Специфичные для ACME (HTTP-01)
+
+| Аннотация | Описание | Когда использовать |
+| :--- | :--- | :--- |
+| `acme.cert-manager.io/http01-edit-in-place` | Не создавать временный Ingress | AWS ALB, GCE Ingress |
+| `acme.cert-manager.io/http01-ingress-class` | Класс Ingress для проверки | Если отличается от основного |
+
+---
+
+## Базовый пример Ingress (2026)
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -68,7 +94,12 @@ kind: Ingress
 metadata:
   name: myapp-ingress
   annotations:
+    # Выбор Issuer
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Безопасность: ротация ключа при каждом обновлении сертификата
+    cert-manager.io/private-key-rotation-policy: "Always"
+    # Для AWS ALB / GCE (необязательно для NGINX)
+    # acme.cert-manager.io/http01-edit-in-place: "true"
 spec:
   ingressClassName: nginx
   tls:
@@ -94,53 +125,49 @@ spec:
 
 Подробные примеры использования доступны в отдельном документе:
 
-- **[Сценарии интеграции](./scenarios.md)** — HTTP-01, wildcard-домены, временные сертификаты, прямой Certificate
-
-**Типовые сценарии (кратко):**
-
-| Сценарий | Описание | Аннотации |
-| :--- | :--- | :--- |
-| Базовый HTTP-01 | Автоматический сертификат для одного домена | `cert-manager.io/cluster-issuer` |
-| Несколько доменов (SAN) | Один сертификат для нескольких хостов | `+ cert-manager.io/common-name` |
-| Временный сертификат | Избежание ошибок TLS во время ACME | `+ cert-manager.io/issue-temporary-certificate: "true"` |
-| Wildcard через DNS-01 | Сертификат `*.example.com` | `+ cert-manager.io/acme-challenge-type: "dns01"` |
-| Прямой Certificate | Полный контроль без аннотаций | Не требуются (Certificate создаётся вручную) |
+- **[Сценарии интеграции](./scenarios.md)** — HTTP-01, wildcard-домены, временные сертификаты, прямой Certificate.
 
 ---
 
 ## Дополнительная информация
 
-### Диагностика
+### Диагностика через cmctl
+
+Для диагностики рекомендуется использовать официальную утилиту **cmctl** (преемник плагина kubectl cert-manager).
 
 ```bash
-# Статус сертификата
-kubectl get certificate -n <namespace>
+# Проверка статуса сертификата
+cmctl status certificate myapp-tls -n <namespace>
 
-# Детали Certificate (ошибки, события)
-kubectl describe certificate <name> -n <namespace>
+# Проверка готовности Issuer
+cmctl check api
 
-# Связанные Order и Challenge (ACME)
-kubectl get order -n <namespace>
-kubectl get challenge -n <namespace>
-
-# Логи cert-manager
+# Просмотр логов контроллера через kubectl
 kubectl logs -n cert-manager -l app=cert-manager --tail=100
+```
+
+### Диагностика через kubectl
+
+```bash
+# Список всех ресурсов выпуска
+kubectl get certificate,certificaterequest,order,challenge -n <namespace>
+
+# Ошибки в конкретном заказе (Order)
+kubectl describe order <order-name> -n <namespace>
 ```
 
 ### Частые ошибки
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `Waiting for HTTP-01 challenge` | Ingress недоступен извне | Проверить LoadBalancer, firewall, DNS |
-| `Secret not found` | Certificate ещё не создан | Подождать 1–2 минуты, проверить логи cert-manager |
-| `Issuer not found` | Неправильный namespace или имя Issuer | Проверить аннотацию и наличие ClusterIssuer/Issuer |
-| `Rate limit exceeded` | Лимит Let's Encrypt исчерпан | Использовать staging-сервер, подождать |
+| `Waiting for HTTP-01 challenge` | Ingress недоступен извне или 80 порт закрыт | Проверить LoadBalancer, Firewall, DNS |
+| `Issuer not found` | Неверное имя или namespace | Проверить ClusterIssuer vs Issuer |
+| `Rate limit exceeded` | Слишком много запросов к Let's Encrypt | Использовать Let's Encrypt Staging для тестов |
 
 ### Связанные документы
 
 - **[Cert-manager: Определения](../definitions.md)** — CRD, Issuer, ACME Solvers
-- **[Let's Encrypt](../LetsEncrypt/index.md)** — публичные сертификаты через ACME
-- **[Private CA](../Private_CA/index.md)** — собственные центры сертификации
-- **[Administration](../Administration/index.md)** — управление и диагностика cert-manager
-- **[Сценарии интеграции](./scenarios.md)** — детальные примеры манифестов
-- **[Ingress: Обзор](../../../Networking/Ingress/overview.md)** — общие концепции Ingress и TLS
+- **[Gateway API: TLS](../gateway_api/definitions_and_concepts.md)** — современная замена Ingress-интеграции
+- **[Let's Encrypt](../LetsEncrypt/index.md)** — работа с публичными CA
+- **[Administration](../Administration/index.md)** — администрирование и тюнинг cert-manager
+- **[Ingress: Обзор](../../../Networking/Ingress/overview.md)** — общие концепции Ingress

@@ -1,24 +1,69 @@
-# Администрирование Cert-manager
+# Администрирование cert-manager
 
 ## Определения
 
-**Администрирование cert-manager** — управление жизненным циклом сертификатов, диагностика, мониторинг и обеспечение безопасности.
+**Администрирование cert-manager** — управление жизненным циклом сертификатов, автоматизация очистки ресурсов, ротация ключей и обеспечение безопасности контроллера.
 
 ## Основные концепции
 
-### Управление секретами при удалении сертификатов
+### Управление жизненным циклом ресурсов
 
-#### Поведение по умолчанию
+#### Сборка мусора (Garbage Collection) и Secret
 
-По умолчанию cert-manager **не удаляет** Kubernetes `Secret` при удалении ресурса `Certificate`. Это сделано для безопасности — случайное удаление `Certificate` не должно приводить к потере рабочего TLS-сертификата.
+По умолчанию cert-manager **не удаляет** Kubernetes `Secret` при удалении ресурса `Certificate`. Это защитный механизм: случайное удаление CRD не должно приводить к потере рабочего TLS-сертификата.
 
-**Проблема:** При пересоздании `Certificate` с тем же `secretName` cert-manager не обновляет существующий Secret, что может привести к использованию устаревшего сертификата.
+**Проблема:** При использовании GitOps (ArgoCD/Flux) или частом пересоздании сертификатов в кластере накапливаются "осиротевшие" секреты.
 
-#### Включение garbage collection
+**Решение:** Включение флага `--enable-certificate-owner-ref=true` добавляет `ownerReference` к Secret. Это связывает время жизни Secret с ресурсом Certificate.
 
-Для автоматического удаления Secret при удалении Certificate используйте флаг `--enable-certificate-owner-ref=true`.
+#### Очистка CertificateRequest
 
-**Helm:**
+В версиях до v1.18 ресурсы `CertificateRequest` (история запросов на выпуск) могли накапливаться тысячами, создавая нагрузку на etcd.
+
+**Изменение в v1.18+:** Параметр `revisionHistoryLimit` теперь по умолчанию равен **1**. Это означает, что cert-manager автоматически удаляет старые запросы, оставляя только последний успешный. В старых версиях рекомендуется устанавливать этот параметр вручную в объекте `Certificate`.
+
+### Безопасность и ротация ключей
+
+#### Ротация приватных ключей (rotationPolicy)
+
+Параметр `rotationPolicy` определяет, будет ли генерироваться новый приватный ключ при каждом продлении сертификата.
+
+- `Never` (по умолчанию в старых версиях): Ключ не меняется. Снижает риск простоя, если приложение плохо обрабатывает смену ключа, но снижает безопасность.
+- `Always` (рекомендуется для v1.18+): Новый ключ генерируется при каждом обновлении. Соответствует современным стандартам безопасности.
+
+#### Распространение CA через trust-manager
+
+Копирование Secret с CA-сертификатом между всеми namespace вручную — антипаттерн. Для этого используется аддон **trust-manager**, который позволяет создать ресурс `Bundle` и автоматически доставлять CA-сертификат во все ConfigMap кластера.
+
+## Практические сценарии
+
+### Сценарий: Настройка автоматической очистки и ротации (v1.18+)
+
+Для обеспечения чистоты кластера и безопасности настройте `Certificate` следующим образом:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: example-com
+  namespace: default
+spec:
+  secretName: example-com-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: example.com
+  # Оставляем только 1 CertificateRequest в истории (v1.18+ default)
+  revisionHistoryLimit: 1
+  # Принудительная ротация ключа при каждом обновлении
+  rotationPolicy: Always
+  dnsNames:
+  - example.com
+```
+
+### Сценарий: Глобальное включение Garbage Collection через Helm
+
+Если вы используете GitOps, рекомендуется включить автоматическое удаление Secret на уровне контроллера:
 
 ```bash
 helm upgrade --install cert-manager jetstack/cert-manager \
@@ -27,91 +72,57 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   --set "extraArgs={--enable-certificate-owner-ref=true}"
 ```
 
-**Поведение после включения:**
-
-- cert-manager добавляет `ownerReference` к Secret, указывая на Certificate
-- При удалении Certificate сборщик мусора Kubernetes автоматически удаляет Secret
-
-| Преимущества | Риски |
-| :--- | :--- |
-| Упрощает управление жизненным циклом | Случайное удаление Certificate удаляет Secret |
-| Автоматическая очистка | Возможны простои при ошибке |
-| Прозрачная связь ресурсов | Требует осторожности в production |
-
-> **Рекомендация:** Используйте с осторожностью в production. Включайте в development/staging.
-
-## Practical Scenarios
-
-### Сценарий: Включение garbage collection в существующем кластере
-
-1. Проверьте текущие флаги контроллера:
-
+**Проверка работы:**
+1. Создайте Certificate.
+2. Убедитесь, что Secret имеет `ownerReferences`:
    ```bash
-   kubectl get deployment cert-manager -n cert-manager -o jsonpath='{.spec.template.spec.containers[0].args}'
+   kubectl get secret example-com-tls -o jsonpath='{.metadata.ownerReferences}'
+   ```
+3. Удалите Certificate и проверьте, что Secret исчез.
+
+### Сценарий: Ограничение сетевого доступа (v1.20+)
+
+Начиная с версии v1.20, Helm-чарт поддерживает создание нативных `NetworkPolicy`. Это позволяет ограничить трафик только необходимыми направлениями (K8s API и ACME-серверы).
+
+```bash
+helm upgrade cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --set global.networkPolicy.enabled=true
+```
+
+### Сценарий: Диагностика "зависших" ресурсов
+
+Если Certificate застрял в `Pending`, проверьте связанные ресурсы по цепочке:
+
+1. **CertificateRequest:**
+   ```bash
+   kubectl describe certificaterequest <name>
+   ```
+2. **Order (для ACME):**
+   ```bash
+   kubectl describe order <name>
+   ```
+3. **Challenge:**
+   ```bash
+   kubectl describe challenge <name>
    ```
 
-2. Если флаг `--enable-certificate-owner-ref` отсутствует, добавьте его:
+Подробные шаги см. в [руководстве по troubleshooting](./troubleshooting.md).
 
-   ```bash
-   helm upgrade cert-manager jetstack/cert-manager \
-     --namespace cert-manager \
-     --reuse-values \
-     --set "extraArgs={--enable-certificate-owner-ref=true}"
-   ```
-
-3. Убедитесь, что поды перезапустились:
-
-   ```bash
-   kubectl rollout status deployment/cert-manager -n cert-manager
-   ```
-
-4. Проверьте, что `ownerReference` добавлен к существующим Secret:
-
-   ```bash
-   kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.metadata.ownerReferences}'
-   ```
-
-### Сценарий: Безопасное удаление Certificate с сохранением Secret
-
-Если garbage collection **не включён** и нужно удалить `Certificate`, сохранив Secret:
-
-1. Убедитесь, что Secret существует и содержит актуальный сертификат:
-
-   ```bash
-   kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -dates
-   ```
-
-2. Удалите ресурс Certificate:
-
-   ```bash
-   kubectl delete certificate <name> -n <namespace>
-   ```
-
-3. Проверьте, что Secret остался на месте:
-
-   ```bash
-   kubectl get secret <tls-secret> -n <namespace>
-   ```
-
-### Сценарий: Восстановление после случайного удаления Certificate
-
-При включённом garbage collection удаление Certificate удалит Secret. Для восстановления:
-
-1. Пересоздайте ресурс Certificate с тем же `secretName` — cert-manager автоматически запросит новый сертификат.
-
-2. Если требуется тот же сертификат — восстановите Secret из backup (см. [операции backup/restore](./operations.md)).
-
-### Диагностика проблем
-
-Для проверки состояния Certificate, Order, Challenge и анализа логов используйте [руководство по troubleshooting](./troubleshooting.md). Для мониторинга, алертинга, backup и обновления — [операции cert-manager](./operations.md).
-
-## Additional Information
+## Дополнительная информация
 
 ### Надёжность информации
 
 | Аспект | Оценка | Обоснование |
 | :--- | :--- | :--- |
 | Garbage collection | **10** | Официальная документация cert-manager.io |
-| Prometheus-метрики | **10** | Встроены в cert-manager с версии 0.11 |
-| Troubleshooting | **9** | Основано на официальной документации и опыте |
-| Backup/Restore | **9** | Стандартная практика Kubernetes |
+| revisionHistoryLimit | **10** | Изменение поведения по умолчанию в v1.18 |
+| rotationPolicy | **10** | Введено в v1.10, рекомендуется в v1.18+ |
+| trust-manager | **9** | Официальный суб-проект cert-manager |
+| NetworkPolicy | **10** | Добавлено в Helm-чарт v1.20 |
+
+### Смотрите также
+
+- **[Cert-manager: Операции](./operations.md)** — мониторинг, backup и обновление
+- **[Cert-manager: Troubleshooting](./troubleshooting.md)** — глубокая диагностика проблем
+- **[Cert-manager: Установка](../installation.md)** — параметры Helm и CRD

@@ -2,127 +2,115 @@
 
 ## Определения
 
-**PDB-blocked Eviction (Блокировка по PDB)** — ситуация, при которой объект PodDisruptionBudget препятствует выселению пода через Eviction API (например, при выполнении `kubectl drain` или Rolling Update). В этом случае под остается на узле, а операция выселения завершается с ошибкой.
+**PDB-blocked Eviction (Блокировка по PDB)** — состояние, при котором объект `PodDisruptionBudget` препятствует удалению пода через Eviction API. Это происходит при добровольных прерываниях (например, `kubectl drain`), когда удаление пода нарушит заданный порог доступности (`minAvailable` или `maxUnavailable`).
 
-**Taint-based Eviction (Выселение на основе Taints)** — автоматический процесс удаления подов с узла при добавлении taint с эффектом `NoExecute`. Это происходит при потере готовности узла или ручном вводе ограничений администратором.
+**Taint-based Eviction (Выселение на основе Taints)** — автоматический процесс удаления подов с узла при добавлении taint с эффектом `NoExecute`. Kubernetes использует этот механизм для реакции на сбои узлов (`NotReady`, `Unreachable`) или при ручном вводе ограничений.
 
-**NoExecute** — эффект taint, инициирующий немедленное или отложенное (через `tolerationSeconds`) выселение всех подов, не имеющих соответствующего toleration.
+**Eviction API** — программный интерфейс, используемый для "вежливого" удаления подов. В отличие от прямого удаления (`delete`), он учитывает PDB и возвращает ошибку `429 Too Many Requests`, если бюджет нарушен.
+
+**DisruptionTarget** — условие (condition), добавляемое в статус пода в Kubernetes 1.31 (GA), которое указывает на причину выселения (например, `EvictionByEvictionAPI` или `DeletionByTaintManager`).
 
 ## Основные концепции
 
-### Сравнение механизмов выселения без учета ресурсов
+### Сравнение механизмов выселения
 
 В отличие от выселения при нехватке ресурсов (Memory/Disk Pressure), данные механизмы управляются логикой доступности или административными правилами.
 
 | Характеристика | Блокировка по PDB | Taint-based Eviction |
-|----------------|-------------------|----------------------|
-| **Инициатор** | `kubectl drain` / rollout | Control Plane (автоматически) |
-| **Результат** | Выселение **блокируется** | Выселение **происходит** |
-| **Сообщение в событиях** | `violates PDB` | `Marking for deletion Pod` |
-| **Причина** | Нарушение лимита доступности | Наличие taint `NoExecute` |
-| **Автоматизация** | Только при внешнем запросе | Постоянный мониторинг состояния |
-| **Решение** | Изменение PDB или масштабирование | Добавление toleration или ремонт узла |
+|:---|:---|:---|
+| **Инициатор** | `kubectl drain` / Rolling Update | Control Plane (автоматически) |
+| **Уважает PDB** | Да | **Нет** |
+| **Результат при конфликте** | Операция блокируется | Под удаляется немедленно |
+| **Сообщение в событиях** | `DisruptionBudgetExceeded` | `TaintManagerEviction` |
+| **Причина** | Плановое обслуживание | Сбой узла или ручной taint |
+| **Основной параметр** | `minAvailable` / `maxUnavailable` | `tolerationSeconds` |
 
-### Взаимодействие с Eviction API
+### Политика выселения нездоровых подов (Kubernetes 1.30+)
 
-PDB (Pod Disruption Budget) защищает поды **только** при использовании Eviction API. Подробное описание параметров PDB доступно в файле **[Бюджет прерывания подов](../../../Autoscaling/pod_disruption_budget.md)**.
+Поле `spec.unhealthyPodEvictionPolicy` позволяет управлять поведением PDB для подов в состоянии `CrashLoopBackOff` или не прошедших Readiness Probe:
 
-Механизм проверки:
+- **`IfHealthyBudget` (по умолчанию)** — нездоровые поды выселяются только если соблюдается бюджет для здоровых. Это может заблокировать `drain`, если в системе много проблемных подов.
+- **`AlwaysAllow`** — нездоровые поды выселяются всегда, даже если бюджет нарушен. Рекомендуется для ускорения обслуживания узлов.
 
-1. Выполняется запрос к Eviction API (например, через `drain`).
-2. API-сервер проверяет текущее количество здоровых реплик.
-3. Если выселение нарушит `minAvailable` или `maxUnavailable`, запрос отклоняется с ошибкой `429 Too Many Requests`.
+### Условия DisruptionTarget (Kubernetes 1.31+)
 
-### Стандартные Taints и задержка выселения
+Для точной диагностики причины выселения следует проверять `status.conditions` пода:
 
-Kubernetes автоматически накладывает taints при проблемах с узлом. По умолчанию подам дается 300 секунд (5 минут) до начала выселения при статусах `NotReady` или `Unreachable`. Подробности механизмов описаны в **[Taints и Tolerations](../../../Scheduling/taints_and_tolerations.md)**.
+```yaml
+status:
+  conditions:
+    - type: DisruptionTarget
+      status: "True"
+      reason: EvictionByEvictionAPI # Выселен через drain
+```
 
 ## Практические сценарии
 
 ### Сценарий 1: drain блокируется PDB
 
 **Симптом:**
-Команда `kubectl drain` останавливается, и в терминале появляется ошибка:
+Команда `kubectl drain` останавливается с ошибкой:
 `error: cannot evict pod as it would violate the pod's disruption budget`.
 
 **Диагностика:**
-
 1. Проверьте состояние PDB:
-
    ```bash
    kubectl get pdb -A
+   ```
+2. Проверьте количество здоровых реплик в `status`:
+   ```bash
    kubectl describe pdb <pdb-name>
    ```
 
-2. Найдите события блокировки:
-
-   ```bash
-   kubectl get events --field-selector reason=DisruptionBudgetExceeded
-   ```
-
 **Решение:**
-
-- Добавьте реплики в Deployment/StatefulSet, чтобы создать "запас" для выселения.
-- Временно отредактируйте PDB, увеличив `maxUnavailable`.
-- Если обслуживание критично, удалите PDB и восстановите его после завершения работ.
+- **Масштабирование:** Увеличьте количество реплик в Deployment/StatefulSet.
+- **Корректировка политики:** Если поды нездоровы, установите `spec.unhealthyPodEvictionPolicy: AlwaysAllow`.
+- **Принудительное удаление:** Если обслуживание критично, удалите под напрямую (`kubectl delete pod`), что проигнорирует PDB.
 
 ### Сценарий 2: Автоматическое выселение при недоступности узла
 
 **Симптом:**
-Под переходит в статус `Terminating` или исчезает с узла, а затем появляется статус `Evicted`.
+Узел перешел в статус `NotReady`, и через 5 минут поды начали переходить в `Terminating` и пересоздаваться на других узлах.
 
 **Диагностика:**
-
 1. Проверьте taints узла:
-
    ```bash
    kubectl describe node <node-name> | grep Taints
+   # → node.kubernetes.io/unreachable:NoExecute
    ```
-
-2. Проверьте tolerations пода:
-
+2. Проверьте `tolerationSeconds` пода:
    ```bash
    kubectl get pod <pod-name> -o jsonpath='{.spec.tolerations}'
    ```
 
 **Решение:**
-Если выселение нежелательно при кратковременных сбоях сети, увеличьте `tolerationSeconds` в спецификации пода для ключей `node.kubernetes.io/unreachable` и `node.kubernetes.io/not-ready`.
+Для критичных приложений увеличьте `tolerationSeconds` до 600-900 (10-15 минут), чтобы избежать лишних переездов при кратковременных сбоях сети.
 
-### Сценарий 3: Ручное выселение через taints
+### Сценарий 3: Ручное выселение через taints (в обход PDB)
 
-Для вывода подов с узла без использования `kubectl drain` (например, если нужно обойти PDB):
+Если необходимо очистить узел, игнорируя PDB (например, если приложение "зависло" и блокирует `drain`), можно использовать taint:
 
 ```bash
 # Наложение taint NoExecute
-kubectl taint node <node-name> maintenance=planned:NoExecute
+kubectl taint node <node-name> manual-eviction=true:NoExecute
 
-# Проверка очистки узла
-kubectl get pods --field-selector spec.nodeName=<node-name>
-
-# Снятие taint после работ
-kubectl taint node <node-name> maintenance=planned-
+# Очистка (после завершения работ)
+kubectl taint node <node-name> manual-eviction-
 ```
 
-## Дополнительная информация
+**Предупреждение:** Для `StatefulSet` это может привести к запуску двух копий пода с одинаковым именем, если старый под на самом деле не завершился (проблема split-brain).
 
-### Сводная таблица механизмов выселения
+## Сводная таблица причин выселения
 
-| Механизм | Инициатор | Уважает PDB | Grace Period |
-|----------|-----------|-------------|--------------|
-| **Drain (Eviction API)** | Пользователь | Да | `terminationGracePeriodSeconds` |
-| **Node Pressure** | Kubelet | Нет | `evictionMaxPodGracePeriod` |
-| **Taint-based NoExecute** | Control Plane | Нет | `tolerationSeconds` (300с по умолчанию) |
-| **kubectl delete** | Пользователь | Нет | `terminationGracePeriodSeconds` |
+| Причина в DisruptionTarget | Описание | Что проверить |
+|:---|:---|:---|
+| **EvictionByEvictionAPI** | Выселение через API (drain) | PDB, бюджет доступности |
+| **DeletionByTaintManager** | Выселение по taints (`NoExecute`) | Состояние узла, Tolerations |
+| **PreemptionByKubeScheduler**| Вытеснение более приоритетным подом | `PriorityClass` |
+| **EvictionByKubelet** | Нехватка ресурсов на узле | RAM/Disk Pressure |
 
-### Рекомендации по настройке
+## Смотрите также
 
-- **Для критичных сервисов:** Всегда настраивайте PDB, но избегайте `maxUnavailable: 0`, так как это полностью заблокирует обслуживание узлов.
-- **Для StatefulSet:** Используйте `maxUnavailable: 1`, чтобы гарантировать последовательное выселение реплик.
-- **Мониторинг:** Настройте алерты на событие `DisruptionBudgetExceeded` для проактивного выявления проблем с обслуживанием.
-
-### Смотрите также
-
-- [Диагностика выселенных подов](./diagnostics.md) — общий алгоритм поиска причин.
-- [Обслуживание узлов: Cordon и Drain](../../../Operations/node_maintenance.md) — основной источник по процедурам обслуживания.
-- [Бюджет прерывания подов (PDB)](../../../Autoscaling/pod_disruption_budget.md) — подробное описание и параметры.
-- [Taints и Tolerations](../../../Scheduling/taints_and_tolerations.md) — механика работы и стандартные значения.
+- [Диагностика выселенных подов](./diagnostics.md) — поиск первопричин через события и метрики.
+- [Бюджет прерывания подов (PDB)](../../../Autoscaling/pod_disruption_budget.md) — полная конфигурация параметров.
+- [Taints и Tolerations](../../../Scheduling/taints_and_tolerations.md) — механизмы управления размещением.

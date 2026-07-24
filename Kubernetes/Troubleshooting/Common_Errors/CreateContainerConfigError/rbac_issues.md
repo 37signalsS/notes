@@ -1,147 +1,99 @@
-# CreateContainerConfigError: Проблемы с RBAC
+# CreateContainerConfigError: Проблемы с RBAC и ServiceAccount
 
-## Definitions
+## Определения
 
-**RBAC-related CreateContainerConfigError** — ошибка, возникающая когда ServiceAccount пода не имеет прав на чтение ConfigMap, Secret или других ресурсов, необходимых для создания конфигурации контейнера.
+**RBAC-related CreateContainerConfigError** — состояние пода, возникающее из-за невозможности `kubelet` подготовить конфигурацию контейнера по причине проблем с правами доступа или отсутствия необходимых объектов `ServiceAccount`. 
 
-## Basic Concepts
+Хотя в стандартном Kubernetes `kubelet` использует собственную идентичность для чтения ConfigMap и Secret, ошибки RBAC и конфигурации ServiceAccount могут блокировать запуск пода в специфических сценариях (CSI-драйверы, проекционные тома, защищенные окружения).
 
-### Типичное сообщение об ошибке
+Подробные определения ошибки: [definitions.md](./definitions.md).
+Обзор RBAC в Kubernetes: [rbac_overview.md](../../../Security/rbac/rbac_overview.md).
 
-```
-user "system:serviceaccount:default:default" cannot get resource "configmaps"
-in API group "" in the namespace "default"
-```
+## Основные концепции
 
-### Механизм ошибки
+### Почему возникают проблемы с правами
 
-```
-Pod использует ServiceAccount
-         ↓
-kubelet запрашивает ресурс (ConfigMap/Secret) от имени SA
-         ↓
-API-сервер проверяет RBAC-права SA
-         ↓
-❌ Нет прав get/list → CreateContainerConfigError
-```
+В большинстве случаев `CreateContainerConfigError` из-за RBAC/SA возникает в следующих ситуациях:
 
-### Почему это происходит
+1.  **Отсутствие ServiceAccount:** Под ссылается на `serviceAccountName`, который не существует в текущем Namespace. Кubelet не может создать проекционный том с токеном.
+2.  **CSI Secret Store:** При использовании CSI-драйверов для внешних хранилищ секретов (Vault, AWS Secrets Manager) драйвер может использовать **ServiceAccount пода** для аутентификации. Если у SA нет прав на работу с провайдером секретов, монтирование тома завершится ошибкой.
+3.  **Ограничения NodeRestriction:** В защищенных кластерах плагин `NodeRestriction` может блокировать `kubelet` доступ к ресурсу, если API-сервер считает, что этот ресурс не должен быть доступен данному узлу.
+4.  **Проблемы с токенами (Automount):** Если `automountServiceAccountToken: true`, но системные настройки запрещают создание токенов или есть ошибки в `ClusterRole` для контроллера токенов.
 
-| Причина | Описание |
-|---------|----------|
-| **Default ServiceAccount** | Pod использует SA `default` без настроенных прав |
-| **Role отсутствует** | Нет Role с правами на нужный ресурс |
-| **RoleBinding отсутствует** | Role существует, но не привязана к SA пода |
-| **Namespace mismatch** | RoleBinding в другом namespace |
-| **Неверный apiGroup** | В rules указан неверный apiGroup для ресурса |
+### Типичное сообщение в Events
 
-> Общие концепции RBAC: [rbac_overview.md](../../../Security/rbac/rbac_overview.md).
-
-## Practical Scenarios
-
-### Сценарий 1: Диагностика RBAC-прав
-
-```bash
-# Проверка: может ли SA читать ConfigMap
-kubectl auth can-i get configmaps \
-  --as=system:serviceaccount:<namespace>:<sa-name> \
-  -n <namespace>
-
-# Проверка: может ли SA читать Secrets
-kubectl auth can-i get secrets \
-  --as=system:serviceaccount:<namespace>:<sa-name> \
-  -n <namespace>
-
-# Проверка всех прав SA
-kubectl auth can-i --list \
-  --as=system:serviceaccount:<namespace>:<sa-name> \
-  -n <namespace>
+```text
+Error: container_linux.go:348: starting container process caused "process_linux.go:402: container init caused \"rootfs_linux.go:58: mounting \\\"/var/lib/kubelet/pods/.../volumes/kubernetes.io~service-account-token/default-token-xxxxx\\\" ...\""
+# Или более явное:
+Error: serviceaccount "my-sa" not found
 ```
 
-### Сценарий 2: Создание Role и RoleBinding
+## Практические сценарии
 
-**Проблема:** SA пода не имеет прав на ConfigMap/Secret.
+### Сценарий 1: ServiceAccount не найден
 
-**Решение:** Создать Role с минимальными правами и привязать к SA.
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: config-reader
-  namespace: default
-rules:
-- apiGroups: [""]
-  resources: ["configmaps", "secrets"]
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: default-config-reader
-  namespace: default
-subjects:
-- kind: ServiceAccount
-  name: default
-  namespace: default
-roleRef:
-  kind: Role
-  name: config-reader
-  apiGroup: rbac.authorization.k8s.io
-```
-
-### Сценарий 3: Проверка ServiceAccount пода
-
-```bash
-# Узнать SA пода
-kubectl get pod <pod-name> -n <namespace> \
-  -o jsonpath='{.spec.serviceAccountName}'
-
-# Проверить, существует ли SA
-kubectl get serviceaccount <sa-name> -n <namespace>
-```
-
-Если поле `serviceAccountName` пустое — используется `default`.
-
-### Сценарий 4: Namespace mismatch
-
-**Симптом:** RoleBinding существует, но ошибка сохраняется.
-
-**Причина:** RoleBinding и Pod находятся в разных namespace.
+Самая простая и частая причина. Под ссылается на несуществующий аккаунт.
 
 **Диагностика:**
-
 ```bash
-# Namespace RoleBinding
-kubectl get rolebinding <binding-name> -n <namespace-a>
+# Проверка SA в спецификации пода
+kubectl get pod <pod-name> -o jsonpath='{.spec.serviceAccountName}'
+# → custom-sa
 
-# Namespace Pod
-kubectl get pod <pod-name> -n <namespace-b>
+# Проверка существования SA
+kubectl get serviceaccount custom-sa
+# → Error from server (NotFound): serviceaccounts "custom-sa" not found
 ```
 
-**Решение:** RoleBinding всегда работает на уровне namespace — создать в том же namespace, где находится Pod.
+**Решение:** Создайте ServiceAccount или исправьте имя в манифесте пода.
 
-### Сценарий 5: Неверный apiGroup в rules
+### Сценарий 2: Использование CSI Secret Store
 
-**Симптом:** RoleBinding есть, но `auth can-i` возвращает `no`.
+При использовании `secrets-store.csi.k8s.io` под должен иметь SA с правами, позволяющими драйверу действовать от его имени.
 
-**Причина:** В rules указан неверный `apiGroups`.
+**Симптом:** Под застрял в `CreateContainerConfigError`, в описании — ошибка от CSI-драйвера.
 
-| Ресурс | apiGroup |
-|--------|----------|
-| ConfigMap, Secret, Pod, Service | `""` (core, пустая строка) |
-| Deployment, ReplicaSet | `"apps"` |
-| Role, RoleBinding | `"rbac.authorization.k8s.io"` |
-| Ingress | `"networking.k8s.io"` |
+**Диагностика прав через impersonation:**
+```bash
+# Проверка: может ли SA "читать" секреты (имитация проверки драйвером)
+kubectl auth can-i get secret --as=system:serviceaccount:<namespace>:<sa-name>
+# → no
+```
 
-**Частая ошибка:** `apiGroups: ["configmaps"]` вместо `apiGroups: [""]`.
+**Решение:** Создайте `Role` и `RoleBinding`, разрешающие доступ к необходимым ресурсам.
 
-## Additional Information
+### Сценарий 3: Ошибки проекции токенов (Token Projection)
+
+В современных кластерах (v1.20+) токены SA проецируются как тома. Если в кластере проблемы с `ServiceAccountIssuer` или настройками API-сервера, это вызовет ошибку на этапе формирования конфигурации контейнера.
+
+**Диагностика:**
+```bash
+kubectl describe pod <pod-name> | grep -A 5 "Volumes:"
+# Проверьте наличие тома типа projected для serviceaccount-token
+```
+
+### Сценарий 4: Ограничения Namespace
+
+Role и RoleBinding для ServiceAccount должны находиться в том же Namespace, что и сам под (если не используются ClusterRoles).
+
+**Решение:** Убедитесь, что `metadata.namespace` в `RoleBinding` совпадает с Namespace пода.
+
+## Список проверок (Checklist)
+
+| Что проверить | Команда / Метод |
+|---------------|-----------------|
+| **Существование SA** | `kubectl get sa <name>` |
+| **Namespace SA** | Убедиться, что SA и Pod в одном Namespace |
+| **Automount** | Проверить `automountServiceAccountToken` в спецификации Pod/SA |
+| **CSI Driver logs** | Если используется внешний Vault/AWS, проверить логи CSI-подов |
+| **Events** | `kubectl describe pod` — искать ошибки монтирования токена |
+
+## Дополнительная информация
 
 ### Связанные ресурсы
 
-- Определения: [definitions.md](./definitions.md)
-- Диагностика: [diagnostics.md](./diagnostics.md)
-- RBAC overview (SSoT): [rbac_overview.md](../../../Security/rbac/rbac_overview.md)
-- Roles: [roles.md](../../../Security/rbac/roles.md)
-- Bindings: [bindings.md](../../../Security/rbac/bindings.md)
+- [Общая диагностика CreateContainerConfigError](./diagnostics.md)
+- [Проблемы с Secret](./secret_issues.md)
+- [Подробно о ServiceAccounts](../../../Security/rbac/bindings.md)
+- [Конфигурация Roles и RoleBindings](../../../Security/rbac/roles.md)
+- [CSI Driver — архитектура](../../../Storage/CSI/csi_overview.md)

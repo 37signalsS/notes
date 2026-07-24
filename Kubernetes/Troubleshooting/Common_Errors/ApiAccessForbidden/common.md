@@ -1,17 +1,21 @@
-# Ошибка 403 Forbidden (Api Access Forbidden): распространённые случаи
+# Ошибка 403 Forbidden (Доступ запрещен): распространенные случаи
 
 ## Определения
 
-**403 Forbidden (namespaced resources)** — ошибка возникает, когда аутентифицированный субъект обращается к ресурсам в пределах пространства имён (namespace), но не имеет соответствующих прав RBAC.
+**403 Forbidden (ресурсы в пространствах имен)** — ошибка возникает, когда субъект успешно прошел проверку личности (аутентификацию), но не имеет достаточных прав в системе **RBAC (Role-Based Access Control)** для выполнения конкретного действия над ресурсом в определенном пространстве имен (**namespace**).
+
+**403 Forbidden (Admission Control)** — отказ API-сервера на этапе контроля допуска. Даже если RBAC разрешает действие, политики безопасности (например, PSA) могут заблокировать запрос.
 
 > Различие 401 vs 403: [definitions.md](definitions.md)
-> Общие лучшие практики RBAC: [../../../../Security/rbac/rbac_overview.md](../../../../Security/rbac/rbac_overview.md)
+> Общие лучшие практики RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
 
 ## Основные концепции
 
-### Паттерн сообщения об ошибке
+### Шаблон сообщения об ошибке
 
-```
+Стандартный ответ API-сервера содержит все детали, необходимые для идентификации проблемы:
+
+```text
 Error from server (Forbidden): <resource> is forbidden:
 User "<subject>" cannot <verb> resource "<resource>"
 in API group "<group>" in the namespace "<namespace>"
@@ -19,49 +23,40 @@ in API group "<group>" in the namespace "<namespace>"
 
 ### Алгоритм быстрого решения
 
-1. Извлечь из сообщения: `subject`, `verb`, `resource`, `apiGroup`, `namespace`
-2. Проверить: есть ли Role с нужными `resources` + `verbs`
-3. Проверить: привязан ли `subject` к этой Role через RoleBinding
-4. Если нет — создать Role + RoleBinding
+1. **Извлечь данные** из сообщения: кто (`subject`), что делает (`verb`), над чем (`resource`), в какой группе (`apiGroup`) и где (`namespace`).
+2. **Проверить Role:** существует ли роль с подходящими `resources` и `verbs`.
+3. **Проверить RoleBinding:** привязан ли нужный `subject` к этой роли в целевом namespace.
+4. **Устранить разрыв:** создать или дополнить Role/RoleBinding.
 
-### Диагностика
+### Инструменты диагностики
 
-Пошаговый процесс выявления причин ошибки 403 описан в разделе **[Диагностика 403 Forbidden](diagnostics.md#шаг-3-диагностика-403-forbidden)**.
-
-Для быстрой проверки прав используйте:
+Основной инструмент для проверки прав — `kubectl auth can-i`. Рекомендуется использовать механизм **impersonation** (выполнение от имени другого пользователя) для точной имитации условий ошибки.
 
 ```bash
-kubectl auth can-i <verb> <resource> --as=<subject> -n <namespace>
+# Проверка прав конкретного ServiceAccount
+kubectl auth can-i <verb> <resource> --as=system:serviceaccount:<namespace>:<sa-name> -n <namespace>
+
+# Пример: может ли SA 'my-sa' получать список секретов в 'my-ns'
+kubectl auth can-i list secrets --as=system:serviceaccount:my-ns:my-sa -n my-ns
+# → no
 ```
 
 > Пошаговая диагностика: [diagnostics.md](diagnostics.md)
 
 ## Практические сценарии
 
-### Сценарий 1: Чтение pods (отсутствует RoleBinding)
+### Сценарий 1: Чтение подов (отсутствует RoleBinding)
 
-**Контекст:** Приложение пытается получить список подов в своем namespace.
+**Контекст:** Приложение пытается получить список подов в своем пространстве имен для обнаружения соседей.
 
 **Сообщение:**
-
-```
+```text
 Error from server (Forbidden): pods is forbidden:
 User "system:serviceaccount:my-ns:my-sa" cannot list resource "pods"
 in API group "" in the namespace "my-ns"
 ```
 
-**Анализ ошибки:**
-
-| Поле | Значение |
-|------|----------|
-| Subject | `system:serviceaccount:my-ns:my-sa` |
-| Verb | `list` |
-| Resource | `pods` |
-| API Group | `""` (core) |
-| Namespace | `my-ns` |
-
-**Решение:**
-
+**Решение (YAML):**
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -69,7 +64,7 @@ metadata:
   name: pod-reader
   namespace: my-ns
 rules:
-- apiGroups: [""]
+- apiGroups: [""] # "" указывает на core API group
   resources: ["pods"]
   verbs: ["get", "list", "watch"]
 ---
@@ -90,60 +85,33 @@ roleRef:
 
 ### Сценарий 2: Доступ к секретам (Secrets)
 
-**Контекст:** Приложению требуется прочитать секреты (Secrets), например, для ротации или синхронизации между пространствами имён.
+**Контекст:** Приложению требуется прочитать `Secrets` для получения учетных данных базы данных.
 
-**Сообщение:**
+**Внимание:** Предоставляйте доступ к секретам только по необходимости. Используйте `resourceNames` для ограничения доступа конкретными объектами.
 
-```
-secrets is forbidden: User "system:serviceaccount:..."
-cannot list resource "secrets" in API group "" in the namespace "..."
-```
-
-**Решение:**
-
+**Решение (ограниченный доступ):**
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: secret-reader
+  name: db-secret-reader
   namespace: my-ns
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: app-secret-reader
-  namespace: my-ns
-subjects:
-- kind: ServiceAccount
-  name: <sa-name>
-  namespace: my-ns
-roleRef:
-  kind: Role
-  name: secret-reader
-  apiGroup: rbac.authorization.k8s.io
+  resourceNames: ["db-credentials"] # Доступ только к этому секрету
+  verbs: ["get"]
 ```
 
-> **Warning:** Предоставляйте доступ к секретам только когда это абсолютно необходимо. По возможности используйте `resourceNames` для ограничения конкретными секретами.
+### Сценарий 3: Создание/удаление Deployment (группа apps)
 
-### Сценарий 3: Создание/удаление Deployment
+**Контекст:** CI/CD конвейер или оператор пытается управлять ресурсами `Deployment`.
 
-**Контекст:** CI/CD конвейер (pipeline) или оператор пытается управлять Deployment.
+**Ошибка:** `deployments is forbidden: User "..." cannot create resource "deployments" in API group "apps"`
 
-**Сообщение:**
-
-```
-deployments is forbidden: User "..." cannot create resource "deployments"
-in API group "apps" in the namespace "..."
-```
-
-**Особенность:** `deployments` принадлежат API-группе `apps` (не core).
+**Особенность:** `deployments` принадлежат API-группе `apps`. Использование пустой строки `""` в `apiGroups` является частой ошибкой.
 
 **Решение:**
-
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -152,40 +120,34 @@ metadata:
   namespace: my-ns
 rules:
 - apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cicd-deployment-manager
-  namespace: my-ns
-subjects:
-- kind: ServiceAccount
-  name: <ci-sa-name>
-  namespace: my-ns
-roleRef:
-  kind: Role
-  name: deployment-manager
-  apiGroup: rbac.authorization.k8s.io
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
 ```
 
 ## Дополнительная информация
 
-### Таблица apiGroups для распространённых ресурсов
+### Таблица API-групп для часто используемых ресурсов
 
 | Ресурс | API Group | Тип роли |
 |--------|-----------|----------|
-| pods, services, configmaps, secrets | `""` (core) | Role |
-| deployments, replicasets, statefulsets | `apps` | Role |
-| ingress | `networking.k8s.io` | Role |
-| cronjobs, jobs | `batch` | Role |
-| roles, rolebindings | `rbac.authorization.k8s.io` | Role |
+| pods, services, configmaps, secrets, events | `""` (core) | Role |
+| deployments, daemonsets, statefulsets | `apps` | Role |
+| ingress, networkpolicies | `networking.k8s.io` | Role |
+| jobs, cronjobs | `batch` | Role |
+| horizontalpodautoscalers | `autoscaling` | Role |
+| persistentvolumeclaims | `""` | Role |
+
+### Частые причины ошибок (чек-лист)
+
+1.  **Множественное число:** Ресурсы в правилах ВСЕГДА во множественном числе (`pods`, `services`, `secrets`).
+2.  **Верная API Group:** Проверьте группу ресурса (например, `ingress` в `networking.k8s.io`).
+3.  **Соответствие Namespace:** Проверьте, что `Role` и `RoleBinding` созданы в том же пространстве имен, где находится ресурс и субъект.
+4.  **Подресурсы:** Для доступа к логам (`pods/log`) или статусу требуется явное указание подресурса.
+5.  **Pod Security Admission (PSA):** Если RBAC корректен, но создание подов запрещено — проверьте метки пространства имен на соответствие политикам безопасности (`privileged`, `baseline`, `restricted`).
 
 ### Связанные ресурсы
 
-- Роли и кластерные роли (Role и ClusterRole): [../../../../Security/rbac/roles.md](../../../../Security/rbac/roles.md)
-- Лучшие практики RBAC: [../../../../Security/rbac/rbac_overview.md](../../../../Security/rbac/rbac_overview.md)
-- Определения 401/403: [definitions.md](definitions.md)
+- Роли и кластерные роли: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
 - Пошаговая диагностика: [diagnostics.md](diagnostics.md)
-- Расширенные сценарии: [advanced.md](advanced.md)
+- Расширенные сценарии (Cluster-wide): [advanced.md](advanced.md)
+- Определения ошибок 401/403: [definitions.md](definitions.md)

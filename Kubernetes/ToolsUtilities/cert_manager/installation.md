@@ -1,218 +1,231 @@
-# Установка Cert-manager
+# Установка cert-manager
 
 ## Определения
 
-**Установка cert-manager** — процесс развёртывания Kubernetes-контроллера для автоматизации управления TLS-сертификатами. Официальная документация: [cert-manager.io/docs](https://cert-manager.io/docs/installation/).
+**Установка cert-manager** — процесс развёртывания контроллера и сопутствующих CRD в кластере Kubernetes для автоматизации управления TLS-сертификатами. Официальная документация: [cert-manager.io/docs/installation](https://cert-manager.io/docs/installation/).
 
 **Связанные темы:**
 
-- Определения, архитектура и версии: [definitions.md](./definitions.md)
-- Обновление и мониторинг: [Administration/operations.md](./Administration/operations.md)
-- Troubleshooting: [Administration/troubleshooting.md](./Administration/troubleshooting.md)
-- Garbage collection: [Administration/index.md](./Administration/index.md)
+- **[Определения и концепции](./definitions.md)** — архитектура, CRD и жизненный цикл ACME
+- **[Администрирование: Операции](./Administration/operations.md)** — мониторинг, резервное копирование и стратегии обновления
+- **[Диагностика (Troubleshooting)](./Administration/troubleshooting.md)** — решение проблем с установкой и выпуском
+- **[Приватный CA: Сценарии](./Private_CA/scenarios.md)** — настройка внутренних иерархий и trust-manager
 
 ---
 
 ## Основные концепции
 
-### Способы установки
+### Методы развёртывания
 
-| Способ | Преимущества | Недостатки | Рекомендация |
+| Метод | Преимущества | Недостатки | Рекомендация |
 | :--- | :--- | :--- | :--- |
-| **Helm** | Управление версиями, values, откат | Требует Helm | **Рекомендуется** |
-| **kubectl apply** | Простота, нет зависимостей | Ручное обновление, нет values | Быстрый старт, CI/CD |
-| **Operator (OLM)** | Интеграция с OpenShift | Требует OLM | OpenShift-кластеры |
+| **Helm** | Управление версиями, шаблонизация (values), поддержка атомарных откатов | Требует Helm-клиент в инфраструктуре | **Стандарт для Production** |
+| **kubectl apply** | Максимальная простота, отсутствие внешних зависимостей | Сложность обновления и кастомизации параметров | Быстрые тесты, простые CI-пайплайны |
+| **Operator Hub** | Автоматизированное управление жизненным циклом в OpenShift | Зависимость от Operator Lifecycle Manager (OLM) | Среды Red Hat OpenShift |
 
-### Предварительные требования
+### Предварительные требования (версии 2026 года)
 
-| Требование | Минимум | Примечание |
+| Требование | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| **Kubernetes** | 1.25 (для cert-manager 1.20+) | Проверить: `kubectl version` |
-| **kubectl** | Настроен на целевой кластер | Контекст: `kubectl config current-context` |
-| **Helm** | 3+ | Проверить: `helm version` |
-| **Gateway API CRD** | Опционально | Установить **до** cert-manager, если требуется |
+| **Kubernetes** | 1.25+ | Рекомендуется 1.29+ для полной поддержки Gateway API |
+| **kubectl** | 1.25+ | Должен соответствовать версии кластера |
+| **Helm** | 3.10+ | Требуется для поддержки OCI-репозиториев и новых схем валидации |
+| **Gateway API** | v1.1.0+ | Должен быть установлен **строго до** cert-manager |
 
-Информацию о поддерживаемых версиях Kubernetes и актуальных релизах cert-manager смотрите в разделе [Версии и совместимость](./definitions.md#версии-и-совместимость).
+### Компоненты системы
 
-### Ключевые компоненты cert-manager
-
-| Компонент | Назначение |
-| :--- | :--- |
-| **cert-manager** | Основной контроллер, управление Certificate |
-| **cert-manager-cainjector** | Инжекция CA в Secret для admission webhooks |
-| **cert-manager-webhook** | Валидация и мутация ресурсов cert-manager |
+При стандартной установке развёртываются три основных пода:
+1. **cert-manager-controller**: Основная логика управления ресурсами (Issuer, Certificate).
+2. **cert-manager-webhook**: Валидация ресурсов при создании/изменении и поддержка мутаций.
+3. **cert-manager-cainjector**: Настройка доверия для системных вебхуков и агрегированных API.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Установка через Helm (рекомендуемый)
+### Сценарий 1: Установка через Helm (Рекомендуемый)
 
-#### Шаг 1: Добавление репозитория
+**1. Добавление репозитория:**
 
 ```bash
 helm repo add jetstack https://charts.jetstack.io
 helm repo update
 ```
 
-#### Шаг 2: Установка Gateway API CRD (опционально)
+**2. Установка Gateway API (опционально):**
 
-> **Важно:** Если планируется использование Gateway API, установите CRD **до** cert-manager.
+Если планируется использование Gateway API, CRD должны быть в кластере до запуска основного контроллера cert-manager.
 
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
 ```
 
-#### Шаг 3: Установка cert-manager
+**3. Установка контроллера:**
 
-Для установки актуальной стабильной версии (например, `v1.20.2`):
+Для версии `v1.21.0` (актуальная стабильная на июль 2026):
 
 ```bash
 helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager \
   --create-namespace \
-  --version v1.20.2 \
-  --set installCRDs=true
+  --version v1.21.0 \
+  --set installCRDs=true \
+  --set global.leaderElection.namespace=cert-manager
 ```
 
-Также поддерживается установка через OCI registry:
+**Альтернатива через OCI (рекомендуется для изолированных сред):**
 
 ```bash
 helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
   --namespace cert-manager \
   --create-namespace \
-  --version v1.20.2 \
+  --version v1.21.0 \
   --set crds.enabled=true
 ```
 
-#### Шаг 4: Проверка установки
+---
+
+### Сценарий 2: Установка в Production с ручным управлением CRD
+
+В критических средах рекомендуется управлять CRD отдельно от Helm-чарта, чтобы избежать их случайного удаления при `helm uninstall`.
+
+**1. Установка CRD:**
 
 ```bash
-kubectl get deployments -n cert-manager
-kubectl get pods -n cert-manager
-kubectl get crds | grep cert-manager.io
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.0/cert-manager.crds.yaml
 ```
 
-**Ожидаемый вывод:**
-
-```
-NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
-cert-manager              1/1     1            1           2m
-cert-manager-cainjector   1/1     1            1           2m
-cert-manager-webhook      1/1     1            1           2m
-```
-
-### Сценарий 2: Установка через kubectl apply
+**2. Установка чарта с отключенным управлением CRD:**
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
-```
-
-**Проверка готовности:**
-
-```bash
-kubectl wait --for=condition=Available deployment/cert-manager \
-  -n cert-manager --timeout=120s
-kubectl wait --for=condition=Available deployment/cert-manager-cainjector \
-  -n cert-manager --timeout=120s
-kubectl wait --for=condition=Available deployment/cert-manager-webhook \
-  -n cert-manager --timeout=120s
-```
-
-### Сценарий 3: Специальные конфигурации
-
-#### Включение Gateway API
-
-```bash
-helm upgrade --install cert-manager jetstack/cert-manager \
+helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager \
-  --set installCRDs=true \
+  --version v1.21.0 \
+  --set installCRDs=false
+```
+
+---
+
+### Сценарий 3: Расширенная конфигурация (Add-ons)
+
+#### Включение поддержки Gateway API
+
+Если CRD были установлены (см. Сценарий 1, шаг 2), включите поддержку в контроллере:
+
+```bash
+helm upgrade cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --reuse-values \
   --set "extraArgs={--enable-gateway-api=true}"
 ```
 
-#### Garbage collection для Secret
+#### Установка trust-manager (Дистрибуция CA)
 
-Автоматическое удаление Secret при удалении Certificate:
+Для автоматического распространения корневых сертификатов во все Namespace:
 
 ```bash
-helm upgrade --install cert-manager jetstack/cert-manager \
+helm install trust-manager jetstack/trust-manager \
   --namespace cert-manager \
-  --set installCRDs=true \
+  --version v0.7.0 \
+  --set app.trust.namespace=cert-manager
+```
+
+#### Настройка Garbage Collection (Owner References)
+
+Для автоматического удаления Secret при удалении Certificate:
+
+```bash
+helm upgrade cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --reuse-values \
   --set "extraArgs={--enable-certificate-owner-ref=true}"
 ```
 
-Подробные сценарии: [Administration: garbage collection](./Administration/index.md).
+---
 
-#### High Availability (HA)
+### Сценарий 4: Проверка и верификация
 
-```bash
-helm upgrade --install cert-manager jetstack/cert-manager \
-  --namespace cert-manager \
-  --set installCRDs=true \
-  --set replicaCount=3 \
-  --set podDisruptionBudget.enabled=true \
-  --set podDisruptionBudget.minAvailable=2
-```
-
-### Сценарий 4: Обновление cert-manager
-
-> **Полное руководство:** [Administration/operations.md](./Administration/operations.md#обновление-cert-manager)
-
-**Краткая процедура:**
+**1. Проверка статуса подов:**
 
 ```bash
-# Проверка доступных версий
-helm search repo jetstack/cert-manager --versions
-
-# Обновление (без пропуска минорных версий)
-helm upgrade cert-manager jetstack/cert-manager \
-  --namespace cert-manager \
-  --version v1.20.2 \
-  --reuse-values
+kubectl get pods -n cert-manager
+# → Должно быть 3 пода в статусе Running
 ```
 
-> **Важно:** При переходе между минорными версиями обновляйте CRD отдельно. Пропуск минорных версий не рекомендуется.
+**2. Тестовый самоподписанный Issuer:**
 
-### Сценарий 5: Удаление cert-manager
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: test-selfsigned
+  namespace: default
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: test-cert
+  namespace: default
+spec:
+  dnsNames:
+    - example.com
+  secretName: test-cert-tls
+  issuerRef:
+    name: test-selfsigned
+```
 
-#### Helm
+**3. Проверка выпуска:**
+
+```bash
+kubectl get certificate test-cert
+# → READY должен быть True
+```
+
+---
+
+### Сценарий 5: Удаление системы
+
+> **Предупреждение:** Удаление CRD приведет к удалению всех ресурсов Certificate, Issuer и ClusterIssuer.
+
+**1. Удаление через Helm:**
 
 ```bash
 helm uninstall cert-manager -n cert-manager
-# CRD не удаляются автоматически — удалить вручную:
-kubectl delete crds \
-  certificaterequests.cert-manager.io \
-  certificates.cert-manager.io \
-  challenges.acme.cert-manager.io \
-  clusterissuers.cert-manager.io \
-  issuers.cert-manager.io \
-  orders.acme.cert-manager.io
 ```
 
-#### kubectl
+**2. Ручное удаление CRD (если требуется):**
 
 ```bash
-kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
+kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.0/cert-manager.crds.yaml
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Параметры Helm
+### Параметры конфигурации Helm
 
-| Параметр | Описание | По умолчанию |
+| Параметр | Назначение | По умолчанию |
 | :--- | :--- | :--- |
-| `installCRDs` (или `crds.enabled` для OCI) | Устанавливать и управлять CRD | `false` |
-| `extraArgs` | Дополнительные флаги контроллера | `[]` |
-| `replicaCount` | Количество реплик | `1` |
-| `podDisruptionBudget.enabled` | PDB для high-availability | `false` |
+| `installCRDs` | Автоматическая установка CRD | `false` |
+| `replicaCount` | Количество реплик (для HA) | `1` |
+| `webhook.timeoutSeconds` | Таймаут вызова вебхука | `10` |
+| `global.priorityClassName` | Приоритет подов в K8s | `""` |
+| `prometheus.enabled` | Экспорт метрик для Prometheus | `true` |
 
 ### Надёжность информации
 
 | Аспект | Оценка | Обоснование |
 | :--- | :--- | :--- |
-| Helm-установка | **10** | Официальная документация cert-manager.io (обновлено до v1.20.2) |
-| kubectl apply | **10** | Стандартный способ из release notes |
-| Gateway API | **9** | Подтверждено в релизах |
-| HA-конфигурация | **9** | Best practices cert-manager |
+| Helm установка | **10** | Основной метод, поддерживаемый Jetstack |
+| Gateway API v1.1 | **10** | Соответствует спецификации K8s 2026 года |
+| trust-manager | **9** | Стабильный аддон, рекомендованный для PKI |
+| Ручное управление CRD | **10** | Best practice для систем высокой доступности |
+
+### Смотрите также
+
+- **[Администрирование: Операции](./Administration/operations.md)** — обновление до v1.22+
+- **[Приватный CA: Сценарии](./Private_CA/scenarios.md)** — использование trust-manager Bundle
+- **[Troubleshooting](./Administration/troubleshooting.md)** — если вебхук не отвечает при установке

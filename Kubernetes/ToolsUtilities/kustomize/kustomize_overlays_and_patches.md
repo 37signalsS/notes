@@ -2,11 +2,11 @@
 
 ## 1. Определения
 
-**Overlay** — директория с манифестом `kustomization.yaml`, которая ссылается на `base/` или другой overlay и применяет специфичные для окружения изменения (патчи).
+**Наложение (Overlay)** — директория с манифестом `kustomization.yaml`, которая ссылается на `base/` или другой overlay и применяет специфические для окружения изменения (патчи). Позволяет создавать иерархии конфигураций без дублирования исходных файлов.
 
-**Patch** — фрагмент YAML/JSON, изменяющий существующий Kubernetes-ресурс без модификации исходного файла. Kustomize поддерживает три основных формата патчей.
+**Патч (Patch)** — фрагмент YAML или JSON, изменяющий существующий Kubernetes-ресурс без модификации исходного манифеста. Kustomize поддерживает три основных формата патчей: Strategic Merge, JSON Patch и Inline.
 
-**Target** — селектор (цель), определяющий, какой именно ресурс должен быть изменен патчем (на основе `kind`, `name`, `label`, `group`, `version`).
+**Цель (Target)** — селектор, определяющий набор ресурсов, к которым должен быть применен патч. Фильтрация осуществляется по группе API, версии, типу (kind), имени и пространству имен.
 
 ## 2. Основные концепции
 
@@ -14,16 +14,21 @@
 
 | Тип | Формат | Сценарий использования |
 | :--- | :--- | :--- |
-| **Strategic Merge Patch** | Частичный YAML-объект ресурса | Простые изменения: количество реплик (replicas), замена образа (image), переменные окружения (env). |
-| **JSON Patch (RFC 6902)** | Массив операций `op/path/value` | Точечные изменения: вставка элемента в массив, удаление конкретного поля. |
-| **Inline Patch** | Встраивается прямо в `kustomization.yaml` | Быстрые небольшие изменения без создания отдельных файлов. |
+| **Strategic Merge Patch** | YAML | Слияние на основе схем Kubernetes. Идеально для простых изменений: `replicas`, `image`, `env`. |
+| **JSON Patch (RFC 6902)** | YAML/JSON | Массив операций `op/path/value`. Позволяет удалять поля, вставлять элементы в массивы по индексу. |
+| **Inline Patch** | YAML/JSON | Встраивается прямо в `kustomization.yaml`. Удобно для небольших изменений (1–3 строки). |
 
-### Strategic Merge Patch
+### Strategic Merge Patch (Стратегическое слияние)
 
-При использовании Strategic Merge Patch создается YAML-файл, содержащий только те поля, которые необходимо добавить или изменить. Kubernetes автоматически выполняет стратегическое слияние с базовым ресурсом:
+Это стандартный механизм слияния в Kubernetes. Он использует предопределенные ключи слияния (например, `name` для контейнеров) для обновления существующих списков вместо их полной замены.
 
+**Директивы управления слиянием:**
+Kustomize поддерживает специальные директивы для изменения логики слияния:
+- `$patch: replace` — полностью заменяет список или объект вместо попытки слияния.
+- `$patch: delete` — удаляет конкретный объект из списка (например, конкретный контейнер).
+
+Пример изменения `replicas` и добавления `env`:
 ```yaml
-# Изменение replicas и добавление env
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,17 +44,23 @@ spec:
           value: "value"
 ```
 
-### JSON Patch (RFC 6902)
+### JSON Patch (RFC 6902) и JSON Pointer
 
-Использует явные операции с путями в формате JSON Pointer:
+Использует явные операции с путями. Kustomize поддерживает расширенный синтаксис YAML для JSON патчей.
 
-| Операция | Описание |
-| :--- | :--- |
-| `add` | Добавить поле или элемент массива |
-| `replace` | Заменить значение существующего поля |
-| `remove` | Удалить поле |
-| `copy` | Копировать значение (редко используется) |
-| `move` | Переместить значение (редко используется) |
+**Операции:**
+- `add`: добавить поле или элемент в массив.
+- `replace`: заменить значение существующего поля.
+- `remove`: удалить поле или элемент.
+- `copy`: копировать значение из одного пути в другой.
+- `move`: переместить значение.
+
+**Экранирование в JSON Pointer:**
+Если имя поля содержит `/` или `~`, необходимо использовать следующие замены:
+- `/` → `~1`
+- `~` → `~0`
+
+Пример: `/metadata/annotations/app.kubernetes.io~1name`
 
 ```yaml
 - op: replace
@@ -62,9 +73,9 @@ spec:
     value: "enabled"
 ```
 
-### Inline Patch
+### Inline Patch (Встроенный патч)
 
-Патч определяется непосредственно внутри `kustomization.yaml`. Это удобно для небольших изменений (в 1–3 строки), чтобы не плодить лишние файлы:
+Патч определяется непосредственно внутри `kustomization.yaml`. Это современный и предпочтительный способ для небольших правок, так как он позволяет видеть изменения без открытия дополнительных файлов.
 
 ```yaml
 patches:
@@ -77,19 +88,25 @@ patches:
         value: 10
 ```
 
-### Синтаксис target (селектор)
+### Унифицированный синтаксис patches (v3.1.0+)
 
-Блок `target` позволяет гибко выбирать ресурсы, к которым будет применен патч:
+В актуальных версиях Kustomize блоки `patchesStrategicMerge` и `patchesJson6902` считаются устаревшими (deprecated). Рекомендуется использовать единый блок `patches`, который поддерживает оба формата и предоставляет мощные селекторы `target`.
 
 ```yaml
 patches:
-  - target:
-      group: apps           # apiVersion group (опционально)
-      version: v1           # apiVersion (опционально)
-      kind: Deployment      # kind ресурса
-      name: myapp           # metadata.name
-      namespace: default    # metadata.namespace (опционально)
-    patch: ...
+  - path: patch-file.yaml      # Файл со Strategic Merge или JSON патчем
+    target:
+      kind: Deployment
+      labelSelector: "env=prod"
+  - patch: |                   # Inline патч
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: unused           # Имя в селекторе выше имеет приоритет
+      spec:
+        replicas: 10
+    target:
+      name: myapp
 ```
 
 ## 3. Практические сценарии
@@ -127,21 +144,14 @@ spec:
 
 ### 3.2. Множественные патчи для production
 
+В сложных проектах изменения разбиваются на файлы по смыслу:
+
 ```yaml
 # overlays/production/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-resources:
-  - ../../base
-
-namespace: production
-namePrefix: prod-
-
 patches:
-  - path: replica-patch.yaml       # replicas: 5
+  - path: replica-patch.yaml       # Увеличение replicas: 5
   - path: resource-limits.yaml     # CPU/memory limits
-  - path: monitoring-sidecar.yaml  # sidecar container
+  - path: monitoring-sidecar.yaml  # Добавление лог-агента или экспортера
 ```
 
 ### 3.3. JSON Patch: добавление env в контейнер
@@ -157,9 +167,9 @@ patches:
       value: info
 ```
 
-### 3.4. JSON Patch: удаление поля или ресурса
+### 3.4. Удаление полей и ресурсов
 
-Для удаления специфических полей (например, `livenessProbe`) в конкретном окружении используется операция `remove`:
+Для удаления специфических полей (например, `livenessProbe`) используется операция `remove`:
 
 ```yaml
 # overlays/staging/remove-probe-patch.yaml
@@ -168,7 +178,7 @@ patches:
 ```
 
 **Удаление ресурса целиком:**
-Хотя Kustomize спроектирован для добавления и изменения ресурсов, полностью удалить ресурс из `base` можно через JSON Patch с фильтрацией или через пустой патч с операцией `remove` в `kustomization.yaml`:
+Хотя Kustomize спроектирован для добавления и изменения ресурсов, полностью исключить ресурс из `base` можно через "хак" с JSON Patch (удаление обязательного поля `metadata/name` приводит к тому, что Kustomize отбрасывает ресурс):
 
 ```yaml
 # kustomization.yaml
@@ -178,12 +188,13 @@ patches:
       name: unused-service
     patch: |-
       - op: remove
-        path: /metadata/name  # Нестандартный способ, лучше исключать из resources
+        path: /metadata/name
 ```
+*Рекомендация: Если ресурс не нужен в большинстве окружений, лучше вынести его из base и подключать только в нужных оверлеях через resources.*
 
-*Примечание: Если ресурс не нужен в большинстве окружений, лучше не включать его в `base`, а добавлять только в нужные `overlays` через список `resources`.*
+### 3.5. Patch через target: изменение конкретного контейнера по индексу
 
-### 3.5. Patch через target: изменение конкретного контейнера
+В JSON Patch можно точно указать, какой контейнер в списке `containers` нужно изменить:
 
 ```yaml
 # kustomization.yaml
@@ -197,10 +208,12 @@ patches:
         value: "2"
 ```
 
-### 3.6. Patch всех Deployment одновременно
+### 3.6. Массовый патчинг ресурсов по типу
+
+Если в `target` не указано `name`, патч применится ко всем ресурсам данного `kind`. Это полезно для добавления общих меток или настроек безопасности.
 
 ```yaml
-# kustomization.yaml — без указания name в target
+# kustomization.yaml
 patches:
   - target:
       kind: Deployment
@@ -210,11 +223,9 @@ patches:
         value: kustomize
 ```
 
-Символы `~1` в JSON Pointer заменяют слэш `/`. Это позволяет добавить метку, содержащую `/` в имени ключа (например, `app.kubernetes.io/managed-by`).
+### 3.7. Патчинг ConfigMap и Secret через генераторы
 
-### 3.7. Использование generator для патчинга ConfigMap и Secret
-
-Генераторы также могут использовать поведение объединения (`merge`) для частичной перезаписи базовых конфигураций:
+Генераторы поддерживают директиву `behavior: merge`, которая позволяет патчить содержимое ConfigMap/Secret из базового слоя без замены всего ресурса.
 
 ```yaml
 # overlays/production/kustomization.yaml
@@ -224,23 +235,13 @@ configMapGenerator:
     literals:
       - LOG_LEVEL=warn
       - METRICS_ENABLED=true
-
-secretGenerator:
-  - name: db-credentials
-    behavior: create
-    literals:
-      - username=prod_user
-      - password=prod_pass
 ```
 
-### 3.8. Переопределение образа (image) для разных окружений
+### 3.8. Переопределение образов (Images)
+
+Механизм `images` — это специализированный встроенный трансформатор, который работает быстрее и удобнее, чем ручные паттерны Strategic Merge.
 
 ```yaml
-# overlays/staging/kustomization.yaml
-images:
-  - name: myregistry/myapp
-    newTag: v1.2.0-staging
-
 # overlays/production/kustomization.yaml
 images:
   - name: myregistry/myapp
@@ -250,36 +251,35 @@ images:
 
 ### 3.9. Валидация перед применением
 
-Перед применением в кластер рекомендуется проверять корректность манифестов через [kubeconform](../kubeconform/kubeconform_overview.md):
+Перед деплоем в кластер критически важно проверить итоговый результат сборки.
 
 ```bash
+# Валидация синтаксиса и схем Kubernetes через kubeconform
 kubectl kustomize overlays/production | kubeconform -strict -summary -
-# → Вывод: Summary: 10 resources found, 0 errors
+# → Результат: Summary: 10 resources found, 0 errors
 ```
-
-Команды `kubectl kustomize` и `kubectl apply -k` описаны в [Обзор и основные концепции](./kustomize_overview.md).
 
 ## 4. Дополнительная информация
 
 ### Выбор типа патча
 
-| Критерий | Рекомендуемый тип |
-| :--- | :--- |
-| Изменение 1–2 полей | Inline patch |
-| Простое изменение replicas/image | Strategic Merge |
-| Добавление элемента в массив | JSON Patch |
-| Сложная структура (env, volumes) | Strategic Merge |
-| Удаление поля | JSON Patch (`remove`) |
+| Задача | Рекомендуемый тип | Примечание |
+| :--- | :--- | :--- |
+| Изменение 1–2 полей | Inline patch | Самый быстрый способ. |
+| Простое изменение replicas/image | Strategic Merge | Максимальная читаемость. |
+| Добавление элемента в массив | JSON Patch / Strategic Merge | Strategic Merge проще, JSON точнее. |
+| Сложная структура (env, volumes) | Strategic Merge | Позволяет описывать структуру YAML. |
+| Удаление поля | JSON Patch (`remove`) | Strategic Merge не умеет удалять без директив. |
 
 ### Ограничения
 
-- **Отсутствие условной логики** — патчи применяются всегда и безусловно.
-- **Strategic Merge зависит от API Server** — поведение слияния может отличаться в зависимости от типа ресурса в кластере.
-- **JSON Patch чувствителен к порядку** — например, при работе со списками сначала следует выполнять `add`, а затем `replace`.
-- **Отсутствие кросс-ресурсных патчей** — один патч применяется к одному ресурсу (или группе однотипных ресурсов через селектор `target`).
+- **Отсутствие условной логики** — патчи применяются всегда. Нельзя применить патч «только если ConfigMap существует».
+- **Специфика CRD** — Strategic Merge может работать некорректно с Custom Resources, если у них не настроены ключи слияния в OpenAPI схеме (будет происходить замена списка целиком). Используйте JSON Patch для CRD.
+- **Порядок применения** — патчи применяются последовательно в том порядке, в котором они перечислены в `patches`.
+- **Экранирование** — ошибки в JSON Pointer (забытые `~1`) — частая причина неисправностей.
 
 ### Связь с другими разделами
 
-- [Обзор и основные концепции](./kustomize_overview.md) — базовые определения
-- [Структура и синтаксис](./kustomize_structure_and_syntax.md) — структура проекта
-- [Продвинутые возможности](./kustomize_advanced_features.md) — генерация ConfigMap и Secret
+- [Обзор и основные концепции](./kustomize_overview.md) — базовые определения и установка.
+- [Структура и синтаксис](./kustomize_structure_and_syntax.md) — структура `kustomization.yaml`.
+- [Продвинутые возможности](./kustomize_advanced_features.md) — генерация ресурсов, компоненты и replacements.

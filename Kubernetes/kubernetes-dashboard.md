@@ -1,195 +1,100 @@
-# Kubernetes Dashboard
+# Веб-интерфейсы Kubernetes: Dashboard и Headlamp
 
 ## Определение
 
-**Kubernetes Dashboard** — официальный веб-интерфейс для управления кластерами Kubernetes. Позволяет управлять приложениями, устранять неполадки и администрировать сам кластер через графический интерфейс.
+**Kubernetes Dashboard** — исторически первый официальный веб-интерфейс для управления кластерами Kubernetes. Позволяет визуализировать ресурсы кластера, управлять приложениями и выполнять базовую диагностику.
 
-> **Критическое предупреждение (статус на 2026 г.):**
-> Проект Kubernetes Dashboard архивирован и больше не поддерживается (репозиторий перемещён в `kubernetes-retired`). Для новых установок официально рекомендуется использовать **[Headlamp](https://headlamp.dev/)** — подпроект Kubernetes SIG UI. Существующие инсталляции Dashboard продолжают функционировать, но не получат обновлений безопасности.
+**Headlamp** — современный, расширяемый веб-интерфейс и официальный преемник Dashboard в рамках инициативы Kubernetes SIG UI. Поддерживает мультикластерность, плагины и обладает более совершенной моделью безопасности.
+
+> **Важное уведомление о статусе (2026 г.):**
+> Проект Kubernetes Dashboard официально архивирован (21.01.2026) и перенесён в репозиторий `kubernetes-retired`. Он больше не получает обновлений безопасности и исправлений ошибок. Для всех новых установок и производственных сред **настоятельно рекомендуется использовать Headlamp**.
 
 ## Основные концепции
 
-### Архитектура и компоненты
+### Сравнение решений
 
-Dashboard разворачивается как набор ресурсов Kubernetes в отдельном namespace (пространстве имён) `kubernetes-dashboard`:
-
-- **Deployment** — поды с веб-интерфейсом
-- **Service** — внутренний сервис для доступа
-- **Role / RoleBinding** — RBAC-правила для функционирования Dashboard
-- **Metrics Scraper** — компонент для сбора метрик (опционально)
-
-### Аутентификация и авторизация
-
-Dashboard не имеет собственной системы пользователей — он делегирует аутентификацию механизмам Kubernetes:
-
-- **kubectl proxy** — использует локальный `kubeconfig`, предоставляя права текущего пользователя
-- **ServiceAccount + Token** — вход по токену сервисного аккаунта с заданными RBAC-ролями
-- **OIDC / Webhook** — внешние провайдеры (зависит от конфигурации API-сервера)
-
-### Статус проекта и альтернативы
-
-| Параметр | Kubernetes Dashboard | Headlamp (рекомендуемая замена) |
+| Параметр | Kubernetes Dashboard (Legacy) | Headlamp (Рекомендуется) |
 | :--- | :--- | :--- |
-| **Статус** | Архивирован (`kubernetes-retired`) | Активно развивается (SIG UI) |
-| **Установка** | Helm / манифест | Helm / манифест / Flatpak / `minikube addons enable` |
-| **Плагины** | Нет | Официальная поддержка |
-| **Режимы** | Только веб-интерфейс | Веб-клиент + десктопное приложение |
-| **RBAC-адаптивность** | Базовая | Автоматическое скрытие недоступных элементов UI |
+| **Статус** | Архивом (Retired) | Активен (CNCF Sandbox) |
+| **Управление** | Только один кластер | Мультикластерный интерфейс |
+| **Расширяемость** | Отсутствует | Система плагинов (JS/TS) |
+| **Аутентификация** | Токены, Kubeconfig (сложно) | Нативная поддержка OIDC, SSO |
+| **Интерфейс** | Только Web | Web + Desktop (Linux, Mac, Win) |
+| **Безопасность** | Высокий риск при неверной настройке | Строгое соблюдение RBAC |
+
+### Аутентификация в Headlamp
+
+Headlamp использует стандартные механизмы Kubernetes, но делает процесс входа более интуитивным:
+- **ID Token (OIDC):** Интеграция с корпоративными провайдерами (Okta, Keycloak, Google).
+- **Service Account Token:** Вход через токен конкретного пользователя.
+- **Kubeconfig:** Загрузка локального файла конфигурации для быстрого доступа.
 
 ## Практические сценарии
 
-### Установка Kubernetes Dashboard (для существующих инсталляций)
+### Установка Headlamp (Рекомендуемый способ)
 
-> Используйте этот раздел только если Dashboard уже развёрнут в вашей инфраструктуре. Для новых кластеров устанавливайте [Headlamp](https://headlamp.dev/docs/latest/installation/).
-
-Рекомендуемый способ установки — применение официального манифеста:
+Для развертывания в кластере используйте Helm:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+helm repo add headlamp https://headlamp-project.github.io/headlamp/
+helm install my-headlamp headlamp/headlamp --namespace headlamp --create-namespace
 ```
 
-Версия `v2.7.0` — последняя стабильная перед архивированием. Репозиторий больше не обновляется. Команда создаёт все ресурсы в namespace `kubernetes-dashboard`.
+После установки сервис будет доступен внутри кластера. Для внешнего доступа настройте Ingress или используйте `kubectl port-forward`.
 
-### Доступ к Dashboard
+### Использование Kubernetes Dashboard (Только для поддержки Legacy)
 
-#### Способ 1: `kubectl proxy` (локальный доступ)
+Если в вашей инфраструктуре всё ещё используется старый Dashboard, обеспечьте его безопасность через `kubectl proxy`.
 
-Наиболее простой и безопасный способ для работы с локальной машины:
+#### Доступ через прокси (Безопасный метод)
 
-1. **Запустите прокси:**
+1. **Запуск прокси на локальной машине:**
+   ```bash
+   kubectl proxy
+   ```
 
-    ```bash
-    kubectl proxy
-    ```
+2. **Доступ по URL:**
+   `http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https-kubernetes-dashboard:/proxy/`
 
-2. **Откройте URL в браузере:**
+#### Создание административного токена (K8s 1.24+)
 
-    ```
-    http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https-kubernetes-dashboard:/proxy/
-    ```
+Для входа в старый интерфейс часто требуется токен с правами администратора:
 
-Аутентификация происходит через локальный `kubeconfig` — права соответствуют правам текущего пользователя `kubectl`.
+1. **Создание ServiceAccount:**
+   ```bash
+   kubectl -n kubernetes-dashboard create serviceaccount admin-user
+   ```
 
-#### Способ 2: Вход по токену (ServiceAccount)
+2. **Привязка роли Cluster Admin:**
+   ```bash
+   kubectl create clusterrolebinding admin-user --clusterrole=cluster-admin --serviceaccount=kubernetes-dashboard:admin-user
+   ```
 
-Создание отдельного пользователя с полными правами администратора:
-
-**1. Создание ServiceAccount:**
-
-```yaml
-# dashboard-admin-user.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: admin-user
-  namespace: kubernetes-dashboard
-```
-
-```bash
-kubectl apply -f dashboard-admin-user.yaml
-```
-
-**2. Создание ClusterRoleBinding:**
-
-```yaml
-# dashboard-admin-rb.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: admin-user
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-- kind: ServiceAccount
-  name: admin-user
-  namespace: kubernetes-dashboard
-```
-
-```bash
-kubectl apply -f dashboard-admin-rb.yaml
-```
-
-**3. Получение токена:**
-
-```bash
-# Для Kubernetes v1.24+
-kubectl -n kubernetes-dashboard create token admin-user
-```
-
-**Для Kubernetes < v1.24:** Токен извлекался из автоматически созданного Secret:
-
-```bash
-kubectl -n kubernetes-dashboard get secret $(kubectl -n kubernetes-dashboard get sa/admin-user -o jsonpath="{.secrets[0].name}") -o go-template="{{.data.token | base64decode}}"
-```
-
-**4. Вход:** На странице выбора аутентификации выберите «Токен» и вставьте полученное значение.
+3. **Генерация токена:**
+   ```bash
+   kubectl -n kubernetes-dashboard create token admin-user
+   ```
 
 ### Устранение неполадок
 
-#### Ошибка Forbidden для system:anonymous
+#### Headlamp: Ошибка подключения к API
+- **Причина:** CORS-политики или неверный контекст в Kubeconfig.
+- **Решение:** Проверьте доступность API-сервера с узла, где запущен Headlamp, и убедитесь, что сертификаты валидны.
 
-**Симптом:** При доступе через Ingress / NodePort (без `kubectl proxy`) возвращается ошибка для анонимного пользователя.
-
-**Причина:** По умолчанию `system:anonymous` не имеет прав на `services/proxy`.
-
-**Решение:** Создать ClusterRole и ClusterRoleBinding для проксирования только к сервису Dashboard:
-
-```yaml
-# dashboard-anonymous-access.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kubernetes-dashboard-anonymous
-rules:
-- apiGroups: [""]
-  resources: ["services/proxy"]
-  resourceNames: ["https:kubernetes-dashboard:"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kubernetes-dashboard-anonymous
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kubernetes-dashboard-anonymous
-subjects:
-- kind: User
-  name: system:anonymous
-  apiGroup: rbac.authorization.k8s.io
-```
-
-Внимание: Манифест открывает страницу входа для всех анонимных пользователей. Сама аутентификация по токену остаётся обязательной.
-
-#### Полная переустановка Dashboard
-
-Если Dashboard установлен кастомным скриптом (например, старой версией Kubespray) и работает некорректно:
-
-1. **Удаление через исходный манифест:**
-
-    ```bash
-    kubectl delete -f path/to/your/old-dashboard.yaml
-    ```
-
-    Простого `kubectl delete deployment` недостаточно — установка включает множество ресурсов (Service, Role, RoleBinding и др.).
-
-2. **Установка актуальной версии** — см. раздел выше.
-
-Рекомендация: Вместо переустановки Dashboard рассмотрите миграцию на [Headlamp](https://headlamp.dev/docs/latest/installation/).
+#### Dashboard: Ошибка 401 Unauthorized
+- **Причина:** Истёк срок действия токена ServiceAccount.
+- **Решение:** Сгенерируйте новый токен командой `kubectl create token`. Помните, что в новых версиях K8s токены имеют ограниченное время жизни по умолчанию.
 
 ## Дополнительная информация
 
 ### Ссылки
 
-- [Официальная документация Kubernetes Dashboard (архив)](https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/)
-- [Headlamp — рекомендуемая замена](https://headlamp.dev/)
-- [Репозиторий kubernetes-retired/dashboard](https://github.com/kubernetes-retired/dashboard)
+- [Официальный сайт Headlamp](https://headlamp.dev/)
+- [Документация по плагинам Headlamp](https://headlamp.dev/docs/latest/development/plugins/)
+- [Архив проекта Kubernetes Dashboard](https://github.com/kubernetes-retired/dashboard)
 
 ### См. также
 
-- [Kubespray — примеры](../Installation/Kubespray/examples.md)
-- [Namespace — пространства имён](./Base/namespace.md)
-- [Minikube — практические сценарии](./Installation/minikube/minikube_practical_scenarios.md)
+- [Kubespray — примеры установки интерфейсов](../Installation/Kubespray/examples.md)
+- [Namespace — изоляция ресурсов](./Base/namespace.md)
+- [Minikube — использование встроенных аддонов](./Installation/minikube/minikube_practical_scenarios.md)

@@ -18,9 +18,11 @@
 
 > **Важно:** Количество master-узлов должно быть нечетным (3, 5, 7) для обеспечения кворума etcd. Общие требования к среде см. в [требованиях к HA-кластеру](../../HA_Cluster_Bare_Metal/k8s_ha_environment_requirements.md).
 
+---
+
 ## Практические сценарии
 
-### Конфигурация Inventory
+### 1. Конфигурация Inventory (INI формат)
 
 **Файл `inventory/my-cluster/inventory.ini`:**
 
@@ -60,7 +62,7 @@ ansible_user=root
 ansible_ssh_private_key_file=~/.ssh/id_rsa
 ```
 
-### Настройка переменных для HA
+### 2. Сценарий A: HA через Keepalived + HAProxy (Классический)
 
 **Файл `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`:**
 
@@ -102,7 +104,29 @@ keepalived_auth_pass: "k8s-ha-secret"
 kube_apiserver_insecure_port: 0
 ```
 
-### Развертывание HA-кластера
+### 3. Сценарий B: HA через Kube-vip (Рекомендуемый современный)
+
+Этот метод не требует HAProxy и работает через Static Pods.
+
+**Файл `inventory/my-cluster/group_vars/all/all.yml`:**
+
+```yaml
+# Включение Kube-vip
+kube_vip_enabled: true
+kube_vip_address: "192.168.1.100"
+kube_vip_interface: "eth0"
+kube_vip_arp_enabled: true  # Режим Layer 2 (ARP)
+```
+
+**Файл `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`:**
+
+```yaml
+loadbalancer_apiserver:
+  address: "192.168.1.100"
+  port: 6443
+```
+
+### 4. Развертывание кластера
 
 **Запуск playbook:**
 
@@ -118,62 +142,22 @@ ansible-playbook -i inventory/my-cluster/inventory.ini \
 **Пошаговое выполнение (для отладки):**
 
 ```bash
-# 1. Подготовка узлов (установка зависимостей)
+# 1. Подготовка узлов (установка зависимостей, настройка ядра)
 ansible-playbook -i inventory/my-cluster/inventory.ini \
   --become bootstrap-os.yml
 
-# 2. Развертывание кластера
+# 2. Развертывание кластера (основной этап)
 ansible-playbook -i inventory/my-cluster/inventory.ini \
   --become cluster.yml
 
-# 3. Проверка
+# 3. Переустановка/восстановление при сбоях
 ansible-playbook -i inventory/my-cluster/inventory.ini \
   --become recover-node.yml
 ```
 
-### Проверка HA-конфигурации
+---
 
-#### Проверка VIP
-
-```bash
-# На master-узле с MASTER статусом
-ip a show dev eth0 | grep 192.168.1.100
-
-# Проверка статуса Keepalived
-systemctl status keepalived
-
-# Журнал VRRP
-journalctl -u keepalived -f
-```
-
-#### Проверка HAProxy
-
-```bash
-# Статус HAProxy
-systemctl status haproxy
-
-# Проверка бэкендов (должны быть UP)
-echo "show stat" | socat stdio /var/run/haproxy/admin.sock | \
-  grep -E "kubernetes-api-masters.*UP"
-
-# Лог HAProxy
-tail -f /var/log/haproxy.log
-```
-
-#### Проверка Kubernetes API
-
-```bash
-# Подключение через VIP
-kubectl --server=https://192.168.1.100:6443 get nodes
-
-# Проверка всех master-узлов
-kubectl get nodes -l node-role.kubernetes.io/control-plane
-
-# Проверка etcd кластера
-kubectl get pods -n kube-system -l component=etcd
-```
-
-### Сценарий: HA-кластер 3+3 с локальным балансировщиком (без Keepalived)
+### 5. Сценарий: HA-кластер 3+3 с локальным балансировщиком (без VIP)
 
 Этот сценарий подходит для учебных и тестовых кластеров, где не требуется единая точка входа через VIP. Кластер сохраняет отказоустойчивость — продолжает работать при потере одного мастера.
 
@@ -184,7 +168,7 @@ kubectl get pods -n kube-system -l component=etcd
 | **Control Plane + etcd** | 3 | 10.128.0.2, 10.128.0.35, 10.128.0.16 |
 | **Worker** | 3 | 10.128.0.31, 10.128.0.18, 10.128.0.38 |
 
-#### Конфигурация Inventory
+#### Конфигурация Inventory (YAML формат)
 
 **Файл `inventory/my-cluster/hosts.yaml`:**
 
@@ -235,23 +219,14 @@ all:
         kube_node:
 ```
 
-> **Важно:** Группы `kube_control_plane` и `etcd` должны содержать одинаковые хосты для обеспечения отказоустойчивости etcd.
-
 #### Настройка переменных
 
 **Файл `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`:**
 
 ```yaml
-# Версия Kubernetes
 kube_version: v1.31.0
-
-# Container runtime
 container_manager: containerd
-
-# Сетевой плагин
 kube_network_plugin: calico
-
-# Режим kube-proxy
 kube_proxy_mode: ipvs
 
 # Локальный балансировщик на worker-нодах (nginx-proxy)
@@ -259,12 +234,10 @@ loadbalancer_apiserver_localhost: true
 loadbalancer_apiserver_port: 6443
 ```
 
-> **Примечание:** При `loadbalancer_apiserver_localhost: true` Kubespray автоматически разворачивает nginx-proxy на каждой worker-ноде. Этот proxy балансирует трафик к API-серверам control plane. Переменная `enable_keepalived` **не указывается** или устанавливается в `false`.
-
 #### Развёртывание
 
 ```bash
-# Подготовка машины управления (Python 3.11+, pip, Ansible)
+# Подготовка машины управления
 sudo apt update && sudo apt install -y git python3-pip python3.11-venv
 
 # Клонирование Kubespray
@@ -277,15 +250,12 @@ pip install -r requirements.txt
 # Копирование примера inventory
 cp -rfp inventory/sample inventory/my-cluster
 
-# Генерация inventory из IP-адресов
+# Генерация inventory из IP-адресов через встроенный скрипт
 IPS="10.128.0.2 10.128.0.35 10.128.0.16 10.128.0.31 10.128.0.18 10.128.0.38"
 declare -a IPS=(${IPS//,/ })
 CONFIG_FILE=inventory/my-cluster/hosts.yaml python3 contrib/inventory_builder/inventory.py ${IPS[@]}
 
-# Проверка и корректировка ролей в hosts.yaml
-# (убедиться что node1-node3 в kube_control_plane и etcd, node4-node6 в kube_node)
-
-# Настройка SSH-ключа
+# Настройка SSH-ключа для доступа к узлам
 scp -i ~/.ssh/your-key.pem ~/.ssh/your-key.pem user@node1:~/.ssh/id_rsa
 chmod 600 ~/.ssh/id_rsa
 
@@ -294,45 +264,71 @@ ansible-playbook -i inventory/my-cluster/hosts.yaml \
   --become --become-user=root -v cluster.yml
 ```
 
-**Время выполнения:** 20–30 минут для кластера из 6 нод.
+---
 
-#### Проверка работоспособности
+## Проверка и валидация
+
+### 1. Проверка VIP (Keepalived / Kube-vip)
 
 ```bash
-# Настройка kubectl
-mkdir -p ~/.kube
-scp node1:/etc/kubernetes/admin.conf ~/.kube/config
-chmod 600 ~/.kube/config
+# На мастер-узле с MASTER статусом
+ip a show dev eth0 | grep 192.168.1.100
+# → inet 192.168.1.100/32 scope global eth0
 
-# Проверка нод
-kubectl get nodes -o wide
-# → Все 6 нод в статусе Ready, версия Kubernetes 1.31
+# Проверка статуса Keepalived (если используется)
+systemctl status keepalived
 
-# Проверка подов
-kubectl get pods -n kube-system -o wide
-# → nginx-proxy поды на worker-нодах, компоненты control plane на master-нодах
-
-# Проверка API через разные worker-ноды
-kubectl --server=https://10.128.0.31:6443 get nodes  # через worker-1
-kubectl --server=https://10.128.0.18:6443 get nodes  # через worker-2
-kubectl --server=https://10.128.0.38:6443 get nodes  # через worker-3
+# Журнал VRRP
+journalctl -u keepalived -f
 ```
 
-> **Результат:** Все три команды должны вернуть список нод. Это подтверждает что nginx-proxy на worker-нодах корректно балансирует трафик к API-серверам.
+### 2. Проверка балансировщика (HAProxy / nginx-proxy)
 
-#### Ограничения и рекомендации
+```bash
+# Для HAProxy: проверка бэкендов (должны быть UP)
+echo "show stat" | socat stdio /var/run/haproxy/admin.sock | \
+  grep -E "kubernetes-api-masters.*UP"
 
-| Аспект | Описание |
-| :--- | :--- |
-| **Единая точка входа** | Отсутствует — клиенты подключаются через разные worker-ноды |
-| **Production готовность** | Не рекомендуется для production — используйте внешний балансировщик с VIP |
-| **Отказоустойчивость** | Кластер переживает потерю одного мастера (из 3), но требует ручной перенастройки клиента |
-| **Следующий шаг** | Для production см. [развёртывание с Keepalived + HAProxy](#развертывание-ha-кластера) |
+# Для nginx-proxy: проверка API через разные worker-ноды
+kubectl --server=https://10.128.0.31:6443 get nodes  # через worker-1
+kubectl --server=https://10.128.0.18:6443 get nodes  # через worker-2
+```
+
+### 3. Проверка Kubernetes API
+
+```bash
+# Подключение через VIP
+kubectl --server=https://192.168.1.100:6443 get nodes
+
+# Проверка статуса всех мастеров
+kubectl get nodes -l node-role.kubernetes.io/control-plane
+# → node1  Ready  control-plane  ...
+# → node2  Ready  control-plane  ...
+
+# Проверка etcd кластера
+kubectl get pods -n kube-system -l component=etcd
+```
+
+---
+
+## Ограничения и рекомендации
+
+| Аспект | Keepalived + HAProxy | Kube-vip | nginx-proxy (local) |
+| :--- | :--- | :--- | :--- |
+| **Единая точка входа** | Да (VIP) | Да (VIP) | Нет |
+| **Production готовность** | Рекомендуется | Рекомендуется | Тесты / Dev |
+| **Отказоустойчивость** | Высокая | Высокая | Средняя |
+| **Сложность настройки** | Средняя | Низкая | Минимальная |
+
+---
 
 ## Дополнительная информация
 
 **См. также:**
-
 - [Основные концепции HA](./kubespray_ha_concepts.md)
 - [Дополнительные темы и Troubleshooting](./kubespray_ha_advanced.md)
 - [Обзор Kubespray](../overview.md)
+
+**Внешние ресурсы:**
+- [Документация Kubespray](https://kubespray.io/)
+- [Kube-vip ARP/BGP Modes](https://kube-vip.io/docs/about/architecture/)

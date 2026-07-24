@@ -1,6 +1,6 @@
 # Helmfile: декларативный оркестратор для Helm
 
-Инструмент декларативного управления множеством Helm-релизов. Описывает желаемое состояние релизов в YAML-файле, выполняя соответствующие команды Helm.
+Helmfile — это инструмент для декларативного управления множеством Helm-релизов. Он позволяет описать желаемое состояние всей инфраструктуры приложений в одном или нескольких YAML-файлах, обеспечивая повторяемость и автоматизацию развёртывания.
 
 ---
 
@@ -8,9 +8,10 @@
 
 | Термин | Описание |
 |--------|----------|
-| **Helmfile** | Декларативный оркестратор для Helm. Описывает релизы, версии, values и namespace в `helmfile.yaml`. См. [Обзор Helm](./helm_overview.md) для общих концепций |
-| **helmfile.yaml** | Основной файл конфигурации. Поддерживает Go-шаблонизацию для динамической генерации конфигурации |
-| **Release (Релиз)** | Элемент списка `releases` в helmfile.yaml — один Helm-релиз для развёртывания |
+| **Helmfile** | Декларативный оркестратор, автоматизирующий выполнение команд Helm для группы чартов |
+| **State File (`helmfile.yaml`)** | Основной файл конфигурации, описывающий репозитории, релизы и параметры окружений |
+| **Environment (Окружение)** | Именованный контекст (например, `production`, `staging`), позволяющий варьировать значения `values` для одних и тех же релизов |
+| **Selector (Селектор)** | Механизм фильтрации релизов по именам или меткам для выборочного применения изменений |
 
 ---
 
@@ -18,114 +19,148 @@
 
 ### Ключевые возможности
 
-| Возможность | Описание |
-|-------------|----------|
-| Декларативность | Все релизы, чарты, версии, values и namespace в одном YAML-файле |
-| Шаблонизация | `helmfile.yaml` — Go-шаблон: динамическая генерация конфигурации по окружениям, переменным окружения, условная логика |
-| Предпросмотр (`diff`) | Интеграция с плагином [helm-diff](./helm_plugins.md) для безопасного развёртывания |
-| Параллельное выполнение | Параллельная установка/обновление нескольких релизов |
-| Интеграция с `helm-secrets` | Хранение секретов в зашифрованном виде в Git (GitOps) |
+1.  **Декларативность:** Описание "что" должно быть развёрнуто, а не "как". Helmfile сам определяет последовательность действий.
+2.  **Многоуровневая шаблонизация:** Поддержка Go-шаблонов непосредственно в `helmfile.yaml`, что позволяет использовать логику, функции (например, `readFile`, `env`) и переменные окружения.
+3.  **Управление окружениями:** Нативная поддержка разделения конфигураций между dev/stage/prod через блок `environments`.
+4.  **Интеграция с плагинами:** Плодотворная работа с `helm-diff` (для предпросмотра изменений) и `helm-secrets` (для шифрования секретов через SOPS).
+5.  **Хуки (Hooks):** Возможность запуска произвольных команд или скриптов до и после выполнения операций Helm.
+6.  **Модульность:** Разделение больших конфигураций на части с использованием `bases`.
 
-### Основные команды
+### Командный интерфейс
 
 | Команда | Описание |
 |---------|----------|
-| `helmfile repos` | Синхронизация репозиториев из `helmfile.yaml` |
-| `helmfile diff` | Показ запланированных изменений для всех релизов |
-| `helmfile apply` | Применение изменений (установка/обновление релизов) |
-| `helmfile sync` | Псевдоним для `apply` |
-| `helmfile destroy` | Удаление всех релизов, описанных в файле |
+| `helmfile repos` | Добавление и обновление Helm-репозиториев, описанных в файле |
+| `helmfile diff` | Сравнение текущего состояния кластера с желаемым (требуется плагин `helm-diff`) |
+| `helmfile apply` | Синхронизация состояния: устанавливает, обновляет или удаляет релизы согласно конфигурации |
+| `helmfile destroy` | Полное удаление всех ресурсов, описанных в текущем контексте |
+| `helmfile lint` | Проверка синтаксиса шаблонов и чартов |
 
-Фильтрация по селектору:
+### Работа с окружениями
 
-```bash
-helmfile -l name=loki apply
+Helmfile позволяет определить переменные для разных окружений в блоке `environments`. При запуске команды указывается флаг `-e <name>`.
+
+```yaml
+environments:
+  default:
+    values:
+      - domain: dev.example.com
+  production:
+    values:
+      - domain: example.com
 ```
 
 ---
 
 ## Практические сценарии
 
-### Пример helmfile.yaml
+### Комплексный пример helmfile.yaml
+
+Пример демонстрирует использование окружений, секретов и глобальных настроек.
 
 ```yaml
-# helmfile.yaml
-
-# Глобальные настройки
+# Глобальные настройки для всех релизов
 helmDefaults:
-  wait: true
-  waitForJobs: true
-  timeout: 300
   atomic: true
+  wait: true
+  timeout: 600
 
-# Репозитории
+environments:
+  staging:
+  production:
+
 repositories:
-  - name: grafana
-    url: https://grafana.github.io/helm-charts
-  - name: prometheus-community
-    url: https://prometheus-community.github.io/helm-charts
+  - name: ingress-nginx
+    url: https://kubernetes.github.io/ingress-nginx
 
-# Релизы
 releases:
-  - name: loki
-    namespace: logging
-    chart: grafana/loki-stack
-    version: 2.9.10
+  - name: nginx-ingress
+    namespace: ingress-basic
+    chart: ingress-nginx/ingress-nginx
+    version: 4.7.0
+    # Использование значений, специфичных для окружения
     values:
-      - loki:
-          auth_enabled: false
+      - controller:
+          service:
+            annotations:
+              external-dns.alpha.kubernetes.io/hostname: {{ .Values.domain }}
+    # Подключение секретов (требуется helm-secrets)
+    secrets:
+      - secrets/{{ .Environment.Name }}/ingress-certs.yaml
 
-  - name: prometheus
-    namespace: monitoring
-    chart: prometheus-community/kube-prometheus-stack
-    version: 45.2.1
-    # Установка только если $PROMETHEUS_ENABLED = "true"
-    installed: '{{ env "PROMETHEUS_ENABLED" | default "false" }}'
+  - name: my-app
+    namespace: default
+    chart: ./charts/my-app
+    # Условная установка: только в production
+    installed: {{ eq .Environment.Name "production" }}
     values:
-      - grafana:
-          enabled: true
-          adminPassword: '{{ requiredEnv "GRAFANA_ADMIN_PASSWORD" }}'
+      - ./config/{{ .Environment.Name }}/values.yaml
 ```
 
-### Управление секретами через переменные окружения
+### Использование хуков (Hooks)
 
-Helmfile позволяет передавать секреты через переменные окружения вместо хранения в `values.yaml`.
+Хуки позволяют автоматизировать задачи, такие как уведомления в Slack или резервное копирование БД перед обновлением.
+
+```yaml
+releases:
+  - name: database
+    chart: bitnami/postgresql
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: "/bin/sh"
+        args: ["-c", "echo 'Starting backup before sync...'"]
+      - events: ["postsync"]
+        command: "curl"
+        args: ["-X", "POST", "-d", "text=DB updated", "https://hooks.slack.com/services/..."]
+```
+
+### Разделение конфигурации через Bases
+
+Для упрощения поддержки больших проектов используется механизм `bases`.
 
 ```yaml
 # helmfile.yaml
+bases:
+  - bases/repositories.yaml
+  - bases/environments.yaml
+
+releases:
+  - name: prometheus
+    chart: prometheus-community/kube-prometheus-stack
+```
+
+### Фильтрация через селекторы
+
+Селекторы (метки) позволяют группировать релизы и управлять ими по отдельности.
+
+```yaml
 releases:
   - name: redis
-    chart: bitnami/redis
-    values:
-      - auth:
-          password: '{{ requiredEnv "REDIS_PASSWORD" }}'
+    labels:
+      tier: backend
+  - name: frontend-app
+    labels:
+      tier: frontend
 ```
 
+Применение изменений только для backend-компонентов:
 ```bash
-export REDIS_PASSWORD="my-secret-password"
-helmfile apply
+helmfile -l tier=backend apply
 ```
-
-`requiredEnv` прервёт выполнение, если переменная не установлена. Альтернатива с default: `{{ env "REDIS_PASSWORD" | default "default-password" }}`.
-
-### Выборочное развёртывание через селекторы
-
-Для работы с конкретным релизом используется флаг `-l` (`--selector`):
-
-```bash
-# Показать изменения только для loki
-helmfile -l name=loki diff
-
-# Применить изменения только для loki
-helmfile -l name=loki apply
-```
-
-Релизы должны иметь уникальные имена (`name` в секции `releases`). Селекторы снижают риск случайного воздействия на другие компоненты системы.
 
 ---
 
 ## Дополнительная информация
 
-Альтернатива Helmfile — [Helmwave](./helmwave_overview.md) (Go, Go-шаблоны для всей конфигурации). См. [Advanced index](./Advanced/index.md) для выбора инструментов декларативного управления.
+### Сравнение с альтернативами
 
-Для оркестрации сотни однотипных микросервисов с общим shared-чартом см. [Практические сценарии: shared-чарт для 100 микросервисов](./helm_chart_practical_scenarios.md).
+*   **[Helmwave](./helmwave_overview.md):** Написан на Go, предлагает более глубокую шаблонизацию всего файла конфигурации и улучшенную работу с зависимостями.
+*   **Argo CD / Flux:** Инструменты GitOps, которые могут использовать Helmfile (через плагины) или работать с чартами напрямую. Helmfile чаще используется в CI/CD пайплайнах для push-модели деплоя.
+
+### Ссылки
+
+*   [Обзор Helm](./helm_overview.md) — базовые знания о пакетном менеджере.
+*   [Плагины Helm](./helm_plugins.md) — детальное описание `helm-diff` и `helm-secrets`.
+*   [Структура Helm-чарта](./helm_chart_structure.md) — как подготовить чарт для использования в Helmfile.
+*   [Официальный репозиторий Helmfile](https://github.com/helmfile/helmfile) (англ.).
