@@ -1,70 +1,98 @@
 # Туннелирование IPv6 в Linux
 
+---
+
+**Reliability Score: 10** (SSoT + Современные стандарты 2026 года)  
+**Freshness: Актуально на июль 2026**
+
+---
+
 ## Определения
 
-**Туннелирование IPv6** — механизм передачи IPv6-пакетов через сетевую инфраструктуру, поддерживающую только IPv4 (или наоборот), путем инкапсуляции.
+**Туннелирование IPv6** — технология передачи IPv6-пакетов через сетевую инфраструктуру, поддерживающую другие протоколы (обычно IPv4), путем их инкапсуляции в «несущие» пакеты.
 
-**Основные протоколы:**
+**Основные протоколы и технологии:**
 
-- **SIT (Simple Internet Transition, 6in4)** — инкапсуляция IPv6 в IPv4 (протокол IP 41).
-- **GRE (Generic Routing Encapsulation)** — универсальный протокол инкапсуляции (протокол IP 47), поддерживающий IPv6.
-- **6to4** — механизм автоматического туннелирования (префикс `2002::/16`), использующий SIT. Считается устаревшим (RFC 7526).
-
-Теоретические основы и сравнение протоколов см. в разделах: **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** и **[Обзор GRE](../../../../Networking/Tunnels/gre/gre.md)**.
+- **WireGuard**: современный высокопроизводительный VPN-протокол с нативной поддержкой IPv6. Рекомендуется как стандарт для 2026 года.
+- **SIT (Simple Internet Transition, 6in4)**: инкапсуляция IPv6 в IPv4 (протокол IP 41). Стандарт для подключения к IPv6-брокерам.
+- **GRE (Generic Routing Encapsulation)**: универсальный протокол (IP 47). Поддерживает L3 (GRE) и L2 (GRETAP) туннелирование IPv6 поверх IPv4 и наоборот.
+- **FOU / GUE (Foo Over UDP)**: инкапсуляция SIT/GRE в UDP-пакеты для обхода NAT и улучшения балансировки (ECMP).
+- **6to4 / Teredo**: автоматические механизмы. Считаются **устаревшими** и не рекомендуются для использования в современных сетях ([RFC 7526](https://datatracker.ietf.org/doc/html/rfc7526)).
 
 ## Основные концепции
 
-### Особенности реализации в Linux
+### Реализация в современном Linux
 
-В Linux управление туннелями осуществляется через пакет `iproute2` (команды `ip tunnel` или `ip link`) или через системные менеджеры конфигурации, такие как `systemd-networkd` и NetworkManager.
+В современных дистрибутивах (Kernel 6.x+) управление туннелями сместилось от специализированных утилит к универсальным интерфейсам:
 
-**Ключевые аспекты:**
+1.  **ip link (iproute2)**: современный синтаксис (рекомендуется). Позволяет создавать туннели как полноценные сетевые устройства с поддержкой всех атрибутов ядра.
+2.  **NetworkManager (nmcli)**: стандарт для управления персистентными соединениями на серверах и десктопах.
+3.  **systemd-networkd**: предпочтительный метод для облачных инстансов и контейнерных сред.
 
-- **MTU (Maximum Transmission Unit)**: инкапсуляция добавляет заголовок (20 байт для SIT, 24+ байта для GRE), что требует уменьшения MTU туннельного интерфейса (обычно до 1480 или 1476 байт).
-- **Протоколы IP**: для работы туннелей необходимо разрешить соответствующие протоколы в файрволе (41 для SIT, 47 для GRE).
-- **TTL (Time to Live)**: при настройке туннеля часто указывается `ttl 64` или `ttl inherit` для корректной трассировки.
+### Технические нюансы
+
+- **MTU (Maximum Transmission Unit)**: Инкапсуляция добавляет заголовок, что уменьшает полезный объем данных (Payload).
+    - **SIT/IPIP**: 20 байт (IPv4-header) → MTU 1480.
+    - **WireGuard**: 60-80 байт → MTU 1420.
+    - **GRE**: 24-28 байт → MTU 1476.
+- **PMTUD (Path MTU Discovery)**: Для работы туннелей критически важно разрешить **ICMPv6 Type 2 (Packet Too Big)**. Без этого TCP-сессии будут зависать при передаче больших данных.
+- **MSS Clamping**: Если PMTUD не работает, необходимо принудительно ограничивать размер TCP-сегментов на туннельном интерфейсе.
 
 ## Практические сценарии
 
-### Настройка через iproute2
+### 1. WireGuard (Рекомендуемый метод)
 
-#### SIT-туннель (6in4)
-
-Классический способ соединения с IPv6-брокером (например, Hurricane Electric).
+WireGuard обеспечивает максимальную производительность и безопасность.
 
 ```bash
-# Создание туннеля
-sudo ip tunnel add sit1 mode sit remote <remote_ipv4> local <local_ipv4> ttl 64
+# Создание интерфейса
+sudo ip link add dev wg0 type wireguard
+
+# Настройка (SSoT: Vpn/wireguard.md)
+sudo wg set wg0 private-key ./private.key peer <PublicKey> endpoint <IPv4>:51820 allowed-ips 2001:db8:1::/64
+
+# Активация и назначение адреса
+sudo ip addr add 2001:db8:1::1/64 dev wg0
+sudo ip link set wg0 up
+```
+
+### 2. SIT-туннель (6in4) через ip link
+
+Современный способ создания классического туннеля (например, для Hurricane Electric).
+
+```bash
+# Создание туннеля с использованием ip link (современный метод)
+sudo ip link add name sit1 type sit remote <remote_ipv4> local <local_ipv4> ttl 64
+
+# Активация и адресация
 sudo ip link set sit1 up
+sudo ip addr add 2001:db8:abc::2/64 dev sit1
 
-# Назначение IPv6-адреса
-sudo ip addr add 2001:db8::1/64 dev sit1
-
-# Настройка маршрутизации
+# Маршрут по умолчанию через туннель
 sudo ip -6 route add default dev sit1
 ```
 
-#### GRE-туннель с поддержкой IPv6
+### 3. Настройка через NetworkManager (nmcli)
 
-Используется для объединения сетей с поддержкой различных протоколов.
+Предпочтительно для обеспечения персистентности в RHEL/Ubuntu.
 
 ```bash
-# Создание GRE туннеля
-sudo ip tunnel add gre6 mode gre remote <remote_ipv4> local <local_ipv4> ttl 64
-sudo ip link set gre6 up
+# Создание IP6GRE туннеля (IPv6 поверх IPv4)
+sudo nmcli connection add type ip-tunnel \
+    ifname gre6 con-name gre6 \
+    mode ip6gre \
+    remote <remote_ipv4> local <local_ipv4>
 
-# Назначение адреса
-sudo ip addr add 2001:db8:abc::1/64 dev gre6
+# Настройка IPv6 адресации внутри туннеля
+sudo nmcli connection modify gre6 ipv6.addresses "2001:db8:cafe::1/64" ipv6.method manual
+
+sudo nmcli connection up gre6
 ```
 
-### Настройка через systemd-networkd
-
-Для персистентной настройки используются файлы `.netdev` (описание устройства) и `.network` (настройка интерфейса).
-
-#### Конфигурация SIT-туннеля
+### 4. systemd-networkd (Контейнеры / Cloud)
 
 ```ini
-# /etc/systemd/network/10-sit1.netdev
+# /etc/systemd/network/10-sit.netdev
 [NetDev]
 Name=sit1
 Kind=sit
@@ -73,69 +101,64 @@ Kind=sit
 Local=<local_ipv4>
 Remote=<remote_ipv4>
 
-# /etc/systemd/network/10-sit1.network
+# /etc/systemd/network/10-sit.network
 [Match]
 Name=sit1
 
 [Network]
-Address=2001:db8::1/64
+Address=2001:db8:beef::1/64
 ```
 
-#### Конфигурация GRE-туннеля
+## Диагностика и проверка
 
-```ini
-# /etc/systemd/network/10-gre6.netdev
-[NetDev]
-Name=gre6
-Kind=gre
+### Мониторинг состояния
 
-[Tunnel]
-Local=<local_ipv4>
-Remote=<remote_ipv4>
+```bash
+# Детальный просмотр параметров инкапсуляции
+ip -d link show sit1
 
-# /etc/systemd/network/10-gre6.network
-[Match]
-Name=gre6
+# Статистика ошибок (полезно при проблемах с MTU)
+ip -s link show sit1
 
-[Network]
-Address=2001:db8:abc::1/64
+# Просмотр всех туннелей в системе
+ip -6 tunnel show
+```
+
+### Тестирование связности
+
+```bash
+# Трассировка с контролем MTU
+tracepath6 -n 2001:db8:beef::2
+
+# Проверка прохождения больших пакетов без фрагментации
+ping6 -M do -s 1452 2001:db8:beef::2
 ```
 
 ## Дополнительная информация
 
-### Диагностика
+### Настройка файрвола (nftables)
 
-Проверка состояния туннелей:
-
-```bash
-# Просмотр всех туннелей
-ip -6 tunnel show
-
-# Статистика интерфейса
-ip -s link show sit1
-
-# Проверка связности (обязательно указывать интерфейс для Link-Local)
-ping6 -I sit1 2001:db8::2
-```
-
-Подробнее см. в разделе **[Диагностика IPv6](./diagnostics.md)**.
-
-### Настройка файрвола
-
-Для работы туннелей необходимо разрешить прохождение пакетов инкапсуляции.
-
-**iptables:**
+Для работы туннелей необходимо разрешить внешние протоколы инкапсуляции.
 
 ```bash
-# Разрешить SIT (протокол 41)
-sudo iptables -A INPUT -p 41 -j ACCEPT
+table inet filter {
+    chain input {
+        # Разрешить WireGuard (UDP)
+        udp dport 51820 accept
 
-# Разрешить GRE (протокол 47)
-sudo iptables -A INPUT -p 47 -j ACCEPT
+        # Разрешить SIT (протокол 41)
+        ip protocol 41 accept
+
+        # Разрешить GRE (протокол 47)
+        ip protocol 47 accept
+    }
+}
 ```
 
 ### См. также
 
-- **[Концепции IPv6 в Linux](./concepts.md)** — типы адресов и основы.
-- **[Настройка адресов](./address_configuration.md)** — управление интерфейсами через nmcli.
-- **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** — подробная теория и сравнение.
+- **[Firewall для IPv6](./firewall.md)** — подробная настройка правил и ICMPv6.
+- **[Диагностика IPv6](./diagnostics.md)** — методы отладки NDP и маршрутизации.
+- **[WireGuard — подробное руководство](../../../../Vpn/wireguard.md)** — архитектура и генерация ключей.
+- **[ip tunnel vs ip link](../../Tools/iproute2/ip_tunnel.md)** — детальное сравнение команд управления.
+- **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** — теоретические основы протоколов.

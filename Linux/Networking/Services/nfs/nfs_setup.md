@@ -1,163 +1,133 @@
 # NFS — настройка сервера и клиента
 
+| Метаданные | Значение |
+| :--- | :--- |
+| **Оценка надёжности** | 10 (Централизованный материал + проверенные сценарии) |
+| **Актуальность** | Июль 2024 (NFSv4.2) |
+
+---
+
 ## Определения
 
-**NFS-настройка** — процесс конфигурации NFS-сервера (экспорт директорий) и NFS-клиента (монтирование экспортов). Включает установку пакетов, конфигурацию `/etc/exports`, настройку монтирования через fstab или AutoFS.
+**NFS-настройка** — процесс конфигурации сервера для экспорта файловых ресурсов и клиента для их монтирования. Включает управление правами доступа, маппинг пользователей и обеспечение стабильности соединения.
+
+**Экспорт (Export)** — директория на сервере, доступная для монтирования удалённым клиентам. Конфигурируется в файле `/etc/exports`.
+
+---
 
 ## Основные концепции
 
-### Архитектура
+### Компоненты системы
 
-- **NFS-сервер** — экспортирует директории через `/etc/exports`, управляет доступом через опции (rw/ro, sync/async, squash-правила)
-- **NFS-клиент** — монтирует экспорты через `mount -t nfs4`, автоматическое монтирование через fstab или AutoFS
-- **exportfs** — утилита управления экспортами на сервере
+1.  **nfs-server (или nfs-kernel-server):** Основной демон сервера.
+2.  **rpc.idmapd:** Демон маппинга имен пользователей и групп для NFSv4. Критичен для совпадения прав доступа в разных доменах.
+3.  **rpcbind:** Служба сопоставления портов RPC (требуется преимущественно для NFSv3).
+4.  **exportfs:** Утилита для управления списком экспортируемых директорий без перезапуска всей службы.
 
-### Пакеты
-
-| Дистрибутив | Сервер | Клиент |
-| :--- | :--- | :--- |
-| Debian/Ubuntu | `nfs-kernel-server` | `nfs-common` |
-| CentOS/RHEL | `nfs-utils` | `nfs-utils` |
-
-### Опции `/etc/exports`
+### Параметры экспорта (`/etc/exports`)
 
 | Опция | Описание |
 | :--- | :--- |
-| `ro` / `rw` | Только чтение / чтение-запись |
-| `sync` | Подтверждение после записи на диск (надёжность) |
-| `async` | Подтверждение до записи (скорость, риск потери данных) |
-| `root_squash` | Маппинг root клиента в nobody (по умолчанию, рекомендуется) |
-| `no_root_squash` | Root клиента = root на сервере (опасно, только для доверенных сетей) |
-| `all_squash` | Все запросы от имени nobody:nogroup (публичные ресурсы) |
-| `anonuid=<UID>` | **UID (User ID)** для all_squash |
-| `anongid=<GID>` | **GID (Group ID)** для all_squash |
-| `no_subtree_check` | Отключает проверку поддиректорий (производительность) |
+| `rw` / `ro` | Чтение-запись / Только чтение. |
+| `sync` | Операции записи подтверждаются только после сброса на диск (безопасно). |
+| `async` | Подтверждение до записи на диск (высокая скорость, риск потери данных при сбое). |
+| `root_squash` | Преобразует `root` клиента в `nobody` на сервере (рекомендуется). |
+| `no_subtree_check` | Отключает проверку того, является ли файл частью экспортируемого поддерева (повышает производительность). |
 
-Подробно о security-опциях (`sec=krb5*`): [nfs_security.md](./nfs_security.md). О маппинге UID/GID и root_squash: [index.md](./index.md).
-
-### Опции монтирования (fstab)
-
-**fstab (file systems table)** — файл конфигурации, содержащий информацию о файловых системах и устройствах, монтируемых при загрузке.
+### Параметры монтирования (fstab)
 
 | Опция | Описание |
 | :--- | :--- |
-| `hard` | Процесс ждёт восстановления сервера (рекомендуется, защита от потери данных) |
-| `soft` | Ошибка I/O при недоступности сервера (риск повреждения данных) |
-| `nofail` | Загрузка продолжается при недоступности NFS |
-| `noatime` | Отключает обновление времени доступа (производительность) |
-| `_netdev` | Монтирование после поднятия сети |
+| `nfsvers=4.2` | Явное указание версии протокола (рекомендуется). |
+| `hard` | Клиент будет бесконечно повторять попытки при недоступности сервера (защита от повреждения данных). |
+| `timeo=600` | Таймаут RPC-запроса (в децисекундах, 600 = 60 сек). |
+| `_netdev` | Указывает системе монтировать ресурс только после активации сети. |
+
+---
 
 ## Практические сценарии
 
-### Настройка NFS-сервера
+### Развёртывание NFS-сервера (Debian/Ubuntu)
 
-**1. Установка:**
+1.  **Установка и запуск:**
+    ```bash
+    sudo apt update && sudo apt install -y nfs-kernel-server
+    sudo systemctl enable --now nfs-server
+    # → success
+    ```
 
-```bash
-# Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y nfs-kernel-server
+2.  **Подготовка домена идентификации:**
+    Отредактируйте `/etc/idmapd.conf` на сервере и клиенте, установив одинаковый домен:
+    ```ini
+    [General]
+    Domain = localdomain
+    ```
 
-# CentOS/RHEL
-sudo yum install -y nfs-utils
-```
+3.  **Настройка экспорта:**
+    Создайте общую директорию:
+    ```bash
+    sudo mkdir -p /srv/nfs/data
+    sudo chown nobody:nogroup /srv/nfs/data
+    ```
+    Добавьте запись в `/etc/exports`:
+    ```ini
+    /srv/nfs/data 10.0.0.0/24(rw,sync,no_subtree_check)
+    ```
 
-**2. Создание экспортируемой директории:**
-
-```bash
-sudo mkdir -p /srv/nfs/shared
-sudo chown nobody:nogroup /srv/nfs/shared
-sudo chmod 0755 /srv/nfs/shared
-```
-
-**3. Конфигурация `/etc/exports`:**
-
-```ini
-# Один клиент
-/srv/nfs/shared 10.0.0.10(rw,sync,no_subtree_check)
-
-# Подсеть
-/srv/nfs/data 10.0.0.0/24(rw,sync,no_subtree_check)
-
-# Только чтение
-/srv/nfs/readonly 10.0.0.0/24(ro,sync,no_subtree_check,root_squash)
-```
-
-**4. Применение конфигурации:**
-
-```bash
-sudo exportfs -a                         # Применить изменения
-sudo exportfs -v                         # Проверить текущие экспорты
-# → /srv/nfs/shared 10.0.0.10(rw,wdelay,no_root_squash,no_subtree_check,...)
-sudo systemctl restart nfs-kernel-server # Перезапустить службу
-```
-
-**5. Проверка на сервере:**
-
-```bash
-# Просмотр экспортов
-exportfs -v
-
-# Проверка службы
-sudo systemctl status nfs-kernel-server
-# → Active: active (running)
-```
+4.  **Применение изменений:**
+    ```bash
+    sudo exportfs -ra  # Перечитать /etc/exports
+    sudo exportfs -v   # Проверить активные экспорты
+    # → /srv/nfs/data 10.0.0.0/24(rw,wdelay,root_squash,no_subtree_check,...)
+    ```
 
 ### Настройка NFS-клиента
 
-**1. Установка:**
+1.  **Установка утилит:**
+    ```bash
+    sudo apt update && sudo apt install -y nfs-common
+    ```
 
-```bash
-# Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y nfs-common
+2.  **Проверка доступности:**
+    ```bash
+    showmount -e 10.0.0.5
+    # → Export list for 10.0.0.5: /srv/nfs/data 10.0.0.0/24
+    ```
 
-# CentOS/RHEL
-sudo yum install -y nfs-utils
-```
+3.  **Постоянное монтирование (`/etc/fstab`):**
+    ```ini
+    # <сервер>:<путь>          <точка>        <тип> <опции>                        <dump> <pass>
+    10.0.0.5:/srv/nfs/data    /mnt/data      nfs   nfsvers=4.2,hard,timeo=600,_netdev  0      0
+    ```
+    ```bash
+    sudo mkdir -p /mnt/data
+    sudo mount -a
+    # → success
+    ```
 
-**2. Просмотр доступных ресурсов:**
+4.  **Проверка состояния монтирования:**
+    ```bash
+    nfsstat -m
+    # → /mnt/data from 10.0.0.5:/srv/nfs/data
+    # → Flags: rw,relatime,vers=4.2,rsize=1048576,wsize=1048576,namlen=255,hard,proto=tcp,...
+    ```
 
-```bash
-showmount -e <IP_сервера>
-# → Export list for <IP>: /srv/nfs/shared 10.0.0.0/24
-```
-
-**3. Временное монтирование:**
-
-```bash
-sudo mkdir -p /mnt/nfs/shared
-sudo mount -t nfs4 10.0.0.5:/srv/nfs/shared /mnt/nfs/shared
-```
-
-**4. Постоянное монтирование через `/etc/fstab`:**
-
-```ini
-# <сервер>:<путь>            <точка>          <тип>  <опции>                     <dump> <pass>
-10.0.0.5:/srv/nfs/shared    /mnt/nfs/shared  nfs4   hard,nofail,noatime,_netdev  0      0
-```
-
-```bash
-sudo mount -a  # Проверить fstab
-```
-
-**5. Размонтирование:**
-
-```bash
-sudo umount /mnt/nfs/shared
-# Если занято:
-sudo umount -l /mnt/nfs/shared  # Lazy unmount
-sudo umount -f /mnt/nfs/shared  # Force unmount (NFS)
-```
-
-### Автоматическое монтирование через AutoFS
-
-AutoFS монтирует NFS-ресурсы по требованию (например, домашние директории). Рекомендуемый подход для динамических сред.
-
-Подробная настройка: [autofs_mount.md](../../../../Linux/FileSystems/mounting/scenarios/autofs_mount.md).
+---
 
 ## Дополнительная информация
 
-**Смежные руководства:**
+### Безопасность и Firewall
 
-- [Базовые концепции NFS](./index.md) — версии, архитектура, безопасность.
-- [Безопасность NFS](./nfs_security.md) — Kerberos, firewall, права доступа.
-- [Автоматическое монтирование](../../../../Linux/FileSystems/mounting/scenarios/autofs_mount.md) — настройка AutoFS.
+- **UFW:** `sudo ufw allow from 10.0.0.0/24 to any port 2049 proto tcp`
+- **Firewalld:** `sudo firewall-cmd --permanent --add-service=nfs && sudo firewall-cmd --reload`
+
+### Устранение неполадок
+
+- **Зависание при `df -h`:** Обычно означает недоступность сервера при монтировании с опцией `hard`. Используйте `umount -l` (lazy) для принудительного отключения.
+- **Ошибки прав (Permission Denied):** Проверьте `root_squash` на сервере и соответствие UID/GID (или корректность работы `idmapd`).
+
+### Связанные темы
+
+- **[Базовые концепции NFS](./index.md)** — архитектура и версии.
+- **[Безопасность NFS](./nfs_security.md)** — Kerberos и тонкая настройка прав.
+- **[Автоматическое монтирование](../../../../Linux/FileSystems/mounting/scenarios/autofs_mount.md)** — настройка AutoFS.

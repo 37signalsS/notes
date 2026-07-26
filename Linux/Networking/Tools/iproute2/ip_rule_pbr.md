@@ -34,30 +34,37 @@
 | `to <prefix>` | По адресу назначения. | `to 10.0.0.0/8` |
 | `iif <name>` | По входящему сетевому интерфейсу. | `iif eth1` |
 | `oif <name>` | По исходящему сетевому интерфейсу. | `oif eth0` |
-| `fwmark <mark>` | По метке пакета, установленной через `iptables` / `nftables`. | `fwmark 0x1` |
-| `tos <value>` | По значению поля Type of Service в IP-заголовке. | `tos 0x10` |
+| `fwmark <mark>` | По метке пакета (`iptables` / `nftables`). | `fwmark 0x1` |
+| `uidrange <L-H>` | По диапазону UID пользователя (для per-user routing). | `uidrange 1000-1005` |
+| `tos <value>` | По значению поля Type of Service. | `tos 0x10` |
 | `ipproto <id>` | По протоколу (tcp, udp, icmp и др.). | `ipproto tcp` |
 | `sport / dport` | По порту источника или назначения. | `dport 80` |
 
-### Типы действий
+### Продвинутые действия и параметры
 
 * **lookup <table_id>** — искать маршрут в указанной таблице.
-* **unreachable** — отбросить пакет и отправить ICMP-сообщение "Network unreachable".
-* **blackhole** — молча отбросить пакет.
-* **prohibit** — отбросить пакет и отправить ICMP-сообщение "Communication administratively prohibited".
+* **suppress_prefixlength <N>** — игнорировать маршруты в таблице с маской меньше или равной N (полезно для пропуска `default via` в кастомных таблицах).
+* **suppress_ifgroup <ID>** — игнорировать таблицу, если исходящий интерфейс принадлежит указанной группе.
+* **unreachable** / **blackhole** / **prohibit** — различные варианты отбрасывания пакетов.
 
 ## Практические сценарии
 
-### Создание правила маршрутизации по адресу источника
+### Маршрутизация на основе пользователя (uidrange)
 
-Это базовый сценарий для **Source-Based Routing**. Например, направить весь трафик от хоста `192.168.1.50` через альтернативный шлюз в таблице `100`.
+Полезно для изоляции трафика конкретных системных пользователей или контейнеров.
 
 ```bash
-# Добавление правила с приоритетом 1000
-sudo ip rule add from 192.168.1.50 table 100 priority 1000
+# Направить трафик пользователя с UID 1001 через таблицу 200
+sudo ip rule add uidrange 1001-1001 table 200 priority 1000
+```
 
-# Проверка списка правил
-ip rule show
+### Использование suppress_prefixlength
+
+Позволяет «пропустить» таблицу, если в ней нет специфичного маршрута (только маршрут по умолчанию), и перейти к проверке следующих правил.
+
+```bash
+# Использовать таблицу 100, только если там есть маршрут точнее, чем /0
+sudo ip rule add from 10.0.0.0/24 table 100 suppress_prefixlength 0
 ```
 
 ### Использование меток фаервола (fwmark)
@@ -90,6 +97,36 @@ sudo ip rule del priority 1000
 sudo ip rule add to not 192.168.0.0/16 table vpn_table
 ```
 
+## Диагностика и устранение неисправностей
+
+### Проверка RPDB
+
+```bash
+# Просмотр всех правил с их приоритетами
+ip rule show
+
+# Детальный просмотр (включая подавление префиксов и группы)
+ip -d rule show
+
+# Эмуляция выбора маршрута для конкретного пакета (важнейший инструмент)
+ip route get 8.8.8.8 from 192.168.1.50 iif eth1
+```
+
+### Проблема асимметрии и rp_filter
+
+При использовании PBR ответный трафик может уходить через другой интерфейс. Если включен **Strict Reverse Path Forwarding (RPF)**, ядро отбросит такие пакеты.
+
+**Решение:** Установить `rp_filter` в режим `2` (Loose).
+
+```bash
+# Временное изменение
+sudo sysctl -w net.ipv4.conf.all.rp_filter=2
+sudo sysctl -w net.ipv4.conf.eth1.rp_filter=2
+
+# Постоянное изменение в /etc/sysctl.d/99-pbr.conf
+# net.ipv4.conf.all.rp_filter = 2
+```
+
 ## Дополнительная информация
 
 ### Сохранение конфигурации
@@ -105,4 +142,4 @@ sudo ip rule add to not 192.168.0.0/16 table vpn_table
 * **[Policy-Based Routing (PBR)](../../Policy_Based_Routing/index.md)** — архитектурные концепции и комплексные сценарии.
 * **[ip route](./ip_route.md)** — управление таблицами маршрутизации, на которые ссылаются правила.
 * **[iptables mangle](../../Settings/tools/iptables_basics.md)** — маркировка трафика для использования в `ip rule`.
-* **[systemd-networkd PBR](../Settings/Persistent_Network/systemd_networkd.md#4-маршрутизация-на-основе-политик-pbr)** — примеры персистентной настройки.
+* **[systemd-networkd PBR](../../Settings/Persistent_Network/systemd_networkd.md#pbr)** — примеры персистентной настройки.

@@ -13,14 +13,19 @@
    - If two files are equal in completeness **and** specificity — prefer the higher-level directory
    - If still ambiguous — propose 2–3 candidates with reasoning and ask the user
 
-### 0.2 Search for Duplicates
+### 0.2 Anti-Duplicate Pipeline — BLOCKING RULE
 
-Search by:
+**STRICTLY MANDATORY** to perform a combined search before ANY create/modify operations. Skipping any search step is a protocol and SSoT violation.
 
-- Key terms (exact and stemmed)
-- Technologies / protocols / standards
-- Semantic equivalents
-- Russian ↔ English term translations
+1.  **Direct Search (`grep_search`):** for key terms, technologies, and standards.
+2.  **Semantic Search (RAG):** MANDATORY use of `AI/rag_system/unified_search.py` to identify semantic duplicates and paraphrases.
+3.  **Translation Search:** verify terms in both Russian and English.
+
+**Workflow:**
+1. Execute `grep_search`.
+2. Execute RAG search (`unified_search.py`).
+3. Analyze results from BOTH tools together.
+**Blocking Condition:** If RAG search was not performed in the current or immediately preceding turn before `replace`/`write_file`, the task MUST be aborted until the search is completed.
 
 ### 0.3 Cross-domain Analysis
 

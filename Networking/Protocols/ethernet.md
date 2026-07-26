@@ -128,7 +128,9 @@ journalctl -k | grep "NIC Link"
 show interfaces Gi0/1 transceiver
 
 # Linux
-ethtool -m eth0
+# Проверка уровней сигнала (DOM) для оптических модулей
+# Подробно: [ethtool: работа с SFP](../../Linux/Networking/Tools/ethtool.md#работа-с-sfp-и-оптическими-модулями)
+sudo ethtool -m eth0
 ```
 
 Критический показатель — `rx_power`. Если значение плавает или ниже допустимого порога для данного типа модуля — проблема в оптике или трансивере.

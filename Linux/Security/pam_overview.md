@@ -46,7 +46,7 @@
 
 Формат: `[тип] [control_flag] [путь_к_модулю] [аргументы]`
 
-**Control Flags:**
+**Control Flags (флаги управления):**
 
 | Флаг | Поведение при успехе | Поведение при ошибке |
 | :--- | :--- | :--- |
@@ -55,17 +55,31 @@
 | `sufficient` | **Немедленный успех** (если нет previous failure в required) | Игнорировать, продолжить |
 | `optional` | Итог не зависит от этого модуля | Итог не зависит от этого модуля |
 
+**Расширенный синтаксис (Stacking):**
+В современных дистрибутивах часто используется синтаксис `[value1=action1 value2=action2 ...]`. Это позволяет точно настроить поведение PAM в зависимости от конкретного кода возврата модуля.
+Пример: `[success=1 default=ignore]` — если модуль вернул успех, пропустить следующий модуль в стеке; в остальных случаях игнорировать результат.
+
+### Инструменты управления конфигурацией
+
+Прямое редактирование файлов в `/etc/pam.d/` допустимо, но в современных системах рекомендуется использовать специализированные утилиты для предотвращения ошибок:
+
+*   **Debian/Ubuntu:** `pam-auth-update` — интерактивная настройка профилей PAM (автоматически обновляет `common-*` файлы).
+*   **RHEL/CentOS/Fedora:** `authselect` — управление профилями (например, `sssd`, `winbind`). Заменяет устаревший `authconfig`.
+
 ### Часто используемые модули
 
 | Модуль | Назначение | Файл настроек |
 | :--- | :--- | :--- |
 | `pam_unix.so` | Стандартная аутентификация через `/etc/passwd` + `/etc/shadow` | — |
+| `pam_faillock.so` | Блокировка учётной записи после неудачных попыток (современная замена `pam_tally2`) | `/etc/security/faillock.conf` |
 | `pam_access.so` | Контроль доступа по IP/хосту/пользователю | `/etc/security/access.conf` |
 | `pam_time.so` | Ограничение доступа по времени | `/etc/security/time.conf` |
 | `pam_limits.so` | Лимиты ресурсов для сессий | `/etc/security/limits.conf` |
-| `pam_wheel.so` | Ограничение `su` членам группы `wheel` | — |
 | `pam_pwquality.so` | Проверка сложности паролей | `/etc/security/pwquality.conf` |
+| `pam_mkhomedir.so` | Автоматическое создание домашней директории при первом входе | — |
+| `pam_wheel.so` | Ограничение `su` членам группы `wheel` | — |
 | `pam_sss.so` | Аутентификация через SSSD/LDAP | — |
+| `pam_google_authenticator.so` | Многофакторная аутентификация (MFA/2FA) через TOTP | `~/.google_authenticator` |
 
 **Ключевая особенность:** изменения в конфигурации PAM применяются немедленно, перезапуск сервисов не требуется.
 
@@ -159,6 +173,72 @@ session    required    pam_limits.so
 **Важно:** `pam_limits.so` применяется только к пользовательским сессиям (SSH, GUI), не к systemd-сервисам. Лимиты вступают в силу после перелогина.
 
 Подробнее: [Лимиты ресурсов](../Core/processes/resource_limits_concepts.md).
+
+### 6. Защита от перебора паролей (`pam_faillock.so`)
+
+**Задача:** заблокировать пользователя на 15 минут после 3 неудачных попыток входа.
+
+**Шаг 1:** настроить параметры в `/etc/security/faillock.conf`:
+
+```text
+deny = 3
+unlock_time = 900
+silent
+```
+
+**Шаг 2:** подключить модуль в `/etc/pam.d/system-auth` и `/etc/pam.d/password-auth` (на RHEL) или через `authselect`. В общем виде строки выглядят так:
+
+```text
+auth    required    pam_faillock.so preauth
+auth    sufficient  pam_unix.so
+auth    [default=die] pam_faillock.so authfail
+```
+
+**Утилита управления:**
+*   Просмотр попыток: `faillock --user <имя>`
+*   Сброс блокировки: `faillock --user <имя> --reset`
+
+### 7. Двухфакторная аутентификация (`pam_google_authenticator.so`)
+
+**Задача:** требовать OTP-код (TOTP) при входе по SSH.
+
+**Шаг 1:** установка модуля и генерация ключа пользователем:
+```bash
+sudo apt install libpam-google-authenticator
+google-authenticator  # следовать инструкциям мастера
+```
+
+**Шаг 2:** добавить модуль в `/etc/pam.d/sshd`:
+```text
+auth required pam_google_authenticator.so
+```
+
+**Шаг 3:** включить поддержку в `/etc/ssh/sshd_config`:
+```text
+KbdInteractiveAuthentication yes  # или ChallengeResponseAuthentication в старых версиях
+UsePAM yes
+```
+
+### 8. Автоматическое создание домашних директорий (`pam_mkhomedir.so`)
+
+**Задача:** автоматически создавать `/home/<user>` при первом входе пользователя из LDAP/Active Directory.
+
+**Debian/Ubuntu:** добавить строку в `/etc/pam.d/common-session`:
+```text
+session required pam_mkhomedir.so skel=/etc/skel umask=0022
+```
+
+**RHEL/CentOS:** рекомендуется использовать сервис `oddjobd` и его модуль:
+```bash
+sudo yum install oddjob-mkhomedir
+sudo systemctl enable --now oddjobd
+# authselect автоматически настроит использование pam_oddjob_mkhomedir.so
+```
+
+| Аргумент | Описание |
+| :--- | :--- |
+| `skel` | Шаблон файлов для новой директории |
+| `umask` | Права доступа к создаваемой директории |
 
 ## Дополнительная информация
 

@@ -83,6 +83,6 @@ systemctl enable nginx
 
 - [Поиск и устранение неисправностей SSH (Secure Shell)](../../Linux/Security/ssh/ssh_troubleshooting.md) — если нет доступа даже в консоль.
 - [Systemd: управление службами](../../Linux/Core/systemd/service_management.md).
-- [Журналирование в Linux (journalctl)](../../Linux/Diagnostics/journalctl.md).
+- [Журналирование в Linux (journalctl)](../../Linux/Diagnostics/journalctl/journalctl_overview.md).
 - [Диагностика причин перезагрузки Linux](../../Linux/Diagnostics/Troubleshooting/reboot_troubleshooting.md).
 - [Общая методология диагностики сервисов](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md).

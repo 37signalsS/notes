@@ -18,88 +18,74 @@
 
 ### Типы туннелей в Linux
 
-| Тип | Режим (mode) | Протокол | Инкапсуляция | Overhead |
-|:---|:---|:---|:---|:---|
-| **GRE** | `gre` | 47 | Любой в IPv4 | ~24 байта |
-| **GRETAP** | `gretap` | 47 | Ethernet в IPv4 | ~42 байта |
-| **IPIP** | `ipip` | 4 | IPv4 в IPv4 | ~20 байт |
-| **SIT** | `sit` | 41 | IPv6 в IPv4 | ~20 байт |
-| **VXLAN** | `vxlan` | UDP 4789 | Ethernet в UDP/IPv4 | ~50 байт |
-| **IP6GRE** | `ip6gre` | 47 | Любой в IPv6 | ~24 байта |
-| **IP6IP6** | `ip6tnl` | 41 | IPv6 в IPv6 | ~40 байт |
+| Тип | Режим (mode) | Протокол | Назначение |
+|:---|:---|:---|:---|
+| **GRE** | `gre` | 47 | Универсальный L3-туннель |
+| **GRETAP** | `gretap` | 47 | L2-туннель (Ethernet поверх GRE) |
+| **IPIP** | `ipip` | 4 | IPv4 в IPv4 |
+| **SIT** | `sit` | 41 | IPv6 в IPv4 (6in4) |
+| **VXLAN** | `vxlan` | UDP 4789 | L2-оверлей поверх UDP |
+| **VTI** | `vti` | 50 (ESP) | Виртуальный интерфейс для IPsec |
+| **FOU / GUE** | `fou` / `gue` | UDP | Инкапсуляция в UDP (для обхода NAT/Firewall) |
+| **ERSPAN** | `erspan` | 47 | Зеркалирование трафика через GRE |
 
-### Ключевые параметры команд
+### Ключевые параметры команд (ip link)
 
-* **local** — локальный IP-адрес (VTEP/Endpoint) туннеля.
-* **remote** — удалённый IP-адрес (Peer/Endpoint) туннеля.
-* **dev** — физический интерфейс, через который будет передаваться инкапсулированный трафик.
-* **ttl** — Time To Live для внешнего IP-заголовка. По умолчанию обычно 64 или `inherit` (копировать из внутреннего пакета).
-* **key** — 32-битный идентификатор (GRE Key), позволяющий создавать несколько независимых туннелей между одной парой IP-адресов.
+* **local** / **remote** — IP-адреса конечных точек (Endpoints).
+* **ttl** — Time To Live внешнего заголовка (рекомендуется `inherit`).
+* **key** — 32-битный ID для GRE/VXLAN.
+* **encap** — выбор типа инкапсуляции (например, `fou` для GRE-в-UDP).
+* **nopmtudisc** — отключение Path MTU Discovery (не рекомендуется).
 
 ## Практические сценарии
 
-### Создание GRE-туннеля (Generic Routing Encapsulation)
+### Создание GRE-туннеля (Современный метод)
 
-Рекомендуется использовать современный синтаксис `ip link`.
+Использование `ip link` позволяет создавать интерфейсы, которые корректно работают с пространствами имен (`netns`) и поддерживают расширенные атрибуты.
 
 ```bash
 # Создание интерфейса
-sudo ip link add gre1 type gre remote 203.0.113.2 local 198.51.100.1 ttl 255 key 100
-
-# Активация интерфейса
-sudo ip link set gre1 up
-
-# Назначение IP-адреса внутри туннеля
-sudo ip address add 10.0.0.1/30 dev gre1
-
-# Настройка маршрутизации
-sudo ip route add 10.0.1.0/24 dev gre1
-```
-
-Подробности см. в разделе **[Протокол GRE](../../../../Networking/Tunnels/gre/gre.md)**.
-
-### Создание IPIP и SIT туннелей
-
-Использование классической команды `ip tunnel` для простых L3-туннелей.
-
-```bash
-# Создание IPIP-туннеля (IPv4 в IPv4)
-sudo ip tunnel add ipip1 mode ipip remote 203.0.113.2 local 198.51.100.1
-
-# Создание SIT-туннеля (IPv6 в IPv4)
-sudo ip tunnel add sit1 mode sit remote 203.0.113.2 local 198.51.100.1
+sudo ip link add gre1 type gre remote 203.0.113.2 local 198.51.100.1 ttl inherit key 100
 
 # Активация и настройка IP
-sudo ip link set sit1 up
-sudo ip address add fc00::1/64 dev sit1
+sudo ip link set gre1 up
+sudo ip address add 10.0.0.1/30 dev gre1
 ```
 
-Подробности см. в разделе **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)**.
+### Настройка FOU (Foo Over UDP)
 
-### Настройка VXLAN
-
-VXLAN настраивается исключительно через `ip link`.
+Позволяет инкапсулировать GRE или IPIP в UDP пакеты для улучшения балансировки (ECMP) и прохождения через NAT.
 
 ```bash
-# Создание VXLAN интерфейса с VNI 100
-sudo ip link add vxlan0 type vxlan id 100 remote 192.0.2.2 local 192.0.2.1 dev eth0 dstport 4789
+# 1. Создаем UDP-слушатель (порт 6666 для протокола 47 - GRE)
+sudo ip fou add port 6666 ipproto 47
 
-sudo ip link set vxlan0 up
+# 2. Создаем GRE-туннель с инкапсуляцией в UDP
+sudo ip link add name gre_fou type gre \
+    remote 203.0.113.2 local 198.51.100.1 \
+    encap fou encap-sport auto encap-dport 6666
 ```
 
-Полное руководство см. в разделе **[VXLAN](../../../../Networking/Tunnels/vxlan.md)**.
+### Виртуальный интерфейс для IPsec (VTI)
+
+VTI позволяет использовать стандартную маршрутизацию (`ip route`) вместо сложных политик IPsec (Policy-based VPN).
+
+```bash
+# Создание VTI-интерфейса (требует настроенного IPsec в ядре)
+sudo ip link add vti1 type vti remote 203.0.113.2 local 198.51.100.1 key 10
+sudo ip link set vti1 up
+sudo ip addr add 10.255.255.1/30 dev vti1
+```
 
 ### Операции управления и мониторинга
 
 ```bash
-# Список всех туннелей (устаревший метод)
-ip tunnel show
+# Просмотр всех туннелей с детальными параметрами инкапсуляции
+ip -d link show type gre
+ip -d link show type vxlan
 
-# Детальные параметры интерфейса (современный метод)
-ip -d link show gre1
-
-# Изменение параметров существующего туннеля
-sudo ip tunnel change ipip1 ttl 128
+# Мониторинг статистики (дропы, ошибки инкапсуляции)
+ip -s link show dev gre1
 
 # Удаление туннеля
 sudo ip link del gre1
@@ -107,17 +93,26 @@ sudo ip link del gre1
 
 ## Дополнительная информация
 
-### Оптимизация MTU
+### Оптимизация MTU и MSS
 
-Инкапсуляция увеличивает размер пакета, что требует уменьшения MTU на туннельном интерфейсе во избежание фрагментации.
+Инкапсуляция увеличивает размер пакета, что часто приводит к проблемам с Path MTU Discovery.
 
-| Тип туннеля | Overhead | Рекомендуемый MTU (при внешнем 1500) |
+| Тип туннеля | Заголовок (байт) | MTU (при внешнем 1500) |
 |:---|:---|:---|
-| GRE | 24 байта | 1476 |
-| IPIP / SIT | 20 байт | 1480 |
-| VXLAN | 50 байт | 1450 |
+| GRE | 24 | 1476 |
+| IPIP / SIT | 20 | 1480 |
+| VXLAN | 50 | 1450 |
+| FOU + GRE | 32 | 1468 |
 
-Рекомендация: используйте `sysctl -w net.ipv4.ip_no_pmtu_disc=0` для включения Path MTU Discovery.
+**Решение проблемы "зависающих" соединений (MSS Clamping):**
+
+Если ICMP сообщения блокируются, необходимо принудительно уменьшать TCP MSS на туннельном интерфейсе:
+
+```bash
+# Пример для iptables (уменьшение MSS до MTU туннеля)
+sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
+    -o gre1 -j TCPMSS --clamp-mss-to-pmtu
+```
 
 ### Поиск и устранение неисправностей
 

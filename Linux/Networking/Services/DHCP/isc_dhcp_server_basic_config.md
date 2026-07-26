@@ -1,122 +1,128 @@
 # ISC DHCP: Базовая настройка
 
-> **Важно:** ISC (Internet Systems Consortium) DHCP достиг стадии EOL (End of Life — прекращение поддержки) в 2022 году ([подтверждение](https://endoflife.date/isc-dhcp)). Для новых развёртываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Данный файл актуален для поддержки существующих систем и миграции.
+> **Надёжность: 9/10** (Стандарт де-факто для существующих систем, но статус EOL)
+> **Актуальность: 2026-07** (Статус: End of Life)
+
+> **Важно:** ISC (Internet Systems Consortium) DHCP достиг стадии **EOL (End of Life — прекращение поддержки)** в 2022 году. Для новых развёртываний настоятельно рекомендуется использовать **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Данный файл актуален для эксплуатации существующих систем и подготовки к миграции.
 
 ## Определения
 
-**ISC DHCP** — реализация DHCP-протокола (Dynamic Host Configuration Protocol — протокол динамической настройки узла) от Internet Systems Consortium. Работает в виде демона `dhcpd` для автоматической выдачи IP-адресов (Internet Protocol — межсетевой протокол) и сетевых параметров клиентам.
+**ISC DHCP (Internet Systems Consortium Dynamic Host Configuration Protocol)** — программная реализация стека протокола автоматической настройки узлов. Основным компонентом является демон `dhcpd`, который управляет распределением **IP-адресов (Internet Protocol — межсетевой протокол)** и сетевых параметров.
+
+**Raw Sockets (Сырые сокеты)** — механизм, используемый `dhcpd` для прямого взаимодействия с сетевым уровнем, минуя стандартный стек TCP/IP ОС. Это необходимо для отправки ответов клиентам, которые ещё не имеют настроенного IP-адреса.
 
 **См. также:**
-
-- [Обзор ISC DHCP и архитектура](./isc_dhcp_server_overview.md) — точка входа в документацию, сравнение с Kea.
-- [Протокол DHCP: теория и концепции](../../../../Networking/Protocols/DHCP/dhcp_overview.md) — базовые понятия, процесс DORA, время аренды.
+- [Обзор ISC DHCP и архитектура](./isc_dhcp_server_overview.md) — иерархия файлов и замена на Kea.
+- [Протокол DHCP: теория](../../../../Networking/Protocols/DHCP/dhcp_overview.md) — описание процесса DORA и структуры пакетов.
 
 ## Основные концепции
 
+### Архитектурные требования
+
+1. **Права доступа:** Из-за работы с Raw Sockets демон должен запускаться от имени суперпользователя (root).
+2. **Файл состояния:** `/var/lib/dhcp/dhcpd.leases` является критически важным. Перед отправкой подтверждения (`DHCPACK`) сервер обязан записать информацию об аренде на диск. Если запись не удалась, адрес не выдаётся.
+3. **Сигналы управления:**
+   - **SIGTERM / SIGINT:** Корректное завершение работы.
+   - **SIGHUP:** Перечитывание конфигурации (в некоторых дистрибутивах может требовать полного рестарта).
+
 ### Структура конфигурации
 
-- `/etc/dhcp/dhcpd.conf` — основной файл конфигурации (иерахическая структура: глобальные параметры → переопределения в `subnet`).
-- `/etc/default/isc-dhcp-server` (Debian/Ubuntu) — указание интерфейсов прослушивания.
-- `/etc/sysconfig/dhcpd` (RHEL/CentOS) — аналогичный файл для дистрибутивов, использующих RPM (Red Hat Package Manager).
-- Резервное копирование обязательно перед редактированием.
-
-### Принцип работы
-
-- Сервер читает конфигурацию при старте.
-- Глобальные параметры действуют для всех подсетей, если не переопределены внутри блока `subnet`.
-- Файл аренды: `/var/lib/dhcp/dhcpd.leases` (Debian) или `/var/lib/dhcpd/dhcpd.leases` (RHEL).
+| Путь | Назначение |
+| :--- | :--- |
+| `/etc/dhcp/dhcpd.conf` | Основной файл конфигурации (глобальные параметры -> подсети) |
+| `/etc/default/isc-dhcp-server` | Указание интерфейсов (Debian/Ubuntu) |
+| `/etc/sysconfig/dhcpd` | Указание интерфейсов (RHEL/Rocky) |
 
 ## Практические сценарии
 
 ### Установка
 
-**Debian/Ubuntu:**
-
+**Debian / Ubuntu:**
 ```bash
-sudo apt update
-sudo apt install isc-dhcp-server
+sudo apt update && sudo apt install isc-dhcp-server
 ```
 
-**RHEL/Rocky Linux/AlmaLinux:**
-
+**RHEL / Rocky Linux / AlmaLinux:**
 ```bash
 sudo dnf install dhcp-server
 ```
 
-### Настройка интерфейса прослушивания
+### Настройка интерфейсов
 
-Указание сетевого интерфейса для приёма DHCP-запросов:
+Серверу необходимо явно указать, на каких физических или виртуальных интерфейсах ожидать запросы.
 
-**Debian/Ubuntu** (`/etc/default/isc-dhcp-server`):
-
+**Debian/Ubuntu (`/etc/default/isc-dhcp-server`):**
 ```ini
-INTERFACESv4="eth0"
+INTERFACESv4="eth0 vlan10"
 ```
 
-**RHEL/CentOS** (`/etc/sysconfig/dhcpd`):
-
+**RHEL/Rocky (`/etc/sysconfig/dhcpd`):**
 ```ini
 DHCPDARGS="eth0"
 ```
 
 ### Основная конфигурация (dhcpd.conf)
 
-Пример минимального рабочего конфига для двух подсетей:
-
 ```ini
 # ГЛОБАЛЬНЫЕ ПАРАМЕТРЫ
 
-# Авторитетный сервер (отправка DHCPNAK для некорректных адресов)
+# authoritative; — сервер считает себя главным. 
+# Если клиент просит неверный IP, сервер отправит DHCPNAK (принудительный сброс)
 authoritative;
 
-# Домен и DNS-серверы (Domain Name System) для клиентов
-option domain-name "work.example.com";
-option domain-name-servers 8.8.8.8, 1.1.1.1;
+# Настройки DNS (Domain Name System)
+option domain-name "corp.internal";
+option domain-name-servers 10.0.1.10, 8.8.8.8;
 
-# Время аренды (секунды)
-default-lease-time 86400;   # 1 день
+# Таймеры аренды (в секундах)
+default-lease-time 86400;   # 24 часа
 max-lease-time 604800;      # 7 дней
 
-# Логирование через syslog
+# Использование системного журнала
 log-facility local7;
 
-# Сеть для серверов (VLAN 10 — Virtual Local Area Network)
+# ОПРЕДЕЛЕНИЕ ПОДСЕТЕЙ
+
+# Подсеть для серверного сегмента (VLAN 10)
 subnet 10.0.10.0 netmask 255.255.255.0 {
-    range 10.0.10.100 10.0.10.200;
+    range 10.0.10.100 10.0.10.250;
     option routers 10.0.10.1;
-    default-lease-time 2592000; # 30 дней (серверы редко меняются)
-    max-lease-time 5184000;     # 60 дней
+    option broadcast-address 10.0.10.255;
+    
+    # Переопределение таймеров для серверов (30 дней)
+    default-lease-time 2592000;
 }
 
-# Сеть для пользователей (VLAN 20)
-subnet 10.0.20.0 netmask 255.255.255.0 {
-    range 10.0.20.50 10.0.20.250;
-    option routers 10.0.20.1;
-    # Время аренды — глобальные значения (1 день)
-}
+# Пустая подсеть (для интерфейса, где не нужно выдавать адреса, но сервер должен слушать)
+# subnet 10.0.50.0 netmask 255.255.255.0 {}
 ```
 
-### Распространённые DHCP-опции
+### Валидация конфигурации
 
-| Опция | Назначение | Пример |
+Перед перезапуском службы **обязательно** проверяйте синтаксис файла конфигурации:
+
+```bash
+# Проверка основного конфига
+sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf
+
+# Проверка с указанием файла аренды (если путь нестандартный)
+sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf -lf /var/lib/dhcp/dhcpd.leases
+```
+
+## Справочник DHCP-опций
+
+| Опция | Описание | Пример |
 | :--- | :--- | :--- |
-| `option domain-name` | Доменное имя | `"example.com"` |
-| `option domain-name-servers` | DNS-серверы | `8.8.8.8, 1.1.1.1` |
-| `option routers` | Шлюз по умолчанию | `10.0.10.1` |
-| `option subnet-mask` | Маска подсети | `255.255.255.0` |
-| `option broadcast-address` | Broadcast-адрес | `10.0.10.255` |
-| `option ntp-servers` | NTP (Network Time Protocol) | `pool.ntp.org` |
-| `option netbios-name-servers` | WINS (Windows Internet Name Service) | `10.0.10.5` |
-| `option tftp-server-name` | TFTP (Trivial File Transfer Protocol) | `"tftp.example.com"` |
-| `option bootfile-name` | Файл загрузки ([PXE](../../Concepts/pxe_boot.md)) | `"undionly.kpxe"` |
-
-> **Примечание:** [PXE (Preboot Execution Environment)](../../Concepts/pxe_boot.md) — среда для загрузки компьютеров через сеть.
+| `option routers` | Шлюз по умолчанию (Default Gateway) | `10.0.10.1` |
+| `option domain-name-servers` | Список DNS-серверов | `1.1.1.1, 8.8.8.8` |
+| `option domain-name` | Суффикс DNS для поиска | `"example.com"` |
+| `option ntp-servers` | **NTP (Network Time Protocol)** серверы | `ntp.pool.org` |
+| `option tftp-server-name` | IP или имя **TFTP** сервера для **PXE** | `"10.0.10.5"` |
+| `option bootfile-name` | Имя загрузочного файла (**PXE**) | `"ipxe.efi"` |
 
 ## Дополнительная информация
 
-### Связанные темы
-
-- [Резервирование IP-адресов](./isc_dhcp_server_reservations.md) — статическое распределение для конкретных клиентов.
-- [Failover-конфигурация](./isc_dhcp_server_failover.md) — отказоустойчивость DHCP-сервера.
-- [DHCP Relay](./isc_dhcp_server_relay.md) — ретрансляция запросов между VLAN.
-- [Проверка и мониторинг](./isc_dhcp_server_verification.md) — валидация конфига, логи, диагностика.
+- [Резервирование IP-адресов](./isc_dhcp_server_reservations.md) — статическая привязка к MAC.
+- [Отказоустойчивость (Failover)](./isc_dhcp_server_failover.md) — создание кластера из двух серверов.
+- [Диагностика и проверка](./isc_dhcp_server_verification.md) — логи, анализ трафика и решение проблем.
+- [Настройка DHCP Relay](./isc_dhcp_server_relay.md) — работа через маршрутизаторы.

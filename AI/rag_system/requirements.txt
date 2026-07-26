@@ -1,0 +1,9 @@
+torch>=2.0
+sentence-transformers>=3.0
+chromadb>=1.5
+langchain>=0.3
+langchain-chroma>=0.2
+langchain-community>=0.3
+langchain-huggingface>=0.3
+langchain-text-splitters>=0.3
+tqdm>=4.60

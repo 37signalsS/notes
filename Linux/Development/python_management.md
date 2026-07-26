@@ -1,246 +1,124 @@
-# Управление версиями Python в Linux
+# Управление версиями и окружениями Python в Linux
 
 ## Определения
 
-* **Python** — высокоуровневый, универсальный, интерпретируемый язык программирования.
-* **`pyenv`** — инструмент для установки нескольких версий Python и управления ими в одной операционной системе.
-* **`pyenv-virtualenv`** — плагин для `pyenv`, позволяющий создавать и управлять изолированных виртуальными окружениями для проектов.
-* **`uv`** — современный и сверхбыстрый инструмент (написан на Rust), объединяющий функции pip, venv, pyenv и pipx.
-* **Изоляция зависимостей** — практика разделения пакетов для разных проектов в изолированные виртуальные окружения для предотвращения конфликтов версий библиотек.
+* **Python** — высокоуровневый, универсальный, интерпретируемый язык программирования, являющийся стандартом для автоматизации и SRE-задач.
+* **`pyenv`** — классический менеджер версий Python, позволяющий устанавливать несколько версий интерпретатора (CPython, PyPy, Anaconda) и переключаться между ними.
+* **`venv`** — встроенный модуль Python (начиная с 3.3), предназначенный для создания легковесных виртуальных окружений.
+* **`virtualenv`** — сторонняя библиотека для создания виртуальных окружений, обладающая расширенным функционалом по сравнению с `venv` (поддержка старых версий Python, более высокая скорость работы).
+* **`pipx`** — утилита для установки и запуска Python-приложений (CLI-инструментов) в изолированных окружениях, чтобы избежать конфликтов с системными пакетами.
+* **`uv`** — современный, сверхбыстрый менеджер Python (написан на Rust), который заменяет `pip`, `venv`, `pyenv`, `pipx` и `poetry`.
+* **PEP 668** — спецификация, запрещающая использование `pip install` в системном окружении дистрибутивов Linux для предотвращения поломки системных утилит.
 
 ## Основные концепции
 
-### Принцип работы `pyenv`
+### Безопасность системного Python
+Python является критическим компонентом большинства дистрибутивов Linux (на нём написаны пакетные менеджеры `apt`, `dnf`, `yum`). **Запрещено изменять или удалять системный Python**, так как это приведет к потере работоспособности ОС. Любая разработка или установка сторонних библиотек должна происходить в изолированных окружениях.
 
-`pyenv` вставляет «прокладки» (shims) в начало переменной `PATH`. При вызове команды `python` система сначала находит shim `pyenv`. Затем `pyenv` определяет целевую версию Python (глобальную, локальную для каталога или заданную через `shell`) и передаёт управление соответствующему исполняемому файлу.
+### PEP 668 — Externally Managed Environment
+В современных дистрибутивах (Debian 12+, Ubuntu 23.04+) при попытке выполнить `pip install <package>` возникнет ошибка `externally-managed-environment`. Это механизм защиты, который требует использования виртуальных окружений или системных пакетов (`apt install python3-<package>`).
 
-### Безопасность системной версии Python
+### Принцип работы shims в pyenv
+`pyenv` перехватывает команды Python с помощью «прокладок» (shims), вставленных в начало переменной `PATH`. Когда вы запускаете `python`, вызывается shim, который проверяет текущую активную версию (через переменную `PYENV_VERSION`, файл `.python-version` или глобальную настройку) и прозрачно перенаправляет вызов реальному исполняемому файлу.
 
-Python является критическим компонентом большинства дистрибутивов Linux. Системные пакетные менеджеры (`yum`, `apt`, `dnf`) зависят от системного Python (`/usr/bin/python`). **Запрещено изменять или удалять системный Python**, так как это приведет к поломке ОС. `pyenv` решает эту проблему, устанавливая версии в домашний каталог пользователя (`~/.pyenv`), не затрагивая системные файлы.
-
-### PEP 668 (Externally Managed Environment)
-
-Начиная с Python 3.11 (Ubuntu 23.04+) дистрибутивы Linux блокируют `pip install` вне виртуального окружения для системного Python. Это политика PEP 668 (PEP — Python Enhancement Proposal).
-
-**Ошибка при попытке установки вне venv:**
-
-```
-error: externally-managed-environment
-× This environment is externally managed
-╰─> To install Python packages system-wide, try apt install
-    python3-xyz, where xyz is the package you are trying to
-    install.
-...
-```
-
-**Причина:** предотвращение конфликтов между pip-пакетами и пакетами системного менеджера (apt) — см. раздел о безопасности системного Python выше.
-
-**Решение:**
-
-1. Использовать виртуальное окружение (`python3 -m venv /path/to/venv`) — **рекомендуемый способ**.
-2. Установить с флагом `--break-system-packages` — только при понимании рисков конфликта с apt:
-
-   ```bash
-   pip install --break-system-packages <package>
-   ```
-
-   В Ansible это делается через параметр `extra_args`:
-   ```yaml
-   - name: Установка Python-библиотек
-     ansible.builtin.pip:
-       name: docker>=5.0.0
-       extra_args: --break-system-packages
-   ```
+### Переход к All-in-one инструментам (uv)
+К 2026 году наблюдается массовый переход от связки `pyenv + pip + venv` к инструменту `uv`. Он работает в разы быстрее (благодаря реализации на Rust и агрессивному кэшированию) и упрощает рабочий процесс, объединяя управление версиями интерпретатора и зависимостями проекта в одном интерфейсе.
 
 ## Практические сценарии
 
-### Установка `pyenv`
+### Настройка pyenv
+`pyenv` собирает Python из исходных кодов, поэтому необходимо установить зависимости для компиляции.
 
-`pyenv` собирает Python из исходных кодов, поэтому предварительно требуются компилятор и библиотеки.
-
-**1. Установка зависимостей для сборки:**
-
+**1. Установка зависимостей сборки:**
 ```bash
-# Для RHEL 8/9 / AlmaLinux / Rocky Linux
-sudo dnf groupinstall "Development Tools" -y
-sudo dnf install -y git gcc make zlib-devel bzip2-devel readline-devel \
-  sqlite-devel openssl-devel tk-devel libffi-devel xz-devel libuuid-devel \
-  libnsl2 # для RHEL 9 используйте python3-libnsl2
-
-# Для Debian/Ubuntu
+# Debian / Ubuntu
 sudo apt update && sudo apt install -y make build-essential libssl-dev zlib1g-dev \
   libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncursesw5-dev \
   xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
+
+# RHEL 8/9 / AlmaLinux / Rocky Linux
+sudo dnf groupinstall "Development Tools" -y
+sudo dnf install -y git gcc make zlib-devel bzip2-devel readline-devel \
+  sqlite-devel openssl-devel tk-devel libffi-devel xz-devel libuuid-devel libnsl2
 ```
 
-**2. Установка самого `pyenv`:**
-
+**2. Установка и инициализация:**
 ```bash
-git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+curl https://pyenv.run | bash
+
+# Добавление в ~/.bashrc
+export PYENV_ROOT="$HOME/.pyenv"
+[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+eval "$(pyenv virtualenv-init -)"
 ```
 
-**3. Настройка окружения:**
-Добавьте инициализацию в `~/.bashrc` (или `~/.zshrc`):
-
+**3. Управление версиями:**
 ```bash
-echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
-echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
-echo -e 'if command -v pyenv 1>/dev/null 2>&1; then\n  eval "$(pyenv init -)"\nfi' >> ~/.bashrc
-source ~/.bashrc
+pyenv install 3.12.5    # Установка версии
+pyenv global 3.12.5     # Глобальная версия для пользователя
+pyenv local 3.11.9      # Версия только для текущей директории (создает .python-version)
 ```
 
-### Управление версиями Python
-
-**Просмотр и установка:**
-
+### Изоляция проектов через venv
+Использование стандартного модуля для создания окружения:
 ```bash
-# Список доступных для установки версий
-pyenv install --list
-
-# Установка конкретной версии (загрузка и компиляция)
-pyenv install 3.12.4
+python3 -m venv .venv   # Создание окружения в папке .venv
+source .venv/bin/activate # Активация окружения (в PATH добавляется путь к .venv/bin)
+# → (venv) user@host:~/project$ 
+pip install requests     # Установка пакета внутри окружения
+deactivate              # Выход из окружения
 ```
 
-**Выбор активной версии:**
-
+### Установка CLI-утилит (pipx)
+Для инструментов вроде `ansible`, `black`, `flake8`:
 ```bash
-pyenv global 3.12.4   # Установка версии по умолчанию для пользователя
-pyenv local 3.12.4    # Версия только для текущего каталога (создаёт файл .python-version)
-pyenv shell 3.12.4    # Версия только для текущей сессии shell
+pipx install ansible    # Ansible будет установлен в свое изолированное venv
+pipx list               # Список установленных инструментов
+pipx run ruff check .   # Одноразовый запуск инструмента без установки
 ```
 
-**Проверка статуса:**
+### Современный стек с uv
+`uv` позволяет полностью отказаться от других инструментов.
 
+**1. Установка uv:**
 ```bash
-pyenv versions   # Показать все установленные версии
-# → выведет список, активная версия будет отмечена звездочкой (*)
-
-pyenv version    # Показать только текущую активную версию и источник ее выбора
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Работа с `pyenv-virtualenv`
-
-**Установка плагина и инициализация:**
-
+**2. Полный цикл работы над проектом:**
 ```bash
-git clone https://github.com/pyenv/pyenv-virtualenv.git $(pyenv root)/plugins/pyenv-virtualenv
-echo 'eval "$(pyenv virtualenv-init -)"' >> ~/.bashrc
-source ~/.bashrc
+uv python install 3.13  # uv сам скачает и установит нужный Python
+uv init my-project      # инициализация проекта с pyproject.toml
+uv add requests         # добавление зависимости (автоматически создаст venv и lock-файл)
+uv run main.py          # запуск скрипта (uv сам активирует venv)
 ```
 
-**Управление окружениями:**
-
+**3. Замена pipx через uv:**
 ```bash
-# Создать окружение на базе Python 3.12.4
-pyenv virtualenv 3.12.4 my-project-env
-
-# Активировать локально (будет автоматически активироваться при входе в этот каталог)
-pyenv local my-project-env
-
-# Установка пакетов в изолированное окружение
-pip install numpy pandas
-
-# Удаление окружения
-pyenv virtualenv-delete my-project-env
+uv tool install ansible # аналог pipx install
+uv tool run ansible-playbook site.yml
 ```
 
-### Установка CLI-инструментов через `pipx`
-
-`pipx` автоматически создаёт изолированное venv для каждого приложения и добавляет символьную ссылку на его исполняемый файл в `~/.local/bin`.
-
-```bash
-# Установка
-pip install pipx
-
-# Установка CLI-утилиты
-pipx install ansible
-
-# Запуск без установки (ephemeral)
-pipx run black --check .
-
-# Установка из каталога или репозитория
-pipx install ./my-tool
-pipx install git+https://github.com/psf/black.git
-
-# Просмотр и управление
-pipx list                # список установленных приложений
-pipx upgrade-all         # обновить все приложения
-pipx uninstall ansible   # удалить приложение
-```
-
-`pipx` использует системный Python (или `pyenv`-версию, если она активна) для создания venv, что гарантирует изоляцию как от системных пакетов, так и от окружений проектов.
-
-## Современный стек: `uv`
-
-`uv` — это универсальный менеджер Python-окружений, который заменяет целый ряд инструментов (pip, venv, pyenv, pipx). Написан на Rust, что обеспечивает кратный прирост производительности по сравнению с классическими утилитами.
-
-### Ключевые возможности
-
-1. **Управление версиями Python (замена pyenv):**
-   ```bash
-   uv python install 3.13  # установка конкретной версии
-   uv python pin 3.13      # фиксация версии для проекта
-   ```
-
-2. **Виртуальные окружения и пакеты (замена venv + pip):**
-   ```bash
-   uv venv                             # создать окружение
-   uv pip install -r requirements.txt  # быстрая установка
-   uv sync                             # синхронизация окружения с lockfile
-   ```
-
-3. **Запуск и воспроизводимость:**
-   ```bash
-   uv run python script.py  # запуск без ручной активации venv
-   uv run pytest            # выполнение тестов в окружении проекта
-   ```
-
-4. **CLI-инструменты (замена pipx):**
-   ```bash
-   uv tool run ruff check . # запуск без установки в систему
-   ```
-
-### Использование в CI/CD
-
-`uv` идеально подходит для CI/CD благодаря скорости и поддержке детерминированных сборок.
-
-- **`uv.lock`**: файл фиксации зависимостей (аналог `package-lock.json`). Его необходимо хранить в репозитории.
-- **Флаг `--frozen`**: гарантирует установку строго из `uv.lock` без пересчёта графа зависимостей.
-
-**Пример для GitHub Actions:**
-
-```yaml
-- name: Setup uv
-  uses: astral-sh/setup-uv@v5 # рекомендуется закреплять версию (не @latest)
-
-- name: Sync dependencies
-  run: uv sync --frozen
-
-- name: Run tests
-  run: uv run pytest
-```
+### Диагностика и типичные ошибки
+* **`ModuleNotFoundError` после активации venv**: Вероятно, пакет был установлен до активации окружения или в другую версию Python. Проверьте `which pip` и `which python`.
+* **Ошибка компиляции в pyenv**: Проверьте наличие `libssl-dev` и `libffi-dev`. В новых дистрибутивах (Ubuntu 24.04) может потребоваться установка `libnsl-dev`.
+* **Broken Shims**: Если `python` ведет себя странно после удаления версии, выполните `pyenv rehash`.
+* **`uv` и кэширование**: Если пакеты не обновляются, используйте `uv pip install --no-cache-dir`.
 
 ## Дополнительная информация
 
-### Сравнительная таблица инструментов
+### Сравнительная таблица менеджеров
 
-| Инструмент | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| **`venv`** | Встроенный модуль Python3 | Простые проекты, когда нужна только одна версия Python. См. [Dockerfile: Лучшие практики для Python](../../Docker/Dockerfile/Docker_best_practices/python.md). |
-| **`pyenv`** | Менеджер версий Python | Когда нужно часто переключаться между разными версиями интерпретатора. |
-| **`poetry`** | Менеджер зависимостей и сборок | Проекты, требующие строгого управления публикацией пакетов. |
-| **`uv`** | **All-in-one менеджер (Rust)** | **Рекомендуемый современный стандарт**. Для максимальной скорости (особенно в CI/CD) и простоты управления. |
-| **`pipx`** | Установка CLI-приложений | Установка системных утилит (ansible, black), если не используется `uv tool`. |
-| **`asdf`** | Универсальный менеджер версий | При разработке на нескольких языках (Ruby, Node.js, Python) одновременно. |
-
-### Диагностика проблем `pyenv`
-
-* **`pyenv: command not found`**: Проверьте, добавлен ли `$PYENV_ROOT/bin` в `PATH` в вашем `~/.bashrc`.
-* **Ошибка компиляции (сборки) Python**: Обычно вызвана нехваткой системных библиотек. Убедитесь, что установлены `zlib`, `openssl`, `libffi` (см. шаг "Установка зависимостей").
-* **Установленный пакет или команда не найдены (Shim не обновлён)**: Выполните `pyenv rehash` для перестроения "прокладок".
+| Инструмент | Скорость | Управление версиями | Управление пакетами | Lock-файлы |
+| :--- | :--- | :--- | :--- | :--- |
+| **pip + venv** | Средняя | Нет | Базовое | Нет (только freeze) |
+| **Poetry** | Медленная | Нет | Продвинутое | Да (`poetry.lock`) |
+| **pyenv** | Средняя | Да | Нет | Нет |
+| **uv** | **Экстремальная** | **Да** | **Продвинутое** | **Да (`uv.lock`)** |
 
 ### Полезные ссылки
-
-* [Файлы версий (Version Files)](../../Git/version_files.md) — обзор файлов для фиксации версий (.python-version, .tool-versions и др.).
-* [Официальный репозиторий pyenv](https://github.com/pyenv/pyenv)
-* [Официальный репозиторий pyenv-virtualenv](https://github.com/pyenv/pyenv-virtualenv)
+* [Файлы версий (Version Files)](../../Git/version_files.md) — обзор `.python-version` и `.tool-versions`.
+* [Официальная документация uv](https://docs.astral.sh/uv/)
+* [Python Packaging User Guide](https://packaging.python.org/en/latest/) — актуальные стандарты упаковки ПО на Python.
+* [Dockerfile: Лучшие практики для Python](../../Docker/Dockerfile/Docker_best_practices/python.md) — специфика использования `uv` и `venv` в контейнерах.

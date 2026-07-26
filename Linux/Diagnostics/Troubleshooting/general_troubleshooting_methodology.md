@@ -90,7 +90,7 @@ ss -tlpn | grep :<port>     # современная утилита: [ss](../Net
 
 ```bash
 # systemd-сервисы
-journalctl -u <service_name> -f    # подробнее: [journalctl](../journalctl.md)
+journalctl -u <service_name> -f    # подробнее: [journalctl](../journalctl/journalctl_overview.md)
 
 # Классические лог-файлы
 tail -f /var/log/<service_name>/error.log

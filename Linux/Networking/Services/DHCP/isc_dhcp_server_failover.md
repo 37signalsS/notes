@@ -1,56 +1,65 @@
 # ISC DHCP Failover — отказоустойчивая пара серверов
 
-> **Важно:** ISC DHCP устарел (EOL, End of Life). Для новых развёртываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)** с поддержкой HA (High Availability) через hook-модули.
+> **Важно:** ISC (Internet Systems Consortium) DHCP устарел (EOL — End of Life). Для новых развёртываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)** с поддержкой **HA (High Availability — высокая доступность)** через hook-модули.
 > См. также: [Защита от rogue DHCP](../../../../Networking/Protocols/DHCP/dhcp_security.md).
 
 ## Определения
 
-**DHCP Failover** — механизм высокой доступности (HA, High Availability), при котором два DHCP-сервера синхронизируют информацию об арендах и подменяют друг друга при сбое.
+**DHCP Failover** — протокол обеспечения высокой доступности, при котором два сервера **DHCP (Dynamic Host Configuration Protocol — протокол динамической настройки узла)** синхронизируют базу данных арендованных адресов и обеспечивают непрерывную работу при сбое одного из узлов.
 
-**Primary / Secondary** — роли серверов в паре. Оба способны выдавать адреса, но primary (основной) имеет приоритет при управлении пулом.
+**Primary / Secondary (Основной / Резервный)** — роли серверов в паре. Primary управляет распределением пула и задаёт параметры синхронизации. Secondary выполняет запросы и заменяет Primary при сбое.
 
-**MCLT (Max Client Lead Time)** — максимальное время, на которое сервер может продлить аренду без согласования с партнёром.
+**MCLT (Max Client Lead Time)** — максимальный интервал времени, на который один сервер может продлить аренду адреса клиенту без подтверждения от партнёра. Параметр настраивается только на Primary.
 
-**Split** — параметр распределения пула адресов между серверами (от 0 до 256, где 128 соответствует 50/50).
+**Split** — алгоритм балансировки нагрузки (Hash-based), разделяющий пул адресов. Значение `128` означает разделение 50/50.
 
 ## Основные концепции
 
+### Обязательные требования
+
+Для корректной работы Failover необходимо выполнение следующих условий:
+1. **Синхронизация времени:** Время на обоих серверах должно быть идентичным (рекомендуется использование **NTP (Network Time Protocol — протокол сетевого времени)** или **Chrony**). Разница более чем в несколько секунд приведёт к разрыву связи между узлами.
+2. **Связанность по сети:** Серверы должны иметь доступ друг к другу по протоколу **TCP (Transmission Control Protocol — протокол управления передачей)** через порт **647**.
+3. **Идентичность конфигураций:** Блоки `subnet` и `shared-network` должны быть полностью одинаковыми на обоих узлах.
+
 ### Принцип работы
 
-1. **Два сервера:** один настраивается как `primary`, другой как `secondary`.
-2. **Синхронизация:** обмен информацией об арендах происходит по протоколу TCP (Transmission Control Protocol) через порт 647.
-3. **Разделение нагрузки:** пул IP-адресов (Internet Protocol) делится параметром `split`, что позволяет обоим серверам отвечать на запросы клиентов.
-
-> **См. также:** [Механизмы Failover](../../../../Concepts/High_Availability/ha_failover_mechanisms.md) — общие принципы Heartbeat, Quorum и Split-Brain.
+1. **Синхронизация:** Обмен информацией о выданных адресах происходит по TCP/647.
+2. **Балансировка:** Оба сервера могут одновременно отвечать клиентам, используя алгоритм хеширования (параметр `split`).
+3. **Отказоустойчивость:** Если один сервер перестаёт отвечать, второй переходит в состояние `communications-interrupted`, а затем (при необходимости) в `partner-down`, принимая на себя обслуживание всего пула.
 
 ### Состояния отказоустойчивой пары
 
 | Состояние | Описание |
 | :--- | :--- |
-| `normal` / `balanced` | Оба сервера работают, синхронизация активна |
-| `communications-interrupted` | Потеря связи между серверами |
-| `partner-down` | Партнёр считается неработающим |
-| `potentially-down` | Требуется подтверждение состояния партнёра |
-| `reboot` | Сервер перезапускается после сбоя |
-| `shutdown` | Сервер остановлен администратором |
-| `paused` | Временная приостановка обработки запросов |
+| `normal` / `balanced` | Штатный режим, синхронизация активна, нагрузка распределена. |
+| `communications-interrupted` | Потеря связи. Серверы продолжают выдавать адреса из своих частей пула. |
+| `partner-down` | Один сервер официально признан нерабочим. Второй узел обслуживает 100% запросов. |
+| `potentially-down` | Переходное состояние, когда один узел подозревает сбой партнёра. |
+| `recover` | Узел запрашивает у партнёра обновление базы аренды после перезагрузки. |
+| `shutdown` | Штатная остановка узла администратором. |
 
 ## Практические сценарии
 
-### Настройка отказоустойчивой пары
+### Настройка безопасности (HMAC-ключи)
 
-#### Шаг 1: Организация конфигурационных файлов
+Для защиты канала синхронизации рекомендуется использовать аутентификацию по ключу.
 
-Рекомендуется вынести общие части в отдельные файлы и подключать их через директиву `include`:
+1. **Генерация ключа:**
+    ```bash
+    dnssec-keygen -a HMAC-MD5 -b 128 -n USER dhcp-key
+    ```
+2. **Добавление в конфиг:**
+    ```bash
+    key "dhcp-failover-key" {
+        algorithm hmac-md5;
+        secret "ВАШ_СЕКРЕТНЫЙ_КЛЮЧ==";
+    };
+    ```
 
-- `/etc/dhcp/dhcpd.conf` — уникальные параметры отказоустойчивости каждого сервера.
-- `/etc/dhcp/dhcpd.conf.d/subnets.conf` — общие определения подсетей (`subnet`).
-- `/etc/dhcp/dhcpd.conf.d/reservations.conf` — общие определения резерваций (`host`).
-
-#### Шаг 2: Конфигурация dhcpd.conf
+### Конфигурация серверов
 
 **Primary сервер (10.0.4.4):**
-
 ```bash
 failover peer "dhcp-failover" {
     primary;
@@ -58,20 +67,17 @@ failover peer "dhcp-failover" {
     port 647;
     peer address 10.0.4.5;
     peer port 647;
-
     max-response-delay 60;
     max-unacked-updates 10;
     mclt 3600;
-    split 128;
+    split 128; # Настраивается только на Primary
     load balance max seconds 3;
 }
 
 include "/etc/dhcp/dhcpd.conf.d/subnets.conf";
-include "/etc/dhcp/dhcpd.conf.d/reservations.conf";
 ```
 
 **Secondary сервер (10.0.4.5):**
-
 ```bash
 failover peer "dhcp-failover" {
     secondary;
@@ -79,64 +85,63 @@ failover peer "dhcp-failover" {
     port 647;
     peer address 10.0.4.4;
     peer port 647;
-
     max-response-delay 60;
     max-unacked-updates 10;
     load balance max seconds 3;
 }
 
 include "/etc/dhcp/dhcpd.conf.d/subnets.conf";
-include "/etc/dhcp/dhcpd.conf.d/reservations.conf";
 ```
 
-#### Шаг 3: Модификация subnets.conf
+### Настройка межсетевого экрана
 
-В каждой подсети необходимо указать имя отказоустойчивой пары внутри блока `pool`:
-
+**Пример для `ufw` (Debian/Ubuntu):**
 ```bash
-subnet 10.0.10.0 netmask 255.255.255.0 {
-    option routers 10.0.10.1;
-
-    pool {
-        failover peer "dhcp-failover";
-        range 10.0.10.100 10.0.10.200;
-    }
-}
+sudo ufw allow from 10.0.4.4 to any port 647 proto tcp
 ```
 
-#### Шаг 4: Настройка межсетевого экрана
-
-На обоих серверах необходимо разрешить входящие подключения на порт **TCP/647**.
-
-### Решение проблем
-
-**Проблема: Серверы не синхронизируются**
-
+**Пример для `firewalld` (RHEL):**
 ```bash
-# Проверка логов
-sudo journalctl -u isc-dhcp-server -f | grep failover
-
-# Проверка подключения к порту партнёра
-telnet 10.0.4.5 647
-
-# Поиск событий failover в системных логах
-grep "failover peer" /var/log/syslog
+sudo firewall-cmd --add-rich-rule='rule family="ipv4" source address="10.0.4.5" port port="647" protocol="tcp" accept' --permanent
+sudo firewall-cmd --reload
 ```
 
-**Проблема: Конфликты IP-адресов**
+## Решение проблем
 
+### Ручное объявление партнёра нерабочим
+
+Если основной сервер вышел из строя и не восстановится быстро, необходимо перевести резервный сервер в состояние `partner-down`. Это **не происходит автоматически** для предотвращения ситуации **Split-Brain** (разделения сознания).
+
+**Способ 1: через `omshell`**
 ```bash
-# Проверка файлов аренды на обоих серверах
-cat /var/lib/dhcp/dhcpd.leases
-
-# Принудительная синхронизация (на стороне secondary)
-sudo systemctl stop isc-dhcp-server
-sudo rm /var/lib/dhcp/dhcpd.leases~
-sudo systemctl start isc-dhcp-server
+omshell
+> server localhost
+> port 7911
+> key dhcp-failover-key "secret"
+> connect
+> new failover-state
+> set name = "dhcp-failover"
+> set local-state = 6 # 6 соответствует partner-down
+> create
 ```
+
+**Способ 2: правка файла аренды (lease file)**
+Остановите службу, найдите блок `failover-state` в `/var/lib/dhcp/dhcpd.leases` и измените `my state communications-interrupted` на `my state partner-down`.
+
+### Диагностика
+
+* **Логи синхронизации:**
+    ```bash
+    sudo journalctl -u isc-dhcp-server -f | grep failover
+    ```
+* **Проверка портов:**
+    ```bash
+    ss -tnlp | grep :647
+    ```
 
 ## Дополнительная информация
 
-- [Обзор ISC DHCP и архитектура](./isc_dhcp_server_overview.md)
-- [Протокол DHCP: теория и концепции](../../../../Networking/Protocols/DHCP/dhcp_overview.md)
-- [Механизмы Failover и Heartbeat](../../../../Concepts/High_Availability/ha_failover_mechanisms.md)
+- [Обзор ISC DHCP и архитектура](./isc_dhcp_server_overview.md) — общие сведения и Kea.
+- [Протокол DHCP: теория](../../../../Networking/Protocols/DHCP/dhcp_overview.md) — процесс DORA и опции.
+- [Механизмы High Availability](../../../../Concepts/High_Availability/ha_failover_mechanisms.md) — теория Heartbeat и Split-Brain.
+- [Диагностика DHCP](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md) — поиск проблем с арендой.

@@ -6,7 +6,7 @@
 
 **Шара (share)** — общий ресурс Samba, доступный клиентам по сети. Определяется секцией в `smb.conf` с параметрами доступа, пути и прав.
 
-**Гостевой доступ** — доступ к сетевому ресурсу без необходимости ввода пароля. Управляется параметрами `map to guest` и `guest ok`.
+**Asynchronous I/O (AIO)** — механизм ввода-вывода, позволяющий Samba обрабатывать запросы без блокировки основного процесса, что критично для производительности на современных SSD.
 
 ## Базовые концепции
 
@@ -14,63 +14,55 @@
 
 | Секция | Назначение |
 | :--- | :--- |
-| `[global]` | Глобальные параметры сервера, значения по умолчанию |
-| `[homes]` | Автоматические шары домашних директорий пользователей |
-| `[printers]` | Доступ к принтерам |
-| `[имя]` | Именованная шара с произвольными параметрами |
+| `[global]` | Глобальные параметры сервера, значения по умолчанию. |
+| `[homes]` | Автоматические шары домашних директорий пользователей. |
+| `[имя]` | Именованная шара с произвольными параметрами. |
 
-### Ключевые параметры
+### Ключевые параметры (Стандарты 2026)
 
-| Параметр | Описание | Значение по умолчанию |
+| Параметр | Описание | Значение 2026 |
 | :--- | :--- | :--- |
-| `workgroup` | Имя рабочей группы / домена | `WORKGROUP` |
-| `server string` | Описание сервера (отображается клиентам) | `%h server` |
+| `server min protocol` | Минимальная версия SMB | `SMB3_11` |
 | `security` | Режим аутентификации | `user` |
 | `map to guest` | Маппинг неудачных логинов | `Never` |
-| `server min protocol` | Минимальная версия SMB | `SMB2_10` |
-| `load printers` | Загрузка списка принтеров | `yes` |
-| `disable spoolss` | Отключение подсистемы печати | `no` |
+| **`aio read size`** | Порог для асинхронного чтения | `1` (всегда асинхронно) |
+| **`aio write size`** | Порог для асинхронной записи | `1` (всегда асинхронно) |
+| **`use sendfile`** | Использование системного вызова sendfile | `yes` |
 
-> **Важно:** Параметр `encrypt passwords` является устаревшим (deprecated) с версии Samba 4.11 и удалён в 4.24. Шифрование паролей теперь всегда включено по умолчанию.
-
-### Переменные подстановки
-
-| Переменная | Описание |
-| :--- | :--- |
-| `%u` | Имя пользователя |
-| `%g` | Группа пользователя |
-| `%I` | IP-адрес клиента |
-| `%m` | NetBIOS-имя клиента |
-| `%S` | Имя текущей шары |
-| `%H` | Домашняя директория пользователя |
+> **Важно:** Параметр `encrypt passwords` удалён в Samba 4.24. Шифрование паролей теперь является обязательным и неотключаемым.
 
 ### Установка пакетов
 
 ```bash
 # Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y samba
+sudo apt-get update && sudo apt-get install -y samba samba-common-bin
 
-# RHEL/CentOS
-sudo yum install -y samba samba-common samba-client
+# RHEL/CentOS/Fedora
+sudo dnf install -y samba samba-common samba-client
 ```
 
 Проверка конфигурации:
 
 ```bash
+# Проверка синтаксиса и вывод итоговых параметров
 testparm -s
-# → Load smb config files from /etc/samba/smb.conf
-# → Loaded services file OK.
 ```
 
 ## Практические сценарии
 
-### Гостевой (анонимный) доступ
+### Производительное хранилище с доступом по паролю
+
+Пример настройки современной шары для работы с большими файлами и SSD.
 
 ```bash
-# Создание директории и установка прав
-sudo mkdir -p /srv/samba/public
-sudo chown -R nobody:nogroup /srv/samba/public/
-sudo chmod -R 0775 /srv/samba/public/
+# Создание пользователя и установка пароля
+sudo useradd -M -s /usr/sbin/nologin smbworker
+sudo smbpasswd -a smbworker
+
+# Подготовка директории
+sudo mkdir -p /srv/samba/fast_storage
+sudo chown smbworker:smbworker /srv/samba/fast_storage
+sudo chmod 0700 /srv/samba/fast_storage
 ```
 
 Конфигурация в `smb.conf`:
@@ -78,87 +70,72 @@ sudo chmod -R 0775 /srv/samba/public/
 ```ini
 [global]
    workgroup = WORKGROUP
-   server string = Samba Server
+   server string = High-Perf Samba
    security = user
+   
+   # Безопасность
+   server min protocol = SMB3_11
+   server smb encrypt = required
+   
+   # Производительность (Тюнинг 2026)
+   aio read size = 1
+   aio write size = 1
+   use sendfile = yes
+   min receivefile size = 16384
+   socket options = TCP_NODELAY
+
+[FastStorage]
+   comment = SSD Optimized Share
+   path = /srv/samba/fast_storage
+   valid users = smbworker
+   writable = yes
+   browsable = yes
+   vfs objects = streams_xattr
+```
+
+### Публичная шара (Только чтение, Гостевой доступ)
+
+Используется для дистрибутивов ПО или публичных архивов.
+
+```ini
+[global]
    map to guest = bad user
-   server min protocol = SMB3
-   load printers = no
-   disable spoolss = yes
 
-[Public]
-   comment = Public Share
-   path = /srv/samba/public
-   browsable = yes
-   writable = yes
+[PublicArchive]
+   path = /srv/samba/archive
    guest ok = yes
-   read only = no
+   read only = yes
+   browsable = yes
+   comment = Read-only Public Archive
 ```
 
-### Доступ по паролю
+### Оптимизация для macOS (Time Machine)
 
-```bash
-# Создание системного пользователя без возможности входа в shell
-sudo useradd --no-create-home --shell /usr/sbin/nologin smbuser
-
-# Установка пароля Samba (отдельная база данных пользователей)
-sudo smbpasswd -a smbuser
-# → New SMB password:
-# → Retype new SMB password:
-# → Added user smbuser.
-
-# Создание директории с ограничением прав
-sudo mkdir -p /srv/samba/private
-sudo chown -R smbuser:smbuser /srv/samba/private/
-sudo chmod -R 0770 /srv/samba/private/
-```
-
-Конфигурация в `smb.conf`:
+Samba позволяет выступать в роли сервера для бэкапов Apple.
 
 ```ini
-[Private]
-   comment = Private Share
-   path = /srv/samba/private
-   valid users = smbuser
-   guest ok = no
+[TimeMachine]
+   path = /srv/samba/timemachine
+   valid users = macuser
    writable = yes
-   browsable = yes
-```
-
-### Шара для группы
-
-```bash
-# Создание группы и добавление пользователя
-sudo groupadd sambashare
-sudo usermod -aG sambashare username
-
-# Подготовка директории с битом setgid
-sudo mkdir -p /srv/samba/share
-sudo chown -R root:sambashare /srv/samba/share
-sudo chmod 2770 /srv/samba/share  # setgid для наследования группы новыми файлами
-```
-
-Конфигурация в `smb.conf`:
-
-```ini
-[share]
-   path = /srv/samba/share
-   browsable = yes
-   read only = no
-   valid users = @sambashare
-   create mask = 0660
-   directory mask = 0770
-   force group = sambashare
+   vfs objects = fruit streams_xattr
+   fruit:time machine = yes
+   fruit:aapl = yes
 ```
 
 ### Управление службами
 
-```bash
-# Активация и запуск служб (Debian/Ubuntu)
-sudo systemctl enable --now smb nmb
-# → Created symlink ...
+В современных дистрибутивах используется демон `smbd`. Демон `nmbd` (NetBIOS) рекомендуется отключать, если не требуется поддержка старых клиентов Windows XP/7.
 
-# Перезапуск после изменения конфигурации
-sudo systemctl restart smb nmb
+```bash
+# Запуск и автозагрузка
+sudo systemctl enable --now smbd
+
+# Если требуется NetBIOS (не рекомендуется в 2026)
+# sudo systemctl enable --now nmbd
+
+# Проверка статуса
+systemctl status smbd
 ```
 
 ## Дополнительная информация
@@ -171,4 +148,5 @@ sudo systemctl restart smb nmb
 ## Смотрите также
 
 - [Монтирование через fstab](../../../FileSystems/mounting/fstab.md)
-- [Systemd mount](../../../FileSystems/mounting/scenarios/systemd_mount.md)
+- [Systemd mount сценарии](../../../FileSystems/mounting/scenarios/systemd_mount.md)
+- [Настройка ZFS для Samba](../../../FileSystems/filesystem_types_comparison.md)

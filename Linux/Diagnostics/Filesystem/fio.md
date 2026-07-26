@@ -2,175 +2,175 @@
 
 ## Определения
 
-- **`fio` (Flexible I/O Tester):** Утилита для бенчмаркинга и стресс-тестирования систем хранения данных. Эмулирует различные типы дисковой нагрузки и измеряет ключевые метрики производительности.
-- **BW (Bandwidth):** Пропускная способность (МБ/с).
+- **`fio` (Flexible I/O Tester):** Мощная кроссплатформенная утилита для бенчмаркинга и стресс-тестирования подсистем ввода-вывода. Позволяет эмулировать практически любой тип нагрузки и измерять производительность с высокой точностью.
+- **BW (Bandwidth):** Пропускная способность или полоса пропускания (МБ/с, ГБ/с).
 - **IOPS (Input/Output Operations Per Second):** Количество операций ввода-вывода в секунду.
-- **Latency (lat):** Задержка выполнения операций (мкс, мс).
-- **Паттерны нагрузки:** Типы доступа к данным (последовательный/случайный, чтение/запись/смешанный).
-- **Механизмы I/O (`ioengine`):** Интерфейсы взаимодействия с подсистемой I/O (`sync`, `libaio`, `io_uring`, `mmap`).
+- **Latency (Задержка):** Время выполнения одной операции. Различают `slat` (submission), `clat` (completion) и `lat` (общее время).
+- **Паттерны нагрузки:** Схемы доступа к данным (`read`, `write`, `randread`, `randwrite`, `rw`, `randrw`).
+- **Механизмы I/O (`ioengine`):** Библиотеки и интерфейсы для взаимодействия с ядром (`sync`, `libaio`, `io_uring`, `mmap`, `posixaio`).
 
 ## Основные концепции
 
-`fio` позволяет точно имитировать реальные сценарии:
+`fio` позволяет гибко настраивать параметры нагрузки для имитации работы реальных приложений:
 
-| Сценарий | Паттерн | Размер блока | Пример |
+| Сценарий | Паттерн | Размер блока (bs) | Пример применения |
 | :--- | :--- | :--- | :--- |
-| **База данных (OLTP — Online Transaction Processing)** | `randread`, `randwrite` | 4K–8K | PostgreSQL, MySQL |
-| **Файловый сервер** | `read`, `write` | 64K–1M | NFS, Samba |
-| **Веб-сервер** | `randread` | 4K–16K | Статический контент |
-| **Логирование** | `write` (seq) | 16K–128K | Журналы, аудит |
-| **Бэкапы** | `read`, `write` (seq) | 256K–1M | Архивирование |
-| **Виртуализация** | `randrw` | 4K–64K | ВМ с mixed workload |
+| **OLTP СУБД** | `randrw` (70/30) | 4K–16K | PostgreSQL, MySQL, Oracle |
+| **Big Data / OLAP** | `read` (seq) | 128K–1M | ClickHouse, Hadoop, Spark |
+| **Файловый сервер** | `rw` (mixed) | 64K–1M | SMB/CIFS, NFS |
+| **Виртуализация** | `randrw` | 8K–64K | KVM/QEMU, VMWare |
+| **Журналирование** | `write` (seq) | 4K–64K | WAL, Syslog, Kafka |
+| **Объектное хранилище**| `read` / `write` | 1M+ | S3, Swift, MinIO |
 
-**Ключевые параметры:**
+### Механизмы ввода-вывода (ioengine)
 
-- `--rw`: Режим операции (`read`, `write`, `randread`, `randwrite`, `randrw`, `rw`)
-- `--bs`: Размер блока (4k, 16k, 128k, 1M)
-- `--size` / `--runtime`: Объем данных или время теста
-- `--numjobs`: Количество потоков
-- `--iodepth`: Глубина очереди (для асинхронных `ioengine`)
-- `--ioengine`: Механизм I/O (`libaio`, `sync`, `io_uring`, `psync`)
-- `--direct`: Прямой I/O (0 = буферизированный, 1 = прямой)
+Выбор движка критически влияет на результаты, особенно для быстрых накопителей:
 
-**Интерпретация результатов:**
+1.  **`sync` / `psync`:** Базовые синхронные вызовы. Поток блокируется до завершения операции. Не подходит для тестирования высокой глубины очереди.
+2.  **`libaio`:** Традиционный асинхронный I/O в Linux. Требует `direct=1`. Долгое время был стандартом для тестирования NVMe.
+3.  **`io_uring`:** Самый современный и производительный интерфейс (Linux 5.1+). Минимизирует переключения контекста, поддерживает Zero-copy и Polling (`hipri`). **Рекомендуется для всех современных тестов на Linux.**
+4.  **`rbd` / `rados`:** Прямое тестирование хранилищ Ceph без промежуточного монтирования.
 
-- **IOPS** важны для транзакционных нагрузок (БД)
-- **Пропускная способность** — для последовательных операций (бэкапы, видео)
-- **Latency** — критична для интерактивных приложений (p95, p99 важнее средней)
+### Глубина очереди и потоки
+
+- **`iodepth`:** Количество запросов, отправленных драйверу одновременно (только для асинхронных движков). Позволяет "насытить" контроллер SSD/NVMe.
+- **`numjobs`:** Количество параллельных процессов или потоков `fio`. Полезно для проверки масштабируемости контроллера или RAID-массива.
 
 ## Практические сценарии
 
-### Базовые тесты
+### Установка
 
 ```bash
-# Последовательная запись 1GB блоками по 1MB
-fio --name=seq_write --rw=write --bs=1M --size=1G --filename=./testfile \
-    --ioengine=libaio --direct=1 --fsync=32
+# Ubuntu / Debian
+sudo apt update && sudo apt install -y fio
 
-# Последовательное чтение
-fio --name=seq_read --rw=read --bs=1M --size=1G --filename=./testfile \
-    --ioengine=libaio --direct=1
-
-# Случайное чтение 4K (типично для БД)
-fio --name=rand_read --rw=randread --bs=4k --size=1G --filename=./testfile \
-    --ioengine=libaio --direct=1 --iodepth=32
-
-# Случайная запись 4K
-fio --name=rand_write --rw=randwrite --bs=4k --size=1G --filename=./testfile \
-    --ioengine=libaio --direct=1 --iodepth=32
+# RHEL / CentOS / Rocky Linux
+sudo dnf install -y fio
 ```
 
-### Смешанная нагрузка (mixed workload)
+### Базовые замеры (Сырые устройства и файлы)
+
+**Важно:** Тестирование сырого устройства (`/dev/sdX`) точнее, но **уничтожает данные**.
 
 ```bash
-# 70% чтение / 30% запись, 4 потока, глубина очереди 32
-fio --name=mixed_rw --rw=randrw --rwmixread=70 --bs=4k --size=1G \
-    --numjobs=4 --iodepth=32 --ioengine=libaio --direct=1 \
-    --filename=./testfile --group_reporting
+# 1. Последовательная запись (проверка линейной скорости)
+fio --name=seq_write --rw=write --bs=1M --size=10G --filename=/dev/sdb \
+    --ioengine=io_uring --direct=1 --group_reporting
 
-# 50/50 чтение/запись для виртуализации
-fio --name=vm_workload --rw=randrw --rwmixread=50 --bs=8k --size=2G \
-    --numjobs=8 --iodepth=64 --ioengine=libaio --direct=1 \
-    --group_reporting --runtime=60 --time_based
+# 2. Случайное чтение 4K (оценка IOPS для БД)
+# Используем io_uring и глубину очереди 32
+fio --name=rand_read --rw=randread --bs=4k --size=4G --filename=./testfile \
+    --ioengine=io_uring --direct=1 --iodepth=32 --runtime=60 --time_based
 ```
 
-### Тестирование для etcd
+### Тестирование для облачных дисков (AWS/GCP/Yandex)
 
-Перед запуском кластера etcd необходимо проверить задержку `fdatasync`:
+В облаках производительность часто лимитирована (IOPS/BW limits). Для достижения лимитов важна глубина очереди.
+
+```bash
+# Проверка латентности на малой нагрузке
+fio --name=cloud_lat --rw=randread --bs=4k --size=1G --direct=1 \
+    --ioengine=io_uring --iodepth=1 --numjobs=1 --filename=./testfile
+
+# Попытка достичь максимальных IOPS (например, 50k)
+fio --name=cloud_max_iops --rw=randread --bs=4k --size=10G --direct=1 \
+    --ioengine=io_uring --iodepth=128 --numjobs=4 --group_reporting --filename=./testfile
+```
+
+### Тестирование для etcd (fdatasync)
+
+Для `etcd` критична скорость сброса данных на диск (`fdatasync`).
 
 ```bash
 fio --rw=write --ioengine=sync --fdatasync=1 --directory=./etcd-data \
-    --size=22m --bs=2300 --name=etcd-test
-# → fdatasync задержка должна быть < 10ms (лучше < 2ms)
+    --size=22m --bs=2300 --name=etcd-sync-test
+# → Ищите результат "clat" или "lat". Для стабильной работы etcd p99 должен быть < 10ms.
 ```
 
-### Бенчмаркинг RBD (RADOS Block Device) в Ceph
+### Сценарий для SSD TRIM (Unmap)
+
+Проверка скорости очистки ячеек.
 
 ```bash
-# Тест последовательной записи на RBD-устройство
-fio --name=write --ioengine=libaio --rw=write --bs=4k \
-    --direct=1 --numjobs=1 --size=1G --runtime=60 \
-    --filename=/dev/rbd0
+fio --name=trim_test --filename=/dev/nvme0n1 --rw=trim --bs=1M \
+    --ioengine=libaio --direct=1 --runtime=60 --time_based
 ```
 
-### Использование job-файлов
+### Тестирование Ceph RBD
 
-Создайте файл `benchmark.fio`:
+Для замера производительности блочных устройств Ceph можно использовать два подхода:
+
+1.  **Через ядро (Kernel RBD):** Тестирование смонтированного устройства `/dev/rbd0`. Используются стандартные движки `io_uring` или `libaio`.
+2.  **Напрямую через librbd (Userspace):** Движок `ioengine=rbd`. Позволяет тестировать RBD без маппинга в ОС.
+
+```bash
+# Пример для librbd (userspace)
+fio --name=ceph_test --ioengine=rbd --clientname=admin --pool=rbd \
+    --rbdname=image01 --rw=randwrite --bs=4k --direct=1 --iodepth=32
+```
+
+### Использование файлов конфигурации (Job-files)
+
+Пример файла `db_workload.fio`:
 
 ```ini
 [global]
-ioengine=libaio
+ioengine=io_uring
 direct=1
-size=1G
-runtime=60
-time_based
 group_reporting
+runtime=120
+time_based
+filename=/dev/nvme1n1
 
-[seq_write]
-rw=write
-bs=1M
-numjobs=4
-iodepth=32
-
-[rand_read_4k]
+[oltp_read]
 rw=randread
-bs=4k
-numjobs=8
+bs=8k
 iodepth=64
+numjobs=4
+
+[oltp_write]
+rw=randwrite
+bs=8k
+iodepth=32
+numjobs=2
 ```
 
-Запуск:
-
-```bash
-fio benchmark.fio
-```
+Запуск: `fio db_workload.fio`
 
 ## Дополнительная информация
 
-### Вывод результатов
+### Вывод результатов и парсинг
 
-**Форматы вывода:**
+`fio` может выводить данные в различных форматах для автоматизации:
 
 ```bash
-# Нормальный вывод (человекочитаемый)
-fio --name=test --rw=randread --bs=4k --size=1G
+# Вывод в JSON для скриптов или Grafana
+fio job_file.fio --output-format=json > results.json
 
-# JSON для парсинга
-fio --name=test --rw=randread --bs=4k --size=1G --output-format=json
+# Компактный формат (terse), разделенный точкой с запятой
+fio job_file.fio --output-format=terse
 ```
 
-**Ключевые поля вывода:**
+### Рекомендации по чистоте эксперимента
 
-- `bw`: Пропускная способность (КБ/с)
-- `iops`: Операций в секунду
-- `lat (usec)` / `lat (msec)`: Задержки (среднее, стандартное отклонение, перцентили)
-- `clat (usec)`: Задержки завершения (completion latency)
+1.  **Steady State (Установившееся состояние):** SSD показывают завышенные результаты "из коробки" (из-за пустого SLC-кэша). Перед финальным тестом SSD нужно "прогреть" — записать его полностью 1–2 раза.
+2.  **Прямой ввод-вывод (`--direct=1`):** Всегда используйте этот параметр, чтобы исключить влияние Page Cache ядра Linux.
+3.  **Охлаждение:** NVMe накопители могут снижать частоту (троттлинг) при перегреве во время долгих тестов. Мониторьте температуру через `smartctl`.
+4.  **Файловая система vs Raw:** Тестирование поверх ФС (Ext4, XFS) добавляет накладные расходы на метаданные. Если нужно проверить чистое железо — используйте блочное устройство.
 
-### Рекомендации по тестированию
+### Типичные показатели производительности (2025–2026)
 
-1. **Тест на пустом диске:** Результаты на заполненном диске могут быть нерепрезентативными.
-2. **Прогрев:** SSD (Solid State Drive) могут показывать разные результаты до и после заполнения SLC-кэша (Single Level Cell).
-3. **Несколько прогонов:** Запускайте тест 3–5 раз для стабильных результатов.
-4. **Мониторинг:** Используйте `iostat -x 1` параллельно для контроля утилизации.
-5. **Прямой I/O:** `--direct=1` отключает кэширование ядра для честных результатов.
-
-### Типичные значения производительности
-
-| Тип накопителя | Seq Read (MB/s) | Seq Write (MB/s) | Rand Read 4K (IOPS) |
+| Тип устройства | Seq Read (МБ/с) | Seq Write (МБ/с) | Rand Read 4K (IOPS) |
 | :--- | :--- | :--- | :--- |
-| **HDD (Hard Disk Drive) 7200 RPM** | 100–200 | 80–150 | 100–200 |
-| **SATA SSD** | 500–550 | 450–500 | 50K–100K |
-| **NVMe PCIe 3.0** | 2000–3500 | 1500–3000 | 300K–600K |
-| **NVMe PCIe 4.0** | 5000–7500 | 4000–6500 | 600K–1M+ |
+| **HDD 7200 RPM** | 150–250 | 120–200 | 100–180 |
+| **SATA SSD** | 540–560 | 500–530 | 70K–100K |
+| **NVMe PCIe 3.0** | 3000–3500 | 2500–3200 | 400K–600K |
+| **NVMe PCIe 4.0** | 7000–7500 | 5000–6500 | 800K–1.2M |
+| **NVMe PCIe 5.0** | 10000–14500 | 9000–12000 | 1.5M–2M+ |
 
-### Ограничения и предостережения
+### Полезные ссылки
 
-- **Деструктивный тест:** Тест на блочном устройстве (`/dev/sdX`) уничтожает данные!
-- **Тепловой троттлинг:** NVMe (Non-Volatile Memory Express) могут снижать производительность при перегреве.
-- **RAID (Redundant Array of Independent Disks):** Результаты зависят от уровня RAID и контроллера.
-
-### Дополнительные ссылки
-
-- [Официальный manual fio](https://fio.readthedocs.io/)
-- [io_uring — асинхронный ввод-вывод](../../Core/kernel/io_uring.md)
-- [Статистика I/O (iostat)](./iostat.md)
+- [Официальная документация fio](https://fio.readthedocs.io/)
+- [io_uring — современный асинхронный I/O](../../Core/kernel/io_uring.md)
+- [Мониторинг дисковой статистики (iostat)](./iostat.md)
+- [Диагностика узких мест БД](../../../Databases/db_disk_bottleneck_troubleshooting.md)

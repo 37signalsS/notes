@@ -2,202 +2,216 @@
 
 ## Определения
 
-**NAT (Network Address Translation — преобразование сетевых адресов)** — механизм в сетях TCP/IP, позволяющий преобразовывать IP-адреса транзитных пакетов.
+**NAT (Network Address Translation — преобразование сетевых адресов)** — механизм, позволяющий изменять IP-адреса в заголовках пакетов при их прохождении через маршрутизатор.
 
-**Masquerading (Маскарадинг)** — частный случай [SNAT](#snat-и-masquerading), используемый для динамических IP-адресов. Автоматически подставляет IP-адрес выходного интерфейса.
+**Masquerading (Маскарадинг)** — динамический вид SNAT, используемый для интерфейсов с непостоянным (получаемым по DHCP или PPPoE) IP-адресом.
 
-**DNAT (Destination Network Address Translation)** — изменение адреса назначения пакета. Используется для проброса портов (Port Forwarding) из внешней сети во внутреннюю.
+**DNAT (Destination NAT)** — изменение адреса и/или порта назначения. Применяется для "проброса портов" (Port Forwarding) из внешней сети во внутреннюю.
 
-**SNAT (Source Network Address Translation)** — изменение адреса источника пакета. Используется для предоставления доступа в интернет узлам с частными IP-адресами.
+**SNAT (Source NAT)** — изменение адреса источника. Используется для предоставления доступа в интернет устройствам из приватных подсетей.
 
-**Сеты (Sets — наборы)** — именованные коллекции элементов (например, IP-адресов или портов), которые позволяют nftables эффективно обрабатывать большое количество значений в одном правиле.
+**Сеты (Sets)** — именованные наборы элементов (IP, порты), позволяющие эффективно обрабатывать списки в одном правиле.
+
+**Мапы (Maps)** — словари "ключ-значение", используемые для привязки критерия к конкретному параметру (например, порт → внутренний IP) или вердикту (vmap).
+
+**Flowtable (Флоу-таблица)** — механизм ускорения обработки пакетов (Fastpath), позволяющий передавать установленные соединения в обход классического сетевого стека для повышения производительности.
+
+**Квота (Quota)** — ограничение объема передаваемого трафика (в байтах) для конкретного правила или адреса.
 
 ## Основные концепции
 
-В nftables практические сценарии реализуются через создание таблиц, цепочек и правил. В отличие от iptables, здесь нет предопределённых таблиц; каждая конфигурация строится "с нуля", что обеспечивает максимальную гибкость.
+Конфигурация nftables строится по принципу полной гибкости: в системе нет предопределенных таблиц, их структура создается пользователем.
 
-Ключевые принципы реализации:
-
-- **Семейства**: Использование `inet` для одновременной поддержки IPv4 и IPv6.
-- **Хуки и приоритеты**: Точное определение места обработки пакета (например, `prerouting` для DNAT, `postrouting` for SNAT).
-- **Состояние соединений**: Использование `ct state` (Connection Tracking) для создания Stateful Firewall.
+**Ключевые принципы:**
+*   **Семейство `inet`:** Позволяет писать правила одновременно для IPv4 и IPv6.
+*   **Хуки (Hooks):** Точки входа в сетевой стек (`prerouting`, `input`, `forward`, `output`, `postrouting`).
+*   **Приоритеты:** Порядок обработки таблиц на одном и том же хуке.
+*   **Connection Tracking (`ct`):** Механизм отслеживания состояний, на основе которого строятся Stateful-файрволы.
 
 ---
 
 ## Практические сценарии
 
-### Базовая настройка для сервера
+### 1. Эталонный Stateful-файрвол для сервера
 
-Типовая конфигурация Stateful Firewall (межсетевого экрана с отслеживанием состояния), разрешающая стандартные веб-службы и SSH (Secure Shell).
+Базовая защита, разрешающая стандартные службы и корректную работу ICMP для обоих стеков (IPv4/IPv6).
 
 ```bash
-# Создать базовую конфигурацию
-sudo nft -f - <<'EOF'
-flush ruleset
-
 table inet filter {
     chain input {
         type filter hook input priority 0; policy drop;
 
         # Разрешить установленные и связанные соединения
         ct state established,related accept
+        
+        # Отбросить некорректные пакеты
+        ct state invalid drop
 
-        # Разрешить loopback (локальную петлю)
-        iif lo accept
+        # Разрешить локальную петлю
+        iif "lo" accept
 
-        # Разрешить SSH, HTTP (HyperText Transfer Protocol), HTTPS (Secure)
-        tcp dport {22, 80, 443} accept
+        # Разрешить SSH (22) и стандартный веб (80, 443)
+        tcp dport { 22, 80, 443 } accept
 
-        # Разрешить ICMP (Internet Control Message Protocol) — ping
+        # Разрешить ICMP (Internet Control Message Protocol)
         icmp type echo-request accept
         
-        # Разрешить ICMPv6 для корректной работы IPv6
-        icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request, echo-reply, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
-    }
-
-    chain forward {
-        type filter hook forward priority 0; policy drop;
-    }
-
-    chain output {
-        type filter hook output priority 0; policy accept;
+        # Разрешить ICMPv6 (критично для функционирования IPv6)
+        icmpv6 type { 
+            destination-unreachable, packet-too-big, time-exceeded, 
+            parameter-problem, echo-request, echo-reply, 
+            nd-router-solicit, nd-router-advert, 
+            nd-neighbor-solicit, nd-neighbor-advert 
+        } accept
     }
 }
-EOF
 ```
 
-### Динамический бан брутфорса SSH
+### 2. Защита от брутфорса с динамическими списками
 
-Защита от перебора паролей (brute-force) без использования внешних инструментов (таких как fail2ban) с помощью динамических наборов (sets).
+Автоматическая блокировка IP-адресов, превышающих лимит попыток подключения к SSH.
 
 ```bash
-sudo nft -f - <<'EOF'
-flush ruleset
-
 table inet filter {
-    # Сет для заблокированных IP с таймаутом (временем жизни) 15 минут
-    set ssh_bruteforce {
+    # Динамический сет для временной блокировки
+    set blacklist {
         type ipv4_addr
-        flags timeout
-        timeout 15m
+        flags dynamic, timeout
+        timeout 1h
     }
 
     chain input {
         type filter hook input priority 0; policy drop;
-
-        # Разрешить установленные соединения
-        ct state established,related accept
-
-        # Блокировать IP-адреса из списка ssh_bruteforce
-        ip saddr @ssh_bruteforce drop
-
-        # Детектировать брутфорс: более 5 новых соединений в минуту → бан
-        tcp dport 22 ct state new limit rate over 5/minute \
-          add @ssh_bruteforce { ip saddr } drop
         
+        ct state established,related accept
+        
+        # Проверка по черному списку
+        ip saddr @blacklist drop
+
+        # Если более 3 новых соединений в минуту — бан на час
+        tcp dport 22 ct state new \
+            limit rate over 3/minute \
+            add @blacklist { ip saddr } \
+            log prefix "SSH Brute Force: " drop
+            
         tcp dport 22 accept
     }
 }
-EOF
 ```
 
-### Интеграция с fail2ban
+### 3. Проброс портов и NAT через мапы (Port-to-IP Mapping)
 
-Интеграция fail2ban с nftables подробно описана в едином источнике: **[fail2ban: Интеграция с nftables](../../../Linux/Security/Tools/fail2ban.md#интеграция-с-nftables)**.
-
-### Сохранение и загрузка правил
-
-Механизмы обеспечения персистентности (сохранения после перезагрузки) конфигурации.
+Использование мап позволяет компактно описать проброс множества портов на разные внутренние серверы.
 
 ```bash
-# Сохранить текущие правила в файл
-sudo nft list ruleset > /etc/nftables.conf
-
-# Загрузить правила из файла
-sudo nft -f /etc/nftables.conf
-
-# Включить службу для автозагрузки при старте системы
-sudo systemctl enable --now nftables
-```
-
-### Работа с наборами (Sets)
-
-Использование именованных списков для упрощения управления правилами доступа.
-
-```bash
-# Создать таблицу с набором разрешённых IP-адресов
-sudo nft -f - <<'EOF'
-table inet filter {
-    set allowed_ips {
-        type ipv4_addr
-        elements = { 192.168.1.10, 192.168.1.20, 10.0.0.0/24 }
-    }
-
-    chain input {
-        type filter hook input priority 0; policy drop;
-        
-        # Разрешить трафик от IP из набора allowed_ips
-        ip saddr @allowed_ips accept
-        
-        ct state established,related accept
-    }
-}
-EOF
-```
-
-### SNAT и Masquerading
-
-Настройка трансляции адресов для организации доступа внутренней сети в интернет.
-
-```bash
-sudo nft -f - <<'EOF'
 table ip nat {
-    chain postrouting {
-        type nat hook postrouting priority 100; policy accept;
-
-        # Masquerade (маскарадинг) для исходящего трафика через интерфейс eth0
-        oifname "eth0" masquerade
-
-        # SNAT (Source NAT) для конкретной подсети на статический IP
-        ip saddr 192.168.1.0/24 oifname "eth0" snat to 203.0.113.1
+    # Мапа для проброса портов: внешний_порт : внутренний_IP
+    map port_forwarding {
+        type inet_service : ipv4_addr
+        elements = { 8080 : 192.168.1.10, 9090 : 192.168.1.20 }
     }
 
     chain prerouting {
         type nat hook prerouting priority -100; policy accept;
+        
+        # DNAT на основе мапы
+        dnat to tcp dport map @port_forwarding
+    }
 
-        # DNAT (Destination NAT): проброс порта 8080 на внутренний сервер 192.168.1.100:80
-        tcp dport 8080 dnat to 192.168.1.100:80
+    chain postrouting {
+        type nat hook postrouting priority 100; policy accept;
+        
+        # Маскарадинг для выхода из локальной сети
+        oifname "eth0" masquerade
     }
 }
-EOF
 ```
 
-### Логирование отброшенных пакетов
+### 4. Оптимизация производительности (Flowtables)
 
-Настройка журналирования попыток несанкционированного доступа.
+Позволяет разгрузить CPU, передавая трафик установленных сессий в "ускоренный" путь.
 
 ```bash
-sudo nft -f - <<'EOF'
 table inet filter {
-    chain input {
-        type filter hook input priority 0; policy drop;
+    # Определение флоу-таблицы для интерфейсов
+    flowtable f {
+        hook ingress priority 0
+        devices = { eth0, eth1 }
+    }
 
-        # Логирование с ограничением частоты (не более 5 записей в минуту), чтобы избежать переполнения логов
-        limit rate 5/minute log prefix "INPUT dropped: " level warn
-
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+        
+        # Передача установленных TCP/UDP соединений во флоу-таблицу
+        ip protocol { tcp, udp } flow add @f
+        
         ct state established,related accept
     }
 }
-EOF
+```
+
+### 5. Управление квотами трафика
+
+Ограничение объема данных для конкретных хостов (например, гостевой сети).
+
+```bash
+table inet filter {
+    # Именованная квота на 10 Гигабайт
+    quota guest_limit { 10 gb }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+        
+        # Применение квоты для подсети
+        ip saddr 192.168.2.0/24 quota name guest_limit accept
+    }
+}
+```
+
+### 6. Фильтрация VLAN в режиме моста (Bridge)
+
+Пример блокировки трафика между конкретными VLAN внутри программного моста.
+
+```bash
+table bridge filter {
+    chain forward {
+        type filter hook forward priority 0; policy accept;
+
+        # Запретить трафик из VLAN 10 в VLAN 20
+        vlan id 10 vlan id 20 drop
+        
+        # Разрешить только HTTP внутри VLAN 30
+        vlan id 30 tcp dport != 80 drop
+    }
+}
 ```
 
 ---
 
 ## Дополнительная информация
 
+### Сохранение и загрузка конфигурации
+
+В большинстве современных дистрибутивов nftables работает как системная служба, читающая правила из `/etc/nftables.conf`.
+
+```bash
+# Сохранение текущего набора правил (runtime) в файл конфигурации
+nft list ruleset | sudo tee /etc/nftables.conf
+
+# Проверка синтаксиса файла без применения изменений
+sudo nft -c -f /etc/nftables.conf
+
+# Применение правил из файла
+sudo nft -f /etc/nftables.conf
+
+# Включение автозагрузки при старте системы
+sudo systemctl enable --now nftables
+```
+
 ### См. также
 
-- **[nftables — моделирование угроз и схемы защиты](./threat_modeling.md)** — планирование правил на основе угроз.
-- **[nftables — архитектура и основные концепции](./architecture_and_concepts.md)** — устройство таблиц, цепочек и хуков.
-- **[Тестирование правил nftables](./firewall_testing.md)** — методы проверки работоспособности конфигурации.
-- **[NAT — Теория и общие сценарии](../../../../../Networking/Concepts/nat/overview.md)** — концептуальный обзор трансляции адресов.
+- **[nftables — моделирование угроз и схемы защиты](./threat_modeling.md)** — архитектурное планирование защиты.
+- **[nftables — архитектура и основные концепции](./architecture_and_concepts.md)** — база: хуки, таблицы, семейства.
+- **[Тестирование правил nftables](./firewall_testing.md)** — верификация настроек (nmap, ss, nc).
+- **[NAT — Теория и общие сценарии](../../../../../Networking/Concepts/nat/overview.md)** — концептуальный обзор технологий трансляции.
+- **[fail2ban: Интеграция с nftables](../../../Linux/Security/Tools/fail2ban.md#интеграция-с-nftables)** — автоматизация блокировок.

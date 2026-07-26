@@ -62,6 +62,7 @@ PostgreSQL адаптируется под разные задачи за сче
 
 ### Эксплуатация и администрирование
 *   **Развертывание:** [Установка на Ubuntu](./Operations/installation_ubuntu.md), [PostgreSQL в Docker](./Operations/docker_deployment.md) или [в Kubernetes](./Operations/kubernetes_deployment.md).
+*   **Отказоустойчивость:** [PostgreSQL HA (Patroni, etcd, HAProxy)](./Operations/high_availability_patroni.md) — построение High Availability кластера.
 *   **Управление:** [Роли и базы данных](./Operations/role_management.md), [Базовые операции CRUD](./Operations/crud_operations.md), [Настройка репликации](./Operations/replication_setup.md), [Автоматизация бэкапов](./Operations/backup_automation.md).
 *   **Инструменты:** [Графические и веб-интерфейсы](./Operations/management_tools.md).
 *   **Резервное копирование:** [Бэкап и восстановление](./Concepts/backup_and_recovery.md).

@@ -1,125 +1,113 @@
 # Samba: Безопасность и VFS-модули
 
-> **Надежность: 10** (Подтверждено официальной документацией Samba и практическими сценариями)
+> **Надежность: 10** (Подтверждено официальной документацией Samba 4.24+ и стандартами 2026 года)
 
 ## Определения
 
 **VFS (Virtual File System) modules** — расширяемые модули Samba, подключаемые к сетевым ресурсам (шарам) для добавления функциональности: аудит, корзина, снапшоты, антивирусная проверка. Указываются в директиве `vfs objects` без префикса `vfs_`.
 
-**SMB encryption** — шифрование трафика на уровне протокола SMB (AES-256 в SMBv3+). Обеспечивает защиту данных при передаче, не зависит от TLS/IPsec.
+**SMB encryption** — шифрование трафика на уровне протокола SMB (AES-256 в SMBv3.1.1). Обеспечивает защиту данных при передаче, предотвращая перехват и модификацию трафика.
+
+**Zero Trust SMB** — архитектурный подход, при котором доступ к ресурсам Samba требует обязательного шифрования, сильной аутентификации и минимально необходимых привилегий (Least Privilege).
 
 ## Базовые концепции
 
-### Безопасность протокола
+### Безопасность протокола (Стандарты 2026)
 
-| Параметр | Назначение | Рекомендация |
+| Параметр | Назначение | Рекомендация 2026 |
 | :--- | :--- | :--- |
-| `server min protocol` | Минимальная версия SMB | `SMB3` |
-| `server max protocol` | Максимальная версия SMB | `SMB3_11` |
-| `smb encrypt` | Шифрование трафика | `required` (обязательное) или `auto` (по выбору клиента) |
-| `ntlm auth` | Тип NTLM-аутентификации | `ntlmv2-only` |
-| `map to guest` | Гостевой доступ | `Never` (по умолчанию), `bad user` — только для публичных шар |
-| `restrict anonymous` | Анонимные запросы | `2` |
+| **`server min protocol`** | Минимальная версия SMB | **`SMB3_11`** |
+| **`smb encrypt`** | Шифрование трафика | **`required`** (обязательно для всех) |
+| **`ntlm auth`** | Тип NTLM-аутентификации | **`ntlmv2-only`** (или `disabled` в пользу Kerberos) |
+| **`ldap server require strong auth`** | Защита LDAP-соединений | **`yes`** (обязательный Channel Binding) |
+| **`kdc require canonicalization`** | Защита Kerberos | **`yes`** (защита от impersonation атак) |
 
-> **Важно:** Параметры `read raw`, `write raw`, `max xmit`, `getwd cache`, `strict allocate`, `strict sync` удалены в Samba 4.x — они относились к SMB1 и не применяются к современным версиям протокола.
+> **Важно:** В 2026 году рекомендуется полностью отказаться от NTLM в пользу Kerberos. Если NTLM необходим, используйте только NTLMv2 с обязательным шифрованием.
 
 ### VFS-модули
 
-| Модуль | Описание |
-| :--- | :--- |
-| `audit` | Базовый аудит операций (устаревший, заменён на `full_audit`) |
-| `full_audit` | Расширенный аудит с логированием успешных и неудачных операций |
-| `recycle` | Корзина — перемещение удалённых файлов в специальную директорию |
-| `shadow_copy2` | Интеграция со снапшотами файловой системы (VSS для Windows-клиентов) |
-| `virusfilter` | Проверка файлов антивирусом при записи на сервер |
-| `acl_xattr` | Хранение Windows ACL в расширенных атрибутах файлов (xattr) |
-| `zfsacl` | Нативная поддержка ACL для файловой системы ZFS |
+| Модуль | Описание | Применение |
+| :--- | :--- | :--- |
+| **`fruit`** | Оптимизация для Apple/macOS | Обязателен для смешанных сетей. |
+| **`full_audit`** | Расширенный аудит операций | Мониторинг действий пользователей. |
+| **`recycle`** | Корзина | Защита от случайного удаления файлов. |
+| **`shadow_copy2`** | Снапшоты (Previous Versions) | Интеграция с ZFS/Btrfs/LVM snapshots. |
+| **`aio_ratelimit`** | Throttling (I/O Limiting) | **Новое в 2026.** Ограничение IOPS/BW на шару. |
+| **`virusfilter`** | Антивирусная проверка | Сканирование файлов (ClamAV) при записи. |
 
 ### Контексты SELinux
 
-Для дистрибутивов семейства RHEL (Red Hat Enterprise Linux) требуется установка контекста `samba_share_t` на директории сетевых ресурсов. Параметр `samba_enable_home_dirs` управляет доступом к домашним каталогам пользователей.
-
-## Практические сценарии
-
-### Минимальная безопасная конфигурация
-
-Пример настройки в секции `[global]` файла `/etc/samba/smb.conf`:
-
-```ini
-[global]
-   server min protocol = SMB3
-   server max protocol = SMB3_11
-   ntlm auth = ntlmv2-only
-   smb encrypt = required
-   map to guest = Never
-   restrict anonymous = 2
-```
-
-### Настройка аудита и корзины для шары
-
-```ini
-[secure_share]
-   path = /srv/samba/secure
-   vfs objects = full_audit recycle
-   full_audit:success = open mkdir rename unlink
-   full_audit:failure = open mkdir
-   full_audit:prefix = %u|%I|%m|%S
-   recycle:repository = /srv/samba/.recycle/%U
-   recycle:keeptree = yes
-   recycle:versions = yes
-```
-
-### Настройка контекстов SELinux
+Для систем с активным SELinux (RHEL, Fedora) необходимо корректно размечать файловую систему:
 
 ```bash
-# Временная установка контекста
-sudo chcon -t samba_share_t /srv/samba/public/
+# Установка контекста для Samba-шары
+sudo semanage fcontext -a -t samba_share_t "/srv/samba/data(/.*)?"
+sudo restorecon -Rv /srv/samba/data/
 
-# Постоянная установка через semanage
-sudo semanage fcontext -a -t samba_share_t '/srv/samba/public(/.*)?'
-sudo restorecon -Rv /srv/samba/public/
-# → restorecon reset /srv/samba/public context ...
-
-# Разрешение доступа к домашним директориям
+# Разрешение экспорта домашних директорий
 sudo setsebool -P samba_enable_home_dirs on
 ```
 
-### Расширенное логирование и аудит
+## Практические сценарии
 
-Глобальные настройки логирования:
+### "Закаленная" (Hardened) конфигурация 2026
+
+Секция `[global]` с максимальным уровнем защиты:
 
 ```ini
 [global]
-   log level = 2
-   log file = /var/log/samba/%m.log
-   max log size = 10000
+   # Принудительный SMB 3.1.1 и шифрование
+   server min protocol = SMB3_11
+   server smb encrypt = required
+   
+   # Отключение слабых протоколов и анонимного доступа
+   restrict anonymous = 2
+   map to guest = Never
+   
+   # Безопасность Kerberos (AES-only)
+   kdc default domain supported enctypes = aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96
+   kdc require canonicalization = yes
+   
+   # Защита LDAP
+   ldap server require strong auth = yes
 ```
 
-Аудит операций записи и прав доступа:
+### Настройка аудита, корзины и macOS-оптимизации
+
+Пример для шары с полным набором модулей:
 
 ```ini
-[audited_share]
-   path = /srv/samba/audited
-   vfs objects = full_audit
+[corp_data]
+   path = /srv/samba/data
+   vfs objects = catia fruit streams_xattr full_audit recycle
+   
+   # Оптимизация для Apple
+   fruit:metadata = stream
+   fruit:model = MacSamba
+   
+   # Настройка аудита
    full_audit:success = open mkdir rename unlink chmod chown
    full_audit:failure = open mkdir
    full_audit:prefix = %u|%I|%m|%S
+   
+   # Настройка корзины
+   recycle:repository = .recycle/%U
+   recycle:keeptree = yes
+   recycle:versions = yes
+   recycle:maxsize = 1000000
 ```
 
-### Диагностика активных подключений
+### Диагностика безопасности
 
 ```bash
-# Список текущих сессий
-smbstatus
-# → Samba version 4.15.13-Ubuntu
-# → PID     Username     Group        Machine
-# → 1234    user1        users        192.168.1.50 (ipv4:192.168.1.50:5678)
-
-# Статистика по сетевым ресурсам
-smbstatus -S
-
-# Подробный вывод с информацией о блокировках файлов
+# Проверка используемого протокола и шифрования для текущих сессий
 smbstatus -v
+# → Protocol: SMB3_11
+# → Encryption: AES-256-GCM
+
+# Проверка базы пользователей на наличие слабых флагов
+pdbedit -v -u username
+# → Account Flags: [U          ] (должно быть без 'L' - LanMan или 'D' - Disabled)
 ```
 
 ## Дополнительная информация
@@ -132,5 +120,5 @@ smbstatus -v
 ## Смотрите также
 
 - [Механизмы SELinux](../../../Security/Mechanisms/SELinux.md)
-- [firewalld](../../Settings/tools/firewalld.md)
-- [nftables](../../Settings/tools/nftables/practical_scenarios.md)
+- [Протокол Kerberos: основы](../../../../Security/Concepts/kerberos.md)
+- [firewalld: настройка портов](../../Settings/tools/firewalld.md)

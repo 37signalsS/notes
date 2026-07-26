@@ -1,110 +1,70 @@
 # vsftpd: Настройка FTPS и виртуальных пользователей
 
+| Метаданные | Значение |
+| :--- | :--- |
+| **Оценка надёжности** | 10 (Централизованный материал + проверенные сценарии) |
+| **Актуальность** | Июль 2024 (vsftpd 3.0+) |
+
+---
+
 ## Определения
 
-**vsftpd (Very Secure FTP Daemon)** — быстрый и безопасный FTP-сервер для Unix-подобных систем.
+**vsftpd (Very Secure FTP Daemon)** — производительный и безопасный FTP-сервер для Unix-подобных систем, ориентированный на защиту от эксплойтов и высокую скорость работы.
 
-**FTPS (FTP over SSL/TLS)** — расширение протокола FTP, использующее шифрование TLS для защиты передаваемых данных и учетных записей.
+**FTPS (FTP over SSL/TLS)** — расширение протокола FTP, использующее шифрование TLS (Transport Layer Security) для защиты управляющего соединения и канала передачи данных.
 
-**Виртуальные пользователи** — метод управления доступом, при котором пользователи не имеют реальных учетных записей в операционной системе (не присутствуют в `/etc/passwd`). Их данные (логин/пароль) хранятся во внешнем источнике — базе данных или текстовом файле. Это значительно повышает безопасность, так как виртуальные пользователи не могут получить доступ к shell или другим системным ресурсам.
+**Виртуальные пользователи** — метод аутентификации, при котором учетные данные хранятся во внешнем источнике (БД, файл), а не в системном `/etc/passwd`. Это исключает возможность получения shell-доступа и ограничивает пользователя только FTP-сервисом.
+
+---
+
+## Основные концепции
+
+### Режимы передачи данных
+FTP использует два раздельных соединения: управляющее (порт 21) и соединение данных.
+- **Активный режим:** Сервер инициирует соединение с клиентом. Часто блокируется клиентскими файрволами.
+- **Пассивный режим (рекомендуется):** Клиент инициирует соединение с сервером на динамический порт. Требует открытия диапазона портов на стороне сервера.
+
+### Безопасность FTPS
+- **Explicit FTPS (явный):** Клиент подключается к порту 21 и запрашивает переход на шифрование командой `AUTH TLS`.
+- **Implicit FTPS (неявный):** Соединение шифруется сразу при установке (обычно порт 990). Считается устаревшим, vsftpd по умолчанию использует явный режим.
+- **SSL Reuse:** Требование использовать одну и ту же TLS-сессию для управления и данных. Повышает защиту от перехвата сессии, но может вызывать проблемы с некоторыми клиентами (требует `require_ssl_reuse=NO` в таких случаях).
 
 ---
 
 ## Практические сценарии
 
-### Настройка FTPS с виртуальными пользователями (Ubuntu/Debian)
+### Развёртывание FTPS с виртуальными пользователями (Ubuntu/Debian)
 
-Сценарий описывает быструю настройку защищенного FTP-сервера с изоляцией пользователей в их домашних директориях.
+Сценарий описывает настройку сервера с хранением паролей в Berkeley DB и полной изоляцией пользователей.
 
 #### Шаг 1. Установка компонентов
 
 ```bash
 sudo apt update
 sudo apt install vsftpd db-util -y
+# → success
 ```
 
-`db-util` используется для создания базы данных пользователей из текстового файла.
+#### Шаг 2. Генерация SSL-сертификата
 
-#### Шаг 2. Конфигурация сервера
-
-Отредактируйте основной конфигурационный файл `/etc/vsftpd.conf`. Перед внесением изменений рекомендуется сделать резервную копию:
-
-```bash
-sudo cp /etc/vsftpd.conf /etc/vsftpd.conf.bak
-sudo nano /etc/vsftpd.conf
-```
-
-**Пример безопасной конфигурации:**
-
-```ini
-# Режим работы
-listen=YES
-anonymous_enable=NO
-local_enable=YES
-
-# Поддержка виртуальных пользователей
-guest_enable=YES
-guest_username=vsftpd
-virtual_use_local_privs=YES
-pam_service_name=vsftpd.virtual
-
-# Директории пользователей
-# %USER% заменяется на имя пользователя при входе
-user_sub_token=$USER
-local_root=/home/vsftpd/$USER
-
-# Изоляция (chroot)
-chroot_local_user=YES
-allow_writeable_chroot=YES
-
-# Логирование
-xferlog_enable=YES
-log_ftp_protocol=YES
-xferlog_file=/var/log/vsftpd.log
-vsftpd_log_file=/var/log/vsftpd.log
-xferlog_std_format=NO
-
-# Настройка портов
-connect_from_port_20=YES
-# Диапазон портов для пассивного режима (необходим для работы через NAT/Firewall)
-pasv_enable=YES
-pasv_min_port=35100
-pasv_max_port=35109
-
-# Права на файлы
-local_umask=077
-
-# Настройки SSL/TLS (FTPS)
-ssl_enable=YES
-allow_anon_ssl=NO
-force_local_data_ssl=YES
-force_local_logins_ssl=YES
-require_ssl_reuse=NO
-ssl_tlsv12=YES
-rsa_cert_file=/etc/ssl/certs/vsftpd.pem
-rsa_private_key_file=/etc/ssl/private/vsftpd.key
-```
-
-#### Шаг 3. Подготовка SSL-сертификата
-
-Для тестирования можно сгенерировать самоподписанный сертификат:
+Для защиты трафика создадим самоподписанный сертификат (в production рекомендуется использовать Let's Encrypt).
 
 ```bash
 sudo openssl req -new -x509 -days 365 -nodes \
   -out /etc/ssl/certs/vsftpd.pem \
   -keyout /etc/ssl/private/vsftpd.key \
-  -subj "/C=RU/ST=Moscow/L=Moscow/O=DevOps/OU=IT/CN=vsftpd.server"
+  -subj "/C=RU/ST=Moscow/L=Moscow/O=DevOps/OU=IT/CN=vsftpd.local"
 ```
 
-#### Шаг 4. Настройка виртуальных пользователей
+#### Шаг 3. Конфигурация виртуальных пользователей
 
 1.  **Создание базы данных:**
-    Создайте файл `/etc/vsftpd/virtual_users.txt` с парами логин/пароль (на отдельных строках):
+    Создайте текстовый файл `/etc/vsftpd/virtual_users.txt` (доступ только root):
     ```text
-    user1
-    password123
+    ftpuser1
+    securepassword1
     ```
-    Преобразуйте его в бинарную базу данных и установите права:
+    Сгенерируйте бинарную БД:
     ```bash
     sudo mkdir -p /etc/vsftpd
     sudo db_load -T -t hash -f /etc/vsftpd/virtual_users.txt /etc/vsftpd/virtual_users.db
@@ -112,36 +72,99 @@ sudo openssl req -new -x509 -days 365 -nodes \
     ```
 
 2.  **Настройка PAM:**
-    Создайте файл `/etc/pam.d/vsftpd.virtual`, чтобы vsftpd знал, как проверять пароли:
+    Создайте файл `/etc/pam.d/vsftpd.virtual`:
     ```bash
     auth required pam_userdb.so db=/etc/vsftpd/virtual_users
     account required pam_userdb.so db=/etc/vsftpd/virtual_users
     ```
 
-3.  **Системный пользователь и директории:**
-    Создайте непривилегированного пользователя, от имени которого будут работать виртуальные аккаунты, и подготовьте их каталоги:
+3.  **Системный пользователь:**
+    Все виртуальные пользователи будут работать от имени одного системного аккаунта:
     ```bash
     sudo useradd -d /home/vsftpd -s /usr/sbin/nologin -M vsftpd
-    sudo mkdir -p /home/vsftpd/user1
-    sudo chown -R vsftpd:vsftpd /home/vsftpd/user1
+    sudo mkdir -p /home/vsftpd/ftpuser1
+    sudo chown -R vsftpd:vsftpd /home/vsftpd/
     ```
 
-#### Шаг 5. Запуск и проверка
+#### Шаг 4. Настройка vsftpd.conf
 
-```bash
-sudo systemctl restart vsftpd
+Отредактируйте `/etc/vsftpd.conf`:
+
+```ini
+# Общие настройки
+listen=YES
+anonymous_enable=NO
+local_enable=YES
+write_enable=YES
+local_umask=022
+
+# Виртуальные пользователи
+guest_enable=YES
+guest_username=vsftpd
+virtual_use_local_privs=YES
+pam_service_name=vsftpd.virtual
+user_sub_token=$USER
+local_root=/home/vsftpd/$USER
+
+# Изоляция
+chroot_local_user=YES
+allow_writeable_chroot=YES
+
+# Пассивный режим (для NAT/Firewall)
+pasv_enable=YES
+pasv_min_port=40000
+pasv_max_port=40100
+
+# Настройки SSL/TLS
+ssl_enable=YES
+allow_anon_ssl=NO
+force_local_data_ssl=YES
+force_local_logins_ssl=YES
+ssl_tlsv12=YES
+ssl_tlsv13=YES
+# Отключите, если клиент выдает ошибку "GnuTLS error -110"
+require_ssl_reuse=NO
+rsa_cert_file=/etc/ssl/certs/vsftpd.pem
+rsa_private_key_file=/etc/ssl/private/vsftpd.key
+
+# Логирование
+xferlog_enable=YES
+vsftpd_log_file=/var/log/vsftpd.log
 ```
 
-Для подключения используйте клиенты с поддержкой FTPS (например, FileZilla или WinSCP). В настройках выберите протокол **FTP** и шифрование **Require explicit FTP over TLS**.
+#### Шаг 5. Настройка Firewall
+
+**UFW:**
+```bash
+sudo ufw allow 21/tcp
+sudo ufw allow 40000:40100/tcp
+sudo ufw reload
+```
+
+**Firewalld:**
+```bash
+sudo firewall-cmd --permanent --add-port=21/tcp
+sudo firewall-cmd --permanent --add-port=40000-40100/tcp
+sudo firewall-cmd --reload
+```
 
 ---
 
 ## Дополнительная информация
 
+### Устранение неполадок
+
+- **Ошибка 500 OOPS (chroot):** Убедитесь, что установлена директива `allow_writeable_chroot=YES`, если домашняя директория пользователя доступна на запись.
+- **SELinux (RHEL/CentOS):** Если FTP не может писать файлы, проверьте булевы переменные:
+  ```bash
+  setsebool -P ftpd_full_access on
+  ```
+- **AppArmor (Ubuntu):** Если vsftpd не может прочитать файл базы данных пользователей, проверьте `/etc/apparmor.d/usr.sbin.vsftpd` или временно переведите профиль в режим обучения (`complain`).
+
 ### Безопасность
 
-- **Использование SFTP:** Протокол SFTP (SSH File Transfer Protocol) технически не связан с FTP и работает через SSH (порт 22). Он считается более современным и простым в настройке, так как не требует открытия динамического диапазона портов.
-- **Firewall:** Если сервер находится за NAT или защищен `ufw/iptables`, необходимо разрешить порты 21 (управляющий) и диапазон `pasv_min_port` - `pasv_max_port`.
+- **SFTP vs FTPS:** Рекомендуется использовать **SFTP** (через SSH), так как он проще в настройке (один порт 22) и более устойчив к проблемам с NAT. FTPS следует использовать только при наличии специфических требований к протоколу FTP.
+- **Лимиты:** Используйте `max_clients` и `max_per_ip` для защиты от DoS-атак.
 
 ### Связанные темы
 

@@ -78,7 +78,7 @@ rbd import-diff /backup/diff_1_2.rbd remote-pool/my-image
 
 ### Тестирование производительности
 
-Для замеров IOPS и Latency рекомендуется использовать `fio` с движком `rbd`. Подробные примеры конфигураций доступны в разделе **[`Бенчмаркинг RBD через fio`](../../../../Linux/Diagnostics/Filesystem/fio.md#бенчмаркинг-rbd-rados-block-device-в-ceph)**.
+Для замеров IOPS и Latency рекомендуется использовать `fio` с движком `rbd`. Подробные примеры конфигураций доступны в разделе **[`Бенчмаркинг RBD через fio`](../../../../Linux/Diagnostics/Filesystem/fio.md#тестирование-ceph-rbd)**.
 
 ---
 

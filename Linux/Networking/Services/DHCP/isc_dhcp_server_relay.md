@@ -1,100 +1,122 @@
 # ISC DHCP Relay — настройка утилиты dhcrelay
 
-> **Важно:** ISC DHCP устарел. Для новых развёртываний рекомендуется использовать **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Утилита `dhcrelay` всё ещё поддерживается для существующих инфраструктур.
+> **Важно:** ISC (Internet Systems Consortium) DHCP устарел (EOL — End of Life). Для новых развёртываний рекомендуется использовать **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Утилита `dhcrelay` всё ещё поддерживается для обслуживания существующих инфраструктур.
 
 ## Определения
 
-**DHCP Relay Agent** — компонент (обычно на маршрутизаторе или Linux-хосте), который пересылает DHCP-запросы между подсетями, преобразуя broadcast в unicast.
+**DHCP Relay Agent (Ретранслятор DHCP)** — компонент (обычно на маршрутизаторе или Linux-хосте), который пересылает сообщения **DHCP (Dynamic Host Configuration Protocol — протокол динамической настройки узла)** между подсетями, когда клиент и сервер находятся в разных широковещательных доменах.
 
-**dhcrelay** — специализированная утилита из состава пакета ISC DHCP для выполнения функций ретранслятора в ОС Linux.
+**dhcrelay** — специализированный демон из состава пакета ISC DHCP для выполнения функций ретранслятора в ОС (операционных системах) семейства Linux.
 
-> **Основной документ:** [Концепция DHCP Relay](../../../../Networking/Protocols/DHCP/dhcp_relay.md) — принцип работы, поля `giaddr`/`hops`, RFC.
+**giaddr (Gateway IP Address)** — поле в заголовке DHCP-пакета, в которое ретранслятор записывает свой **IP-адрес (Internet Protocol — межсетевой протокол)** интерфейса, принявшего запрос от клиента. На основе этого адреса сервер определяет, из какой подсети выделить IP.
+
+> **Основной документ:** [Концепция DHCP Relay](../../../../Networking/Protocols/DHCP/dhcp_relay.md) — принцип работы, поля `giaddr`/`hops`, RFC (Request for Comments).
 
 ## Основные концепции
 
-### Назначение в Linux
+### Принцип работы в Linux
 
-В Linux-системах `dhcrelay` используется для организации централизованной DHCP-инфраструктуры, когда один сервер обслуживает несколько VLAN или удалённых подсетей. Это позволяет избежать развёртывания DHCP-сервера в каждом широковещательном сегменте.
+В Linux-системах `dhcrelay` работает на прикладном уровне модели **OSI (Open Systems Interconnection)**. Он прослушивает интерфейсы на наличие широковещательных запросов (broadcast) на порт **UDP (User Datagram Protocol)** 67.
+
+**Процесс обработки:**
+1. Принимает `DHCPDISCOVER` от клиента.
+2. Подставляет свой IP в поле `giaddr`.
+3. Пересылает пакет в виде направленной передачи (unicast) на настроенные IP-адреса DHCP-серверов.
+4. Принимает ответ от сервера и пересылает его обратно клиенту в соответствующую **VLAN (Virtual Local Area Network)** или подсеть.
 
 **Ключевые особенности:**
-
-- Работает как посредник между клиентами и удалённым сервером.
-- Использует интерфейсы, подключённые к клиентским подсетям и к подсети сервера.
-- Позволяет Linux-маршрутизатору заменять аппаратные решения (например, Cisco `ip helper-address`).
+- **Замена аппаратных решений:** Позволяет Linux-маршрутизатору заменять функционал Cisco `ip helper-address`.
+- **Поддержка Option 82:** Может добавлять информацию о порте и интерфейсе (`Agent Information Option`), что полезно для безопасности и детальной идентификации клиентов.
 
 ## Практические сценарии
 
 ### Debian / Ubuntu
 
 1. **Установка:**
-
     ```bash
     sudo apt update
     sudo apt install isc-dhcp-relay
     ```
 
 2. **Настройка** (`/etc/default/isc-dhcp-relay`):
-
-    ```ini
+    В процессе установки часто открывается интерактивное окно. Для ручной правки используйте:
+    ```bash
+    # Укажите IP-адреса DHCP-серверов через пробел
     SERVERS="10.0.4.4 10.0.4.5"
+    # Укажите интерфейсы (клиентские и серверный)
     INTERFACES="eth0 eth1"
+    # Дополнительные опции (например, -A для Option 82)
     OPTIONS=""
     ```
 
-    Либо через переопределение systemd:
-
+3. **Управление сервисом:**
     ```bash
-    sudo systemctl edit --full isc-dhcp-relay
-    ```
-
-3. **Запуск:**
-
-    ```bash
-    sudo systemctl start isc-dhcp-relay
+    sudo systemctl restart isc-dhcp-relay
     sudo systemctl enable isc-dhcp-relay
     ```
 
 ### RHEL / Rocky Linux / AlmaLinux
 
 1. **Установка:**
-
     ```bash
     sudo dnf install dhcp-server
     ```
 
-2. **Настройка** — редактирование systemd-юнита `dhcrelay.service`:
-
+2. **Настройка** (`/etc/sysconfig/dhcrelay`):
+    Отредактируйте файл конфигурации для передачи аргументов демону:
     ```bash
-    sudo systemctl edit --full dhcrelay.service
+    # Интерфейсы, на которых слушать запросы
+    INTERFACES="eth0 eth1"
+    # IP-адреса DHCP-серверов
+    SERVERS="10.0.4.4"
+    # Дополнительные аргументы
+    DHCRELAY_ARGS=""
     ```
 
-    В секции `[Service]` изменить `ExecStart`:
-
-    ```ini
-    [Service]
-    ...
-    ExecStart=/usr/sbin/dhcrelay -d --no-pid $DHCRELAY_ARGS 10.0.4.4 10.0.4.5
-    ```
-
-3. **Запуск:**
-
+3. **Управление сервисом:**
     ```bash
-    sudo systemctl daemon-reload
     sudo systemctl start dhcrelay
     sudo systemctl enable dhcrelay
     ```
+
+### Настройка Firewall
+
+Для работы ретранслятора необходимо разрешить трафик по протоколу UDP на портах 67 (server) и 68 (client).
+
+**Пример для `ufw` (Ubuntu):**
+```bash
+sudo ufw allow in on eth0 to any port 67 proto udp
+sudo ufw allow in on eth1 to any port 67 proto udp
+```
+
+**Пример для `firewalld` (RHEL):**
+```bash
+sudo firewall-cmd --add-service=dhcp --permanent
+sudo firewall-cmd --reload
+```
 
 ## Дополнительная информация
 
 ### Диагностика
 
-- `journalctl -u isc-dhcp-relay -f` — логи Relay на Debian/Ubuntu.
-- `journalctl -u dhcrelay -f` — логи на RHEL-подобных системах.
-- `tcpdump -i eth0 port 67 or port 68` — проверка прохождения DHCP-пакетов.
+* **Проверка портов:**
+    ```bash
+    ss -nlup | grep dhcrelay
+    # Ожидаемый результат: *:67
+    ```
+* **Просмотр логов:**
+    - Debian/Ubuntu: `journalctl -u isc-dhcp-relay -f`
+    - RHEL: `journalctl -u dhcrelay -f`
+* **Анализ трафика:**
+    ```bash
+    # Захват DHCP пакетов на конкретном интерфейсе
+    sudo tcpdump -i eth0 port 67 or port 68 -vv -n
+    ```
 
 ### Связанные документы
 
-- [Концепция DHCP Relay Agent](../../../../Networking/Protocols/DHCP/dhcp_relay.md)
-- [Обзор ISC DHCP](./isc_dhcp_server_overview.md)
-- [Базовая настройка ISC DHCP](./isc_dhcp_server_basic_config.md)
-- [Настройка Failover](./isc_dhcp_server_failover.md)
+- [Концепция DHCP Relay Agent](../../../../Networking/Protocols/DHCP/dhcp_relay.md) — теоретическая база и RFC.
+- [Обзор ISC DHCP](./isc_dhcp_server_overview.md) — архитектура и сравнение с Kea.
+- [Базовая настройка ISC DHCP](./isc_dhcp_server_basic_config.md) — настройка основного сервера.
+- [Настройка Failover](./isc_dhcp_server_failover.md) — обеспечение отказоустойчивости.
+- [Диагностика DHCP](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md) — общие методы устранения неполадок.

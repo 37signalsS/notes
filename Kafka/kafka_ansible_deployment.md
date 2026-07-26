@@ -158,6 +158,7 @@ scala_version=2.13
 
 ### См. также
 
+- **[Управление и тюнинг Java (JVM)](../Linux/Development/java_management.md)** — SSoT по настройке памяти, GC и работе в контейнерах.
 - **[Обзор Apache Kafka](./kafka_overview.md)** — основы архитектуры (брокеры, топики).
 - **[Kafka для мониторинга](./kafka_for_monitoring.md)** — метрики JMX, которые стоит собирать после деплоя.
 - **[Гарантии доставки](./delivery_guarantees.md)** — как настройки `acks` и `min.insync.replicas` влияют на надежность.

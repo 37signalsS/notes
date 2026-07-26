@@ -124,7 +124,7 @@ journalctl -b | head -n 1
 
 ### Связанные темы
 
-- [journalctl](../journalctl.md)
+- [journalctl](../journalctl/journalctl_overview.md)
 - [Kernel Panic](../../Core/kernel/kernel_panic.md)
 - [OOM Killer Diagnostics](../../Core/processes/oom_killer_diagnostics.md)
 - [Общая методология диагностики](./general_troubleshooting_methodology.md)

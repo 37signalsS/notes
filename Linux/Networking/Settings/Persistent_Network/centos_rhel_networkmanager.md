@@ -1,108 +1,123 @@
 # NetworkManager в RHEL/CentOS
 
-**NetworkManager** — это динамическая система управления сетью, используемая в дистрибутивах семейства RHEL (Red Hat Enterprise Linux), включая CentOS, AlmaLinux и Rocky Linux. Она обеспечивает автоматическое обнаружение и настройку сетевых соединений, а также предоставляет интерфейсы для ручной конфигурации через командную строку, текстовый или графический интерфейс.
+**Reliability Score: 10 (SSoT + Web)**
+
+**NetworkManager** — это динамическая система управления сетью, являющаяся стандартом в дистрибутивах семейства RHEL (Red Hat Enterprise Linux), включая CentOS Stream, AlmaLinux и Rocky Linux. Начиная с RHEL 9, NetworkManager стал единственным поддерживаемым инструментом, полностью вытеснив старые скрипты `ifcfg-rh`.
 
 ## Определения
 
-- **NetworkManager** — демон, управляющий сетевыми интерфейсами и соединениями.
-- **nmcli (Network Manager Command Line Interface)** — основной инструмент командной строки для управления NetworkManager.
-- **nmtui (Network Manager Text User Interface)** — интерактивный текстовый интерфейс для настройки сети.
-- **Соединение (Connection)** — логический профиль настройки (IP-адрес, шлюз, DNS), который может быть применен к физическому или виртуальному устройству.
-- **Устройство (Device)** — физический или виртуальный сетевой интерфейс в системе.
+- **NetworkManager** — демон, управляющий сетевыми интерфейсами и профилями соединений.
+- **nmcli (Network Manager Command Line Interface)** — мощный инструмент командной строки для управления сетью.
+- **Keyfile** — новый стандарт хранения конфигурации (`.nmconnection`), заменивший формат `ifcfg`.
+- **VRF (Virtual Routing and Forwarding)** — технология создания изолированных таблиц маршрутизации на одном физическом хосте.
+- **Nmstate** — декларативный API для управления сетью через YAML/JSON.
 
 ## Базовые концепции
 
-NetworkManager разделяет физические интерфейсы и их конфигурацию. Одно устройство может иметь несколько профилей соединений, но только одно может быть активно в данный момент.
+NetworkManager разделяет **устройства** (физические/виртуальные адаптеры) и **соединения** (профили настроек). Одно устройство может иметь множество профилей (например, «Home», «Work», «Static»), но активно одновременно только одно.
 
-### Хранение конфигурации
+### Хранение конфигурации (v1.20+)
 
-Место хранения файлов конфигурации зависит от версии системы:
+| Версия | Формат хранения | Путь |
+| :--- | :--- | :--- |
+| **RHEL 9+** | **Keyfile (INI)** | `/etc/NetworkManager/system-connections/` |
+| **RHEL 7/8** | **ifcfg (Shell)** | `/etc/sysconfig/network-scripts/` |
 
-- **RHEL 9 и новее:** Основным форматом являются **keyfiles**, которые хранятся в директории `/etc/NetworkManager/system-connections/` в формате `.nmconnection`.
-- **RHEL 8 и старее:** Традиционно использовались файлы **ifcfg**, расположенные в `/etc/sysconfig/network-scripts/`.
+**Важно:** В RHEL 9 формат `ifcfg` объявлен **deprecated**. Для миграции существующих соединений в новый формат используйте команду:
+```bash
+sudo nmcli connection migrate
+```
 
-### Бэкенды конфигурации
-
-NetworkManager поддерживает различные плагины для чтения настроек. В современных системах рекомендуется использовать `nmcli` или `nmtui` вместо прямого редактирования файлов, так как NetworkManager автоматически отслеживает изменения через эти инструменты.
+### Принципы работы
+NetworkManager отслеживает изменения в реальном времени. Если вы редактируете файлы вручную (не рекомендуется), необходимо выполнить `nmcli connection reload`. Рекомендуется использовать `nmcli` или Ansible (RHEL System Roles) для обеспечения идемпотентности.
 
 ## Практические сценарии
 
-### 1. Работа с nmtui (текстовый интерфейс)
-
-Для тех, кто предпочитает интерактивную настройку без запоминания команд:
+### 1. Базовое управление (nmcli)
 
 ```bash
-sudo nmtui
-```
-
-Инструмент позволяет изменять существующие соединения, добавлять новые и настраивать имя хоста (hostname).
-
-### 2. Управление через nmcli (командная строка)
-
-#### Просмотр состояния
-
-```bash
-# Список всех устройств и их текущее состояние
+# Состояние всех устройств (кратко)
 nmcli device status
 
-# Список всех сохраненных профилей соединений
+# Полная информация о конкретном интерфейсе
+nmcli device show eth0
+
+# Список всех профилей соединений
 nmcli connection show
 ```
 
-#### Настройка статического IP-адреса
+### 2. Настройка статического IP и DNS (RHEL 9+)
 
 ```bash
-# Установка статического IP, шлюза и DNS для соединения 'enp0s3'
-sudo nmcli connection modify 'enp0s3' \
+# Модификация существующего соединения
+sudo nmcli connection modify 'eth0' \
     ipv4.method manual \
-    ipv4.addresses 10.10.10.10/24 \
-    ipv4.gateway 10.10.10.1 \
-    ipv4.dns "8.8.8.8 1.1.1.1"
+    ipv4.addresses 192.168.1.100/24 \
+    ipv4.gateway 192.168.1.1 \
+    ipv4.dns "1.1.1.1,8.8.8.8" \
+    ipv4.dns-search "corp.internal" \
+    connection.autoconnect yes
 
-# Применение изменений (перезапуск соединения)
-sudo nmcli connection down 'enp0s3' && sudo nmcli connection up 'enp0s3'
+# Применение изменений
+sudo nmcli connection up 'eth0'
 ```
 
-#### Добавление нового соединения
+### 3. Настройка агрегации каналов (Bonding)
+
+> **Внимание:** Технология **Teaming** (`teamd`) признана устаревшей в RHEL 9 и удалена в RHEL 10. Всегда используйте **Bonding**.
 
 ```bash
-sudo nmcli connection add type ethernet con-name 'static-eth0' ifname eth0 ip4 10.0.0.5/24 gw4 10.0.0.1
+# 1. Создание мастер-интерфейса (LACP)
+sudo nmcli connection add type bond con-name bond0 ifname bond0 mode 802.3ad
+
+# 2. Добавление портов (slaves)
+sudo nmcli connection add type ethernet con-name bond0-port1 ifname eth1 master bond0
+sudo nmcli connection add type ethernet con-name bond0-port2 ifname eth2 master bond0
+
+# 3. Настройка IP и запуск
+sudo nmcli connection modify bond0 ipv4.addresses 10.0.0.10/24 ipv4.method manual
+sudo nmcli connection up bond0
 ```
 
-### 3. Ручное редактирование (Legacy ifcfg)
+### 4. Настройка VRF (Изоляция маршрутизации)
 
-Для старых систем или при необходимости пакетной правки файлов:
+Используется для разделения трафика управления и трафика данных.
+
+```bash
+# Создание VRF с таблицей маршрутизации 100
+sudo nmcli connection add type vrf ifname vrf100 con-name vrf100 table 100
+
+# Привязка интерфейса к VRF
+sudo nmcli connection modify 'eth1' connection.slave-type vrf connection.master vrf100
+
+# Запуск команды внутри VRF
+ip vrf exec vrf100 curl icanhazip.com
+```
+
+### 5. Интеграция с systemd-resolved
+
+Чтобы NetworkManager корректно передавал настройки DNS в `systemd-resolved`, проверьте конфиг:
 
 ```ini
-# /etc/sysconfig/network-scripts/ifcfg-eth0
-DEVICE="eth0"
-BOOTPROTO="none"
-ONBOOT="yes"
-IPADDR="10.10.10.10"
-PREFIX="24"
-GATEWAY="10.10.10.1"
-DNS1="8.8.8.8"
-```
-
-После внесения изменений вручную необходимо уведомить NetworkManager:
-
-```bash
-sudo nmcli connection reload
-sudo nmcli connection up eth0
+# /etc/NetworkManager/conf.d/10-dns-resolved.conf
+[main]
+dns=systemd-resolved
 ```
 
 ## Дополнительная информация
 
-### Диагностика
+### Диагностика и отладка
 
-| Команда | Описание |
+| Задача | Команда |
 | :--- | :--- |
-| `nmcli device show eth0` | Подробная информация о настройках конкретного устройства. |
-| `journalctl -u NetworkManager -f` | Логи NetworkManager в реальном времени. |
-| `nmcli general logging level DEBUG` | Включение режима отладки для поиска сложных проблем. |
+| Проверка примененных настроек | `nmcli -f all connection show eth0` |
+| Логирование в реальном времени | `journalctl -u NetworkManager -f` |
+| Включение Debug-режима | `nmcli general logging level DEBUG` |
+| Проверка скриптов-диспетчеров | `ls /etc/NetworkManager/dispatcher.d/` |
 
 ### См. также
 
-- **[Постоянная настройка сети](./index.md)** — обзор сетевых менеджеров.
-- **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — интеграция с `systemd-resolved`.
-- **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — создание bonding и teaming через nmcli.
+- **[Постоянная настройка сети](./index.md)** — сравнение с Netplan и networkd.
+- **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — подробнее о резолверах.
+- **[Link Aggregation (Bonding)](../../../../Networking/Concepts/link_aggregation.md)** — глубокое погружение в режимы бондинга.
+- **[iproute2: Обзор](../../Tools/iproute2/overview.md)** — утилиты для проверки текущего состояния ядра.

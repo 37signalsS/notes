@@ -2,143 +2,131 @@
 
 ## Определения
 
-`systemd-nspawn` — это утилита, которую можно рассматривать как "chroot на стероидах". Она использует современные технологии ядра Linux (пространства имён, cgroups) для запуска легковесных контейнеров, которые глубоко интегрированы с основной хост-системой.
-
-В отличие от Docker, `nspawn` не использует образы, а работает напрямую с корневой файловой системой rootfs (Root File System) другого дистрибутива, расположенной в директории.
-
-**Архитектурное положение:** systemd-nspawn занимает промежуточное положение между:
-
-- **Docker/Podman** (OCI (Open Container Initiative)-образы, слои, сеть, реестры)
-- **Виртуальными машинами VM (Virtual Machine)** (гипервизор, собственное ядро)
-
-Это **системный контейнер на уровне ОС (Операционная система)**: изолированный процесс со своим корнем файловой системы, PID (Process ID)-пространством и сетью. Ядро при этом общее с хостом.
+* **`systemd-nspawn`** — это системная утилита для запуска легковесных контейнеров (пространств имён) в Linux. Её часто называют «chroot на стероидах», так как она использует современные механизмы ядра (Namespaces, Cgroups) для полной изоляции файловой системы, процессов, сети и пользователей.
+* **Системный контейнер** — в отличие от прикладных контейнеров (Docker), ориентированных на запуск одного приложения, `nspawn` предназначен для запуска полноценной операционной системы с собственным init-процессом (PID 1).
 
 ## Основные концепции
 
-### Когда использовать systemd-nspawn
+### Сравнение с Docker и виртуальными машинами
 
-| Сценарий | Рекомендация |
-| :--- | :--- |
-| **Docker/Podman** | Когда нужны образы, реестры, оркестрация, микросервисы |
-| **systemd-nspawn** | Когда нужно: <br>• Быстро поднять изолированное окружение для теста или сборки <br>• Запустить другой дистрибутив на том же хосте без VM <br>• Отлаживать chroot, но с нормальной изоляцией <br>• Не тащить Docker на минималистичный сервер |
+| Характеристика | systemd-nspawn | Docker / Podman | Виртуальные машины |
+| :--- | :--- | :--- | :--- |
+| **Цель** | Системный контейнер (Full OS) | Прикладной контейнер (App) | Полная виртуализация (HW) |
+| **Рантайм** | Без демона (часть systemd) | Демон (dockerd) или без него | Гипервизор (KVM, ESXi) |
+| **Образы** | Директории, tar, raw-образы | OCI-слои | ISO, vmdk, qcow2 |
+| **Изоляция** | Высокая (Namespaces, Cgroups) | Высокая | Максимальная (аппаратная) |
+| **Накладные расходы** | Практически отсутствуют | Низкие | Значительные |
 
-### Преимущества перед альтернативами
+### Технологии изоляции и интеграция
 
-- **Никакого демона** — не требует отдельного сервиса в продакшене
-- **Никакого рантайма** — не нужны containerd, runc, crun
-- **Никакой регистрации** — не нужен Docker Hub или другие реестры
-- **Нулевые накладные расходы** — весит ноль байт сверх того, что уже есть в systemd
-- **Готов "из коробки"** — часть systemd, доступен сразу после установки
+`systemd-nspawn` обеспечивает глубокую интеграцию с экосистемой systemd:
+* **Изоляция:** Автоматическое создание пространств имён (`PID`, `mount`, `user`, `network`, `IPC`).
+* **Журналирование:** Логи контейнера напрямую доступны на хосте через `journalctl -M <имя>`.
+* **Управление:** Единый интерфейс управления через `machinectl`.
+* **Ресурсы:** Ограничение CPU и RAM через cgroups v2.
 
-Ключевые преимущества `systemd-nspawn` перед традиционным `chroot`:
+### Работа с образами
 
-- **Полная изоляция:** Автоматически создаёт отдельные пространства имён (namespaces) для:
-  - Процессов (`PID`)
-  - Файловой системы (`mount`)
-  - Пользователей (`user`)
-  - Сети (`network`)
-  - Межпроцессного взаимодействия (`IPC (Inter-Process Communication)`)
-- **Простота использования:** Может работать с готовыми образами системы (например, созданными через `debootstrap`) или простыми директориями.
-- **Глубокая интеграция с `systemd`:**
-  - Контейнером можно управлять как обычной системной службой (`systemd-nspawn@.service`).
-  - Полная поддержка логирования через `journald` хоста (включая машинный журнал).
-  - Управляется через утилиту `machinectl`.
+Хотя `nspawn` не использует многослойные образы Docker, он поддерживает:
+* **Директории:** Простые деревья файлов (rootfs).
+* **Архивы:** `.tar.gz`, `.tar.xz`.
+* **Дисковые образы:** `.raw`, `.qcow2` (через loop-устройства).
+* **Импорт:** `machinectl pull-dkr` позволяет скачивать и конвертировать образы из Docker Hub.
 
 ## Практические сценарии
 
 ### 1. Подготовка окружения
 
-Для запуска контейнера нужна его корневая файловая система. Для Debian/Ubuntu ее можно создать с помощью `debootstrap`.
+Для запуска нужен корень файловой системы (rootfs).
 
 ```bash
-# Устанавливаем debootstrap
+# Установка debootstrap (для Debian/Ubuntu)
 sudo apt install debootstrap
 
-# Создаем директорию для нашего контейнера
-sudo mkdir -p /var/lib/machines/mydebian
+# Создание директории контейнера
+sudo mkdir -p /var/lib/machines/my-debian
 
-# Устанавливаем минимальную систему Debian в эту директорию
-sudo debootstrap stable /var/lib/machines/mydebian http://deb.debian.org/debian/
+# Развертывание минимальной ОС
+sudo debootstrap stable /var/lib/machines/my-debian http://deb.debian.org/debian/
 ```
 
-> **Примечание:** systemd-nspawn работает с директориями в `/var/lib/machines` или `/srv`. Использование `/var/lib/machines` предпочтительнее для интеграции с `machinectl`.
+### 2. Режимы запуска и изоляции
 
-### 2. Запуск и управление
-
-#### Интерактивный запуск
-
+#### Интерактивный и системный запуск
 ```bash
-# Запустить контейнер из директории и войти в него
-sudo systemd-nspawn -D /var/lib/machines/mydebian
+# Простой запуск (аналог chroot с изоляцией)
+sudo systemd-nspawn -D /var/lib/machines/my-debian
 
-# Запустить контейнер с приватной виртуальной сетью (veth (Virtual Ethernet)-пара)
-sudo systemd-nspawn -D /var/lib/machines/mydebian --network-veth
-
-# Запустить и сразу выполнить команду
-sudo systemd-nspawn -D /var/lib/machines/mydebian /bin/bash -c "ls -la /"
-
-# Запуск как полноценный systemd-контейнер (с init-процессом)
-sudo systemd-nspawn -D /var/lib/machines/mydebian --boot --network-veth
+# Запуск с загрузкой init-системы (полноценная ОС)
+sudo systemd-nspawn -D /var/lib/machines/my-debian --boot --network-veth
 ```
 
-#### Утилита `machinectl`
+#### Эфемерный режим (Ephemeral)
+Позволяет запустить контейнер на временном снимке (snapshot). Все изменения будут стерты после остановки.
+```bash
+# Запуск временной копии
+sudo systemd-nspawn -x -D /var/lib/machines/my-debian
+```
 
-`machinectl` — это `systemctl` для контейнеров и виртуальных машин.
+#### Изоляция пользователей (User Namespaces)
+Безопасный режим, при котором root в контейнере не является root на хосте.
+```bash
+# Автоматическое назначение диапазона UID/GID
+sudo systemd-nspawn -U -D /var/lib/machines/my-debian
+```
+
+### 3. Настройка через файлы конфигурации (.nspawn)
+
+Настройки контейнера можно описать в файле `/etc/systemd/nspawn/my-debian.nspawn`. Это позволяет избежать длинных командных строк.
+
+```ini
+[Exec]
+Boot=yes
+Capability=CAP_NET_ADMIN
+
+[Network]
+VirtualEthernet=yes
+Bridge=br0
+```
+
+### 4. Управление через machinectl
+
+Утилита `machinectl` — основной интерфейс для работы с образами и запущенными контейнерами.
 
 ```bash
-# Показать список запущенных контейнеров ("машин")
+# Список всех машин (контейнеров)
 machinectl list
-# → список запущенных машин и их параметров (STATUS, PATH, ADDRESS)
+# → список активных контейнеров и их параметров
 
-# Войти в работающий контейнер (получить shell)
-machinectl shell mydebian
-# → открытие новой shell-сессии внутри контейнера
+# Вход в работающий контейнер (shell)
+machinectl shell my-debian
+# → открытие новой сессии внутри контейнера
 
-# Посмотреть статус машины
-machinectl status mydebian
-# → детальная информация о состоянии контейнера и процессах в нем
+# Скачивание образа из Docker Registry
+sudo machinectl pull-dkr library/debian --verify=no
+# → загрузка и конвертация образа в /var/lib/machines/debian
 
-# Остановить машину
-machinectl stop mydebian
-
-# Запустить машину
-machinectl start mydebian
+# Клонирование контейнера
+sudo machinectl clone my-debian backup-debian
 ```
 
-#### Запуск как системная служба
+### 5. Запуск как системная служба
 
-`systemd` предоставляет шаблонный юнит `systemd-nspawn@.service`, который позволяет легко запускать `nspawn`-контейнеры как обычные службы. Имя экземпляра — это имя директории в `/var/lib/machines` или `/srv`.
-
-Если наш контейнер находится в `/var/lib/machines/mydebian`, то служба будет называться `systemd-nspawn@mydebian.service`.
+Для постоянной работы контейнеров используется шаблонный юнит `systemd-nspawn@.service`.
 
 ```bash
-# Запустить контейнер как службу
-sudo systemctl start systemd-nspawn@mydebian.service
+# Включение автозапуска для контейнера в /var/lib/machines/my-debian
+sudo systemctl enable --now systemd-nspawn@my-debian.service
 
-# Включить автозапуск
-sudo systemctl enable systemd-nspawn@mydebian.service
-
-# Проверить статус
-systemctl status systemd-nspawn@mydebian.service
-# → статус системного юнита (active/running)
-```
-
-### 3. Минимальный пример: быстрый тест изоляции
-
-```bash
-# Создаём тестовое окружение
-sudo debootstrap stable /var/lib/machines/testenv
-
-# Запускаем изолированно
-systemd-nspawn -D /var/lib/machines/testenv
-
-# Внутри контейнера:
-# - Отдельная файловая система
-# - Отдельные PID (первый процесс имеет PID 1)
-# - Отдельное пространство имён
-# - Но общее ядро с хостом
+# Проверка состояния
+systemctl status systemd-nspawn@my-debian.service
+# → статус юнита: active (running)
 ```
 
 ## Дополнительная информация
 
-Альтернативы контейнеризации: [Docker](../../../Docker/docker_overview.md), [Podman vs Docker](../../../Podman/podman_vs_docker.md). Общий обзор: [Виртуализация в Linux](../../Virtualization/virtualization_overview.md). Технологии изоляции: [Namespaces](../namespaces.md), [Cgroups](../cgroups.md). Интеграция: [Systemd units](./systemd_units_overview.md), [Docker и systemd](../../../Docker/docker_systemd.md).
+### См. также
+* [Механизм Control Groups (cgroups)](../cgroups.md) — управление ресурсами.
+* [Пространства имён (Namespaces)](../namespaces.md) — основы изоляции в Linux.
+* [Утилита chroot](../chroot.md) — классический метод смены корня.
+* [Обзор systemd units](./systemd_units_overview.md) — работа с системными службами.

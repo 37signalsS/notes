@@ -138,7 +138,7 @@ iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
 **Смежные темы:**
 
-- **[VRF](../../Linux/Networking/vrf.md)** — изоляция на L3 (аналог VLAN для маршрутизации)
+- **[VRF](../../../Linux/Networking/vrf.md)** — изоляция на L3 (аналог VLAN для маршрутизации)
 - **[Таблицы маршрутизации в Linux](../../../Linux/SystemAdministration/routing.md)** — IP forwarding, маршруты
 - **[Настройка VLAN в Linux](./vlan_linux_diagnostics.md)** — VLAN-интерфейсы, диагностика
 - **[Trunk и Native VLAN](./vlan_trunk_native.md)** — trunk-порты для ROAS

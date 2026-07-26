@@ -2,106 +2,128 @@
 
 ## Определения
 
-* **PXE (Preboot Execution Environment — среда исполнения перед загрузкой)** — это стандартная среда, позволяющая компьютеру загружаться по сети, используя только свою сетевую карту, без необходимости в локальном загрузочном устройстве (жестком диске, USB).
+**PXE (Preboot Execution Environment — среда исполнения перед загрузкой)** — это стандартная среда, позволяющая компьютеру загружаться по сети, используя только свою сетевую карту (NIC), без необходимости в локальном загрузочном устройстве (жестком диске, USB-накопителе).
+
+**NBP (Network Boot Program — программа сетевой загрузки)** — небольшой исполняемый файл (например, `pxelinux.0` или `ipxe.efi`), который скачивается клиентом по сети и управляет дальнейшим процессом загрузки ОС.
+
+**HTTP Boot** — современное расширение спецификации UEFI, позволяющее загружать NBP или ядро ОС напрямую по протоколам HTTP/HTTPS вместо медленного и ненадежного TFTP.
 
 ## Базовые концепции
 
-PXE является стандартом де-факто для автоматической установки операционных систем в центрах обработки данных, запуска бездисковых рабочих станций и систем восстановления.
+PXE является стандартом де-факто для автоматизированного развертывания серверов (Bare Metal Provisioning), работы бездисковых станций (VDI) и систем аварийного восстановления.
 
 ### Компоненты PXE-инфраструктуры
 
-1. **Клиент:** Компьютер с сетевой картой, поддерживающей PXE.
-2. **DHCP-сервер (Dynamic Host Configuration Protocol — протокол динамической настройки узла):** Выдает клиенту IP-адрес и передает информацию о местонахождении TFTP-сервера (`next-server`) и имени файла для загрузки (`filename`).
-3. **TFTP-сервер (Trivial File Transfer Protocol — простой протокол передачи файлов):** Простой файловый сервер, который отдает по сети **NBP (Network Boot Program — программа сетевой загрузки)**.
-4. **Файловый сервер HTTP (HyperText Transfer Protocol) / NFS (Network File System):** Хранит ядро, `initrd` и основной образ операционной системы.
+1.  **Клиент:** Устройство с сетевой картой, поддерживающей стек PXE (в ПЗУ карты или в прошивке UEFI).
+2.  **DHCP-сервер:** Выдает клиенту временный IP-адрес и передает параметры загрузки:
+    *   `next-server` (Option 66): IP-адрес сервера загрузки.
+    *   `filename` (Option 67): Имя загрузочного файла.
+3.  **TFTP-сервер:** Предоставляет загрузчик (NBP) по упрощенному протоколу UDP. В современных сетях TFTP используется только для доставки первичного загрузчика (iPXE/GRUB), который затем переходит на HTTP.
+4.  **Файловый сервер (HTTP/NFS):** Хранит тяжелые компоненты: ядро Linux (`vmlinuz`), `initramfs`, файлы инсталлятора или корневую файлорую систему (`rootfs`).
 
-### Процесс загрузки
+### Процесс загрузки (Legacy vs UEFI)
 
-1. **BIOS (Basic Input/Output System) / UEFI (Unified Extensible Firmware Interface)** инициализирует сетевую карту.
-2. Сетевая карта отправляет широковещательный **DHCP-запрос**.
-3. **DHCP-сервер** отвечает, предоставляя IP-адрес и опции `next-server` (IP TFTP-сервера) и `filename` (имя загрузчика, например `pxelinux.0` или `ipxe.efi`).
-4. Клиент скачивает **NBP** с TFTP-сервера в оперативную память и исполняет его.
-5. NBP (например, **PXELINUX**) скачивает свою конфигурацию, ядро Linux (`vmlinuz`) и `initrd`.
-6. Запускается ядро, которое монтирует корневую файловую систему по сети через **NFS** или **iSCSI (Internet Small Computer Systems Interface)**, либо начинает автоматическую установку ОС, скачивая файлы с HTTP-сервера.
+| Этап | Legacy (BIOS) | UEFI |
+| :--- | :--- | :--- |
+| **Инициализация** | 16-битный стек PXE | 32/64-битный EFI Network Stack |
+| **DHCP Запрос** | Обычный DHCP Discover | DHCP Discover с указанием Architecture Type (Option 93) |
+| **Получение NBP** | Скачивает `pxelinux.0` через TFTP | Скачивает `.efi` файл (через TFTP или HTTP Boot) |
+| **Режим CPU** | Реальный режим (1 МБ памяти) | Защищенный режим (доступ ко всей памяти) |
+| **Безопасность** | Отсутствует | Поддержка Secure Boot (подпись загрузчика) |
+
+#### Детальный механизм DORA-загрузки:
+1.  **Discover:** Клиент рассылает широковещательный запрос.
+2.  **Offer:** DHCP-сервер предлагает IP и указывает `next-server`.
+3.  **Request:** Клиент запрашивает предложенные параметры.
+4.  **Acknowledge:** Сервер подтверждает аренду и передает `filename` (путь к NBP).
+5.  **Transfer:** Клиент обращается к TFTP-серверу за файлом NBP.
 
 Подробнее о [процессе загрузки Linux](../../Core/kernel/boot_process.md).
 
 ## Практические сценарии
 
-### 1. Настройка PXE-загрузки в BIOS/UEFI
+### 1. Настройка сетевой загрузки в прошивке
 
-* Войдите в настройки BIOS/UEFI.
-* Найдите раздел `Boot` или `Advanced`.
-* Включите опцию `Network Boot` или `LAN Boot`.
-* Установите сетевую карту (`Network Adapter`, `Onboard LAN`) в качестве первого загрузочного устройства.
+*   **BIOS:** Включить `LAN Option ROM` или `Network Stack`. Установить `Network/PXE` первым в `Boot Priority`.
+*   **UEFI:** Включить `Network Stack`, выбрать режим `IPv4 PXE Support` или `IPv6 PXE Support`. Для использования **HTTP Boot** необходимо выбрать соответствующий тип загрузки в меню BIOS (доступно в UEFI 2.5+).
 
-### 2. Развертывание PXE-сервера
+### 2. Настройка DHCP для PXE (Dnsmasq)
 
-* **[DHCP-сервер: Развертывание и настройка](../Services/DHCP/isc_dhcp_server_overview.md)**
-* **TFTP-сервер (например, `tftpd-hpa`):**
-  * В корневой директории TFTP (часто `/srv/tftp/`) размещаются загрузчик `pxelinux.0`, директория `pxelinux.cfg/` с конфигурационными файлами, ядро `vmlinuz` и `initrd`.
-* **HTTP/NFS-сервер:**
-  * Предоставляет доступ к файлам установки ОС (например, `Kickstart` для CentOS/RHEL или `Preseed` для Debian/Ubuntu).
+`dnsmasq` — наиболее удобный инструмент для малых и средних сред, совмещающий DHCP, TFTP и DNS.
 
-## Дополнительная информация
+```bash
+# /etc/dnsmasq.conf
+interface=eth0
+dhcp-range=192.168.1.50,192.168.1.150,255.255.255.0,12h
 
-### iPXE: продвинутый сетевой загрузчик
+# Параметры для PXE
+enable-tftp
+tftp-root=/srv/tftp
 
-**iPXE** — это мощная open-source реализация PXE, которая расширяет его возможности. iPXE можно загрузить по цепочке (chainloading), он поддерживает:
+# Определение типа клиента (Option 93)
+dhcp-match=set:efi64,option:client-arch,7
+dhcp-match=set:efi64,option:client-arch,9
+dhcp-match=set:bios,option:client-arch,0
 
-* Загрузку образов по **HTTP**, **iSCSI**, Fibre Channel.
-* Работу с Wi-Fi сетями.
-* Исполнение скриптов для сложной логики загрузки.
+# Выдача разных загрузчиков в зависимости от архитектуры
+dhcp-boot=tag:bios,pxelinux.0
+dhcp-boot=tag:efi64,ipxe.efi
+```
 
-Это позволяет отказаться от медленного TFTP в пользу HTTP.
+### 3. Развертывание iPXE: Продвинутая загрузка
 
-**Пример скрипта iPXE:**
+**iPXE** — это open-source реализация PXE, которая позволяет обходить ограничения классического PXE (медленный TFTP, отсутствие скриптов).
 
+**Преимущества iPXE:**
+*   Загрузка через **HTTP/HTTPS** (в 10-50 раз быстрее TFTP).
+*   Загрузка через **iSCSI**, **NFS**, **Fibre Channel**.
+*   Поддержка скриптов для меню выбора ОС.
+
+**Пример скрипта iPXE (`boot.ipxe`):**
 ```ipxe
 #!ipxe
 dhcp
-set boot-url http://192.168.1.100/install
-kernel ${boot-url}/vmlinuz initrd=initrd.img ip=dhcp
-initrd ${boot-url}/initrd.img
+set server_ip 192.168.1.10
+set base-url http://${server_ip}/os
+
+menu Choose Operating System
+item ubuntu_24_04 Install Ubuntu 24.04 LTS
+item rescue       System Rescue
+choose --default ubuntu_24_04 --timeout 5000 target || goto cancel
+
+:ubuntu_24_04
+kernel ${base-url}/ubuntu/vmlinuz initrd=initrd.gz cloud-config-url=${base-url}/configs/user-data ip=dhcp
+initrd ${base-url}/ubuntu/initrd.gz
+boot
+
+:rescue
+kernel ${base-url}/rescue/vmlinuz
+initrd ${base-url}/rescue/initrd.img
 boot
 ```
 
-### PXE в средах UEFI
+## Дополнительная информация
 
-* **Загрузчики:** Для Legacy BIOS требуется `pxelinux.0`, для UEFI используются `.efi` файлы (`shim.efi`, `grubx64.efi` или `ipxe.efi`).
-* **Secure Boot:** В средах с включенным Secure Boot загрузчики должны быть подписаны доверенным ключом.
+### Диагностика и решение проблем
 
-### Безопасность
+| Симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| **PXE-E32: TFTP Timeout** | TFTP сервер недоступен или заблокирован файрволом | Проверить UDP порт 69. Проверить `tftp-root`. |
+| **PXE-E51: No DHCP offers** | Клиент не видит DHCP-сервер или пул адресов пуст | Проверить L2-связность. Включить [DHCP Snooping](../../../Networking/Protocols/DHCP/dhcp_security.md#dhcp-snooping---отслеживание-dhcp) на коммутаторе. |
+| **PXE-E53: No boot filename** | DHCP-сервер выдал IP, но не передал Option 67 | Проверить конфиг DHCP на наличие параметра `filename`. |
+| **UEFI: Secure Boot Violation** | Загрузчик (`ipxe.efi`) не подписан | Отключить Secure Boot или использовать подписанный загрузчик `shim.efi`. |
 
-Стандартный PXE не поддерживает шифрование, трафик передается в открытом виде. Риски:
+### Современные решения для Provisioning (2026)
 
-* **Rogue DHCP Server:** подмена загрузчика злоумышленником.
-* **Перехват данных:** компрометация конфигурационных файлов.
+| Решение | Описание | Основной метод |
+| :--- | :--- | :--- |
+| **Netbox + Netbox-Provisioning** | Автоматизация на основе данных из IPAM/DCIM | iPXE API |
+| **Tinkerbell (Equinix)** | Cloud-native Provisioning через Kubernetes | PXE + Hook (Docker images) |
+| **Canonical MAAS** | Управление физическими серверами как облаком | PXE + DHCP + IPMI |
+| **Red Hat Ironic** | Компонент OpenStack для Bare Metal | iPXE / Virtual Media |
 
-Рекомендации:
-
-* Использование iPXE с загрузкой по HTTPS.
-* Изоляция PXE-сегмента сети (VLAN).
-* Включение [DHCP Snooping](../../../Networking/Protocols/DHCP/dhcp_security.md#dhcp-snooping---отслеживание-dhcp).
-
-### Современные решения для Provisioning
-
-| Решение | Описание | Использование PXE |
-|---------|----------|-------------------|
-| **MAAS (Metal as a Service)** | Управление физическими серверами как облаком | PXE + DHCP + TFTP |
-| **Tinkerbell** | CNCF проект, workflow-based provisioning | PXE/HTTP |
-| **Virtual Media (IPMI/iDRAC)** | Монтирование ISO удалённо | Альтернатива PXE |
-
-### Альтернативы PXE
-
-| Метод | Преимущества | Недостатки |
-|-------|-------------|------------|
-| **IPMI Virtual Media** | Не требует PXE-инфраструктуры | Медленнее, требует лицензий |
-| **iSCSI Boot** | Загрузка по iSCSI напрямую | Требует поддержки NIC |
-| **HTTP Boot (UEFI)** | Быстрее TFTP, проще настройка | Требуется UEFI 2.0+ |
-
-См. также:
-
+### См. также
 * [Настройка DHCP-сервера](../Services/DHCP/isc_dhcp_server_overview.md)
 * [Процесс загрузки Linux](../../Core/kernel/boot_process.md)
+* [BIOS и UEFI](../../Core/firmware_bios_uefi.md)
 * [Безопасность DHCP](../../../Networking/Protocols/DHCP/dhcp_security.md)

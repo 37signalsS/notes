@@ -1,4 +1,4 @@
-# Администрирование Policy-Based Routing
+# Администрирование Policy-Based Routing (PBR)
 
 ## Определения
 
@@ -53,24 +53,8 @@ ip route get 8.8.8.8 from 192.168.1.100 iif eth1
 
 Примеры настройки для различных системных менеджеров:
 
-#### Debian / Ubuntu (ifupdown)
-
-Файл `/etc/network/interfaces`:
-
-```bash
-iface eth0 inet static
-    address 192.168.1.100/24
-    # Добавление правил при поднятии интерфейса
-    post-up ip route add default via 192.168.1.1 table 100
-    post-up ip rule add from 192.168.1.100 table 100 priority 1000
-    # Удаление правил при опускании интерфейса
-    pre-down ip rule del from 192.168.1.100 table 100 priority 1000
-```
-
 #### Systemd-networkd
-
 Файл `/etc/systemd/network/10-eth0.network`:
-
 ```ini
 [Route]
 Gateway=192.168.1.1
@@ -83,9 +67,7 @@ Priority=1000
 ```
 
 #### Netplan
-
 Файл `/etc/netplan/01-netcfg.yaml`:
-
 ```yaml
 network:
   ethernets:
@@ -102,36 +84,34 @@ network:
 При использовании PBR для асимметричной маршрутизации механизм `rp_filter` может ошибочно классифицировать пакеты как спуфинг.
 
 **Режимы фильтрации:**
-
-- `1` (Strict) — строгая проверка (пакет отбрасывается, если ответный путь не через тот же интерфейс). Несовместимо с PBR.
+- `1` (Strict) — строгая проверка. Несовместимо с PBR.
 - `2` (Loose) — ослабленная проверка (проверяется только наличие любого маршрута к источнику). **Рекомендуется для PBR.**
 
 **Применение настроек:**
-
 ```bash
 # Временная настройка
 sudo sysctl -w net.ipv4.conf.all.rp_filter=2
-sudo sysctl -w net.ipv4.conf.default.rp_filter=2
 
 # Постоянная настройка в /etc/sysctl.d/99-pbr.conf
 net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.default.rp_filter = 2
 ```
 
-### Диагностика и устранение неисправностей
+---
+
+## Диагностика и устранение неисправностей
 
 | Проблема | Диагностика | Решение |
 | :--- | :--- | :--- |
 | **Трафик игнорирует правила** | `ip rule show` | Проверить приоритеты (правила с меньшим числом выше). |
 | **Ответы не уходят (Drop)** | `sysctl net.ipv4.conf.all.rp_filter` | Установить значение `2` (Loose mode). |
 | **Конфликт таблиц** | `cat /etc/iproute2/rt_tables` | Убедиться, что ID таблиц уникальны и не перекрываются. |
-| **Маркировка не срабатывает** | `iptables -t mangle -L -v` | Проверить счетчики пакетов в цепочках PREROUTING/OUTPUT. |
+| **Маркировка не срабатывает** | `nft list ruleset` / `iptables -t mangle -L -v` | Проверить счетчики пакетов в цепочках. |
 
 ---
 
 ## Дополнительная информация
 
-- [ip route](../Tools/iproute2/ip_route.md) — детальное описание управления таблицами.
-- [ip rule и PBR](../Tools/iproute2/ip_rule_pbr.md) — синтаксис и селекторы правил.
-- [обзор iproute2](../Tools/iproute2/overview.md) — общие сведения об утилитах семейства.
-- [диагностика сети](../network_diagnostics_tools.md) — общие методы траблшутинга.
+- **[ip rule & PBR](../Tools/iproute2/ip_rule_pbr.md)** — синтаксис и селекторы правил.
+- **[ip route](../Tools/iproute2/ip_route.md)** — управление таблицами маршрутизации.
+- **[Сценарии PBR](./scenarios.md)** — практические примеры настройки.

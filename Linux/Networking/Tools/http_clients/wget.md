@@ -1,8 +1,8 @@
-# Wget: Надежное скачивание и зеркалирование
+# Wget — надежное скачивание и зеркалирование
 
 ## Определения
 
-**GNU Wget** — утилита CLI (Command Line Interface) для надежного скачивания файлов и создания локальных зеркал веб-сайтов. Поддерживает протоколы HTTP (HyperText Transfer Protocol), HTTPS (HyperText Transfer Protocol Secure), FTP (File Transfer Protocol). Отличается устойчивостью к разрывам соединения и возможностью работы в фоне.
+**GNU Wget** — утилита командной строки для надежного скачивания файлов и создания локальных зеркал веб-сайтов. Поддерживает протоколы HTTP, HTTPS и FTP. Основное преимущество — высокая устойчивость к нестабильным сетевым соединениям: Wget может автоматически продолжать загрузку после обрыва связи.
 
 ## Основные концепции
 
@@ -14,220 +14,147 @@ wget [опции] [URL]
 
 **Основные группы опций:**
 
-- **Загрузка:** `-O`, `-o`, `-c`, `-b`
-- **Рекурсия:** `-r`, `-l`, `-k`, `-p`
-- **Аутентификация:** `--user`, `--password`, `--load-cookies`
-- **Отладка:** `--debug`, `-v`
+- **Загрузка:** `-O` (имя выходного файла), `-c` (продолжить загрузку), `-b` (работа в фоне).
+- **Рекурсия:** `-r` (рекурсивно), `-l` (глубина), `-k` (преобразовать ссылки), `-p` (все ресурсы страницы).
+- **Аутентификация:** `--user`, `--password`, `--load-cookies`, `--save-cookies`.
+- **Сеть:** `--tries` (попытки), `--timeout`, `--limit-rate` (ограничение скорости).
 
-### 2. wget vs wget2
+### 2. Сравнение Wget и Wget2
 
-| Характеристика | wget | wget2 |
+Wget2 — это современный наследник Wget, разработанный с нуля для работы в многопоточном режиме.
+
+| Характеристика | Wget (v1.x) | Wget2 (v2.x) |
 | :--- | :--- | :--- |
-| **Многопоточность** | Нет | Да |
-| **HTTP/2** | Нет | Да |
-| **Поведение при 4xx/5xx** | Возвращает ошибку | Возвращает ошибку (надёжнее) |
-| **Статус** | Стабильная версия | Новая версия (развивается) |
-
-> **Примечание:** wget2 — новая версия с поддержкой многопоточности и HTTP/2, но пока менее распространена.
+| **Многопоточность** | Нет (последовательно) | Да (параллельная загрузка чанков) |
+| **HTTP/2 и HTTP/3** | Только HTTP/1.1 | Поддержка HTTP/2 и HTTP/3 |
+| **Производительность** | Стандартная | Значительно быстрее на больших файлах |
+| **Совместимость** | Полная | Высокая, но некоторые флаги отличаются |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Базовая загрузка файла
+### Сценарий 1. Базовая загрузка и управление файлами
 
 ```bash
-# Простая загрузка
+# Простая загрузка файла в текущую директорию
 wget https://example.com/file.zip
-# → 'file.zip' saved [1024/1024]
 
-# Загрузка с указанием имени файла
-wget -O myfile.zip https://example.com/file.zip
+# Загрузка с переименованием (имя из URL игнорируется)
+wget -O production_backup.zip https://example.com/backup_2024.zip
 
-# Продолжение прерванной загрузки
-wget -c https://example.com/large-file.zip
+# Использование имени файла из заголовка Content-Disposition (важно для API/S3)
+wget --content-disposition https://example.com/download?id=123
 
-# Фоновая загрузка
-wget -b https://example.com/large-file.zip
-# → Output will be written to 'wget-log'.
+# Продолжение прерванной загрузки (Resume)
+wget -c https://example.com/large-iso-image.iso
+
+# Работа в фоновом режиме (логи записываются в wget-log)
+wget -b https://example.com/archive.tar.gz
 ```
 
-### Сценарий 2: Зеркалирование сайта
+### Сценарий 2. Создание зеркала сайта (Offline Copy)
 
 ```bash
-# Полное зеркало для офлайн-просмотра
-wget -r -l inf -k -p --adjust-extension https://example.com
+# Полная копия сайта для локального просмотра
+# -r: рекурсивно
+# -l inf: бесконечная глубина
+# -k: замена ссылок на локальные (./path/to/file)
+# -p: загрузка изображений/стилей для корректного рендеринга
+# -np: не подниматься выше родительской директории
+wget -r -l inf -k -p -np --adjust-extension https://example.com/docs/
 
-# С ограничением глубины (3 уровня)
-wget -r -l 3 -k -p https://example.com
-
-# С ограничением скорости (100 КБ/с)
-wget -r -l inf --limit-rate=100k https://example.com
-
-# Только файлы определённого типа
-wget -r -l inf -A.pdf https://example.com
+# Ограничение нагрузки на сервер (этичное зеркалирование)
+wget -r --limit-rate=200k --wait=2 --random-wait https://example.com
 ```
 
-**Опции зеркалирования:**
-
-| Опция | Описание |
-| :--- | :--- |
-| `-r`, `--recursive` | Рекурсивная загрузка |
-| `-l <depth>`, `--level=<depth>` | Глубина рекурсии (`inf` — бесконечно) |
-| `-k`, `--convert-links` | Преобразовать ссылки для локального просмотра |
-| `-p`, `--page-requisites` | Загрузить все ресурсы страницы (CSS, JS, изображения) |
-| `--adjust-extension` | Добавлять расширения (.html, .css) к файлам |
-| `--limit-rate=<rate>` | Ограничить скорость загрузки |
-| `-A <ext>`, `--accept=<ext>` | Загружать только файлы с указанными расширениями |
-| `-R <ext>`, `--reject=<ext>` | Исключить файлы с указанными расширениями |
-
-### Сценарий 3: Массовая загрузка файлов
+### Сценарий 3. Массовая автоматизация и CI/CD
 
 ```bash
-# Загрузка из списка URL (Uniform Resource Locator) (каждый URL с новой строки)
-wget -i urls.txt
+# Загрузка списка URL из файла
+wget -i download_list.txt
 
-# Загрузка с продолжением прерванных файлов
-wget -c -i urls.txt
+# Использование в Docker Healthcheck (тихий режим, проверка статуса)
+wget --spider -q http://localhost:8080/health || exit 1
 
-# Загрузка в фоновом режиме
-wget -b -i urls.txt
+# Повторные попытки при ошибках сервера (5xx)
+# Полезно для нестабильных API в пайплайнах
+wget --tries=10 --retry-on-http-error=503,504 https://api.example.com/data
 ```
 
-### Сценарий 4: Работа с cookies и аутентификацией
+### Сценарий 4. Аутентификация и Cookies
 
 ```bash
-# Basic auth
-wget --user=admin --password=secret https://example.com/protected
+# Базовая аутентификация
+wget --user=devops --password=secret https://repo.example.com/file.rpm
 
-# Сохранить cookies
-wget --save-cookies cookies.txt https://example.com/login
+# Работа с сессионными cookies
+# 1. Сначала логинимся и сохраняем cookies
+wget --post-data 'user=a&pass=b' --save-cookies auth.txt https://example.com/login
+# 2. Используем их для доступа к закрытым данным
+wget --load-cookies auth.txt https://example.com/dashboard
 
-# Загрузить cookies
-wget --load-cookies cookies.txt https://example.com/profile
-
-# Использование .netrc (файл ~/.netrc)
-# machine example.com login user password pass
-wget --netrc https://example.com/protected
+# Использование .netrc для безопасности (не светить пароль в истории команд)
+# ~/.netrc: machine repo.example.com login devops password secret
+wget --netrc https://repo.example.com/file.rpm
 ```
 
-### Сценарий 5: wget как простой API (Application Programming Interface) клиент
+### Сценарий 5. Диагностика и обход ограничений
 
 ```bash
-# GET-запрос с заголовками
-wget --header='Accept: application/json' \
-     https://api.example.com/users
-
-# POST с данными формы
-wget --post-data='name=John&age=30' \
-     https://api.example.com/users
-
-# POST с JSON (JavaScript Object Notation) (вручную указываем Content-Type)
-wget --header='Content-Type: application/json' \
-     --post-data='{"name":"John","age":30}' \
-     https://api.example.com/users
-
-# Вывод ответа в stdout
-wget -q -O - https://api.example.com/users
-```
-
-> **Примечание:** wget менее удобен для API по сравнению с curl и httpie — нет встроенной поддержки multipart/form-data, JSON сериализуется вручную.
-
-### Сценарий 6: Отладка и диагностика
-
-```bash
-# Подробный вывод
-wget -v https://example.com
-# → Resolving example.com... 93.184.216.34 ... Connected.
-
-# Максимально подробный вывод (debug)
-wget --debug https://example.com
-
-# Только проверка доступности (без загрузки)
-wget --spider https://example.com/file.zip
+# Проверка существования файла без загрузки
+wget --spider https://example.com/huge-file.zip
 # → Remote file exists.
 
-# С таймаутом
-wget --timeout=10 https://example.com
-```
+# Подмена User-Agent (для сайтов, блокирующих wget)
+wget -U "Mozilla/5.0 (Windows NT 10.0; rv:100.0) Gecko/20100101 Firefox/100.0" https://example.com
 
-### Сценарий 7: Обход ограничений
+# Игнорирование ошибок SSL (для self-signed сертификатов в dev-среде)
+wget --no-check-certificate https://internal-dev.local/config.yaml
 
-```bash
-# Подмена User-Agent
-wget --user-agent='Mozilla/5.0' https://example.com
-
-# Игнорирование SSL (Secure Sockets Layer) сертификатов
-wget --no-check-certificate https://self-signed.example.com
-
-# Принудительное использование IPv4
-wget -4 https://example.com
-
-# Принудительное использование IPv6
-wget -6 https://example.com
-```
-
-### Сценарий 8: Роботы и этичное скачивание
-
-```bash
-# Соблюдать robots.txt (по умолчанию включено)
-wget -e robots=on https://example.com
-
-# Игнорировать robots.txt (использовать с осторожностью!)
-wget -e robots=off https://example.com
-
-# Задержка между запросами (в секундах)
-wget -r --wait=2 https://example.com
-
-# Случайная задержка (от 1 до 3 секунд)
-wget -r --random-wait https://example.com
+# Поддержка HSTS (HTTP Strict Transport Security)
+wget --hsts --hsts-file=~/.wget-hsts https://example.com
 ```
 
 ---
 
 ## Дополнительная информация
 
-### 1. Коды возврата
+### 1. Коды возврата (Exit Codes)
 
 | Код | Описание |
 | :--- | :--- |
 | **0** | Успех |
 | **1** | Общая ошибка |
-| **2** | Ошибка парсинга |
-| **3** | Ошибка ввода-вывода |
-| **4** | Ошибка сети |
-| **5** | Ошибка SSL |
-| **6** | Ошибка аутентификации |
-| **7** | Ошибка протокола |
-| **8** | Сервер вернул ошибку (4xx/5xx) |
+| **4** | Ошибка сети (Network failure) |
+| **5** | Ошибка SSL/TLS |
+| **6** | Ошибка аутентификации (401/403) |
+| **8** | Сервер вернул ошибку (404, 500 и т.д.) |
 
-### 2. Вывод в stdout
+### 2. Вывод в стандартный поток (stdout)
 
-Для передачи вывода wget в конвейер (pipe) используйте `-O -`:
+Для передачи данных в конвейер (например, для `jq` или `grep`) используйте `-O -`:
 
 ```bash
-wget -q -O - https://api.example.com/data | jq .
+# Тихая загрузка JSON и его обработка
+wget -qO- https://api.ipify.org?format=json | jq .ip
 ```
 
-### 3. Скачивание файла с именем `-`
+### 3. Работа с Metalink
 
-Если файл называется `-`, используйте `./-`:
+Wget поддерживает Metalink для автоматического выбора лучшего зеркала и проверки контрольных сумм:
 
 ```bash
-wget https://example.com/-
-# или
-wget https://example.com/./-
+wget --metalink=distribution.metalink
 ```
 
-### 4. Metalink и цифровые подписи
+### 4. Рекомендации по безопасности
 
-wget поддерживает Metalink-файлы для автоматического выбора зеркал и проверки целостности:
-
-```bash
-wget --metalink=file.metalink https://example.com/file.iso
-```
+1.  **Не передавайте пароли через флаги:** Используйте `--netrc` или переменные окружения, так как параметры командной строки видны в списке процессов (`ps aux`).
+2.  **Проверка сертификатов:** Старайтесь не использовать `--no-check-certificate` в продакшене. Если сертификат самоподписанный, лучше использовать `--ca-certificate=/path/to/cert.crt`.
 
 ### 5. Связанные заметки
 
-- **[Обзор HTTP-клиентов](./overview.md)** — сравнение curl, wget, httpie
-- **[Инструменты диагностики сети](../../network_diagnostics_tools.md)**
+- **[Обзор HTTP-клиентов](./overview.md)** — сравнение curl, wget, httpie.
+- **[Диагностика сети](../../network_diagnostics_tools.md)** — общие инструменты.
+- **[curl: универсальный инструмент](./curl.md)** — основной CLI-клиент для API.

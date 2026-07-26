@@ -112,19 +112,20 @@ resources:
 - Для Python: `tracemalloc`, `objgraph`.
 - Для Node.js: `--inspect` и Chrome DevTools.
 
-#### 3. Настройка JVM в контейнерах (Java 11/17/21+)
+#### 3. Настройка JVM в контейнерах (Java 17/21+)
 
-Современные версии Java (начиная с 8u191, 11+) корректно распознают лимиты контейнера.
+Современные версии Java корректно распознают лимиты cgroups. Для предотвращения OOMKilled используйте процентное управление кучей, оставляя запас для Non-Heap памяти.
 
-**Рекомендация:** Используйте процентное управление кучей (Heap), чтобы оставить место для non-heap памяти (Metaspace, Stack, Direct Buffers).
+*   **Рекомендация:** Устанавливайте `-XX:MaxRAMPercentage=75.0`.
+*   **Подробное руководство:** См. SSoT-файл **[Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md)**.
 
 ```yaml
 env:
 - name: JAVA_TOOL_OPTIONS
-  value: "-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0"
+  value: "-XX:MaxRAMPercentage=75.0"
 resources:
   limits:
-    memory: "1Gi" # JVM увидит 1Gi и выделит ~768Mi под Heap
+    memory: "1Gi"
 ```
 
 #### 4. OOM при запуске

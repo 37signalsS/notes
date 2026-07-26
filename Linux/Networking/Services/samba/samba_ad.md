@@ -8,62 +8,62 @@
 
 **idmap** — подсистема Samba для маппинга идентификаторов безопасности Windows (SID) на Unix-идентификаторы (UID/GID). Централизованное управление UID/GID критично для корректной работы в домене.
 
+**SSPR (Self-Service Password Reset)** — (Новое в 2026) возможность сброса паролей пользователями через веб-интерфейс (Keycloak/Entra ID), который интегрируется с политиками паролей Samba.
+
 ## Базовые концепции
 
 ### Требования
 
-- Настроенный домен Active Directory.
-- Синхронизация времени (Kerberos требует точного времени, расхождение ≤5 минут).
-- Пакет `winbind`.
+- Настроенный домен Active Directory (Windows Server 2016+ или Samba AD DC).
+- Синхронизация времени через **Chrony** или **NTP** (расхождение Kerberos ≤5 минут).
+- Пакеты `winbind` и `libnss-winbind`.
 
-### Уровни безопасности (`security`)
+### Уровни безопасности и Hardening (Стандарты 2026)
 
-| Режим | Описание |
-| :--- | :--- |
-| `security = user` | Стандартный режим, локальная аутентификация |
-| `security = ads` | Член домена Active Directory, Kerberos |
-| `security = domain` | Устаревший режим для NT4-доменов |
+| Параметр | Описание | Рекомендация |
+| :--- | :--- | :--- |
+| `security = ads` | Член домена Active Directory | Обязательно для AD. |
+| **`kerberos method`** | Метод проверки билетов | `secrets and keytab` |
+| **`kdc require canonicalization`** | Защита от impersonation | `yes` |
+| **`client signing`** | Подпись SMB-трафика клиентом | `required` |
 
 ### Бэкенды idmap
 
-| Бэкенд | Описание | Использование |
+| Бэкенд | Описание | Применение |
 | :--- | :--- | :--- |
-| `tdb` | Локальная база (trivial database) | Для локальных пользователей (`*`) |
-| `rid` | Маппинг на основе RID домена | Для доменных пользователей |
-| `ad` | Маппинг из атрибутов AD (uidNumber/gidNumber) | Для сложных схем с RFC2307 |
-| `autorid` | Автоматическое выделение диапазонов | Для нескольких доменов |
-
-### Принципы маппинга UID/GID
-
-Без централизованного управления UID/GID возможны конфликты прав доступа. Диапазоны должны быть непересекающимися:
-
-- `*` (локальные пользователи): 3000–7999
-- `EXAMPLE` (основной домен): 10000–999999
-- `TRUSTED` (доверенные домены): 2000000–2999999
+| `tdb` | Локальная база данных | Для локальных SID (`*`). |
+| `rid` | Алгоритмический маппинг | Рекомендуется для одиночных доменов. |
+| `ad` | Чтение атрибутов из AD | RFC2307 (uidNumber/gidNumber). |
+| `autorid` | Автоматическое выделение | Для лесов с множеством доменов. |
 
 ## Практические сценарии
 
-### Установка пакетов
+### Установка пакетов (Modern)
 
 ```bash
-# Debian/Ubuntu
-sudo apt-get install -y samba winbind libnss-winbind libpam-winbind
+# Debian/Ubuntu 24.04+
+sudo apt-get install -y samba winbind libnss-winbind libpam-winbind krb5-user
 
-# RHEL/CentOS
-sudo yum install -y samba-winbind samba-winbind-clients
+# RHEL/AlmaLinux 9+
+sudo dnf install -y samba-winbind samba-winbind-clients krb5-workstation
 ```
 
-### Конфигурация (`/etc/samba/smb.conf`)
+### Конфигурация члена домена (`/etc/samba/smb.conf`)
+
+Пример с использованием бэкенда `rid` и усиленной безопасностью.
 
 ```ini
 [global]
    workgroup = EXAMPLE
    realm = EXAMPLE.COM
    security = ADS
-   encrypt passwords = yes
+   
+   # Безопасность Kerberos 2026
    kerberos method = secrets and keytab
-
-   # ID mapping (важно для корректного маппинга UID/GID)
+   kdc require canonicalization = yes
+   client signing = required
+   
+   # ID mapping
    idmap config * : backend = tdb
    idmap config * : range = 3000-7999
    idmap config EXAMPLE : backend = rid
@@ -71,61 +71,55 @@ sudo yum install -y samba-winbind samba-winbind-clients
 
    winbind use default domain = yes
    winbind offline logon = yes
+   winbind refresh tickets = yes
 ```
 
 ### Присоединение к домену
 
 ```bash
-# Присоединение к домену
-sudo net ads join -U Administrator
-# → Joined 'SERVER' to dns domain 'example.com'
+# Инициализация Kerberos тикета администратора
+kinit Administrator@EXAMPLE.COM
 
-# Проверка подключения
+# Присоединение (создание учетной записи компьютера и keytab)
+sudo net ads join -U Administrator
+# → Joined 'SAMBA-SRV' to dns domain 'example.com'
+
+# Проверка статуса
 net ads testjoin
 # → Join is OK
-
-# Запуск служб
-sudo systemctl enable --now smb nmb winbind
 ```
 
 ### Настройка NSS и PAM
 
-**`/etc/nsswitch.conf`:**
+**`/etc/nsswitch.conf`** (добавление winbind):
 
 ```yaml
 passwd:         compat winbind
 group:          compat winbind
-shadow:         compat
 ```
 
-**PAM (автоматическое создание домашних директорий):**
+**PAM (автоматическое создание домашних директорий при входе):**
 
 ```bash
-sudo pam-auth-update
+# Для Debian/Ubuntu
+sudo pam-auth-update --enable mkhomedir
 ```
 
-### Проверка и диагностика
+### Диагностика AD интеграции
 
 ```bash
-# Информация о домене
+# Проверка связи с DC и параметров домена
 net ads info
-# → LDAP server: 192.168.1.10 ...
 
-# Список пользователей домена
+# Проверка работы winbind (список пользователей домена)
 wbinfo -u
-# → administrator, user1, user2...
 
-# Список групп домена
-wbinfo -g
-# → domain users, domain admins...
-
-# Проверка маппинга UID/GID
+# Проверка разрешения имен пользователей через ОС
 getent passwd "EXAMPLE\user1"
 # → user1:*:10001:10000:User One:/home/EXAMPLE/user1:/bin/bash
 
-# Проверка билета Kerberos
+# Просмотр билетов Kerberos в кеше
 klist
-# → Default principal: user1@EXAMPLE.COM
 ```
 
 ## Дополнительная информация
@@ -134,4 +128,4 @@ klist
 - [Настройка сервера](./samba_setup.md) — базовые шаги конфигурации
 - [Интеграция через SSSD](../../../SystemAdministration/Users/LDAP_SSSD/index.md) — современная альтернатива Winbind
 - [Протокол Kerberos](../../../../Security/Concepts/kerberos.md) — основы сетевой аутентификации
-- [Управление пользователями](../../../SystemAdministration/users_management.md) — настройка NSS/PAM
+- [Управление пользователями](../../../SystemAdministration/users_management.md) — общие принципы Linux

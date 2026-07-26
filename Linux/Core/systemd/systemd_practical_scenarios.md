@@ -2,121 +2,102 @@
 
 ## Определения
 
-**Практические сценарии systemd** — это типовые наборы конфигураций для решения прикладных задач администрирования: от автоматического монтирования дисков до создания сложных цепочек зависимых сервисов. Каждый сценарий демонстрирует оптимальную комбинацию типов юнитов (units) и директив для обеспечения отказоустойчивости и корректного порядка запуска в Операционной Системе (ОС).
+* **Практические сценарии systemd** — это типовые конфигурации для решения задач администрирования: от автоматизации монтирования до создания изолированных цепочек сервисов.
+* **Связка юнитов (Unit coupling)** — использование нескольких типов юнитов (например, `.socket` + `.service` или `.path` + `.service`) для реализации сложной логики активации.
+* **Песочница (Sandboxing)** — применение директив изоляции внутри сценариев для ограничения доступа сервисов к системным ресурсам.
 
 ## Основные концепции
 
 ### Правила именования юнитов монтирования
 
-Для юнитов типов `.mount` и `.automount` имя файла **обязано** точно соответствовать пути к точке монтирования в Файловой Системе (ФС).
+Для юнитов типов `.mount` и `.automount` имя файла **обязано** точно соответствовать пути к точке монтирования. Слэши (`/`) заменяются на дефисы (`-`), ведущий слэш игнорируется.
 
-* Слэши (`/`) заменяются на дефисы (`-`).
-* Ведущий слэш игнорируется.
-
-| Точка монтирования | Имя юнит-файла |
+| Путь | Имя юнит-файла |
 | :--- | :--- |
 | `/backup` | `backup.mount` |
 | `/mnt/data/share` | `mnt-data-share.mount` |
-| `/var/lib/docker` | `var-lib-docker.mount` |
 
-> **Внимание**: Если имя файла не совпадает с путём монтирования, `systemd` не сможет активировать юнит.
+### Типовые паттерны активации
 
-### Типовые паттерны зависимостей
-
-1. **Подготовка ресурса**: Сначала выполняется сервис (например, расшифровка раздела LUKS), затем монтируется диск.
-2. **Цепочка выполнения**: Сначала монтируется диск, затем запускается скрипт обработки данных.
-3. **Группировка**: Объединение нескольких микросервисов под единый `.target` для массового управления.
+1. **Lazy Start (Ленивый запуск)** — сервис спит, пока не придет сетевой запрос (Socket) или не появится файл (Path).
+2. **Event-driven (Событийный запуск)** — активация по таймеру или при наступлении системного события (например, подключение USB).
+3. **Target Grouping (Группировка)** — объединение микросервисов под единый `.target` для массового управления.
 
 ## Практические сценарии
 
-### 1. Монтирование файловой системы (.mount)
+### 1. Управление дисками (Mount и Automount)
 
-Используется для управления дисками через `systemd` вместо классического `/etc/fstab`.
+Используется для управления ФС декларативно, заменяя `/etc/fstab`.
 
+**Юнит монтирования** (`mnt-storage.mount`):
 ```ini
-# /etc/systemd/system/mnt-storage.mount
 [Unit]
 Description=Mount External Storage
-# Ждем расшифровки диска
-Requires=systemd-cryptsetup@storage.service
-After=systemd-cryptsetup@storage.service
+After=network.target
 
 [Mount]
-What=/dev/mapper/storage
+What=/dev/sdb1
 Where=/mnt/storage
 Type=ext4
 Options=defaults,noatime
-
-[Install]
-WantedBy=multi-user.target
 ```
 
-Детальное руководство по всем параметрам монтирования: [Systemd mount units](../../FileSystems/mounting/scenarios/systemd_mount.md).
-
-### 2. Динамическое монтирование (.automount)
-
-Юнит активирует точку монтирования только в момент обращения к ней (например, при выполнении `cd /mnt/storage`).
-
+**Юнит автомонтирования** (`mnt-storage.automount`):
+Активирует диск только при первом обращении к `/mnt/storage`.
 ```ini
-# /etc/systemd/system/mnt-storage.automount
-[Unit]
-Description=Automount Storage on Access
-
 [Automount]
 Where=/mnt/storage
-# Размонтировать через 5 минут бездействия
 TimeoutIdleSec=300
-
-[Install]
-WantedBy=multi-user.target
 ```
 
-```bash
-# Активация автомонтирования
-sudo systemctl enable --now mnt-storage.automount
-# → Created symlink /etc/systemd/system/multi-user.target.wants/mnt-storage.automount ...
-```
+### 2. Мониторинг файлов (Path)
 
-### 3. Резервное копирование по событию (Type=oneshot)
+Автоматический запуск скрипта обработки при появлении новых файлов в директории.
 
-Запуск скрипта, который должен завершиться перед тем, как система посчитает задачу выполненной.
-
+**Юнит пути** (`image-processor.path`):
 ```ini
-# /etc/systemd/system/daily-backup.service
-[Unit]
-Description=Daily Backup Script
-# Запуск только после успешного монтирования хранилища
-Requires=mnt-storage.mount
-After=mnt-storage.mount
+[Path]
+PathChanged=/var/spool/uploads/
+Unit=image-processor.service
+```
 
+**Сервис** (`image-processor.service`):
+```ini
 [Service]
 Type=oneshot
-User=backup_user
-ExecStart=/usr/local/bin/backup.sh
-# Сохранять статус active после выхода, чтобы зависимые юниты видели успех
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
+ExecStart=/usr/local/bin/process-images.sh
 ```
 
-### 4. Создание пользовательского таргета (.target)
+### 3. Активация по сети (Socket)
 
-Позволяет объединить группу сервисов проекта для одновременного запуска или остановки.
+Экономия ресурсов: приложение запускается только при первом обращении к порту.
 
+**Юнит сокета** (`myapp.socket`):
 ```ini
-# /etc/systemd/system/my-project.target
-[Unit]
-Description=My Full Project Stack
-AllowIsolate=yes
-
-[Install]
-WantedBy=multi-user.target
+[Socket]
+ListenStream=8080
 ```
 
-**Привязка сервиса к таргету**:
-В юнит-файле конкретной службы добавьте:
+**Сервис** (`myapp.service`):
+```ini
+[Service]
+ExecStart=/usr/bin/myapp
+# Остановка при отсутствии активности
+StopWhenUnneeded=yes
+```
 
+### 4. Создание пользовательского стека (Target)
+
+Позволяет управлять группой сервисов как единым целым.
+
+**Юнит таргета** (`my-project.target`):
+```ini
+[Unit]
+Description=My Project Stack
+AllowIsolate=yes
+```
+
+**Привязка сервиса** (в файле `app.service`):
 ```ini
 [Unit]
 PartOf=my-project.target
@@ -125,30 +106,40 @@ PartOf=my-project.target
 WantedBy=my-project.target
 ```
 
-## Дополнительная информация
+```bash
+# Массовый запуск всего стека
+sudo systemctl start my-project.target
+```
 
-### Диагностика сложных связей
+### 5. Безопасный запуск временных задач (systemd-run)
+
+Запуск тяжелого бэкапа с ограничением ресурсов без создания файлов.
 
 ```bash
-# Проверить статус монтирования
-systemctl status mnt-storage.mount
-# → ● mnt-storage.mount - Mount External Storage
-# →    Active: active (mounted) ...
+systemd-run --unit=backup-task \
+            --property=MemoryMax=1G \
+            --property=CPUQuota=20% \
+            --property=PrivateTmp=yes \
+            /usr/local/bin/heavy-backup.sh
+# → Running as unit: backup-task.service
+```
 
-# Посмотреть, какие юниты зависят от хранилища (реверсивные зависимости)
-systemctl list-dependencies --reverse mnt-storage.mount
-# → mnt-storage.mount
-# → └─daily-backup.service
+## Дополнительная информация
 
-# Анализ логов конкретной задачи
-journalctl -u daily-backup.service -e
-# → -- Logs begin at ... --
-# → Jun 07 10:00:01 host backup.sh[1234]: Backup completed successfully.
+### Диагностика сценариев
+
+```bash
+# Проверка дерева зависимостей для таргета
+systemctl list-dependencies my-project.target
+# → my-project.target
+# → ├─app.service
+# → └─db.service
+
+# Поиск ошибок в связках (например, .path без .service)
+systemd-analyze verify /etc/systemd/system/*.path
 ```
 
 ### См. также
-
-* [Детальное руководство по монтированию](../../FileSystems/mounting/scenarios/systemd_mount.md)
-* [Управление зависимостями юнитов](./systemd_dependencies.md)
-* [Структура юнит-файла](./systemd_unit_file_structure.md)
-* [Типы сервисов systemd](./systemd_service_types.md)
+* [Обзор юнитов systemd](./systemd_units_overview.md) — типы и назначение.
+* [Управление зависимостями](./systemd_dependencies.md) — логика связей.
+* [Таймеры systemd](./timers.md) — сценарии запуска по времени.

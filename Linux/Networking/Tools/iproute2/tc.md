@@ -2,122 +2,136 @@
 
 ## Определения
 
-* **`tc` (Traffic Control)** — утилита пакета `iproute2` для реализации QoS в Linux. Управляет дисциплинами очередей (`qdisc`), классами и фильтрами.
-* **`qdisc` (Queuing Discipline)** — дисциплина очереди, механизм ядра Linux, определяющий как пакеты обрабатываются, откладываются или отбрасываются.
-* **HTB (Hierarchical Token Bucket)** — дисциплина для приоритизации трафика с иерархической структурой классов.
-* **fq_codel** — дисциплина для борьбы с bufferbloat, снижающая латентность.
+* **`tc` (Traffic Control)** — утилита пакета `iproute2` для настройки механизмов управления трафиком в ядре Linux (QoS).
+* **`qdisc` (Queuing Discipline)** — дисциплина очереди. Механизм, определяющий алгоритм обработки пакетов (очередность, буферизация, отбрасывание) перед передачей драйверу сетевой карты.
+* **HTB (Hierarchical Token Bucket)** — классическая дисциплина для иерархического шейпинга (ограничения скорости) и приоритизации трафика.
+* **fq_codel (Fair Queuing Controlled Delay)** — дисциплина для борьбы с **bufferbloat**. Изолирует потоки и активно управляет задержкой.
+* **CAKE (Common Applications Kept Enhanced)** — современная "универсальная" дисциплина, комбинирующая шейпинг и справедливое распределение очереди с минимальной настройкой.
+* **clsact (Classifier Action)** — специальная qdisc, позволяющая прикреплять фильтры (включая eBPF) как на входящий (ingress), так и на исходящий (egress) трафик без создания иерархии классов.
 
-> Основные концепции QoS, включая детальное сравнение **Policing** и **Shaping**, описаны в файле [QoS](../../../../Networking/Concepts/qos.md).
+> Основные концепции QoS, включая сравнение Policing и Shaping, описаны в файле [QoS](../../../../Networking/Concepts/qos.md).
 
 ## Основные концепции
 
+### Идентификаторы (Handles)
+
+Каждый объект в `tc` идентифицируется числом в формате `major:minor`.
+* **`1:`** — major-номер 1, minor-номер 0 (обычно корневая qdisc).
+* **`1:10`** — minor-номер 10 внутри major-номера 1 (обычно идентификатор класса).
+* **`ffff:`** — зарезервированный номер для ingress qdisc.
+
 ### Интеграция с сетевым стеком
 
-> Настройка дисциплин по умолчанию через `sysctl` описана в [Оптимизация TCP](../../Concepts/tcp_tuning/tcp_queueing_disciplines.md).
+Дисциплина по умолчанию задается через `sysctl`. Подробнее в [Оптимизация TCP](../../Concepts/tcp_tuning/tcp_queueing_disciplines.md).
 
-* `net.core.default_qdisc` — задает qdisc по умолчанию (например, `fq_codel`).
-* Детальная настройка классов и фильтров выполняется через `tc`.
+* `net.core.default_qdisc` — выбор qdisc (например, `fq_codel` или `fq`).
+* `tc` используется для тонкой настройки: создания классов, фильтров и лимитов для конкретных интерфейсов.
 
 ### Структура QoS
 
-```
-Корневая qdisc
-├── Класс 1:10 (высокий приоритет)
-│   └── Дочерняя qdisc (fq_codel)
-├── Класс 1:20 (низкий приоритет)
-│   └── Дочерняя qdisc (fq_codel)
-└── Фильтры (классификация трафика)
+```text
+Корневая qdisc (1:)
+├── Класс 1:1 (Общий лимит)
+│   ├── Класс 1:10 (Высокий приоритет) ──> qdisc (fq_codel)
+│   └── Класс 1:20 (Низкий приоритет)   ──> qdisc (fq_codel)
+└── Фильтры (Классификация трафика по портам/IP)
 ```
 
 ## Практические сценарии
 
-### Ограничение входящего трафика (Policing)
+### Ограничение скорости с помощью CAKE
 
-Задача: ограничить скорость загрузки до 100 кбит/с.
-
-```bash
-# Проверить существующие дисциплины
-sudo tc qdisc show dev eth0
-
-# Добавить ingress qdisc
-sudo tc qdisc add dev eth0 handle ffff: ingress
-
-# Добавить фильтр с полисингом (весь IP-трафик)
-sudo tc filter add dev eth0 parent ffff: protocol ip u32 match u32 0 0 police rate 100kbit burst 8k drop
-```
-
-**Параметры:**
-
-* `filter add dev eth0 parent ffff:`: Добавляем фильтр к `ingress` qdisc на интерфейсе `eth0`.
-* `u32 match u32 0 0`: Универсальный классификатор `u32`, сопоставляет любой пакет.
-* `police rate 100kbit burst 8k drop`:
-  * `rate 100kbit`: Лимит скорости.
-  * `burst 8k`: Размер буфера (token bucket) для всплесков.
-  * `drop`: Отбрасывать пакеты при превышении лимита.
+CAKE — наиболее современный и простой способ настроить шейпинг. Он автоматически справляется с bufferbloat и справедливо делит полосу.
 
 ```bash
-# Проверка статистики (счетчик dropped)
-sudo tc -s filter show dev eth0 parent ffff:
-
-# Удаление правила
-sudo tc qdisc del dev eth0 ingress
+# Ограничить интерфейс eth0 скоростью 100 Мбит/с
+sudo tc qdisc add dev eth0 root cake bandwidth 100mbit
 ```
 
-### Приоритизация трафика с HTB и fq_codel
+# → Проверка: tc qdisc show dev eth0
+
+### Иерархическая приоритизация (HTB + fq_codel)
+
+Сценарий: гарантировать 200 Мбит для важного трафика, остальное (800 Мбит) — для фонового, с возможностью заимствования полосы.
 
 ```bash
-# Создание HTB с классами приоритета
-tc qdisc replace dev eth0 root handle 1: htb default 20
+# 1. Корневая дисциплина HTB
+sudo tc qdisc replace dev eth0 root handle 1: htb default 20
 
-# Корневой класс с ограничением скорости
-tc class add dev eth0 parent 1: classid 1:1 htb rate 1gbit ceil 1gbit
+# 2. Общий класс-родитель (1 Гбит)
+sudo tc class add dev eth0 parent 1: classid 1:1 htb rate 1gbit ceil 1gbit
 
-# Класс приоритета 0 для интерактивного трафика (200 Мбит)
-tc class add dev eth0 parent 1:1 classid 1:10 htb rate 200mbit prio 0
+# 3. Класс для приоритетного трафика (rate — гарантия, ceil — максимум)
+sudo tc class add dev eth0 parent 1:1 classid 1:10 htb rate 200mbit ceil 1gbit prio 0
 
-# Класс приоритета 1 для фонового трафика (800 Мбит)
-tc class add dev eth0 parent 1:1 classid 1:20 htb rate 800mbit prio 1
+# 4. Класс для обычного трафика
+sudo tc class add dev eth0 parent 1:1 classid 1:20 htb rate 800mbit ceil 1gbit prio 1
 
-# Добавление fq_codel к каждому классу
-tc qdisc add dev eth0 parent 1:10 fq_codel
-tc qdisc add dev eth0 parent 1:20 fq_codel
+# 5. Листовые дисциплины для борьбы с задержками внутри классов
+sudo tc qdisc add dev eth0 parent 1:10 fq_codel
+sudo tc qdisc add dev eth0 parent 1:20 fq_codel
 ```
 
-### Эмуляция сетевых проблем (netem)
+### Современная классификация (Flower)
 
-Для тестирования сетевых задержек, потерь и повреждений пакетов используется модуль `netem`.
+Классификатор `flower` нагляднее старого `u32` и поддерживает больше протоколов.
 
 ```bash
-# Добавление задержки 100ms
-sudo tc qdisc add dev eth0 root netem delay 100ms
-
-# Удаление netem
-sudo tc qdisc del dev eth0 root netem
+# Направить трафик на порт 80 в класс 1:10
+sudo tc filter add dev eth0 parent 1: protocol ip flower ip_proto tcp dst_port 80 flowid 1:10
 ```
 
-Подробные сценарии (потери, дублирование, джиттер) описаны в разделе **[tc netem](./tc_netem.md)**.
+### Использование eBPF (clsact)
+
+Для высокопроизводительной обработки пакетов программами eBPF.
+
+```bash
+# Создание точки прикрепления (одновременно ingress и egress)
+sudo tc qdisc add dev eth0 clsact
+
+# Прикрепление eBPF-программы (пример)
+sudo tc filter add dev eth0 ingress bpf da obj my_filter.o sec classifier
+```
+
+## Диагностика и отладка
+
+### Просмотр статистики
+
+Ключ `-s` (statistics) критически важен для понимания того, работает ли шейпинг.
+
+```bash
+sudo tc -s qdisc show dev eth0
+```
+
+**На что смотреть:**
+* `sent`: общее количество байт/пакетов.
+* `dropped`: количество отброшенных пакетов (если растет — лимит достигнут).
+* `overlimits`: сколько раз qdisc не смогла отправить пакет сразу из-за лимита скорости.
+* `backlog`: текущий размер очереди (в байтах и пакетах).
+
+### Удаление настроек
+
+```bash
+# Удалить все настройки с интерфейса
+sudo tc qdisc del dev eth0 root
+```
 
 ## Дополнительная информация
 
-### Таблица дисциплин очередей
+### Сравнение дисциплин очередей
 
-| Дисциплина | Назначение | Когда использовать |
-|------------|------------|-------------------|
-| `htb` | Иерархическое управление полосой | Приоритизация трафика |
-| `fq_codel` | Борьба с bufferbloat | Низкая латентность |
-| `fq` | Fair Queuing | Pacing с BBR |
-| `netem` | Эмуляция проблем | Тестирование |
-| `ingress` | Точка для фильтров | Policing входящего |
-
-### Интеграция с сетевым стеком
-
-* **Для initcwnd:** настройка через [`ip route`](./ip_route.md).
-* **Для буферов TCP:** через [`sysctl`](../../../Core/kernel/sysctl.md).
-* **Для многопоточности:** [RSS, RPS, RFS](../../Concepts/rss_rps_rfs.md).
+| Дисциплина | Назначение | Особенности |
+|------------|------------|-------------|
+| **HTB** | Сложный иерархический шейпинг | Требует ручной настройки классов и фильтров. |
+| **CAKE** | Современный шейпинг "всё в одном" | Минимум настроек, встроенная борьба с bufferbloat. |
+| **fq_codel** | AQM (Active Queue Management) | Отлично для LAN/WAN без явного шейпинга. |
+| **netem** | Эмуляция сетевых проблем | Только для тестирования (задержки, потери). |
+| **ingress** | Policing (ограничение входящего) | Старый метод для входного трафика. |
 
 ### Связанные темы
 
-* **[QoS](../../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
-* **[tc netem](./tc_netem.md)** — детальное описание эмуляции сетевых проблем
-* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка сетевого стека
-* **[`ip route`](./ip_route.md)** — управление маршрутами и initcwnd
+* **[tc netem](./tc_netem.md)** — детальное описание эмуляции сетевых проблем.
+* **[QoS](../../../../Networking/Concepts/qos.md)** — общие концепции качества обслуживания.
+* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка сетевого стека Linux.
+* **[`ip route`](./ip_route.md)** — управление маршрутами и параметром `initcwnd`.
+* **[RSS, RPS, RFS](../../Concepts/rss_rps_rfs.md)** — многопоточная обработка трафика.

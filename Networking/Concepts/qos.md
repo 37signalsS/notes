@@ -44,7 +44,7 @@
 
 ### Реализация в Linux
 
-Утилита `tc` (traffic control) из пакета `iproute2` реализует QoS через дисциплины очередей (qdisc), классы и фильтры. Основные qdisc: HTB (Hierarchical Token Bucket), TBF (Token Bucket Filter), FQ-CoDel (Fair Queuing Controlled Delay).
+Утилита `tc` (traffic control) из пакета `iproute2` реализует QoS через дисциплины очередей (qdisc), классы и фильтры. Основные qdisc: **HTB** (Hierarchical Token Bucket), **fq_codel** (Fair Queuing Controlled Delay) и современный **CAKE** (Common Applications Kept Enhanced).
 
 Подробнее: [tc — управление трафиком](../../Linux/Networking/Tools/iproute2/tc.md).
 

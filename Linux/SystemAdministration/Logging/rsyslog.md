@@ -4,7 +4,7 @@
 
 **`rsyslog`** (Rocket-fast System for Log Processing) — высокопроизводительная служба для сбора, обработки и пересылки системных журналов. В современных Linux основная роль — получать логи от `systemd-journald`, фильтровать и перенаправлять в места назначения (текстовые файлы в `/var/log`, удаленные серверы).
 
-**Ключевое применение:** построение систем [централизованного логирования](../../../Concepts/Observability_and_Monitoring/observability_definitions.md). Взаимодействие с [journald](./journald.md) и [journalctl](../../Diagnostics/journalctl.md) описано в соответствующих файлах. Общий обзор — в [обзоре логирования](./logging_overview.md).
+**Ключевое применение:** построение систем [централизованного логирования](../../../Concepts/Observability_and_Monitoring/observability_definitions.md). Взаимодействие с [journald](./journald.md) и [journalctl](../../Diagnostics/journalctl/journalctl_overview.md) описано в соответствующих файлах. Общий обзор — в [обзоре логирования](./logging_overview.md).
 
 ## Базовые концепции
 

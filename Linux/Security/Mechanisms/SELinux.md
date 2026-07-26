@@ -181,6 +181,9 @@ sudo setsebool -P httpd_can_network_connect on
 # Логи аудита (отказы SELinux)
 sudo tail -f /var/log/audit/audit.log | grep AVC # → type=AVC msg=audit(...): denied { read } ...
 
+# Интерпретация причин отказа (почему доступ был запрещен)
+sudo ausearch -m avc -ts recent | audit2why # → Was caused by: ...
+
 # Принудительная перемаркировка файлов при загрузке
 sudo touch /.autorelabel
 # После перезагрузки система перемаркирует все файлы
@@ -217,7 +220,7 @@ sudo semanage port -a -t ssh_port_t -p tcp 5022
 # 3. Перезапустить sshd
 ```
 
-**Изменение каталога данных MySQL:**
+**Изменение каталога данных MySQL/MariaDB:**
 
 ```bash
 # Для каталога /srv/mysql
@@ -225,12 +228,12 @@ sudo semanage fcontext -a -t mysqld_db_t "/srv/mysql(/.*)?"
 sudo restorecon -Rv /srv/mysql # → Relabeled /srv/mysql ...
 ```
 
-### 10. SELinux и Docker/containers
+### 10. SELinux и контейнеры (Docker/Podman)
 
 ```bash
 # Монтирование тома с автоматической сменой контекста
-# z — приватный контекст
-# Z — общий контекст
+# z — приватный контекст (shared)
+# Z — общий контекст (private/exclusive)
 docker run -v /host/path:/container/path:z my_image # → ...
 ```
 
@@ -238,9 +241,9 @@ docker run -v /host/path:/container/path:z my_image # → ...
 
 ### История
 
-- Разработано NSA США
-- Впервые в ядре Linux — 1998 год
-- В составе ядра 2.6 (2003) через LSM
+- Разработано NSA (Агентство национальной безопасности США)
+- Публичный релиз — 2000 год
+- В составе ядра 2.6 (2003) через фреймворк LSM
 
 ### MCS (Multi-Category Security) — изоляция контейнеров
 
@@ -285,7 +288,7 @@ system_u:system_r:container_t:s0:c123,c456
 
 ```bash
 # Установка
-sudo dnf install mcstrans  # RHEL/CentOS
+sudo dnf install mcstrans  # RHEL/AlmaLinux/Rocky Linux
 sudo apt install mcstrans   # Debian/Ubuntu
 
 # Запуск

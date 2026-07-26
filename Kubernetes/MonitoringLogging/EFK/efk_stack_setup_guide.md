@@ -109,4 +109,5 @@ helm upgrade --install kibana elastic/kibana \
 *   [Парсинг логов во Fluent Bit](./fluentbit/parsing.md) — разбор JSON и многострочных записей (Java/Python).
 *   [Практическое руководство по Kibana](./kibana_guide.md) — как искать логи и строить дашборды.
 *   [Устранение неполадок EFK](./efk_stack_troubleshooting.md) — типичные ошибки при подключении и запуске.
+*   [Роутинг логов на NFS](./fluentbit_to_fluentd_nfs_scenario.md) — гибридная архитектура Fluent Bit → Fluentd → NFS.
 *   [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md) — почему Fluent Bit предпочтительнее для K8s.

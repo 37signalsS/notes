@@ -55,7 +55,7 @@
 
 ### Драйвер `journald`
 
-Интегрируется с `systemd-journald`, позволяя использовать стандартную утилиту [`journalctl`](../../Linux/Diagnostics/journalctl.md) для просмотра логов всех контейнеров. Это предпочтительный выбор для систем на базе `systemd`.
+Интегрируется с `systemd-journald`, позволяя использовать стандартную утилиту [`journalctl`](../../Linux/Diagnostics/journalctl/journalctl_overview.md) для просмотра логов всех контейнеров. Это предпочтительный выбор для систем на базе `systemd`.
 
 **Конфигурация (`/etc/docker/daemon.json`):**
 

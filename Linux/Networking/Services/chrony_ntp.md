@@ -1,3 +1,8 @@
+---
+Надёжность: 10 (SSoT + Практический опыт 2026)
+Свежесть: Актуально на июль 2026
+---
+
 # Chrony — NTP-сервер
 
 ## Определения
@@ -5,6 +10,8 @@
 **Chrony** — полноценный NTP-демон для Linux. Состоит из двух компонентов: `chronyd` (фоновый демон) и `chronyc` (утилита управления). Предпочтительный выбор для серверов, требующих высокой точности времени и стабильной работы в нестабильных сетях.
 
 **NTP (Network Time Protocol)** — протокол синхронизации часов компьютеров через сети. Работает по иерархической модели stratum (0–15), где stratum 0 — атомные часы/GPS, stratum 1 — серверы, подключённые напрямую к stratum 0.
+
+**NTS (Network Time Security)** — расширение NTP, обеспечивающее аутентификацию и целостность данных с использованием TLS и AEAD, предотвращая атаки типа Man-in-the-Middle (MitM).
 
 > Базовая синхронизация через `systemd-timesyncd` описана в [time_synchronization.md](../../../Linux/Core/systemd/time_synchronization.md).
 
@@ -20,6 +27,7 @@
 | Работа без сети | Нет | Да (`local stratum`) | Частично |
 | Быстрая синхронизация | Нет | Да (`iburst`) | Нет |
 | Коррекция дрейфа | Нет | Да (файл drift) | Да (файл drift) |
+| Безопасность (NTS) | Нет | Да (v4.0+) | Нет |
 | Рекомендуемое применение | Рабочие станции, простые серверы | Все серверы, виртуальные машины, изолированные сети | Устаревший, не рекомендуется |
 
 > Chrony заменил `ntpd` как NTP-демон по умолчанию в RHEL 8+, Fedora, Alpine Linux.
@@ -55,9 +63,11 @@ sudo dnf install chrony
 | `driftfile` | Файл хранения дрейфа частоты | `driftfile /var/lib/chrony/drift` |
 | `logdir` | Каталог логов | `logdir /var/log/chrony` |
 | `allow` | Разрешить клиентам из сети | `allow 192.168.10.0/24` |
-| `local stratum` | Объявить себя сервером при потере связи с upstream | `local stratum 10` |
+| `local stratum` | Объявить себя основным источником при потере связи с вышестоящими серверами | `local stratum 10` |
 | `bindaddress` | Привязка к конкретному интерфейсу | `bindaddress 10.0.0.1` |
 | `cmdallow` | Разрешить команды chronyc | `cmdallow 127.0.0.1` |
+| `nts` | Включить Network Time Security (требует поддержки сервером) | `server time.cloudflare.com nts iburst` |
+| `cmdport` | Порт управления (0 для отключения сети) | `cmdport 0` |
 
 ### Символы источников в `chronyc sources`
 
@@ -104,6 +114,38 @@ log measurements statistics tracking
 sudo systemctl enable --now chrony
 ```
 
+### Настройка безопасной синхронизации (NTS)
+
+Использование NTS для защиты от подмены времени.
+
+```ini
+# /etc/chrony/chrony.conf
+
+# Серверы с поддержкой NTS
+server time.cloudflare.com nts iburst
+server nts.netnod.se nts iburst
+server ptbtime1.ptb.de nts iburst
+
+# Хранилище для NTS-ключей
+ntsdumpdir /var/lib/chrony
+```
+
+### Настройка в облачных средах (Cloud)
+
+Облачные провайдеры предоставляют локальные высокоточные источники времени.
+
+```ini
+# AWS (Link-local IP)
+server 169.254.169.123 iburst prefer
+
+# Google Cloud (GCP)
+server metadata.google.internal iburst prefer
+
+# Azure
+server time.windows.com iburst
+# Или через виртуальный IP, если доступен (зависит от региона)
+```
+
 ### Настройка Chrony в качестве сервера
 
 Конфигурация для раздачи времени клиентам в локальной сети.
@@ -111,7 +153,7 @@ sudo systemctl enable --now chrony
 ```ini
 # /etc/chrony/chrony.conf
 
-# Источники времени
+# Источники времени (внешние)
 pool pool.ntp.org iburst
 
 # Разрешить клиентам
@@ -128,28 +170,41 @@ driftfile /var/lib/chrony/drift
 
 > `local stratum 10` — chrony продолжит раздавать время даже в изолированной сети. Клиенты получат stratum 11.
 
-### Работа в виртуальной среде
+### Безопасность и ужесточение (Hardening)
 
-В виртуальных машинах рекомендуется использовать гипервизор как источник времени (если поддерживается) или разрешить более агрессивную коррекцию.
-
-```ini
-# Для KVM/QEMU (через PTP, если настроено)
-# refclock PHC /dev/ptp0 poll 2 dp4
-
-# Или использование гипервизора как NTP-сервера
-server hypervisor.local iburst
-```
-
-Если сеть нестабильна, увеличьте порог коррекции:
+Рекомендации по защите демона `chronyd`.
 
 ```ini
-# Разрешить резкие скачки при загрузке
-makestep 10.0 5
+# /etc/chrony/chrony.conf
+
+# Отключить прослушивание порта управления по сети
+cmdport 0
+
+# Ограничить доступ к управлению (только localhost)
+bindcmdaddress 127.0.0.1
+bindcmdaddress ::1
+
+# Запуск от непривилегированного пользователя (обычно по умолчанию)
+user _chrony
+
+# Отключить неиспользуемые функции
+noclientlog
 ```
 
-### Утилита управления chronyc
+### Мониторинг и диагностика
 
-Основные команды для диагностики и управления демоном.
+#### Prometheus Exporter
+
+Для мониторинга состояния синхронизации можно использовать `node_exporter` (включается флагом `--collector.ntp`) или специализированный `chrony-exporter`.
+
+Метрики для отслеживания:
+- `node_ntp_offset_seconds`: отклонение от сервера.
+- `chrony_stratum`: уровень стратума.
+- `chrony_source_reachable`: доступность источника.
+
+#### Утилита управления chronyc
+
+Основные команды для диагностики.
 
 ```bash
 # Источники времени и их статус
@@ -161,25 +216,41 @@ chronyc sources
 # Детальная информация о каждом источнике
 chronyc sources -v
 
-# Текущий статус синхронизации
+# Текущий статус синхронизации (оффсет, дрейф, стратум)
 chronyc tracking
-# → Reference ID    : 185.209.136.132 (ntp1.example.com)
+# → Reference ID    : B9D18884 (ntp1.example.com)
 # → Stratum         : 2
+# → System time     : 0.000000005 seconds slow of NTP time
+# → Last offset     : -0.000001234 seconds
+# → RMS offset      : 0.000012345 seconds
 
 # Статистика источников (за историю)
 chronyc sourcestats
 
-# Проверить, синхронизировано ли время
-chronyc activity
+# Проверить статус NTS соединений
+chronyc ntsstats
 
-# Ручная синхронизация (немедленно)
+# Немедленная пошаговая коррекция
 chronyc makestep
+```
 
-# Добавить сервер на лету
-chronyc addserver 10.0.0.1
+### Работа в виртуальной среде
 
-# Удалить сервер
-chronyc delete 10.0.0.1
+В виртуальных машинах рекомендуется использовать гипервизор как источник времени или разрешить более агрессивную коррекцию.
+
+```ini
+# Для KVM/QEMU (через PTP)
+# refclock PHC /dev/ptp0 poll 2 dp4
+
+# Или использование гипервизора как NTP-сервера
+server hypervisor.local iburst
+```
+
+Если сеть нестабильна, увеличьте порог коррекции:
+
+```ini
+# Разрешить резкие скачки при загрузке
+makestep 10.0 5
 ```
 
 ### Конфигурация для изолированной сети
@@ -269,3 +340,4 @@ ss -6 -unap | grep chrony
 * [IPv6: настройка сервисов](../Settings/ipv6_configuration/services_configuration.md)
 * [Samba: решение проблем](./samba/samba_troubleshooting.md)
 * [Kerberos: основы и настройка](../../../Security/Concepts/kerberos.md)
+* [Механизмы безопасности Linux](../../Security/Linux_Security_Mechanisms_Overview.md)

@@ -51,14 +51,17 @@ Cilium расширяет стандартный API Kubernetes для упра�
 
 - **ClusterMesh:** Объединение нескольких кластеров Kubernetes в единую плоскую сеть. Позволяет сервисам обращаться друг к другу по именам (Global Services) и обеспечивать отказоустойчивость.
 - **Шифрование трафика:** Поддержка прозрачного шифрования "узел-узел" через **WireGuard** (рекомендуется за производительность) или **IPsec**.
-- **BGP Control Plane:** Нативная интеграция с BGP для анонсирования маршрутов до сервисов и узлов, что заменяет MetalLB в сложных сетевых топологиях.
+- **Load Balancer (L2 & BGP):** Нативная поддержка сервисов типа `LoadBalancer`, заменяющая сторонние решения (например, MetalLB).
+    - **L2 Mode:** Использует ARP-анонсы. IP-адрес приземляется на одну из нод (выбор лидера).
+    - **BGP Mode:** Анонсирование маршрутов через протокол BGP, что позволяет распределять трафик между несколькими узлами (ECMP).
 - **Egress Gateway:** Маршрутизация исходящего трафика подов через фиксированные IP-адреса узлов (шлюзов) для интеграции с внешними корпоративными файрволами.
 - **Bandwidth Manager:** Управление полосой пропускания и предотвращение эффекта "шумного соседа" через очереди ядра (EDT - Earliest Departure Time).
 
 ### Cilium Service Mesh и Gateway API
 
 Cilium поддерживает стандарт **Gateway API** и может работать в режиме Service Mesh без sidecar-контейнеров:
-- **L7 Load Balancing:** Балансировка на основе путей, заголовков и весов.
+- **L7 Load Balancing:** Балансировка на основе путей, заголовков и весов через встроенный Envoy.
+- **Включение:** Требует установки Gateway API CRDs и активации параметра `gatewayAPI.enabled=true` в Helm-чарте.
 - **Mutual Auth (mTLS):** Автоматическое шифрование и проверка подлинности между подами на уровне ядра (через Ztunnel).
 - **Прозрачный Ingress:** Замена стандартных Ingress-контроллеров высокопроизводительным решением на eBPF.
 
@@ -80,7 +83,7 @@ Cilium поддерживает стандарт **Gateway API** и может �
 - **Производительность:** Прямое управление пакетами в ядре минимизирует задержки.
 - **Масштабируемость:** Эффективная работа в кластерах с тысячами узлов и десятками тысяч сервисов.
 - **Безопасность:** Инспекция трафика до L7 и фильтрация по DNS-именам.
-- **Экосистема:** Единое решение для CNI, Service Mesh, Ingress и шифрования.
+- **Экосистема:** Единое решение для CNI, Service Mesh, Ingress, LoadBalancer (L2/BGP) и шифрования.
 
 ### Недостатки
 - **Требования к ядру:** Для полной функциональности (kube-proxy replacement, WireGuard) требуется ядро 5.10+ (рекомендуется 6.x для современных функций).
@@ -113,9 +116,98 @@ Cilium поддерживает стандарт **Gateway API** и может �
    # → результат: bpffs on /sys/fs/bpf type bpffs (rw,nosuid,nodev,noexec,relatime)
    ```
 
+### Установка (Helm)
+
+Рекомендуемый способ установки для production-сред — Helm.
+
+```bash
+helm upgrade --install cilium cilium/cilium \
+  --namespace kube-system \
+  --set kubeProxyReplacement=strict \
+  --set k8sServiceHost=10.0.0.10 \
+  --set k8sServicePort=6443 \
+  --set l2announcements.enabled=true \
+  --set externalIPs.enabled=true \
+  --set gatewayAPI.enabled=true
+```
+
+**ВАЖНО:** После обновления конфигурации через Helm необходимо выполнить перезапуск Cilium Agent для применения изменений:
+```bash
+kubectl rollout restart ds cilium -n kube-system
+```
+
+### Настройка Load Balancer (L2 Mode)
+
+Для работы сервисов типа `LoadBalancer` в L2-режиме необходимо создать два ресурса:
+
+1. **Пул IP-адресов (`CiliumLoadBalancerIPPool`):**
+   ```yaml
+   apiVersion: "cilium.io/v2alpha1"
+   kind: CiliumLoadBalancerIPPool
+   metadata:
+     name: "l2-pool"
+   spec:
+     blocks:
+     - start: "192.168.1.180"
+       stop: "192.168.1.190"
+   ```
+
+2. **Политика анонсирования (`CiliumL2AnnouncementPolicy`):**
+   ```yaml
+   apiVersion: "cilium.io/v2alpha1"
+   kind: CiliumL2AnnouncementPolicy
+   metadata:
+     name: "l2-policy"
+   spec:
+     interfaces:
+     - ^eth[0-9]+
+     externalIPs: true
+     loadBalancerIPs: true
+   ```
+
+**Механизм выбора лидера:** Cilium использует объект `Lease` (Kind: `Lease` в `kube-system`) для определения узла, который будет отвечать на ARP-запросы для конкретного IP. По умолчанию интервал проверки (`leaseDuration`) составляет 15 секунд.
+
+### Настройка Gateway API
+
+1. **Установка CRD (Gateway API):**
+   ```bash
+   kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/v1.1.0/config/crd/standard/gwapi-std-crds.yaml
+   ```
+
+2. **Gateway Class:**
+   ```yaml
+   apiVersion: gateway.networking.k8s.io/v1
+   kind: GatewayClass
+   metadata:
+     name: cilium
+   spec:
+     controllerName: io.cilium/gateway-controller
+   ```
+
+3. **HTTP Route (Пример маршрутизации по хосту):**
+   ```yaml
+   apiVersion: gateway.networking.k8s.io/v1
+   kind: HTTPRoute
+   metadata:
+     name: my-route
+   spec:
+     parentRefs:
+     - name: my-gateway
+     hostnames:
+     - "test1.example.com"
+     rules:
+     - matches:
+       - path:
+           type: PathPrefix
+           value: /
+       backendRefs:
+       - name: my-service
+         port: 80
+   ```
+
 ### Установка (Cilium CLI)
 
-Самый простой способ установки — использование официальной утилиты `cilium`:
+Самый простой способ базовой установки — использование официальной утилиты `cilium`:
 
 ```bash
 # Установка Cilium с заменой kube-proxy и включенным Hubble

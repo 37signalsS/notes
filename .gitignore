@@ -1,1 +1,13 @@
 .obsidian/**
+
+# RAG System
+AI/rag_system/venv/
+AI/rag_system/chroma_db/
+AI/rag_system/chroma_bge/
+AI/rag_system/chroma_qwen/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# System
+.DS_Store
