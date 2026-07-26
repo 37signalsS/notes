@@ -5,6 +5,8 @@ AI/rag_system/venv/
 AI/rag_system/chroma_db/
 AI/rag_system/chroma_bge/
 AI/rag_system/chroma_qwen/
+AI/rag_system/manifest.json
+AI/rag_system/*.log
 **/__pycache__/
 *.py[cod]
 *$py.class

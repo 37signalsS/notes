@@ -33,7 +33,7 @@ ENGINES = {
     }
 }
 
-EXCLUDED_DIRS = ["Vagrant", ".git", ".obsidian", "venv", "rag_system"]
+EXCLUDED_DIRS = [".git", ".obsidian", "venv", "rag_system"]
 EXCLUDED_FILES = ["GEMINI.md", "MEMORY.md", ".DS_Store"]
 EXCLUDED_EXTENSIONS = [".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".py"]
 
