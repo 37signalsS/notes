@@ -113,21 +113,7 @@ ldap_tls_reqcert = demand
 
 ### Интеграция с Active Directory (AD)
 
-Для работы в доменах Windows используется оптимизированный провайдер `ad`:
-
-```ini
-[domain/ad_domain]
-id_provider = ad
-auth_provider = ad
-access_provider = ad
-
-ad_domain = example.com
-krb5_realm = EXAMPLE.COM
-
-# Автоматический маппинг идентификаторов (если в AD нет POSIX-атрибутов)
-ldap_id_mapping = True
-fallback_homedir = /home/%u@%d
-```
+Для работы в доменах Windows используется оптимизированный провайдер `ad`. Подробное руководство по подключению через `realmd` и специфическим настройкам AD см. в отдельной статье: **[Интеграция SSSD с Active Directory](./ad_integration.md)**.
 
 ---
 

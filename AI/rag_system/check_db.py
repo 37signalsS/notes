@@ -1,33 +1,40 @@
+import argparse
 import rag_utils
-from langchain_chroma import Chroma as ChromaStore
 
 log = rag_utils.log
 
-def check_db(engine_name):
+
+def check_db(engine_name: str) -> None:
     cfg = rag_utils.ENGINES[engine_name]
-    db_dir = cfg["dir"]
     log.info("--- %s ---", cfg['label'])
-    log.info("  Директория: %s", db_dir)
-    log.info("  Коллекция: %s", cfg['collection'])
-    log.info("  Модель: %s", cfg['model'])
+    log.info("  Directory: %s", cfg['dir'])
+    log.info("  Collection: %s", cfg['collection'])
+    log.info("  Model: %s", cfg['model'])
     try:
-        embeddings = rag_utils.get_embeddings(cfg["model"])
-        vs = ChromaStore(
-            persist_directory=db_dir,
-            embedding_function=embeddings,
-            collection_name=cfg["collection"]
-        )
-        count = vs._collection.count()
-        log.info("  Чанков: %d", count)
+        vs, _ = rag_utils.load_chroma(engine_name)
+        data = vs.get(include=[])
+        if data is None:
+            log.error("  DB returned None")
+            return
+        count = len(data.get("ids") or [])
+        log.info("  Chunks: %d", count)
         if count > 0:
-            sample = vs._collection.get(limit=1)
+            sample = vs.get(limit=1)
             src = None
-            if sample.get("metadatas"):
+            if sample and sample.get("metadatas"):
                 src = sample["metadatas"][0].get("source")
-            log.info("  Пример source: %s", src or 'N/A')
+            log.info("  Sample source: %s", src or 'N/A')
     except Exception as e:
-        log.error("Ошибка: %s", e)
+        log.error("Error: %s", e)
+
 
 if __name__ == "__main__":
-    check_db("bge")
-    check_db("mpnet")
+    parser = argparse.ArgumentParser(description="Check vector DB status")
+    parser.add_argument("--engine", "-e", default=None, help=f"Engine name: {', '.join(rag_utils.ENGINES)}")
+    args = parser.parse_args()
+
+    if args.engine:
+        check_db(args.engine)
+    else:
+        check_db("mpnet")
+        check_db("bge")

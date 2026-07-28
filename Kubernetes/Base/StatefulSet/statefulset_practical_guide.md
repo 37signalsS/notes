@@ -87,7 +87,47 @@ spec:
 
 ---
 
-### Сценарий 2: Миграция между кластерами с использованием произвольных индексов (Ordinals)
+### Сценарий 2: Развертывание базы данных MySQL
+
+Классический пример использования StatefulSet для обеспечения стабильного хранения данных СУБД.
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  serviceName: "mysql"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-persistent-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+---
+
+### Сценарий 3: Миграция между кластерами с использованием произвольных индексов (Ordinals)
 
 Задача: Перенести нагрузку в новый кластер, начав нумерацию подов с индекса 3, чтобы избежать конфликтов с работающими подами 0-2 в старом кластере.
 

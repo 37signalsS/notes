@@ -126,6 +126,6 @@ klist
 
 - [Обзор Samba](./index.md) — архитектура и версии протокола
 - [Настройка сервера](./samba_setup.md) — базовые шаги конфигурации
-- [Интеграция через SSSD](../../../SystemAdministration/Users/LDAP_SSSD/index.md) — современная альтернатива Winbind
+- [Интеграция через SSSD](../../../SystemAdministration/Users/LDAP_SSSD/ad_integration.md) — современная альтернатива Winbind
 - [Протокол Kerberos](../../../../Security/Concepts/kerberos.md) — основы сетевой аутентификации
 - [Управление пользователями](../../../SystemAdministration/users_management.md) — общие принципы Linux

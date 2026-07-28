@@ -14,131 +14,126 @@
 
 ### Сценарий 1: Сборка DEB-пакетов (Debian/Ubuntu)
 
-#### Шаг 1: Получение исходного кода и зависимостей
+#### Вариант А: Модификация существующего пакета
 
-```bash
-# Включите репозитории исходного кода (deb-src) в /etc/apt/sources.list
-# Пример: deb-src http://archive.ubuntu.com/ubuntu focal main universe
+Используется, когда нужно внести изменения в официальный пакет дистрибутива (например, наложить патч или изменить параметры компиляции).
 
-# Обновите индекс пакетов
-sudo apt update
+1.  **Получение исходного кода и зависимостей**:
+    ```bash
+    # Убедитесь, что в /etc/apt/sources.list активны строки deb-src
+    sudo apt update
+    apt-get source <package_name>
+    sudo apt-get build-dep <package_name>
+    ```
 
-# Загрузите исходный код пакета
-apt-get source <package_name>
+2.  **Внесение изменений**:
+    Перейдите в директорию и внесите правки. Для управления патчами используйте `quilt`:
+    ```bash
+    export QUILT_PATCHES=debian/patches
+    quilt push -a    # Применить все существующие патчи
+    quilt new my_fix.patch
+    quilt add file_to_edit.c
+    # ... правка файла ...
+    quilt refresh
+    quilt pop -a     # Откатить патчи перед сборкой (dpkg-buildpackage применит их сам)
+    ```
 
-# Установите все необходимые зависимости для сборки (Build-Depends)
-sudo apt-get build-dep <package_name>
-```
+3.  **Обновление журнала изменений**:
+    ```bash
+    dch -i "Добавлена поддержка кастомного модуля"
+    ```
 
-#### Шаг 2: Изменение версии и журнала изменений
+4.  **Сборка**:
+    ```bash
+    # -us -uc отключает подпись (для локального тестирования)
+    dpkg-buildpackage -us -uc -b
+    ```
 
-```bash
-# Перейдите в директорию с исходниками
-cd package-name-version/
+#### Вариант Б: Создание нового пакета «с нуля»
 
-# Используйте dch (debchange) для добавления записи в changelog
-dch -i          # Увеличить версию и открыть редактор
-dch -n          # Добавить новую версию для Ubuntu поверх Debian
+Используется для упаковки собственного ПО или утилит, не имеющих директории `debian/`.
 
-# Формат версии в DEB (Debian Package):
-# 1.2.3-4ubuntu5
-# │   │  └─ Ревизия для Ubuntu (Revision)
-# │   └───── Ревизия для Debian (Revision)
-# └───────── Версия апстрима (Upstream)
-```
+1.  **Подготовка архива**:
+    ```bash
+    tar -czf myapp-1.0.tar.gz myapp-1.0/
+    cd myapp-1.0/
+    ```
 
-#### Шаг 3: Процесс сборки
+2.  **Инициализация структуры debian**:
+    ```bash
+    # Установка dh-make
+    sudo apt install dh-make
+    
+    # Создание шаблонов (s — single binary, p — python и т.д.)
+    dh_make --createorig -s
+    ```
 
-```bash
-# Сборка бинарного пакета без цифровой подписи
-dpkg-buildpackage -us -uc -b
+3.  **Настройка**:
+    Отредактируйте `debian/control` (метаданные) и `debian/rules` (инструкции сборки). В большинстве современных случаев в `rules` достаточно оставить `dh $@`.
 
-# Сборка полного комплекта (исходники + бинарники) с использованием debuild
-debuild -us -uc
-
-# Результаты сборки появятся на уровень выше:
-# ../package-name_version_arch.deb    — бинарный пакет для установки
-# ../package-name_version.dsc         — описание исходного пакета
-# ../package-name_version.orig.tar.gz — оригинальный архив исходного кода
-```
-
-#### Шаг 4: Проверка и установка
-
-```bash
-# Проверьте пакет на соответствие стандартам Debian
-lintian ../package-name_version_arch.deb
-
-# Установите пакет локально
-sudo apt install ./../package-name_version_arch.deb
-```
+4.  **Сборка**:
+    ```bash
+    debuild -us -uc
+    ```
 
 ---
 
 ### Сценарий 2: Сборка RPM-пакетов (Fedora/RHEL/CentOS)
 
-#### Шаг 1: Подготовка рабочего дерева
+#### Вариант А: Сборка из Source RPM (SRPM)
 
-`RPM` (Red Hat Package Manager) требует специфической структуры директорий для сборки.
+Стандартный метод пересборки существующего пакета с новыми параметрами.
 
-```bash
-# Установка базового инструментария
-sudo dnf install rpm-build rpmdevtools
+1.  **Подготовка среды**:
+    ```bash
+    sudo dnf install rpm-build rpmdevtools
+    rpmdev-setuptree  # Создает структуру ~/rpmbuild/
+    ```
 
-# Создание структуры директорий ~/rpmbuild/
-rpmdev-setuptree
+2.  **Загрузка и установка SRPM**:
+    ```bash
+    dnf download --source <package_name>
+    rpm -i <package_name>.src.rpm
+    ```
 
-# Назначение папок:
-# ~/rpmbuild/SOURCES/   — исходные архивы (.tar.gz) и патчи
-# ~/rpmbuild/SPECS/     — конфигурационные .spec файлы
-# ~/rpmbuild/RPMS/      — готовые бинарные пакеты
-# ~/rpmbuild/SRPMS/     — исходные пакеты (.src.rpm)
-```
+3.  **Установка зависимостей и сборка**:
+    ```bash
+    sudo dnf builddep ~/rpmbuild/SPECS/<package_name>.spec
+    rpmbuild -ba ~/rpmbuild/SPECS/<package_name>.spec
+    ```
 
-#### Шаг 2: Получение и распаковка SRPM (Source RPM)
+#### Вариант Б: Создание пакета через SPEC-файл
 
-```bash
-# Скачивание исходного пакета
-dnf download --source <package_name>
+Используется для создания пакета для собственного приложения.
 
-# Установка SRPM (распаковка архивов и spec-файла в дерево rpmbuild)
-rpm -i <package_name>.src.rpm
-```
+1.  **Создание скелета SPEC-файла**:
+    ```bash
+    cd ~/rpmbuild/SPECS/
+    rpmdev-newspec myapp.spec
+    ```
 
-#### Шаг 3: Установка зависимостей сборки
+2.  **Заполнение секций**:
+    *   **Source0**: Путь к исходному архиву в `~/rpmbuild/SOURCES/`.
+    *   **%prep**: Инструкции по распаковке (обычно `%setup -q`).
+    *   **%build**: Команды компиляции (`make`, `cmake`).
+    *   **%install**: Команды установки в `%{buildroot}`.
+    *   **%files**: Список всех устанавливаемых файлов.
 
-```bash
-# Автоматическая установка зависимостей, указанных в BuildRequires
-sudo dnf builddep ~/rpmbuild/SPECS/<package_name>.spec
-```
-
-#### Шаг 4: Сборка пакета
-
-```bash
-# Сборка бинарного и исходного пакетов
-rpmbuild -ba ~/rpmbuild/SPECS/<package_name>.spec
-
-# Сборка только бинарного пакета (.rpm)
-rpmbuild -bb ~/rpmbuild/SPECS/<package_name>.spec
-```
-
-#### Шаг 5: Проверка и установка
-
-```bash
-# Проверка качества собранного пакета
-rpmlint ~/rpmbuild/RPMS/<arch>/<package_name>.rpm
-
-# Установка пакета в систему
-sudo dnf install ~/rpmbuild/RPMS/<arch>/<package_name>.rpm
-```
+3.  **Валидация и сборка**:
+    ```bash
+    rpmlint myapp.spec
+    rpmbuild -bb myapp.spec
+    ```
 
 ---
 
 ## Дополнительная информация
 
-Продвинутые техники (изолированное окружение `mock`/`pbuilder`, кросс-компиляция, автоматизация) описаны в документе **[Дополнительная информация](./additional_info.md)**.
+Продвинутые техники (изолированная сборка в `mock`/`sbuild`, автоматизация через CI/CD) описаны в документе **[Дополнительная информация](./additional_info.md)**.
 
 ### Связанные документы
 
 - **[Определения](./definitions.md)** — глоссарий терминов сборки.
 - **[Основные понятия](./basic_concepts.md)** — этапы сборки и структура файлов.
 - **[Обзор управления пакетами](../linux_package_management_overview.md)** — сравнение систем DEB и RPM.
+- **[Анализ и распаковка пакетов](../package_analysis.md)** — инструменты для изучения состава готовых пакетов.

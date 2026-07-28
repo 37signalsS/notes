@@ -68,12 +68,13 @@ python check_db.py
 
 ## Исключение файлов из поиска
 
-Список исключённых директорий, файлов и расширений задаётся в `rag_utils.py`:
+Список исключённых директорий, файлов и расширений задаётся в `config.yaml`:
 
-```python
-EXCLUDED_DIRS = ["Vagrant", ".git", ".obsidian", "venv", "rag_system"]
-EXCLUDED_FILES = ["GEMINI.md", "MEMORY.md", ".DS_Store"]
-EXCLUDED_EXTENSIONS = [".doc", ".docx", ".pdf", ".xls", ...]
+```yaml
+excluded:
+  dirs: [".git", ".obsidian", "venv", "rag_system"]
+  files: ["GEMINI.md", "MEMORY.md", ".DS_Store"]
+  extensions: [".doc", ".docx", ".pdf", ".xls", ...]
 ```
 
 После добавления нового исключения запустите `ingest.py` — система сама удалит старые чанки из индекса.

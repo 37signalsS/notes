@@ -2,110 +2,72 @@
 
 ## Определения
 
-**Fluent Bit** — легковесный агент сбора и пересылки логов (log shipper), написанный на C. Используется для сбора логов из контейнеров, файлов и системных журналов с последующей отправкой в централизованные хранилища (Loki, Elasticsearch, Kafka).
+**Fluent Bit** — высокопроизводительный, легковесный агент и агрегатор телеметрии (логи, метрики, трассировки). Написан на языке C, что обеспечивает минимальное потребление ресурсов CPU и RAM, делая его идеальным решением для развертывания в качестве DaemonSet в кластерах Kubernetes.
 
-**Output-плагин `grafana-loki`** — встроенный плагин Fluent Bit для отправки логов в Grafana Loki. Поддерживает динамические лейблы, сжатие и буферизацию.
+**Output-плагин `loki`** — встроенный компонент Fluent Bit для передачи данных в Grafana Loki. Плагин поддерживает группировку сообщений в пакеты (batching), сжатие и динамическое назначение меток (labels).
 
-**Динамические лейблы** — метки, извлекаемые из полей лога (например, метаданных Kubernetes) в момент выполнения. Обеспечивают уникальность потока логов в Loki.
+**Структурированные метаданные (Structured Metadata)** — функция Loki 3.x, поддерживаемая Fluent Bit, которая позволяет передавать дополнительные атрибуты лога без создания новых индексов в хранилище. Это решает проблему высокой кардинальности меток.
 
-> **См. также:** [Обзор Grafana Loki](./loki_overview.md) — архитектура и базовые концепции Loki. [Конфигурация Fluent Bit](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md) — основы настройки Fluent Bit.
+**Подробнее:** [Обзор Grafana Loki](./loki_overview.md), [Конфигурация Fluent Bit](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)
 
-## Базовые концепции
+## Основные концепции
 
-### Выбор версии Fluent Bit
+### Версии и поддержка
 
 | Версия | Статус | Рекомендация |
 | :--- | :--- | :--- |
-| **Fluent Bit v3.x** | ✅ Активно развивается | Рекомендуется для новых развертываний |
-| **Fluent Bit v2.x** | ✅ Поддерживается | Стабильная версия для production |
-| **grafana/fluent-bit** | ⚠️ Deprecated | Не использовать, переходить на официальный Fluent Bit |
+| **Fluent Bit v3.x** | Текущая (Stable) | Рекомендуется для всех новых развертываний. Включает поддержку процессоров и улучшенную работу с OTLP. |
+| **Fluent Bit v2.x** | Поддерживается | Стабильная версия, широко распространенная в существующих окружениях. |
+| **grafana/fluent-bit** | Устарело (Deprecated) | Специализированный образ от Grafana Labs более не требуется, так как плагин `loki` интегрирован в официальный бинарный файл Fluent Bit. |
 
-> **Важно:** Официальный Fluent Bit имеет встроенный output-плагин `grafana-loki`, который отлично работает. Избегайте устаревшего образа `grafana/fluent-bit`.
+### Ограничения Loki: Индексация и лейблы
 
-### Ключевая особенность Loki: Уникальность лейблов
+Loki индексирует только метаданные (лейблы), а не текст лога. Это накладывает два критических ограничения при интеграции с Fluent Bit:
 
-В отличие от Elasticsearch, который индексирует практически любые данные, Loki накладывает строгое ограничение: **в один и тот же момент времени нельзя отправлять данные с одинаковым набором лейблов**.
+1.  **Порядок логов (Out of Order):** Loki требует, чтобы логи внутри одного потока (уникальный набор лейблов) поступали в хронологическом порядке. Если несколько экземпляров Fluent Bit отправляют данные с идентичными статичными лейблами одновременно, может возникнуть конфликт.
+2.  **Кардинальность (Cardinality):** Создание уникального лейбла для каждого идентификатора запроса (например, `request_id`) приведет к взрывному росту индекса и отказу Querier.
 
-Если несколько агентов Fluent Bit (например, с разных узлов кластера) отправят логи одновременно с идентичным статичным набором меток (например, `job="fluent-bit-k8s"`), Loki вернет ошибку, связанную с нарушением порядка (`out-of-order`).
+**Решение:** Используйте динамические лейблы для идентификации источника (под, контейнер) и структурированные метаданные для передачи детального контекста.
 
-**Решение** — обеспечить уникальность набора лейблов для каждого потока логов. Это достигается добавлением динамических меток, которые идентифицируют источник лога.
-
-**Неправильный подход (приведет к ошибкам):**
-
-```ini
-[OUTPUT]
-    Name  loki
-    Match *
-    Host  loki-gateway.loki.svc.cluster.local
-    Port  80
-    Labels job=fluent-bit-k8s
-```
-
-**Правильный подход (добавление динамических меток):**
-
-```ini
-[OUTPUT]
-    Name  loki
-    Match kube.*
-    Host  loki-gateway.loki.svc.cluster.local
-    Port  80
-    Labels job=fluent-bit-k8s, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name'], container=$kubernetes['container_name'], host=$kubernetes['host']
-```
-
-В этом примере метки `namespace`, `pod`, `container` и `host` извлекаются из полей, добавленных фильтром `kubernetes`, и гарантируют уникальность потока логов.
-
-### Сравнение: Fluent Bit vs. Grafana Alloy для Loki
+### Сравнение Fluent Bit и Grafana Alloy
 
 | Критерий | Fluent Bit | Grafana Alloy |
 | :--- | :--- | :--- |
-| **Статус** | ✅ Активно развивается | ✅ Активно развивается |
-| **Специализация** | Логи и метрики | Логи + метрики + трассировки + профили |
-| **Конфигурация** | INI/TOML/YAML | River (HCL-подобный) |
-| **Интеграция с Loki** | Output-плагин `grafana-loki` | Нативный компонент `loki.write` |
-| **Kubernetes** | Фильтр `kubernetes` | `discovery.kubernetes` + `loki.source.kubernetes` |
-| **Производительность** | Высокая, низкое потребление | Высокая, немного больше ресурсов |
-| **Рекомендация** | Для существующих развертываний | Для новых развертываний |
+| **Язык разработки** | C | Go |
+| **Конфигурация** | Classic (INI / YAML / TOML) | River (декларативный граф) |
+| **Область применения** | Преимущественно логи и базовые метрики | Полноценная наблюдаемость (логи, метрики, трейсы, профили) |
+| **Интеграция с Loki** | Через плагин вывода | Нативный компонент `loki.write` |
+| **Рекомендация** | Стандарт для систем, где критично минимальное потребление RAM | Рекомендуемый выбор для современных LGTM-стеков (Loki, Grafana, Tempo, Mimir) |
 
-> **Подробнее:** [Grafana Alloy](../Grafana/grafana_alloy_overview.md) — универсальный агент Grafana Labs.
+## Практические сценарии
 
-## Практический сценарий: Настройка Fluent Bit для Loki
+### Сценарий 1: Сбор логов Kubernetes с поддержкой Loki 3.x
 
-Этот сценарий описывает конфигурацию Fluent Bit для сбора логов из Kubernetes и системных файлов с последующей отправкой в Loki.
+Пример конфигурации для Fluent Bit v3.x, который собирает логи контейнеров, обогащает их метаданными Kubernetes и отправляет в Loki, используя структурированные метаданные для меток с высокой кардинальностью.
 
-> **Примечание:** Конфигурация актуальна для Fluent Bit v2.x/v3.x. Для Grafana Alloy см. [loki_stack_setup/alloy_installation.md](./loki_stack_setup/alloy_installation.md).
-
-### Файл конфигурации `fluent-bit.conf`
+**Файл `fluent-bit.conf`:**
 
 ```ini
 [SERVICE]
-    # Глобальные настройки
-    Flush         5
-    Daemon        off
+    Flush         1
     Log_Level     info
+    Daemon        off
     Parsers_File  parsers.conf
     HTTP_Server   On
     HTTP_Listen   0.0.0.0
     HTTP_Port     2020
 
 [INPUT]
-    # Сбор логов из подов Kubernetes
     Name              tail
     Tag               kube.*
     Path              /var/log/containers/*.log
     Parser            docker
-    Mem_Buf_Limit     10MB
+    DB                /var/log/flb_kube.db
+    Mem_Buf_Limit     50MB
     Skip_Long_Lines   On
-
-[INPUT]
-    # Сбор системных логов
-    Name              tail
-    Tag               syslog.*
-    Path              /var/log/messages,/var/log/secure
-    Parser            syslog
-    Mem_Buf_Limit     5MB
+    Refresh_Interval  10
 
 [FILTER]
-    # Обогащение логов Kubernetes метаданными
     Name                kubernetes
     Match               kube.*
     Kube_URL            https://kubernetes.default.svc:443
@@ -114,85 +76,66 @@
     K8S-Logging.Parser  On
     K8S-Logging.Exclude On
 
-[FILTER]
-    # Добавление статических меток для системных логов
-    Name record_modifier
-    Match syslog.*
-    Record application syslog
-
 [OUTPUT]
-    # Отправка логов Kubernetes в Loki
-    Name               loki
-    Match              kube.*
-    Host               loki-gateway.loki.svc.cluster.local # Адрес вашего Loki Gateway
-    Port               80
-    Labels             job=k8s, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name'], container=$kubernetes['container_name'], host=$kubernetes['host']
-    Line_Format        log
-    LogLevel           info
-
-[OUTPUT]
-    # Отправка системных логов в Loki
-    Name               loki
-    Match              syslog.*
-    Host               loki-gateway.loki.svc.cluster.local
-    Port               80
-    Labels             job=syslog, host=$hostname, app=$application, file=$filename
-    Line_Format        log
-    LogLevel           info
+    Name                   loki
+    Match                  kube.*
+    Host                   loki-gateway.logging.svc.cluster.local
+    Port                   80
+    # Лейблы определяют индекс (низкая кардинальность)
+    Labels                 job=fluent-bit, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name']
+    # Структурированные метаданные для поиска (не индексируются)
+    Structured_Metadata    container=$kubernetes['container_name'], node=$kubernetes['host']
+    Auto_Kubernetes_Labels On
+    Line_Format            json
+    LogLevel               info
 ```
 
-### Разбор конфигурации
+### Сценарий 2: Обработка системных журналов (Journald)
 
-#### `[INPUT]` секции
+Сбор логов операционной системы с нод Kubernetes.
 
-1. **Первая секция (`kube.*`)**: Использует плагин `tail` для чтения всех файлов логов контейнеров в `/var/log/containers/`. Применяет парсер `docker` для разбора стандартного формата логов Docker/containerd.
-2. **Вторая секция (`syslog.*`)**: Читает системные логи из `/var/log/messages` и `/var/log/secure`, используя парсер `syslog`.
+```ini
+[INPUT]
+    Name           systemd
+    Tag            host.*
+    Systemd_Filter _SYSTEMD_UNIT=kubelet.service
+    Read_From_Tail On
 
-#### `[FILTER]` секции
-
-1. **`kubernetes`**: Перехватывает логи с тегом `kube.*` и обогащает их метаданными из Kubernetes API: `pod_name`, `namespace_name`, `labels`, `annotations` и т.д. Эти поля становятся доступны для использования в `[OUTPUT]`.
-2. **`record_modifier`**: Добавляет статическое поле `application: syslog` к системным логам.
-
-#### `[OUTPUT]` секции
-
-Обе секции используют плагин `loki`.
-
-1. **`kube.*`**:
-    - `Labels`: Динамически создает набор лейблов из полей, добавленных фильтром `kubernetes`. Это обеспечивает уникальность потоков логов. `job=k8s` — статическая метка для удобства фильтрации.
-    - `Line_Format log`: Указывает, что в качестве строки лога должно использоваться содержимое поля `log`.
-2. **`syslog.*`**:
-    - `Labels`: Использует `hostname` (внутренняя переменная Fluent Bit), `application` (добавлено фильтром) и `filename` (внутренняя переменная) для создания уникального набора лейблов.
+[OUTPUT]
+    Name   loki
+    Match  host.*
+    Host   loki-gateway.logging.svc.cluster.local
+    Port   80
+    Labels job=systemd, unit=$_SYSTEMD_UNIT, hostname=$hostname
+```
 
 ## Устранение неполадок
 
-### Ошибка: `413 Request Entity Too Large`
+### Ошибки при передаче данных
 
-Эта ошибка возникает, когда Fluent Bit пытается отправить в Loki батч (пакет) логов, размер которого превышает лимит, установленный на стороне Loki (или на прокси перед ним, например, Nginx Ingress).
-
-**Решения:**
-
-| Решение | Описание | Пример |
+| Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Увеличить лимит в Loki** | Параметр `max_body_size` в конфигурации Loki | `server.http_listen_max_body_size: 10MB` |
-| **Увеличить лимит в Ingress** | Аннотация для Nginx Ingress | `nginx.ingress.kubernetes.io/proxy-body-size: "10m"` |
-| **Уменьшить батч в Fluent Bit** | Параметры `Flush` и `Mem_Buf_Limit` | `Flush 1`, `Mem_Buf_Limit 5MB` |
+| **413 Request Entity Too Large** | Батч логов превышает лимит Loki или Ingress | Увеличьте `http_listen_max_body_size` в Loki или добавьте аннотацию `proxy-body-size` в Nginx Ingress. |
+| **429 Too Many Requests** | Превышен лимит скорости записи (Ingestion Rate) | Настройте `ingestion_rate_mb` в `limits_config` на стороне Loki. |
+| **Error parsing labels** | Ошибка в синтаксисе обращения к переменным | Проверьте, что переменные (например, `$kubernetes['pod_name']`) доступны после работы фильтра. |
+| **Out of Order Entries** | Несколько потоков пишут в один Stream без уникальных меток | Добавьте метку с именем ноды или идентификатором реплики агента. |
 
-**Пример настройки Ingress для Loki:**
+### Проверка конфигурации Ingress
+
+Для корректной работы Fluent Bit с внешним Loki через Ingress, необходимо настроить таймауты и лимиты тела запроса.
 
 ```yaml
-# Ingress для Loki Gateway
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: loki-gateway
+  name: loki-ingress
   namespace: logging
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
 spec:
   rules:
-    - host: loki.example.com
+    - host: loki.internal.example.com
       http:
         paths:
           - path: /
@@ -204,10 +147,11 @@ spec:
                   number: 80
 ```
 
-## Дополнительные ресурсы
+## Дополнительная информация
 
-Конфигурация Fluent Bit для Loki описана в официальной документации: [Fluent Bit Output: Loki](https://docs.fluentbit.io/manual/pipeline/outputs/loki).
-
-Базовые концепции Loki и LogQL: [Обзор Grafana Loki](./loki_overview.md). Настройка Loki в Docker Compose: [Docker Compose Setup](../Grafana/Installation/docker_compose_setup.md). Развертывание Loki Stack в Kubernetes с Helm: [Loki Installation](./loki_stack_setup/loki_installation.md).
-
-Рекомендуемый агент для новых развёртываний: [Grafana Alloy](../Grafana/grafana_alloy_overview.md). Основы конфигурации Fluent Bit: [Fluent Bit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md).
+| Ресурс | Описание |
+| :--- | :--- |
+| [Обзор Grafana Loki](./loki_overview.md) | Архитектура системы, типы хранилищ и язык LogQL |
+| [Установка Grafana Alloy](./loki_stack_setup/alloy_installation.md) | Описание рекомендуемого агента для новых систем |
+| [Документация Fluent Bit: Loki](https://docs.fluentbit.io/manual/pipeline/outputs/loki) | Официальный справочник параметров плагина вывода |
+| [Примеры LogQL запросов](./loki_stack_setup/logql_examples.md) | Как анализировать логи, собранные Fluent Bit |

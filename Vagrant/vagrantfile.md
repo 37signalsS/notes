@@ -2,11 +2,26 @@
 
 ## Определения
 
-**Vagrantfile** — конфигурационный файл на языке Ruby, описывающий параметры виртуальных машин и их окружения. Служит единым источником истины для настройки инфраструктуры проекта.
+**Vagrantfile** — основной конфигурационный файл проекта на языке Ruby, описывающий желаемое состояние виртуальных машин и их окружения. Он является декларативным описанием инфраструктуры и позволяет воспроизводить идентичные окружения на разных машинах разработчиков.
 
-> **Синтаксис:** Ruby DSL (Domain-Specific Language). Актуальная версия синтаксиса — `"2"`.
+> **Синтаксис:** Ruby DSL (Domain-Specific Language). Актуальная и единственная поддерживаемая версия синтаксиса — `"2"`.
 
 ## Базовые концепции
+
+### Порядок поиска Vagrantfile
+
+При выполнении любой команды (`vagrant up`, `vagrant status` и др.) Vagrant ищет конфигурационные файлы в определённом порядке, объединяя их настройки:
+
+1.  **Box Vagrantfile:** Поставляется вместе с образом (box). Содержит специфические для данного образа настройки (например, имя пользователя по умолчанию).
+2.  **User Vagrantfile:** Расположен в домашней директории пользователя (`~/.vagrant.d/Vagrantfile`). Используется для глобальных настроек (например, прокси или плагинов).
+3.  **Project Vagrantfile:** Находится в корневой директории проекта. Это основной файл, который хранится в системе контроля версий.
+
+### Слияние конфигураций
+
+Vagrant объединяет настройки из всех найденных файлов. При конфликте параметров действуют следующие правила:
+-   **Переопределение:** Параметры из Project Vagrantfile имеют приоритет над User и Box Vagrantfile.
+-   **Дополнение:** Некоторые параметры (например, проброс портов или сетевые интерфейсы) суммируются, создавая несколько правил.
+-   **Специфичность:** Глобальные настройки внутри одного файла переопределяются настройками внутри блока `config.vm.define`.
 
 ### Структура файла
 
@@ -21,167 +36,149 @@ Vagrant.configure("2") do |config|
   # Конфигурация конкретной ВМ
   config.vm.define "web" do |web|
     web.vm.hostname = "web-server"
+    web.vm.network "forwarded_port", guest: 80, host: 8080
   end
 end
 ```
 
 **Основные элементы:**
 
-- `Vagrant.configure("2")` — инициализация блока конфигурации.
-- `config` — объект, через который задаются глобальные параметры.
-- `do |config| ... end` — блок Ruby, внутри которого описывается логика.
+-   `Vagrant.configure("2")` — инициализация блока конфигурации. Число "2" указывает на версию API Vagrant.
+-   `config` — объект, через который задаются параметры, общие для всех машин в файле.
+-   `do |config| ... end` — блок Ruby, внутри которого описывается логика.
 
 ### Конструкция config.vm.define
 
-**`config.vm.define "web" do |web| ... end`** — создаёт отдельную виртуальную машину и открывает блок её настройки.
+Метод `config.vm.define` используется для описания конкретной виртуальной машины (особенно важно в мульти-машинных конфигурациях).
 
-Разбор по частям:
+**Пример:**
+```ruby
+config.vm.define "web" do |web|
+  web.vm.hostname = "web-server"
+end
+```
 
-- `config` — главный объект конфигурации Vagrant.
-- `vm` — раздел, отвечающий за виртуальные машины.
-- `define` — метод, создающий отдельную ВМ.
-- `"web"` — логическое имя виртуальной машины в Vagrant (используется в командах: `vagrant up web`, `vagrant ssh web`).
-- `do |web| ... end` — блок Ruby, внутри которого `web` ссылается на конфигурацию этой конкретной ВМ. Все параметры внутри блока (`web.vm.hostname`, `web.vm.network` и т.д.) применяются только к данной машине.
+**Разбор по частям:**
+
+-   `config` — главный объект конфигурации Vagrant.
+-   `vm` — раздел, отвечающий за параметры виртуальных машин.
+-   `define` — метод, создающий логическое описание отдельной ВМ.
+-   `"web"` — имя виртуальной машины в контексте Vagrant (используется в командах: `vagrant up web`, `vagrant ssh web`).
+-   `do |web| ... end` — блок Ruby, внутри которого `web` ссылается на объект конфигурации этой конкретной ВМ. Все параметры внутри блока (`web.vm.hostname`, `web.vm.network` и т.д.) применяются только к данной машине и переопределяют глобальные настройки `config`.
 
 ### Ключевые параметры конфигурации
 
-| Параметр | Пример | Описание |
+| Группа | Параметр | Описание |
 | :--- | :--- | :--- |
-| `config.vm.box` | `"bento/ubuntu-24.04"` | Базовый образ (box) |
-| `config.vm.box_version` | `"~> 202501.0"` | Версия образа |
-| `config.vm.box_check_update` | `false` | Проверка обновлений box при запуске |
-| `config.vm.hostname` | `"web-server"` | Имя хоста внутри виртуальной машины |
-| `config.vm.network` | `"forwarded_port", ...` | Настройка сетевых интерфейсов |
-| `config.vm.provider` | `"libvirt"`, `"virtualbox"` | Настройки гипервизора |
-| `config.vm.provision` | `"shell"`, `"ansible"` | Автоматизация настройки ОС |
-| `config.vm.synced_folder` | `"./src", "/app"` | Синхронизация папок хост-гость |
-| `config.ssh.username` | `"vagrant"` | Имя пользователя для SSH-подключения |
+| **Образ** | `config.vm.box` | Имя базового образа (например, `bento/ubuntu-24.04`). |
+| | `config.vm.box_version` | Фиксация версии образа (`"~> 202501.0"`). |
+| | `config.vm.box_check_update` | Проверка обновлений при каждом запуске (`true`/`false`). |
+| **ОС** | `config.vm.hostname` | Имя хоста внутри ВМ. |
+| | `config.vm.guest` | Тип гостевой ОС (помогает Vagrant правильно применять настройки). |
+| **Сеть** | `config.vm.network` | Настройка портов (`forwarded_port`), частных (`private_network`) или публичных сетей. |
+| **SSH** | `config.ssh.username` | Имя пользователя для подключения (по умолчанию `vagrant`). |
+| | `config.ssh.private_key_path` | Путь к приватному ключу SSH. |
+| | `config.ssh.forward_agent` | Проброс SSH-агента хоста в ВМ. |
+| **Ресурсы** | `config.vm.provider` | Блок настроек гипервизора (память, CPU, специфические флаги). |
+| **Файлы** | `config.vm.synced_folder` | Синхронизация директорий хоста и ВМ. |
+| **Настройка**| `config.vm.provision` | Автоматизация установки ПО (Shell, Ansible, Docker). |
+| **Инфо** | `config.vm.post_up_message` | Сообщение, выводимое пользователю после успешного запуска `vagrant up`. |
 
 ## Практические сценарии
 
-### Сценарий 1: Базовая конфигурация
+### Сценарий 1: Проверка наличия плагинов
 
-Минимально необходимый набор параметров для запуска одной машины:
+Хорошей практикой является проверка установленных плагинов перед их использованием, чтобы избежать ошибок у других разработчиков:
+
+```ruby
+Vagrant.configure("2") do |config|
+  if Vagrant.has_plugin?("vagrant-proxyconf")
+    config.proxy.http     = "http://proxy.example.com:8080/"
+    config.proxy.https    = "http://proxy.example.com:8080/"
+    config.proxy.no_proxy = "localhost,127.0.0.1"
+  end
+
+  config.vm.box = "bento/ubuntu-24.04"
+end
+```
+
+### Сценарий 2: Использование внешнего файла настроек (Vagrantfile.local)
+
+Для локальных правок, которые не должны попадать в Git, можно использовать подгрузку дополнительного файла:
 
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
-  config.vm.hostname = "dev-machine"
-  
-  # Настройка ресурсов (провайдер Libvirt)
-  config.vm.provider "libvirt" do |libvirt|
-    libvirt.memory = 2048
-    libvirt.cpus = 2
+
+  # Загрузка локальных настроек, если файл существует
+  if File.exist?("Vagrantfile.local")
+    load "Vagrantfile.local"
   end
-  
-  # Проброс порта для веб-приложения
-  config.vm.network "forwarded_port", guest: 80, host: 8080
-  
-  # Базовая настройка через Shell-скрипт
-  config.vm.provision "shell", inline: "apt-get update && apt-get install -y nginx"
 end
 ```
 
-### Сценарий 2: Комплексная конфигурация для разработки
+### Сценарий 3: Динамическая генерация машин
 
-Пример файла, объединяющего сеть, провайдеры, общие папки и расширенный provisioning:
+Ruby позволяет использовать циклы для создания кластеров:
 
 ```ruby
-# -*- mode: ruby -*-
-# vi: set ft=ruby :
-
 Vagrant.configure("2") do |config|
-  # === Базовые настройки ===
-  config.vm.box = "bento/ubuntu-24.04"
-  config.vm.hostname = "dev-environment"
-  config.vm.box_check_update = false
-  
-  # === Сеть ===
-  config.vm.network "forwarded_port", guest: 80, host: 8080
-  config.vm.network "forwarded_port", guest: 3000, host: 3000
-  config.vm.network "private_network", ip: "192.168.77.10"
-  
-  # === Настройки провайдера (Libvirt) ===
-  config.vm.provider "libvirt" do |libvirt|
-    libvirt.memory = 4096
-    libvirt.cpus = 4
-    libvirt.nested = true
-    libvirt.storage_pool_name = "default"
-  end
-  
-  # === Общие папки ===
-  config.vm.synced_folder ".", "/vagrant", disabled: true
-  config.vm.synced_folder "src/", "/app/src", type: "nfs"
-  
-  # === Provisioning (Shell + Ansible) ===
-  config.vm.provision "shell", path: "scripts/bootstrap.sh"
-  config.vm.provision "ansible" do |ansible|
-    ansible.playbook = "playbooks/site.yml"
-  end
-  
-  # === Триггеры ===
-  config.trigger.after :up do |trigger|
-    trigger.run_local = { inline: "echo 'VM is ready!'" }
+  (1..3).each do |i|
+    config.vm.define "node-#{i}" do |node|
+      node.vm.box = "bento/ubuntu-24.04"
+      node.vm.hostname = "node-#{i}"
+      node.vm.network "private_network", ip: "192.168.56.#{10 + i}"
+      
+      node.vm.provider "virtualbox" do |vb|
+        vb.memory = 1024
+        vb.name = "cluster-node-#{i}"
+      end
+    end
   end
 end
 ```
-
-### Другие сценарии
-
-Для реализации специфических задач используйте соответствующие разделы:
-
-- **Мульти-машинные конфигурации:** Описание нескольких ВМ в одном файле — [Vagrant Advanced Usage](./vagrant_advanced_usage.md#multi-machine-архитектура).
-- **Динамическая конфигурация:** Использование переменных окружения (`ENV`) — [Vagrant Advanced Usage](./vagrant_advanced_usage.md#динамическая-конфигурация-через-env).
-- **Настройка VirtualBox:** Специфические параметры для провайдера VirtualBox — [Vagrant Providers](./vagrant_providers.md#сценарий-1-конфигурация-провайдера-в-vagrantfile).
 
 ## Дополнительная информация
 
-### Переменные и циклы в Vagrantfile
+### Использование переменных окружения
 
-Поскольку Vagrantfile — это Ruby-код, в нем можно использовать стандартные конструкции языка:
+Переменные окружения позволяют гибко менять параметры без редактирования файла:
 
 ```ruby
-# Использование переменных
-app_name = "myapp"
-config.vm.hostname = "#{app_name}-dev"
-
-# Условия (например, для CI-окружения)
-if ENV['CI'] == 'true'
-  config.vm.box_check_update = true
-end
-
-# Циклы для создания кластера машин
-(1..3).each do |i|
-  config.vm.define "node-#{i}" do |node|
-    node.vm.network "private_network", ip: "192.168.77.#{10 + i}"
+Vagrant.configure("2") do |config|
+  # Использование переменной или значения по умолчанию
+  ram = ENV['VAGRANT_RAM'] || "2048"
+  
+  config.vm.provider "libvirt" do |lv|
+    lv.memory = ram.to_i
   end
 end
+```
+
+### Валидация и отладка
+
+```bash
+# Проверка синтаксиса Vagrantfile
+vagrant validate
+
+# Просмотр итоговой конфигурации всех ВМ в проекте
+vagrant status
+
+# Запуск с подробным логированием процесса разбора файла
+VAGRANT_LOG=debug vagrant status
 ```
 
 ### Лучшие практики
 
-1. **Комментарии:** Разделяйте логические секции (`Network`, `Providers`, `Provision`) комментариями для удобства чтения.
-2. **Безопасность:** Не храните пароли и токены в `Vagrantfile`. Используйте переменные окружения или зашифрованные файлы (например, Ansible Vault).
-3. **Версионирование:** Всегда указывайте версию box (`config.vm.box_version`), чтобы избежать внезапных изменений в базовой ОС при обновлении образа у разработчиков.
-4. **.gitignore:** Добавляйте директорию `.vagrant/` и файлы с секретами (`.env`) в исключения Git.
-
-### Валидация Vagrantfile
-
-```bash
-# Проверка синтаксиса файла
-vagrant validate
-
-# Просмотр итоговой конфигурации всех машин
-vagrant status
-```
-
-Подробные уровни логирования при отладке конфигурации описаны в [Vagrant Troubleshooting](./vagrant_troubleshooting/practical_scenarios.md).
+1.  **Комментарии:** Используйте комментарии для разделения секций (Network, Provisioning, Providers).
+2.  **Безопасность:** Не храните секреты в `Vagrantfile`. Используйте `.env` файлы (через плагин `vagrant-env`) или системные переменные окружения.
+3.  **Идемпотентность:** Пишите скрипты провижининга так, чтобы их можно было запускать многократно без ошибок.
+4.  **Версионирование:** Всегда фиксируйте версию box (`config.vm.box_version`), чтобы гарантировать одинаковый результат у всей команды.
 
 ### См. также
 
-- [Vagrant Basic Workflow](./vagrant_basic_workflow.md) — основы работы.
-- [Vagrant Providers](./vagrant_providers.md) — управление образами и провайдерами.
-- [Vagrant Networking](./vagrant_networking.md) — детальная настройка сетей.
-- [Vagrant Provisioning](./vagrant_provisioning.md) — автоматизация настройки.
-- [Vagrant Storage and Folders](./vagrant_storage_and_folders.md) — работа с дисками и папками.
-- [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — сложные сценарии и триггеры.
+- [Vagrant Basic Workflow](./vagrant_basic_workflow.md) — основы работы и жизненный цикл ВМ.
+- [Vagrant Providers](./vagrant_providers.md) — детальная настройка гипервизоров.
+- [Vagrant Networking](./vagrant_networking.md) — проброс портов и настройка сетей.
+- [Vagrant Provisioning](./vagrant_provisioning.md) — автоматизация настройки гостевой ОС.
+- [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — сложные сценарии, триггеры и мульти-машинные конфигурации.

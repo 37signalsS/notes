@@ -124,37 +124,9 @@ finally:
 
 ### Настройка RabbitMQ для At-least-once (Quorum Queues)
 
-Для максимальной надежности в RabbitMQ следует использовать **Quorum Queues**.
-```python
-import pika
+Обеспечение надежности в RabbitMQ реализуется через использование **Quorum Queues**, включение **Publisher Confirms** на стороне продюсера и использование **Manual Acknowledgments** на стороне консьюмера.
 
-# Продюсер: ожидание подтверждения публикации
-connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
-channel = connection.channel()
-channel.confirm_delivery() # Включение Publisher Confirms
-
-try:
-    channel.basic_publish(
-        exchange='',
-        routing_key='critical_tasks',
-        body='Payment Data',
-        properties=pika.BasicProperties(delivery_mode=2) # Персистентное сообщение
-    )
-    print("Сообщение подтверждено брокером")
-except pika.exceptions.UnroutableError:
-    print("Сообщение не доставлено")
-
-# Консьюмер: ручное подтверждение
-def callback(ch, method, properties, body):
-    try:
-        save_to_db(body)
-        ch.basic_ack(delivery_tag=method.delivery_tag) # Ack только после записи в БД
-    except Exception:
-        # Возврат в очередь или отправка в DLQ
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-
-channel.basic_consume(queue='critical_tasks', on_message_callback=callback)
-```
+Подробное описание настройки с примерами кода на Python приведено в основном разделе: **[Обзор RabbitMQ: Надежность и гарантии доставки](../rabbitmq/overview.md#надежность-и-гарантии-доставки)**.
 
 ---
 

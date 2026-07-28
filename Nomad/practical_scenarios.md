@@ -1,22 +1,18 @@
 # Nomad — практические сценарии
 
-## Определения
+## Обзор сценариев
 
-Основные единицы работы в Nomad (Job, Group, Task) и их описание вынесены в основной файл определений.
+В данном разделе представлены практические примеры использования Nomad для различных типов нагрузок. Базовые сущности (Job, Group, Task) описаны в [основном файле определений](./definitions_and_concepts.md).
 
-Подробности: [Nomad — определения](./definitions_and_concepts.md#определения).
+## Ключевые паттерны
 
-## Основные концепции
-
-Концептуальная информация о типах задач и структуре job-файлов доступна в разделе базовых концепций.
-
-Подробности: [Nomad — типы jobs и структура файла](./definitions_and_concepts.md#типы-jobs).
+Подробная информация о типах задач и структуре job-файлов доступна в [базовых концепциях](./definitions_and_concepts.md#типы-jobs).
 
 ## Практические сценарии
 
 ### 1. Развёртывание микросервисов
 
-Микросервисная архитектура с service discovery и управлением секретами:
+Микросервисная архитектура с автоматическим обнаружением сервисов (Service Discovery) и использованием **Workload Identity** для безопасного доступа к Vault:
 
 ```hcl
 job "webapp" {
@@ -28,13 +24,14 @@ job "webapp" {
 
     network {
       port "http" {
-        static = 8080
+        to = 8080
       }
     }
 
     service {
       name = "webapp"
       port = "http"
+      provider = "nomad" # Использование встроенного Service Discovery (v1.6+)
 
       check {
         name     = "http_health"
@@ -53,8 +50,20 @@ job "webapp" {
         ports = ["http"]
       }
 
-      vault {
-        policies = ["webapp-policy"]
+      # Использование Workload Identity (v1.6+) вместо статического блока vault
+      identity {
+        env  = true
+        file = true
+      }
+
+      template {
+        data = <<EOH
+{{ with secret "secret/data/webapp/config" }}
+DB_PASSWORD="{{ .Data.data.password }}"
+{{ end }}
+EOH
+        destination = "secrets/file.env"
+        env         = true
       }
 
       consul {
@@ -67,11 +76,11 @@ job "webapp" {
 }
 ```
 
-Документация: [Secret Management с Vault](https://developer.hashicorp.com/nomad/tutorials/enterprise/nomad-vault-secret-management), [Consul Connect Integration](https://developer.hashicorp.com/nomad/tutorials/connect).
+Документация: [Workload Identity](https://developer.hashicorp.com/nomad/docs/concepts/workload-identity), [Consul Connect Integration](https://developer.hashicorp.com/nomad/tutorials/connect).
 
 ### 2. Периодические пакетные задания (Batch)
 
-ETL-процессы, бэкапы, обработка данных:
+ETL-процессы, бэкапы, обработка данных с использованием **Nomad Variables**:
 
 ```hcl
 job "backup" {
@@ -88,8 +97,15 @@ job "backup" {
         args    = ["-h", "${attr.unique.network.ip-address}", "-U", "postgres", "mydb"]
       }
 
-      env {
-        PGPASSWORD = "${vault.secret.data.password}"
+      # Использование Nomad Variables (встроенное хранилище)
+      template {
+        data = <<EOH
+{{ with nomadVar "nomad/jobs/backup" }}
+PGPASSWORD="{{ .password }}"
+{{ end }}
+EOH
+        destination = "secrets/file.env"
+        env         = true
       }
     }
   }
@@ -101,9 +117,9 @@ job "backup" {
 }
 ```
 
-### 3. Оркестрация виртуальных машин (QEMU)
+### 3. Оркестрация виртуальных машин
 
-Legacy-приложения или Windows-workload'ы в VM:
+Запуск изолированных приложений или Windows-нагрузок через драйвер QEMU:
 
 ```hcl
 job "legacy-app" {
@@ -135,9 +151,9 @@ job "legacy-app" {
 }
 ```
 
-### 4. GPU и AI/ML Workloads
+### 4. Нагрузки с использованием GPU и AI/ML
 
-Обучение моделей, инференс, обработка видео:
+Обучение моделей, инференс и обработка видео с аппаратным ускорением:
 
 ```hcl
 job "ml-training" {
@@ -168,11 +184,11 @@ job "ml-training" {
 
 **Возможности GPU:** автоматическое обнаружение NVIDIA GPU через fingerprinting, поддержка MIG (Multi-Instance GPU), интеграция с NVIDIA Device Plugin.
 
-### 5. Edge Computing
+### 5. Периферийные вычисления (Edge Computing)
 
-Развёртывание на периферийных устройствах с ограниченными ресурсами.
+Развёртывание на устройствах с ограниченными ресурсами.
 
-**Преимущества Nomad для Edge:** минимальные требования (~50 MB RAM для клиента), работа в нестабильных сетях (автоматическое переподключение), мульти-регион федерация, поддержка разнородных workload'ов.
+**Преимущества Nomad для Edge:** минимальные требования (~50 MB RAM для клиента), работа в нестабильных сетях, нативная федерация.
 
 ```hcl
 job "edge-processor" {
@@ -200,7 +216,46 @@ job "edge-processor" {
 }
 ```
 
-### 6. Мульти-регион федерация
+### 6. Состояние и хранение данных (Stateful с CSI)
+
+Использование внешних систем хранения через интерфейс CSI (Container Storage Interface):
+
+```hcl
+job "database" {
+  datacenters = ["dc1"]
+  type        = "service"
+
+  group "db" {
+    network {
+      port "db" { to = 5432 }
+    }
+
+    volume "postgres-data" {
+      type            = "csi"
+      source          = "pg-volume"
+      read_only       = false
+      attachment_mode = "file-system"
+      access_mode     = "single-node-writer"
+    }
+
+    task "postgres" {
+      driver = "docker"
+
+      volume_mount {
+        volume      = "postgres-data"
+        destination = "/var/lib/postgresql/data"
+      }
+
+      config {
+        image = "postgres:16"
+        ports = ["db"]
+      }
+    }
+  }
+}
+```
+
+### 7. Федерация между регионами
 
 Глобальное развёртывание с репликацией ACL-политик и квот:
 

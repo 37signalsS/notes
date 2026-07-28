@@ -2,86 +2,109 @@
 
 ## Определения
 
-**Интеграция Vault с Docker** — совокупность методов и инструментов для использования **[HashiCorp Vault](../overview.md)** в качестве внешнего доверенного хранилища конфиденциальных данных (паролей, токенов, ключей API) в контейнеризированных приложениях. Основная цель интеграции — исключение хранения секретов в коде, переменных окружения или образах **[Docker](../../Docker/docker_overview.md)**.
+**Интеграция Vault с Docker** — совокупность архитектурных паттернов и инструментов для обеспечения безопасности секретов (паролей, ключей, сертификатов) в контейнеризированных средах. Целью интеграции является реализация модели жизненного цикла безопасности (SLM), при которой секреты никогда не сохраняются в образах, слоях Docker или переменных окружения.
+
+**BuildKit Secrets** — механизм Docker, позволяющий безопасно монтировать секреты в процессе сборки образа без их сохранения в итоговых слоях файловой системы.
+
+**Vault Agent (Sidecar)** — вспомогательный контейнер, обеспечивающий автоматическую аутентификацию, получение и ротацию секретов для основного приложения.
 
 ## Основные концепции
 
-Процесс интеграции строится на принципе отделения конфигурации от секретов и включает следующие этапы:
+### Жизненный цикл секрета в Docker
 
-1. **Идентификация (Identity):** Каждому контейнеру или сервису назначается уникальная идентичность (например, через **[AppRole](./vault_auth_approle.md)**).
-2. **Аутентификация (Authentication):** Контейнер подтверждает свою личность брокеру секретов (Vault) для получения временного токена доступа.
-3. **Авторизация (Authorization):** Доступ ограничивается строго определенными путями через **[политики доступа](../authorization.md)**.
-4. **Доставка (Delivery):** Секреты передаются в контейнер в момент выполнения (Runtime) в виде файлов или переменных окружения.
+Процесс интеграции разделяется на две стадии:
+
+1.  **Стадия сборки (Build-time):** Секреты нужны для доступа к приватным репозиториям, пакетам или API провайдеров.
+2.  **Стадия выполнения (Runtime):** Приложение получает динамические или статические учетные данные для работы с базами данных, очередями и внешними сервисами.
 
 ### Сравнение методов интеграции
 
-| Метод | Описание | Область применения |
+| Метод | Описание | Когда использовать |
 | :--- | :--- | :--- |
-| **Vault Agent** | Клиентский демон для автоматической аутентификации и рендеринга шаблонов. | Рекомендуется для большинства производственных сред (Production). |
-| **Direct API (Библиотеки)** | Прямое взаимодействие приложения с API Vault через клиентские библиотеки. | Сложные приложения с динамической логикой работы с секретами. |
-| **Entrypoint-скрипт** | Использование bash-скрипта для получения секретов перед запуском приложения. | Простые сценарии, Legacy-приложения, не поддерживающие чтение из файлов. |
+| **BuildKit Secrets** | Монтирование секретов через `--mount=type=secret`. | Сборка образов (CI/CD). |
+| **Vault Agent** | Рендеринг шаблонов в общую `tmpfs` директорию. | Продуктивные среды, Docker Compose. |
+| **Direct API** | Использование SDK (hvac, vault-ruby) внутри кода. | Сложная динамическая логика. |
+| **Entrypoint (Bash)** | Получение секретов через `curl` перед запуском приложения. | Legacy-системы, быстрые прототипы. |
+
+### Идентификация и аутентификация
+
+Для контейнеров в Docker (в отличие от Kubernetes) предпочтительными методами аутентификации являются:
+*   **OIDC / JWT:** Для CI/CD пайплайнов (GitHub Actions, GitLab CI), где Vault доверяет идентификатору раннера.
+*   **AppRole:** Стандартный метод для статических серверов или Docker Compose, использующий `RoleID` и `SecretID`.
+*   **Cloud Auth (AWS/GCP/Azure):** Если Docker запущен на облачной виртуальной машине, Vault проверяет личность через метаданные инстанса.
 
 ## Практические сценарии
 
-### Использование Vault Agent в Docker Compose
+### Сборка образов с использованием BuildKit Secrets
 
-**[Vault Agent](./vault_agent/basics.md)** может быть запущен как отдельный сервис (Sidecar) или как Init-контейнер для подготовки секретов во внешнем томе (**Volume**).
+Использование BuildKit предотвращает утечку Vault-токенов в историю слоев образа.
+
+**Пример Dockerfile:**
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim
+
+# Монтирование секрета только на время выполнения команды RUN
+RUN --mount=type=secret,id=vault_token \
+    VAULT_TOKEN=$(cat /run/secrets/vault_token) && \
+    pip install --index-url https://my-private-repo.com/simple/ my-internal-package
+```
+
+**Команда сборки:**
+```bash
+export VAULT_TOKEN=$(vault login -method=oidc -token-only)
+docker build --secret id=vault_token,env=VAULT_TOKEN -t my-secure-app .
+```
+
+### Использование Vault Agent в Docker Compose (Sidecar паттерн)
+
+В Docker Compose рекомендуется запускать Vault Agent как отдельный сервис, который готовит секреты в общей `tmpfs` области памяти.
 
 **Пример `docker-compose.yml`:**
-
 ```yaml
 services:
   # Основное приложение
   webapp:
     image: my-app:latest
     volumes:
-      - secrets-data:/etc/app/secrets:ro
+      - secrets-shared:/app/secrets:ro
     depends_on:
       vault-agent:
         condition: service_healthy
 
-  # Агент для доставки секретов
+  # Агент Vault
   vault-agent:
     image: hashicorp/vault:latest
-    entrypoint: vault agent -config=/etc/vault.d/agent.hcl
+    cap_add:
+      - IPC_LOCK
     volumes:
-      - ./agent.hcl:/etc/vault.d/agent.hcl
-      - secrets-data:/etc/app/secrets
+      - ./agent-config.hcl:/etc/vault/config.hcl
+      - secrets-shared:/app/secrets
+    command: agent -config=/etc/vault/config.hcl
     environment:
-      - VAULT_ADDR=http://vault-server:8200
-      - VAULT_ROLE_ID=${APP_ROLE_ID}
-      - VAULT_SECRET_ID=${APP_SECRET_ID}
+      - VAULT_ADDR=https://vault.example.com:8200
 
 volumes:
-  secrets-data:
+  secrets-shared:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
 ```
 
-### Использование Entrypoint-скрипта (Bash)
+### Скрипт инициализации (Entrypoint) для Legacy-приложений
 
-Этот метод позволяет получить секреты и экспортировать их как переменные окружения (**Environment Variables**) непосредственно перед запуском основного процесса приложения.
+Если приложение поддерживает только переменные окружения, используйте скрипт, который получает данные из Vault и выполняет `exec`.
 
 **Пример `entrypoint.sh`:**
-
 ```bash
 #!/bin/bash
-set -e
+# Аутентификация через AppRole (RoleID и SecretID передаются оркестратором)
+TOKEN=$(curl -s --request POST --data "{\"role_id\":\"$ROLE_ID\",\"secret_id\":\"$SECRET_ID\"}" $VAULT_ADDR/v1/auth/approle/login | jq -r .auth.client_token)
 
-# 1. Аутентификация через AppRole для получения токена
-LOGIN_RESPONSE=$(curl --silent --request POST \
-  --data '{"role_id": "'"$VAULT_ROLE_ID"'", "secret_id": "'"$VAULT_SECRET_ID"'"}' \
-  $VAULT_ADDR/v1/auth/approle/login)
+# Получение секрета
+DB_PASSWORD=$(curl -s --header "X-Vault-Token: $TOKEN" $VAULT_ADDR/v1/secret/data/db | jq -r .data.data.password)
 
-VAULT_TOKEN=$(echo $LOGIN_RESPONSE | jq -r .auth.client_token)
-
-# 2. Получение секрета из KV-хранилища
-SECRET_RESPONSE=$(curl --silent --header "X-Vault-Token: $VAULT_TOKEN" \
-  $VAULT_ADDR/v1/secret/data/myapp/config)
-
-# 3. Экспорт переменных окружения
-export DB_PASSWORD=$(echo $SECRET_RESPONSE | jq -r .data.data.password)
-export API_KEY=$(echo $SECRET_RESPONSE | jq -r .data.data.api_key)
-
-# 4. Передача управления основному приложению
+export DB_PASSWORD
 exec "$@"
 ```
 
@@ -89,15 +112,15 @@ exec "$@"
 
 ### Рекомендации по безопасности
 
-* **Использование tmpfs:** При монтировании секретов в файлы используйте временную файловую систему в оперативной памяти (**tmpfs**), чтобы данные не сохранялись на физическом диске.
-* **Принцип наименьших привилегий:** Каждая роль AppRole должна иметь доступ только к тем секретам, которые необходимы конкретному приложению.
-* **Маскирование логов:** Убедитесь, что скрипты инициализации не выводят значения секретов в `stdout` или `stderr`.
-* **Динамические секреты:** По возможности используйте динамические секреты (базы данных, облачные провайдеры) для автоматической ротации и минимизации ущерба при утечке.
+1.  **Использование tmpfs:** Никогда не сохраняйте расшифрованные секреты на физический диск хоста. Используйте `tmpfs` тома Docker.
+2.  **Защита памяти (IPC_LOCK):** Всегда добавляйте `cap_add: [IPC_LOCK]` для контейнера с Vault или Агентом, чтобы предотвратить сброс секретов в swap.
+3.  **Маскирование переменных:** В CI/CD пайплайнах помечайте переменные как `masked` или `hidden`.
+4.  **Сетевая безопасность:** Даже во внутренней сети Docker (`bridge` или `overlay`) трафик к Vault должен быть зашифрован (TLS).
 
 ### См. также
 
-* **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — обзор нативных методов Docker (Secrets, Compose).
-* **[Vault Agent: Определения и Базовая Конфигурация](./vault_agent/basics.md)** — подробное руководство по работе агента.
-* **[Аутентификация в Vault через AppRole](./vault_auth_approle.md)** — настройка прав доступа для приложений.
-* **[Подход Zero Trust к управлению секретами](../zero_trust.md)** — общие принципы архитектуры нулевого доверия.
-* **[Антипаттерны управления секретами](../common_antipatterns.md)** — типичные ошибки, которых следует избегать.
+*   **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — SSoT по нативным механизмам Docker.
+*   **[Vault Agent: основы](./vault_agent/basics.md)** — детальная настройка шаблонов.
+*   **[Аутентификация через AppRole](./vault_auth_approle.md)** — детали машинной аутентификации.
+*   **[Подход Zero Trust](../zero_trust.md)** — концепция федерации идентичности (WIF).
+*   **[Антипаттерны управления секретами](../common_antipatterns.md)** — почему нельзя использовать `ARG` и `ENV` для секретов.

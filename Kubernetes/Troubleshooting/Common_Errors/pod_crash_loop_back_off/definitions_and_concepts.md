@@ -86,34 +86,31 @@
 
 ### Быстрая диагностика через CLI
 
-Для определения причин `CrashLoopBackOff` используется стандартный набор команд с анализом их вывода:
+Для системного устранения `CrashLoopBackOff` рекомендуется следовать последовательной цепочке команд (от абстракций верхнего уровня к логам приложения):
 
-1. **Проверка статуса и событий Pod:**
+1. **Проверка статуса Deployment (если есть):**
+   ```bash
+   kubectl describe deployment <deployment-name>
+   ```
+   # → Проверьте, может ли развертывание создавать нужные реплики и нет ли общих ошибок на уровне контроллера.
 
+2. **Детальный осмотр Pod и событий:**
    ```bash
    kubectl describe pod <pod-name>
    ```
+   # → Ищите в событиях (Events) причины: FailedScheduling, FailedMount или Back-off.
 
-   # → Ищите в выводе:
-   # State: Waiting / Reason: CrashLoopBackOff
-   # Last State: Terminated / Reason: Error / Exit Code: 1
-   # Events: Warning BackOff (Back-off restarting failed container)
-
-2. **Анализ логов предыдущего запуска (критично):**
-
+3. **Анализ логов упавшего контейнера:**
    ```bash
-   kubectl logs <pod-name> --previous
+   kubectl logs <pod-name> -c <container-name> --previous
    ```
+   # → Флаг --previous критичен для CrashLoopBackOff, так как текущий контейнер может быть пуст.
 
-   # → Позволяет увидеть лог падения, даже если текущий контейнер пуст или только запустился.
-
-3. **Проверка событий Namespace (сортировка по времени):**
-
+4. **Хронологический список событий кластера:**
    ```bash
-   kubectl get events --sort-by='.lastTimestamp'
+   kubectl get events --sort-by='.metadata.creationTimestamp'
    ```
-
-   # → Помогает увидеть системные проблемы (OOM, сбои узла), затрагивающие несколько подов.
+   # → Позволяет точно восстановить последовательность сбоев.
 
 ## Дополнительная информация
 

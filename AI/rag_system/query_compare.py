@@ -1,51 +1,38 @@
 import sys
+import argparse
 import json
 import time
 import rag_utils
-from langchain_chroma import Chroma as ChromaStore
+from unified_search import perform_search
 
-def get_engine(engine_type):
-    cfg = rag_utils.ENGINES[engine_type]
-    embeddings = rag_utils.get_embeddings(cfg["model"])
-    vs = ChromaStore(
-        persist_directory=cfg["dir"],
-        embedding_function=embeddings,
-        collection_name=cfg["collection"]
-    )
-    return vs
+_FORMAT_RESULT_MAX_CHARS = 300
 
-def test_query(question, engine_type, k=30):
-    start_time = time.time()
-    vs = get_engine(engine_type)
 
-    search_query = rag_utils.BGE_QUERY_PREFIX + question if engine_type == "bge" else question
-    results = vs.max_marginal_relevance_search(search_query, k=k, fetch_k=60)
+def test_query(question: str, engine_type: str, k: int = 30, use_rerank: bool = False, max_chars: int = _FORMAT_RESULT_MAX_CHARS) -> dict:
+    start = time.time()
+    results = perform_search(question, engine_names=[engine_type], top_k=k, use_rerank=use_rerank)
+    duration = time.time() - start
 
-    duration = time.time() - start_time
-    output = []
-    for res in results:
-        source = res.metadata.get("source", "")
-        if rag_utils.is_excluded(source):
-            continue
-        output.append({
-            "content": res.page_content[:200] + "...",
-            "source": source
-        })
+    for r in results:
+        content = r["content"]
+        if len(content) > max_chars:
+            r["content"] = content[:max_chars] + "..."
 
-    return {"engine": engine_type, "time": f"{duration:.2f}s", "results": output}
+    return {"engine": engine_type, "time": f"{duration:.2f}s", "results": results}
+
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python query_compare.py 'engine' 'question'")
-        print("Engine: 'bge' or 'mpnet'")
+    parser = argparse.ArgumentParser(description="Compare search results from different engines")
+    parser.add_argument("engine", help=f"Engine name: {', '.join(rag_utils.ENGINES)}")
+    parser.add_argument("query", help="Search query")
+    parser.add_argument("--k", type=int, default=rag_utils.MMR_COMPARE_DEFAULT_K, help="Number of results (default: 30)")
+    parser.add_argument("--rerank", action="store_true", help="Apply cross-encoder reranking")
+    parser.add_argument("--max-chars", type=int, default=_FORMAT_RESULT_MAX_CHARS, help="Max content length per result")
+    args = parser.parse_args()
+
+    if args.engine not in rag_utils.ENGINES:
+        print(f"Unknown engine: {args.engine}. Available: {', '.join(rag_utils.ENGINES)}")
         sys.exit(1)
 
-    engine = sys.argv[1]
-    question = sys.argv[2]
-
-    if engine not in rag_utils.ENGINES:
-        print(f"Неизвестный движок: {engine}. Доступны: {', '.join(rag_utils.ENGINES.keys())}")
-        sys.exit(1)
-
-    res = test_query(question, engine)
+    res = test_query(args.query, args.engine, k=args.k, use_rerank=args.rerank, max_chars=args.max_chars)
     print(json.dumps(res, indent=2, ensure_ascii=False))

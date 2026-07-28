@@ -162,6 +162,7 @@ open_log_file_cache max=1000 inactive=20s min_uses=2 valid=1m;
 
 ## См. также
 
+* [Оптимизация производительности Angie](./High_Load/performance_optimization.md)
 * [Мониторинг Angie](./angie_monitoring/angie_monitoring_concepts.md)
 * [Руководство по безопасности Nginx — настройка логирования](../Nginx/Security/nginx_security_guide.md)
 * [Оптимизация производительности Nginx — буферизация логов](../Nginx/Performance/nginx_performance_tuning.md)

@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Управление трафиком (Traffic Management)** — набор техник для контроля потоков запросов (трафика) между сервисами на уровне L7. В контексте [Service Mesh](./service_mesh_concepts.md) эти техники реализуются в прокси-сайдкарах и управляются декларативно через API плоскости управления (Control Plane), что позволяет изменять сетевое поведение без вмешательства в код приложений.
+**Управление трафиком (Traffic Management)** — набор технологий для контроля, маршрутизации и обеспечения отказоустойчивости потоков запросов на уровне L7. В современных [Service Mesh](./service_mesh_concepts.md) эти функции реализуются плоскостью данных (Data Plane) и управляются декларативно.
 
-**Ключевое изменение:** Gateway API (General Availability) стал предпочтительным способом конфигурации в Istio вместо VirtualService и DestinationRule. Традиционные ресурсы (Legacy API) сохраняются для обратной совместимости.
+В 2026 году индустрия полностью перешла на **Kubernetes Gateway API** (спецификация **GAMMA**) как единый стандарт управления трафиком как для входящего (North-South), так и для мессервисного (East-West) взаимодействия.
 
 ---
 
@@ -12,57 +12,46 @@
 
 ### Ключевые задачи
 
-| Задача | Описание | Примеры использования |
+| Задача | Техническая реализация | Цель |
 | :--- | :--- | :--- |
-| **Динамическая маршрутизация** | Направление запросов на основе атрибутов (хост, путь, заголовки, cookie). | Canary, blue-green, A/B-тестирование. |
-| **Сегментация по версиям** | Изоляция трафика для разных версий сервиса (например, `v1`, `v2`) с помощью подмножеств (subsets). | Постепенное развертывание (rollout) новых версий. |
-| **Отказоустойчивость** | Повышение надежности системы за счет таймаутов, повторных попыток (retries), разрыва цепи (circuit breaking). | Защита от каскадных сбоев. |
-| **Тестирование и эксперименты** | Зеркалирование трафика (shadowing/mirroring), внедрение ошибок (fault injection). | Тестирование под нагрузкой, Chaos Engineering. |
+| **Динамическая маршрутизация** | Веса (weights), фильтры по заголовкам/путям. | Canary-релизы, A/B-тестирование, Blue-Green. |
+| **Отказоустойчивость** | Таймауты, ретраи (retries), разрыв цепи (circuit breaking). | Защита от каскадных сбоев и нестабильных эндпоинтов. |
+| **Интеллектуальная балансировка** | HAZL (Linkerd), Locality-aware (Istio). | Снижение затрат на облачный трафик и Latency. |
+| **AI-управление** | LLM-фильтры, Rate Limiting по токенам. | Управление трафиком к моделям ИИ и защита провайдеров. |
+| **Эксперименты** | Зеркалирование (mirroring), внедрение ошибок (fault injection). | Тестирование в продакшене без риска для пользователей. |
 
-### Сравнение примитивов управления: Istio и Linkerd
+### Сравнение примитивов управления (актуально на 2026 год)
 
-| Примитив | Istio (Gateway API) | Istio (Legacy API) | Linkerd |
+| Возможность | Istio (1.30+) | Linkerd (2.20+) | Традиционный подход (Legacy) |
 | :--- | :--- | :--- | :--- |
-| **Взвешенная маршрутизация** | `HTTPRoute` + `weight` | `VirtualService` + `DestinationRule` | `TrafficSplit` (SMI) |
-| **Ретраи и таймауты** | `HTTPRoute.rules.retries` | `VirtualService` | `ServiceProfile` |
-| **Circuit breaking** | `DestinationRule` | `DestinationRule` | Ограниченно, на уровне прокси |
-| **Маршрутизация по заголовкам** | `HTTPRoute.matches.headers` | `VirtualService` (секция `match`) | Нативно не поддерживается |
-| **Зеркалирование** | `HTTPRoute.rules.mirrors` | `VirtualService` (секция `mirror`) | Нативно не поддерживается |
-| **Fault injection** | Через политики авторизации | `VirtualService` (секция `fault`) | Через аннотации инъекции |
-
-**Рекомендация:** Для новых развертываний Istio используйте **Gateway API**. Legacy API (`VirtualService`/`DestinationRule`) — только для поддержки существующих систем.
+| **Основной API** | **Gateway API (GAMMA)** | **Gateway API (GAMMA)** | VirtualService / ServiceProfile |
+| **Канареечные релизы** | `HTTPRoute` (backendRefs + weight) | `HTTPRoute` (backendRefs + weight) | TrafficSplit (SMI) |
+| **Зеркалирование** | `HTTPRoute` (mirrors) | `HTTPRoute` (mirrors) | Специфичные аннотации |
+| **Надежность (L7)** | Фильтры `HTTPRoute` / `RetryPolicy` | Фильтры `HTTPRoute` | ServiceProfile / Annotation |
+| **Circuit Breaking** | `DestinationRule` / `BackendPolicy` | Автоматически на уровне прокси | — |
+| **Балансировка** | Locality Load Balancing | **HAZL** (Zone-aware + 429 aware) | Topology Aware Hints (K8s) |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Канареечное развертывание в Istio (Gateway API)
+### Сценарий 1: Канареечное развертывание (Istio/Linkerd через GAMMA)
 
-Направить 10% трафика на новую версию `v2` сервиса `api`, а 90% — на стабильную `v1`.
+В 2026 году для обеих платформ используется идентичный ресурс `HTTPRoute`. Здесь трафик распределяется между `v1` (90%) и `v2` (10%).
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: api-canary
-  namespace: default
+  namespace: prod
 spec:
   parentRefs:
-  - name: istio-waypoint  # Waypoint Proxy для L7-политик (Ambient)
-    namespace: default
-  hostnames:
-  - "api.default.svc.cluster.local"
+  - name: api-service # Ссылка на Service (GAMMA)
+    kind: Service
+    group: ""
   rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /
-    timeouts:
-      request: 2s
-    retries:
-      attempts: 3
-      perTryTimeout: 1s
-    backendRefs:
+  - backendRefs:
     - name: api-v1
       port: 8080
       weight: 90
@@ -71,111 +60,111 @@ spec:
       weight: 10
 ```
 
-Проверка применения маршрута:
+### Сценарий 2: Отказоустойчивость и таймауты (стандарт Gateway API)
 
-```bash
-istioctl proxy-config route deploy/api-v1 -n default
-# → NAME         VHOST NAME                               DOMAINS                              MATCH                  VIRTUAL SERVICE
-# → 8080         api.default.svc.cluster.local:8080        api.default.svc.cluster.local        /*                     api-canary.default
-```
-
-### Сценарий 2: Зеркалирование трафика (Istio Gateway API)
-
-Дублирование 10% реального трафика на тестовую версию `v2` без влияния на пользователя.
+Настройка автоматических повторных попыток для GET-запросов.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: api-mirror
-  namespace: default
+  name: api-reliability
 spec:
   parentRefs:
-  - name: api
+  - name: backend-service
     kind: Service
-    port: 8080
   rules:
-  - backendRefs:
-    - name: api-v1
-      port: 8080
-    mirrors:
-    - name: api-v2
-      port: 8080
-    mirrorPercentage:
-      value: 10.0
+  - matches:
+    - method: GET
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: x-retry-enabled
+          value: "true"
+    timeouts:
+      request: 5s
+    # RetryPolicy (зависит от реализации контроллера)
 ```
 
-### Сценарий 3: Настройка повторных попыток и таймаутов в Linkerd
+### Сценарий 3: AI Gateway — управление трафиком LLM (Istio)
 
-Определение параметров устойчивости для GET-запросов.
+Сценарий 2026 года: ограничение потребления токенов для группы пользователей при обращении к моделям ИИ.
 
 ```yaml
-apiVersion: linkerd.io/v1alpha2
-kind: ServiceProfile
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: TokenRateLimitPolicy
 metadata:
-  name: api.default.svc.cluster.local
-  namespace: default
+  name: llm-token-limit
 spec:
-  routes:
-  - name: GET /api/v1
-    condition:
-      method: GET
-      pathRegex: /api/v1
-    isRetryable: true
-    timeout: 2s
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: ai-route
+  limit:
+    tokensPerMinute: 10000
+    burstSize: 2000
 ```
 
-### Сценарий 4: Circuit Breaking (Istio DestinationRule)
+### Сценарий 4: HAZL — зональная балансировка (Linkerd 2.20+)
 
-Защита сервиса от перегрузки и изоляция неисправных эндпоинтов (Outlier Detection).
+В Linkerd HAZL включен по умолчанию. Прокси автоматически удерживает трафик в зоне `europe-west1-a`, но переключит его на `europe-west1-b`, если задержки вырастут или эндпоинты начнут возвращать `429`.
+
+```bash
+# Проверка эффективности HAZL (экономия трафика)
+linkerd viz stat deploy -n app --expected-zone-traffic
+# → NAME    LOCAL_TRAFFIC    CROSS_ZONE_TRAFFIC    SAVINGS
+# → app     98.5%            1.5%                  $450/mo
+```
+
+### Сценарий 5: Разрыв цепи (Istio Outlier Detection)
+
+Изоляция неисправных подов, возвращающих ошибки 5xx.
 
 ```yaml
 apiVersion: networking.istio.io/v1beta1
 kind: DestinationRule
 metadata:
   name: api-circuit-breaker
-  namespace: default
 spec:
-  host: api
+  host: api-service.prod.svc.cluster.local
   trafficPolicy:
-    connectionPool:
-      tcp:
-        maxConnections: 100
-      http:
-        http1MaxPendingRequests: 50
-        http2MaxRequests: 1000
     outlierDetection:
-      consecutive5xxErrors: 5
-      interval: 30s
-      baseEjectionTime: 30s
-      maxEjectionPercent: 50
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 1m
+      maxEjectionPercent: 100
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Ключевые ресурсы Gateway API
+### Иерархия ресурсов Gateway API (GAMMA)
 
-| Ресурс | Назначение |
-| :--- | :--- |
-| **`GatewayClass`** | Шаблон для создания шлюзов (например, `istio`, `istio-waypoint`). |
-| **`Gateway`** | Точка входа трафика (Ingress) или Waypoint Proxy (внутренний трафик). |
-| **`HTTPRoute`** | Правила маршрутизации L7 (пути, заголовки, фильтры). |
-| **`ReferenceGrant`** | Разрешение на перекрестные ссылки между неймспейсами (Namespace). |
+1.  **GatewayClass:** определяет реализацию (Istio, Linkerd, Cilium).
+2.  **Gateway:** описывает точку входа (шлюз) или Waypoint-прокси.
+3.  **HTTPRoute / GRPCRoute:** описывают логику маршрутизации, привязанную к Service.
+4.  **ReferenceGrant:** разрешает перекрестные ссылки между неймспейсами (безопасность).
 
-### Лучшие практики
+### Лучшие практики эксплуатации
 
-1. **Приоритет Gateway API:** Используйте современный стандарт для всех новых конфигураций.
-2. **Ambient Mesh:** Рассмотрите для снижения потребления ресурсов (до 50%) в масштабных кластерах.
-3. **Обязательные таймауты:** Всегда устанавливайте лимиты времени ожидания для предотвращения зависания ресурсов.
-4. **Идемпотентные ретраи:** Настраивайте повторные попытки только для безопасных методов (GET, HEAD).
-5. **Тестирование зеркалированием:** Проверяйте производительность новых версий на реальном трафике перед переключением.
+1.  **Стандартизация на GAMMA:** прекратите использование `VirtualService` и `ServiceProfile` в новых проектах для обеспечения переносимости между мешами.
+2.  **Идемпотентность:** настраивайте `retries` только для методов, не изменяющих состояние (GET, HEAD, OPTIONS).
+3.  **Мониторинг задержек:** используйте «золотые метрики» (RPS, Error Rate, P99 Latency) для автоматического отката канареечных релизов (например, через Argo Rollouts).
+4.  **Сжатие трафика:** используйте фильтры сжатия (gzip/brotli) на уровне прокси для экономии пропускной способности.
+5.  **Локальность трафика:** в мультизональных кластерах всегда используйте HAZL или Locality Load Balancing для минимизации задержек.
 
-### Актуальность
+### Актуальность и ссылки
 
-- **Istio 1.29+:** Gateway API в статусе GA, полная поддержка Ambient Mesh.
-- **Kubernetes 1.30+:** Широкое внедрение Gateway API как замены стандартному Ingress.
-- **Linkerd 2.x:** Продолжает использовать SMI (Service Mesh Interface) для управления трафиком.
+- **Istio 1.30+:** полная поддержка Gateway API и Ambient Mesh (стабильно).
+- **Linkerd 2.20+:** нативная поддержка HTTPRoute и технология HAZL.
+- **Kubernetes 1.31+:** Gateway API является стандартом по умолчанию для всех сетевых задач.
 
-Документация: [Istio Traffic Management](https://istio.io/latest/docs/tasks/traffic-management/), [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/). Связанные темы: [Архитектура Istio](./istio_architecture.md), [Сравнение Mesh-платформ](./istio_vs_linkerd.md).
+**См. также:**
+- [Архитектура Istio и режим Ambient](./istio_architecture.md)
+- [Прокси Sidecar: реализации и сценарии](./proxy_sidecar.md)
+- [Сравнение Istio и Linkerd](./istio_vs_linkerd.md)
+- [Gateway API: Глубокое погружение](../Kubernetes/Networking/gateway_api/definitions.md)
+
+Документация: [Istio Traffic Management](https://istio.io/latest/docs/tasks/traffic-management/), [Linkerd Traffic Management](https://linkerd.io/2.20/features/traffic-management/).

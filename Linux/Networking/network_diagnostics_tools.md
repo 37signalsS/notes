@@ -138,6 +138,7 @@ resolvectl query google.com
 - **[ss](../Diagnostics/Networking/ss.md)** — глубокий анализ сокетов и TCP-метрик (RTT, cwnd).
 - **[tcpdump](../Diagnostics/Networking/tcpdump.md)** — захват и фильтрация трафика.
 - **[traceroute и mtr](../Diagnostics/Networking/traceroute_mtr.md)** — детальный анализ маршрута.
+- **[Альтернативы ping](../../Networking/Troubleshooting/ping_alternatives.md)** — проверка доступности без ICMP (TCP-пинг).
 - **[nmap](../Diagnostics/Networking/nmap.md)** — сканирование сетей.
 - **[Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md)** — `iftop`, `snitch`, `iptraf-ng`.
 

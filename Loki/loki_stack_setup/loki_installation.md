@@ -2,14 +2,14 @@
 
 ## Определения
 
-**Loki Helm-чарт** — пакет для развертывания Loki в Kubernetes с поддержкой трёх режимов: Single Binary, Simple Scalable, Distributed.
+**Loki Helm-чарт** — пакет для развертывания Loki в Kubernetes. Начиная с версии 3.x, чарт поддерживает три основных режима: Single Binary, Simple Scalable и Distributed. Основной фокус в новых версиях сделан на производительности запросов и поддержке нативного поиска по Bloom-фильтрам.
 
-> **⚠️ Важно (март 2026):** Репозиторий `grafana https://grafana.github.io/helm-charts` более не обновляется. Чарт Loki мигрировал на `grafana-community`.
->
-> ```bash
-> helm repo add grafana-community https://grafana-community.github.io/helm-charts
-> helm repo update
-> ```
+**Важное замечание (март 2026):** Репозиторий `grafana https://grafana.github.io/helm-charts` переведен в режим обслуживания. Актуальный чарт Loki теперь находится в репозитории `grafana-community`.
+
+```bash
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
+helm repo update
+```
 
 **Текущая версия (апрель 2026):** Loki 3.x (стабильная), Helm-чарт 6.55.x+
 
@@ -21,11 +21,13 @@
 
 | Режим | Компоненты | Назначение |
 | :--- | :--- | :--- |
-| **Single Binary** | Все в одном поде | Тестирование, разработка, малые нагрузки |
-| **Simple Scalable** (рекомендуется) | Разделение read/write/backend | Production-средние нагрузки |
-| **Distributed** | Каждый компонент отдельно | Крупные production-кластеры |
+| **Single Binary** | Все компоненты в одном поде | Тестирование, разработка, малые нагрузки |
+| **Simple Scalable** | Разделение на чтение (Read), запись (Write) и системные задачи (Backend) | Рекомендуемый режим для Production средних и крупных масштабов |
+| **Distributed** | Каждый микросервис (Ingester, Querier, Distributer и др.) запускается отдельно | Экстремальные нагрузки, требующие тонкой настройки каждого компонента |
 
 ### Архитектура Simple Scalable (рекомендуемый режим)
+
+В этом режиме компоненты группируются по типам нагрузки. Gateway (обычно Nginx) выступает единой точкой входа, маршрутизируя трафик на Read или Write таргеты.
 
 ```
 ┌─────────┐     ┌──────────┐     ┌─────────┐
@@ -43,28 +45,28 @@
            └──────────┘
 ```
 
-### Схема хранения данных
+### Ключевые особенности Loki 3.x
 
-| Параметр | Loki 3.x (актуально) | Loki 2.x (устарело) |
-| :--- | :--- | :--- |
-| **Schema** | `v13` | `v12`, `v11` |
-| **Store** | `tsdb` | `boltdb-shipper` |
-| **Index period** | `24h` | `24h` |
+1.  **Bloom Filters:** Позволяют значительно ускорить поиск по неиндексированным данным, отсекая чанки, которые точно не содержат искомый текст.
+2.  **Structured Metadata:** Позволяет прикреплять метаданные к строкам логов без создания новых лейблов (и, следовательно, без увеличения кардинальности индекса).
+3.  **TSDB Index:** Стандартный формат индекса, обеспечивающий высокую плотность хранения и скорость поиска.
 
 ## Практические сценарии
 
 ### Подготовка репозитория Helm
 
 ```bash
-# Новый репозиторий (после 16 марта 2026)
+# Добавление актуального репозитория
 helm repo add grafana-community https://grafana-community.github.io/helm-charts
 helm repo update
 
-# Просмотр значений по умолчанию
+# Получение стандартных значений для анализа
 helm show values grafana-community/loki > loki_values.yaml
 ```
 
-### Сценарий 1: Production — Simple Scalable с S3
+### Сценарий 1: Production — Simple Scalable с S3 и Bloom-фильтрами
+
+Этот сценарий включает поддержку Bloom-фильтров для ускорения запросов и хранение данных в S3.
 
 **Файл `loki_values.yaml`:**
 
@@ -79,11 +81,13 @@ loki:
       ruler: loki-ruler
       admin: loki-admin
     s3:
-      endpoint: s3.amazonaws.com
+      endpoint: s3.amazonaws.com # Или ваш S3-совместимый эндпоинт
       secretAccessKey: ${S3_SECRET_KEY}
       accessKeyId: ${S3_ACCESS_KEY}
+  
   commonConfig:
     replication_factor: 3
+  
   schemaConfig:
     configs:
       - from: "2024-01-01"
@@ -93,55 +97,56 @@ loki:
         index:
           prefix: index_
           period: 24h
+
+  # Включение Bloom-фильтров (Loki 3.0+)
+  bloom_build_config:
+    enabled: true
+  bloom_gateway:
+    enabled: true
+
   limits_config:
     retention_period: 744h  # 31 день
     max_query_series: 5000
-    max_query_parallelism: 14
+    allow_structured_metadata: true # Включение структурированных метаданных
 
+# Настройка компонентов Read (Querier, Frontend)
 read:
-  replicas: 2
+  replicas: 3
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
-    limits:
-      cpu: 1000m
+      cpu: 1
       memory: 2Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
 
+# Настройка компонентов Write (Ingester, Distributor)
 write:
-  replicas: 2
+  replicas: 3
   resources:
     requests:
-      cpu: 500m
-      memory: 1Gi
-    limits:
-      cpu: 1000m
+      cpu: 1
       memory: 2Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
 
+# Настройка Backend (Compactor, Ruler)
 backend:
   replicas: 2
   resources:
     requests:
       cpu: 500m
       memory: 1Gi
-    limits:
-      cpu: 1000m
-      memory: 2Gi
 
 gateway:
   enabled: true
   replicas: 2
-
-monitoring:
-  dashboards:
-    enabled: true
-  rules:
-    enabled: true
-  serviceMonitor:
-    enabled: true
 ```
 
-### Сценарий 2: Тестирование — Single Binary с filesystem
+### Сценарий 2: Тестирование — Single Binary с локальным хранилищем
+
+Подходит для небольших кластеров или сред разработки.
 
 ```yaml
 deploymentMode: SingleBinary
@@ -157,17 +162,14 @@ loki:
         store: tsdb
         object_store: filesystem
         schema: v13
-        index:
-          prefix: index_
-          period: 24h
 
 singleBinary:
   replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
       cpu: 500m
       memory: 1Gi
 
@@ -176,9 +178,10 @@ gateway:
   replicas: 1
 ```
 
-### Установка Loki
+### Установка в кластер
 
 ```bash
+# Создание namespace и установка
 helm upgrade --install loki grafana-community/loki \
   --namespace logging \
   --create-namespace \
@@ -186,56 +189,47 @@ helm upgrade --install loki grafana-community/loki \
   --wait --atomic
 ```
 
-### Проверка статуса
+### Проверка работоспособности
 
 ```bash
-# Проверка подов
+# Просмотр статуса всех компонентов
 kubectl get pods -n logging -l app.kubernetes.io/name=loki
 
-# Проверка сервисов
-kubectl get svc -n logging -l app.kubernetes.io/name=loki
+# Проверка логов инжестера на наличие ошибок записи
+kubectl logs -n logging -l app.kubernetes.io/component=write -f
 
-# Детали StatefulSet
-kubectl describe statefulset -n logging -l app.kubernetes.io/name=loki
-
-# Логи Loki
-kubectl logs -n logging -l app.kubernetes.io/name=loki -f
+# Проверка PVC при использовании локального хранилища
+kubectl get pvc -n logging
 ```
 
-### Устранение неполадок
+### Диагностика типичных ошибок
 
-| Проблема | Причина | Решение |
+| Ошибка | Возможная причина | Путь решения |
 | :--- | :--- | :--- |
-| **Pod в статусе Pending** | Отсутствуют PV или нет доступа к S3 | Проверьте состояние PVC: `kubectl get pvc -n logging` и учетные данные S3 |
-| **CrashLoopBackOff** | Ошибка конфигурации схемы или хранилища | Изучите логи: `kubectl logs -n logging -l app.kubernetes.io/name=loki` |
-| **Ошибка Gateway 502** | Компоненты backend еще не готовы | Дождитесь завершения инициализации всех сервисов |
-| **Schema mismatch** | Некорректная дата в параметре `from` | Убедитесь, что `from` не позже даты первого запуска кластера |
+| **Pending Pods** | Недостаточно ресурсов или проблемы с PVC | Проверьте `kubectl describe pod` и наличие свободного места/прав на StorageClass |
+| **Invalid Schema** | Неверная дата `from` или версия схемы | Дата `from` должна быть в прошлом. Для Loki 3.x используйте `v13` и `tsdb` |
+| **S3 Connection Refused** | Неверный эндпоинт или сетевой доступ | Проверьте сетевые политики (NetworkPolicies) и валидность IAM-ключей |
+| **403 Forbidden** | Недостаточно прав у ServiceAccount | Убедитесь, что у подов Loki есть права на запись в S3 бакет |
 
-### Полезные команды
+### Полезные команды для эксплуатации
 
 ```bash
-# Статус релиза
-helm status loki -n logging
+# Просмотр текущей конфигурации в кластере
+helm get values loki -n logging
 
-# История обновлений
+# Список установленных версий чарта
 helm history loki -n logging
 
-# Откат к предыдущей версии
-helm rollback loki -n logging
-
-# Удаление релиза
-helm uninstall loki -n logging
-
-# Просмотр значений
-helm get values loki -n logging -o yaml
+# Быстрый откат при неудачном обновлении
+helm rollback loki -n logging <version>
 ```
 
 ## Дополнительная информация
 
 | Ресурс | Описание |
 | :--- | :--- |
-| [Обзор Loki](../loki_overview.md) | Архитектура, LogQL, сравнение с Elasticsearch |
-| [Установка Grafana](grafana_installation.md) | Визуализация логов, datasource Loki |
-| [Примеры LogQL](logql_examples.md) | Запросы для анализа логов |
-| [Установка Alloy](alloy_installation.md) | Рекомендуемый агент для сбора логов |
-| [Документация Loki Helm](https://grafana.com/docs/loki/latest/setup/install/helm/) | Официальная документация Grafana Labs |
+| [Обзор Loki](../loki_overview.md) | Архитектура, принципы работы и сравнение с ELK |
+| [Установка Grafana](grafana_installation.md) | Настройка источника данных и дашбордов |
+| [Примеры LogQL](logql_examples.md) | Практическое руководство по языку запросов |
+| [Установка Alloy](alloy_installation.md) | Настройка современного агента сбора логов |
+| [Документация по Bloom-фильтрам](https://grafana.com/docs/loki/latest/operations/bloom-filters/) | Детальная настройка ускорения запросов |

@@ -2,244 +2,174 @@
 
 ## Определения
 
-* **iproute2** — см. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
-* **Linux Bridge** — см. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
-* **Open vSwitch (OVS)** — см. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
-* **Меж-VLAN маршрутизация** — см. **[VLAN (протокол)](../../Protocols/vlan.md#меж-vlan-маршрутизация)**.
+*   **iproute2** — основной набор утилит для управления сетевым стеком в Linux. См. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
+*   **Linux Bridge** — программная реализация L2-коммутатора в ядре. См. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
+*   **Open vSwitch (OVS)** — продвинутый виртуальный коммутатор для многоузловых сред. См. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
+*   **Docker macvlan/ipvlan** — сетевые драйверы для прямого подключения контейнеров к L2-сегментам хоста.
 
 ## Базовые концепции
 
-Перед выполнением сценариев изучите базовые принципы в **[Определения и концепции L2 Switching и VLAN](./definitions_and_concepts.md)**.
+Перед выполнением сценариев изучите теоретическую базу в **[Определения и концепции L2 Switching и VLAN](./definitions_and_concepts.md)**.
 
-Ключевые принципы настройки VLAN в Linux:
+### Ключевые принципы настройки в Linux
 
-* VLAN-интерфейсы создаются как сабинтерфейсы физического NIC с указанием `id`
-* Физический NIC должен быть подключён к trunk-порту коммутатора
-* Для постоянных настроек используйте NetworkManager или Netplan
-* Меж-VLAN маршрутизация требует включённого `ip_forward`
-
-Полное описание протокола 802.1Q и схемы Router-on-a-Stick — в **[VLAN (протокол)](../../Protocols/vlan.md)**.
+1.  **Сабинтерфейсы:** VLAN-интерфейсы создаются поверх физического адаптера (NIC) и имеют формат `имя.vlan_id` (например, `eth0.10`).
+2.  **Trunk-порт:** Физический интерфейс хоста должен быть подключён к порту коммутатора, настроенному в режиме `trunk` с разрешёнными VLAN ID.
+3.  **Forwarding:** Для реализации маршрутизации между VLAN на Linux-хосте должен быть включён параметр ядра `net.ipv4.ip_forward=1`.
+4.  **MTU и тегирование:** При использовании 802.1Q к кадру добавляется 4 байта. Современные NIC поддерживают это автоматически, но в Q-in-Q или при использовании старого оборудования может потребоваться корректировка MTU.
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка VLAN в Linux
+### Сценарий 1: Настройка VLAN в Linux (Host-уровень)
 
-**Задача:** Сервер подключён к trunk-порту, нужны интерфейсы для VLAN 10 и 20.
+**Задача:** Настроить доступ к двум изолированным сетям (VLAN 10 и 20) через один физический интерфейс `eth0`.
 
-### Вариант A: Временная настройка (iproute2)
-
-```bash
-# Создать VLAN-интерфейсы
-ip link add link eth0 name eth0.10 type vlan id 10
-ip link add link eth0 name eth0.20 type vlan id 20
-
-# Назначить IP
-ip addr add 192.168.10.100/24 dev eth0.10
-ip addr add 192.168.20.100/24 dev eth0.20
-
-# Поднять интерфейсы
-ip link set eth0.10 up
-ip link set eth0.20 up
-
-# Проверка
-ip -d link show eth0.10
-ip -d link show eth0.20
-```
-
-### Вариант B: NetworkManager (nmtui/nmcli)
+#### Вариант A: Временная настройка (iproute2)
+Используется для быстрой проверки или в скриптах автоматизации.
 
 ```bash
-# Создать VLAN через nmcli
-nmcli connection add type vlan ifname enp0s3.10 \
-  dev enp0s3 id 10 con-name "vlan10-users"
+# Создание интерфейсов
+sudo ip link add link eth0 name eth0.10 type vlan id 10
+sudo ip link add link eth0 name eth0.20 type vlan id 20
 
-nmcli connection modify vlan10-users \
-  ipv4.addresses 192.168.10.100/24 \
-  ipv4.gateway 192.168.10.1 \
-  ipv4.dns "8.8.8.8 8.8.4.4" \
-  ipv4.method manual
+# Назначение IP-адресов
+sudo ip addr add 192.168.10.100/24 dev eth0.10
+sudo ip addr add 192.168.20.100/24 dev eth0.20
 
-nmcli connection up vlan10-users
+# Активация
+sudo ip link set eth0.10 up
+sudo ip link set eth0.20 up
 ```
 
-### Вариант C: Netplan (Ubuntu 18.04+)
-
-**Подробная документация:** **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)** — полные примеры конфигураций (статические IP, bonding, VLAN, маршруты).
+#### Вариант B: Постоянная настройка (Netplan / Ubuntu)
+Рекомендуемый способ для современных дистрибутивов на базе Ubuntu/Debian. Подробности см. в **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)**.
 
 ```yaml
 # /etc/netplan/01-netcfg.yaml
 network:
   version: 2
-  renderer: networkd
   ethernets:
     eth0:
       dhcp4: no
-      optional: true
   vlans:
     eth0.10:
       id: 10
       link: eth0
       addresses: [192.168.10.100/24]
-      routes:
-        - to: default
-          via: 192.168.10.1
-      nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
     eth0.20:
       id: 20
       link: eth0
       addresses: [192.168.20.100/24]
+```
 
-# Применить
-sudo netplan apply
+#### Вариант C: Облачная инициализация (Cloud-init)
+Используется при развертывании виртуальных машин в облаках (OpenStack, Proxmox, AWS).
+
+```yaml
+# cloud-config
+network:
+  version: 2
+  vlans:
+    vlan10:
+      id: 10
+      link: eth0
+      addresses:
+        - 192.168.10.50/24
 ```
 
 ---
 
-## Сценарий 2: VLAN на гипервизоре (KVM/QEMU)
+### Сценарий 2: Контейнеризация (Docker macvlan)
 
-**Задача:** Виртуальные машины на одном гипервизоре должны быть в разных VLAN.
-
-### Решение с Linux Bridge
+**Задача:** Запустить контейнер, который будет виден в сети VLAN 10 как отдельное физическое устройство со своим MAC-адресом.
 
 ```bash
-# Создать мосты для каждого VLAN
-ip link add name br-vlan10 type bridge
-ip link add name br-vlan20 type bridge
+# Создание Docker-сети типа macvlan, привязанной к сабинтерфейсу хоста
+docker network create -d macvlan \
+  --subnet=192.168.10.0/24 \
+  --gateway=192.168.10.1 \
+  -o parent=eth0.10 \
+  vlan10_net
 
-# Создать VLAN-интерфейсы
-ip link add link eth0 name eth0.10 type vlan id 10
-ip link add link eth0 name eth0.20 type vlan id 20
-
-# Привязать VLAN к мостам
-ip link set eth0.10 master br-vlan10
-ip link set eth0.20 master br-vlan20
-
-# Поднять всё
-ip link set eth0.10 up
-ip link set eth0.20 up
-ip link set br-vlan10 up
-ip link set br-vlan20 up
-
-# Виртуальные машины подключаются к соответствующему мосту
-# VM1 → br-vlan10, VM2 → br-vlan20
-```
-
-### Решение с Open vSwitch
-
-```bash
-# Создать OVS мост
-ovs-vsctl add-br ovs-br0
-
-# Добавить физический интерфейс как trunk
-ovs-vsctl add-port ovs-br0 eth0
-
-# Создать внутренние порты для VLAN
-ovs-vsctl add-port ovs-br0 vlan10 -- set interface vlan10 type=internal
-ovs-vsctl set interface vlan10 options:tag=10
-
-ovs-vsctl add-port ovs-br0 vlan20 -- set interface vlan20 type=internal
-ovs-vsctl set interface vlan20 options:tag=20
-
-# Назначить IP
-ip addr add 192.168.10.1/24 dev vlan10
-ip addr add 192.168.20.1/24 dev vlan20
+# Запуск контейнера в этой сети
+docker run -d --name web-vlan10 --network vlan10_net nginx
 ```
 
 ---
 
-## Сценарий 3: Меж-VLAN маршрутизация
+### Сценарий 3: Виртуализация (KVM/QEMU)
 
-**Задача:** Обеспечить связь между VLAN 10 и 20.
-
-**SSoT:** Полная информация о маршрутизации между VLAN, включая схемы Router-on-a-Stick и сабинтерфейсы, доступна в **[VLAN (протокол)](../../Protocols/vlan.md#меж-vlan-маршрутизация-router-on-a-stick)**.
-
-**Краткая настройка в Linux:**
+**Задача:** Изолировать трафик виртуальных машин с помощью Linux Bridge.
 
 ```bash
-# Включить IP forwarding
-sysctl -w net.ipv4.ip_forward=1
+# Создание моста и привязка к нему VLAN-интерфейса
+sudo ip link add name br-vlan10 type bridge
+sudo ip link set eth0.10 master br-vlan10
 
-# Создать VLAN-интерфейсы с IP
-ip link add link eth0 name eth0.10 type vlan id 10
-ip link add link eth0 name eth0.20 type vlan id 20
+# Поднятие интерфейсов
+sudo ip link set br-vlan10 up
 
-ip addr add 192.168.10.1/24 dev eth0.10
-ip addr add 192.168.20.1/24 dev eth0.20
-
-ip link set eth0.10 up
-ip link set eth0.20 up
+# В настройках VM (libvirt/virt-manager) указать Bridge 'br-vlan10'
 ```
 
 ---
 
-## Сценарий 4: Диагностика проблем VLAN
+### Сценарий 4: Меж-VLAN маршрутизация (Router-on-a-Stick)
 
-### Проблема 1: Нет связи между устройствами в одном VLAN
-
-```bash
-# Проверить VLAN на интерфейсе
-ip -d link show eth0.10
-# Ожидается: vlan id 10 ...
-
-# Проверить таблицу ARP
-ip neigh show dev eth0.10
-
-# Проверить counters
-ip -s link show eth0.10
-
-# tcpdump для проверки тегов
-tcpdump -i eth0 -e -n vlan
-```
-
-### Проблема 2: Трафик не проходит через trunk
+**Задача:** Сделать Linux-хост маршрутизатором между VLAN 10 и 20.
 
 ```bash
-# На коммутаторе проверить разрешённые VLAN
-show interfaces trunk
-show running-config interface Gi0/8
+# 1. Включение маршрутизации
+sudo sysctl -w net.ipv4.ip_forward=1
 
-# Проверить native VLAN
-show interfaces Gi0/8 switchport
+# 2. Настройка IP на сабинтерфейсах (шлюзы для подсетей)
+sudo ip addr add 192.168.10.1/24 dev eth0.10
+sudo ip addr add 192.168.20.1/24 dev eth0.20
 
-# На Linux проверить получение тегов
-tcpdump -i eth0 -e 'vlan[0:2] & 0x0fff = 10'
+# 3. Настройка правил доступа (iptables/nftables)
+# Разрешить трафик между VLAN
+sudo iptables -A FORWARD -i eth0.10 -o eth0.20 -j ACCEPT
+sudo iptables -A FORWARD -i eth0.20 -o eth0.10 -j ACCEPT
 ```
 
-### Проблема 3: Медленная работа сети
+---
+
+### Сценарий 5: Диагностика и поиск неисправностей
+
+#### Проверка наличия тегов (tcpdump)
+Критически важно убедиться, что коммутатор действительно присылает тегированный трафик.
 
 ```bash
-# Проверить broadcast-трафик
-tcpdump -i eth0 -c 1000 | grep -i broadcast | wc -l
-
-# Проверить ошибки на интерфейсе
-ip -s link show eth0
-ethtool -S eth0 | grep -i error
+# Просмотр Ethernet-заголовков на физическом интерфейсе
+sudo tcpdump -i eth0 -e -n vlan
+# Ожидаемый вывод: ... vlan 10, p 0, ethertype IPv4 ...
 ```
+
+#### Проверка связности без IP (arping)
+Позволяет проверить L2-связность, даже если IP-адреса настроены неверно.
+
+```bash
+sudo arping -I eth0.10 192.168.10.1
+```
+
+#### Типичные ошибки
+- **Native VLAN Mismatch:** Если на одном конце транка Native VLAN 1, а на другом 99, трафик будет попадать в неверные сегменты.
+- **VLAN Pruning:** Убедитесь, что нужный VLAN добавлен в список разрешённых на портах всех коммутаторов по пути следования трафика (`allowed vlan`).
 
 ## Дополнительная информация
 
-Настройка Netplan (статические IP, bonding, VLAN, маршруты) — в **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)**.
+### Маркировка кабелей и портов
 
-## Маркировка кабелей и портов
+Для поддержки сложных VLAN-структур обязательна физическая маркировка оборудования.
 
-Правильная маркировка критична для поддержки VLAN в production-средах.
-
-**Стандарты маркировки:**
-
-* **Двусторонняя маркировка:** Оба конца кабеля маркируются идентично
-* **Формат:** `Откуда → Куда` (например, `SW1-P24 → SRV3-eth0`)
-* **VLAN информация:** На коммутаторе указать VLAN ID на порту
-
-**Пример маркировки:**
-
+**Пример документирования порта:**
+```text
+Port: Gi0/24
+Config: Mode=Trunk, Native=99, Allowed=10,20,30
+Destination: SRV-PROD-01 (eth0)
 ```
-Порт коммутатора:
-  Gi0/1  [VLAN 10]  →  SRV1-eth0  (Users)
-  Gi0/2  [VLAN 20]  →  SRV1-eth1  (Servers)
-  Gi0/24 [TRUNK]    →  SW2-Gi0/1
 
-Кабель:
-  [SW1-P24] ====== [SW2-P1]
-  CAT6A, 2024-03-15
-```
+**Связанные документы:**
+- **[VLAN: Определения и концепции](./definitions_and_concepts.md)** — теоретическая база.
+- **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)** — полные примеры конфигурации.
+- **[VLAN в Linux: Диагностика](../../Protocols/VLAN/vlan_linux_diagnostics.md)** — расширенный список команд для отладки.

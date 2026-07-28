@@ -10,7 +10,9 @@
 
 **Task Group** — логическая группа задач, размещаемых на одном узле. Параметр `count` задаёт количество реплик.
 
-**Task** — минимальная единица работы с конкретным driver (docker, exec, qemu, java, raw_exec).
+**Task** — минимальная единица работы с конкретным driver (docker, podman, exec, qemu, java, raw_exec).
+
+**Workload Identity** — механизм (введенный в v1.6), позволяющий задачам получать JWT-токены для безопасной аутентификации в Vault, Consul и облачных провайдерах без использования статических секретов.
 
 Актуальная информация о версиях: [Nomad — версии и поддержка](./advanced_topics.md#версии-и-поддержка).
 
@@ -22,13 +24,14 @@
 
 | Компонент | Назначение |
 | :--- | :--- |
-| **Server** | Управление кластером, хранение состояния, планирование |
-| **Client** | Запуск задач, отчёт о ресурсах, взаимодействие с runtime |
+| **Server** | Управление кластером, хранение состояния (Raft), планирование |
+| **Client** | Запуск задач, отчёт о ресурсах, взаимодействие с runtime (drivers) |
 
 **Режимы развёртывания:**
 
-- **Standalone** — один сервер (dev/test)
-- **High Availability** — 3–5 серверов (production, консенсус Raft)
+- **Standalone** — один сервер (dev/test).
+- **High Availability** — 3–5 серверов (production, консенсус Raft).
+- **Federated** — объединение нескольких регионов в единую сеть управления.
 
 ### Типы jobs
 
@@ -42,63 +45,65 @@
 
 - `job` — корневой блок: имя, датацентры, тип.
 - `group` — группа задач, `count` реплик.
-- `network` — порты, режимы (static/dynamic).
+- `network` — порты, режимы (static/dynamic/bridge).
 - `service` — регистрация в Consul, health checks.
 - `task` — driver, image/command, resources, vault/consul интеграция.
+- `variables` — работа с встроенным хранилищем переменных (`nomad var`).
 - `periodic` — cron-расписание для batch jobs.
-- `constraint` — ограничения на размещение узлов.
-- `resources` — CPU, memory, GPU.
-- `vault` — политики для секретов.
-- `consul` — параметры Consul Connect (sidecar).
+- `constraint` — ограничения на размещение (OS, kernel version, custom attributes).
+- `affinity` — предпочтения по размещению (soft constraints).
+- `resources` — CPU, memory (reserved/max), GPU.
+- `vault` — политики для секретов и Workload Identity.
+- `consul` — параметры Consul Connect (sidecar) и Service Identity.
 
 ### Ключевые характеристики
 
 | Характеристика | Описание |
 | :--- | :--- |
-| **Простота** | Один бинарный файл, тривиальная установка |
-| **Гибкость workload'ов** | Docker, Podman, exec, Java, QEMU/VM, raw_exec |
-| **Масштабируемость** | До 10 000+ узлов в production |
-| **Мульти-регион** | Нативная федерация кластеров |
-| **Гибридность** | Единый workflow для on-prem, cloud, edge |
-| **Лицензия** | Open source (BSL → MPL) |
+| **Простота** | Один бинарный файл, отсутствие внешних БД (использует встроенный BoltDB) |
+| **Гибкость workload'ов** | Контейнеры (Docker, Podman), Binaries, Java, QEMU/VM |
+| **Масштабируемость** | Проверено до 10 000+ узлов в одном кластере |
+| **Мульти-регион** | Нативная федерация кластеров «из коробки» |
+| **Workload Identity** | Безопасная OIDC-аутентификация для задач |
+| **Лицензия** | Business Source License (BSL) для новых версий (с августа 2023) |
 
 ### Интеграция с экосистемой HashiCorp
 
-- **[Consul](../Consul/consul_overview.md):** service discovery, health checking, service mesh.
-- **[Vault](../Vault/overview.md):** управление секретами, динамические credentials.
-- **[Terraform](https://developer.hashicorp.com/terraform):** provisioning инфраструктуры.
-- **Boundary:** безопасный доступ к workload'ам (через Consul).
+- **[Consul](../Consul/consul_overview.md):** service discovery, health checking, service mesh, dynamic configuration.
+- **[Vault](../Vault/overview.md):** управление секретами, динамические credentials, шифрование данных.
+- **[Terraform](https://developer.hashicorp.com/terraform):** provisioning инфраструктуры и управление job'ами как кодом.
+- **Boundary:** безопасный доступ к workload'ам без открытых портов.
 
 ### Сравнение с другими оркестраторами
 
 | Критерий | **Nomad** | **[Kubernetes](../Kubernetes/kubernetes_overview.md)** | **[Docker Swarm](../Docker_swarm/docker_swarm_overview.md)** |
 | :--- | :--- | :--- | :--- |
-| **Архитектура** | Единый бинарник, нет внешних зависимостей | 12+ компонентов, требует etcd | Встроен в Docker Engine |
-| **Workload'ы** | Контейнеры + legacy (Windows, Java, VM) | Только Linux-контейнеры | Только Docker-контейнеры |
-| **Масштабируемость** | До 10 000+ узлов | До 5 000 узлов | До ~1 000 узлов |
-| **Сложность** | Минимальная | Высокая операционная сложность | Низкая |
-| **Мульти-регион** | Нативная федерация | Ограниченная, высокая сложность | Отсутствует |
-| **Service Discovery** | Через Consul | Встроенный (CoreDNS, Services) | Встроенный (Routing Mesh) |
-| **Secrets Management** | Через Vault | Встроенный + External | Встроенный (Secrets) |
-| **GPU / AI / ML** | Встроенная поддержка | Через Device Plugins | Ограниченная |
-| **Сообщество** | Нишевое, растущее | Доминирующее, enterprise-стандарт | Угасающее |
+| **Архитектура** | Единый бинарник, BoltDB | 12+ компонентов, требует etcd | Встроен в Docker Engine |
+| **Workload'ы** | Контейнеры + legacy (Binaries, Java, VM) | Преимущественно контейнеры (Wasm через runtime) | Только Docker-контейнеры |
+| **Масштабируемость** | Очень высокая (10k+ узлов) | Высокая (до 5k узлов официально) | Средняя (до ~1k узлов) |
+| **Сложность** | Низкая/Средняя (Pragmatic) | Высокая (Operational overhead) | Низкая |
+| **Мульти-регион** | Нативная федерация | Сложная (через внешние инструменты) | Отсутствует |
+| **Service Discovery** | Через Consul или DNS | Встроенный (CoreDNS, Services) | Встроенный (Routing Mesh) |
+| **Secrets Management** | Через Vault или `nomad var` | Встроенный (Secrets) | Встроенный (Secrets) |
+| **GPU / AI / ML** | Нативная поддержка (fingerprinting) | Через Device Plugins | Ограниченная |
+| **Stateful** | CSI-драйверы, хост-тома | Обширная поддержка CSI, PVC/PV | Ограниченная |
 
 ### Преимущества и недостатки
 
 **Преимущества:**
 
-- Простота установки и эксплуатации.
-- Фокус на оркестрации — эффективное планирование и запуск нагрузок.
-- Гибридные workload'ы: микс контейнеров и legacy-приложений в одном кластере.
-- Малые команды: меньше ресурсов на поддержку vs Kubernetes.
-- Edge computing: легковесность для периферийных устройств.
+- Минимальный порог вхождения и затраты на эксплуатацию.
+- Единый workflow для контейнеризированных и классических приложений.
+- Отличная работа на "краю" (Edge computing) благодаря легковесности.
+- Глубокая интеграция с Vault и Consul (Workload Identity).
+- Высокая скорость планирования (до тысяч контейнеров в секунду).
 
 **Недостатки:**
 
-- Требует Consul (service discovery) и Vault (secrets) для полноценной работы.
-- Меньшая экосистема и community tools vs Kubernetes.
-- Нишевое решение: сложнее найти специалистов.
-- Не оптимален для cloud-native greenfield (предпочтителен Kubernetes).
+- Для полноценного Discovery/Secrets требуются дополнительные продукты (Consul/Vault).
+- Меньшее количество готовых Helm-подобных чартов (хотя есть Nomad Pack).
+- Экосистема уступает Kubernetes по количеству сторонних операторов.
+- Специфичный язык описания (HCL), хотя поддерживается и JSON.
 
 ## Практические сценарии
 

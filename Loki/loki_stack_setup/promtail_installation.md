@@ -2,17 +2,19 @@
 
 ## Определения
 
-**Promtail** — специализированный агент для сбора логов и отправки в Loki. Работает как DaemonSet на каждой ноде кластера.
+**Promtail** — специализированный агент для сбора логов и их отправки в систему Loki. В архитектуре Kubernetes он развертывается как DaemonSet, обеспечивая сбор логов со всех узлов кластера.
 
-> **Примечание (весна 2026):** Поддержка Promtail прекращена. Для новых развертываний используйте [Grafana Alloy](alloy_installation.md). Данный файл сохранён для поддержки legacy-систем.
+**Важное примечание (весна 2026):** Поддержка Promtail официально прекращена. Для всех новых инсталляций и при плановом обновлении инфраструктуры необходимо использовать **Grafana Alloy**. Данный документ сохраняется исключительно для обслуживания и эксплуатации существующих legacy-систем.
 
-**Статус:** Helm-чарт `grafana/promtail` более не обновляется. Новые версии не выпускаются.
+**Статус:** Helm-чарт `grafana/promtail` переведен в архивный режим. Обновления безопасности и функционала не выпускаются.
 
 **Подробнее:** [Статус агентов сбора](../loki_overview.md#важные-изменения)
 
 ## Основные концепции
 
 ### Архитектура Promtail
+
+Агент читает файлы логов из директории `/var/log/pods` на хосте, обогащает их метаданными из API Kubernetes и отправляет пакеты (batches) в Loki через балансировщик (Gateway).
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────┐
@@ -28,142 +30,123 @@
 
 | Компонент | Назначение |
 | :--- | :--- |
-| **`clients`** | Адрес Loki для отправки логов |
-| **`scrape_configs`** | Обнаружение и сбор логов из подов |
-| **`relabel_configs`** | Добавление меток (namespace, pod, container) |
-| **`positions`** | Файл отслеживания прочитанных позиций |
+| **`clients`** | Настройка адресов Loki и параметров аутентификации |
+| **`scrape_configs`** | Правила обнаружения источников (Service Discovery) и парсинга |
+| **`pipeline_stages`** | Этапы обработки строки: парсинг JSON, обработка многострочных логов (multiline), фильтрация |
+| **`positions`** | Файл для хранения смещения (offset) в каждом читаемом файле |
 
-### Отличия от Grafana Alloy
+### Сравнение с Grafana Alloy
 
 | Характеристика | Promtail | Grafana Alloy |
 | :--- | :--- | :--- |
-| **Тип данных** | Только логи | Логи + метрики + трассировки |
-| **Язык конфигурации** | YAML | River (HCL) |
-| **Статус** | Устарело (Deprecated) | Активно развивается |
-| **Миграция** | — | Встроенный конвертер Promtail → Alloy |
+| **Тип данных** | Только логи | Универсальный: логи, метрики, трассировки, профили |
+| **Язык конфигурации** | YAML (статический) | River (динамический, HCL-подобный) |
+| **Производительность** | Средняя | Высокая (оптимизировано под Go и OTel) |
+| **Жизненный цикл** | Устарело (Deprecated) | Стандарт индустрии (Current) |
 
 ## Практические сценарии
 
-### Сценарий 1: Установка Promtail для существующих систем
+### Сценарий 1: Эксплуатация Promtail в существующем кластере
 
-> Используйте только для поддержки legacy-окружений. Для новых — [Alloy](alloy_installation.md).
+Для поддержки работоспособности агента в старых окружениях необходимо использовать фиксированные версии чарта.
 
 **Подготовка:**
 
 ```bash
-# Legacy-репозиторий (более не обновляется)
+# Использование legacy-репозитория
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
+
+# Получение текущих значений
 helm show values grafana/promtail > promtail_values.yaml
 ```
 
-**Файл `promtail_values.yaml`:**
+**Пример конфигурации для многострочных логов (Java Stacktrace):**
 
 ```yaml
 config:
   clients:
     - url: http://loki-gateway.logging.svc.cluster.local:80/loki/api/v1/push
+      batchwait: 1s
+      batchsize: 1048576 # 1MB
 
   snippets:
+    pipelineStages:
+      - multiline:
+          firstline: '^\[\d{4}-\d{2}-\d{2}' # Начало строки с датой
+          max_wait_time: 3s
+      - json:
+          expressions:
+            level: level
+            msg: message
+
     scrape_configs:
       - job_name: kubernetes-pods
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
-            action: keep
-            regex: "true"
           - source_labels: [__meta_kubernetes_pod_namespace]
             target_label: namespace
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: pod
-          - source_labels: [__meta_kubernetes_pod_container_name]
-            target_label: container
-          - replace: /var/log/pods/*$1/*.log
-            separator: /
-            source_labels:
-              - __meta_kubernetes_pod_uid
-              - __meta_kubernetes_pod_container_name
-            target_label: __path__
-
-# Толерации для всех нод (включая master)
-tolerations:
-  - operator: "Exists"
-
-# ServiceMonitor для мониторинга Promtail
-serviceMonitor:
-  enabled: true
-  namespace: logging
-  labels:
-    release: prometheus
 ```
 
-**Установка:**
+### Сценарий 2: Управление ресурсами и лимитами
 
-```bash
-helm upgrade --install promtail grafana/promtail \
-  --namespace logging \
-  -f promtail_values.yaml
+В высоконагруженных кластерах Promtail может потреблять значительный объем памяти при буферизации.
+
+```yaml
+resources:
+  limits:
+    cpu: 200m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# Настройка backoff при недоступности Loki
+config:
+  clients:
+    - url: http://loki:3100/loki/api/v1/push
+      backoff_config:
+        min_period: 100ms
+        max_period: 10s
+        max_retries: 10
 ```
 
-### Сценарий 2: Проверка статуса
+### Диагностика и устранение неисправностей
 
-```bash
-# Проверка подов
-kubectl get pods -n logging -l app.kubernetes.io/name=promtail -o wide
-
-# Детали DaemonSet
-kubectl describe daemonset -n logging -l app.kubernetes.io/name=promtail
-
-# Логи Promtail
-kubectl logs -n logging -l app.kubernetes.io/name=promtail -f
-```
-
-### Устранение неполадок
-
-| Проблема | Причина | Решение |
+| Проблема | Причина | Способ решения |
 | :--- | :--- | :--- |
-| **Pod не запускается** | Отсутствуют толерации для master-нод | Добавьте `tolerations: - operator: "Exists"` |
-| **Логи не отправляются** | Некорректный URL Loki | Проверьте сетевую доступность и URL через curl из пода |
-| **Дубликаты логов** | Сбой в файле позиций (positions) | Удалите `positions.yaml` и перезапустите под |
-| **413 Request Too Large** | Превышен допустимый размер батча | Уменьшите `clients.batch_wait` или увеличьте лимит в Loki |
+| **Поды не запускаются (Pending)** | Taints на мастер-нодах | Добавьте `tolerations: - operator: "Exists"` в values.yaml |
+| **Пропуски данных при рестарте** | Сбой файла `positions.yaml` | Проверьте монтирование HostPath для персистентности файла позиций |
+| **Ошибка 429 (Too many requests)** | Превышение лимитов в Loki | Увеличьте `ingestion_rate_mb` в конфигурации Loki или уменьшите `batchsize` |
+| **Memory Limit Exceeded** | Слишком много открытых файлов или длинные очереди | Ограничьте количество читаемых файлов через селекторы (relabel_configs) |
 
-### Сценарий 3: Миграция на Grafana Alloy
+### Сценарий 3: Переход на Grafana Alloy
 
-**Процесс миграции:**
+Миграция рекомендуется как единственный путь обеспечения безопасности и масштабируемости.
 
-1. **Экспортируйте конфигурацию Promtail:**
-
-```bash
-kubectl get configmap -n logging -l app.kubernetes.io/name=promtail -o yaml > promtail_config.yaml
-```
-
-1. **Конвертируйте через онлайн-инструмент:**
-
-Используйте [конвертер Promtail → Alloy](https://grafana.com/docs/alloy/latest/tasks/migrate/) для автоматической трансляции YAML в River.
-
-1. **Протестируйте Alloy в staging:**
-
-```bash
-helm install alloy-test grafana-community/alloy \
-  --namespace logging-test \
-  -f converted_alloy_values.yaml
-```
-
-1. **Переключите трафик на Alloy:**
-
-Убедитесь, что Alloy собирает те же логи, затем удалите Promtail:
-
-```bash
-helm uninstall promtail -n logging
-```
+1.  **Экспорт конфигурации:**
+    ```bash
+    kubectl get configmap -n logging promtail -o jsonpath='{.data["promtail\.yaml"]}' > legacy_promtail.yaml
+    ```
+2.  **Конвертация:**
+    Используйте встроенную утилиту Alloy (или онлайн-версию):
+    ```bash
+    alloy convert --source-format=promtail --output=config.alloy legacy_promtail.yaml
+    ```
+3.  **Валидация:**
+    Проверьте полученный файл `config.alloy` на наличие ошибок синтаксиса River.
+4.  **Развертывание:**
+    Инструкции по установке нового агента доступны в [Руководстве по Alloy](alloy_installation.md).
 
 ## Дополнительная информация
 
 | Ресурс | Описание |
 | :--- | :--- |
-| [Установка Grafana Alloy](alloy_installation.md) | Рекомендуемый агент для новых развертываний |
-| [Конвертер Promtail → Alloy](https://grafana.com/docs/alloy/latest/tasks/migrate/) | Автоматическая миграция конфигурации |
-| [Обзор Loki](../loki_overview.md) | Архитектура, LogQL, статус агентов |
-| [Установка Loki](loki_installation.md) | Развертывание бэкенда Loki |
-| [Grafana Alloy Overview](../../Grafana/grafana_alloy_overview.md) | Полный обзор Alloy и язык River |
+| [Установка Grafana Alloy](alloy_installation.md) | Рекомендуемый современный агент для сбора телеметрии |
+| [Конвертер Promtail к Alloy](https://grafana.com/docs/alloy/latest/tasks/migrate/) | Официальный инструмент миграции от Grafana Labs |
+| [Обзор Loki](../loki_overview.md) | Общая архитектура системы логирования |
+| [Установка Loki](loki_installation.md) | Развертывание бэкенда в Kubernetes |
+| [Grafana Alloy — обзор](../../Grafana/grafana_alloy_overview.md) | Детальное описание преимуществ и языка River |

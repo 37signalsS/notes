@@ -1,0 +1,49 @@
+excluded:
+  dirs: [".git", ".obsidian", "venv", "rag_system"]
+  files: ["GEMINI.md", "MEMORY.md", ".DS_Store"]
+  extensions: [".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".py"]
+
+engines:
+  mpnet:
+    dir: chroma_db
+    collection: notes_rag_v2
+    model: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+    chunk_size: 1200
+    chunk_overlap: 200
+    batch_size: 100
+    label: "MPNet"
+    query_prefix: ""
+    doc_prefix: ""
+  bge:
+    dir: chroma_bge
+    collection: notes_bge
+    model: "BAAI/bge-m3"
+    chunk_size: 1500
+    chunk_overlap: 250
+    batch_size: 100
+    label: "BGE-M3"
+    query_prefix: "Represent this query for searching relevant passages: "
+    doc_prefix: "Represent this document for searching relevant passages: "
+
+reranker:
+  model: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+  max_chars: 2048
+
+rrf:
+  k: 60
+  dense_weight: 2
+  keyword_weight: 2
+
+hybrid:
+  extra_k_offset: 50
+
+bm25:
+  k1: 2.5
+  b: 0.75
+
+mmr:
+  default_k: 15
+  compare_default_k: 30
+  lambda: 0.5
+
+hf_hub_timeout: 180

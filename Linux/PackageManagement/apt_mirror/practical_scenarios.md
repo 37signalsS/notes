@@ -2,7 +2,9 @@
 
 ## Определения
 
-Определения терминов приведены в документе **[Определения](./definitions.md)**. Система APT (Advanced Package Tool) является основным инструментом управления пакетами в дистрибутивах на базе Debian и Ubuntu.
+Определения терминов приведены в документе **[Определения](./definitions.md)**. Система APT является основным инструментом управления пакетами в дистрибутивах на базе Debian и Ubuntu.
+
+---
 
 ## Основные концепции
 
@@ -12,165 +14,117 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Создание зеркала для APT (Debian/Ubuntu)
+### Сценарий 1: Создание зеркала с помощью aptly (рекомендуется)
 
-#### Шаг 1: Установка
+`aptly` является современным стандартом для управления зеркалами благодаря поддержке снимков (Snapshots) и возможности публикации нескольких версий репозитория.
 
-Для работы потребуется пакет `apt-mirror` и веб-сервер (например, Apache или Nginx) для раздачи пакетов по протоколу HTTP (HyperText Transfer Protocol).
-
+#### Шаг 1: Установка и инициализация
 ```bash
-sudo apt update
-sudo apt install apt-mirror apache2
+sudo apt update && sudo apt install aptly
+
+# Создание конфигурационного файла ~/.aptly.conf (опционально)
+# По умолчанию данные хранятся в ~/.aptly
 ```
 
-#### Шаг 2: Настройка `apt-mirror`
+#### Шаг 2: Создание зеркала
+Пример для **Ubuntu 24.04 (Noble Numbat)**:
+```bash
+# Добавление зеркала
+aptly mirror create noble-main http://archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse
 
-Конфигурационный файл `/etc/apt/mirror.list` определяет скачиваемые репозитории, компоненты и архитектуры.
+# Обновление зеркала (загрузка пакетов)
+aptly mirror update noble-main
+```
 
-**Пример конфигурации для Ubuntu 22.04 (Jammy Jellyfish):**
+#### Шаг 3: Создание снимка и публикация
+Снимки обеспечивают стабильность: клиенты не увидят изменений, пока вы не обновите публикацию новым снимком.
+```bash
+# Создание снимка из зеркала
+aptly snapshot create noble-main-snap-2026-07-27 from mirror noble-main
 
+# Публикация снимка
+aptly publish snapshot -distribution="noble" noble-main-snap-2026-07-27
+```
+
+#### Шаг 4: Настройка клиента (DEB822)
+В современных версиях Ubuntu (24.04+) рекомендуется использовать формат `.sources` (DEB822).
+
+Создайте файл `/etc/apt/sources.list.d/local-mirror.sources`:
+```text
+Types: deb
+URIs: http://mirror.local/noble
+Suites: noble
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/local-mirror-archive-keyring.gpg
+```
+
+---
+
+### Сценарий 2: Использование apt-mirror (legacy)
+
+Классический способ «один-в-один». Подходит для простых задач без необходимости управления версиями.
+
+#### Шаг 1: Настройка `mirror.list`
+Пример для **Ubuntu 24.04**:
 ```bash
 sudo tee /etc/apt/mirror.list << 'EOF'
-############# config ##################
-# Базовый путь для хранения всех файлов зеркала
 set base_path    /var/spool/apt-mirror
-
-# Количество потоков для одновременной загрузки
 set nthreads     20
-
-# Обработка символа '~' в версиях пакетов
 set _tilde       0
-############# end config ##############
 
-# Основные репозитории
-deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
 
-# Репозиторий безопасности
-deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
-
-# Очистка устаревших пакетов
 clean http://archive.ubuntu.com/ubuntu
 clean http://security.ubuntu.com/ubuntu
 EOF
 ```
 
-#### Шаг 3: Синхронизация
-
+#### Шаг 2: Синхронизация и раздача
 ```bash
-# Первый запуск (может занять длительное время)
 sudo apt-mirror
 
-# Проверка результата
-ls -la /var/spool/apt-mirror/mirror/
-
-# Размер зеркала
-du -sh /var/spool/apt-mirror/
-```
-
-#### Шаг 4: Публикация через веб-сервер (Nginx)
-
-```bash
-# Создать символическую ссылку
+# Публикация через Nginx
 sudo ln -s /var/spool/apt-mirror/mirror/archive.ubuntu.com/ubuntu /var/www/html/ubuntu
-sudo ln -s /var/spool/apt-mirror/mirror/security.ubuntu.com/ubuntu /var/www/html/ubuntu-security
-
-# Конфигурация Nginx
-sudo tee /etc/nginx/sites-available/repo << 'EOF'
-server {
-    listen 80;
-    server_name mirror.local;
-    root /var/www/html;
-
-    location / {
-        autoindex on;
-        autoindex_format html;
-        autoindex_localtime on;
-    }
-
-    location ~* \.(deb|gz|xml)$ {
-        expires 1h;
-        add_header Cache-Control "public, must-revalidate";
-    }
-}
-EOF
-
-sudo ln -s /etc/nginx/sites-available/repo /etc/nginx/sites-enabled/repo
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-#### Шаг 5: Настройка клиентов
-
-На клиентских машинах отредактировать `/etc/apt/sources.list` или добавить файл в `sources.list.d`:
-
-```bash
-echo "deb http://mirror.local/ubuntu jammy main restricted universe multiverse" | \
-    sudo tee /etc/apt/sources.list.d/local-mirror.list
-
-sudo apt update
-```
-
-#### Шаг 6: Автоматизация обновлений
-
-**Использование Systemd timer:**
-
-```bash
-# /etc/systemd/system/apt-mirror.service
-[Unit]
-Description=APT Mirror Sync
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/apt-mirror
-
-# /etc/systemd/system/apt-mirror.timer
-[Unit]
-Description=Run apt-mirror daily
-
-[Timer]
-OnCalendar=daily
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-```bash
-sudo systemctl enable --now apt-mirror.timer
 ```
 
 ---
 
-### Сценарий 2: Зеркалирование для изолированной сети (Air-Gapped)
+### Сценарий 3: Работа в изолированной сети (Air-Gapped)
 
-#### Шаг 1: Подготовка съёмного носителя
-
+#### Шаг 1: Подготовка данных
+На машине с доступом в интернет выполните синхронизацию и упакуйте данные:
 ```bash
-# На машине с интернетом
-sudo apt-mirror
+# Для aptly (экспорт базы и пакетов)
+tar -cvzf aptly_data.tar.gz ~/.aptly
 
-# Копирование на внешний диск с помощью rsync
-EXTERNAL_DISK="/mnt/external-drive"
-sudo rsync -av /var/spool/apt-mirror/ $EXTERNAL_DISK/apt-mirror/
+# Для apt-mirror (копирование через rsync)
+rsync -av /var/spool/apt-mirror/ /mnt/external-disk/apt-mirror/
 ```
 
-#### Шаг 2: Развёртывание в изолированной сети
-
-```bash
-# На машине в изолированной сети
-EXTERNAL_DISK="/mnt/external-drive"
-sudo mkdir -p /var/www/html/offline-repo
-sudo rsync -av $EXTERNAL_DISK/apt-mirror/ /var/www/html/offline-repo/
-```
+#### Шаг 2: Развёртывание
+В изолированном контуре разверните данные и настройте веб-сервер для раздачи статики.
 
 ---
 
 ## Дополнительная информация
 
-Подробная информация об оптимизации и мониторинге приведена в документе **[Дополнительная информация](./additional_info.md)**.
+### Автоматизация
+Для ежедневного обновления зеркала используйте таймеры systemd:
 
-### Связанные темы
+```ini
+# /etc/systemd/system/aptly-sync.service
+[Unit]
+Description=Update aptly mirror and publish
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/aptly mirror update noble-main
+ExecStartPost=/usr/bin/aptly snapshot create noble-snap-$(date +%%Y%%m%%d) from mirror noble-main
+ExecStartPost=/usr/bin/aptly publish switch noble noble-snap-$(date +%%Y%%m%%d)
+```
 
-- **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md)** — публикация внутренних .deb-пакетов.
-- **[Зеркалирование YUM/DNF](../yum_dnf_repository_mirror.md)** — аналогичный процесс для RPM-экосистемы.
+### Связанные документы
+- **[Дополнительная информация](./additional_info.md)** — расчет места и решение проблем.
+- **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md)** — создание собственных пакетов.
+- **[Nginx: Настройка репозитория](../../WebServers/Nginx/Scenarios/secure_apt_repository_guide.md)** — конфигурация веб-сервера.

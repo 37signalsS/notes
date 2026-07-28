@@ -40,9 +40,9 @@ else
 fi
 
 echo "[1/2] Indexing BGE-M3..."
-python "$SCRIPT_DIR/ingest.py" bge $FORCE_FLAG
+python3 "$SCRIPT_DIR/ingest.py" bge $FORCE_FLAG
 
 echo "[2/2] Indexing MPNet..."
-python "$SCRIPT_DIR/ingest.py" mpnet $FORCE_FLAG
+python3 "$SCRIPT_DIR/ingest.py" mpnet $FORCE_FLAG
 
 echo "--- Synchronization complete! Indexes are up to date. ---"

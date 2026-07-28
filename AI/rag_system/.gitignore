@@ -1,0 +1,9 @@
+venv/
+chroma_db/
+chroma_bge/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+manifest.json
+manifest.json.lock

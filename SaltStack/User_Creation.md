@@ -1,92 +1,131 @@
-# Создание пользователя (user.present)
+---
+**Надёжность:** 10 (SSoT + Проектный контекст 2026)
+**Свежесть:** Актуально на июль 2026
+---
+
+# Управление пользователями и группами в SaltStack
 
 ## Определения
 
-- **`user.present`**: Функция состояния (state function) в SaltStack, которая обеспечивает декларативное управление пользователями в системе. Гарантирует, что пользователь существует с заданными атрибутами.
-- **`user.absent`**: Обратная функция, гарантирующая отсутствие пользователя в системе.
+- **`user.present`**: Функция состояния (state function), обеспечивающая декларативное управление пользователями. Гарантирует наличие пользователя с заданными атрибутами.
+- **`user.absent`**: Гарантирует отсутствие пользователя в системе.
+- **`group.present`**: Управляет созданием и параметрами системных групп.
+- **`ssh_auth.present`**: Управляет авторизованными SSH-ключами для конкретного пользователя.
+- **`user.manage`**: Продвинутый метод для массового управления пользователями на основе структуры данных.
 
 ---
 
 ## Основные концепции
 
-Данное состояние проверяет наличие пользователя с указанным именем (`name`). Если пользователь отсутствует, Salt его создаст. Если пользователь
-существует, Salt проверит, соответствуют ли его параметры (например, домашний каталог `home` и оболочка `shell`) заданным в состоянии, и применит
-изменения в случае расхождения.
+SaltStack реализует модель идемпотентного управления пользователями:
+1.  **Создание**: Если пользователя нет, он будет создан с указанными параметрами.
+2.  **Сверка (Reconciliation)**: Если пользователь существует, Salt проверит его атрибуты (UID, GID, домашний каталог, оболочка, GECOS-данные).
+3.  **Обновление**: При обнаружении расхождений Salt применит изменения (например, сменит оболочку или добавит в группы).
 
-Ключевые параметры:
-
-- `name`: Имя пользователя (обязательный).
-- `home`: Путь к домашнему каталогу.
-- `shell`: Путь к командной оболочке.
+**Взаимосвязь компонентов:**
+Обычно создание пользователя сопровождается созданием его основной группы (`group.present`) и добавлением SSH-ключей (`ssh_auth.present`). Для обеспечения безопасности пароли никогда не хранятся в SLS-файлах в открытом виде — для этого используется [Pillar и секреты](Security_Approaches.md).
 
 ---
 
 ## Практические сценарии
 
-**Задача:** Создать пользователя `webuser` с домашним каталогом `/home/webuser` и оболочкой `/bin/bash`.
+### 1. Комплексное создание пользователя (User + Group + SSH)
 
-Это состояние можно сохранить в SLS-файл, например, `users/init.sls`:
+Этот пример демонстрирует создание пользователя `deployer` с выделенной группой и SSH-ключом.
 
 ```yaml
-# Файл: /srv/salt/users/init.sls
+# /srv/salt/users/deployer.sls
 
-create_webuser:
+deployer_group:
+  group.present:
+    - name: deployer
+    - system: True
+
+deployer_user:
   user.present:
-    - name: webuser
-    - home: /home/webuser
+    - name: deployer
+    - fullname: Deploy Automation User
     - shell: /bin/bash
+    - home: /home/deployer
+    - createhome: True
+    - gid_from_name: True
+    - groups:
+      - docker
+    - require:
+      - group: deployer_group
+
+deployer_ssh_key:
+  ssh_auth.present:
+    - user: deployer
+    - name: ssh-ed25519 AAAAC3Nza... user@workstation
+    - require:
+      - user: deployer_user
 ```
 
-**Применение состояния:**
+### 2. Использование Pillar для управления паролями
 
-Чтобы применить это состояние к целевой машине (minion), используется команда:
+Безопасный подход с использованием зашифрованных данных или внешних хранилищ (Vault).
 
+```yaml
+# /srv/pillar/users.sls
+users:
+  admin:
+    password: $6$rounds=656000$salt$hash... # Хэш пароля
+```
+
+```yaml
+# /srv/salt/users/admins.sls
+admin_user:
+  user.present:
+    - name: admin
+    - password: {{ salt['pillar.get']('users:admin:password') }}
+```
+
+**Применение:**
 ```bash
-salt '<target-minion>' state.apply users
+salt '*' state.apply users.admins
 ```
 
 ---
 
 ## Дополнительная информация
 
-Это состояние является базовым элементом для более сложных конфигураций. Его можно включать в `Highstate` для автоматического применения на всех необходимых серверах ([механизм применения состояний](Highstate_and_Execution_Order.md)). Вопросы безопасности пользователей, включая хеширование паролей, описаны в [подходах к безопасности](Security_Approaches.md).
-
-**Расширенные параметры `user.present`**
+### Расширенные параметры `user.present`
 
 | Параметр | Описание | Пример |
-|---|---|---|
-| `uid` | Числовой ID пользователя | `uid: 1001` |
-| `gid` | Основной ID группы | `gid: 1001` |
-| `groups` | Дополнительные группы | `groups: [docker, sudo]` |
-| `password` | Хэш пароля (SHA-512) | `password: $6$...` |
-| `createhome` | Создавать ли домашний каталог | `createhome: True` |
-| `system` | Системный пользователь | `system: True` |
-| `expire` | Дата истечения срока | `expire: 2026-12-31` |
+| :--- | :--- | :--- |
+| `uid` | Числовой ID пользователя | `uid: 2000` |
+| `gid` | Основной GID или имя группы | `gid: 2000` |
+| `groups` | Список дополнительных групп | `groups: [sudo, wheel]` |
+| `remove_groups` | Удалять из групп, не указанных в списке | `remove_groups: False` |
+| `fullname` | Полное имя (GECOS) | `fullname: Ivan Ivanov` |
+| `roomnumber` | Номер комнаты (GECOS) | `roomnumber: 404` |
+| `workphone` | Рабочий телефон (GECOS) | `workphone: 555-0101` |
+| `createhome` | Создавать `/home` при отсутствии | `createhome: True` |
+| `system` | Создать системного пользователя | `system: True` |
+| `unique_uid` | Гарантировать уникальность UID | `unique_uid: True` |
 
-**Пример с расширенными параметрами**
+### Специфика операционных систем
 
-```yaml
-create_deployer:
-  user.present:
-    - name: deployer
-    - uid: 1001
-    - gid: 1001
-    - groups:
-      - docker
-      - sudo
-    - shell: /bin/bash
-    - home: /home/deployer
-    - createhome: True
-    - system: False
-```
+- **Linux**: Использует стандартные утилиты `useradd`/`usermod`. Пароли должны передаваться в виде хэша (совместимого с `crypt`).
+- **macOS**: Использует `dscl`. Некоторые параметры (например, `uid`) Salt обрабатывает специфично для Open Directory.
+- **Windows**: Управляет локальными пользователями. Параметры `shell` и `home` могут интерпретироваться иначе.
 
-**Удаление пользователя**
+### Удаление ресурсов
 
 ```yaml
-remove_olduser:
+cleanup_user:
   user.absent:
-    - name: olduser
-    - force: True  # Принудительное удаление
+    - name: tempuser
+    - purge: True # Удалить домашний каталог и почтовый ящик
+    - force: True # Удалить, даже если пользователь в системе
+
+cleanup_group:
+  group.absent:
+    - name: oldgroup
 ```
 
-См. также документацию Salt: `salt.states.group` (управление группами), `salt.states.ssh_auth` (управление SSH-ключами).
+**Связанные темы:**
+- [Highstate и порядок выполнения](Highstate_and_Execution_Order.md) — автоматизация применения.
+- [Подходы к безопасности](Security_Approaches.md) — шифрование паролей и интеграция с Vault.
+- [Официальная документация user.present](https://docs.saltproject.io/en/latest/ref/states/all/salt.states.user.html)

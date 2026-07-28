@@ -37,7 +37,7 @@
 | :--- | :--- | :--- |
 | **Порядок запуска** | Строго последовательный | Параллельный (после всех init) |
 | **Время работы** | Кратковременный (до кода 0) | Долгоживущий (до остановки) |
-| **Probes** | Не поддерживаются | liveness, readiness, startup |
+| **Probes** | **Не поддерживаются** (liveness, readiness, startup) | Поддерживаются |
 | **Lifecycle hooks** | Не поддерживаются | postStart, preStop |
 | **Порты и Service** | Не участвуют в Endpoints | Доступны через Service |
 | **Статус Pod** | Pod не готов (Ready: false) | Зависит от readiness probe |

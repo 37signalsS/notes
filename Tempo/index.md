@@ -1,14 +1,14 @@
-# Grafana Tempo
+# Grafana Tempo — распределённая трассировка
 
 ## Определения
 
-**Tempo** — высокомасштабируемое распределённое хранилище трассировок (traces) от Grafana Labs. Анонсировано в 2020, GA в 2021. Язык — Go, лицензия — AGPLv3. Цель — экономичное хранение больших объёмов трассировок в объектном хранилище (S3, GCS, Azure, MinIO).
+**Tempo** — высокомасштабируемое распределённое хранилище трассировок (traces) от Grafana Labs. С выходом версии 3.0 (июнь 2026) проект перешёл на новую архитектуру с разделением путей чтения и записи (Decoupled Read/Write Path). Написано на Go, лицензия — AGPLv3. Основная цель — максимально экономичное и производительное хранение огромных объёмов телеметрии в объектных хранилищах (S3, GCS, Azure, MinIO).
 
-**Trace (трассировка)** — запись полного жизненного цикла запроса, проходящего через несколько сервисов. Показывает задействованные сервисы, последовательность, длительность этапов и взаимодействия.
+**Trace (трассировка)** — запись полного жизненного цикла запроса в распределённой системе. Позволяет отследить путь запроса через микросервисы, выявить задержки и ошибки взаимодействия.
 
-**Span (спан)** — фундаментальная единица трассировки. Представляет отдельную операцию (HTTP-запрос, вызов функции, запрос к БД). Имеет имя, время начала/окончания, атрибуты, ссылки на другие спаны.
+**Span (спан)** — минимальный атомарный блок трассировки, представляющий отдельную операцию (HTTP-вызов, запрос к БД, выполнение функции). Содержит метаданные, временные метки и атрибуты.
 
-**TraceQL** — язык запросов для поиска и фильтрации трассировок в Tempo. Вдохновлён PromQL и LogQL. Поддерживает фильтрацию по атрибутам, длительности, событиям (events), ссылкам (links) и агрегацию (metrics).
+**TraceQL** — специализированный язык запросов для поиска и анализа трассировок. В Tempo 3.0 TraceQL получил статус GA для генерации метрик на лету (TraceQL Metrics), что позволяет вычислять агрегаты (например, P99 задержки) без предварительной настройки коллекторов.
 
 ---
 
@@ -16,41 +16,37 @@
 
 ### Назначение трассировок
 
-- Выявление задержек и «узких мест» в распределённых системах.
-- Визуализация потоков выполнения запросов.
-- Отладка ошибок на стыке сервисов.
+- **Локализация проблем:** быстрое нахождение сервиса, вызывающего задержку или ошибку в цепочке вызовов.
+- **Анализ критического пути:** визуализация наиболее длительных этапов выполнения запроса.
+- **Оптимизация производительности:** выявление неэффективных запросов к БД или внешним API.
+- **Соответствие (Compliance):** использование Trace Redaction для удаления чувствительных данных (PII).
 
-### Ключевые особенности
+### Ключевые особенности Tempo 3.0
 
-- **Масштабируемость** — горизонтальное масштабирование для обработки больших объёмов трассировок.
-- **Экономичное хранение** — object storage (S3, GCS, Azure, MinIO) или NFS. Данные хранятся сжатыми в формате vParquet.
-- **Поддержка OpenTelemetry** — полный цикл сбора, обработки и экспорта телеметрии через [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md).
-- **Мульти-тенантность** — встроенная изоляция данных для разных команд/клиентов (tenants).
-- **Интеграция с Grafana** — визуализация и корреляция с метриками/логами. Собственного UI нет.
-- **Гибкость форматов** — приём [Jaeger](../Jaeger/jaeger_overview.md), Zipkin, [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md).
-- **Exemplars** — связь трассировок с метриками [Prometheus](../Prometheus/overview.md) через `trace_id`.
-- **Нативные гистограммы Prometheus** — поддержка native histograms для данных высокой точности (с v2.6).
+- **Новая архитектура (Decoupled Path):** использование Kafka (или совместимой очереди) в качестве буфера записи. Это позволило отказаться от обязательного RF3 (репликации) в пользу **RF1** в объектном хранилище, снизив TCO (стоимость владения) в 2–3 раза.
+- **TraceQL Metrics GA:** возможность создания метрик на основе трейсов в реальном времени. Поддерживает сложные агрегации и фильтры.
+- **AI и MCP интеграция:** нативная поддержка Model Context Protocol (MCP) позволяет AI-агентам (Claude, Grafana Assistant) напрямую анализировать трейсы для поиска корневых причин инцидентов.
+- **Span Profiling:** бесшовная интеграция с Grafana Pyroscope (через OTel), позволяющая переходить от конкретного спана к профилю CPU/Memory соответствующей строки кода.
+- **Экономичность:** использование формата vParquet4/vParquet5 и хранение в object storage делает Tempo значительно дешевле традиционных решений на базе Elasticsearch.
+- **Trace Redaction:** инструмент `tempo-cli redact` для удаления конкретных трейсов или данных из них согласно GDPR.
 
 ### Сравнение с Jaeger
 
-| Характеристика | Tempo | Jaeger v2 |
+| Характеристика | Tempo 3.0 | Jaeger v2 |
 | :--- | :--- | :--- |
-| Индексация | Только по `trace_id` | Полная индексация метаданных (теги) |
-| Хранилище | Object storage (S3, GCS, Azure, MinIO) | Elasticsearch, OpenSearch, Cassandra, ClickHouse, Badger |
-| Стоимость хранения | Низкая | Высокая (требует БД) |
-| Поиск | Ограничен (по trace_id и атрибутам через TraceQL) | Гибкий поиск по тегам, сервисам, операциям |
-| UI | Интеграция с Grafana | Собственный Jaeger UI |
-| Масштабируемость | Неограниченная (object storage) | Ограничена возможностями БД |
-| Операционная сложность | Низкая | Средняя/Высокая (тюнинг БД) |
-| Экосистема | Grafana Stack (Loki, Mimir, Grafana) | CNCF, независимый проект |
-
-Tempo выбирают для экономичного хранения больших объёмов трассировок в экосистеме Grafana. Jaeger — для сценариев с требованием гибкого поиска и независимого деплоя. Подробнее: [Jaeger overview](../Jaeger/jaeger_overview.md).
+| Архитектура | Разделение путей записи/чтения (Kafka-buffer) | Классическая (Collector -> DB) |
+| Поиск | TraceQL (мощный поиск по атрибутам и метрикам) | Поиск по тегам, сервисам и операциям |
+| Хранение | Object storage (S3/GCS) — RF1 (с v3.0) | Elasticsearch, Cassandra, ClickHouse, Badger |
+| Стоимость (TCO) | Минимальная (самое дешёвое хранение) | Высокая (из-за накладных расходов БД) |
+| Генерация метрик | TraceQL Metrics (динамически) | Adaptive Sampling, интеграция с Prometheus |
+| Интеграция с AI | Нативный MCP Server | Ограниченная (через внешние плагины) |
+| UI | Встроен в Grafana (Explore) | Собственный Jaeger UI |
 
 ### Архитектура
 
-Tempo построен на микросервисной архитектуре (Distributor, Ingester, Querier и др.) и поддерживает режимы монолита или независимых сервисов. Архитектура аналогична [Loki](../Loki/loki_overview.md) и [Mimir](../Mimir/mimir_overview.md).
+В версии 3.0 Tempo окончательно разделил компоненты на пишущие и читающие. Трейсы поступают в **Distributor**, затем в **Kafka**, откуда асинхронно записываются в объектное хранилище. Это устраняет влияние тяжёлых запросов на стабильность приёма данных.
 
-Подробное описание компонентов и режимов деплоя: [Архитектура и операции Tempo](./architecture_operations.md).
+Подробное описание компонентов, форматов vParquet и режимов миграции: [Архитектура и операции Tempo](./architecture_operations.md).
 
 ---
 
@@ -58,63 +54,62 @@ Tempo построен на микросервисной архитектуре 
 
 ### Установка и деплой
 
-Способы установки: бинарный файл (Linux, macOS, Windows), [Docker](../Docker/docker_overview.md), Kubernetes (Helm-чарт), Grafana Cloud.
+С 2026 года основным репозиторием для OSS-чартов является `grafana-community`.
 
-Деплой в Kubernetes:
+**Установка через Helm:**
 
 ```bash
-helm repo add grafana https://grafana.github.io/helm-charts
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
 helm repo update
-helm install tempo grafana/tempo-distributed --namespace tempo --create-namespace
+# Установка Tempo 3.0
+helm install tempo grafana-community/tempo --namespace tempo --create-namespace
 ```
 
-Пример полного деплоя: [LGTM Stack в Minikube](../Kubernetes/Installation/LGTM_Stack/lgtm_otel_minikube_overview.md).
+Для миграции с версии 2.x используется утилита `tempo-cli migrate`, которая обновляет конфигурацию и структуру данных в хранилище.
 
-### Язык запросов TraceQL
+### Работа с TraceQL
 
-Базовые примеры запросов:
+Примеры современных запросов (v3.0):
 
 ```traceql
-// Фильтрация по атрибутам спанов
-{.service.name = "frontend" && .http.status_code = 500}
+// Поиск медленных запросов к конкретному сервису
+{.service.name = "billing" && .duration > 2s}
 
-// Фильтрация по продолжительности
-{.duration > 100ms}
+// Агрегация: расчет P99 задержки по сервисам (TraceQL Metrics)
+rate({.http.status_code = 200}) by (.service.name)
 
-// Поиск по событиям (events)
-{ event.name = "exception" }
+// Поиск спанов с конкретными ошибками и событиями
+{ status = error && event.name = "exception" }
 
-// Агрегация (TraceQL Metrics, с v2.6)
-count_by(.service.name)
+// Поиск по атрибутам ресурсов
+{ resource.node.name = "k8s-node-1" }
 ```
-
-> **Важно:** Для TraceQL Metrics требуется `replication_factor: 1` и настройка `local-blocks` processor. Подробнее: [конфигурация TraceQL Metrics](./architecture_operations.md#конфигурация-traceql-metrics).
 
 ### Интеграции
 
-**Grafana** — поиск и фильтрация через TraceQL, просмотр диаграммы Ганта, корреляция с метриками (Exemplars) и логами (Derived Fields). Настройка datasource: [Grafana datasources](../Grafana/grafana_datasources.md).
+**Grafana Alloy** — рекомендуемый агент для сбора и передачи трейсов. Полностью заменяет старые коллекторы и поддерживает нативную корреляцию с профилями Pyroscope.
 
-**OpenTelemetry Collector** — рекомендуемый способ отправки трассировок в Tempo. Конфигурация receiver/exporter описана в [OTLP Protocol](../OpenTelemetry/otlp_protocol.md).
+**Grafana Pyroscope** — позволяет выполнять «Span-to-Profile» переход. Если спан содержит `profile_id`, Grafana предложит открыть Flame Graph для этого конкретного вызова.
 
-**Loki** — настройка Derived Fields извлекает `trace_id` из логов и создаёт ссылку на datasource Tempo. Подробнее: [Loki overview](../Loki/loki_overview.md).
+**Loki и Mimir** — корреляция через `trace_id` (Derived Fields в [Loki](../Loki/loki_overview.md)) и Exemplars (в [Mimir](../Mimir/mimir_overview.md) или Prometheus). В Tempo 3.0 корреляция стала двухсторонней благодаря AI-ассистенту, который сам находит связанные логи по контексту трейса.
 
 ### Рекомендации по эксплуатации
 
-- **Head sampling** — сэмплирование на уровне приложения для управления объёмом данных.
-- **Retention policy** — настройка политик хранения до деплоя в production.
-- **Единые trace_id** — поддержка единых идентификаторов для трассировок, метрик и логов.
-- **Кэширование** — Redis/Memcached для Query Frontend.
-- **Мониторинг Tempo** — деплой [Prometheus](../Prometheus/overview.md) для мониторинга метрик самого Tempo.
-- **TLS** — включение TLS для всех внутренних коммуникаций в production.
+- **Использование Kafka:** для продуктовых сред Tempo 3.0 строго рекомендуется развёртывать с Kafka-буфером.
+- **Retention Policy:** настраивайте через Compactor; для GDPR-запросов используйте `tempo-cli redact`.
+- **S3 Tiering:** используйте Intelligent Tiering в S3 для автоматического перемещения старых трейсов в дешёвые слои хранения.
+- **Streaming Queries:** в настройках Grafana включите `Query Streaming` для мгновенного отображения первых результатов поиска.
 
 ---
 
 ## Дополнительная информация
 
-Tempo входит в состав Grafana Stack (LGTM) и тесно интегрирован с [Grafana](../Grafana/grafana_overview.md), [Loki](../Loki/loki_overview.md) и [Mimir](../Mimir/mimir_overview.md). Стандарт телеметрии — [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md).
+Tempo является фундаментом [LGTM Stack](../Kubernetes/Installation/LGTM_Stack/lgtm_otel_minikube_overview.md) и тесно взаимодействует с [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md).
 
 ### См. также
 
-- [Архитектура и операции Tempo](./architecture_operations.md)
-- [Официальная документация](https://grafana.com/docs/tempo/latest/)
+- [Архитектура и операции Tempo](./architecture_operations.md) — детали vParquet5 и настройки микросервисов.
 - [TraceQL Documentation](https://grafana.com/docs/tempo/latest/traceql/)
+- [Миграция на Tempo 3.0](https://grafana.com/docs/tempo/latest/operations/migration-3-0/)
+- [Grafana Alloy](../Grafana/grafana_alloy_overview.md)
+

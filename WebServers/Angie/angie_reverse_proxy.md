@@ -118,6 +118,7 @@ location / {
 
 ### См. также
 
+- [Оптимизация производительности Angie](./High_Load/performance_optimization.md)
 - [Балансировка нагрузки HTTP в Angie](./angie_http_load_balancing.md)
 - [Директивы location в Angie](./angie_location_directives.md)
 - [Прокси-сервер — концепция](../../Networking/Concepts/proxy.md)

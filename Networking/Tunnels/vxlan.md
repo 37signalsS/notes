@@ -1,4 +1,4 @@
-# VXLAN (Virtual Extensible LAN)
+# VXLAN — виртуальная расширяемая локальная сеть
 
 ## Определения
 
@@ -8,14 +8,14 @@
 
 - **Уровень:** L2 (инкапсуляция Ethernet в UDP)
 - **Транспорт:** UDP порт `4789` (IANA), `8472` (Linux по умолчанию до стандартизации)
-- **Идентификатор:** VNI (24 бита) — до 16 миллионов сетей
-- **Шифрование:** Отсутствует (опционально через [IPsec](./ipsec/ipsec.md))
+- **Идентификатор:** VNI (24 бита) — до 16 миллионов изолированных сетей
+- **Шифрование:** Отсутствует (традиционно используется поверх [IPsec](./ipsec/ipsec.md) или MACsec)
 
-**VTEP (VXLAN Tunnel End Point)** — конечная точка, выполняющая инкапсуляцию/декапсуляцию VXLAN.
+**VTEP (VXLAN Tunnel End Point)** — логический интерфейс (точка), выполняющая инкапсуляцию (ingress) и декапсуляцию (egress) VXLAN-трафика.
 
 ## Основные концепции
 
-### Формат заголовка VXLAN
+### Формат заголовка VXLAN (8 байт)
 
 ```
  0                   1                   2                   3
@@ -27,217 +27,132 @@
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-**Поля:**
+- **I-бит:** Должен быть равен 1 (указывает на корректный VNI).
+- **VNI (24 бита):** Уникальный идентификатор виртуальной сети.
 
-- **I-бит (бит 3):** Указывает на наличие VNI (должен быть 1)
-- **VNI (24 бита):** Идентификатор виртуальной сети
-- **Reserved:** Зарезервированные биты (должны быть 0)
-
-### Принцип работы
-
-**Инкапсуляция:**
+### Инкапсуляция и Overhead
 
 ```
-[Ethernet-кадр] → [VXLAN (8 байт)] → [UDP] → [Внешний IP] → Передача
+[Внешний Ethernet][Внешний IP][UDP][VXLAN Header][Внутренний Ethernet Frame]
 ```
 
-**Overhead:** ~50 байт
-
-- VXLAN: 8 байт
-- UDP: 8 байт
-- Внешний IP: 20 байт
+**Размер оверхеда (Overhead):** ~50 байт (в IPv4).
 - Внешний Ethernet: 14 байт
+- IPv4 Header: 20 байт
+- UDP Header: 8 байт
+- VXLAN Header: 8 байт
 
-### Преимущества VXLAN
+### Типы VNI
 
-| Преимущество | Описание |
-|-------------|----------|
-| **Масштабируемость** | 16M VNI против 4096 VLAN |
-| **L2 over L3** | Расширение L2 через маршрутизируемую L3-сеть |
-| **NAT-friendly** | UDP-инкапсуляция проходит через NAT |
-| **ECMP** | Поддержка Equal-Cost Multi-Path маршрутизации |
-| **Мультитенантность** | Изоляция арендаторов через VNI |
+1.  **L2-VNI (Bridging):** Используется для расширения L2-домена между разными хостами. Ведёт себя как виртуальный коммутатор.
+2.  **L3-VNI (Routing):** Используется в архитектуре **IRB (Integrated Routing and Bridging)** для передачи трафика между разными подсетями внутри оверлея.
 
-### Компоненты VXLAN
+### Плоскость управления (Control Plane)
 
-**VTEP (VXLAN Tunnel End Point):**
+В отличие от Data Plane (инкапсуляция UDP), Control Plane определяет, как VTEP узнают о расположении MAC/IP адресов.
 
-- Выполняет инкапсуляцию/декапсуляцию
-- Может быть программным (Linux, vSwitch) или аппаратным (NIC, switch)
+- **Flood and Learn (Multicast):** Традиционный метод. Использует multicast-группы для рассылки BUM-трафика (Broadcast, Unknown Unicast, Multicast) и обучения.
+- **Static FDB:** Ручное прописывание таблиц пересылки. Подходит для простых топологий точка-точка.
+- **BGP EVPN (Ethernet VPN):** Современный стандарт (RFC 7432). Использует протокол BGP для обмена информацией о MAC и IP адресах. Позволяет избежать широковещательного шторма и поддерживает многопутевую передачу (ECMP).
 
-**VNI (VXLAN Network Identifier):**
-
-- Аналог VLAN ID, но 24 бита
-- Локально значимый идентификатор сегмента
-
-**VXLAN Segment:**
-
-- Логический L2-домен внутри VXLAN
-- Аналог broadcast-домена VLAN
-
-## Практические сценарии
+## Практические сценарии в Linux
 
 ### 1. Unicast (точка — точка)
 
-**Сценарий:** Простое соединение двух хостов.
+Самый простой способ соединить два хоста без использования Multicast.
 
 ```bash
-# Сторона 1 (192.0.2.1)
-ip link add vxlan0 type vxlan id 100 remote 192.0.2.2 local 192.0.2.1 dev eth0 dstport 4789
-ip link set vxlan0 up
-ip address add 10.8.0.1/24 dev vxlan0
+# Хост A (192.168.1.10)
+ip link add vxlan10 type vxlan id 100 remote 192.168.1.20 local 192.168.1.10 dev eth0 dstport 4789
+ip link set vxlan10 up
+ip address add 10.0.0.1/24 dev vxlan10
 
-# Сторона 2 (192.0.2.2)
-ip link add vxlan0 type vxlan id 100 remote 192.0.2.1 local 192.0.2.2 dev eth0 dstport 4789
-ip link set vxlan0 up
-ip address add 10.8.0.2/24 dev vxlan0
+# Хост B (192.168.1.20)
+ip link add vxlan10 type vxlan id 100 remote 192.168.1.10 local 192.168.1.20 dev eth0 dstport 4789
+ip link set vxlan10 up
+ip address add 10.0.0.2/24 dev vxlan10
 ```
 
-**Параметры:**
+### 2. Multicast (динамическое обучение)
 
-- `id 100` — VNI виртуальной сети
-- `dev eth0` — физический интерфейс для VXLAN-трафика
-- `dstport 4789` — стандартный порт VXLAN
-
-### 2. Multicast (многоточечный)
-
-**Сценарий:** Динамическое обнаружение VTEP через multicast.
+VTEP подписываются на multicast-группу для обнаружения друг друга.
 
 ```bash
-# Все участники группы
-ip link add vxlan0 type vxlan id 100 group 239.0.0.10 local 192.0.2.1 dev eth0 dstport 4789
-ip link set vxlan0 up
-ip address add 10.8.0.1/24 dev vxlan0
+# На всех участниках
+ip link add vxlan10 type vxlan id 100 group 239.1.1.1 dev eth0 dstport 4789
+ip link set vxlan10 up
 ```
 
-**Требования:**
+### 3. VXLAN + Bridge (L2-сегмент)
 
-- Поддержка multicast в сети
-- Настроенный IGMP для управления группами
-- [Адреса 239.0.0.0/8](../Concepts/network_classification.md) — локально-административные
-
-**Ограничения:**
-
-- Multicast обычно не работает через публичный Интернет
-- Требует настройки multicast-маршрутизации
-
-### 3. VXLAN с FDB (Forwarding Database)
-
-**Сценарий:** Статическая или динамическая таблица MAC-адресов.
+Обычно VXLAN-интерфейс добавляется в Bridge для объединения с виртуальными машинами или контейнерами.
 
 ```bash
-# Создание VXLAN без remote (для FDB)
-ip link add vxlan0 type vxlan id 100 dev eth0 dstport 4789
-ip link set vxlan0 up
-
-# Добавление записей FDB
-bridge fdb append to 00:11:22:33:44:55 dev vxlan0 dst 192.0.2.2
-bridge fdb append to 00:11:22:33:44:66 dev vxlan0 dst 192.0.2.3
+ip link add br-vxlan type bridge
+ip link set vxlan10 master br-vxlan
+ip link set veth-container master br-vxlan
 ```
 
-**Применение:**
+## Эксплуатация и тюнинг
 
-- Интеграция с SDN-контроллерами
-- Динамическое обучение MAC-адресов
+### Аппаратное ускорение (Offload)
 
-### 4. VXLAN в Kubernetes (CNI)
+Современные сетевые карты (NIC) могут выполнять инкапсуляцию, расчет контрольных сумм и сегментацию трафика (TSO/LRO) аппаратно.
 
-**Примеры CNI с VXLAN:**
-
-- **Flannel:** VXLAN backend по умолчанию
-- **Calico:** VXLAN для cross-subnet
-- **Cilium:** VXLAN для cluster pooling
-
-**Типичная конфигурация Flannel:**
-
-```json
-{
-  "Network": "10.244.0.0/16",
-  "Backend": {
-    "Type": "vxlan",
-    "VNI": 1,
-    "Port": 8472
-  }
-}
+**Проверка:**
+```bash
+ethtool -k eth0 | grep vxlan
+# → tx-vxlan-segmentation: on
+# → tx-checksum-vxlan-non-generic: on
 ```
 
-### 5. Проверка и диагностика
+### Настройка MTU
+
+Инкапсуляция добавляет 50 байт оверхеда, что критично при стандартном MTU 1500.
+
+1.  **Режим Jumbo Frames (Рекомендуется):** Установить MTU 9000-9216 на физических интерфейсах (Underlay). Это позволит оверлею использовать честные 1500 байт.
+2.  **Уменьшение MTU оверлея:** Если Underlay ограничен 1500 байтами, установите на VXLAN-интерфейсах MTU **1450**.
+    - В некоторых облаках (например, при двойной инкапсуляции) может потребоваться **1442** или даже **1400**.
 
 ```bash
-# Статус VXLAN
-ip -d link show vxlan0
-# → vxlan id 100 local 192.0.2.1 dev eth0 srcport 0 0 dstport 4789 ...
-
-# Таблица FDB (MAC-адреса)
-bridge fdb show dev vxlan0
-# → 00:11:22:33:44:55 dst 192.0.2.2 self permanent
-# → 00:11:22:33:44:66 dst 192.0.2.3 self permanent
-
-# Группы multicast
-bridge mdb show
-# → dev vxlan0 port vxlan0 group 239.0.0.10 permanent
-
-# Мониторинг трафика
-tcpdump -i eth0 udp port 4789 -n
-tcpdump -i vxlan0 -n
+ip link set dev vxlan10 mtu 1450
 ```
 
-## Дополнительная информация
-
-### Сравнение с другими L2-оверлеями
-
-| Протокол | Overhead | Масштаб | Транспорт | Сценарий |
-|----------|----------|---------|-----------|----------|
-| **VXLAN** | ~50 байт | 16M VNI | UDP | Дата-центры |
-| **GRETAP** | ~42 байта | Ограничен | IP (47) | Простые L2 |
-| **Geneve** | ~50+ байт | 16M | UDP (6081) | Гибкий (TLV) |
-| **STT** | ~50 байт | 16M | TCP | VMware NSX |
-| **NVGRE** | ~42 байта | 16M | GRE | Hyper-V |
-
-**Примечание:** VXLAN-GPE ([RFC 8365](https://datatracker.ietf.org/doc/html/rfc8365)) — расширение для поддержки L3-протоколов поверх VXLAN.
-
-### Ограничения
-
-| Ограничение | Описание | Митигация |
-|-------------|----------|-----------|
-| **Нет шифрования** | Трафик открыт | [IPsec](./ipsec/ipsec.md), MACsec |
-| **MTU** | Уменьшение на ~50 байт | Jumbo frames, PMTUD |
-| **Multicast** | Требует поддержки в сети | Unicast с FDB |
-| **CPU overhead** | Инкапсуляция в userspace | Offload на NIC |
-
-### Аппаратное ускорение VXLAN (Offload)
-
-**Аппаратная поддержка:**
-
-- Современные NIC поддерживают VXLAN checksum/TLS offload
-- Проверка: `ethtool -k eth0 | grep vxlan`
-
-**Включение offload:**
+### Диагностика
 
 ```bash
-ethtool -K eth0 vxlan-hw-offload on
+# Просмотр таблицы FDB (MAC -> Remote VTEP IP)
+bridge fdb show dev vxlan10
+
+# Детальная информация об интерфейсе
+ip -d link show vxlan10
+
+# Мониторинг VXLAN трафика (внешние пакеты)
+tcpdump -ni eth0 udp port 4789
+
+# Мониторинг трафика внутри туннеля
+tcpdump -ni vxlan10
 ```
 
-### Особенности MTU
+## Сравнение технологий
 
-**Расчёт MTU для VXLAN:**
+| Протокол | Overhead | Масштаб | Транспорт | Control Plane |
+| :--- | :--- | :--- | :--- | :--- |
+| **VXLAN** | 50 B | 16M VNI | UDP 4789 | Flood-n-Learn / BGP EVPN |
+| **Geneve** | 50+ B | 16M VNI | UDP 6081 | Гибкий (TLV), стандарт в OVN |
+| **NVGRE** | 42 B | 16M VSID | GRE (IP 47) | Microsoft (Hyper-V) |
+| **GRETAP** | 42 B | < 4096 | GRE | Статический / Простой L2 |
 
-```
-Базовый MTU (1500) - VXLAN overhead (50) = 1450
-```
+## Ограничения и риски
 
-**Настройка:**
-
-```bash
-# Для физического интерфейса (jumbo frames)
-ip link set eth0 mtu 9000
-
-# Для VXLAN-интерфейса
-ip link set vxlan0 mtu 1450
-```
+- **Проблема MTU:** Неправильная настройка ведет к фрагментации или полной потере пакетов (особенно при TCP/TLS).
+- **Отсутствие шифрования:** Трафик внутри Underlay передается в открытом виде.
+- **Нагрузка на CPU:** Без аппаратного ускорения инкапсуляция может потреблять значительные ресурсы CPU при высоком PPS (Packets Per Second).
 
 ## См. также
 
 - [Обзор туннелирования](./tunneling_overview.md)
-- [Драйвер overlay в Docker](../../Docker/Docker_network/drivers/overlay.md)
-- [Настройка сетей в Proxmox](../../Proxmox/proxmox_networking.md)
+- [BGP и EVPN](../Protocols/bgp.md)
+- [Сетевой драйвер Overlay в Docker](../../Docker/Docker_network/drivers/overlay.md)
+- [Настройка SDN в Proxmox](../../Proxmox/proxmox_networking.md)
+- [Проблемы MTU и фрагментация](../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)

@@ -2,121 +2,119 @@
 
 ## Определения
 
-**Миграция на Podman** — процесс перевода контейнеризированных приложений с Docker на Podman. Основная цель — переход от централизованного привилегированного демона (`dockerd`) к бездемонной (**daemonless**) архитектуре и безрутовому (**rootless**) режиму работы.
+**Миграция на Podman** — комплексный процесс перевода контейнерной инфраструктуры с Docker на Podman. Главный вектор миграции — переход от монолитного привилегированного демона (`dockerd`) к бездемонной (**daemonless**) архитектуре и работе без прав суперпользователя (**rootless**).
 
-### Мотивация миграции
+**Quadlet** — нативный инструмент Podman для декларативного описания контейнеров, сетей и томов в виде юнитов **systemd**. Является рекомендуемым стандартом для промышленной эксплуатации (Production) вместо классического Docker Compose.
 
-1.  **Устранение единой точки отказа**: В Docker перезапуск демона останавливает все контейнеры. В Podman каждый контейнер — независимый процесс.
-2.  **Безопасность (Rootless)**: Работа под обычным пользователем минимизирует риски при компрометации контейнера (злоумышленник не получает root-права на хосте).
-3.  **Нативная интеграция с ОС**: Использование **systemd** для управления жизненным циклом, логирования (**journald**) и зависимостей.
-4.  **Экономия ресурсов**: Отсутствие постоянно запущенного демона снижает потребление RAM/CPU в простое.
+**Pasta (Pack A Subtle Tap Abstraction)** — сетевой стек нового поколения (введен в Podman 5.0), заменяющий `slirp4netns` для rootless-контейнеров. Обеспечивает более высокую производительность и нативную поддержку IPv6 без использования NAT.
+
+---
+
+## Мотивация миграции
+
+1.  **Повышение безопасности**: Rootless-режим гарантирует, что даже при полном взломе приложения злоумышленник получит права обычного пользователя, а не root-доступ к хосту.
+2.  **Архитектурная устойчивость**: Отсутствие центрального демона устраняет единую точку отказа. Каждый контейнер — это стандартный дочерний процесс операционной системы.
+3.  **Интеграция с systemd**: Podman «из коробки» использует системный планировщик для управления жизненным циклом, зависимостями и сбором логов через `journald`.
+4.  **Совместимость с Kubernetes**: Podman использует концепцию **Pods** (групп контейнеров), что позволяет экспортировать локальные конфигурации напрямую в YAML-манифесты Kubernetes.
+
+---
 
 ## Практические сценарии
 
-### 1. Подготовка системы для rootless-режима
+### 1. Подготовка системы к Rootless-режиму
 
-Для полноценной работы без прав root необходимо выполнить несколько настроек.
+Для полноценной работы без прав root необходимо настроить маппинг идентификаторов и системные лимиты.
 
-#### Разрешение низких портов
-
-По умолчанию порты < 1024 зарезервированы за root. В rootless-режиме попытка открыть, например, порт 80 вызовет ошибку `permission denied`. Чтобы разрешить пользователям открывать порты начиная с 80:
-
+#### Настройка UID/GID (subuid/subgid)
+Убедитесь, что для пользователя выделен диапазон дополнительных ID (обычно 65536 на пользователя):
 ```bash
-echo "net.ipv4.ip_unprivileged_port_start=80" | sudo tee /etc/sysctl.d/90-unprivileged-ports.conf
-sudo sysctl -p /etc/sysctl.d/90-unprivileged-ports.conf
-# → net.ipv4.ip_unprivileged_port_start = 80
+cat /etc/subuid
+# → user:100000:65536
 ```
 
-#### Включение Linger
-
-Гарантирует, что процессы пользователя (контейнеры) не будут завершены после закрытия сессии (например, при выходе из SSH) и будут автоматически запускаться при старте системы:
-
+#### Разрешение низких портов и Linger
+Чтобы разрешить запуск сервисов на портах < 1024 и гарантировать работу контейнеров после выхода из SSH:
 ```bash
+# Разрешаем порты от 80
+echo "net.ipv4.ip_unprivileged_port_start=80" | sudo tee /etc/sysctl.d/90-podman.conf
+sudo sysctl -p /etc/sysctl.d/90-podman.conf
+
+# Включаем Linger для пользователя
 sudo loginctl enable-linger $USER
-# → Проверка: ls /var/lib/systemd/linger/$USER
 ```
 
-### 2. Установка и режимы работы
+### 2. Перенос Docker Compose на Podman 5.x
+
+Podman 5.x значительно улучшил поддержку Compose Specification, позволяя запускать большинство файлов без изменений.
+
+#### Вариант А: Прямой запуск (Docker Compose V2)
+Установите пакет `podman-docker` и используйте привычный CLI:
+```bash
+# Podman эмулирует сокет и API Docker
+docker compose up -d
+```
+
+#### Вариант Б: Конвертация в Quadlet (Рекомендуется)
+Для повышения надежности используйте утилиту `podlet` для генерации systemd-юнитов.
 
 ```bash
-# Установка (Debian/Ubuntu)
-sudo apt install podman
+# Генерация юнитов из compose.yaml
+podlet -i -a compose compose.yaml
+
+# Размещение файлов (для rootless-пользователя)
+mkdir -p ~/.config/containers/systemd/
+mv *.container *.network ~/.config/containers/systemd/
+
+# Применение конфигурации
+systemctl --user daemon-reload
+systemctl --user start my-app.service
 ```
 
-**Режимы работы:**
-- **CLI (Основной)**: Прямой запуск контейнеров без демона (`podman run`). Рекомендуется для всех новых задач.
-- **API (Совместимость)**: Работа через сокет для инструментов, ожидающих Docker API (CI/CD, сторонние клиенты).
-  ```bash
-  systemctl --user enable --now podman.socket
-  # Сокет: /run/user/$(id -u)/podman/podman.sock
-  ```
+### 3. Настройка сетевого стека Pasta
 
-### 3. Конвертация Docker Compose в Quadlet
+В Podman 5.0 стек `pasta` используется по умолчанию для rootless-режима. Он позволяет контейнеру видеть IP-адрес хоста напрямую.
 
-Хотя `podman-compose` позволяет запускать файлы YAML "как есть", рекомендуемый путь для продакшена — конвертация в юниты Quadlet.
-
-#### Использование утилиты podlet
-
-**podlet** — инструмент для автоматической генерации Quadlet-файлов из Compose или команд `podman run`.
-
-**Установка:**
 ```bash
-# Скачивание бинарного файла (пример для x86_64)
-curl -L https://github.com/containers/podlet/releases/download/v0.3.1/podlet-x86_64-unknown-linux-gnu.tar.xz -o podlet.tar.xz
-tar -xf podlet.tar.xz
-sudo mv podlet-x86_64-unknown-linux-gnu/podlet /usr/local/bin/
-sudo chmod +x /usr/local/bin/podlet
+# Проверка используемого исполнителя
+podman info --format '{{ .Host.Pasta.Executable }}'
+
+# Принудительное использование pasta (если не по умолчанию)
+podman run --network=pasta ...
 ```
 
-**Конвертация:**
+### 4. Работа с Docker Socket
+
+Если ваши инструменты (CI/CD агенты, мониторинг) требуют `/var/run/docker.sock`, Podman может эмулировать его:
+
 ```bash
-podlet -i -a compose docker-compose.yaml
-# → Генерирует содержимое .container и .network файлов
+# Для системного уровня (root)
+sudo systemctl enable --now podman.socket
+
+# Для пользователя (rootless)
+systemctl --user enable --now podman.socket
+export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"
 ```
 
-#### Нюансы сетевой миграции
+---
 
-Автоматическая конвертация внешних сетей (`external: true`) в `podlet` может завершаться ошибкой. В таких случаях сеть описывается вручную.
+## Особенности и ограничения миграции
 
-**Пример `caddy.network`:**
-```ini
-[Unit]
-Description=Caddy network
+- **Явные реестры (Fully Qualified Image Names)**: Podman (в отличие от Docker) по соображениям безопасности требует указывать полный путь к образу: `docker.io/library/nginx` вместо просто `nginx`.
+- **Права на тома (Volume Permissions)**: В rootless-режиме UID 0 внутри контейнера — это ваш UID на хосте. При монтировании существующих папок может потребоваться `podman unshare chown -R 0:0 /data`.
+- **Миграция БД Podman**: При переходе с Podman 4 на 5 происходит автоматическая миграция базы данных с BoltDB на SQLite. Рекомендуется сделать бэкап `~/.local/share/containers/storage` перед обновлением.
+- **Отсутствие Docker Swarm**: Podman не поддерживает Swarm. Рекомендуемой альтернативой является переход на **Kubernetes** или использование **Pods** в связке с Quadlet.
+- **Cgroups v2**: Podman 5.0 требует Cgroups v2. На старых дистрибутивах (RHEL 7, Debian 10) миграция может потребовать обновления ядра.
 
-[Network]
-Driver=bridge
-
-[Install]
-WantedBy=default.target
-```
-
-**Привязка в `caddy.container`:**
-```ini
-[Container]
-Image=docker.io/library/caddy:latest
-Network=caddy.network
-```
-
-### 4. Управление зависимостями
-
-В Podman (и Quadlet) нет прямого аналога `depends_on`. Зависимости реализуются через механизмы **systemd**:
-- `Requires=db.service`
-- `After=db.service`
-- **Healthchecks** + `Notify=healthy`.
-
-Подробнее: **[Управление зависимостями и готовностью](./podman-dependencies.md)**.
-
-## Особенности и ограничения
-
-- **Отсутствие systemd**: На дистрибутивах без systemd (Alpine с OpenRC) Quadlet не работает, миграция потребует ручного написания скриптов запуска.
-- **Docker Socket**: Приложения, жестко привязанные к `/var/run/docker.sock` (например, Portainer), требуют перенаправления на сокет Podman или использования переменной `DOCKER_HOST`. При этом Portainer в rootless-режиме может иметь ограниченный функционал.
-- **Безопасность**: При миграции критически важно сменить все дефолтные пароли и ограничивать биндинг портов (например, `-p 127.0.0.1:5432:5432`), чтобы сервисы не торчали наружу.
+---
 
 ## Дополнительная информация
 
-### См. также
+### Связанные разделы
+- **[Quadlet: Декларативные контейнеры](./podman_daemonless_architecture.md)** — подробное руководство по написанию `.container` файлов.
+- **[Rootless режим](./podman_rootless.md)** — глубокое погружение в механизмы изоляции.
+- **[Podman Compose](./podman-compose.md)** — особенности работы с YAML-файлами.
+- **[Управление зависимостями](./podman-dependencies.md)** — как заменить `depends_on` в systemd.
 
-- **[Rootless режим](./podman_rootless.md)** — механизмы изоляции и настройки.
-- **[Daemonless архитектура](./podman_daemonless_architecture.md)** — принципы работы без демона.
-- **[Podman vs Docker](./podman_vs_docker.md)** — детальное сравнение.
-- **[Podman Compose](./podman-compose.md)** — работа с Compose-файлами.
+### Ссылки
+- **[Official Podman Migration Guide](https://podman.io/docs/migration)** (англ.)
+- **[Podman 5.0 Release Notes](https://blog.podman.io/2024/03/podman-5-0-released/)** (архитектурные изменения)

@@ -2,42 +2,40 @@
 
 ## Определения
 
-**Loki** — система агрегации логов от Grafana Labs, индексирующая только метаданные (метки), а не полный текст логов. Подробная архитектура: [loki_overview.md](../loki_overview.md).
+**Loki** — горизонтально масштабируемая система агрегации логов от Grafana Labs, которая индексирует только метаданные (метки), а не полный текст логов. Подробная архитектура: [loki_overview.md](../loki_overview.md).
 
-**Docker Compose** — инструмент для определения и запуска многоконтейнерных Docker-приложений с помощью одного YAML (YAML Ain't Markup Language) файла.
+**Docker Compose** — инструмент для определения и запуска многоконтейнерных Docker-приложений с помощью YAML-файлов.
 
-**UI (User Interface)** — пользовательский интерфейс для взаимодействия с системой.
+**UI (User Interface)** — пользовательский интерфейс (например, веб-интерфейс Grafana) для визуализации и анализа данных.
+
+**URL (Uniform Resource Locator)** — унифицированный указатель ресурса, используемый для адресации сервисов в сети.
 
 ## Основные концепции
 
-Для полноценного сбора логов в Docker с использованием Loki требуется три компонента:
+Для полноценного сбора логов в Docker с использованием Loki требуется три основных компонента. Информация актуальна на **июль 2026 года**.
 
-| Компонент | Назначение | Образ / Примечание |
-| :--- | :--- | :--- |
-| **Loki** | Сервер для приема, хранения и индексации логов | `grafana/loki` |
-| **Promtail** | Агент для сбора логов с хоста и контейнеров | `grafana/promtail` (Deprecated) |
-| **Grafana** | Визуализация и запросы (LogQL) | `grafana/grafana` |
-| **Alloy** | Универсальный агент (альтернатива Promtail) | `grafana/alloy` (Рекомендовано) |
+| Компонент | Назначение | Актуальная версия | Примечание |
+| :--- | :--- | :--- | :--- |
+| **Loki** | Сервер для приема, хранения и индексации логов | `3.7.4` | Основной бэкенд системы |
+| **Grafana Alloy** | Универсальный агент для сбора телеметрии | `1.18.0` | **Рекомендуемый агент** (замена Promtail) |
+| **Grafana** | Визуализация и запросы (LogQL) | `13.1.1` | Единый UI для мониторинга |
+| **Promtail** | Агент для сбора логов (Legacy) | — | **Удален** в Loki 3.7.3. Только для старых систем |
 
-Без агента-сборщика (Promtail/Alloy) логи не будут попадать в Loki.
-
-> **Важно:** Promtail в статусе deprecated, для новых развёртываний рекомендуется Grafana Alloy. Для настройки Alloy см. [Grafana Alloy](../../Grafana/grafana_alloy_overview.md).
+> **Важно:** С июля 2026 года Promtail официально удален из состава Loki. Для всех новых развертываний необходимо использовать **Grafana Alloy**. Подробнее см. [Grafana Alloy](../../Grafana/grafana_alloy_overview.md).
 
 ## Практические сценарии
 
 ### Конфигурация Docker Compose
 
-Сервисы `loki`, `promtail` (legacy) или `alloy` (рекомендуется) и `grafana` добавляются в основной файл `docker-compose.yml` стека мониторинга. Ниже приведен пример с использованием **Grafana Alloy** (рекомендуемый агент).
+Ниже приведен современный пример `compose.yml` (формат Compose Spec, версия не указывается) для развертывания стека логирования.
 
 ```yaml
-# monitoring/docker-compose.yml
-
-version: '3.8'
+# monitoring/compose.yml
 
 services:
   loki:
-    image: grafana/loki:3.0.0
-    container_name: ${PROJECT_NAME:-monitoring}-loki
+    image: grafana/loki:3.7.4
+    container_name: monitoring-loki
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -48,13 +46,15 @@ services:
       - monitoring
 
   alloy:
-    image: grafana/alloy:v1.0.0
-    container_name: ${PROJECT_NAME:-monitoring}-alloy
+    image: grafana/alloy:v1.18.0
+    container_name: monitoring-alloy
     volumes:
-      - /var/log:/var/log:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
-    command: run --server.http.listen-addr=0.0.0.0:12345 /etc/alloy/config.alloy
+      - alloy_data:/var/lib/alloy
+    command: run --storage.path=/var/lib/alloy /etc/alloy/config.alloy
+    ports:
+      - "12345:12345" # UI Alloy для отладки
     restart: always
     networks:
       - monitoring
@@ -62,8 +62,8 @@ services:
       - loki
 
   grafana:
-    image: grafana/grafana:11.0.0
-    container_name: ${PROJECT_NAME:-monitoring}-grafana
+    image: grafana/grafana:13.1.1
+    container_name: monitoring-grafana
     ports:
       - "3000:3000"
     volumes:
@@ -80,6 +80,7 @@ services:
 
 volumes:
   loki_data:
+  alloy_data:
   grafana_data:
 
 networks:
@@ -87,19 +88,18 @@ networks:
     driver: bridge
 ```
 
-### Ключевые параметры
+### Ключевые параметры развертывания
 
 | Параметр | Описание |
 | :--- | :--- |
-| **`image: grafana/loki:3.0.0`** | Фиксированная версия для production |
-| **`volumes: loki_data`** | Персистентное хранилище для Loki |
-| **`/var/log:/var/log:ro`** | Доступ Alloy к системным логам хоста |
-| **`/var/lib/docker/containers`** | Доступ к логам контейнеров Docker |
-| **`./grafana/provisioning`** | Автоматическая настройка datasource Loki в Grafana |
+| **`image: grafana/loki:3.7.4`** | Стабильная версия Loki с новым движком запросов |
+| **`/var/run/docker.sock`** | Позволяет Alloy обнаруживать контейнеры и читать их логи |
+| **`alloy_data:/var/lib/alloy`** | Хранение positions-файлов (чтобы не читать логи заново при перезапуске) |
+| **`./grafana/provisioning`** | Автоматическое добавление источника данных Loki при старте |
 
-### datasources.yaml для Grafana
+### Конфигурация источников данных Grafana
 
-Grafana требует настройки источника данных Loki через провиженинг.
+Для автоматической настройки Loki в Grafana создайте файл провиженинга.
 
 ```yaml
 # monitoring/grafana/provisioning/datasources/datasources.yaml
@@ -107,12 +107,6 @@ Grafana требует настройки источника данных Loki �
 apiVersion: 1
 
 datasources:
-  - name: Prometheus
-    type: prometheus
-    url: http://prometheus:9090
-    isDefault: false
-    editable: true
-
   - name: Loki
     type: loki
     url: http://loki:3100
@@ -123,30 +117,45 @@ datasources:
     isDefault: true
 ```
 
-| Параметр | Описание |
-| :--- | :--- |
-| **`type: loki`** | Тип источника данных |
-| **`url: http://loki:3100`** | Адрес Loki в Docker-сети (URL — Uniform Resource Locator) |
-| **`access: proxy`** | Запросы через бэкенд Grafana |
-| **`editable: false`** | Запрет редактирования через UI |
-| **`isDefault: true`** | Loki как источник по умолчанию |
-
 ### Конфигурация Grafana Alloy (рекомендуется)
 
-Grafana Alloy использует язык River для настройки пайплайнов сбора и отправки логов.
+Современный способ сбора логов Docker в Alloy использует компоненты `discovery.docker` и `loki.source.docker`.
 
 ```alloy
-# monitoring/alloy/config.alloy
+// monitoring/alloy/config.alloy
 
-// Сбор логов контейнеров
-loki.source.file "containers" {
-  path    = "/var/lib/docker/containers/*/*-json.log"
-  labels  = { job = "container_logs" }
-  forward = [loki.write.default.receiver]
+// 1. Обнаружение контейнеров Docker
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
 }
 
-// Отправка в Loki
-loki.write "default" {
+// 2. Очистка и преобразование меток (Relabeling)
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  // Извлекаем имя контейнера (убираем начальный слэш)
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // Оставляем имя образа
+  rule {
+    source_labels = ["__meta_docker_container_image"]
+    target_label  = "image"
+  }
+}
+
+// 3. Сбор логов из обнаруженных контейнеров
+loki.source.docker "local_docker" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.docker_logs.output
+  forward_to = [loki.write.local_loki.receiver]
+}
+
+// 4. Отправка логов в Loki
+loki.write "local_loki" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
   }
@@ -155,14 +164,12 @@ loki.write "default" {
 
 ### Конфигурация Promtail (legacy)
 
-Если используется Promtail, конфигурация сбора логов выполняется через YAML.
+Если вы используете версию Loki ниже 3.7.3, вы можете использовать Promtail. **Для новых систем используйте Alloy.**
 
 ```yaml
-# monitoring/promtail/config.yml
-
+# monitoring/promtail/config.yml legacy example
 server:
   http_listen_port: 9080
-  grpc_listen_port: 0
 
 positions:
   filename: /tmp/positions.yaml
@@ -173,101 +180,54 @@ clients:
 scrape_configs:
   - job_name: containers
     static_configs:
-      - targets:
-          - localhost
+      - targets: [localhost]
         labels:
           job: container_logs
           __path__: /var/lib/docker/containers/*/*-json.log
-
-    pipeline_stages:
-      - json:
-          expressions:
-            output: log
-            stream: stream
-            attrs:
-      - json:
-          expressions:
-            tag:
-          source: attrs
-      - regex:
-          expression: (?P<container_name>^(?:[^_]+_){3}))
-          source: tag
-      - labels:
-          - container_name
-          - stream
-
-  - job_name: syslog
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: syslog
-          __path__: /var/log/syslog
-
-  - job_name: app_logs
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: app
-          __path__: /var/log/myapp/*.log
 ```
 
-| Секция | Назначение |
-| :--- | :--- |
-| **`clients`** | Адрес Loki для отправки логов |
-| **`positions`** | Файл отслеживания прочитанных позиций (только Promtail) |
-| **`scrape_configs`** | Источники логов (контейнеры, системные, приложения) |
-| **`pipeline_stages`** | Парсинг и обогащение логов метаданными |
-
-Для Kubernetes используется другая конфигурация с фильтром `kubernetes`. См. [loki_installation.md](../loki_stack_setup/loki_installation.md).
-
-### Запуск и проверка
+### Запуск и проверка системы
 
 1. Создание структуры директорий:
 
 ```bash
 mkdir -p monitoring/grafana/provisioning/datasources
-mkdir -p monitoring/alloy  # Или monitoring/promtail
+mkdir -p monitoring/alloy
 ```
 
-1. Размещение файлов конфигурации:
-   - `monitoring/docker-compose.yml`
+2. Размещение файлов конфигурации:
+   - `monitoring/compose.yml`
    - `monitoring/grafana/provisioning/datasources/datasources.yaml`
-   - `monitoring/alloy/config.alloy` (или `monitoring/promtail/config.yml`)
+   - `monitoring/alloy/config.alloy`
 
-2. Запуск стека:
+3. Запуск стека:
 
 ```bash
 cd monitoring
-docker-compose up -d
+docker compose up -d
 ```
 
-1. Проверка статуса контейнеров:
+4. Проверка статуса:
 
 ```bash
-docker-compose ps
-# или
-docker ps --filter "name=monitoring"
+docker compose ps
 ```
 
-1. Проверка логов Loki:
-
-```bash
-docker-compose logs loki
-```
-
-1. Проверка в Grafana: откройте `http://localhost:3000`, перейдите в **Explore** → выберите источник **Loki** → выполните запрос `{}`.
+5. Проверка в Grafana: откройте `http://localhost:3000` (admin/admin), перейдите в **Explore**, выберите источник **Loki** и выполните запрос `{container=~".+"}`.
 
 ### Поиск и устранение неисправностей
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
-| **Loki не принимает логи** | Неправильный URL в агенте | Проверьте `clients.url` (Promtail) или `endpoint` (Alloy) |
-| **Дубликаты логов** | Сбой positions-файла | Удалите `/tmp/positions.yaml` (Promtail) и перезапустите агента |
-| **Grafana не видит Loki** | Проблема с сетью Docker | Убедитесь, что сервисы в одной сети (`networks: - monitoring`) |
-| **413 Request Entity Too Large** | Превышен размер батча | Уменьшите размер батча в агенте или увеличьте лимит в Loki |
+| **Логи не появляются** | Нет доступа к `docker.sock` | Проверьте права доступа и монтирование сокета в Alloy |
+| **404 Not Found в Alloy** | Неверный URL API Loki | Проверьте `url` в `loki.write`. Должен быть `/loki/api/v1/push` |
+| **Высокая нагрузка на CPU** | Слишком много мелких логов | Настройте батчинг (batching) в `loki.write` |
+| **Пустой список контейнеров** | Ошибка discovery | Откройте UI Alloy на порту 12345 и проверьте граф компонентов |
 
 ## Дополнительная информация
 
-Развёртывание в Kubernetes: [loki_installation.md](../loki_stack_setup/loki_installation.md). Рекомендуемый агент для новых развёртываний: [Grafana Alloy](../../Grafana/grafana_alloy_overview.md). Хранилища для production: [loki_overview.md](../loki_overview.md#конфигурация).
+* **Обзор архитектуры:** [loki_overview.md](../loki_overview.md)
+* **Развертывание в Kubernetes:** [loki_installation.md](../loki_stack_setup/loki_installation.md)
+* **Подробно об Alloy:** [Grafana Alloy](../../Grafana/grafana_alloy_overview.md)
+* **Официальная документация:** [Grafana Loki Docs](https://grafana.com/docs/loki/latest/)
+

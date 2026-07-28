@@ -1,240 +1,192 @@
-# Buildah: Концепции и практика
+# Buildah: Концепции и практика сборки образов
 
 ## Определения
 
-* **Buildah** — специализированный инструмент командной строки для сборки образов контейнеров, соответствующих стандартам **OCI (Open Container Initiative)**.
-* **Daemonless** — архитектура без постоянно запущенного фонового процесса (демона). Buildah работает как обычная утилита: запустилась, выполнила задачу, завершилась.
-* **Rootless** — возможность работы от имени обычного пользователя без привилегий `root`.
-* **Working Container** — временный контейнер, созданный Buildah для внесения изменений, которые впоследствии будут "закоммичены" в образ.
+**Buildah** — специализированный инструмент командной строки для сборки образов контейнеров, полностью соответствующих стандартам **OCI (Open Container Initiative)**. Buildah спроектирован как модульный инструмент, который не требует фонового демона и предоставляет низкоуровневый ("хирургический") доступ к файловой системе и метаданным образа.
 
-## Основные концепции
+**Daemonless** — архитектура без постоянно запущенного фонового процесса. Buildah работает по модели fork-exec: процесс запускается, выполняет конкретную операцию (например, копирование файла или коммит слоя) и немедленно завершается.
+
+**Working Container (Рабочий контейнер)** — это временная сущность в локальном хранилище, представляющая собой распакованную файловую систему базового образа с наложенным на нее записываемым слоем. Buildah манипулирует этим слоем, позволяя "закоммитить" его в итоговый образ в любой момент.
+
+**Extreme Distroless** — методика создания минимальных образов (часто на базе `scratch`), в которых отсутствуют даже базовые утилиты ОС (пакетные менеджеры, оболочки, coreutils).
+
+---
 
 ## Уникальные преимущества Buildah (за пределами Dockerfile)
 
-Buildah предоставляет возможности, которые технически невозможно или крайне сложно реализовать через стандартный `docker build` и Dockerfile.
+Buildah предоставляет возможности, которые технически невозможно или крайне сложно реализовать через стандартный `docker build`.
 
-### 1. Образы без пакетного менеджера (Extreme Distroless)
-В стандартных "slim" образах (например, `python:slim`) все равно присутствуют `apt`, `dash`, `coreutils`, что увеличивает поверхность атаки.
-
-- **Проблема Docker:** Чтобы собрать образ `FROM scratch`, вы не сможете использовать `RUN apt-get install`, так как в образе нет пакетного менеджера.
-- **Решение Buildah:** Использование `buildah mount`. Вы монтируете файловую систему будущего образа как папку на хосте и используете пакетный менеджер хоста для установки софта внутрь образа.
+### 1. Изолированная установка через `buildah mount`
+В Docker для установки софта (`RUN apt install`) вы обязаны иметь пакетный менеджер *внутри* образа.
+- **Решение Buildah:** Вы можете смонтировать файловую систему будущего образа как папку на хосте и использовать пакетный менеджер **хоста** для установки софта внутрь образа.
+- **Практический пример:**
   ```bash
+  # Создаем пустой контейнер
   newcontainer=$(buildah from scratch)
+  # Монтируем его ФС в директорию на хосте
   scratchmnt=$(buildah mount $newcontainer)
-  # Установка софта через менеджер пакетов хоста прямо в образ
-  dnf install --installroot=$scratchmnt --releasever=39 python3 -y
+  
+  # Установка софта через менеджер пакетов хоста (dnf) прямо в точку монтирования образа
+  # В итоговом образе НЕ будет dnf, rpm или их зависимостей
+  dnf install --installroot=$scratchmnt --releasever=40 python3-minimal -y
+  
+  # Очистка и фиксация
   buildah unmount $newcontainer
   buildah commit $newcontainer my-pure-python
   ```
-- **Итог:** В итоговом образе нет пакетного менеджера, шелла и лишних утилит. Только ваше приложение и его зависимости.
+- **Результат:** Образ содержит только бинарные файлы Python и библиотеки. Поверхность атаки минимизирована, так как в образе нет инструментов для скачивания или компиляции вредоносного кода.
 
-### 2. Полный контроль над структурой слоев
-- **Проблема Docker:** Каждая инструкция `RUN`, `COPY`, `ADD` создает новый слой. Чтобы уменьшить количество слоев, приходится объединять команды в гигантские цепочки через `&&`, что ухудшает читаемость.
-- **Решение Buildah:** Вы можете выполнить любое количество команд (изменять, удалять, перемещать файлы) и вызвать `buildah commit` только один раз в самом конце.
-- **Итог:** Вы получаете образ ровно с одним слоем (или столько, сколько захотите), сохраняя при этом чистоту и читаемость сборочного bash-скрипта.
+### 2. Полный контроль над гранулярностью слоев
+- **Проблема Docker:** Каждая инструкция (`COPY`, `RUN`) создает слой. Объединение команд через `&&` — единственный способ уменьшить их количество, что портит читаемость.
+- **Решение Buildah:** Вы можете выполнить сотни операций (копирование, изменение прав, удаление временных файлов) в рамках одного рабочего контейнера и вызвать `buildah commit` только один раз в самом конце.
+- **Результат:** Итоговый образ имеет ровно один слой, при этом сборочный скрипт остается чистым и структурированным.
 
-### 3. Сборка «снаружи» (Повышенная безопасность)
-- **Проблема Docker:** Команды `RUN` выполняются *внутри* контейнера. Если пакетный менеджер или базовая система скомпрометированы, вредоносный код может попытаться атаковать ядро через системные вызовы.
+### 3. Сборка «снаружи» (Out-of-band manipulation)
+- **Проблема Docker:** Код сборки выполняется *внутри* контейнера. Это требует запуска процессов из базового образа, что может быть небезопасно.
 - **Решение Buildah:** Вы можете манипулировать файлами образа снаружи, просто копируя их в точку монтирования. Вам вообще не обязательно запускать какой-либо код из образа во время сборки.
-- **Итог:** Минимизация рисков при сборке образов из недоверенных источников.
+- **Результат:** Максимальная безопасность при работе с образами из недоверенных источников.
 
-### 4. Отсутствие демона и root-прав
-Buildah — это просто CLI-утилита. Она не требует запуска фонового процесса (в отличие от `buildkitd`) и может работать полностью в userspace без привилегий `root`.
-4. **Контроль слоев:** Вы сами решаете, когда создавать слой, используя команду `commit`.
-
-### Две стадии работы Buildah
-
-В отличие от Docker, Buildah разделяет процесс на две четкие фазы:
-
-1.  **Container-фаза (рабочий контейнер):** Команда `buildah from` создает "черновик" образа. Файловая система контейнера смонтирована (обычно в `/var/lib/containers/`), вы можете копировать в неё файлы и менять конфиги, но **процесс контейнера не запущен** как сервис. Это просто песочница для подготовки файловой системы.
-2.  **Commit (фиксация):** Команда `buildah commit` превращает подготовленный "черновик" в статичный неизменяемый образ, готовый к развертыванию.
-
-Запуск готового образа для проверки выполняется отдельно через **Podman** или **Docker**.
-
-### Связь с Podman и Skopeo
-
-- **Buildah** — для **сборки** (Build).
-- **Podman** — для **запуска** (Run). Хотя `podman build` существует, под капотом он использует код Buildah.
-- **[Skopeo](./skopeo_overview.md)** — для **перемещения** и инспекции (Transport/Inspect). Buildah может делать `push`, но Skopeo предоставляет гораздо более гибкие возможности по управлению репозиториями в CI/CD.
+---
 
 ## Настройка и внедрение в Production
 
 ### 1. Настройка Storage Driver для Rootless режима
 
-В режиме "без рута" Buildah часто сталкивается с ограничениями ядра на монтирование слоев. Стандартный `overlay` драйвер может не работать без специфических патчей ядра.
+В безрутовом режиме Buildah часто сталкивается с ограничениями ядра на монтирование. Для стабильной работы необходимо использовать **fuse-overlayfs**.
 
-**Решение:** Использование **fuse-overlayfs**.
-
-1. Установите пакет: `sudo apt install fuse-overlayfs` (или `dnf install`).
-2. Настройте конфигурацию хранилища в `~/.config/containers/storage.conf`:
+**Файл конфигурации:** `~/.config/containers/storage.conf` (создайте, если отсутствует):
 
 ```ini
 [storage]
+# Использование overlay драйвера (стандарт OCI)
 driver = "overlay"
 
 [storage.options]
+# Программа монтирования для работы без прав root
 mount_program = "/usr/bin/fuse-overlayfs"
+# Опция для ускорения работы в некоторых файловых системах
+mountopt = "nodev,metacopy=on"
 ```
 
-Это гарантирует стабильную сборку в userspace на большинстве дистрибутивов.
+### 2. Сборка в Kubernetes (Image-in-Image)
 
-### 2. Сборка образов в Kubernetes (Image-in-Image)
+Для запуска Buildah внутри Pod'а (например, в GitLab Runner или Tekton) требуются специфические настройки изоляции.
 
-Запуск Buildah внутри Pod'а позволяет собирать образы прямо в кластере без доступа к `/var/run/docker.sock`.
-
-**Основные требования к Pod:**
-- Использование `fuse-overlayfs` (см. выше).
-- SecurityContext: Потребуются `CAP_SETUID` и `CAP_SETGID` для корректного маппинга пользователей.
-- Хранилище: Рекомендуется монтировать `emptyDir` в `/var/lib/containers` для временных слоев.
-
-**Пример манифеста (фрагмент):**
+**Пример манифеста (фрагмент SecurityContext):**
 
 ```yaml
 spec:
   containers:
-  - name: buildah
-    image: quay.io/buildah/stable
+  - name: buildah-builder
+    image: quay.io/buildah/stable:latest
     securityContext:
+      # Требуются для корректного маппинга UID/GID в User Namespaces
       capabilities:
         add: ["SETUID", "SETGID"]
+    env:
+    - name: STORAGE_DRIVER
+      value: "overlay"
+    - name: BUILDAH_ISOLATION
+      value: "chroot" # Важно для работы внутри контейнера
     volumeMounts:
-    - name: storage
+    - name: varlibcontainers
       mountPath: /var/lib/containers
   volumes:
-  - name: storage
+  - name: varlibcontainers
     emptyDir: {}
 ```
 
-Для более удобного управления в K8s существует **Buildah Operator**, который автоматизирует создание сборочных ресурсов.
-
-### 3. Интеграция в CI/CD со Skopeo
-
-Типичный пайплайн доставки:
-1. `buildah bud` — сборка образа.
-2. `buildah commit` — локальная фиксация.
-3. **[Skopeo](./skopeo_overview.md)** — перемещение из локального хранилища `containers-storage:` в удаленный Registry `docker://`.
-
-```bash
-# Копирование из хранилища Buildah в реестр через Skopeo
-skopeo copy containers-storage:localhost/my-app:latest docker://my-registry.com/my-app:latest
-```
-
-Вместе они составляют "Red Hat Container Tools" — модульную замену монолитному Docker.
+---
 
 ## Практические сценарии
 
-### 1. Базовый цикл сборки (Pipeline)
-
-Конвейер сборки через Buildah выглядит следующим образом:
-
-1.  `buildah from nginx:latest` — создание рабочего контейнера (например, `nginx-working`).
-2.  `buildah copy <container> <src> <dest>` — копирование файлов внутрь "черновика".
-3.  `buildah config` — (опционально) настройка `CMD`, `ENTRYPOINT`, портов и переменных окружения.
-4.  `buildah commit <container> <image-name>` — фиксация образа в локальном хранилище.
-5.  `buildah rm <container>` — удаление временного рабочего контейнера.
-6.  `podman run -d -p 8080:80 <image-name>` — запуск и проверка готового образа.
-
-**Пример скрипта:**
+### 1. Базовый цикл сборки через скрипт
 
 ```bash
-# 1. Создаем рабочий контейнер из базового образа
-container=$(buildah from fedora)
+#!/bin/bash
+# 1. Создаем рабочий контейнер
+container=$(buildah from alpine:latest)
 
-# 2. Выполняем команды (создаются изменения, но не новые слои до коммита)
-buildah run $container -- dnf install -y httpd
-buildah copy $container index.html /var/www/html/
+# 2. Выполняем действия (без создания промежуточных слоев)
+buildah run $container -- apk add --no-cache nodejs npm
+buildah copy $container ./package.json /app/
+buildah run $container --workingdir /app -- npm install
+buildah copy $container ./src /app/src
 
-# 3. Настраиваем метаданные
-buildah config --author "DevOps Team" --port 80 --entrypoint "/usr/sbin/httpd -D FOREGROUND" $container
+# 3. Настраиваем метаданные (Config)
+buildah config --author "DevOps Team" \
+               --port 3000 \
+               --env NODE_ENV=production \
+               --entrypoint '["node", "/app/src/index.js"]' \
+               $container
 
-# 4. Сохраняем изменения в новый образ
-buildah commit $container my-custom-httpd
-
-# 5. Удаляем рабочий контейнер
-buildah rm $container
+# 4. Фиксируем образ (создается единственный слой со всеми изменениями)
+buildah commit --rm $container my-node-app:v1
 ```
 
-### 2. Сборка "с нуля" (From Scratch)
+### 2. Многоэтапная сборка (Multi-stage) в Bash
 
-Это позволяет создать максимально пустой образ, куда вы копируете только бинарный файл.
-
-```bash
-newcontainer=$(buildah from scratch)
-scratchmnt=$(buildah mount $newcontainer)
-
-# Копируем только нужные файлы с хоста в корень контейнера
-cp my_app_binary ${scratchmnt}/usr/bin/
-# ...настройка библиотек...
-
-buildah unmount $newcontainer
-buildah commit $newcontainer my-minimal-app
-```
-
-### 3. Использование инструментов хоста (Mount)
-
-Вы можете примонтировать файловую систему контейнера к хосту и использовать `apt`/`dnf` хоста. Внутри образа пакетный менеджер не останется.
+Buildah позволяет копировать файлы между любыми образами на хосте без ограничений, накладываемых синтаксисом Dockerfile.
 
 ```bash
-container=$(buildah from ubi8-micro)
-mountpoint=$(buildah mount $container)
+# Этап 1: Сборка артефакта (Builder)
+builder=$(buildah from golang:1.22-alpine)
+buildah run $builder -- go build -o /app/server main.go
+b_mnt=$(buildah mount $builder)
 
-# Используем dnf хоста для установки в путь mountpoint
-dnf install --installroot $mountpoint --releasever 8 -y httpd
+# Этап 2: Финальный образ (Runtime)
+runtime=$(buildah from alpine:latest)
+r_mnt=$(buildah mount $runtime)
 
-buildah unmount $container
-buildah commit $container ubi8-httpd-no-dnf
-```
+# Копируем бинарник напрямую между смонтированными путями
+cp ${b_mnt}/app/server ${r_mnt}/usr/bin/server
 
-### 4. Работа с Dockerfile (buildah bud)
-
-Buildah полностью поддерживает сборку по Dockerfile (или Containerfile).
-
-```bash
-buildah bud -t my-image:v1 .
-```
-*Примечание: `bud` расшифровывается как "Build Using Dockerfile".*
-
-### 5. Многоэтапная сборка (Multi-stage) в скриптах
-
-Аналог Multi-stage Dockerfile, но более гибкий.
-
-```bash
-# Этап 1: Сборка артефакта
-builder=$(buildah from golang:alpine)
-buildah run $builder -- go build -o app main.go
-mount_builder=$(buildah mount $builder)
-
-# Этап 2: Финальный образ
-runtime=$(buildah from alpine)
-mount_runtime=$(buildah mount $runtime)
-
-# Копируем бинарник между монтированными путями на хосте
-cp ${mount_builder}/go/src/app ${mount_runtime}/usr/bin/
-
+# Финализация
 buildah unmount $runtime
-buildah commit $runtime final-app
+buildah commit $runtime my-app-prod
+buildah rm $builder $runtime
 ```
 
-### Когда выбирать Buildah?
+### 3. Работа с Multi-arch манифестами
 
-1. Вам нужен «хирургический» контроль над процессом сборки (сборка без Dockerfile).
-2. Вы создаете сверхмалые **Distroless** образы, не содержащие даже пакетного менеджера.
-3. Вы находитесь в экосистеме **Red Hat / OpenShift**, где Buildah является нативным стандартом.
-4. Вам требуется сборка без фоновых процессов (демонов) для максимальной легковесности.
+Buildah — основной инструмент для создания манифестов, объединяющих образы для разных платформ под одним тегом.
+
+```bash
+# Создание пустого манифеста
+buildah manifest create my-app:latest
+
+# Добавление архитектур (может быть как локальный образ, так и удаленный)
+buildah manifest add my-app:latest docker://my-app-amd64:v1
+buildah manifest add my-app:latest docker://my-app-arm64:v1
+
+# Пуш манифеста со всеми архитектурами в реестр
+buildah manifest push --all my-app:latest docker://registry.com/my-app:latest
+```
+
+---
+
+## Сравнение механизмов сборки
+
+| Характеристика | Buildah (CLI) | Podman Build / `bud` | Docker BuildKit |
+| :--- | :--- | :--- | :--- |
+| **Формат описания** | Скрипты (Bash/Python/etc) | Dockerfile / Containerfile | Dockerfile + расширения |
+| **Управление слоями** | Ручное (через `commit`) | Автоматическое | Автоматическое + кэш |
+| **OCI Manifests** | Нативная поддержка | Через `podman manifest` | Через `buildx` |
+| **Сборка без демона** | Полная (Daemonless) | Полная (через код Buildah) | Требует `buildkitd` |
+| **Монтирование ФС** | Да (`buildah mount`) | Нет | Только внутри `RUN` |
+
+---
 
 ## Дополнительная информация
 
-### Buildah vs Podman Build
+### Связанные разделы
+- **[Podman: Основные команды](./podman_basic_commands.md)** — использование образов.
+- **[Skopeo: Транспортировка](./skopeo_overview.md)** — перемещение образов между реестрами.
+- **[Rootless режим в Podman](./podman_rootless.md)** — детали работы `fuse-overlayfs`.
+- **[Изоляция в Linux](../Docker/Concepts/linux_isolation.md)** — база по Namespaces и Cgroups.
+- **[Интеграция с Ansible](../Ansible/ansible_buildah_image_building.md)** — автоматизация через плейбуки.
 
-| Особенность | Buildah (CLI) | Podman build |
-| :--- | :--- | :--- |
-| **Формат** | Скрипты (bash) + Dockerfile | Только Dockerfile |
-| **Гранулярность** | Полный контроль над слоями | Один шаг — один слой (обычно) |
-| **Монтирование** | `buildah mount` (очень мощно) | Недоступно напрямую |
-| **Назначение** | Сложная, оптимизированная сборка | Стандартная сборка по шаблону |
-
-### См. также
-
-* **[Podman: Основные команды](./podman_basic_commands.md)**
-* **[Сравнение Podman и Docker](./podman_vs_docker.md)**
-* **[Интеграция Buildah и Ansible](../Ansible/ansible_buildah_image_building.md)**
+### Рекомендации
+- Используйте `buildah bud` для простых задач и совместимости с существующими Dockerfile.
+- Переходите на скриптовую сборку Buildah, если вам нужны сверхмалые образы (Distroless) или сложная логика на этапе билда.
+- Для отладки используйте `buildah unshare`, чтобы войти в пространство имен пользователя и увидеть файловую систему так же, как её видит Buildah.

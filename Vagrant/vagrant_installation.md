@@ -2,94 +2,123 @@
 
 ## Определения
 
-**Vagrant** — инструмент для создания и управления легковесными, воспроизводимыми и переносимыми средами разработки. Устанавливается на хост-систему и служит прослойкой между пользователем и провайдером виртуализации.
+**Vagrant** — кроссплатформенный инструмент для создания и управления воспроизводимыми средами разработки. Он автоматизирует процесс настройки виртуализации, позволяя описывать конфигурацию инфраструктуры в виде кода (Vagrantfile).
 
-> **Важно:** Актуальная стабильная версия — **2.4.9** (январь 2026). HashiCorp продолжает развитие проекта под лицензией MPL 2.0.
+> **Актуальная версия:** 2.4.9 (январь 2026). Проект развивается под лицензией MPL 2.0.
 
 ## Базовые концепции
 
 ### Компоненты системы
 
-1. **Бинарный пакет Vagrant** — основное приложение, предоставляющее CLI-интерфейс `vagrant`. Рекомендуется использовать официальные репозитории для своевременного получения патчей безопасности.
-2. **Plugins (плагины)** — дополнительные модули, расширяющие функциональность (например, поддержка `libvirt`, интеграция с прокси или автоматическая установка гостевых дополнений).
-3. **Boxes (образы)** — шаблоны операционных систем. Скачиваются один раз и кэшируются в домашней директории пользователя (`~/.vagrant.d/boxes/`).
+1.  **Бинарный пакет Vagrant:** Основное CLI-приложение. Рекомендуется использовать официальные репозитории HashiCorp для обеспечения безопасности и стабильности.
+2.  **Плагины (Plugins):** Расширения для поддержки новых провайдеров (libvirt, AWS), настройки прокси или автоматизации гостевых дополнений.
+3.  **Образы (Boxes):** Сжатые шаблоны ОС. Кэшируются локально в директории `~/.vagrant.d/boxes/`.
 
 ## Практические сценарии
 
-### Сценарий 1: Установка в Debian/Ubuntu (рекомендуемый способ)
+### Сценарий 1: Установка в Debian/Ubuntu
 
-Установка через официальный репозиторий HashiCorp обеспечивает автоматическое обновление и корректное разрешение зависимостей.
+Использование официального репозитория гарантирует корректную работу всех системных интеграций.
 
-**1. Настройка репозитория:**
+**1. Настройка репозитория и ключей:**
 
 ```bash
-# Установка вспомогательных пакетов
-sudo apt-get update
-sudo apt-get install -y curl gpg apt-transport-https software-properties-common
+# Установка необходимых утилит
+sudo apt-get update && sudo apt-get install -y curl gpg software-properties-common
 
-# Добавление GPG-ключа HashiCorp
-curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+# Добавление GPG-ключа
+curl -fsSL https://apt.releases.hashicorp.com/gpg | \
+sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 
-# Добавление репозитория в систему
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+# Добавление официального репозитория
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+sudo tee /etc/apt/sources.list.d/hashicorp.list
 ```
 
-**2. Установка пакета:**
+**2. Установка приложения:**
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y vagrant
+sudo apt-get update && sudo apt-get install -y vagrant
 ```
 
 ### Сценарий 2: Альтернативные методы установки
 
-| **Snap (Linux)** | `sudo snap install vagrant --classic` | Изолированное окружение, автообновление |
-| **Homebrew (macOS)** | `brew install vagrant` | Стандарт для macOS. Для M1/M2/M3 см. **[Vagrant на Apple Silicon](./vagrant_macos_apple_silicon.md)** |
-| **Windows** | `winget install HashiCorp.Vagrant` | Менеджер пакетов Windows |
+| Платформа | Команда установки | Особенности |
+| :--- | :--- | :--- |
+| **Linux (Snap)** | `sudo snap install vagrant --classic` | Изолированное окружение, автообновление. |
+| **macOS (Homebrew)**| `brew install vagrant` | Стандарт для macOS (поддержка Intel и Apple Silicon). |
+| **Windows** | `winget install HashiCorp.Vagrant` | Установка через стандартный менеджер пакетов Windows. |
 
+### Сценарий 3: Зависимости для плагина vagrant-libvirt (Linux)
 
-### Сценарий 3: Управление плагинами
-
-Плагины расширяют возможности Vagrant для работы со специфическими провайдерами или инструментами.
+Для корректной сборки и работы плагина `vagrant-libvirt` в Linux-системах требуются дополнительные библиотеки:
 
 ```bash
-# Установка плагина для поддержки Libvirt (KVM/QEMU)
+sudo apt-get install -y libvirt-dev ruby-dev ruby-libvirt qemu-utils make gcc
 vagrant plugin install vagrant-libvirt
-
-# Просмотр установленных плагинов
-vagrant plugin list
-# → vagrant-libvirt (0.12.2, global)
-
-# Обновление всех плагинов
-vagrant plugin update
-
-# Удаление плагина
-vagrant plugin uninstall vagrant-libvirt
 ```
 
-### Сценарий 4: Проверка корректности установки
+## Пост-установочные действия
 
-После установки необходимо убедиться, что Vagrant видит установленные провайдеры и готов к работе.
+### 1. Настройка прав доступа (Linux)
+
+Чтобы запускать Vagrant без `sudo` при использовании Libvirt, добавьте своего пользователя в соответствующую группу:
 
 ```bash
-# Проверка версии приложения
-vagrant --version
-# → Vagrant 2.4.9
+sudo usermod -aG libvirt $USER
+# Требуется перезагрузка сессии (logout/login)
+```
 
-# Проверка статуса (покажет доступность провайдеров)
-vagrant status
+### 2. Включение автодополнения (Shell Autocomplete)
+
+**Для Bash:**
+```bash
+vagrant autocomplete install --bash
+source ~/.bashrc
+```
+
+**Для Zsh:**
+```bash
+vagrant autocomplete install --zsh
+source ~/.zshrc
+```
+
+### 3. Переменные окружения
+
+Добавление в `.bashrc` или `.zshrc` для кастомизации работы:
+
+- `VAGRANT_HOME`: Путь к директории с кэшем образов и плагинов (по умолчанию `~/.vagrant.d/`).
+- `VAGRANT_DEFAULT_PROVIDER`: Установка провайдера по умолчанию (`libvirt`, `virtualbox`).
+
+```bash
+export VAGRANT_DEFAULT_PROVIDER=libvirt
+```
+
+## Проверка корректности установки
+
+```bash
+# Проверка версии CLI
+vagrant --version
+
+# Проверка списка установленных плагинов
+vagrant plugin list
+
+# Просмотр доступных команд и помощи
+vagrant --help
 ```
 
 ## Дополнительная информация
 
-### Важные замечания по совместимости
+### Совместимость с гипервизорами
 
-- **Провайдеры:** Для работы Vagrant необходим установленный гипервизор. На Linux рекомендуется **Libvirt** (требует плагин), на Windows/macOS — **VirtualBox** или **VMware**.
-- **Ubuntu 24.04 и новее:** Официальные образы от Canonical более не выпускаются. Подробности и альтернативы см. в [Провайдеры и образы](./vagrant_providers.md#сценарий-4-выбор-образа-для-ubuntu-2404).
-- **Сетевые интерфейсы:** При использовании нескольких провайдеров одновременно возможны конфликты сетевых мостов.
+Vagrant требует наличия установленного провайдера виртуализации:
+- **Linux:** Рекомендуется **Libvirt** (KVM).
+- **Windows / macOS:** Рекомендуется **VirtualBox** или **VMware Desktop**.
+- **Apple Silicon (M1/M2/M3):** Специфические инструкции приведены в разделе **[Vagrant на Apple Silicon](./vagrant_macos_apple_silicon.md)**.
 
 ### См. также
 
-- [Начало работы](./vagrant_basic_workflow.md) — инициализация проекта и первый запуск ВМ.
-- [Провайдеры и образы](./vagrant_providers.md) — выбор и настройка движков виртуализации.
-- [Решение проблем](./vagrant_troubleshooting/basic_concepts.md) — диагностика ошибок установки и запуска.
+- [Базовый рабочий процесс](./vagrant_basic_workflow.md) — инициализация и первый запуск.
+- [Провайдеры и образы](./vagrant_providers.md) — детальная настройка гипервизоров.
+- [Сетевые настройки](./vagrant_networking.md) — конфигурация доступа к ВМ.
+- [Vagrant Troubleshooting](./vagrant_troubleshooting/basic_concepts.md) — диагностика ошибок.

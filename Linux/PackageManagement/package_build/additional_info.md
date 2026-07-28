@@ -22,73 +22,85 @@
 
 Использование чистых сред гарантирует отсутствие "скрытых" зависимостей в системе сборки и обеспечивает воспроизводимость результата.
 
-**DEB: pbuilder (Personal Package Builder)**
+**DEB: sbuild и pbuilder**
+
+`sbuild` является современным стандартом для сборки пакетов в Debian/Ubuntu, обеспечивая более высокую производительность и гибкость по сравнению с `pbuilder`.
 
 ```bash
-# Установка необходимых утилит
-sudo apt-get install pbuilder debootstrap
+# Установка sbuild
+sudo apt-get install sbuild debootstrap devscripts
 
-# Создание базового окружения (chroot) для конкретного дистрибутива
-sudo pbuilder create --distribution focal
+# Создание базового окружения (chroot) для конкретного релиза (например, bookworm)
+sudo sbuild-createchroot bookworm /srv/chroot/bookworm-amd64-sbuild http://deb.debian.org/debian
 
-# Сборка пакета из файла исходного пакета (.dsc)
-sudo pbuilder build ../package-name_version.dsc
-
-# Результаты сборки сохраняются в /var/cache/pbuilder/result/
+# Сборка пакета из .dsc файла
+sbuild -d bookworm package-name_version.dsc
 ```
 
 **RPM: mock**
 
-`mock` позволяет собирать RPM (Red Hat Package Manager) пакеты в изолированных средах `chroot`.
+`mock` позволяет собирать RPM (Red Hat Package Manager) пакеты в изолированных средах `chroot`, используя конфигурации из `/etc/mock/`.
 
 ```bash
-# Установка mock
-sudo dnf install mock
+# Сборка пакета для конкретной цели с использованием внешних репозиториев
+mock -r rockylinux-9-x86_64 --rebuild ~/rpmbuild/SRPMS/package-name.src.rpm
 
-# Добавление пользователя в группу mock для работы без sudo
-sudo usermod -aG mock $USER
-
-# Сборка пакета из SRPM (Source RPM) для конкретной цели (Fedora 38 x86_64)
-mock -r fedora-38-x86_64 ~/rpmbuild/SRPMS/package-name.src.rpm
-
-# Результаты сборки сохраняются в /var/lib/mock/fedora-38-x86_64/result/
+# Очистка окружения после сборки
+mock -r rockylinux-9-x86_64 --clean
 ```
 
-### Кросс-компиляция
+### Кросс-архитектурная сборка
 
-Процесс сборки пакетов для архитектуры (например, ARM64), отличной от архитектуры хоста (например, x86_64):
+Сборка пакетов для архитектур, отличных от хостовой (например, сборка ARM64 на x86_64), часто требует эмуляции через `QEMU`.
+
+#### Использование qemu-user-static
+
+Позволяет запускать бинарные файлы целевой архитектуры внутри `chroot` или контейнера.
 
 ```bash
-# DEB: Сборка для архитектуры ARM64
-dpkg-buildpackage -aarm64 -us -uc
+# Установка эмулятора
+sudo apt-get install qemu-user-static
 
-# RPM: Сборка для архитектуры AArch64
-rpmbuild --target=aarch64 -ba SPECS/package.spec
+# В sbuild это настраивается через указание архитектуры
+sbuild -d bookworm --arch=arm64 package-name_version.dsc
 ```
 
 ### Автоматизация через CI/CD (Continuous Integration / Continuous Deployment)
 
-Интеграция сборки пакетов в пайплайны непрерывной разработки:
+Интеграция сборки пакетов в пайплайны позволяет автоматизировать проверку качества и публикацию.
 
-- **DEB**: Использование `git-buildpackage` (gbp) для автоматизации сборки напрямую из Git-репозитория.
-- **RPM**:
-  - **Copr**: Сервис для Fedora/RHEL, аналогичный PPA (Personal Package Archive) в Ubuntu.
-  - **OBS (Open Build Service)**: Мощная платформа от openSUSE для сборки пакетов под множество дистрибутивов одновременно.
+#### Подпись пакетов в пайплайнах
+
+Для безопасности в CI/CD рекомендуется использовать выделенные секреты для GPG-ключей.
+
+```bash
+# Пример подписи RPM в CI
+echo "$GPG_PRIVATE_KEY" | gpg --import
+rpm --addsign package.rpm
+```
+
+#### Внешние сервисы сборки
+
+1.  **OBS (Open Build Service)**: Универсальная платформа от openSUSE. Поддерживает сборку под Debian, Ubuntu, RHEL, Fedora, SUSE и другие дистрибутивы из одного исходного кода.
+2.  **Copr (Cool Other Package Repo)**: Сервис для экосистемы Red Hat. Позволяет создавать персональные репозитории и автоматически собирать пакеты при пуше в Git.
+3.  **Launchpad PPA**: Основной сервис для Ubuntu, обеспечивающий сборку и распространение DEB-пакетов через персональные архивы.
 
 ---
 
-### Полезные утилиты
+### Полезные утилиты и инструменты
 
 | Утилита | Назначение |
 | :--- | :--- |
-| `debuild` | Высокоуровневая обёртка для `dpkg-buildpackage` с автоматической проверкой `lintian`. |
-| `dch` / `debchange` | Быстрое редактирование файла `debian/changelog`. |
-| `quilt` | Стандартный инструмент для управления патчами в DEB-системах. |
-| `rpmdev-bumpspec` | Автоматическое инкрементирование версии и добавление записи в `%changelog` spec-файла. |
-| `fedpkg` / `centpkg` | Специализированные инструменты для работы с инфраструктурой DistGit в Fedora и CentOS. |
+| `git-buildpackage` (gbp) | Управление жизненным циклом DEB-пакета напрямую из Git (слияние апстрима, создание патчей). |
+| `lintian` | Статический анализатор DEB-пакетов на соответствие Debian Policy. |
+| `rpmlint` | Аналог `lintian` для RPM-пакетов. Обязателен перед отправкой в официальные репозитории. |
+| `quilt` | Инструмент для управления стеком патчей в директории `debian/patches/`. |
+| `rpmdevtools` | Набор утилит для создания скелетов spec-файлов и настройки рабочего дерева. |
 
 ### Связанные документы
 
-- **[Основные понятия](./basic_concepts.md)** — этапы сборки и структура файлов.
+- **[Основные понятия](./basic_concepts.md)** — этапы сборки и архитектура.
 - **[Практические сценарии](./practical_scenarios.md)** — пошаговые инструкции.
-- **[Обзор управления пакетами](../linux_package_management_overview.md)** — сравнение систем DEB и RPM.
+- **[Обзор управления пакетами](../linux_package_management_overview.md)** — сравнение пакетных систем.
+- **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md)** — публикация собранных .deb пакетов.
+- **[Собственный RPM-репозиторий](../Repository_Management/custom_repository.md)** — публикация собранных .rpm пакетов.

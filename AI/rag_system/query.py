@@ -1,56 +1,30 @@
 import sys
+import argparse
 import json
-import os
-import torch
 import rag_utils
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from unified_search import perform_search
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_DIR = os.path.join(SCRIPT_DIR, "chroma_db")
-COLLECTION_NAME = "notes_rag_v2"
-MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 
-def get_device():
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+def query(question: str, engine_name: str = "mpnet", k: int = rag_utils.MMR_DEFAULT_K, use_rerank: bool = True) -> list[dict]:
+    results = perform_search(question, engine_names=[engine_name], top_k=k, use_rerank=use_rerank)
+    return [
+        {"content": r["content"], "metadata": {"source": r["source"]}}
+        for r in results
+    ]
 
-def query(question, k=15):
-    device = get_device()
-    embeddings = HuggingFaceEmbeddings(model_name=MODEL_NAME, model_kwargs={"device": device})
-    
-    vectorstore = Chroma(
-        persist_directory=DB_DIR,
-        embedding_function=embeddings,
-        collection_name=COLLECTION_NAME
-    )
-    
-    # Используем MMR (Maximal Marginal Relevance) для разнообразия результатов
-    # Это помогает не получать 15 одинаковых кусков из одного файла
-    results = vectorstore.max_marginal_relevance_search(question, k=k, fetch_k=50)
-    
-    output = []
-    for res in results:
-        source = res.metadata.get("source", "")
-        if rag_utils.is_excluded(source):
-            continue
-        output.append({
-            "content": res.page_content,
-            "metadata": res.metadata
-        })
-    
-    return output
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python query.py 'your question'")
+    engine_list = ", ".join(rag_utils.ENGINES)
+    parser = argparse.ArgumentParser(description="Simple hybrid search on a single engine")
+    parser.add_argument("query", help="Search query")
+    parser.add_argument("--engine", "-e", default="mpnet", help=f"Engine name: {engine_list}")
+    parser.add_argument("--k", type=int, default=rag_utils.MMR_DEFAULT_K, help="Number of results (default: 15)")
+    parser.add_argument("--no-rerank", action="store_true", help="Disable cross-encoder reranking")
+    args = parser.parse_args()
+
+    if args.engine not in rag_utils.ENGINES:
+        print(f"Unknown engine: {args.engine}. Available: {engine_list}")
         sys.exit(1)
-    
-    question = sys.argv[1]
-    k = 15
-    if len(sys.argv) > 2:
-        k = int(sys.argv[2])
-        
-    results = query(question, k)
+
+    results = query(args.query, args.engine, args.k, use_rerank=not args.no_rerank)
     print(json.dumps(results, indent=2, ensure_ascii=False))

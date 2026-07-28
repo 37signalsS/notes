@@ -1,164 +1,114 @@
-# Настройка VLAN в Linux и диагностика
+# VLAN в Linux: механизмы, настройка и диагностика
 
 ## Определения
 
-* **iproute2** — см. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
-* **Linux Bridge** — см. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
-* **Open vSwitch (OVS)** — см. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
+**VLAN (Virtual LAN)** в Linux — реализация виртуальных локальных сетей на уровне ядра. Позволяет одному физическому интерфейсу участвовать в нескольких логических сегментах сети (L2).
 
-## Базовые концепции
+**802.1Q sub-interface** — традиционный метод создания виртуальных интерфейсов (например, `eth0.100`) для каждого VLAN ID.
 
-### Принцип настройки VLAN в Linux
+**VLAN-aware bridge** — современный механизм (ядро 3.8+), позволяющий одному мосту (bridge) обрабатывать несколько VLAN аналогично аппаратному коммутатору, используя фильтрацию тегов на портах.
 
-VLAN-интерфейсы создаются как сабинтерфейсы физического NIC с указанием `id`. Физический интерфейс должен быть подключён к trunk-порту коммутатора.
+**Reliability Score:** 10 (SSoT + Industry standards verified)
 
-Для постоянной конфигурации используются NetworkManager или Netplan.
+## Основные механизмы VLAN в Linux
 
-### MTU и VLAN tagging
+### 1. Традиционные сабинтерфейсы (802.1Q)
+Самый распространенный метод. Для каждого VLAN создается отдельное сетевое устройство.
+- **Плюсы:** Простота настройки, независимые счетчики трафика, легкая привязка IP-адресов.
+- **Минусы:** Большое количество интерфейсов при сотнях VLAN.
 
-Стандартный Ethernet-кадр: 14 байт (заголовок) + до 1500 байт (данные) + 4 байта (CRC32) = **1518 байт**.
+### 2. VLAN-aware Bridge
+Используется в виртуализации (Proxmox, KVM) и контейнеризации. Мост работает в режиме фильтрации (`vlan_filtering 1`).
+- **Плюсы:** Масштабируемость, поведение как у реального коммутатора (Trunk/Access порты внутри одного моста).
+- **Минусы:** Требует понимания работы утилиты `bridge`.
 
-С тегом 802.1Q добавляется 4 байта → **1522 байта** (baby giant frame).
+### 3. VLAN поверх Bonding
+В высокодоступных системах VLAN настраиваются поверх агрегированного интерфейса (`bond0`), а не поверх физических карт.
+- **SSoT:** Подробнее об агрегации см. **[Агрегация каналов (Bonding)](../../Concepts/link_aggregation.md)**.
 
-**MTU не требуется изменять** при включении VLAN tagging, потому что:
+## MTU и тегирование
 
-* Современные коммутаторы и NIC поддерживают baby giant frames (1522 байта) по умолчанию
-* MTU относится к IP-уровню (L3) и не включает заголовок Ethernet (L2)
-* VLAN тег добавляется на L2 и не влияет на расчёт MTU для IP-пакетов
+Стандартный Ethernet-кадр — 1518 байт. Тег 802.1Q добавляет 4 байта.
 
-**Исключения:**
+- **Baby Giant Frames:** Кадр вырастает до 1522 байт. Современные драйверы Linux обрабатывают это автоматически, не требуя уменьшения MTU (оставляя 1500 для IP).
+- **QinQ (802.1ad):** Добавляет 8 байт (1526 байт). Может потребоваться увеличение MTU физического интерфейса до 1508+.
+- **Bridge MTU:** При использовании моста его MTU должен быть равен или меньше MTU самого медленного порта.
 
-* Старое оборудование (15+ лет) может не поддерживать кадры >1518 байт
-* **Q-in-Q** (802.1ad, два тега) → кадр 1526 байт
-* Jumbo frames требуют согласования MTU по всей цепочке
+## Практические сценарии диагностики
 
-## Практические сценарии
-
-### Создание VLAN-интерфейсов (iproute2)
-
-Временная настройка — сохраняется до перезагрузки:
-
-```bash
-# Создать VLAN-интерфейсы
-ip link add link eth0 name eth0.10 type vlan id 10
-ip link add link eth0 name eth0.20 type vlan id 20
-
-# Назначить IP-адреса
-ip addr add 192.168.10.1/24 dev eth0.10
-ip addr add 192.168.20.1/24 dev eth0.20
-
-# Активировать интерфейсы
-ip link set eth0.10 up
-ip link set eth0.20 up
-
-# Проверка
-ip -d link show
-```
-
-### Настройка через NetworkManager (nmcli)
-
-Постоянная конфигурация:
+### Проверка конфигурации интерфейсов
 
 ```bash
-nmcli connection add type vlan ifname enp0s3.20 dev enp0s3 id 20
-nmcli connection modify enp0s3.20 ipv4.addresses 192.168.20.1/24
-nmcli connection modify enp0s3.20 ipv4.method manual
-nmcli connection up enp0s3.20
+# Детальная информация о VLAN-интерфейсе
+ip -d link show eth0.100
+
+# Что искать в выводе:
+# vlan protocol 802.1Q id 100 <REORDER_HDR> 
+# REORDER_HDR — флаг, указывающий на удаление тега перед передачей в стек (норма)
 ```
 
-### Постоянная конфигурация (Netplan, Ubuntu)
-
-Подробная документация: **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)** — примеры bonding, VLAN, маршрутов и DNS.
-
-```yaml
-# /etc/netplan/01-netcfg.yaml
-network:
-  version: 2
-  ethernets:
-    eth0:
-      dhcp4: no
-  vlans:
-    eth0.10:
-      id: 10
-      link: eth0
-      addresses: [192.168.10.1/24]
-    eth0.20:
-      id: 20
-      link: eth0
-      addresses: [192.168.20.1/24]
-```
+### Диагностика VLAN-aware моста
 
 ```bash
-sudo netplan apply
+# Просмотр таблицы VLAN на портах моста
+bridge vlan show
+
+# Ожидаемый вывод:
+# port    vlan ids
+# eth0    10 PVID Egress Untagged
+#         20
+# br0     10
 ```
+- **PVID:** Входящий нетегированный трафик будет помечен этим ID (Access-порт).
+- **Egress Untagged:** Тег будет удален при выходе кадра.
 
----
+### Анализ трафика через tcpdump
 
-### Диагностика VLAN
-
-#### Проверка конфигурации и создание интерфейсов (iproute2)
-
-Временная настройка (до перезагрузки):
+Для захвата тегированного трафика на физическом интерфейсе:
 
 ```bash
-# Создание VLAN-интерфейса (например, ID 100 поверх eth0)
-sudo ip link add link eth0 name eth0.100 type vlan id 100
-
-# Назначение IP и активация
-sudo ip addr add 192.168.100.10/24 dev eth0.100
-sudo ip link set eth0.100 up
-
-# Просмотр всех VLAN-интерфейсов с деталями
-ip -d link show type vlan
-```
-
-#### Анализ трафика через tcpdump
-
-Для проверки наличия тегов на физическом интерфейсе:
-
-```bash
-# Просмотр всех кадров с тегами 802.1Q
-# -e выводит Ethernet-заголовок, где виден VLAN ID
+# Просмотр всех кадров с тегами (-e выводит L2 заголовок)
 sudo tcpdump -i eth0 -nn -e vlan
 
-# Пример вывода:
-# 12:30:45.123 ethertype 802.1Q (0x8100), VLAN 100, IP 192.168.10.2 > 192.168.10.1: ICMP echo request
+# Фильтрация по конкретному VLAN ID (например, 10)
+sudo tcpdump -i eth0 -e vlan 10
 
-# Фильтрация конкретного VLAN (например, 200)
-sudo tcpdump -i eth0 vlan 200
+# Захват QinQ (двойное тегирование)
+sudo tcpdump -i eth0 -e vlan and vlan
 ```
 
-#### Тестирование связности (arping)
+### Тестирование связности (L2)
 
-Позволяет проверить доступность узла внутри конкретного VLAN без настройки маршрутизации:
+Если IP настроен, но связи нет, проверьте прохождение ARP-запросов:
 
 ```bash
-# Проверка ответа ARP через VLAN-интерфейс
+# Отправка ARP-запроса через конкретный VLAN-интерфейс
 sudo arping -I eth0.100 192.168.100.1
 ```
-Если ответы приходят, значит путь для данного VLAN ID настроен корректно.
 
-#### Типичные проблемы
+## Типичные проблемы
 
-| Проблема | Симптомы | Причина / Решение |
-|----------|----------|-------------------|
-| **Access vs Trunk** | Трафик с тегами отбрасывается | Порт коммутатора настроен как `access`, но хост шлет тегированный трафик (или наоборот). |
-| **VLAN ID Mismatch** | Нет связи при корректных IP | Тег на хосте не совпадает с разрешенными VLAN на коммутаторе или с настройкой на другом конце линка. |
-| **Allowed List** | Пакеты не проходят через свитч | VLAN не добавлен в список `allowed vlan` на магистральном (trunk) порту. |
-| **Native VLAN mismatch** | Трафик попадает не в ту подсеть | Несовпадение Native VLAN на разных концах транка приводит к «утечке» нетегированного трафика. |
+| Проблема | Причина | Диагностика |
+| :--- | :--- | :--- |
+| **Нет связи на сабинтерфейсе** | Физический порт коммутатора в режиме Access | `tcpdump -i eth0 -e vlan` не покажет входящих тегов. |
+| **Дублирование трафика** | Петля L2 или неверный `vlan_filtering` | Проверьте `bridge vlan show` на наличие дублей ID. |
+| **Дропы пакетов большого размера** | Проблема с MTU (особенно в QinQ или VPN) | `ping -s 1472 -M do <IP>` (тест 1500 MTU). |
+| **VLAN не поднимается** | Модуль `8021q` не загружен | `lsmod | grep 8021q`. |
 
+## Постоянная конфигурация
+
+Методы сохранения настроек зависят от используемого менеджера сети:
+
+1.  **Netplan (Ubuntu):** Секция `vlans:` в YAML. См. **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)**.
+2.  **NetworkManager (RHEL/Debian):** `nmcli con add type vlan ...`. См. **[NetworkManager](../../../Linux/Networking/Settings/Persistent_Network/centos_rhel_networkmanager.md)**.
+3.  **Interfaces (Debian legacy):** Секции `iface eth0.100`. См. **[Debian Interfaces](../../../Linux/Networking/Settings/Persistent_Network/debian_ubuntu_interfaces.md)**.
+4.  **systemd-networkd:** Файлы `.netdev` и `.network`. См. **[systemd-networkd](../../../Linux/Networking/Settings/Persistent_Network/systemd_networkd.md)**.
 
 ## Дополнительная информация
 
-**Стандарты:**
+### Смежные документы
 
-* **IEEE 802.1Q** — стандарт тегирования VLAN
-* **IEEE 802.1ad** — Q-in-Q (stacked VLANs, двойное тегирование)
-
-**Смежные темы:**
-
-* **[Формат кадра 802.1Q](./vlan_8021q_frame.md)** — структура тега
-* **[Меж-VLAN маршрутизация](./vlan_inter_vlan_routing.md)** — Router-on-a-Stick, сабинтерфейсы
-* **[Trunk и Native VLAN](./vlan_trunk_native.md)** — trunk-порты
-* **[QoS](../../Concepts/qos.md)** — приоритезация трафика через PCP-биты
-* **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)** — постоянная конфигурация сети в Ubuntu
+- **[Формат кадра 802.1Q](./vlan_8021q_frame.md)** — структура и поля тега.
+- **[Trunk и Native VLAN](./vlan_trunk_native.md)** — работа магистральных портов.
+- **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)** — глубокое погружение в работу мостов в ядре.
+- **[L2 Switching и VLAN: Практические сценарии](../../Concepts/vlan_l2_switching/practical_scenarios.md)** — расширенные примеры.

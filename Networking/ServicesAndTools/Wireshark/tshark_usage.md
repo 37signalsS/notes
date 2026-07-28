@@ -28,25 +28,24 @@
 | `-r <file>` | Ввод | Чтение данных из файла (pcap/pcapng) | `File → Open` |
 | `-f "..."` | Фильтр | Фильтр захвата (BPF-синтаксис tcpdump) | Capture Filter |
 | `-Y "..."` | Фильтр | Фильтр отображения (синтаксис Wireshark) | Display Filter |
-| `-D` | Инфо | Список доступных интерфейсов | — |
 | `-T fields -e ...` | Вывод | Экспорт конкретных полей протокола | Apply as Column |
 | `-T json` | Вывод | Экспорт всей структуры пакета в JSON | — |
 | `-q -z <stat>` | Стат. | Сбор статистики (потоки, иерархия и др.) | Statistics меню |
-| `-o key=value` | Опции | Переопределение настроек (например, TLS ключи) | Preferences |
+| `-o key:value` | Опции | Переопределение настроек (например, TLS ключи) | Preferences |
 | `-V` | Вывод | Максимальная детализация (Verbose) | Packet Details |
 
 ### Работа с фильтрами
 
 В tshark разделяются два типа фильтрации:
 
-1. **Capture Filter (`-f`)**: Применяется библиотекой `libpcap` до записи на диск. Экономит ресурсы и место.
+1. **Capture Filter (`-f`)**: Применяется библиотекой `libpcap` до записи на диск. Экономит ресурсы и место. Использует синтаксис `tcpdump`.
 2. **Display Filter (`-Y`)**: Применяется движком Wireshark к уже захваченным или считанным данным. Поддерживает всю мощь логики диссекции.
 
 Подробнее о синтаксисе: **[Фильтрация в Wireshark](./core_concepts.md#фильтрация-трафика)**.
 
 ## Практические сценарии
 
-### Сценарий 1: Захват трафика на удалённом сервере
+### Захват трафика на удалённом сервере
 
 ```bash
 # Список интерфейсов с индексами
@@ -59,7 +58,7 @@ sudo tshark -i eth0 -c 100 -w capture.pcapng
 sudo tshark -i eth0 -f "tcp port 80" -w http_only.pcap
 ```
 
-### Сценарий 2: Анализ и извлечение данных из дампа
+### Анализ и извлечение данных из дампа
 
 ```bash
 # Чтение файла с фильтром отображения
@@ -72,7 +71,22 @@ tshark -r capture.pcapng -T fields -e ip.src -e ip.dst
 tshark -r capture.pcapng -Y "dns" -V -c 1
 ```
 
-### Сценарий 3: Экспорт данных для автоматизации
+### Расширенное извлечение полей (Wireshark 4.x)
+
+Начиная с версии 4.x, tshark поддерживает арифметические и логические операции прямо в параметрах `-e`:
+
+```bash
+# Расчет размера полезной нагрузки TCP (длина IP-пакета - заголовок IP - заголовок TCP)
+tshark -r capture.pcap -T fields -e "ip.len - ip.hdr_len - tcp.hdr_len"
+
+# Логическая проверка: задержка кадра более 100мс
+tshark -r capture.pcap -T fields -e "frame.time_delta > 0.1"
+
+# Извлечение среза данных (первые 4 байта нагрузки UDP)
+tshark -r capture.pcap -T fields -e "udp.payload[0:4]"
+```
+
+### Экспорт данных для автоматизации
 
 ```bash
 # Экспорт в CSV: IP источника, IP назначения и длина кадра
@@ -82,12 +96,9 @@ tshark -r capture.pcapng -T fields \
 
 # Извлечение всех запрашиваемых доменных имён из DNS-трафика
 tshark -r capture.pcapng -Y "dns.flags.response == 0" -T fields -e dns.qry.name
-
-# Получение списка всех HTTP User-Agent
-tshark -r capture.pcapng -Y "http.user_agent" -T fields -e http.user_agent | sort | uniq
 ```
 
-### Сценарий 4: Сбор сетевой статистики
+### Сбор сетевой статистики
 
 ```bash
 # Иерархия протоколов (процентное соотношение трафика)
@@ -96,11 +107,14 @@ tshark -r capture.pcapng -q -z io,phs
 # Список всех IP-диалогов (Conversations)
 tshark -r capture.pcapng -q -z conv,ip
 
-# Статистика ответов HTTP (коды состояний)
-tshark -r capture.pcapng -q -z http,tree
+# Сводка экспертной информации (ошибки, аномалии)
+tshark -r capture.pcapng -q -z expert
+
+# Список конечных узлов (Endpoints) с объемами трафика
+tshark -r capture.pcapng -q -z endpoints,ip
 ```
 
-### Сценарий 5: Расшифровка защищённого трафика (TLS)
+### Расшифровка защищённого трафика (TLS)
 
 ```bash
 # Использование файла с сессионными ключами SSLKEYLOGFILE
@@ -110,16 +124,7 @@ tshark -r capture.pcapng -o tls.keylog_file:/path/to/keys.log -Y "http2"
 tshark -r capture.pcapng -o tls.keys_list:192.168.1.10,443,http,/path/to/server.key
 ```
 
-Методология расшифровки: **[Методы расшифровки TLS](./tls_decryption_methods.md)**.
-
-### Сценарий 6: Непрерывный захват с ротацией файлов
-
-Используется для мониторинга инцидентов на высоконагруженных серверах без переполнения диска:
-
-```bash
-# Создавать новый файл каждые 100 МБ, хранить последние 10 файлов
-sudo tshark -i eth0 -b filesize:100000 -b files:10 -w /tmp/rotation.pcapng
-```
+Подробнее: **[Методы расшифровки TLS](./tls_decryption_methods.md)**.
 
 ## Дополнительная информация
 
@@ -135,8 +140,6 @@ sudo tshark -i eth0 -b filesize:100000 -b files:10 -w /tmp/rotation.pcapng
 
 ### См. также
 
-- **[Определения и инструменты Wireshark](./definitions.md)** — обзор всей экосистемы.
-- **[Основные концепты захвата](./core_concepts.md)** — детали работы фильтров и интерфейсов.
-- **[Методы расшифровки TLS](./tls_decryption_methods.md)** — подробнее о работе с ключами.
+- **[Wireshark — определения](./definitions.md)** — обзор всей экосистемы.
+- **[Основные концепции захвата](./core_concepts.md)** — детали работы фильтров и интерфейсов.
 - **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — инструмент для быстрого захвата.
-- **[termshark](../../../Linux/Diagnostics/Networking/network_cli_tools.md#termshark)** — интерактивный TUI для tshark.

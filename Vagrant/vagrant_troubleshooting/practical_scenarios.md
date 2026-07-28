@@ -2,264 +2,182 @@
 
 ## Сценарий 1: Работа через прокси-сервер
 
-**Проблема:** Vagrant не может скачать box'ы или выполнить сетевые операции внутри ВМ.
+**Проблема:** Vagrant не может скачать образы (boxes) или выполнить сетевые операции внутри ВМ (например, `apt-get update`).
 
-**Решение:**
+**Решение на уровне хоста:**
 
 ```bash
-# Переменные для утилит Linux
-export http_proxy="http://user:pass@proxy.example.com:port/"
-export https_proxy="http://user:pass@proxy.example.com:port/"
+# Переменные для стандартных утилит Linux (curl, wget)
+export http_proxy="http://user:pass@proxy.example.com:8080/"
+export https_proxy="http://user:pass@proxy.example.com:8080/"
 
-# Специальные переменные для Vagrant
+# Специальные переменные для ядра Vagrant (загрузка образов)
 export VAGRANT_HTTP_PROXY="${http_proxy}"
 export VAGRANT_HTTPS_PROXY="${https_proxy}"
-
-# Для постоянного добавления в ~/.bashrc или ~/.zshrc
+export VAGRANT_NO_PROXY="127.0.0.1,localhost,192.168.0.0/16"
 ```
 
-**Автоматизация через плагин:**
+**Решение внутри гостевой ОС (через плагин):**
 
 ```bash
 vagrant plugin install vagrant-proxyconf
 ```
 
 ```ruby
-# В Vagrantfile
 Vagrant.configure("2") do |config|
   if Vagrant.has_plugin?("vagrant-proxyconf")
     config.proxy.http     = ENV["HTTP_PROXY"]
-    config.proxy.https   = ENV["HTTPS_PROXY"]
-    config.proxy.no_proxy = "localhost,127.0.0.1"
+    config.proxy.https    = ENV["HTTPS_PROXY"]
+    config.proxy.no_proxy = "localhost,127.0.0.1,.localdomain"
   end
 end
 ```
 
-## Сценарий 2: Ошибка "диск уже существует" в Libvirt
+## Сценарий 2: Ошибка "диск уже существует" (Libvirt)
 
 **Симптом:**
-
 ```
 Error creating storage: storage volume 'data-disk.qcow2' already exists
 ```
 
-**Причина:** Рассинхронизация между Vagrant и libvirt после некорректного удаления.
+**Причина:** Локальное состояние Vagrant (`.vagrant/`) было удалено вручную, но ресурсы у гипервизора (virsh) остались.
 
-**Решение:**
+**Решение (Глубокая очистка):**
 
 ```bash
-# 1. Уничтожить ВМ
+# 1. Попытка штатного удаления
 vagrant destroy -f
 
-# 2. Проверить пул хранения libvirt
+# 2. Поиск зависших томов в пуле Libvirt
 virsh --connect qemu:///system vol-list default
 
-# 3. Удалить оставшиеся диски
+# 3. Принудительное удаление диска
 virsh --connect qemu:///system vol-delete --pool default data-disk.qcow2
 
-# 4. Удалить локальное состояние
-rm -rf .vagrant
+# 4. Удаление зависшего домена (ВМ)
+virsh --connect qemu:///system undefine <domain_name> --remove-all-storage
 
-# 5. Повторить запуск
-vagrant up
-```
-
-## Сценарий 3: Конфликты имён в Libvirt
-
-**Проблема:** Ошибки при создании ВМ из-за специальных символов в имени.
-
-**Причина:** Libvirt формирует имя домена как `проект_машина`. Символ `_` может вызывать конфликты.
-
-**Решение:**
-
-```ruby
-# Правильно:
-config.vm.define "web-server"
-config.vm.define "db-node"
-
-# Неправильно:
-config.vm.define "web_server"  # Может вызвать конфликт
-```
-
-## Сценарий 4: Ручная очистка рассинхронизированных ВМ (Libvirt)
-
-**Симптом:** `vagrant status` показывает "not created", но `virsh list --all` показывает домены.
-
-### Диагностика
-
-```bash
-# Проверить состояние в Libvirt
-virsh --connect qemu:///system list --all
-
-# Проверить состояние в Vagrant
-vagrant status
-vagrant global-status
-
-# Проверить привязку ID
-cat .vagrant/machines/*/libvirt/id 2>/dev/null
-```
-
-### Очистка
-
-**Способ 1: Через virsh (точечная)**
-
-```bash
-# Найти имена доменов
-virsh --connect qemu:///system list --all
-
-# Остановить домен (если работает)
-virsh --connect qemu:///system destroy domain-name
-
-# Удалить домен и хранилище
-virsh --connect qemu:///system undefine domain-name --remove-all-storage
-
-# Очистить кэш Vagrant
+# 5. Очистка кэша
 vagrant global-status --prune
 ```
 
-**Способ 2: Через vagrant destroy (по ID)**
-
-```bash
-# Найти ID машины
-vagrant global-status
-
-# Удалить по ID
-vagrant destroy <machine-id> -f
-```
-
-## Сценарий 5: SSH не подключается
-
-**Симптом:** `vagrant ssh` завершается с ошибкой аутентификации.
-
-**Возможные причины и решения:**
-
-| Причина | Решение |
-| --- | --- |
-| SSH-сервис не запущен | `vagrant reload` для перезагрузки |
-| Неправильный ключ | `vagrant destroy` + `vagrant up` |
-| Порт SSH изменён | Проверить `config.ssh.port` в Vagrantfile |
-| Гостевые дополнения не установлены | Установить `vagrant-vbguest` плагин |
-
-**Диагностика:**
-
-```bash
-# Проверить конфигурацию SSH
-vagrant ssh-config
-
-# Принудительное пересоздание ключа
-vagrant destroy -f && vagrant up
-
-# Проверить лог Vagrant
-VAGRANT_LOG=info vagrant up 2>&1 | tee vagrant.log
-```
-
-## Сценарий 6: Недостаточно места на диске
+## Сценарий 3: Конфликты сетевых мостов (Network Conflicts)
 
 **Симптом:**
+```
+Call to virNetworkCreate failed: Requested operation is not valid: network is already active
+```
+или `IP address is already in use`.
 
+**Причина:** Vagrant пытается создать сеть `vagrant-libvirt` (или другую), но подсеть уже занята Docker, VPN (например, Tailscale) или другим экземпляром Vagrant.
+
+**Решение:**
+
+1.  **Смена подсети в Vagrantfile:**
+    ```ruby
+    config.vm.network "private_network", ip: "10.10.10.10" # Избегайте стандартных 192.168.121.x
+    ```
+
+2.  **Перезапуск зависшей сети Libvirt:**
+    ```bash
+    # Просмотр сетей
+    virsh --connect qemu:///system net-list --all
+    
+    # Уничтожение и запуск проблемной сети
+    virsh --connect qemu:///system net-destroy vagrant-libvirt
+    virsh --connect qemu:///system net-start vagrant-libvirt
+    ```
+
+## Сценарий 4: SSH не подключается (Connection Timeout / Authentication Failure)
+
+**Симптом:** Команда `vagrant ssh` зависает или выдает `Permission denied (publickey)`.
+
+### Диагностика:
+
+```bash
+# 1. Просмотр эффективной конфигурации SSH, которую генерирует Vagrant
+vagrant ssh-config
+
+# 2. Прямое подключение с максимальной детализацией (-vvv)
+# Скопируйте параметры из предыдущей команды:
+ssh -vvv -i .vagrant/machines/default/libvirt/private_key vagrant@192.168.121.10 -p 22
+```
+
+### Возможные причины и решения:
+
+| Причина | Решение |
+| :--- | :--- |
+| **Смена ключа** | Vagrant при первой загрузке меняет небезопасный ключ на уникальный. При сбое процесса ключ может рассинхронизироваться. Выполните: `vagrant destroy -f && vagrant up` |
+| **Сбой сети (Port Forwarding)** | Проверьте порт через `nc -zv localhost 2222`. Измените порт в конфигурации, если он занят. |
+| **Падение SSHD в гостевой ОС** | Подключитесь через GUI провайдера (например, `virt-manager` или VirtualBox UI) и проверьте статус: `systemctl status sshd`. |
+
+## Сценарий 5: Недостаточно места на диске
+
+**Симптом:**
 ```
 Error while creating new volume: No space left on device
 ```
 
-**Решение:**
+**Очистка системы:**
 
 ```bash
-# Проверить свободное место
-df -h
+# Проверить точки монтирования (часто переполняется /var/lib/libvirt/images)
+df -hT
 
-# Очистить кэш box'ов
+# Очистить кэш старых образов Vagrant (~/.vagrant.d/boxes)
 vagrant box prune
 
-# Удалить неиспользуемые box'ы
-vagrant box list
-vagrant box remove <unused-box>
-
-# Очистить логи и временные файлы
+# Удалить системные логи старше 7 дней (на хосте)
 sudo journalctl --vacuum-time=7d
-sudo apt-get autoremove
 ```
 
-**Профилактика:**
+## Сценарий 6: Ошибки вложенной виртуализации (Nested Virtualization)
 
-```ruby
-# В Vagrantfile для Libvirt
-config.vm.provider "libvirt" do |libvirt|
-  libvirt.storage_pool_name = "default"
-  # Указать другой пул с большим местом
-  # libvirt.storage_pool_name = "data-pool"
-end
-```
+**Симптом:** ВМ запускается, но внутри неё невозможно запустить Docker (KVM) или Minikube.
 
-## Сценарий 7: Ошибки вложенной виртуализации
-
-**Симптом:** ВМ запускается, но Docker/KVM внутри не работают.
-
-**Причина:** Вложенная виртуализация не включена на уровне хоста.
-
-**Проверка:**
-
+**Проверка поддержки на хосте:**
 ```bash
-# Проверить поддержку вложенной виртуализации
-cat /sys/module/kvm/parameters/ignore_msrs
-
-# Для Intel
-grep -E 'vmx|nested' /proc/cpuinfo
-
-# Для AMD
-grep -E 'svm|nested' /proc/cpuinfo
+# Должно вернуть 'Y' или '1'
+cat /sys/module/kvm_intel/parameters/nested # Для Intel
+cat /sys/module/kvm_amd/parameters/nested   # Для AMD
 ```
 
-**Включение:**
-
-```bash
-# Для Intel
-echo "options kvm-intel nested=1" | sudo tee /etc/modprobe.d/kvm-intel.conf
-
-# Для AMD
-echo "options kvm-amd nested=1" | sudo tee /etc/modprobe.d/kvm-amd.conf
-
-# Перезагрузить модуль
-sudo modprobe -r kvm-intel && sudo modprobe kvm-intel
-```
-
+**Решение (настройка Libvirt):**
 ```ruby
-# В Vagrantfile
 config.vm.provider "libvirt" do |libvirt|
+  # Включение вложенной виртуализации
   libvirt.nested = true
+  # Проброс модели CPU хоста (критично для производительности)
+  libvirt.cpu_mode = "host-passthrough"
 end
 ```
 
-## Сценарий 8: Проблемы с общими папками (Synced Folders)
+## Сценарий 7: Проблемы с общими папками (Synced Folders)
 
 **Симптом:**
-
 ```
 Mounting shared folders failed
 ```
 
-**Решение для VirtualBox:**
-
+**Решение для VirtualBox (Guest Additions):**
+Версия Guest Additions в ядре гостевой ОС должна совпадать с версией VirtualBox на хосте.
 ```bash
-# Переустановить Guest Additions
 vagrant plugin install vagrant-vbguest
-vagrant vbguest --do install
+vagrant reload
 ```
 
-**Решение для Libvirt:**
-
+**Решение для Libvirt (NFS/Virtiofs):**
 ```ruby
-# Использовать NFS вместо virtiofs
+# Современный и быстрый метод для KVM (Vagrant 2.4+)
+config.vm.synced_folder ".", "/vagrant", type: "virtiofs"
+
+# Если virtiofs недоступен, используйте NFS
 config.vm.synced_folder ".", "/vagrant", type: "nfs"
-
-# Или отключить, если не нужно
-config.vm.synced_folder ".", "/vagrant", disabled: true
 ```
 
-**Альтернатива — rsync:**
+## См. также
 
-```ruby
-config.vm.synced_folder ".", "/vagrant",
-  type: "rsync",
-  rsync__exclude: [".git/", ".vagrant/"],
-  rsync__args: ["--verbose", "--archive", "--delete"]
-```
+- [Vagrant Troubleshooting: Основные концепции](./basic_concepts.md) — обзор архитектуры сбоев.
+- [Vagrant Networking](../vagrant_networking.md) — детальная настройка сетей.
+- [Управление дисками и папками](../vagrant_storage_and_folders.md) — работа с `virtiofs` и хранилищами.
+- [Диагностика SSH](../../Linux/Security/ssh/ssh_troubleshooting.md) — фундаментальные методы отладки протокола.

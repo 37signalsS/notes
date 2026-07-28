@@ -2,11 +2,11 @@
 
 ## Определения
 
-**Tempo** — высокомасштабируемое распределённое хранилище трассировок. В данном файле рассматриваются технические аспекты архитектуры, режимы деплоя и эксплуатационные характеристики.
+**Tempo** — высокомасштабируемое распределённое хранилище трассировок. В данном файле рассматриваются глубокие технические аспекты архитектуры 3.0, режимы деплоя и эксплуатационные характеристики.
 
-**Архитектура Tempo** — совокупность компонентов (Distributor, Ingester, Querier и др.), обеспечивающих прием, хранение и поиск трассировок в объектном хранилище.
+**Decoupled Read/Write Path** — новая архитектурная модель Tempo 3.0, где долговечность данных (durability) обеспечивается внешней очередью (Kafka), а не репликацией внутри Tempo Ingesters.
 
-**vParquet** — специализированный формат хранения Tempo на базе Apache Parquet, оптимизированный для TraceQL и эффективного сжатия данных трассировок.
+**vParquet5** — актуальный формат хранения (с Tempo 2.10 и 3.0), обеспечивающий максимальную производительность TraceQL-запросов и эффективное сжатие метаданных.
 
 Навигация: [Главная Tempo](./index.md).
 
@@ -14,131 +14,102 @@
 
 ## Основные концепции
 
-### Архитектура и компоненты
+### Архитектура 3.0 и компоненты
 
-Tempo построен на микросервисной архитектуре, аналогичной [Loki](../Loki/loki_overview.md) и [Mimir](../Mimir/mimir_overview.md).
+С версии 3.0 Tempo перешёл на модель, где путь записи (write path) и путь чтения (read path) полностью независимы.
 
-| Компонент | Функции |
-| :--- | :--- |
-| **Distributor** | Принимает трассировки (OTLP, Jaeger, Zipkin), валидирует их и распределяет между Ingesters с помощью consistent hashing. |
-| **Ingester** | Нарезает входящие трассировки на блоки (batches), буферизует их в оперативной памяти и записывает в долгосрочное хранилище (S3/GCS/Azure). |
-| **Querier** | Отвечает за поиск трассировок по `trace_id` или выполнение запросов TraceQL. Запрашивает данные из Ingesters (свежие данные) и из объектного хранилища. |
-| **Query Frontend** | Опциональный компонент для шардирования и кэширования запросов, обеспечивающий параллелизацию выполнения TraceQL. |
-| **Compactor** | Фоновый процесс, который объединяет небольшие блоки в объектном хранилище в более крупные для оптимизации производительности чтения и стоимости хранения. |
-| **Metric Generator** | Генерирует метрики (Service Graphs, Span Metrics) на основе проходящих трассировок и отправляет их в Prometheus/Mimir. |
+| Компонент | Роль в 3.0 | Изменения |
+| :--- | :--- | :--- |
+| **Distributor** | Прием и первичная обработка | Теперь отправляет данные не только в Ingesters, но и в Kafka. |
+| **Kafka / Queue** | **Durability Layer** | Хранит входящие данные до их записи в S3. Позволяет использовать RF1 в S3. |
+| **Ingester** | Краткосрочное хранение | Больше не является SSoT для свежих данных. Служит для индексации в памяти. |
+| **Querier** | Выполнение запросов | Читает данные из Ingesters (последние минуты) и S3. |
+| **Query Frontend** | Оркестрация запросов | Распараллеливает запросы по Queriers и управляет кэшем. |
+| **Compactor** | Оптимизация S3 | Объединяет блоки, удаляет дубликаты и применяет политики Retention. |
+| **Metric Generator** | Генерация метрик | Работает в режиме "local-blocks" или "streaming" для создания Service Graphs. |
 
 ### Режимы деплоя
 
-1. **Монолит (Monolithic mode)** — все компоненты запускаются в одном процессе. Идеально для небольших инсталляций, тестирования или локальной разработки.
-2. **Микросервисы (Microservices mode)** — каждый компонент запускается как отдельный сервис. Позволяет независимо масштабировать Ingesters (для записи) и Queriers (для чтения).
+1. **Монолит (Monolithic mode)** — все компоненты в одном бинарнике. Подходит для нагрузки до 100-200 МБ/с.
+2. **Микросервисы (Microservices mode)** — каждый компонент масштабируется независимо. В 3.0 требует наличия Kafka для обеспечения высокой доступности записи.
 
 ### Форматы хранения (vParquet)
 
-Tempo использует собственный формат хранения на базе Apache Parquet. По умолчанию — vParquet4 (с Tempo 2.0).
+Tempo использует Apache Parquet для хранения трейсов.
 
-| Версия | Tempo | Статус |
-| :--- | :--- | :--- |
-| v2 | <2.1 | Устаревший (удалён в Tempo 3.0) |
-| vParquet3 | 2.1–2.5 | Устаревший (удалён в Tempo 3.0) |
-| **vParquet4** | **≥2.0** | **Формат по умолчанию** (требуется для новых функций TraceQL) |
-| **vParquet5** | **≥2.10** | **Добавлен в Tempo 2.10** |
-
-> **Breaking Change:** Форматы v2 и vParquet3 удалены в Tempo 3.0. Для миграции требуется vParquet4+. Новые функции TraceQL (events, links) работают только с vParquet4+.
+| Версия | Tempo | Статус в 3.0 | Особенности |
+| :--- | :--- | :--- | :--- |
+| v2 / vParquet3 | <2.1 | **Удалены** | Больше не поддерживаются. |
+| **vParquet4** | **≥2.0** | Поддерживается | Необходим для базовых функций TraceQL. |
+| **vParquet5** | **≥2.10** | **Рекомендуемый** | Оптимизация для TraceQL Metrics и больших трейсов. |
 
 ---
 
 ## Практические сценарии
 
-### Breaking changes (v2.6+)
+### Миграция на Tempo 3.0
 
-| Изменение | Описание | Требуемое действие |
-| :--- | :--- | :--- |
-| **vParquet4 по умолчанию** | Формат хранения по умолчанию | Требуется Tempo ≥2.0 для чтения |
-| **TraceQL Metrics** | Экспериментальная функция | Настройка `local-blocks` processor, `replication_factor: 1` |
-| **tempo-query** | Отдельный сервер (не gRPC plugin) | Обновление конфигурации на `0.0.0.0:7777` |
-| **Удалённые параметры** | `storage.azure.use_v2_sdk`, `autocomplete_filtering_enabled` | Проверка конфигурации |
+Для перехода с 2.x на 3.0 используется утилита `tempo-cli`:
 
-### Примеры конфигурации
+1. **Валидация форматов:** Убедитесь, что все старые данные имеют формат vParquet4+.
+2. **Запуск миграции:**
+   ```bash
+   tempo-cli migrate --config.file=config.yaml
+   ```
+   Утилита обновит секции конфигурации, удалив устаревшие параметры `ingester.lifecycler` и настроив новый путь записи.
 
-#### Минимальная конфигурация (монолит)
+### Примеры конфигурации (v3.0)
+
+#### Конфигурация с Kafka (Microservices)
 
 ```yaml
 server:
   http_listen_port: 3200
 
-distributor:
-  receivers:
-    otlp:
-      protocols:
-        http:
-          endpoint: 0.0.0.0:4318
-        grpc:
-          endpoint: 0.0.0.0:4317
-
-ingester:
-  max_block_duration: 5m
-  max_block_bytes: 1073741824
-
-storage:
-  trace:
-    backend: local
-    wal:
-      path: /tmp/tempo/wal
-    local:
-      path: /tmp/tempo/blocks
-```
-
-#### Конфигурация для S3-совместимого хранилища (Yandex Object Storage / MinIO)
-
-```yaml
+# Настройка нового пути записи через Kafka
 storage:
   trace:
     backend: s3
     s3:
       bucket: tempo-traces
-      endpoint: storage.yandexcloud.net
-      region: ru-central1
-      access_key: ${S3_ACCESS_KEY}
-      secret_key: ${S3_SECRET_KEY}
-      insecure: false
+    # Использование Kafka для долговечности (durability)
     wal:
-      path: /var/tempo/wal
-    pool:
-      max_workers: 100
-      queue_depth: 10000
+      type: kafka
+      kafka:
+        brokers: [kafka-1:9092, kafka-2:9092]
+        topic: tempo-traces-wal
+
+# Ingester в 3.0 может работать с RF1, так как данные есть в Kafka
+ingester:
+  lifecycler:
+    replication_factor: 1
 ```
 
-### Конфигурация TraceQL Metrics
+#### Настройка TraceQL Metrics (GA)
 
-Для работы агрегаций и генерации метрик необходимо настроить `metrics_generator`:
+В 3.0 метрики могут генерироваться Querier-ом на лету. Для кэширования результатов рекомендуется Redis:
 
 ```yaml
-overrides:
-  defaults:
-    metrics_generator:
-      processors: [local-blocks]
-      storage_path: /var/tempo/metrics-generator
-    tracing:
-      enabled: true
-
-metrics_generator:
-  processor:
-    local_blocks:
-      flush_to_storage: true
+querier:
+  metrics_queries_cache:
+    redis:
+      endpoint: redis:6379
 ```
+
+### Рекомендации по эксплуатации
+
+- **S3 Durability:** Благодаря Kafka, в S3 можно выключать versioning (если не требуется внешними политиками) и использовать `replication_factor: 1`.
+- **Compaction:** В 3.0 Compactor стал значительно быстрее обрабатывать блоки vParquet5. Рекомендуется выделять больше CPU на этот компонент при больших объёмах записи.
+- **Monitoring:** Следите за метрикой `tempo_distributor_kafka_write_errors_total` — это критический индикатор проблем с приёмом данных.
 
 ---
 
 ## Дополнительная информация
 
-### Рекомендации по эксплуатации
-
-- **Retention:** Настраивается в секции `compactor`. По умолчанию данные хранятся вечно (если не настроены политики в облаке).
-- **Object Storage:** Рекомендуется использовать облачные хранилища (S3, GCS) для обеспечения отказоустойчивости и неограниченного масштабирования.
-- **Resource Limits:** Ingesters требуют значительного объема оперативной памяти для буферизации блоков перед записью.
-
 ### См. также
 
-- [Официальная документация](https://grafana.com/docs/tempo/latest/)
-- [Формат vParquet](https://grafana.com/docs/tempo/latest/configuration/parquet/)
-- [Release notes v2.10](https://grafana.com/docs/tempo/latest/release-notes/v2-10/)
+- [Главная Tempo](./index.md)
+- [Официальная документация: Architecture](https://grafana.com/docs/tempo/latest/operations/architecture/)
+- [TraceQL Metrics Reference](https://grafana.com/docs/tempo/latest/traceql/metrics/)
+- [Tempo CLI Redact Tool](https://grafana.com/docs/tempo/latest/operations/redacting/)
+

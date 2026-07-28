@@ -2,177 +2,118 @@
 
 ## Определения
 
-**Агрегация каналов** (также известная как `Link Aggregation`, `Port Channel`, `EtherChannel`) — это технология, позволяющая объединить несколько физических сетевых интерфейсов в один логический. В Linux для этого используется модуль ядра **`bonding`** (рекомендуемый) и, ранее, модуль **`teaming`**.
+**Агрегация каналов** (также известная как `Link Aggregation`, `Port Channel`, `EtherChannel`) — это технология объединения нескольких физических сетевых интерфейсов в один логический. Это позволяет повысить отказоустойчивость и увеличить суммарную пропускную способность соединения.
 
-Основные цели агрегации:
+В ОС (Operating System — операционная система) Linux для реализации этой технологии используются два основных механизма:
+1.  **Модуль ядра `bonding`:** Классическая и наиболее стабильная реализация. **Рекомендуется** для использования в большинстве современных систем (RHEL (Red Hat Enterprise Linux), Debian, Ubuntu).
+2.  **Модуль `teaming`:** Более современная архитектура с логикой в пользовательском пространстве (`teamd`). **Признана устаревшей (deprecated)** в RHEL 9+ и постепенно выводится из эксплуатации.
 
-1. **Отказоустойчивость (Fault Tolerance):** Если один из физических каналов выходит из строя, трафик автоматически перенаправляется через оставшиеся рабочие каналы, обеспечивая непрерывность соединения.
-2. **Увеличение пропускной способности (Bandwidth Aggregation):** Суммирование пропускной способности нескольких каналов для увеличения общей скорости передачи данных. **Важно:** это увеличивает *пропускную способность*, но не *скорость* одного соединения. Скорость одного потока (например, скачивания одного файла) будет ограничена скоростью одного физического канала.
+### Основные цели
+*   **Отказоустойчивость (Fault Tolerance):** При выходе из строя одного физического линка трафик прозрачно переключается на оставшиеся.
+*   **Увеличение пропускной способности (Bandwidth Aggregation):** Суммирование емкости каналов. **Важно:** агрегация увеличивает *общую* пропускную способность интерфейса, но не скорость *одиночного* TCP (Transmission Control Protocol) соединения, которое всегда ограничено скоростью одного физического порта из-за механизмов хеширования.
 
 ## Основные концепции
 
-### Bonding vs. Teaming
+### Мониторинг состояния линков
+Для определения работоспособности физических интерфейсов в `bonding` используются два основных метода:
+1.  **MII мониторинг (Media Independent Interface):** Проверяет только состояние несущей (Link Carrier). Работает быстро, но не видит проблем «дальше» первого коммутатора (например, если порт коммутатора активен, но трафик не идет). Параметр: `miimon`.
+2.  **ARP мониторинг (Address Resolution Protocol):** Проверяет доступность конкретного IP (Internet Protocol) адреса через интерфейс. Надежнее, так как проверяет сквозную передачу данных. Параметры: `arp_interval` и `arp_ip_target`.
 
-- **Bonding:** Стандартный модуль ядра Linux. Поддерживает множество режимов работы. **Рекомендуемый способ** в современных дистрибутивах (RHEL 9+, Fedora, Debian/Ubuntu).
-- **Teaming:** Реализация в пользовательском пространстве через `teamd`. Предлагает те же режимы, называемые "runners". **Считается устаревшим в RHEL 9+** и не рекомендуется для новых конфигураций.
+### Политики хеширования (Transmit Hash Policy)
+Для режимов, поддерживающих балансировку (`mode 2` и `mode 4`), критически важно, как ядро выбирает физический порт для отправки пакета. Параметр `xmit_hash_policy` определяет этот алгоритм:
+*   **layer2 (по умолчанию):** Использует XOR (исключающее ИЛИ) над MAC (Media Access Control) адресами. Весь трафик между двумя конкретными узлами всегда идет через один порт.
+*   **layer2+3:** Использует комбинацию MAC и IP адресов. Позволяет лучше распределять трафик между подсетями.
+*   **layer3+4:** Использует IP адреса и номера портов (TCP/UDP). Обеспечивает наиболее равномерную балансировку, так как разные сессии между одними и теми же узлами могут идти через разные порты. **Важно:** этот режим может не полностью соответствовать стандарту 802.3ad в некоторых реализациях.
 
 ### Режимы работы Bonding
 
-Режим определяет, как трафик распределяется между объединенными интерфейсами.
+| Режим | Название | Описание | Требование к коммутатору |
+| :--- | :--- | :--- | :--- |
+| **mode=0** | `round-robin` | Пакеты отправляются по очереди через все интерфейсы. | Требует Static Trunk / EtherChannel |
+| **mode=1** | `active-backup` | Один активный, остальные в резерве. | Не требуется |
+| **mode=2** | `balance-xor` | Балансировка на основе хеша (MAC/IP). | Требует Static Trunk / EtherChannel |
+| **mode=3** | `broadcast` | Отправка всех пакетов через все интерфейсы. | Требует Static Trunk |
+| **mode=4** | `802.3ad` (LACP) | Динамическая агрегация по протоколу LACP. | **Обязательна поддержка LACP** |
+| **mode=5** | `balance-tlb` | Адаптивная балансировка исходящего трафика. | Не требуется |
+| **mode=6** | `balance-alb` | Адаптивная балансировка входящего и исходящего трафика. | Не требуется |
 
-- `mode=0` (`round-robin`):
-  - **Принцип:** Пакеты поочередно отправляются через каждый интерфейс в группе.
-  - **Преимущества:** Обеспечивает балансировку нагрузки.
-  - **Недостатки:** Может приводить к нарушению порядка доставки пакетов.
-- `mode=1` (`active-backup`):
-  - **Принцип:** Один интерфейс активен, остальные находятся в режиме ожидания. Если активный интерфейс падает, один из резервных занимает его место.
-  - **Преимущества:** Идеально для простой отказоустойчивости. Не требует настройки коммутатора.
-  - **Недостатки:** Не увеличивает пропускную способность.
-- `mode=2` (`balance-xor`):
-  - **Принцип:** Выбор интерфейса для отправки пакета осуществляется на основе XOR-операции над MAC-адресами отправителя и получателя.
-- `mode=3` (`broadcast`):
-  - **Принцип:** Все пакеты отправляются через все интерфейсы в группе.
-  - **Преимущества:** Максимальная отказоустойчивость.
-  - **Недостатки:** Непрактично.
-- `mode=4` (`802.3ad`, LACP):
-  - **Принцип:** Динамическая агрегация каналов по протоколу LACP (Link Aggregation Control Protocol).
-  - **Преимущества:** Отраслевой стандарт, обеспечивает балансировку нагрузки и отказоустойчивость.
-  - **Требование:** **Обязательна поддержка и настройка на сетевом коммутаторе.** Не будет работать с неуправляемыми коммутаторами.
-- `mode=5` (`balance-tlb`) и `mode=6` (`balance-alb`):
-  - **Принцип:** Адаптивная балансировка нагрузки. Исходящий трафик распределяется в зависимости от текущей нагрузки.
-  - **Требование:** Не требует специальной настройки коммутатора.
+> **Предупреждение:** Режим `mode=0` может приводить к нарушению порядка доставки пакетов (out-of-order delivery), что негативно сказывается на производительности TCP. В современных сетях предпочтительнее использовать `mode=4` (LACP).
+
+### Multi-Chassis Link Aggregation (MLAG / vPC)
+Стандартный LACP подразумевает подключение всех линков к одному логическому коммутатору. Для обеспечения отказоустойчивости на уровне коммутаторов используются технологии:
+*   **vPC (virtual Port Channel):** Терминология Cisco.
+*   **MLAG (Multi-Chassis Link Aggregation):** Терминология Arista, Mellanox и др.
+Это позволяет серверу подключать один порт `bond` к коммутатору А, а второй — к коммутатору Б, объединяя их в одну LACP группу.
 
 ## Практические сценарии
 
-### Настройка Bonding (рекомендуемый способ)
+### Настройка через NetworkManager (nmcli)
 
-#### С помощью nmcli (Red Hat/Fedora/CentOS)
-
-**Сценарий 1: Режим `active-backup` для отказоустойчивости**
-
-Этот режим не требует настройки на коммутаторе.
+**Сценарий 1: LACP (mode 4) с хешированием layer3+4**
+Наиболее распространенный сценарий для высоконагруженных серверов.
 
 ```bash
-# 1. Создать логический bond-интерфейс
-nmcli connection add type bond con-name bond0 ifname bond0 mode active-backup
+# 1. Создание bond-интерфейса
+nmcli connection add type bond con-name bond0 ifname bond0 \
+  mode 802.3ad bond.options "miimon=100,xmit_hash_policy=layer3+4"
 
-# 2. Назначить IP-адрес
-nmcli connection modify bond0 ipv4.addresses 192.168.1.10/24
-nmcli connection modify bond0 ipv4.method manual
+# 2. Добавление портов (slaves)
+nmcli connection add type ethernet con-name bond0-port1 ifname eth1 master bond0
+nmcli connection add type ethernet con-name bond0-port2 ifname eth2 master bond0
 
-# 3. Добавить физические интерфейсы ("порты") в bond
-nmcli connection add type ethernet con-name bond0-port1 ifname enp0s3 master bond0
-nmcli connection add type ethernet con-name bond0-port2 ifname enp0s8 master bond0
-
-# 4. Активировать соединение
+# 3. Настройка IP и активация
+nmcli connection modify bond0 ipv4.addresses 10.0.0.10/24 ipv4.method manual
 nmcli connection up bond0
-
-# 5. Проверить состояние
-cat /proc/net/bonding/bond0
 ```
 
-**Сценарий 2: Режим `802.3ad` (LACP) для увеличения пропускной способности**
-
-Этот режим требует, чтобы на коммутаторе порты были объединены в LACP-группу (Port Channel).
-
-```bash
-# Создание bond-интерфейса с режимом 802.3ad
-nmcli connection add type bond con-name bond1 ifname bond1 mode 802.3ad
-
-# Дальнейшие шаги аналогичны (назначение IP, добавление slave-интерфейсов)
-nmcli connection modify bond1 ipv4.addresses 192.168.2.10/24 ipv4.method manual
-nmcli connection add type ethernet con-name bond1-port1 ifname enp0s9 master bond1
-nmcli connection add type ethernet con-name bond1-port2 ifname enp0s10 master bond1
-nmcli connection up bond1
-```
-
-#### С помощью Netplan (Ubuntu/Debian)
-
-Пример конфигурации в файле `/etc/netplan/01-netcfg.yaml`.
+### Настройка через Netplan (Ubuntu)
+Конфигурация в `/etc/netplan/01-netcfg.yaml`:
 
 ```yaml
 network:
   version: 2
-  renderer: networkd
   ethernets:
-    enp3s0f0:
-      dhcp4: no
-    enp3s0f1:
-      dhcp4: no
+    enp3s0: {}
+    enp3s1: {}
   bonds:
     bond0:
-      dhcp4: no
-      interfaces: [enp3s0f0, enp3s0f1]
+      interfaces: [enp3s0, enp3s1]
+      addresses: [10.10.10.2/24]
       parameters:
         mode: 802.3ad
-        mii-monitor-interval: 1
-      addresses: [10.10.10.2/24]
-      routes:
-        - to: default
-          via: 10.10.10.1
+        mii-monitor-interval: 100
+        transmit-hash-policy: layer3+4
+        lacp-rate: fast
 ```
 
-Подробнее: **[Настройка Netplan](../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)**.
-
-### Настройка VLAN поверх Bond-интерфейса
-
-Сначала создается `bond`, а затем на его основе — `vlan`.
+### Диагностика и проверка состояния
+Основной источник информации о состоянии `bond` в Linux — виртуальная файловая система `/proc`.
 
 ```bash
-# 1. Создать bond-интерфейс (как в примерах выше, но без IP-адреса)
-nmcli connection add type bond con-name bond0 ifname bond0 mode active-backup
-nmcli connection add type ethernet con-name bond0-port1 ifname enp0s3 master bond0
-nmcli connection add type ethernet con-name bond0-port2 ifname enp0s8 master bond0
-nmcli connection up bond0
-
-# 2. Создать VLAN-интерфейс поверх bond0
-# dev - родительский интерфейс, id - номер VLAN
-nmcli connection add type vlan con-name vlan10 ifname bond0.10 dev bond0 id 10
-
-# 3. Назначить IP-адрес VLAN-интерфейсу
-nmcli connection modify vlan10 ipv4.addresses 10.0.10.10/24 ipv4.method manual
-nmcli connection up vlan10
+# Просмотр детального состояния бонда и каждого линка в нем
+cat /proc/net/bonding/bond0
 ```
 
-### Настройка Teaming (устаревший способ)
-
-> **Важно:** `teaming` считается устаревшим в RHEL 9+. Примеры ниже приведены для legacy-систем и ознакомления. Для новых конфигураций используйте `bonding`.
-
-#### Сценарий: Режим `active_backup`
-
-```bash
-# 1. Создать логический team-интерфейс
-nmcli connection add type team con-name my-team-0 ifname team0 config '{"runner": {"name": "active_backup"}}'
-
-# 2. Назначить IP-адрес
-nmcli connection modify my-team-0 ipv4.addresses 192.168.1.10/24 ipv4.method manual
-
-# 3. Добавить физические интерфейсы ("порты") в team
-nmcli connection add type team-slave con-name team0-port1 ifname enp0s3 master team0
-nmcli connection add type team-slave con-name team0-port2 ifname enp0s8 master team0
-
-# 4. Активировать соединение
-nmcli connection up my-team-0
-
-# 5. Проверить состояние
-teamdctl team0 state
-```
+**На что смотреть в выводе:**
+*   **Bonding Mode:** Текущий режим.
+*   **Transmit Hash Policy:** Выбранная политика хеширования.
+*   **MII Status:** Должен быть `up`.
+*   **Partner Mac Address (в mode 4):** Если адрес `00:00:00:00:00:00`, значит LACP не согласован со стороны коммутатора.
 
 ## Дополнительная информация
 
 ### Связанные технологии
+*   **[VLAN в Linux: настройка и диагностика](../Protocols/VLAN/vlan_linux_diagnostics.md):** Создание сабинтерфейсов поверх `bond0`.
+*   **[Linux Bridge](./linux_bridge.md):** Использование `bond` как порта для моста в виртуализации.
+*   **[Тюнинг сетевого стека](../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md):** Оптимизация производительности агрегированных каналов.
 
-- **[VLAN](./vlan_l2_switching/definitions_and_concepts.md):** VLAN можно настраивать поверх агрегированных интерфейсов.
-- **[QoS](./qos.md):** Агрегация может использоваться для увеличения пропускной способности для критического трафика.
-- **[Netplan bonding](../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md):** Настройка bonding через Netplan (Ubuntu/Debian).
+### Сравнение реализаций
 
-### Сравнение bonding и teaming
+| Характеристика | bonding | teaming |
+| :--- | :--- | :--- |
+| **Место работы** | Ядро (Kernel space) | Пользовательское пространство (User space) |
+| **Конфигурация** | Простая (sysfs/nmcli) | Сложная (JSON/teamd) |
+| **Рекомендуемое использование** | **Везде (Standard)** | **Устарело (Deprecated)** |
+| **Производительность** | Очень высокая | Высокая |
 
-| Характеристика      | bonding                               | teaming                               |
-| ------------------- | ------------------------------------- | ------------------------------------- |
-| **Реализация**      | В ядре Linux                          | Пользовательское пространство (`teamd`) |
-| **Производительность** | Высокая                               | Высокая                               |
-| **Гибкость настройки** | Стандартная                           | Расширенная через JSON                |
-| **Статус**          | **Рекомендуемый**                     | **Устаревший (RHEL 9+)**              |
-
-Для настройки `bonding` через конфигурационные файлы см. **[Persistent Network Configuration](../../Linux/Networking/Settings/Persistent_Network/index.md)**.
+Для глубокой настройки параметров через файлы конфигурации см. **[Persistent Network Configuration](../../Linux/Networking/Settings/Persistent_Network/index.md)**.

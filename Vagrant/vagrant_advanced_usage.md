@@ -2,36 +2,40 @@
 
 ## Определения
 
-**Multi-Machine Vagrantfile** — конфигурация, описывающая несколько взаимосвязанных ВМ в одном файле. Позволяет моделировать сложные окружения: кластеры, микросервисы, многоуровневые приложения.
+**Multi-Machine Vagrantfile** — конфигурация, описывающая группу взаимосвязанных виртуальных машин в рамках одного проекта. Позволяет моделировать сложные топологии: микросервисные архитектуры, кластеры баз данных и многоуровневые приложения (Frontend/Backend/DB).
 
-**Triggers (триггеры)** — механизм автоматического выполнения действий до/после команд Vagrant (`up`, `destroy`, `provision` и др.). Используются для бэкапов, уведомлений, проверок.
+**Triggers (триггеры)** — механизм выполнения произвольных действий (скриптов, команд) в ответ на события жизненного цикла Vagrant (до или после команд `up`, `halt`, `provision`, `destroy`).
 
-**Динамическая конфигурация** — использование переменных окружения (`ENV`) для гибкой настройки параметров ВМ без изменения Vagrantfile.
+**Динамическая конфигурация** — использование внешних источников данных (YAML-файлы, переменные окружения) для управления параметрами ВМ без изменения основного кода `Vagrantfile`.
 
 ## Базовые концепции
 
-### Multi-Machine архитектура
+### Продвинутая Multi-Machine архитектура
 
-Каждая машина определяется через `config.vm.define` и имеет индивидуальную конфигурацию.
+Vagrant позволяет не только описывать несколько машин, но и управлять их зависимостями и ролями.
 
-**Пример структуры:**
+**Основные возможности:**
+- `config.vm.define "name", primary: true` — помечает машину как основную (она будет запускаться по умолчанию при выполнении `vagrant up` без аргументов).
+- `config.vm.define "name", autostart: false` — машина не будет запускаться автоматически при общей команде `up`.
+
+**Пример оркестрации:**
 
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
-  
-  # Веб-сервер
-  config.vm.define "web" do |web|
-    web.vm.hostname = "web-server"
-    web.vm.network "private_network", ip: "192.168.77.10"
-    web.vm.provision "shell", path: "scripts/web.sh"
+
+  # База данных (вспомогательный узел)
+  config.vm.define "db", autostart: false do |db|
+    db.vm.hostname = "db-node"
+    db.vm.network "private_network", ip: "192.168.77.10"
   end
-  
-  # База данных
-  config.vm.define "db" do |db|
-    db.vm.hostname = "db-server"
-    db.vm.network "private_network", ip: "192.168.77.11"
-    db.vm.provision "shell", path: "scripts/db.sh"
+
+  # Веб-сервер (основной узел)
+  config.vm.define "web", primary: true do |web|
+    web.vm.hostname = "web-app"
+    web.vm.network "private_network", ip: "192.168.77.11"
+    # Ожидание готовности БД через shell
+    web.vm.provision "shell", inline: "sleep 10" 
   end
 end
 ```
@@ -40,272 +44,138 @@ end
 
 ```bash
 vagrant up web              # Запустить только web
-vagrant ssh db              # Подключиться к db
-vagrant provision web       # Применить provisioning к web
-vagrant destroy -f db       # Удалить только db
-vagrant status              # Статус всех машин
+vagrant ssh db              # Подключиться к db (если она запущена)
+vagrant status              # Статус всех машин проекта
 ```
 
-### Триггеры
+### Детальная настройка триггеров
 
-Триггеры выполняются локально (`run_local`) или удалённо (`run_remote`) на ВМ.
+Триггеры могут выполняться в разных контекстах, что критично для автоматизации.
 
-**Пример конфигурации:**
+**Контексты выполнения:**
+- `run_local`: Команда выполняется на хост-машине.
+- `run_remote`: Команда выполняется внутри гостевой ОС (требует активного SSH-соединения).
+- `run`: Псевдоним для выполнения в зависимости от ситуации (по умолчанию `local`).
+
+**Пример сложного триггера:**
 
 ```ruby
-Vagrant.configure("2") do |config|
-  config.vm.box = "bento/ubuntu-24.04"
-
-  # Уведомление после запуска
-  config.trigger.after :up do |trigger|
-    trigger.name = "Ready notification"
-    trigger.run_local = { inline: "echo 'VM is ready!'" }
-  end
-
-  # Очистка при уничтожении
-  config.trigger.before :destroy do |trigger|
-    trigger.name = "Cleanup"
-    trigger.run_remote = { inline: "rm -rf /tmp/cache" }
-  end
-end
-```
-
-**Ключевые возможности:**
-
-- `config.trigger.before :command` — действие ДО команды
-- `config.trigger.after :command` — действие ПОСЛЕ команды
-- `trigger.on_error = :continue` — продолжить при ошибке
-- `trigger.run_local` / `trigger.run_remote` — контекст выполнения
-
-### Динамическая конфигурация через ENV
-
-Использование переменных окружения позволяет изменять параметры окружения (образ, ресурсы, флаги) без редактирования `Vagrantfile`.
-
-**Пример реализации:**
-
-```ruby
-Vagrant.configure("2") do |config|
-  # Образ из переменной окружения или по умолчанию
-  config.vm.box = ENV['VAGRANT_BOX'] || "bento/ubuntu-24.04"
+config.trigger.after :up do |trigger|
+  trigger.name = "Post-up Automation"
   
-  # Ресурсы из переменных
-  config.vm.provider "libvirt" do |libvirt|
-    libvirt.memory = ENV.fetch('VAGRANT_MEMORY', 2048).to_i
-    libvirt.cpus = ENV.fetch('VAGRANT_CPUS', 2).to_i
-  end
+  # Локальное действие: обновление файла /etc/hosts на хосте
+  trigger.run_local = { 
+    inline: "echo '192.168.77.11 web-app.local' | sudo tee -a /etc/hosts" 
+  }
   
-  # Включение provisioning только при необходимости
-  if ENV['PROVISION'] == 'true'
-    config.vm.provision "shell", path: "scripts/provision.sh"
-  end
+  # Удаленное действие: проверка статуса сервиса
+  trigger.run_remote = { 
+    inline: "systemctl is-active --quiet nginx || echo 'Warning: Nginx is not running!'" 
+  }
 end
-```
-
-**Запуск:**
-
-```bash
-# С кастомными параметрами
-VAGRANT_MEMORY=4096 VAGRANT_CPUS=4 vagrant up
-
-# С provisioning
-PROVISION=true vagrant up
-```
-
-### Плагины для работы с переменными окружения
-
-**vagrant-env** — плагин для загрузки `.env` файлов:
-
-```bash
-vagrant plugin install vagrant-env
-```
-
-Файл `.env` (добавить в `.gitignore!`):
-
-```bash
-VAGRANT_MEMORY=4096
-VAGRANT_CPUS=4
-TAILSCALE_AUTHKEY=tskey-...
 ```
 
 ## Практические сценарии
 
-### Сценарий 1: Создание кластера с циклом и Ansible
+### Сценарий 1: Генерация ВМ из внешнего YAML-конфига
 
-Развертывание кластера из N машин с различными ролями через цикл:
+Лучшая практика для больших команд — вынос настроек ресурсов в отдельный файл, который не требует знаний Ruby для редактирования.
 
+**Файл `servers.yml`:**
+```yaml
+- name: master
+  ip: 192.168.10.10
+  mem: 2048
+  cpu: 2
+- name: worker-1
+  ip: 192.168.10.11
+  mem: 1024
+  cpu: 1
+```
+
+**Реализация в `Vagrantfile`:**
 ```ruby
-# -*- mode: ruby -*-
-# vi: set ft=ruby :
+require 'yaml'
+
+servers = YAML.load_file('servers.yml')
 
 Vagrant.configure("2") do |config|
-  config.vm.box = "jtarpley/ubuntu2404_base"
-  config.vm.guest = :ubuntu
-
-  N = 3
-  (1..N).each do |machine_id|
-    config.vm.define "machine#{machine_id}" do |machine|
-      machine.vm.hostname = "machine#{machine_id}"
-      machine.vm.box_check_update = false
-      machine.vm.network "private_network", ip: "192.168.77.#{10+machine_id}"
-
-      # Правило UFW для разрешения входящих подключений на порт 80
-      machine.vm.provision "shell", inline: "sudo ufw allow 80/tcp"
-
-      machine.vm.provider "libvirt" do |libvirt|
-        libvirt.memory = 2048
-        libvirt.cpus = 2
-        libvirt.random_hostname = false
-        libvirt.storage_pool_name = "default"
-        libvirt.machine_virtual_size = 10
-      end
-
-      # Условное применение плейбуков Ansible
-      if machine_id == 1
-         machine.vm.provision :ansible do |ansible|
-           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
-           ansible.playbook = "nginx-lab/ansible/playbook_machine1.yml"
-         end
-      else
-         machine.vm.provision :ansible do |ansible|
-           ansible.inventory_path = "nginx-lab/ansible/inventory.ini"
-           ansible.playbook = "nginx-lab/ansible/playbook.yml"
-         end
+  servers.each do |server|
+    config.vm.define server['name'] do |node|
+      node.vm.box = "bento/ubuntu-24.04"
+      node.vm.network "private_network", ip: server['ip']
+      
+      node.vm.provider "libvirt" do |lv|
+        lv.memory = server['mem']
+        lv.cpus = server['cpu']
       end
     end
   end
 end
 ```
 
-**Использование:**
+### Сценарий 2: Глобальные переменные окружения Vagrant
 
+Vagrant поддерживает ряд системных переменных, управляющих поведением самого приложения.
+
+| Переменная | Описание |
+| :--- | :--- |
+| `VAGRANT_CWD` | Изменяет рабочую директорию (где искать `Vagrantfile`). |
+| `VAGRANT_DOTFILE_PATH` | Изменяет путь к директории `.vagrant/` (полезно для CI/CD). |
+| `VAGRANT_HOME` | Путь к глобальному кэшу образов и плагинов (`~/.vagrant.d`). |
+| `VAGRANT_LOG` | Уровень логирования (`debug`, `info`, `warn`, `error`). |
+| `VAGRANT_DEFAULT_PROVIDER` | Форсирует использование конкретного провайдера. |
+
+**Пример использования в CLI:**
 ```bash
-vagrant up                    # Запуск всего кластера
-vagrant up machine2           # Запуск отдельного узла
-vagrant provision machine1    # Перепровижининг конкретного узла
-vagrant destroy -f machine3   # Удаление узла
+VAGRANT_LOG=info VAGRANT_DEFAULT_PROVIDER=libvirt vagrant up
 ```
 
-> **Примечание:** Сети для multi-machine описаны в [Vagrant Networking](./vagrant_networking.md#сценарий-2-изолированная-сеть-для-кластера).
+### Сценарий 3: Интеграция с Tailscale (Zero Trust VPN)
 
-### Сценарий 2: Интеграция с Tailscale
-
-Автоматическое подключение ВМ к приватной сети Tailscale:
+Автоматическое подключение ВМ к приватной сети Tailscale для безопасного доступа.
 
 ```ruby
 Vagrant.configure("2") do |config|
-  config.env.enable
-
   config.vm.box = "bento/ubuntu-24.04"
-  config.vm.hostname = "tailscale-node"
 
-  # Установка Tailscale
-  config.vm.provision "install", type: "shell", inline: <<-SHELL
+  config.vm.provision "shell", inline: <<-SHELL
     curl -fsSL https://tailscale.com/install.sh | sh
+    tailscale up --authkey=#{ENV['TAILSCALE_KEY']} --ssh
   SHELL
 
-  # Подключение к сети
-  config.vm.provision "connect", type: "shell" do |s|
-    s.inline = "tailscale up --ssh --operator=vagrant --authkey=#{ENV['TAILSCALE_AUTHKEY']}"
-    s.privileged = true
-  end
-
-  # Очистка при уничтожении
   config.trigger.before :destroy do |trigger|
-    trigger.name = "Tailscale Logout"
     trigger.run_remote = { inline: "tailscale logout" }
-    trigger.on_error = :continue
-  end
-end
-```
-
-**Преимущества:**
-
-- Безопасный доступ к ВМ из любой точки мира
-- Не требуется пробрасывать порты на роутере
-- Шифрование всего трафика
-
-Подробнее о Tailscale: [VPN/Tailscale](../Vpn/tailscale.md)
-
-### Сценарий 3: Ansible Vault для секретов
-
-Интеграция с Ansible Vault для безопасного хранения секретов:
-
-```ruby
-config.vm.provision :ansible do |ansible|
-  ansible.playbook = "playbook.yml"
-  ansible.vault_password_file = ".vault_password"
-end
-```
-
-Файл `.vault_password` должен быть в `.gitignore`.
-
-**Подробности:** [Ansible Vault Examples](../Ansible/Vault/examples.md)
-
-### Сценарий 4: Триггеры для автоматизации бэкапов и проверок
-
-```ruby
-Vagrant.configure("2") do |config|
-  config.vm.box = "bento/ubuntu-24.04"
-
-  # Проверка перед запуском
-  config.trigger.before :up do |trigger|
-    trigger.name = "Pre-up check"
-    trigger.run_local = { inline: "echo 'Starting VM...'" }
-  end
-
-  # Бэкап перед уничтожением
-  config.trigger.before :destroy do |trigger|
-    trigger.name = "Backup data"
-    trigger.run_remote = {
-      inline: "tar -czf /tmp/data-backup.tar.gz /var/data 2>/dev/null || true"
-    }
-    trigger.on_error = :continue
-  end
-
-  # Уведомление после запуска
-  config.trigger.after :up do |trigger|
-    trigger.name = "Post-up notification"
-    trigger.run_local = { inline: "echo 'VM is ready!'" }
   end
 end
 ```
 
 ## Дополнительная информация
 
+### Управление глобальным состоянием
+
+При работе с множеством проектов полезно знать команды управления «забытыми» машинами:
+
+```bash
+# Список всех ВМ, известных Vagrant в системе
+vagrant global-status
+
+# Очистка записей о машинах, которые были удалены вручную
+vagrant global-status --prune
+
+# Подключение к машине из любого места системы (по ID из global-status)
+vagrant ssh <id>
+```
+
 ### Лучшие практики
 
-1. **Именование машин:** Используйте дефисы вместо подчёркиваний (`web-server`, не `web_server`) — это предотвращает конфликты в Libvirt.
-
-2. **Секреты:** Никогда не храните секреты в `Vagrantfile`. Используйте:
-   - `vagrant-env` для переменных окружения
-   - Ansible Vault для зашифрованных переменных ([Ansible Vault Best Practices](../Ansible/Vault/best_practices.md))
-   - Файл `.env` в `.gitignore`
-
-3. **Идемпотентность provisioning:** Скрипты должны выполняться многократно без побочных эффектов:
-
-   ```bash
-   # Плохо
-   echo "line" >> /etc/config
-
-   # Хорошо
-   grep -q "line" /etc/config || echo "line" >> /etc/config
-   ```
-
-   Подробнее: [Vagrant Provisioning](./vagrant_provisioning.md#лучшие-практики)
-
-4. **Версионирование box'ов:** Фиксируйте версии для воспроизводимости:
-
-   ```ruby
-   config.vm.box = "bento/ubuntu-24.04"
-   config.vm.box_version = "~> 202501.0"
-   ```
-
-5. **Ресурсы:** Выделяйте разумное количество ресурсов. Для большинства задач достаточно 1-2 CPU и 1-2GB RAM.
+1.  **Изоляция метаданных:** Если вы запускаете несколько копий одного проекта (например, для разных веток Git), используйте `VAGRANT_DOTFILE_PATH`, чтобы состояния `.vagrant/` не конфликтовали.
+2.  **Безопасность триггеров:** Избегайте использования `sudo` в триггерах `run_local`, если это возможно. Если `sudo` необходимо, убедитесь, что команда не требует интерактивного ввода пароля.
+3.  **Именование в мульти-машинах:** Всегда задавайте уникальные `vb.name` или `lv.management_network_name`, чтобы избежать коллизий на уровне гипервизора при запуске нескольких кластеров.
 
 ### См. также
 
-- [Vagrant Provisioning](./vagrant_provisioning.md) — детальная настройка provisioning
-- [Vagrantfile Reference](./vagrantfile.md) — полный синтаксис конфигурации
-- [Vagrant Networking](./vagrant_networking.md) — конфигурация сетей
-- [Vagrant Storage and Folders](./vagrant_storage_and_folders.md) — synced folders, управление дисками
-- [Vagrant Providers](./vagrant_providers.md) — настройка провайдеров (Libvirt, VirtualBox)
+- [Vagrantfile: Справочник параметров](./vagrantfile.md) — базовый синтаксис и параметры.
+- [Vagrant Networking: Кластерные сети](./vagrant_networking.md#сценарий-2-мульти-стек-сеть-ipv4-ipv6) — настройка связи между узлами.
+- [Vagrant Provisioning: Сложные сценарии](./vagrant_provisioning.md#сценарий-4-совмещение-и-порядок-выполнения) — порядок настройки группы машин.
+- [Vagrant Troubleshooting: Логирование](./vagrant_troubleshooting/basic_concepts.md) — детальная отладка через переменные окружения.

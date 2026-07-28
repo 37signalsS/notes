@@ -2,55 +2,70 @@
 
 ## Определения
 
-**Установка Vault** — процесс развёртывания бинарного файла **HashiCorp Vault**, настройки его как системной службы, инициализации и приведения в рабочее состояние через процедуру распечатывания (unseal).
+**Установка Vault** — процесс развёртывания бинарного файла **HashiCorp Vault**, настройки его как системной службы, инициализации и приведения в рабочее состояние через процедуру распечатывания (unseal) или настройки автоматического распечатывания (auto-unseal).
+
+**Integrated Storage (Raft)** — встроенное хранилище на базе протокола консенсуса Raft, являющееся стандартом (SSoT) для продуктивных сред Vault. Оно исключает внешние зависимости (такие как Consul) и обеспечивает высокую доступность данных.
 
 ## Основные концепции
 
-### Подготовка системы
+### Подготовка операционной системы
 
-1. **Непривилегированный пользователь:** Запуск сервиса от имени выделенного системного пользователя `vault` обеспечивает изоляцию процесса от остальной системы.
+Безопасность Vault начинается с изоляции процесса на уровне ядра и файловой системы.
 
+1.  **Системный пользователь:** Запуск сервиса от имени выделенного пользователя `vault`.
     ```bash
     sudo useradd --system --home /etc/vault.d --shell /bin/false vault
     ```
-
-2. **Выделенные директории:** Создание отдельных каталогов для конфигурации (`/etc/vault.d`) и данных (`/var/lib/vault/data`) позволяет гранулярно управлять правами доступа.
-
+2.  **Структура директорий:**
+    *   `/etc/vault.d` — конфигурационные файлы (права `640`, владелец `vault:vault`).
+    *   `/opt/vault/data` — данные Raft (права `700`, владелец `vault:vault`).
+    *   `/var/log/vault` — логи аудита.
+3.  **Отключение Swap:** Для предотвращения попадания секретов из оперативной памяти на диск необходимо полностью отключить раздел подкачки или использовать `mlock`.
     ```bash
-    sudo mkdir --parents /etc/vault.d /var/lib/vault/data
-    sudo chown --recursive vault:vault /etc/vault.d /var/lib/vault/
-    sudo chmod 750 /var/lib/vault/data
+    sudo swapoff -a
+    # Удалить упоминания swap из /etc/fstab
     ```
 
-### Базовая конфигурация (vault.hcl)
+### Безопасная конфигурация (vault.hcl)
 
-Файл конфигурации `/etc/vault.d/vault.hcl` описывается на языке **HCL (HashiCorp Configuration Language)** и определяет параметры работы сервера:
+Современная установка (2024–2025) предполагает использование Raft и TLS для всех коммуникаций.
 
 ```hcl
 ui = true
 
 listener "tcp" {
-  address     = "0.0.0.0:8200"
-  tls_disable = 1  // Отключить TLS только для первоначальной настройки
+  address       = "0.0.0.0:8200"
+  cluster_address = "0.0.0.0:8201"
+  tls_cert_file = "/etc/vault.d/tls/vault.crt"
+  tls_key_file  = "/etc/vault.d/tls/vault.key"
+  
+  # Рекомендуется использовать mTLS для максимальной безопасности
+  tls_disable   = 0
 }
 
 storage "raft" {
-  path    = "/var/lib/vault/data"
-  node_id = "vault_node_1"
+  path    = "/opt/vault/data"
+  node_id = "vault-node-1"
+  
+  # Автоматическое присоединение узлов к кластеру
+  retry_join {
+    leader_api_addr = "https://vault-node-2.example.com:8200"
+  }
 }
 
-api_addr     = "http://127.0.0.1:8200"
-cluster_addr = "https://127.0.0.1:8201"
+# Настройка Auto-unseal (пример для AWS KMS)
+seal "awskms" {
+  region     = "us-east-1"
+  kms_key_id = "alias/vault-unseal-key"
+}
+
+api_addr     = "https://vault.example.com:8200"
+cluster_addr = "https://10.0.0.1:8201"
 ```
 
-* **TLS (Transport Layer Security):** Протокол защиты передачи данных. В промышленной среде использование TLS обязательно.
-* **Права доступа:** `sudo chown vault:vault /etc/vault.d/vault.hcl && sudo chmod 640 /etc/vault.d/vault.hcl`
+### Харденинг службы Systemd
 
-Для высокодоступных (HA — High Availability) инсталляций с внешним бэкендом см. **[Vault с Consul в качестве бэкенда](./vault_with_consul_backend.md)**.
-
-### Настройка Systemd
-
-Файл `/etc/systemd/system/vault.service` управляет Vault как системной службой Linux:
+Файл `/etc/systemd/system/vault.service` должен максимально ограничивать возможности процесса.
 
 ```ini
 [Unit]
@@ -63,91 +78,64 @@ ConditionFileNotEmpty=/etc/vault.d/vault.hcl
 User=vault
 Group=vault
 ProtectSystem=full
-ProtectHome=read-only
+ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 SecureBits=keep-caps
 AmbientCapabilities=CAP_IPC_LOCK
-CapabilityBoundingSet=CAP_SYSLOG CAP_IPC_LOCK
+CapabilityBoundingSet=CAP_IPC_LOCK
 NoNewPrivileges=yes
+MemoryDenyWriteExecute=yes
+LimitMEMLOCK=infinity
+LimitCORE=0
 ExecStart=/usr/local/bin/vault server -config=/etc/vault.d/vault.hcl
 ExecReload=/bin/kill --signal HUP $MAINPID
 KillMode=process
-KillSignal=SIGINT
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=30
-LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Механизм CAP_IPC_LOCK
-
-Специальная возможность ядра Linux `cap_ipc_lock` позволяет Vault блокировать оперативную память от выгрузки в раздел подкачки (swap) через системный вызов `mlock()`. Это предотвращает попадание чувствительных данных в открытом виде на диск.
-
-```bash
-sudo setcap cap_ipc_lock=+eip /usr/local/bin/vault
-```
-
-### Процесс распечатывания (Unseal)
-
-Подробное описание архитектуры процесса приведено в разделе **[Процесс запечатывания и распечатывания](../concepts.md#процесс-запечатывания-seal-и-распечатывания-unseal)**. В основе лежит алгоритм разделения секрета Шамира: для работы сервера требуется ввод порогового значения ключей (обычно 3 из 5).
-
 ## Практические сценарии
 
-### Шаг 1: Загрузка и установка бинарного файла
+### Шаг 1: Установка бинарного файла и прав доступа
 
-1. Загрузите актуальную версию с официального сайта HashiCorp.
-2. Распакуйте архив и переместите файл в директорию, входящую в `PATH`:
+```bash
+# Установка через пакетный менеджер (рекомендуется)
+wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install vault
 
-    ```bash
-    unzip vault_*_linux_amd64.zip
-    sudo mv vault /usr/local/bin/
-    ```
+# Настройка CAP_IPC_LOCK (разрешить блокировку памяти)
+sudo setcap cap_ipc_lock=+eip /usr/bin/vault
+```
 
-3. Настройте разрешения ядра (см. раздел **[Механизм CAP_IPC_LOCK](#механизм-cap_ipc_lock)**).
+### Шаг 2: Инициализация с Auto-unseal
 
-### Шаг 2: Запуск и инициализация
+При использовании механизма Auto-unseal (KMS/HSM) Vault не генерирует ключи распечатывания, а создает **Recovery Keys** (ключи восстановления).
 
-1. Перечитайте конфигурацию системных служб и активируйте Vault:
+```bash
+export VAULT_ADDR='https://127.0.0.1:8200'
 
-    ```bash
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now vault
-    ```
+# Инициализация (3 ключа из 5 для восстановления)
+vault operator init -recovery-shares=5 -recovery-threshold=3
+```
 
-2. Укажите адрес сервера для **CLI (Command Line Interface)**:
+**Важно:** Ключи восстановления необходимы для выполнения критических операций (rekeying, генерация нового root-токена), если механизм Auto-unseal станет недоступен.
 
-    ```bash
-    export VAULT_ADDR='http://127.0.0.1:8200'
-    ```
+### Шаг 3: Настройка устройств аудита
 
-3. Выполните инициализацию (будут сгенерированы ключи распечатывания и корневой токен):
+После входа в Vault (`vault login`) первым шагом необходимо включить журналирование:
 
-    ```bash
-    vault operator init
-    ```
+```bash
+# Локальный файл аудита
+vault audit enable file file_path=/var/log/vault/audit.log
 
-    **Важно:** Сохраните полученные ключи и токен в безопасном месте. Их утрата ведет к невозможности восстановления доступа к данным.
-
-### Шаг 3: Распечатывание и вход
-
-1. Введите ключи распечатывания (по умолчанию требуется 3 ввода):
-
-    ```bash
-    vault operator unseal <unseal_key_1>
-    vault operator unseal <unseal_key_2>
-    vault operator unseal <unseal_key_3>
-    ```
-
-2. Проверьте состояние сервера: `vault status`. Поле `Sealed` должно иметь значение `false`.
-3. Выполните вход, используя корневой токен (Root Token):
-
-    ```bash
-    vault login <root_token>
-    ```
+# Отправка в Syslog
+vault audit enable syslog
+```
 
 ## Дополнительная информация
 
@@ -155,13 +143,14 @@ sudo setcap cap_ipc_lock=+eip /usr/local/bin/vault
 
 | Проблема | Причина и решение |
 | :--- | :--- |
-| Ошибка прав доступа (Permission denied) | Проверьте владельца и права на `/etc/vault.d/` и `/var/lib/vault/data` (`chown vault:vault`) |
-| Ошибка конфигурации хранилища | Убедитесь, что в `vault.hcl` определен только один блок `storage` |
-| Сервис не запускается | Изучите логи: `journalctl -u vault -e`. Проверьте синтаксис HCL |
+| **Error locking memory** | Ошибка `mlock`. Проверьте `CAP_IPC_LOCK` и `LimitMEMLOCK=infinity` в системной службе. |
+| **Raft Quorum Lost** | Потеря кворума в кластере. Требуется восстановление из снимка (snapshot) или ручная правка `peers.json`. |
+| **TLS Certificate Expired** | Истечение сертификата. Vault не запустится, если `tls_disable=0`. Используйте внутренний [PKI Engine](../concepts.md#движки-секретов-secret-engines) для авто-ротации. |
 
 ### Связанные документы
 
-* **[Обзор HashiCorp Vault](../overview.md)** — общие сведения о системе.
-* **[Основные концепции Vault](../concepts.md)** — архитектура, методы аутентификации, жизненный цикл секретов.
-* **[Vault с Consul в качестве бэкенда](./vault_with_consul_backend.md)** — настройка отказоустойчивого кластера.
-* **[Интеграция Vault с Docker](./vault_docker_integration.md)** — запуск сервера в контейнеризованном окружении.
+*   **[Обзор HashiCorp Vault](../overview.md)** — архитектура SLM и ключевые преимущества.
+*   **[Основные концепции](../concepts.md)** — детали алгоритма Шамира и работы хранилищ.
+*   **[Подход Zero Trust](../zero_trust.md)** — реализация архитектуры нулевого доверия.
+*   **[Vault с Consul в качестве бэкенда](./vault_with_consul_backend.md)** — устаревший (legacy) метод для старых инсталляций.
+*   **[Интеграция с Kubernetes](./vault_kubernetes_integration.md)** — установка Vault через Helm-чарты.

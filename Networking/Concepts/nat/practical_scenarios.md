@@ -1,150 +1,181 @@
+---
+reliability: 10
+updated: 2026-07-27
+---
+
 # NAT — Практические сценарии
 
-### Настройка NAT в firewalld (Linux Router)
+## Настройка NAT (Masquerading) в Linux
+
+### Вариант 1: Firewalld (CentOS/RHEL/Fedora)
 
 1. **Включить IP Forwarding:**
 
     ```bash
-    # Временно
-    sudo sysctl -w net.ipv4.ip_forward=1
-
-    # Постоянно
-    echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.d/99-router.conf
-    sudo sysctl -p /etc/sysctl.d/99-router.conf
+    # Постоянно через sysctl
+    echo "net.ipv4.ip_forward=1" | sudo tee /etc/sysctl.d/99-router.conf
+    sudo sysctl --system
     ```
 
-2. **Настроить NAT (Masquerading) в firewalld:**
+2. **Настроить Masquerading:**
 
     ```bash
-    # Проверить активные зоны
-    firewall-cmd --get-active-zones
+    # Перевести внешний интерфейс в зону external (маскарадинг включен по умолчанию)
+    firewall-cmd --zone=external --change-interface=eth0 --permanent
 
-    # Перевести внешний интерфейс в зону external
-    firewall-cmd --zone=external --change-interface=<внешний_интерфейс> --permanent
+    # Или включить маскарадинг в текущей зоне
+    firewall-cmd --zone=public --add-masquerade --permanent
 
-    # Или добавить masquerading в текущую зону
-    firewall-cmd --add-masquerade --permanent
-
-    # Применить
     firewall-cmd --reload
-    firewall-cmd --query-masquerade
     ```
 
-    Зона `external` в firewalld по умолчанию имеет `masquerade=yes`.
+### Вариант 2: Nftables (Современный стандарт)
 
-3. **Проверка:**
+```bash
+# Создание таблицы nat
+nft add table ip nat
 
-    ```bash
-    # С хоста внутренней сети
-    ping 8.8.8.8
+# Добавление цепочки POSTROUTING
+nft add chain ip nat postrouting { type nat hook postrouting priority 100 \; }
 
-    # На роутере
-    firewall-cmd --list-all
-    ```
+# Включение маскарадинга для интерфейса eth0
+nft add rule ip nat postrouting oifname "eth0" masquerade
+```
 
-### Port Forwarding (DNAT)
+### Вариант 3: Iptables (Legacy)
 
-**Port Forwarding (проброс портов)** — частный случай Destination NAT: трафик с порта публичного IP перенаправляется на внутренний хост.
+```bash
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+```
 
-**Пример через firewalld:** Веб-сервер `192.168.1.10:80`, внешний порт `8080`:
+---
 
+## Проброс портов (Destination NAT / DNAT)
+
+**DNAT** используется для предоставления доступа к внутренним сервисам из внешней сети.
+
+### Пример: Веб-сервер за NAT
+Внешний порт `8080` -> Внутренний IP `192.168.1.10:80`.
+
+**Через firewalld:**
 ```bash
 firewall-cmd --permanent --zone=external --add-forward-port=port=8080:proto=tcp:toport=80:toaddr=192.168.1.10
 firewall-cmd --reload
 ```
 
-**Пример на iptables:**
-
+**Через nftables:**
 ```bash
-# FORWARD
-iptables -A FORWARD -i eth0 -o eth1 -p tcp --dport 80 -d 192.168.1.10 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
-
-# DNAT
-iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 8080 -j DNAT --to-destination 192.168.1.10:80
+nft add rule ip nat prerouting iifname "eth0" tcp dport 8080 dnat to 192.168.1.10:80
 ```
 
-**Схема работы DNAT:**
+---
 
-```
-[Клиент из Интернета]
-       |
-       | Запрос на 203.0.113.50:8080
-       v
-[Linux Router (DNAT)]
-       |  -> Переписывает dst: 203.0.113.50:8080 → 192.168.1.10:80
-       v
-[Внутренний сервер 192.168.1.10:80]
-```
+## Настройка Hairpin NAT (Loopback NAT)
 
-### Проброс SSH через iptables (альтернатива SSH ProxyJump)
+**Проблема:** Внутренний клиент обращается к внутреннему серверу по **публичному** IP-адресу.
 
-**Сценарий:** Доступ к серверу B (серый IP) через сервер A (белый IP). Работает на сетевом уровне, в отличие от [SSH ProxyJump](../../../Linux/Security/ssh/ssh_client_config.md).
-
-**Схема:**
-
-```
-[Клиент] --(SSH:2222)--> [Сервер A: белый IP] --(SSH:22)--> [Сервер B: серый IP]
+**Решение (на Iptables):**
+```bash
+# SNAT для внутреннего трафика, чтобы сервер отвечал через роутер
+iptables -t nat -A POSTROUTING -s 192.168.1.0/24 -d 192.168.1.10 -p tcp --dport 80 -j MASQUERADE
 ```
 
-**Настройка на сервере A:**
+**Решение (на Nftables):**
+```bash
+nft add rule ip nat postrouting ip saddr 192.168.1.0/24 ip daddr 192.168.1.10 tcp dport 80 masquerade
+```
+
+---
+
+## Проброс SSH через сетевой уровень (NAT-L3)
+
+Сценарий: Доступ к серверу B (внутренний) через сервер A (шлюз) без использования SSH-туннелей (ProxyJump).
+
+**На сервере A:**
 
 1. **DNAT:**
-
    ```bash
-   iptables -t nat -A PREROUTING -p tcp --dport 2222 -j DNAT --to-destination <IP_сервера_B>:22
+   iptables -t nat -A PREROUTING -p tcp --dport 2222 -j DNAT --to-destination 192.168.1.20:22
    ```
 
-2. **MASQUERADE:**
-
+2. **SNAT (для корректного обратного пути):**
    ```bash
-   iptables -t nat -A POSTROUTING -d <IP_сервера_B> -o eth0 -j MASQUERADE
+   iptables -t nat -A POSTROUTING -d 192.168.1.20 -o eth1 -j MASQUERADE
    ```
 
-3. **FORWARD:**
+---
 
-   ```bash
-   iptables -A FORWARD -p tcp -d <IP_сервера_B> --dport 22 -j ACCEPT
-   iptables -A FORWARD -p tcp -s <IP_сервера_B> -j ACCEPT
-   ```
+## NAT в облачных инфраструктурах
 
-4. **IP-форвардинг:**
+В облаках (Yandex Cloud, AWS) классический NAT на ВМ заменяется управляемыми шлюзами.
 
-   ```bash
-   sysctl -w net.ipv4.ip_forward=1
-   ```
+*   **Yandex Cloud:** Используется **NAT Gateway**. Маршрутизация настраивается через таблицу маршрутов: `0.0.0.0/0 -> NAT Gateway`. Подробнее: **[VPC и NAT в Yandex Cloud](../../../Yandex/VPC.md#nat-gateway-шлюз-nat)**.
+*   **Kubernetes:** NAT используется для маскировки трафика подов при выходе за пределы узла (`IP Masquerade Agent`).
 
-**Подключение:**
+---
+
+## Технологии перехода на IPv6 (NAT64)
+
+В средах IPv6-only используется NAT64 для доступа к IPv4-интернету.
+
+**Пример конфигурации Tayga (Linux):**
+```ini
+# /etc/tayga.conf
+tun-device nat64
+ipv4-addr 192.168.255.1
+prefix 64:ff9b::/96
+```
+
+---
+
+## Диагностика и отладка NAT
+
+### Проверка таблицы трансляций (Conntrack)
+```bash
+# Просмотр всех активных трансляций
+sudo conntrack -L
+
+# Статистика conntrack (количество сессий, лимиты)
+sudo conntrack -S
+
+# Топ-10 IP по количеству соединений
+sudo conntrack -L | awk '{print $4}' | cut -d= -f2 | sort | uniq -c | sort -nr | head -n 10
+```
+
+### Оптимизация Conntrack (SRE Best Practices)
+При высокой нагрузке (тысячи соединений) стандартные лимиты могут быть исчерпаны.
 
 ```bash
-ssh user@сервер_A -p 2222 -i my_private_key
+# Просмотр текущего лимита
+sysctl net.netfilter.nf_conntrack_max
+
+# Увеличение лимита (например, до 1 млн)
+sudo sysctl -w net.netfilter.nf_conntrack_max=1048576
 ```
 
-**Сравнение с SSH ProxyJump:**
+### Обнаружение двойного NAT (Double NAT)
+Если `traceroute` показывает два и более частных (RFC 1918) IP-адреса в первых прыжках — вы за двойным NAT.
 
-| Характеристика | **iptables DNAT** | **SSH ProxyJump** |
-| :--- | :--- | :--- |
-| **Уровень** | Сетевой (L3) | Прикладной (L7, SSH) |
-| **Требования к серверу A** | root / iptables | SSH-доступ |
-| **Безопасность** | Ниже (открытый порт) | Выше (шифрование, аутентификация) |
-| **Производительность** | Выше | Ниже (SSH-инкапсуляция) |
-| **Когда использовать** | Постоянный доступ, высокая нагрузка | Временный доступ, безопасность |
-
-> **Рекомендация:** Временный доступ — [SSH ProxyJump](../../../Linux/Security/ssh/ssh_client_config.md). Постоянный — iptables DNAT.
-
-**Схема работы NAT:**
-
+```bash
+traceroute -n 8.8.8.8
+# 1. 192.168.1.1  (Ваш роутер)
+# 2. 10.100.0.1   (NAT провайдера / CGNAT)  <-- Двойной NAT
 ```
-[Внутренняя сеть] → [Linux Router (NAT)] → [Интернет]
-     10.0.1.x              203.0.113.50 (публичный IP)
-                  |
-                  +-- SNAT: 10.0.1.x → 203.0.113.50
-                  +-- DNAT: 203.0.113.50 → 10.0.1.x (ответы)
+
+### Верификация NAT Traversal (STUN)
+```bash
+# Установка клиента
+sudo apt install stun-client
+
+# Проверка типа NAT
+stun stun.l.google.com:19302
+# → result: Primary: Independent, Secondary: Port Restricted
 ```
 
 ## Связанные документы
 
-- **[Теория NAT](./overview.md)** — определения, виды, SNAT vs Masquerade
-- **[Специальные IP-адреса](../../Protocols/IP_addressing/special_addresses.md)** — RFC 1918, Carrier-Grade NAT (RFC 6598)
-- **[Firewalld: динамический межсетевой экран](../../../Linux/Networking/Settings/tools/firewalld.md)** — практические команды NAT и Port Forwarding.
-- **[nftables — NAT](../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md)** — NAT в nftables
-- **[Docker Network — iptables](../../../Docker/Docker_network/docker_network.md)** — NAT в Docker
+- **[Теория NAT](./overview.md)** — глубокий разбор механизмов, типов и теории.
+- **[Специальные IP-адреса](../../Protocols/IP_addressing/special_addresses.md)** — RFC 1918 и CGNAT.
+- **[Nftables — Практика](../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md)** — примеры фильтрации и NAT.
+- **[Firewalld — Команды](../../../Linux/Networking/Settings/tools/firewalld.md)** — справочник команд.
+- **[Netfilter в Linux](../../../Linux/Networking/Settings/tools/iptables_basics.md)** — архитектура цепочек.
