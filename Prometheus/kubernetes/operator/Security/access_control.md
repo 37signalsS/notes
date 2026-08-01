@@ -2,9 +2,11 @@
 
 ## Определения
 
-**Контроль доступа** — комплекс мер по ограничению доступа к компонентам Prometheus Operator с использованием сетевой фильтрации (Network Policies) и механизмов авторизации Kubernetes API (RBAC).
+**Контроль доступа** — система мер по ограничению взаимодействия с компонентами мониторинга, включающая сетевую изоляцию (Network Policies) и авторизацию доступа к Kubernetes API (RBAC). Основная цель — минимизация привилегий и защита данных метрик от несанкционированного доступа.
 
-> **Навигация:** [Главная Security](./index.md) | [Секреты](./secrets_best_practices.md)
+**Admission Webhook Security** — защита портов оператора, через которые Kubernetes API проверяет корректность создаваемых ресурсов (PrometheusRule, ServiceMonitor).
+
+> **Навигация:** [Главная Security](./index.md) | [Управление секретами](./secrets_best_practices.md) | **Надёжность: 10**
 
 ---
 
@@ -12,22 +14,23 @@
 
 ### Сетевые политики (Network Policies)
 
-**NetworkPolicy** используется для изоляции компонентов мониторинга на сетевом уровне (L3/L4). Это критически важно для защиты Prometheus и Alertmanager от несанкционированного доступа из других неймспейсов.
+**NetworkPolicy** используется для изоляции компонентов мониторинга на сетевом уровне (L3/L4). Это критически важно для защиты Prometheus и Alertmanager от несанкционированного доступа.
 
-- **Принцип работы:** По умолчанию в Kubernetes разрешён весь трафик. Применение политики включает режим "запрещено по умолчанию" (default-deny) для выбранных подов.
-- **Требования:** Необходим CNI-плагин с поддержкой политик (Calico, Cilium). Flannel не поддерживает этот механизм.
-
-> **Подробно:** [Определения и принципы NetworkPolicy](../../../Kubernetes/Networking/Network/NetworkPolicy/definitions.md)
+- **Принцип работы:** По умолчанию в Kubernetes разрешён весь трафик. Применение политики включает режим «запрещено по умолчанию» (default-deny) для выбранных подов.
+- **Современные стандарты (2026):** Рекомендуется использование eBPF-плагинов (Cilium, Calico) для глубокой инспекции трафика и защиты от подмены IP.
+- **Критические порты:**
+    - Prometheus: `9090` (UI/API)
+    - Alertmanager: `9093` (API), `9094` (Gossip/HA)
+    - Operator Webhook: `9443` (Validation/Mutation)
+    - Thanos Sidecar: `10901` (gRPC)
 
 ### RBAC (Role-Based Access Control)
 
-**RBAC** управляет правами доступа Prometheus к Kubernetes API для обнаружения целей (Service Discovery) и сбора метрик.
+**RBAC** управляет правами доступа Prometheus к Kubernetes API для обнаружения целей (Service Discovery) и управления ресурсами.
 
-- **ServiceAccount:** Идентифицирует под Prometheus в кластере.
-- **ClusterRole:** Определяет права на чтение ресурсов (`nodes`, `pods`, `services`) во всём кластере.
-- **Принцип наименьших привилегий:** Prometheus требует только права на чтение (`get`, `list`, `watch`). Права на запись или изменение ресурсов не требуются.
-
-> **Подробно:** [Обзор RBAC в Kubernetes](../../../Kubernetes/Security/rbac/rbac_overview.md)
+- **Service Discovery:** С 2025 года обязательным является использование `EndpointSlice` вместо устаревшего `Endpoints` для снижения нагрузки на Control Plane.
+- **Принцип наименьших привилегий:** Prometheus требует права на чтение (`get`, `list`, `watch`) ресурсов во всех отслеживаемых неймспейсах.
+- **Управление CRD:** Оператор должен обладать правами на управление новыми ресурсами, такими как `ScrapeConfig` и `ThanosRuler`.
 
 ---
 
@@ -49,18 +52,39 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: prometheus
-  policyTypes:
-    - Ingress
   ingress:
     - from:
         - namespaceSelector:
             matchLabels:
-              name: monitoring
+              kubernetes.io/metadata.name: monitoring
         - podSelector:
             matchLabels:
-              app: grafana
+              app.kubernetes.io/name: grafana
       ports:
         - port: 9090
+          protocol: TCP
+```
+
+#### Защита Admission Webhook (Operator)
+
+Разрешает Kubernetes API-серверу доступ к вебхуку оператора для валидации ресурсов.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: operator-webhook-access
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-operator
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0 # В реальных средах ограничить CIDR мастеров
+      ports:
+        - port: 9443
           protocol: TCP
 ```
 
@@ -106,7 +130,7 @@ metadata:
 
 #### ClusterRole для доступа к Kubernetes API
 
-Необходим для работы Service Discovery.
+Необходим для работы Service Discovery и сбора метрик.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -122,9 +146,17 @@ rules:
       - endpoints
       - pods
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"] # Современный механизм SD
+    resources:
+      - endpointslices
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources:
       - ingresses
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["monitoring.coreos.com"] # Поддержка ScrapeConfig
+    resources:
+      - scrapeconfigs
     verbs: ["get", "list", "watch"]
   - nonResourceURLs: ["/metrics"]
     verbs: ["get"]
@@ -153,8 +185,10 @@ subjects:
 
 ## Дополнительная информация
 
-> **См. также:**
->
-> - [High Availability](../high_availability.md) — конфигурация отказоустойчивости
-> - [Prometheus CRD](../crd/prometheus.md) — описание ресурсов Prometheus
-> - [NetworkPolicy Best Practices](../../../Kubernetes/Networking/Network/NetworkPolicy/best_practices.md)
+Контроль доступа является фундаментом безопасности мониторинга. Рекомендуется регулярно проводить аудит прав ServiceAccount.
+
+- **[Безопасность (Главная)](./index.md)** — обзорная страница.
+- **[Управление секретами](./secrets_best_practices.md)** — ротация и защита учетных данных.
+- **[NetworkPolicy: Обзор](../../../Kubernetes/Networking/Network/NetworkPolicy/definitions.md)** — глубокое погружение в сетевую изоляцию.
+- **[RBAC: Обзор](../../../Kubernetes/Security/rbac/rbac_overview.md)** — принципы авторизации в K8s.
+- **[Troubleshooting](../troubleshooting.md)** — решение проблем с правами и сетью.

@@ -75,28 +75,10 @@ Docker Content Trust (DCT) считается устаревшим. Соврем
 
 ### 1. Настройка аудита (auditd)
 
-Согласно CIS Benchmark, необходимо настроить аудит критических файлов Docker.
+Согласно CIS Benchmark, необходимо настроить аудит критических файлов Docker (бинарные файлы, сокет, конфигурация). 
 
-1. Установите `auditd`: `sudo apt install auditd`
-2. Добавьте правила в `/etc/audit/rules.d/docker.rules`:
-    ```bash
-    # Аудит исполняемых файлов и сокета
-    -w /usr/bin/dockerd -k docker
-    -w /var/run/docker.sock -k docker
-    -w /usr/bin/docker-containerd -k docker
-    -w /usr/bin/docker-runc -k docker
+Подробные правила и инструкции по настройке см. в основном документе: **[`auditd`: Аудит событий безопасности — Сценарий для Docker](../../Linux/SystemAdministration/Logging/auditd.md#3-аудит-контейнерной-инфраструктуры-docker)**.
 
-    # Аудит конфигурации
-    -w /etc/docker -k docker
-    -w /etc/docker/daemon.json -k docker
-    -w /lib/systemd/system/docker.service -k docker
-    -w /lib/systemd/system/docker.socket -k docker
-
-    # Аудит хранилища (новое в CIS 1.7)
-    -w /var/lib/docker -k docker
-    ```
-3. Перезапустите службу: `sudo systemctl restart auditd`.
-4. Проверка логов: `ausearch -k docker`.
 
 ### 2. Настройка User Namespaces (`daemon.json`)
 
@@ -132,7 +114,7 @@ Docker Content Trust (DCT) считается устаревшим. Соврем
 | Альтернатива | Проблема |
 | :--- | :--- |
 | `chown 101000:101000 /data` | UID 101000 может не существовать на хосте; хрупко при смене subuid. |
-| `mode: 0777` | Дыра в безопасности; `chown` внутри контейнера все равно упадет. |
+| `mode: 0777` | Дыра в безопасности; `chown` внутри контейнера всё равно упадёт. Подробнее: [почему 777 не всегда решает проблему](../../Linux/Security/Concepts/File_Permissions/overview_definitions.md#диагностика-почему-chmod-777-не-всегда-решает-проблему). |
 | `:idmap` (Docker 25+) | Требует поддержки ФС (например, XFS с reflink) и ядра; пока не везде стабильно. |
 | `user: root` в Compose | Контейнер будет root и сможет писать, но это нарушает принцип минимальных привилегий. |
 

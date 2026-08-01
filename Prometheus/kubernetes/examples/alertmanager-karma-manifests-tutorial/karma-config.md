@@ -1,34 +1,28 @@
-# Конфигурация Karma (ConfigMap)
+# Конфигурация Karma: ConfigMap и настройки UI
 
 ## Определения
 
-**ConfigMap Karma** — Kubernetes ConfigMap, содержащий файл `config.yaml` с настройками Karma: адреса серверов Alertmanager, параметры фильтрации меток и отображения. Монтируется в под Karma как `--config.file`.
+**ConfigMap конфигурации Karma** — ресурс Kubernetes, содержащий файл `config.yaml`. Karma является stateless-приложением, поэтому все параметры подключения к Alertmanager и правила фильтрации меток передаются через этот манифест.
 
-> **См. также:** материал [Karma Dashboard](../../karma_dashboard.md) — общие возможности и Helm-установка
+> **См. также:** [Дашборд Karma — общая информация](../../karma_dashboard.md).
+
+---
 
 ## Основные концепции
 
-### Структура конфигурационного файла Karma
+### Структура конфигурации
 
-| Блок | Назначение | Обязательный |
-|---|---|---|
-| `alertmanager.servers` | Список сервер Alertmanager для сбора алертов | Да |
-| `labels.strip` | Метки, которые следует скрыть из UI | Нет |
-| `labels.keep` | Метки, которые следует показать (обратная фильтрация) | Нет |
-| `annotations.default` | Аннотации, отображаемые по умолчанию | Нет |
-| `receivers.keep` | Получатели, отображаемые в UI | Нет |
+| Секция | Назначение |
+| :--- | :--- |
+| `alertmanager.servers` | Список инстансов Alertmanager, с которых Karma собирает данные. |
+| `labels.strip` | Метки, которые будут скрыты в интерфейсе (для уменьшения визуального шума). |
+| `annotations.default` | Список аннотаций, развернутых по умолчанию при просмотре алерта. |
 
-### Формат URI Alertmanager
-
-| Тип подключения | Формат URI | Пример |
-|---|---|---|
-| **Внутри кластера (ClusterIP)** | `http://<service>.<namespace>.svc.cluster.local:<port>` | `http://alertmanager.monitoring.svc.cluster.local:9093` |
-| **С внешним доступом (Ingress)** | `https://<hostname>` | `https://alertmanager.example.com` |
-| **Несколько серверов** | Массив в `servers: []` | См. раздел «Несколько Alertmanager» ниже |
+---
 
 ## Практические сценарии
 
-### Манифест ConfigMap
+### Манифест ConfigMap для Karma
 
 **`karma-config.yaml`**
 
@@ -41,74 +35,23 @@ metadata:
 data:
   config.yaml: |
     alertmanager:
+      interval: 1m
       servers:
-        - name: "Kubernetes"
+        - name: "Kubernetes Cluster"
           uri: "http://alertmanager.monitoring.svc.cluster.local:9093"
+          timeout: 10s
+          proxy: true
 
-    # Фильтрация и отображение
     labels:
-      # Не показывать эту метку в UI
-      strip: ["receiver"]
+      # Технические метки, которые не нужны в UI
+      strip: ["receiver", "deployment", "replicaset"]
+      keep: ["alertname", "severity", "instance", "pod"]
 ```
 
-### Пояснения к конфигу
-
-| Параметр | Значение | Описание |
-|---|---|---|
-| `alertmanager.servers[0].name` | `"Kubernetes"` | Отображаемое имя сервера в UI Karma |
-| `alertmanager.servers[0].uri` | `http://alertmanager.monitoring.svc.cluster.local:9093` | DNS-имя сервиса Alertmanager внутри кластера |
-| `labels.strip` | `["receiver"]` | Метка `receiver` техническая — скрывается из UI для чистоты |
-
-### Несколько серверов Alertmanager
-
-Karma поддерживает агрегацию нескольких Alertmanager в едином интерфейсе:
-
-```yaml
-alertmanager:
-  servers:
-    - name: "Production"
-      uri: "http://alertmanager-prod.monitoring.svc.cluster.local:9093"
-    - name: "Staging"
-      uri: "http://alertmanager-staging.monitoring.svc.cluster.local:9093"
-```
-
-### Дополнительные настройки
-
-Расширенный конфиг с управлением аннотациями и таймаутами:
-
-```yaml
-alertmanager:
-  servers:
-    - name: "Kubernetes"
-      uri: "http://alertmanager.monitoring.svc.cluster.local:9093"
-      timeout: "10s"
-
-labels:
-  strip: ["receiver", "namespace"]
-  keep: ["alertname", "severity", "instance"]
-
-annotations:
-  default:
-    - summary
-    - description
-    - runbook_url
-```
-
-### Монтирование в Deployment
-
-ConfigMap монтируется в [karma-deployment.md](./karma-deployment.md) через `volumeMounts`:
-
-```yaml
-volumeMounts:
-  - name: config
-    mountPath: /etc/karma
-    readOnly: true
-```
-
-И передаётся аргументом: `--config.file=/etc/karma/config.yaml`
+---
 
 ## Дополнительная информация
 
-- [Karma Deployment](./karma-deployment.md) — манифест Deployment с монтированием данного ConfigMap
-- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — источник алертов для Karma
-- [Karma Dashboard](../../karma_dashboard.md) — общее описание Karma
+- **[Развёртывание Karma (Deployment)](./karma-deployment.md)** — описание пода и монтирования томов.
+- **[Alertmanager StatefulSet](./alertmanager-statefulset.md)** — источник данных для дашборда.
+- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

@@ -2,13 +2,14 @@ import sys
 import argparse
 import json
 import time
+from typing import Any
 import rag_utils
 from unified_search import perform_search
 
 _FORMAT_RESULT_MAX_CHARS = 300
 
 
-def test_query(question: str, engine_type: str, k: int = 30, use_rerank: bool = False, max_chars: int = _FORMAT_RESULT_MAX_CHARS) -> dict:
+def test_query(question: str, engine_type: str, k: int = 30, use_rerank: bool = False, max_chars: int = _FORMAT_RESULT_MAX_CHARS) -> dict[str, Any]:
     start = time.time()
     results = perform_search(question, engine_names=[engine_type], top_k=k, use_rerank=use_rerank)
     duration = time.time() - start

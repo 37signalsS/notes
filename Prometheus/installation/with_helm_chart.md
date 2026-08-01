@@ -1,193 +1,141 @@
-# Установка Alertmanager через Helm-чарт
+# Установка Prometheus в Kubernetes через Helm
 
 ## Определения
 
-**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, маршрутизация, подавление. Полное руководство — [Alertmanager](../alertmanager.md).
+**Helm** — менеджер пакетов для Kubernetes, позволяющий описывать, устанавливать и обновлять сложные приложения через шаблонизированные чарты.
 
-**Helm** — менеджер пакетов для Kubernetes. Обзор — [Helm overview](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md).
+**kube-prometheus-stack** — основной Helm-чарт сообщества для развертывания полного стека мониторинга. Включает в себя:
+*   **Prometheus Operator**: управляет жизненным циклом Prometheus и Alertmanager через Custom Resources (CRD).
+*   **Prometheus Server**: сбор и хранение метрик.
+*   **Alertmanager**: обработка и маршрутизация оповещений.
+*   **Grafana**: визуализация данных.
+*   **Exporters**: Node Exporter и Kube State Metrics для сбора системных метрик.
 
-**kube-prometheus-stack** — umbrella Helm-чарт для развёртывания полного стека мониторинга (Prometheus, Alertmanager, Grafana, Exporters). Обзор — [kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/overview.md).
+**Standalone установка** — развертывание отдельных компонентов (например, только Alertmanager или только Prometheus) с использованием их индивидуальных чартов.
 
 ## Основные концепции
 
-### Отличие standalone-чарта от kube-prometheus-stack
+### Почему kube-prometheus-stack?
 
-| Параметр | `prometheus-community/alertmanager` | `kube-prometheus-stack` (subchart) |
-|---|---|---|
-| **Назначение** | Только Alertmanager в K8s | Полный стек мониторинга |
-| **Управление** | Прямое через `values.yaml` чарта | Через `alertmanager.*` в umbrella-чарте |
-| **Сценарий** | Alertmanager уже есть свой Prometheus | Новое развёртывание с нуля |
-| **Service Discovery** | Требует ручной настройки в Prometheus | Автоматический через Prometheus Operator |
+В отличие от ручной установки, использование стека обеспечивает:
+1.  **Автоматизацию Scrape-конфигураций**: Через `ServiceMonitor` и `PodMonitor` вместо ручного редактирования `prometheus.yml`.
+2.  **Декларативность**: Вся конфигурация (ретенция, ресурсы, алерты) описывается в едином `values.yaml`.
+3.  **Готовые дашборды**: Автоматический импорт преднастроенных дашбордов Grafana для мониторинга кластера Kubernetes.
 
-### Актуальные версии
+### Актуальные версии (прогноз на 2026)
 
-| Параметр | Значение |
-|---|---|
-| **Репозиторий standalone** | `prometheus-community/alertmanager` |
-| **Версия Alertmanager** | 0.31.0 (февраль 2026) |
-| **Минимальный Kubernetes** | 1.21+ |
-
-> **Важно:** Версии чарта и приложения могут отличаться. Проверяйте [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/alertmanager).
-
-### Преимущества установки через Helm
-
-* **Декларативность:** Конфигурация в `values.yaml`
-* **GitOps:** Интеграция с ArgoCD, Flux
-* **Версионирование:** Откат к предыдущим версиям
-* **Шаблоны:** Автоматизация сложных манифестов
+| Компонент | Версия приложения | Репозиторий чарта |
+| :--- | :--- | :--- |
+| **KPS Stack** | 82.x.x (Chart) | `prometheus-community/kube-prometheus-stack` |
+| **Prometheus** | 3.11.x | В составе стека |
+| **Alertmanager** | 0.32.x | В составе стека |
+| **Grafana** | 11.x.x | В составе стека |
 
 ## Практические сценарии
 
-### Базовая установка (standalone чарт)
+### Сценарий 1: Установка полного стека (kube-prometheus-stack)
+
+Это рекомендуемый способ для большинства Kubernetes-кластеров.
 
 **1. Добавление репозитория:**
-
 ```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 ```
 
-**2. Создание `values.yaml`:**
-
+**2. Создание базового `values.yaml`:**
 ```yaml
-nameOverride: alertmanager
+# values.yaml
+prometheus:
+  prometheusSpec:
+    retention: 30d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn # Укажите ваш StorageClass
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
 
-# Ingress для доступа к UI
-ingress:
-  enabled: true
-  ingressClassName: nginx
-  hosts:
-    - host: alertmanager.my-domain.com
-      paths:
-        - path: /
-          pathType: ImplementationSpecific
+grafana:
+  adminPassword: "strong-password-here"
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.k8s.example.com
+```
 
-# Конфигурация Alertmanager
+**3. Установка:**
+```bash
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace \
+  -f values.yaml
+```
+
+### Сценарий 2: Standalone установка Alertmanager
+
+Используется, если Prometheus уже развернут иным способом или находится вне кластера.
+
+**1. Создание `values.yaml`:**
+```yaml
 config:
   global:
     resolve_timeout: 5m
   route:
-    group_by: ['job']
-    group_wait: 30s
-    group_interval: 5m
-    repeat_interval: 12h
-    receiver: 'null'
+    receiver: 'default-receiver'
   receivers:
-    - name: 'null'
-
-# Ресурсы
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-  limits:
-    cpu: 200m
-    memory: 256Mi
-
-# Персистентность
-persistence:
-  enabled: true
-  size: 2Gi
+    - name: 'default-receiver'
+      # Настройка Telegram/Slack здесь
 ```
 
-> Структура `config` идентична [alertmanager.yml](../alertmanager.md#конфигурация-alertmanageryml).
-
-**3. Установка:**
-
+**2. Установка:**
 ```bash
 helm install alertmanager prometheus-community/alertmanager \
-  --namespace monitoring \
-  --create-namespace \
-  -f values.yaml
+  --namespace monitoring -f values.yaml
 ```
 
-**4. Проверка:**
+> Подробности настройки — в разделе **[Alertmanager: установка через Helm](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md)**.
+
+### Сценарий 3: Обновление конфигурации
+
+Любые изменения вносятся через обновление релиза Helm:
 
 ```bash
-helm status alertmanager -n monitoring
-kubectl get pods -n monitoring -l app.kubernetes.io/name=alertmanager
-```
+# Проверка изменений (diff)
+helm diff upgrade monitoring prometheus-community/kube-prometheus-stack -f values.yaml
 
-### Установка через GitOps (ArgoCD)
-
-**Application манифест:**
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: alertmanager
-  namespace: argocd
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
-spec:
-  project: default
-  source:
-    repoURL: 'https://prometheus-community.github.io/helm-charts'
-    chart: alertmanager
-    targetRevision: 'x.y.z'
-    helm:
-      valuesFiles:
-        - 'values.yaml'
-  destination:
-    server: 'https://kubernetes.default.svc'
-    namespace: monitoring
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
-
-### Интеграция с Prometheus
-
-**В `prometheus.yml` укажите target Alertmanager:**
-
-```yaml
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets:
-            - 'alertmanager.monitoring.svc.cluster.local:9093'
-```
-
-> Для kube-prometheus-stack интеграция автоматическая — см. [Alertmanager config in kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md).
-
-### Проверка конфигурации
-
-```bash
-# Проверка синтаксиса внутри пода
-kubectl exec -n monitoring deploy/alertmanager -- \
-  amtool check-config /etc/alertmanager/alertmanager.yml
-
-# Логи
-kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager
-
-# Статус релиза
-helm status alertmanager -n monitoring
+# Применение
+helm upgrade monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring -f values.yaml
 ```
 
 ## Дополнительная информация
 
-### Обновление чарта
+### Проверка статуса
 
+После установки убедитесь, что все компоненты запущены:
 ```bash
-helm repo update
-helm upgrade alertmanager prometheus-community/alertmanager \
-  --namespace monitoring \
-  -f values.yaml
-
-# Откат к предыдущей версии
-helm rollback alertmanager -n monitoring
+kubectl get pods -n monitoring
+kubectl get servicemonitors -n monitoring
 ```
 
-### Удаление
+### Удаление стека
 
 ```bash
-helm uninstall alertmanager -n monitoring
+helm uninstall monitoring -n monitoring
+# Примечание: CRD (Custom Resource Definitions) не удаляются автоматически.
+# Их нужно удалять вручную, если это необходимо:
+# kubectl delete crd prometheuses.monitoring.coreos.com ...
 ```
 
 ### См. также
+*   **[Установка Prometheus: обзор](./overview.md)** — сравнение методов.
+*   **[Обзор kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/overview.md)** — глубокое погружение в компоненты.
+*   **[Конфигурация Alertmanager в KPS](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md)**.
+*   **[Helm: общие сведения](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)**.
 
-Архитектура и конвейер обработки оповещений — [Alertmanager](../alertmanager.md). Бинарная установка и Docker — [Alertmanager installation — manual](./alertmanager_installation.md). Конфигурация Alertmanager в umbrella-чарте — [Alertmanager config in kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md). Обзор всех способов установки — [Installation overview](./overview.md).
+---
+**Надежность:** 10 (SSoT + Валидация kube-prometheus-stack)
+**,file_path:

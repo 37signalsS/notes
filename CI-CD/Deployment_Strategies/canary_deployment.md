@@ -10,6 +10,11 @@
 
 **Основная цель:** Снижение риска инцидентов путем раннего обнаружения технических и бизнес-регрессий на малой доле реального трафика.
 
+**Принципы:**
+- **Минимальное воздействие:** Новая версия сначала доступна лишь 5–10% пользователей.
+- **Реальный трафик:** Тестирование происходит в боевых условиях с настоящими запросами.
+- **Постепенность:** Поэтапное увеличение нагрузки или откат при обнаружении аномалий.
+
 **Ключевые предпосылки:**
 - **Разделение трафика (Traffic Splitting)** — возможность точно направлять процент трафика или сегментировать его по атрибутам (headers, cookies).
 - **Продвинутая наблюдаемость** — раздельный сбор метрик для разных версий для их прямого сравнения.
@@ -36,54 +41,136 @@
 
 ## Практические сценарии
 
-### Реализация через Gateway API
+### Нативная реализация в Kubernetes (Standard)
 
-Современный способ в Kubernetes, не зависящий от конкретного вендора Ingress:
+В стандартном Kubernetes Canary реализуется через создание двух Deployment с общими метками для селектора одного Service. Распределение трафика в этом случае пропорционально количеству реплик.
+
+1.  **Стабильная версия (90% трафика):**
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: app-stable
+    spec:
+      replicas: 9
+      selector:
+        matchLabels:
+          app: my-app
+      template:
+        metadata:
+          labels:
+            app: my-app
+            version: stable
+        spec:
+          containers:
+          - name: app
+            image: my-app:v5
+    ```
+
+2.  **Канареечная версия (10% трафика):**
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: app-canary
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: my-app
+      template:
+        metadata:
+          labels:
+            app: my-app
+            version: canary
+        spec:
+          containers:
+          - name: app
+            image: my-app:v6
+    ```
+
+3.  **Общий Service:**
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: my-app-service
+    spec:
+      ports:
+      - port: 80
+      selector:
+        app: my-app  # Выбирает поды обоих Deployment
+    ```
+
+**Управление трафиком:**
+Распределение трафика можно динамически изменять, масштабируя количество реплик в каждом Deployment с помощью `kubectl`:
+```bash
+# Увеличение доли Canary до ~18% (2 из 11 подов)
+kubectl scale deployment/app-canary --replicas=2
+```
+
+### Реализация через Istio (Service Mesh)
+
+Istio позволяет управлять весами трафика на уровне виртуальной сети, не изменяя физическое количество реплик.
 
 ```yaml
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: HTTPRoute
+# DestinationRule определяет подмножества на основе меток
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
 metadata:
-  name: api-route
+  name: app-destination
 spec:
-  rules:
-  - backendRefs:
-    - name: api-stable
-      port: 8080
+  host: my-app-service
+  subsets:
+  - name: stable
+    labels:
+      version: stable
+  - name: canary
+    labels:
+      version: canary
+
+---
+# VirtualService распределяет веса между подмножествами
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: app-virtualservice
+spec:
+  hosts:
+  - my-app-service
+  http:
+  - route:
+    - destination:
+        host: my-app-service
+        subset: stable
       weight: 90
-    - name: api-canary
-      port: 8080
+    - destination:
+        host: my-app-service
+        subset: canary
       weight: 10
 ```
 
-### Автоматизация с Argo Rollouts
-
-Argo Rollouts автоматизирует процесс, избавляя от необходимости ручного изменения весов:
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Rollout
-metadata:
-  name: my-app
-spec:
-  replicas: 5
-  strategy:
-    canary:
-      steps:
-      - setWeight: 10
-      - pause: {duration: 5m} # Остановка для ручного или авто-анализа
-      - setWeight: 50
-      - pause: {duration: 10m}
-      - analysis:
-          templates:
-          - templateName: success-rate
-```
+**Преимущество:** Вы можете плавно изменять веса (например, 99/1 → 90/10 → 50/50), просто обновляя манифест `VirtualService`, что дает гораздо более точный контроль, чем масштабирование подов.
 
 ### Использование флагов функций (Feature Toggles)
 
 Альтернатива на уровне приложения — управление логикой через [флаги функций](../Testing/feature_toggles/scenarios.md). Позволяет реализовать Canary для конкретных пользователей (например, по ID или региону) даже без поддержки на уровне сети.
 
 ## Дополнительная информация
+
+### Мониторинг и корректировка
+
+Поскольку при Canary-развертывании новая версия обрабатывает реальный пользовательский трафик (даже малую его часть), наличие надежного мониторинга является критическим условием.
+
+-   **Инструменты:** Основной стек для наблюдения — **Prometheus** (сбор метрик), **Grafana** (визуализация) и нативные метрики Kubernetes.
+-   **Процесс:**
+    1.  **Наблюдение:** Отслеживание ошибок, задержек и потребления ресурсов сразу после подачи трафика на Canary.
+    2.  **Анализ:** Сравнение показателей Canary с Baseline.
+    3.  **Решение:** На основе данных принимается решение:
+        *   **Scale-up:** Увеличение веса Canary (продвижение релиза).
+        *   **Rollback:** Немедленный откат при обнаружении всплеска ошибок или деградации производительности.
+
+Подробные примеры настройки и ключевые показатели описаны в разделе **[Мониторинг Kubernetes — обзор](../../Prometheus/kubernetes/overview.md)**.
 
 ### Анализ метрик и автоматическое принятие решений (Gating)
 
@@ -114,5 +201,6 @@ spec:
 ### Рекомендованные ссылки
 
 - [Мониторинг и оценка трафика при Canary](./canary_monitoring_and_gating.md) — детализация процесса анализа и PromQL примеры.
+- [Управление трафиком в Service Mesh](../../Service_Mesh/traffic_management.md) — современные стандарты (Gateway API/GAMMA) для Canary.
 - [Обзор стратегий развертывания](../Core_Concepts/deployment_strategies.md) — сравнение с Blue/Green и Rolling Update.
 - [Сравнение стратегий развертывания](./comparison.md) — матрица выбора подходов.

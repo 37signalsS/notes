@@ -1,243 +1,179 @@
-# Prometheus Operator Troubleshooting
+# Prometheus Operator: Диагностика и устранение неисправностей
 
 ## Определения
 
-**Troubleshooting Prometheus Operator** — процесс диагностики и устранения проблем в цикле reconciliation Operator'а, скрейпинге целей, отправке алертов и работе хранилища. Основные источники диагностической информации: логи Operator'а, статус Targets в Prometheus UI, события Kubernetes-объектов, метрики самого Operator'а.
+**Troubleshooting Prometheus Operator** — систематический процесс выявления и устранения сбоев в работе контроллера, механизмов обнаружения целей (Service Discovery) и конвейера обработки метрик в Kubernetes.
 
-> **Концепции Operator:** [Concepts](./concepts.md) — архитектура, CRD, принцип работы reconciliation.
+**Цикл Reconciliation (Сверка)** — основной механизм работы Оператора (Watch → Generate → Apply → Reload). Сбой на любом этапе приводит к расхождению между декларативной конфигурацией (CRD) и реальным состоянием Prometheus.
+
+**Config-Reloader** — sidecar-контейнер, отвечающий за мониторинг обновлений конфигурационных файлов в Secret и выполнение HTTP-запросов на перезагрузку основного процесса.
+
+> **См. также:** [Концепции Prometheus Operator](./concepts.md), [Service Discovery в Kubernetes](./service_discovery.md).
 
 ## Базовые концепции
 
-### Цикл reconciliation и точки отказа
+### Точки отказа в жизненном цикле конфигурации
 
-Сбой на любом этапе цикла reconciliation (Watch → Generate → Apply → Reload) приводит к неработоспособности мониторинга.
+| Этап | Механизм | Симптом сбоя | Инструмент диагностики |
+| :--- | :--- | :--- | :--- |
+| **Watch** | K8s API Watch | Оператор не реагирует на изменение CRD | `kubectl get events -A`, RBAC check |
+| **Generate** | Operator Logic | Конфигурация в Secret не обновляется | Логи Оператора: `failed to generate config` |
+| **Apply** | K8s API (Secret/STS) | Ошибка `Forbidden` или `Large resource` | `kubectl describe secret`, лимит 1MB |
+| **Reload** | Sidecar Reloader | В `/config` (UI) старые данные | Логи `config-reloader`, статус пода |
 
-| Этап | Симптом | Диагностика |
-| :--- | :--- | :--- |
-| **Watch** | CRD не обнаружены | `kubectl get crd \| grep monitoring.coreos.com` |
-| **Generate** | Ошибка в конфигурации | Логи Operator: `config invalid` |
-| **Apply** | RBAC error, Storage error | `kubectl describe pvc`, проверка ClusterRole |
-| **Reload** | Цели не скрейпятся | Логи `prometheus-config-reloader`, `/targets` UI |
+---
 
-> **Подробнее:** [Prometheus CRD](./crd/prometheus.md), [ServiceMonitor](./crd/servicemonitor.md), [Alertmanager CRD](./crd/alertmanager.md).
+## Алгоритм диагностики: «Цель не скрейпится»
 
-### Основные метрики Operator
+Если вы добавили `ServiceMonitor`, но не видите целей в Prometheus, следуйте по шагам:
 
-Проблемы в работе контроллера можно обнаружить, отслеживая метрики ошибок reconciliation и длительности синхронизации.
+1.  **Проверка CRD:** Убедитесь, что `ServiceMonitor` создан и имеет нужные лейблы.
+2.  **Селектор в Prometheus:** Соответствуют ли лейблы `ServiceMonitor` селектору `serviceMonitorSelector` в ресурсе `Prometheus`?
+3.  **Endpoints:** Проверьте, что у целевого `Service` есть активные `Endpoints` (`kubectl get ep`). Если их нет — проблема в приложении или селекторе сервиса.
+4.  **Сгенерированный конфиг:** Проверьте секрет Прометеуса (`kubectl get secret prometheus-<name>`). Содержит ли он вашу `job`?
+5.  **Логи релоадера:** Видит ли sidecar изменения и прошел ли запрос `/-/reload` с кодом 200?
+6.  **Сетевой уровень:** Доступен ли IP пода приложения с пода Прометеуса по указанному порту? (`kubectl exec ... curl <pod-ip>:<port>/metrics`).
 
-> **См. также:** [Concepts — Метрики для мониторинга](./concepts.md#метрики-для-мониторинга-operator), [High Availability](./high_availability.md).
+---
 
 ## Практические сценарии
 
-### ServiceMonitor не работает
+### 1. Проблемы Service Discovery и селекторов
 
-#### Проверка ServiceMonitor
+**Симптом:** Цели не появляются в списке `/targets`.
 
-```bash
-# Проверка существования ServiceMonitor
-kubectl get servicemonitor -n monitoring
+*   **Label Matching:** Самая частая причина.
+    ```bash
+    # Проверка селектора в ресурсе Prometheus
+    kubectl get prometheus main -o yaml | grep serviceMonitorSelector -A 3
+    # Проверка лейблов на ServiceMonitor
+    kubectl get servicemonitor my-app -o show-labels
+    ```
+*   **Namespace Selection:** Если `ServiceMonitor` в другом namespace, в `Prometheus` должен быть настроен `serviceMonitorNamespaceSelector` (по умолчанию ищет только в своем namespace).
 
-# Проверка конкретного ServiceMonitor
-kubectl get servicemonitor my-app -n production -o yaml
+### 2. Ошибки Admission Webhooks и TLS
 
-# Проверка лейблов
-kubectl get servicemonitor my-app -n production -o yaml | grep release
-```
+**Симптом:** Ошибки при `kubectl apply -f prometheus-rule.yaml`.
+`Error from server (InternalError): Internal error occurred: failed calling webhook...`
 
-#### Соответствие лейблов
+*   **Диагностика сертификатов:** Оператор требует TLS для вебхука. Если используется `cert-manager`:
+    ```bash
+    kubectl describe certificate prometheus-operator-webhook -n monitoring
+    ```
+*   **Проверка связности:** API-сервер должен «видеть» порт 9443 пода Оператора.
+    ```bash
+    # Проверьте, что сервис вебхука имеет Endpoints
+    kubectl get ep prometheus-operator -n monitoring
+    ```
+*   **Таймауты:** Если Оператор не отвечает за 10с (дефолт), проверьте его CPU usage. При перегрузке reconciliation может блокировать обработку вебхуков.
 
-ServiceMonitor должен иметь лейблы, которые соответствуют селектору в Prometheus CRD:
+### 3. Лимит 1MB на Kubernetes Secret
 
-```yaml
-# В Prometheus CRD
-spec:
-  serviceMonitorSelector:
-    matchLabels:
-      release: monitoring
+**Симптом:** Новые `ServiceMonitor` игнорируются, в логах Оператора ошибка:
+`Secret "prometheus-main" is invalid: data: Too long: must have at most 1048576 bytes`
 
-# В ServiceMonitor
-metadata:
-  labels:
-    release: monitoring  # Должно совпадать!
-```
+*   **Причина:** При тысячах целей сгенерированный `prometheus.yaml` превышает лимит Kubernetes для объектов Secret/ConfigMap.
+*   **Решение:**
+    1.  **Шардирование:** Используйте `spec.shards` в `Prometheus` для разделения нагрузки и конфига.
+    2.  **Сжатие:** В новых версиях Оператора используйте аннотацию или настройку для сжатия конфига (gzip).
+    3.  **Оптимизация:** Уменьшите количество `relabel_configs` в каждом мониторе.
 
-> **Детали:** [ServiceMonitor CRD — как работает](./crd/servicemonitor.md#как-работает-servicemonitor).
+### 4. Alertmanager: Ошибки отправки и конфигурации
 
-#### Проверка Endpoints
+**Симптом:** Алерты видны в Prometheus, но не приходят получателям.
 
-```bash
-# Проверка Endpoints сервиса
-kubectl get endpoints -n production -l app=my-app
+*   **Проверка конфига:**
+    ```bash
+    # Извлечение актуальной конфигурации
+    kubectl get secret alertmanager-main -n monitoring -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d
+    ```
+*   **Проверка кластера (Gossip):** Alertmanager использует порт 9094 для синхронизации.
+    ```bash
+    kubectl exec -it alertmanager-main-0 -n monitoring -- amtool cluster show
+    ```
+*   **Логи Alertmanager:** Ищите ошибки аутентификации (SMTP/Webhook/Slack).
+    ```bash
+    kubectl logs -l app.kubernetes.io/name=alertmanager -n monitoring
+    ```
 
-# Детальная информация
-kubectl describe endpoints -n production -l app=my-app
-```
+### 5. Проблемы с хранилищем (PVC и Mount)
 
-#### Логи Operator
+**Симптом:** Поды Prometheus в состоянии `Pending` или `CrashLoopBackOff`.
 
-```bash
-# Логи Prometheus Operator
-kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator
+*   **Проверка PVC:**
+    ```bash
+    kubectl get pvc -n monitoring
+    kubectl describe pvc prometheus-main-db-prometheus-main-0
+    ```
+*   **Corruption в TSDB:** Если диск был переполнен, Prometheus может не запуститься. Ищите в логах `WAL segment is corrupted`.
+    *   *Решение:* Требуется ручное удаление поврежденных сегментов в директории `/prometheus/wal/`.
 
-# Логи config-reloader
-kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-config-reloader
-```
+### 6. Thanos Sidecar: gRPC и S3
 
-### Prometheus не скрейпит цели
+**Симптом:** Данные не уходят в Object Storage или Thanos Query выдает пустые ответы.
 
-#### Проверка статуса целей
+*   **Connectivity S3:** Проверьте логи sidecar.
+    ```bash
+    kubectl logs -c thanos-sidecar prometheus-main-0 -n monitoring
+    # Ошибка: "failed to upload blocks" -> проверьте Secret с credentials
+    ```
+*   **gRPC Errors:** Thanos Query подключается к Sidecar по порту 10901. Проверьте сетевой доступ (NetworkPolicy).
 
-```bash
-# Через Prometheus UI: http://<prometheus>:9090/targets
+### 7. Slow Reconciliation (Медленная сверка)
 
-# Через API
-kubectl port-forward prometheus-main-0 -n monitoring 9090:9090
-curl http://localhost:9090/api/v1/targets
-```
+**Симптом:** Изменения в CRD применяются через минуты, а не секунды.
 
-#### Проверка сгенерированной конфигурации
+*   **Метрики:** `prometheus_operator_reconcile_duration_seconds_bucket`.
+*   **Причины:**
+    1.  **Throttling API:** Оператор уперся в лимиты запросов к K8s API.
+    2.  **Большой кэш:** Слишком много объектов в кластере (десятки тысяч подов). Увеличьте RAM лимиты Оператора.
+    3.  **Network Latency:** Задержки между Оператором и API-сервером.
 
-```bash
-# Проверка сгенерированной конфигурации
-kubectl get secret prometheus-main -n monitoring -o jsonpath='{.data.prometheus\.yaml}' | base64 -d
+---
 
-# Проверка правил
-kubectl get prometheusrule -n monitoring
-```
+## Распространённые проблемы скрейпинга (Сводка)
 
-#### Распространённые проблемы скрейпинга
-
-| Проблема | Причина | Решение |
+| Ошибка | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| **Цель не найдена** | Неправильный селектор ServiceMonitor | Проверить `selector.matchLabels` |
-| **Нет Endpoints** | Service не имеет pod'ов | Проверить `kubectl get endpoints` |
-| **404 на /metrics** | Неправильный путь | Проверить `endpoints.path` |
-| **Timeout** | Долгий ответ приложения | Увеличить `scrapeTimeout` |
+| **"no targets"** | Неверный Label Selector | Проверить `matchLabels` в ServiceMonitor. |
+| **404 Not Found** | Неверный `path` в конфиге | Проверить `endpoints.path` (по дефолту `/metrics`). |
+| **Connection Refused**| Приложение слушает другой порт | Проверить `endpoints.port` или `targetPort`. |
+| **Context Deadline** | Медленный ответ приложения | Увеличить `scrapeTimeout` в мониторе. |
+| **Authentication Error**| Нужен токен/сертификат | Настроить `tlsConfig` или `bearerTokenSecret`. |
 
-### Alertmanager не отправляет алерты
+---
 
-#### Проверка конфигурации
+## Инструментарий диагностики
 
+### Доступ к UI для глубокой проверки
 ```bash
-# Проверка Secret с конфигурацией
-kubectl get secret alertmanager-main -n monitoring -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d
+# Port-forward к сервису (operated-версия всегда ведет на активные поды)
+kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
 ```
 
-#### Проверка получателей и кластера
+### Полезные запросы PromQL для самодиагностики
 
-```bash
-# Логи Alertmanager
-kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager
-
-# Проверка кластера
-kubectl exec -it alertmanager-main-0 -n monitoring -- wget -qO- http://localhost:9094/api/v2/status
-```
-
-#### Проверка AlertmanagerConfig
-
-```bash
-# Проверка AlertmanagerConfig
-kubectl get alertmanagerconfig -n monitoring
-
-# Проверка селектора в Alertmanager
-kubectl get alertmanager main -n monitoring -o yaml | grep -A5 configSelector
-```
-
-> **Детали:** [AlertmanagerConfig CRD — селекторы](./crd/alertmanagerconfig.md#взаимосвязь-с-alertmanager-crd).
-
-### Ошибки reconciliation
-
-#### Проверка статуса Operator
-
-```bash
-# Проверка подов Operator
-kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus-operator
-
-# Логи Operator
-kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator --tail=100
-```
-
-#### Распространённые ошибки reconciliation
-
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| **CRD not found** | CRD не установлены | `kubectl apply -f crd/` |
-| **RBAC error** | Недостаточно прав | Проверить ClusterRole/Binding |
-| **Config invalid** | Ошибка в конфигурации | Проверить YAML-синтаксис |
-| **Storage error** | Проблема с PV | `kubectl describe pvc` |
-
-### Проблемы с хранилищем
-
-#### Проверка PVC
-
-```bash
-# Проверка PVC
-kubectl get pvc -n monitoring
-
-# Детальная информация
-kubectl describe pvc prometheus-main -n monitoring
-```
-
-#### Проблемы с mount
-
-```bash
-# Проверка подов
-kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus
-
-# События
-kubectl describe pod prometheus-main-0 -n monitoring
-```
-
-> **Детали:** [Prometheus CRD — хранилище](./crd/prometheus.md#хранилище).
-
-### Диагностика через Prometheus UI
-
-#### Доступ к Prometheus
-
-```bash
-kubectl port-forward prometheus-main-0 -n monitoring 9090:9090
-```
-
-#### Полезные endpoint'ы
-
-| Endpoint | Описание |
+| Запрос | Назначение |
 | :--- | :--- |
-| `/targets` | Статус целей скрейпинга |
-| `/rules` | Правила алертинга |
-| `/alerts` | Активные алерты |
-| `/config` | Текущая конфигурация |
-| `/service-discovery` | Service Discovery |
+| `up{job="prometheus-operator"} == 0` | Оператор упал или не скрейпится. |
+| `rate(prometheus_operator_reconcile_errors_total[5m]) > 0` | Обнаружены ошибки в цикле сверки. |
+| `prometheus_operator_config_size_bytes` | Проверка близости к лимиту 1MB. |
+| `prometheus_target_scrapes_exceeded_sample_limit_total` | Цели отбрасываются из-за лимита метрик. |
+| `alertmanager_notifications_failed_total` | Ошибки отправки уведомлений. |
 
-### Полезные запросы PromQL
-
-```promql
-# Цели вниз
-up == 0
-
-# Ошибки скрейпинга
-rate(prometheus_target_scrapes_exceeded_sample_limit_total[5m])
-
-# Ошибки reconciliation
-rate(prometheus_operator_reconcile_errors_total[5m])
-
-# Статус Alertmanager
-alertmanager_cluster_members
-```
+---
 
 ## Дополнительная информация
 
-### Связанные компоненты
+### Рекомендации по алгоритму отладки (Runbook)
 
-| Компонент | Описание | Файл |
-|---|---|---|
-| **Concepts** | Базовые концепции Operator | [Concepts](./concepts.md) |
-| **Installation** | Ручная установка Operator | [Installation](./installation.md) |
-| **High Availability** | HA Prometheus и Alertmanager | [High Availability](./high_availability.md) |
-| **CRD Overview** | Описание всех CRD | [CRD directory](./crd/) |
+1.  **Проверьте логи Оператора:** Это SSoT для всех проблем с конфигурацией.
+2.  **Проверьте статус в UI Prometheus:** Раздел `Status -> Targets` покажет, видит ли Прометеус цель вообще. Раздел `Status -> Configuration` покажет, дошли ли изменения до процесса.
+3.  **Используйте `kubectl describe`:** Это основной способ увидеть ошибки планировщика, проблемы с монтированием томов и нехватку прав (Events).
+4.  **Проверка в Air-gapped:** Если образы не скачиваются, проверьте `imagePullSecrets` в ресурсе `Prometheus` и доступность локального реестра.
 
-### Рекомендации по отладке
+### Связанные ресурсы
 
-1. **Всегда начинайте с логов Operator'а** — большинство проблем связаны с неправильной конфигурацией CRD
-2. **Проверяйте лейблы** — несоответствие `serviceMonitorSelector` и меток ServiceMonitor — самая частая причина
-3. **Используйте `kubectl describe`** — события Kubernetes содержат информацию о проблемах с PVC, RBAC, networking
-4. **Мониторьте метрики reconciliation** — рост `reconcile_errors_total` сигнализирует о системных проблемах
+- **[Installation Guide](./installation.md)** — архитектура RBAC и Webhooks.
+- **[High Availability](./high_availability.md)** — диагностика проблем HA и шардирования.
+- **[ScrapeConfig CRD](./crd/servicemonitor.md)** — детали скрейпинга через мониторы.

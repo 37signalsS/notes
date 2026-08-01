@@ -2,10 +2,10 @@
 
 ## Определения
 
-В Angie, как и в его прародителе [Nginx](../Nginx/Core/nginx_overview.md), существует два основных типа логов, критически важных для отладки, [мониторинга](./angie_monitoring/angie_monitoring_concepts.md) и анализа безопасности по протоколу **HTTP (HyperText Transfer Protocol)**:
+В Angie, как и в его прародителе [Nginx](../Nginx/Core/nginx_overview.md), существует два основных типа логов, критически важных для отладки, [мониторинга](./angie_monitoring/angie_monitoring_concepts.md) и анализа безопасности. В отличие от Nginx, Angie предоставляет расширенные возможности управления логами ошибок и поддержку современных форматов «из коробки»:
 
-* **Лог доступа (`access_log`)**: Записывает информацию о каждом обработанном запросе клиента.
-* **Лог ошибок (`error_log`)**: Предназначен для записи информации о проблемах, возникших в процессе работы сервера.
+* **Лог доступа (`access_log`)**: Фиксирует информацию о каждом обработанном запросе клиента (HTTP) или сессии (Stream/L4).
+* **Лог ошибок (`error_log`)**: Предназначен для записи информации о проблемах, возникших в процессе работы сервера, а также для диагностических сообщений.
 
 ## Базовые концепции
 
@@ -25,14 +25,27 @@ location /static/ {
 
 ### Лог ошибок (`error_log`)
 
-Формат `error_log` не настраивается, но можно управлять уровнем его детализации.
+В Angie директива `error_log` значительно расширена по сравнению с классическим Nginx. Помимо уровня детализации, она поддерживает форматирование в JSON, фильтрацию сообщений и ограничение скорости записи.
 
 ```nginx
 # Глобальный лог ошибок с уровнем детализации 'warn'
 error_log /var/log/angie/error.log warn;
+
+# Использование JSON-формата для лога ошибок (Angie-specific)
+error_log /var/log/angie/error.log warn format=json;
+
+# Ограничение скорости записи для предотвращения переполнения диска (Angie-specific)
+# rate=10 означает не более 10 сообщений в секунду
+error_log /var/log/angie/error.log warn rate=10;
 ```
 
-**Уровни детализации** (от самого критичного к самому подробному): `emerg`, `alert`, `crit`, `error`, `warn`, `notice`, `info`, `debug`. Для обычной работы рекомендуется `warn` или `error`. Уровень `notice` полезен для отладки модулей (например, **ACME (Automated Certificate Management Environment)**), а `debug` — для глубокой диагностики.
+**Уровни детализации** (от самого критичного к самому подробному): `emerg`, `alert`, `crit`, `error`, `warn`, `notice`, `info`, `debug`. 
+* Для промышленной эксплуатации рекомендуется `warn` или `error`. 
+* Уровень `notice` полезен для отладки модулей (например, **ACME (Automated Certificate Management Environment)**).
+* Уровень `debug` требует сборки с флагом `--with-debug` и предназначен для глубокой диагностики.
+
+**Параметр `filter` (Angie-specific):** позволяет записывать в лог только сообщения, соответствующие определенному условию или тегу.
+
 
 ### Логирование в модуле Stream (L4)
 
@@ -49,6 +62,31 @@ stream {
 ```
 
 Подробнее см. в [L4 балансировка и проксирование](./l4_balancing_and_proxying.md).
+
+### Логирование в Syslog и контейнерные среды
+
+В современных инфраструктурах часто требуется отправка логов во внешние системы или сборщики контейнеров.
+
+#### Логирование в стандартные потоки (Docker/Kubernetes)
+Для контейнеризированных сред рекомендуется направлять логи в `stdout` и `stderr`, чтобы их мог перехватить рантайм контейнеров.
+```nginx
+# Перенаправление лога ошибок в stderr
+error_log stderr warn;
+
+# Перенаправление лога доступа в stdout (через символическую ссылку в официальных образах)
+access_log /var/log/angie/access.log combined;
+```
+
+#### Логирование в Syslog
+Angie поддерживает прямую отправку логов в **Syslog** без промежуточных файлов.
+```nginx
+# Пример отправки в Syslog на локальный сокет
+access_log syslog:server=unix:/dev/log,facility=local7,tag=angie,severity=info combined;
+
+# Пример отправки на удаленный сервер по UDP
+error_log syslog:server=192.168.1.10:514,facility=local6,tag=angie_err warn;
+```
+Параметры `server`, `facility`, `tag` и `severity` позволяют гибко классифицировать сообщения на стороне приемника.
 
 ## Практические сценарии
 
@@ -81,13 +119,14 @@ http {
 
 ### Логирование в формате JSON
 
-Для упрощения парсинга логов в автоматизированных системах (**ELK (Elasticsearch, Logstash, Kibana)**, [Loki](../../Loki/loki_overview.md)) удобно использовать формат **JSON (JavaScript Object Notation)**.
+Для упрощения парсинга логов в автоматизированных системах (**ELK (Elasticsearch, Logstash, Kibana)**, [Loki](../../Loki/loki_overview.md)) удобно использовать формат **JSON (JavaScript Object Notation)**. В Angie рекомендуется добавлять идентификаторы запросов для сквозной трассировки.
 
 ```nginx
 http {
     log_format json_logs escape=json
       '{'
         '"timestamp":"$time_iso8601",'
+        '"request_id":"$request_id",'        # Уникальный ID запроса для трассировки
         '"client_ip":"$remote_addr",'
         '"request":"$request",'
         '"status":$status,'
@@ -100,6 +139,20 @@ http {
       '}';
 
     access_log /var/log/angie/json_access.log json_logs;
+}
+```
+
+### Настройка формата времени (`time_format`)
+
+Angie позволяет переопределять формат времени в логах с помощью директивы `time_format` (Angie-specific), что избавляет от необходимости использовать сложные конструкции с `map`.
+
+```nginx
+http {
+    # Определение собственного формата времени с миллисекундами
+    time_format custom_time "%Y-%m-%dT%H:%M:%S.%L%z";
+
+    log_format timed '$remote_addr [$custom_time] "$request" $status';
+    access_log /var/log/angie/access.log timed;
 }
 ```
 
@@ -160,9 +213,18 @@ access_log /var/log/angie/access.log.gz extended gzip=1;
 open_log_file_cache max=1000 inactive=20s min_uses=2 valid=1m;
 ```
 
+### Ротация логов
+
+Angie не закрывает и не переоткрывает файлы логов автоматически после их переименования или перемещения (например, внешней утилитой `logrotate`). Чтобы сервер начал писать в новый файл, ему необходимо отправить сигнал **USR1**:
+
+```bash
+# Переоткрытие файлов логов без перезагрузки конфигурации
+kill -USR1 $(cat /var/run/angie.pid)
+```
+Это действие заставляет рабочий процесс переоткрыть все файлы логов, сохранив при этом производительность.
+
 ## См. также
 
 * [Оптимизация производительности Angie](./High_Load/performance_optimization.md)
-* [Мониторинг Angie](./angie_monitoring/angie_monitoring_concepts.md)
+* [Мониторинг Angie: основные концепции](./angie_monitoring/angie_monitoring_concepts.md)
 * [Руководство по безопасности Nginx — настройка логирования](../Nginx/Security/nginx_security_guide.md)
-* [Оптимизация производительности Nginx — буферизация логов](../Nginx/Performance/nginx_performance_tuning.md)

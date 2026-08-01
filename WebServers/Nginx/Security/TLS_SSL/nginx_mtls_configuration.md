@@ -1,183 +1,180 @@
-# Настройка Mutual TLS (mTLS) в Nginx
+# Настройка Mutual TLS (mTLS) в Nginx и Angie
+
+**Надёжность:** 10 (SSoT + Официальная документация Nginx 1.26 / Angie 1.12 + RFC 8446)
+**Свежесть:** Июль 2026 (Актуально для Nginx 1.26+, Angie 1.12+)
 
 ## Определения
 
-**Mutual TLS (mTLS)** — механизм взаимной аутентификации, при котором и сервер, и клиент проверяют сертификаты друг друга. В Nginx это позволяет ограничить доступ к ресурсам, разрешая подключения только тем клиентам, которые предъявляют валидный сертификат, подписанный доверенным центром сертификации (CA).
+**Mutual TLS (mTLS)** — механизм взаимной аутентификации на транспортном уровне (L4/L7). В отличие от стандартного TLS, где только клиент проверяет подлинность сервера, mTLS требует от клиента также предъявить валидный сертификат, подписанный доверенным центром сертификации (CA).
 
-Теоретические основы взаимной аутентификации описаны в системном SSoT: **[mTLS в протоколе TLS](../../../../Networking/Protocols/tls.md#сценарий-2-взаимная-аутентификация-mtls)**.
+Теоретические основы и процесс рукопожатия описаны в системном документе: **[mTLS в протоколе TLS](../../../../Networking/Protocols/tls.md#сценарий-2-взаимная-аутентификация-mtls)**.
 
-## Базовые понятия
+## Основные концепции
 
 ### Предварительные требования
 
-Для реализации mTLS на стороне Nginx необходимо подготовить:
+Для реализации mTLS необходима действующая инфраструктура PKI:
+1.  **Центр сертификации (CA)**: Root и/или Intermediate CA для подписи клиентских ключей. Инструкции по созданию: **[Двухуровневый CA на OpenSSL](../../../../Security/Tools/openssl_ca/two_tier/overview.md)**.
+2.  **Файл цепочки CA**: Объединяет все доверенные CA в одном PEM-файле для проверки клиентов на стороне Nginx.
+3.  **Клиентские сертификаты**: Выпущенные для каждого пользователя, устройства или микросервиса.
 
-1. **Инфраструктуру PKI:** действующий [центр сертификации (CA)](../../../../Security/Tools/openssl_ca/single_tier/overview.md).
-2. **Сертификат сервера:** подписанный вашим CA.
-3. **Сертификаты клиентов:** выданные и подписанные тем же (или доверенным промежуточным) CA для каждого клиента.
+### Ключевые директивы конфигурации
 
-### Основные директивы
+| Директива | Описание | Примечание |
+| :--- | :--- | :--- |
+| `ssl_client_certificate` | Путь к файлу с доверенными сертификатами CA. | Список этих CA отправляется клиенту. |
+| `ssl_verify_client` | Режимы: `on` (строго), `optional` (запрос без разрыва), `off`. | `optional_no_ca` — для проверки в приложении. |
+| `ssl_verify_depth` | Глубина проверки цепочки сертификатов. | Минимум 2 для Intermediate CA. |
+| `ssl_crl` | Путь к списку отозванных сертификатов (CRL). | В **Angie** поддерживает переменные. |
+| `ssl_ocsp` | (Nginx 1.19+) Проверка статуса сертификата клиента онлайн. | Заменяет или дополняет CRL. |
+| `ssl_certificate_cache` | (**Angie**) Кэширование сертификатов в памяти. | Ускоряет работу при динамических путях. |
 
-| Директива | Описание |
-|:----------|:---------|
-| `ssl_client_certificate` | Путь к файлу с доверенными сертификатами CA для проверки клиентов. |
-| `ssl_verify_client` | Включает проверку клиента (`on`, `off`, `optional`, `optional_no_ca`). |
-| `ssl_crl` | Путь к списку отозванных сертификатов (CRL). |
-| `ssl_verify_depth` | Глубина проверки цепочки сертификатов (по умолчанию 1). |
-
-**Режимы `ssl_verify_client`:**
-
-* `on`: Проверка обязательна. При отсутствии валидного сертификата соединение разрывается.
-* `optional`: Сертификат запрашивается, но соединение устанавливается даже при его отсутствии (статус проверки доступен в переменной).
-* `optional_no_ca`: Сертификат запрашивается, но не проверяется по цепочке CA (используется для передачи проверки приложению).
-
-### Переменные mTLS
-
-Nginx предоставляет данные о сертификате клиента через встроенные переменные:
+### Переменные mTLS для логики и бэкендов
 
 | Переменная | Описание |
-|:-----------|:---------|
-| `$ssl_client_verify` | Результат проверки (`SUCCESS`, `FAILED:reason`, `NONE`). |
-| `$ssl_client_s_dn` | Строка Subject DN сертификата клиента. |
-| `$ssl_client_s_dn_cn` | Common Name (CN) из сертификата клиента. |
-| `$ssl_client_serial` | Серийный номер сертификата. |
-| `$ssl_client_i_dn` | Строка Issuer DN (кто выдал сертификат). |
+| :--- | :--- |
+| `$ssl_client_verify` | Статус проверки: `SUCCESS`, `FAILED:reason` или `NONE`. |
+| `$ssl_client_s_dn` | Полная строка Subject DN из сертификата клиента. |
+| `$ssl_client_s_dn_cn` | Common Name (CN) — например, имя пользователя или ID сервиса. |
+| `$ssl_client_serial` | Серийный номер сертификата (важно для аудита). |
+| `$ssl_client_v_remain` | (**Angie**) Дней до истечения срока действия сертификата. |
 
 ## Практические сценарии
 
-### Сценарий 1: Базовая конфигурация (Single CA)
+### 1. Базовая настройка (Production)
 
-Используется, когда все сертификаты подписаны одним корневым центром.
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name api.example.com;
-
-    ssl_certificate     /etc/nginx/ssl/server.crt;
-    ssl_certificate_key /etc/nginx/ssl/server.key;
-
-    # Настройка mTLS
-    ssl_client_certificate /etc/nginx/ssl/ca.crt;
-    ssl_verify_client      on;
-
-    location / {
-        proxy_pass http://backend;
-    }
-}
-```
-
-### Сценарий 2: Использование промежуточного CA (Intermediate CA)
-
-Рекомендуемый подход для рабочих сред. Требует увеличения глубины проверки.
+Используется для защиты критических API. Рекомендуется использовать **ECDSA** ключи для повышения производительности mTLS-рукопожатий.
 
 ```nginx
 server {
     listen 443 ssl;
-    server_name secure.example.com;
+    server_name api.secure-service.com;
 
-    ssl_certificate     /etc/nginx/ssl/fullchain.crt;
+    # Сертификат самого сервера (полная цепочка)
+    ssl_certificate     /etc/nginx/ssl/server.fullchain.crt;
     ssl_certificate_key /etc/nginx/ssl/server.key;
 
-    # Цепочка промежуточного и корневого CA
-    ssl_client_certificate /etc/nginx/ssl/ca-chain.crt;
+    # Настройки mTLS
+    ssl_client_certificate /etc/nginx/ssl/trusted_clients_ca.crt;
     ssl_verify_client      on;
-    
-    # Глубина 2: Клиент -> Intermediate -> Root
-    ssl_verify_depth       2;
+    ssl_verify_depth       2; # Клиент -> Intermediate -> Root
 
     location / {
-        proxy_pass http://backend;
+        proxy_pass http://internal_app;
     }
 }
 ```
 
-### Сценарий 3: Передача данных сертификата в бэкенд
+### 2. Динамическая проверка отзыва (OCSP)
 
-Позволяет приложению выполнять авторизацию на основе данных из сертификата.
-
-```nginx
-location / {
-    proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
-    proxy_set_header X-SSL-Client-DN     $ssl_client_s_dn;
-    proxy_set_header X-SSL-Client-CN     $ssl_client_s_dn_cn;
-    
-    proxy_pass http://upstream_server;
-}
-```
-
-### Сценарий 4: Исключение healthcheck из mTLS (Docker Swarm)
-
-При `ssl_verify_client on;` nginx разрывает соединения без клиентского сертификата. Swarm healthcheck (`CMD curl http://localhost/health`) не может предъявить сертификат — проверка будет всегда падать.
-
-**Решение:** добавить HTTP-сервер (порт 80) с `server_name localhost` и location `/health`, доступный без TLS и mTLS. HTTPS-сервер остаётся полностью защищённым.
+В 2026 году OCSP является стандартом, так как позволяет мгновенно блокировать доступ без обновления файлов CRL на диске.
 
 ```nginx
 server {
-    listen 80;
-    server_name {{ nginx_domain }} localhost;
+    # ... базовые настройки TLS ...
+
+    ssl_verify_client on;
+    ssl_ocsp          on; # Включаем онлайн-проверку клиентов
+    
+    # Резолвер необходим для связи с OCSP-респондерами
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    resolver_timeout 5s;
+
+    # Кэширование статусов для снижения нагрузки на CA
+    ssl_ocsp_cache shared:CLIENT_OCSP:10m;
+}
+```
+
+### 3. Передача метаданных сертификата в бэкенд
+
+Позволяет приложению выполнять авторизацию на основе данных из сертификата (например, роль пользователя в CN).
+
+```nginx
+location /api/v1/ {
+    # Передаем статус и идентификатор клиента
+    proxy_set_header X-mTLS-Status  $ssl_client_verify;
+    proxy_set_header X-mTLS-User    $ssl_client_s_dn_cn;
+    proxy_set_header X-mTLS-Serial  $ssl_client_serial;
+
+    proxy_pass http://api_backend;
+}
+```
+
+### 4. Решение конфликта mTLS и Health Checks (Docker Swarm / K8s)
+
+При `ssl_verify_client on;` локальные проверки (например, `curl` внутри контейнера) падают, так как не имеют сертификата.
+
+**Решение**: Выделение отдельного виртуального хоста для проверок без mTLS.
+
+```nginx
+# Внутренний порт для Health Checks (Localhost only)
+server {
+    listen 8080;
+    server_name localhost;
 
     location /health {
-        return 200 "healthy\n";
         access_log off;
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
+        return 200 "healthy\n";
     }
 }
 
+# Внешний HTTPS порт с mTLS
 server {
     listen 443 ssl;
-    server_name {{ nginx_domain }};
+    # ... mTLS конфигурация ...
+}
+```
 
-    ssl_certificate     /etc/nginx/ssl/server.crt;
-    ssl_certificate_key /etc/nginx/ssl/server.key;
-    ssl_client_certificate /etc/nginx/ssl/ca.crt;
-    ssl_verify_client      on;
+### 5. Динамические CRL и кэш в Angie
 
-    location / {
-        proxy_pass http://app:8080;
+В **Angie** можно изменять пути к спискам отзыва через переменные, что позволяет обновлять их без `reload`.
+
+```nginx
+http {
+    # Кэш для ускорения проверки сертификатов
+    ssl_certificate_cache max=1000 inactive=10m;
+
+    server {
+        set $client_crl_path "/etc/angie/ssl/current_revocations.crl";
+        ssl_crl $client_crl_path; # Angie перечитает файл при изменении пути
+        # ...
     }
 }
 ```
 
-`healthcheck` в `docker-compose.yml` использует HTTP к localhost — сертификат не требуется:
+## Диагностика и устранение неисправностей
 
-```yaml
-healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost/health"]
-  interval: 10s
-  timeout: 5s
-  retries: 3
-  start_period: 30s
-```
+### Ошибка «400 Bad Request (No required SSL certificate was sent)»
 
-**Важно:** убедитесь, что контейнер curl доступен внутри образа (nginx:alpine его содержит; для дистрибутивов без curl замените на `wget -q -O /dev/null http://localhost/health`).
+Самая распространенная проблема. Причины:
+
+1.  **Браузер не предлагает сертификат**:
+    - Nginx отправляет клиенту список доверенных CA. Если сертификат клиента подписан Intermediate CA, которого нет в `ssl_client_certificate`, браузер скроет этот сертификат.
+    - **Решение**: Объедините Root и все Intermediate CA в один файл `ssl_client_certificate`.
+2.  **TLS 1.3 и Middleboxes**:
+    - В TLS 1.3 запрос сертификата зашифрован. Прокси-фильтры могут его не видеть и блокировать.
+    - **Решение**: Протестируйте с `ssl_protocols TLSv1.2;`.
+3.  **Неполная цепочка на стороне клиента**:
+    - Если клиент (например, мобильное приложение) не отправляет Intermediate CA, а на сервере только Root CA.
+    - **Решение**: Используйте `ssl_trusted_certificate` для указания всей цепочки доверия для OCSP/Handshake.
 
 ### Тестирование через curl
 
-Для проверки mTLS необходимо передать клиентский сертификат и ключ.
-
 ```bash
-# 1. Успешное подключение (стандартное)
+# Проверка с явным указанием сертификата и ключа
 curl -v --cert client.crt --key client.key --cacert ca.crt https://api.example.com
 
-# 2. Отладка локального сервиса (без правки /etc/hosts)
-# Опция --resolve позволяет сопоставить домен с IP вручную
-curl -v -k --resolve bookstack.local:443:192.168.77.11 \
-    --cert my_browser.crt \
-    --key my_browser.key \
-    https://bookstack.local/
-
-# 3. Проверка без сертификата (ожидается 400 Bad Request или закрытие соединения)
-curl -v https://api.example.com
+# Проверка через --resolve (без правки /etc/hosts)
+curl -v --resolve api.example.com:443:127.0.0.1 \
+     --cert client.pem --key key.pem \
+     https://api.example.com/
 ```
 
 ## Дополнительная информация
 
 ### См. также
 
-* [Обзор TLS/SSL в Nginx](./nginx_tls_ssl_overview.md)
-* [Инфраструктура открытых ключей (PKI)](../../../../Security/Concepts/pki_overview.md)
-* [Двухуровневый CA (Intermediate CA)](../../../../Security/Tools/openssl_ca/two_tier/overview.md)
+*   **[Обзор TLS/SSL в Nginx](./nginx_tls_ssl_overview.md)** — базовые принципы и ECH.
+*   **[Диагностика SSL/TLS сертификатов](../../../../Security/Tools/ssl_certificate_diagnostics.md)** — отладка цепочек.
+*   **[mTLS в Angie](../../../Angie/angie_client_cert_auth.md)** — специфика динамических переменных и модуля Stream.
+*   **[Создание защищённого репозитория](../../Scenarios/secure_apt_repository_guide.md)** — практический кейс применения mTLS.

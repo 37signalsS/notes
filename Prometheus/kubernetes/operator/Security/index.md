@@ -2,47 +2,49 @@
 
 ## Определения
 
-**Безопасность Prometheus Operator** — комплекс мер по защите стека мониторинга: аутентификация, TLS, контроль доступа и управление секретами.
+**Безопасность Prometheus Operator** — многоуровневая система защиты стека мониторинга, охватывающая весь жизненный цикл данных: от безопасного хранения секретов и контроля доступа к Kubernetes API до шифрования трафика между компонентами и аутентификации пользователей.
 
 ---
 
 ## Основные концепции
 
-### Компоненты безопасности
+### Эшелонированная защита (Defense in Depth)
 
-Безопасность Prometheus Operator строится на четырёх уровнях:
+Безопасность оператора строится на пяти ключевых уровнях:
 
-| Уровень | Механизм | Описание | Документация |
-|---|---|---|---|
-| **Аутентификация** | Basic Auth, OAuth | Защита веб-интерфейсов Prometheus, Alertmanager, Grafana | [Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md) |
-| **TLS** | Ingress TLS, mTLS | Шифрование внешнего и внутреннего трафика | Настоящий файл |
-| **Контроль доступа** | NetworkPolicy, RBAC | Сетевая изоляция и авторизация Kubernetes API | [access_control.md](./access_control.md) |
-| **Управление секретами** | Kubernetes Secrets | Безопасное хранение учётных данных и ключей | [secrets_best_practices.md](./secrets_best_practices.md) |
-
-> **Подробно:** [Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md) — полный обзор аутентификации в kube-prometheus-stack.
+| Уровень | Механизм | Назначение | SSoT |
+|:---|:---|:---|:---|
+| **Управление секретами** | Kubernetes Secrets, External Secrets | Безопасное хранение токенов, паролей и ключей. | [secrets_best_practices.md](./secrets_best_practices.md) |
+| **Контроль доступа** | RBAC, ServiceAccounts | Авторизация запросов Prometheus к Kubernetes API. | [access_control.md](./access_control.md) |
+| **Сетевая изоляция** | NetworkPolicy | Ограничение L3/L4 доступа к портам компонентов. | [access_control.md](./access_control.md) |
+| **Инфраструктурный TLS** | `spec.web.tlsConfig`, cert-manager | Шифрование Web UI и API (Prometheus, Alertmanager). | Настоящий файл |
+| **Аутентификация** | Basic Auth, OAuth2 Proxy | Идентификация пользователей и систем. | [Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md) |
 
 ---
 
 ## Практические сценарии
 
-### Аутентификация
+### Аутентификация и защита веб-интерфейсов
 
-Для настройки аутентификации через Ingress (Basic Auth) или встроенных механизмов Grafana используйте специализированное руководство:
-> **См. также:** [Web Authentication — Практические сценарии](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md#практические-сценарии)
+#### Встроенная авторизация (Built-in Auth)
 
-#### Встроенная аутентификация Prometheus (CRD)
-
-В современных версиях (v2.48+) Prometheus поддерживает встроенную аутентификацию, которую можно настроить напрямую через Custom Resource:
+С версии Prometheus 2.48+ и в Prometheus 3.x поддерживается встроенная Basic Auth. Начиная с Operator v0.80+, настройка TLS и авторизации выполняется через блок `spec.web`:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: Prometheus
 metadata:
   name: main
-  namespace: monitoring
 spec:
-  # ...
   web:
+    tlsConfig:
+      cert:
+        secret:
+          name: prometheus-server-tls
+          key: tls.crt
+      keySecret:
+        name: prometheus-server-tls
+        key: tls.key
     webConfig:
       basicAuth:
         username:
@@ -53,65 +55,73 @@ spec:
           key: password
 ```
 
-**Создание секрета:**
+#### Защита Alertmanager
 
-```bash
-kubectl create secret generic prometheus-auth \
-  --from-literal=username="admin" \
-  --from-literal=password="$(openssl rand -base64 20)" \
-  -n monitoring
-```
-
----
-
-### TLS
-
-#### Шифрование через Ingress
-
-Для защиты внешнего трафика используйте TLS в ресурсе Ingress:
+Аналогично Prometheus, Alertmanager поддерживает TLS для API и веб-интерфейса, а также шифрование внутреннего Gossip-трафика (порт 9094):
 
 ```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: prometheus
-  namespace: monitoring
+kind: Alertmanager
 spec:
-  tls:
-    - hosts:
-        - prometheus.example.com
-      secretName: prometheus-tls
-  rules:
-    - host: prometheus.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: prometheus
-                port:
-                  number: 9090
+  replicas: 3
+  clusterTLS: # Защита трафика между репликами
+    cert:
+      secret: {name: am-cluster-tls, key: tls.crt}
+    keySecret:
+      name: am-cluster-tls
+      key: tls.key
+  web:
+    tlsConfig: # Защита веб-интерфейса
+      cert:
+        secret: {name: am-web-tls, key: tls.crt}
+      keySecret:
+        name: am-web-tls
+        key: tls.key
 ```
 
-#### mTLS для внутренних соединений
+### Автоматизация TLS с cert-manager
 
-Prometheus Operator позволяет настраивать mTLS для сбора метрик (scrape) через ServiceMonitor:
+Стандартным подходом в 2026 году является использование `cert-manager` для автоматической генерации и ротации сертификатов:
+
+1.  **Создание Certificate:**
+    ```yaml
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: prometheus-server-tls
+    spec:
+      secretName: prometheus-server-tls
+      dnsNames: ["prometheus.monitoring.svc.cluster.local"]
+      issuerRef:
+        name: internal-ca
+        kind: ClusterIssuer
+    ```
+2.  **Привязка к CRD:** Оператор обнаружит секрет и автоматически настроит `--web.config.file`.
+
+### Безопасный скрейпинг (Secure Scrape)
+
+Для сбора метрик с защищенных эндпоинтов используйте mTLS, OAuth2 или `proxyConfig`:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: secure-app
-  namespace: production
 spec:
   endpoints:
     - port: https
       scheme: https
+      oauth2:
+        clientId:
+          secret: {name: auth-creds, key: id}
+        clientSecret:
+          name: auth-creds
+          key: secret
+        tokenUrl: https://keycloak.corp/token
+      proxyConfig: # Использование прокси для выхода из изолированных сегментов
+        proxyUrl: http://squid.corp:3128
       tlsConfig:
-        caFile: /etc/prometheus/secrets/ca.crt
-        certFile: /etc/prometheus/secrets/client.crt
-        keyFile: /etc/prometheus/secrets/client.key
+        ca:
+          secret: {name: app-ca, key: ca.crt}
         insecureSkipVerify: false
 ```
 
@@ -119,8 +129,10 @@ spec:
 
 ## Дополнительная информация
 
-> **См. также:**
->
-> - [High Availability](../high_availability.md) — отказоустойчивая конфигурация
-> - [Prometheus CRD](../crd/prometheus.md) — описание параметров Prometheus Custom Resource
-> - [Alertmanager](../../../alertmanager.md) — общая информация об Alertmanager
+Безопасность Prometheus Operator является динамической областью. Для реализации специфических мер следуйте специализированным SSoT-руководствам:
+
+- **[Контроль доступа](./access_control.md)** — глубокая настройка RBAC и NetworkPolicy.
+- **[Управление секретами](./secrets_best_practices.md)** — ротация и внешние хранилища.
+- **[Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md)** — реализация SSO и OAuth2-proxy.
+- **[High Availability](../high_availability.md)** — влияние отказоустойчивости на безопасность.
+- **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

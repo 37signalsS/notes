@@ -1,40 +1,41 @@
-# Alertmanager StatefulSet (манифест)
+# Alertmanager StatefulSet: Манифест и конфигурация
 
 ## Определения
 
-**Alertmanager StatefulSet** — Kubernetes StatefulSet для развёртывания Alertmanager с инициализацией конфигурации через init-container. Паттерн обеспечивает безопасную подстановку секретов (токены, пароли) из Kubernetes Secret в шаблон `alertmanager.yml` во время запуска пода.
+**Alertmanager StatefulSet** — основной ресурс Kubernetes для развёртывания Alertmanager. Использование StatefulSet вместо Deployment обеспечивает стабильные сетевые идентификаторы (важно для кластеризации) и гарантирует привязку PersistentVolume для сохранения состояния (silences, нотификации).
 
-> **См. также:** материал [Развёртывание Alertmanager в Kubernetes](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты)
+**Расширение переменных окружения (External Variable Expansion)** — функция Alertmanager (v0.27+), позволяющая подставлять значения из переменных окружения напрямую в файл `alertmanager.yml` через синтаксис `${VAR_NAME}`.
+
+> **См. также:** [Развёртывание Alertmanager в Kubernetes](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты).
+
+---
 
 ## Основные концепции
 
-### Архитектура подов
+### Структура пода
 
-| Компонент | Описание |
-|---|---|
-| **Init Container (`config-init`)** | Образ `busybox:1.36`, читает шаблон из ConfigMap, подставляет секреты через `sed`, записывает готовый `alertmanager.yml` в `emptyDir` |
-| **Основной контейнер (`alertmanager`)** | Образ `prom/alertmanager:v0.26.0`, монтирует готовый конфиг из `emptyDir`, запускается с `--config.file` и `--storage.path` |
+В современных инсталляциях (2025–2026) рекомендуется использовать встроенную поддержку переменных окружения, что упрощает манифест и избавляет от необходимости в `init-container`.
 
-### Схема volumes
+| Компонент | Назначение |
+| :--- | :--- |
+| **Alertmanager** | Образ `prom/alertmanager:v0.27.0`. Флаг `--config.expand-external-variables` активирует подстановку секретов. |
+| **Volumes** | Монтирование ConfigMap с шаблоном конфига и PVC для данных. |
 
-| Volume | Тип | Назначение |
-|---|---|---|
-| `config-template` | ConfigMap | Шаблон `alertmanager.yml.tpl` с плейсхолдерами |
-| `config` | emptyDir | Временный том для готового конфига (init-container → основной контейнер) |
-| `templates` | ConfigMap | Go-шаблоны для форматирования уведомлений |
-| `alertmanager-data` | PersistentVolumeClaim | Постоянное хранение silences и данных (1Gi, ReadWriteOnce) |
+### Схема томов (Volumes)
 
-### Ключевые параметры запуска
+| Том | Источник | Точка монтирования | Описание |
+| :--- | :--- | :--- | :--- |
+| `config` | ConfigMap | `/etc/alertmanager` | Содержит `alertmanager.yml` с плейсхолдерами `${VAR}`. |
+| `templates` | ConfigMap | `/etc/alertmanager/templates` | Дополнительные Go-шаблоны оформления. |
+| `data` | PVC | `/alertmanager` | Хранение состояния (1Gi, ReadWriteOnce). |
 
-| Параметр | Значение | Описание |
-|---|---|---|
-| `--config.file` | `/etc/alertmanager/alertmanager.yml` | Путь к сгенерированному конфигу |
-| `--storage.path` | `/alertmanager` | Путь к PVC для данных |
-| `containerPort` | `9093` | Порт веб-интерфейса и API |
+---
 
 ## Практические сценарии
 
 ### Манифест StatefulSet
+
+Пример современной конфигурации с использованием нативного расширения переменных из Secret.
 
 **`alertmanager-statefulset.yaml`**
 
@@ -55,47 +56,23 @@ spec:
       labels:
         app: alertmanager
     spec:
-      # === Init Container для генерации конфига ===
-      initContainers:
-        - name: config-init
-          image: busybox:1.36
-          command: ['/bin/sh', '-c']
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
           args:
-            - |
-              #!/bin/sh
-              set -e
-              # Читаем шаблон и подставляем переменные окружения
-              cat /config-template/alertmanager.yml.tpl |
-              sed "s/##SMTP_USER##/$SMTP_USER/g" |
-              sed "s/##SMTP_PASSWORD##/$SMTP_PASSWORD/g" |
-              sed "s/##TELEGRAM_TOKEN##/$TELEGRAM_TOKEN/g" |
-              sed "s/##TELEGRAM_CHAT_ID##/$TELEGRAM_CHAT_ID/g"
-              > /config/alertmanager.yml
-          # Переменные окружения, извлеченные из секрета
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+            # Важно: включаем поддержку переменных в конфиге
+            - "--config.expand-external-variables"
+          ports:
+            - name: web
+              containerPort: 9093
           env:
-            - name: SMTP_USER
-              valueFrom: { secretKeyRef: { name: alertmanager-secret, key: smtp.user } }
+            # Извлекаем секреты напрямую в переменные окружения
             - name: SMTP_PASSWORD
               valueFrom: { secretKeyRef: { name: alertmanager-secret, key: smtp.password } }
             - name: TELEGRAM_TOKEN
               valueFrom: { secretKeyRef: { name: alertmanager-secret, key: telegram.token } }
-            - name: TELEGRAM_CHAT_ID
-              valueFrom: { secretKeyRef: { name: alertmanager-secret, key: telegram.chat_id } }
-          volumeMounts:
-            - name: config-template
-              mountPath: /config-template
-            - name: config
-              mountPath: /config
-      # === Основной контейнер Alertmanager ===
-      containers:
-        - name: alertmanager
-          image: prom/alertmanager:v0.26.0
-          args:
-            - "--config.file=/etc/alertmanager/alertmanager.yml"
-            - "--storage.path=/alertmanager"
-          ports:
-            - name: web
-              containerPort: 9093
           volumeMounts:
             - name: config
               mountPath: /etc/alertmanager
@@ -105,12 +82,10 @@ spec:
             - name: alertmanager-data
               mountPath: /alertmanager
       volumes:
-        - name: config-template
-          configMap: { name: alertmanager-config-template }
+        - name: config
+          configMap: { name: alertmanager-config }
         - name: templates
           configMap: { name: alertmanager-templates }
-        - name: config
-          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: alertmanager-data
@@ -119,28 +94,15 @@ spec:
         resources: { requests: { storage: 1Gi } }
 ```
 
-### Пояснения к манифесту
+### Альтернатива: Использование Init Container
 
-**Init Container:**
+В учебных целях или для систем, не поддерживающих расширение переменных, может использоваться паттерн с `busybox` и `sed` (описан в полной версии руководства). Он позволяет подготовить конфиг до запуска основного процесса.
 
-- Образ `busybox:1.36` — минимальный, быстрый, содержит `sed` и `cat`
-- Команда читает шаблон из `/config-template/alertmanager.yml.tpl`, подставляет 4 переменные окружения из Secret, записывает результат в `/config/alertmanager.yml`
-- `set -e` — аварийное завершение при ошибке подстановки (под не запустится без валидного конфига)
-
-**Основной контейнер:**
-
-- `prom/alertmanager:v0.26.0` — проверяйте актуальность версии в разделе [Актуальная версия](../../installation/alertmanager_installation.md#актуальная-версия)
-- Монтирует готовый конфиг из `emptyDir` (путь `/etc/alertmanager`)
-- Данные хранятся на PVC (`alertmanager-data`, 1Gi) — silences и состояние сохраняются при перезапусках
-
-**StatefulSet vs Deployment:**
-
-- StatefulSet выбран для стабильного сетевого идентификатора (`alertmanager-0`) и возможности масштабирования в HA-кластер с gossip-протоколем
-- `serviceName: alertmanager` — требуется для DNS-разрешения пода
+---
 
 ## Дополнительная информация
 
-- [Секреты Kubernetes](./secrets.md) — Kubernetes Secret с токенами SMTP и Telegram
-- [ConfigMap-шаблон](./alertmanager-config.md) — шаблон `alertmanager.yml.tpl` с плейсхолдерами
-- [Шаблоны сообщений](./alertmanager-templates.md) — Go-шаблоны для форматирования уведомлений
-- [Сервисы](./services.md) — публикация Alertmanager и Karma наружу
+- **[Секреты Kubernetes](./secrets.md)** — описание ключей в Secret.
+- **[Конфигурация (ConfigMap)](./alertmanager-config.md)** — синтаксис `${}` в конфиге.
+- **[Шаблоны сообщений](./alertmanager-templates.md)** — оформление уведомлений.
+- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

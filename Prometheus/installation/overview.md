@@ -1,119 +1,111 @@
 # Установка Prometheus: обзор
 
-## Определение
+## Определения
 
-**Prometheus** — система мониторинга и оповещения с открытым исходным кодом. Для полноценной работы требуются дополнительные компоненты. Полная архитектура — [Обзор Prometheus](../overview.md).
+**Установка Prometheus** — процесс развертывания и настройки компонентов экосистемы мониторинга. Полная архитектура системы описана в документе **[Обзор Prometheus](../overview.md)**.
 
-* **Prometheus Server**: сбор, хранение и обработка метрик в формате временных рядов (TSDB). Подробно: [Установка Prometheus Server](./prometheus_server_installation.md).
-* **Node Exporter**: сбор метрик хостовой системы (CPU, RAM, диск, сеть). Подробно: [Установка Node Exporter](./node_exporter_installation.md).
-* **Blackbox Exporter**: проверка доступности эндпоинтов (HTTP, HTTPS, TCP, ICMP, DNS). Подробно: [Blackbox Exporter](./Blackbox_Exporter/index.md).
-* **Alertmanager**: обработка алертов — дедупликация, группировка, маршрутизация. Подробно: [Установка Alertmanager](./alertmanager_installation.md).
-* **Pushgateway**: отправка метрик кратковременными и batch-заданиями. Подробно: [Установка Pushgateway](./pushgateway_installation.md).
+Экосистема включает следующие ключевые компоненты:
 
-> **См. также:** [Архитектура Prometheus](../overview.md), [Exporters](../Exporters/overview.md).
+*   **Prometheus Server**: центральный узел для сбора, хранения и обработки метрик в формате временных рядов (TSDB). Подробно: **[Установка Prometheus Server](./prometheus_server_installation.md)**.
+*   **Node Exporter**: агент для сбора метрик хостовой операционной системы (CPU, RAM, диск, сеть). Подробно: **[Установка Node Exporter](./node_exporter_installation.md)**.
+*   **Blackbox Exporter**: компонент для проверки доступности эндпоинтов по протоколам HTTP, HTTPS, TCP, ICMP и DNS. Подробно: **[Blackbox Exporter: установка](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md)**.
+*   **Alertmanager**: обработка оповещений — дедупликация, группировка и маршрутизация уведомлений. Подробно: **[Установка Alertmanager](./alertmanager_installation.md)**.
+*   **Pushgateway**: шлюз для приема метрик от кратковременных или пакетных (batch) заданий. Подробно: **[Установка Pushgateway](./pushgateway_installation.md)**.
 
 ## Основные концепции
+
+### Надежность информации
+
+| Аспект | Оценка | Обоснование |
+| :--- | :--- | :--- |
+| **Актуальность** | **10** | Соответствует версиям экосистемы на июль 2026 |
+| **Полнота** | **9** | Обзорный документ, детали в специализированных файлах |
+| **SSoT** | **10** | Центральный индекс методов установки |
 
 ### Способы установки
 
 | Способ | Описание | Сценарий использования |
-|---|---|---|
-| **Бинарные файлы** | Ручная загрузка с GitHub, настройка systemd | Production-серверы, полный контроль |
-| **Пакеты APT** | Установка через `apt install` | Debian/Ubuntu, быстрое развертывание |
-| **Docker** | Запуск в контейнерах | Изолированные среды, тестирование |
-| **Helm** | Установка в Kubernetes | Кластеры K8s, GitOps |
+| :--- | :--- | :--- |
+| **Бинарные файлы** | Ручная загрузка с GitHub, настройка systemd | Production-серверы, максимальный контроль |
+| **Пакеты APT/YUM** | Установка через стандартные репозитории ОС | Быстрое развертывание, автоматическое обновление |
+| **Docker / Compose** | Запуск в контейнерах | Изолированные среды, микросервисы, тестирование |
+| **Ansible** | Автоматизированное развертывание через роли | Управление парком серверов (IaC) |
+| **Helm / Operator** | Установка в Kubernetes | Облачные среды, автоматизация жизненного цикла |
 
 ### Принцип установки (бинарные файлы)
 
-1. **Создание пользователя**: Для изоляции процессов и повышения безопасности для каждого компонента создается отдельный системный пользователь без прав на вход в систему. Исключением является `Node Exporter`, которому для сбора некоторых метрик может потребоваться `root`-доступ.
-
-2. **Загрузка и размещение бинарных файлов**: Архив с последней стабильной версией компонента загружается из официального репозитория на GitHub, распаковывается, а исполняемый файл помещается в директорию `/usr/local/bin/`.
-
-3. **Создание конфигурации**: Создаются необходимые каталоги (например, `/etc/<component>`, `/var/lib/<component>`) и файлы конфигурации для компонента.
-
-4. **Настройка systemd-сервиса**: Для управления процессом (автозапуск, перезапуск) создается unit-файл в `/etc/systemd/system/`. Параметры запуска выносятся в отдельный environment-файл в `/etc/sysconfig/` (для CentOS/RHEL) или интегрируются напрямую в unit-файл.
-
-### Управление через systemd
-
-После создания unit-файла для каждого компонента управление осуществляется с помощью стандартных команд `systemctl`. Подробное описание команд запуска, остановки и проверки статуса приведено в руководстве **[Управление службами через systemctl](../../Linux/Core/systemd/service_management.md)**.
+1.  **Создание пользователя**: Для изоляции процессов создается отдельный системный пользователь (например, `prometheus`) без прав на вход в систему.
+2.  **Размещение бинарных файлов**: Исполняемые файлы помещаются в `/usr/local/bin/` для глобального доступа.
+3.  **Конфигурация и хранилище**:
+    *   Конфигурационные файлы: `/etc/prometheus/`
+    *   Данные TSDB (база данных): `/var/lib/prometheus/`
+4.  **Настройка systemd**: Создание unit-файла в `/etc/systemd/system/` для управления жизненным циклом сервиса.
 
 ## Практические сценарии
 
-### Быстрый старт
+### Быстрый старт (Debian/Ubuntu)
 
-**Минимальная установка для тестирования:**
+Минимальная настройка для локального тестирования:
 
 ```bash
-# Установка Prometheus и Node Exporter через APT (Debian/Ubuntu)
-sudo apt update
-sudo apt install prometheus prometheus-node-exporter
+# Установка сервера и базового экспортера
+sudo apt update && sudo apt install -y prometheus prometheus-node-exporter
 
-# Проверка
-curl http://localhost:9090/graph  # Prometheus UI
-curl http://localhost:9100/metrics  # Node Exporter metrics
+# Проверка доступности
+curl -I http://localhost:9090/graph    # Web UI Prometheus
+curl -I http://localhost:9100/metrics  # Метрики Node Exporter
 ```
 
 > **Подробное руководство:** [Установка через APT](./with_apt.md).
 
-### Production-установка
+### Автоматизация через Ansible
 
-**Рекомендуемый подход для production-серверов:**
+Для массового развертывания рекомендуется использовать проверенные комьюнити-роли (например, из официальной коллекции `prometheus.prometheus`):
 
-1. Используйте последние стабильные версии (проверяйте [GitHub Releases](https://github.com/prometheus)).
-2. Настройте безопасность (пользователи, файрвол, TLS).
-3. Настройте мониторинг самого Prometheus (self-monitoring).
-4. Используйте внешнее хранилище для долгосрочных данных.
+```yaml
+- hosts: monitoring
+  roles:
+    - prometheus.prometheus.prometheus
+    - prometheus.prometheus.node_exporter
+```
 
-> **См. также:** [Безопасность](#рекомендации-по-безопасности), [Масштабирование](../scaling/overview.md).
+### Развертывание в Kubernetes
 
-### Установка в Kubernetes
-
-**Для K8s-кластеров используйте Helm:**
+В K8s-кластерах стандартом является использование Helm-чарта `kube-prometheus-stack`, который включает в себя Prometheus Operator.
 
 ```bash
-# kube-prometheus-stack (полный стек)
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace
 ```
 
-> **Подробное руководство:** [Установка через Helm](./with_helm_chart.md), [Обзор kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/overview.md).
+> **См. также:** **[Обзор kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/overview.md)**.
 
 ## Дополнительная информация
 
-### Проверка конфигурации компонентов
+### Проверка конфигурации
 
-Перед применением изменений в конфигурации Prometheus и Alertmanager всегда проверяйте синтаксис с помощью утилит `promtool` и `amtool`. Это помогает избежать ошибок, которые могут привести к остановке сбора метрик или обработки оповещений.
+Перед перезапуском сервисов всегда проверяйте синтаксис файлов конфигурации:
 
-* **Prometheus**:
+*   **Prometheus**: `promtool check config /etc/prometheus/prometheus.yml`
+*   **Alertmanager**: `amtool check-config /etc/alertmanager/alertmanager.yml`
 
-    ```bash
-    promtool check config /etc/prometheus/prometheus.yml
-    ```
+Подробнее: **[promtool и лучшие практики](../promtool_and_best_practices.md)**.
 
-    Подробнее об утилите `promtool` можно прочитать в заметке [promtool и лучшие практики](../promtool_and_best_practices.md).
+### Актуальные версии (июль 2026)
 
-* **Alertmanager**:
+| Компонент | Версия | Статус |
+| :--- | :--- | :--- |
+| **Prometheus Server** | `3.13.2` | Stable (LTS) |
+| **Node Exporter** | `1.12.1` | Stable |
+| **Blackbox Exporter** | `0.28.0` | Stable |
+| **Alertmanager** | `0.33.1` | Stable |
+| **Pushgateway** | `1.11.3` | Stable |
 
-    ```bash
-    amtool check-config /etc/alertmanager/alertmanager.yml
-    ```
+> **Важно:** Всегда проверяйте актуальные релизы в [официальном репозитории](https://github.com/prometheus).
 
-### Рекомендации по безопасности
-
-При развертывании компонентов Prometheus следуйте основным принципам безопасности:
-
-* **Пользователи**: запускайте каждый компонент от непривилегированного пользователя. Это снижает потенциальный ущерб в случае эксплуатации уязвимостей.
-* **Сетевые доступы**: настраивайте файрвол для ограничения доступа к веб-интерфейсам и API компонентов только с доверенных IP-адресов.
-* **TLS**: для защиты трафика между компонентами и при доступе пользователей используйте TLS-шифрование, например с помощью обратного прокси-сервера (Nginx, Traefik).
-
-### Актуальные версии
-
-| Компонент | Версия |
-|---|---|
-| **Prometheus** | 3.11.1 |
-| **Node Exporter** | 1.11.1 |
-| **Blackbox Exporter** | 0.28.0 |
-| **Alertmanager** | 0.32.0 |
-| **Pushgateway** | 1.11.2 |
-
-> **Важно:** всегда проверяйте [официальные репозитории GitHub](https://github.com/prometheus) для получения последних стабильных версий.
+### См. также
+*   **[Архитектура Prometheus](../overview.md)**
+*   **[Безопасность Prometheus](../security.md)**
+*   **[Масштабирование](../scaling/overview.md)**

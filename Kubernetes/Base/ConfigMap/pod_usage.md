@@ -106,6 +106,38 @@ spec:
       emptyDir: {}
 ```
 
+### Приоритеты и переопределение переменных
+
+Если переменная с одним и тем же именем определена и в `envFrom`, и в `env`, то значение из секции `env` (через `valueFrom` или прямое `value`) имеет **приоритет** и переопределяет значение из `envFrom`.
+
+**Пример переопределения:**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: env-override-demo
+spec:
+  containers:
+    - name: sample
+      image: busybox
+      command: [ "/bin/sh", "-c", "env | grep K8S" ]
+      # 1. Загружаем все ключи из ConfigMap
+      envFrom:
+        - configMapRef:
+            name: app-config # содержит K8S_FOO: "original", K8S_BAR: "value-bar"
+      # 2. Переопределяем конкретный ключ
+      env:
+        - name: K8S_FOO
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: K8S_BAR # Теперь K8S_FOO будет равен значению K8S_BAR ("value-bar")
+  restartPolicy: Never
+```
+
+В данном примере в логах пода мы увидим, что `K8S_FOO` равен значению `K8S_BAR`, так как секция `env` переопределила данные из `envFrom`.
+
 ## Дополнительная информация
 
 ### Рекомендации по безопасности и эксплуатации

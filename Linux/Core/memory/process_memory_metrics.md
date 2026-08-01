@@ -85,10 +85,16 @@ sudo ps_mem
 ```bash
 # Быстрое получение PSS и RSS для процесса
 cat /proc/<PID>/smaps_rollup | grep -E "Rss|Pss"
-# → Rss:               12440 kB
 # → Pss:                8520 kB
 # → Pss_Anon:           4120 kB
 # → Pss_File:           4400 kB
+
+# Основные показатели и пиковое потребление из статуса
+grep -E "VmRSS|VmSize|VmSwap|VmPeak" /proc/<PID>/status
+# → VmPeak:          150240 kB (пиковое потребление VSS за все время)
+# → VmSize:          150240 kB (текущий VSS)
+# → VmRSS:             4096 kB (текущий RSS)
+# → VmSwap:               0 kB (объем в свопе)
 ```
 
 ## Дополнительная информация

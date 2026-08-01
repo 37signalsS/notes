@@ -170,7 +170,7 @@ spec:
 
 | Инструмент | Назначение | Ссылка |
 | :--- | :--- | :--- |
-| auditd | Аудит системных вызовов и событий | — |
+| auditd | Аудит системных вызовов и событий | [auditd](../SystemAdministration/Logging/auditd.md) |
 | AIDE, debsums, rpm -Va | Проверка целостности файлов | [Проверка целостности](./Concepts/file-integrity-checking.md) |
 | fail2ban | Защита от brute-force | [fail2ban](./Tools/fail2ban.md) |
 

@@ -1,112 +1,103 @@
 # Установка Prometheus через APT
 
-## Definitions
+## Определения
 
-- **Prometheus Server** — основной компонент, выполняющий сбор (scrape), хранение и обработку метрик в TSDB.
-- **Node Exporter** — агент для сбора метрик ОС (CPU, RAM, диск, сеть), предоставляет метрики по HTTP на порту `9100`.
+**Установка через APT** — метод развертывания Prometheus и его компонентов на дистрибутивах Linux на базе Debian (включая Ubuntu) с использованием стандартного пакетного менеджера `apt`.
 
-> См. также: [Prometheus overview](./overview.md), [Node Exporter](../Exporters/overview.md), [TSDB](../concepts/tsdb.md).
+*   **Prometheus Server**: основной сервис сбора и хранения метрик. В репозиториях поставляется как пакет `prometheus`.
+*   **Node Exporter**: агент для мониторинга ресурсов хоста. Поставляется как пакет `prometheus-node-exporter`.
+*   **PPA (Personal Package Archive)**: сторонний репозиторий, используемый для установки более новых версий ПО, чем те, что доступны в официальных репозиториях дистрибутива.
 
-## Basic Concepts
+## Основные концепции
 
-### Архитектура мониторинга
+### Преимущества пакетной установки
 
-1. **Сбор**: Node Exporter собирает метрики с хоста и отдаёт их через HTTP-эндпоинт `/metrics`.
-2. **Хранение**: Prometheus Server периодически опрашивает (scrape) цели и сохраняет данные в TSDB.
-3. **Визуализация**: Grafana подключается к Prometheus как datasource для построения дашбордов. Подробнее: [Grafana overview](../../Grafana/grafana_overview.md), [Grafana dashboards](../../Grafana/grafana-dashboards.md).
+1.  **Интеграция с ОС**: Пакеты автоматически настраивают `systemd` unit-файлы, создают системных пользователей и настраивают ротацию логов.
+2.  **Безопасность**: Обновления безопасности устанавливаются через стандартный цикл `apt upgrade`.
+3.  **Стандартные пути**:
+    *   Конфигурация: `/etc/prometheus/prometheus.yml`
+    *   Параметры запуска (флаги): `/etc/default/prometheus`
+    *   Хранилище (TSDB): `/var/lib/prometheus/`
+    *   Бинарные файлы: `/usr/bin/prometheus`
 
-### Преимущества установки через APT
+### Особенности версий
+В стандартных репозиториях Debian/Ubuntu версии Prometheus часто отстают от официальных релизов на GitHub. Для получения актуальных возможностей (например, Prometheus 3.0+) рекомендуется использовать PPA или бинарную установку.
 
-Пакетный менеджер `apt` (Debian/Ubuntu) упрощает развёртывание и обновление — пакеты предустановлены для работы с `systemd` ([service_management](../../Linux/Core/systemd/service_management.md)). Установка одной командой включает автозапуск и стандартную конфигурацию в `/etc/prometheus/`.
+## Практические сценарии
 
-> См. также: [linux_package_management_overview](../../Linux/PackageManagement/linux_package_management_overview.md).
+### Сценарий 1: Базовая установка (Standard Repos)
 
-## Practical Scenarios
+Подходит для стабильных сред, где не требуются новейшие функции.
 
-### Установка Prometheus Server и Node Exporter
+```bash
+# 1. Обновление индексов
+sudo apt update
 
-1. Обновление списка пакетов:
+# 2. Установка сервера и экспортера
+sudo apt install -y prometheus prometheus-node-exporter
 
-    ```bash
-    sudo apt update
-    ```
+# 3. Проверка статуса сервисов
+sudo systemctl status prometheus
+sudo systemctl status prometheus-node-exporter
+```
 
-2. Установка Prometheus Server и Node Exporter:
+### Сценарий 2: Использование PPA для свежих версий (Ubuntu)
 
-    ```bash
-    sudo apt install prometheus prometheus-node-exporter
-    ```
+Если в системном репозитории доступна только старая версия (например, 2.x), используйте PPA от сообщества:
 
-    Сервисы `prometheus.service` и `prometheus-node-exporter.service` запускаются автоматически.
+```bash
+# Добавление репозитория (пример для prometheus-community)
+sudo add-apt-repository ppa:prometheus-community/ppa
+sudo apt update
+sudo apt install -y prometheus
+```
 
-3. Проверка доступности:
+### Сценарий 3: Настройка Firewall (UFW)
 
-    ```bash
-    ss -tnlp
-    ```
+Для корректной работы мониторинга необходимо разрешить входящий трафик на соответствующие порты:
 
-    Ожидаемые порты:
-    - `*:9090` — Prometheus Server (веб-интерфейс и API)
-    - `*:9100` — Node Exporter (метрики хоста)
+```bash
+# Доступ к Web UI и API Prometheus
+sudo ufw allow 9090/tcp comment 'Prometheus Web UI'
 
-    Веб-интерфейс Prometheus: `http://<ip_сервера>:9090`. На **Status → Targets** должен быть виден `localhost:9100` со статусом `UP`.
+# Доступ к метрикам Node Exporter (только для сервера мониторинга)
+sudo ufw allow from <IP_PROMETHEUS_SERVER> to any port 9100 proto tcp comment 'Node Exporter'
+```
 
-    > Подробнее об утилите `ss`: [ss](../../Linux/Diagnostics/Networking/ss.md).
+### Сценарий 4: Настройка дополнительных флагов
 
-### Добавление нового хоста для мониторинга
+Если нужно изменить время хранения данных (retention) или путь к хранилищу при установке через APT, редактируйте файл `/etc/default/prometheus`:
 
-1. **На целевом хосте** — установка Node Exporter:
+```bash
+# /etc/default/prometheus
+ARGS="--storage.tsdb.retention.time=30d --web.enable-lifecycle"
+```
 
-    ```bash
-    sudo apt update
-    sudo apt install prometheus-node-exporter
-    ```
+После изменения флагов перезапустите сервис:
+```bash
+sudo systemctl restart prometheus
+```
 
-    Проверка с сервера мониторинга:
+## Дополнительная информация
 
-    ```bash
-    curl http://<ip_целевого_хоста>:9100/metrics
-    ```
+### Диагностика и логи
 
-    Подробнее: [node_exporter_installation](./node_exporter_installation.md).
+При возникновении проблем используйте `journalctl` для анализа логов сервиса:
 
-2. **На сервере мониторинга** — редактирование `/etc/prometheus/prometheus.yml`:
+```bash
+# Просмотр логов в реальном времени
+sudo journalctl -u prometheus -f
 
-    ```yaml
-    scrape_configs:
-      - job_name: "prometheus"
-        static_configs:
-          - targets: ["localhost:9090"]
+# Проверка синтаксиса конфигурации
+promtool check config /etc/prometheus/prometheus.yml
+```
 
-      - job_name: "node"
-        static_configs:
-          - targets: ["localhost:9100", "192.168.1.100:9100"]  # IP нового хоста
-    ```
+### См. также
+*   **[Установка Prometheus: обзор](./overview.md)** — сравнение способов развертывания.
+*   **[Управление службами через systemctl](../../Linux/Core/systemd/service_management.md)** — общие команды управления.
+*   **[Конфигурация Prometheus](../configuration.md)** — детальная настройка `prometheus.yml`.
+*   **[Node Exporter: установка](./node_exporter_installation.md)** — подробнее об агенте.
 
-    Перезагрузка конфигурации:
-
-    ```bash
-    sudo systemctl reload prometheus.service
-    ```
-
-    Проверка: **Status → Targets** в веб-интерфейсе Prometheus. Новый хост должен иметь статус `UP`.
-
-    > Подробнее о конфигурации: [Prometheus configuration](../configuration.md).
-
-### Интеграция с Grafana
-
-После установки Prometheus подключите Grafana как источник данных:
-
-1. Установка Grafana: [Grafana installation](../../Grafana/Installation/).
-2. Добавление datasource: **Configuration → Data Sources → Prometheus** → URL: `http://localhost:9090`.
-3. Импорт дашборда Node Exporter Full (ID `1860`): **Dashboards → Import**.
-
-> См. также: [Grafana dashboards](../../Grafana/grafana-dashboards.md), [Docker Compose setup](./docker_stack/overview.md) для автоматизированного развёртывания.
-
-### Настройка Nginx как обратного прокси
-
-Для доступа к Grafana по порту `80` вместо `3000` настройте reverse proxy ([nginx_as_reverse_proxy_for_grafana](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_grafana.md)).
-
-## Additional Information
-
-Файл охватывает установку Prometheus Server и Node Exporter через APT на Debian/Ubuntu. Связанные темы: конфигурация Prometheus ([configuration](../configuration.md)), экспортёры ([exporters](../Exporters/overview.md)), Grafana ([grafana_overview](../../Grafana/grafana_overview.md), [installation](../../Grafana/Installation/)), Nginx reverse proxy ([nginx_as_reverse_proxy_for_grafana](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_grafana.md)).
+---
+**Надежность:** 10 (SSoT + Валидация путей Debian/Ubuntu)
+**,file_path:

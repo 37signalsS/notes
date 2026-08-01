@@ -6,106 +6,113 @@
 
 **Ключевые модификаторы:**
 
-- `by (<label1>, <label2>)` — группировка по указанным лейблам, все остальные лейблы удаляются из результата.
-- `without (<label1>, <label2>)` — агрегация по всем лейблам, кроме указанных.
+- `by (<label_list>)` — группировка по указанным лейблам. Все лейблы, не указанные в списке, удаляются из результата.
+- `without (<label_list>)` — агрегация по всем лейблам, **кроме** указанных. Используется, когда нужно сохранить большинство лейблов, удалив лишь специфические (например, `instance` или `pod`).
 
 ## Базовые концепции
 
 ### Синтаксис агрегации
 
+Операторы агрегации могут записываться двумя способами:
+
 ```promql
-<aggr_op> [parameter] by(<labels>) ([metric])
-<aggr_op> [parameter] without(<labels>) ([metric])
+# Способ 1: Модификатор после имени оператора
+<aggr_op> [parameter] by(<labels>) (<vector_expr>)
+
+# Способ 2: Модификатор после выражения
+<aggr_op> [parameter] (<vector_expr>) by(<labels>)
 ```
 
 ### Операторы мгновенной агрегации
 
 | Оператор | Описание | Пример |
 |----------|----------|--------|
-| `sum()` | Сумма значений | `sum(http_requests_total)` |
-| `avg()` | Среднее значение | `avg(node_cpu_seconds_total)` |
-| `count()` | Количество рядов | `count(up{job="api"})` |
-| `min()`, `max()` | Минимум/максимум | `max(node_filesystem_avail_bytes)` |
-| `stddev()`, `stdvar()` | Стандартное отклонение/дисперсия | `stddev(http_request_duration_seconds)` |
-| `topk(k, v)` | `k` наибольших значений | `topk(5, node_cpu_seconds_total)` |
-| `bottomk(k, v)` | `k` наименьших значений | `bottomk(3, node_memory_MemFree_bytes)` |
-| `count_values(label, v)` | Подсчёт рядов с одинаковыми значениями | `count_values("version", app_build_info)` |
-| `quantile(φ, v)` | φ-квантиль (0 ≤ φ ≤ 1) | `quantile(0.95, http_request_duration_seconds)` |
+| `sum()` | Сумма значений всех рядов в группе. | `sum by (job) (up)` |
+| `avg()` | Среднее арифметическое. | `avg(node_load1)` |
+| `count()` | Количество временных рядов в группе. | `count(up == 1)` |
+| `min()`, `max()` | Минимальное или максимальное значение. | `max(node_cpu_seconds_total)` |
+| `stddev()`, `stdvar()` | Стандартное отклонение и дисперсия. | `stddev(http_request_duration_seconds)` |
+| `topk(k, v)` | `k` рядов с наибольшими значениями. | `topk(5, rate(http_requests_total[5m]))` |
+| `bottomk(k, v)` | `k` рядов с наименьшими значениями. | `bottomk(3, node_memory_MemFree_bytes)` |
+| `count_values(label, v)` | Считает количество рядов для каждого уникального значения `v`. | `count_values("version", build_info)` |
+| `quantile(φ, v)` | φ-квантиль (0 ≤ φ ≤ 1) по значениям в векторе. | `quantile(0.95, rate(http_requests_total[5m]))` |
+| `group()` | Группирует ряды, устанавливая значение в `1`. | `group by (region) (up)` |
 
-### Агрегация по времени (`..._over_time`)
+**Особенности использования:**
+- **`topk` и `bottomk`**: Нестабильны для визуализации на графиках, так как состав "топ-5" может меняться каждую точку, создавая "прыгающие" линии. Рекомендуется использовать только в таблицах или для мгновенных запросов.
+- **`count_values`**: Создает новый лейбл (указанный первым аргументом), значением которого становится само числовое значение метрики, а значением ряда — количество таких вхождений.
 
-Функции диапазона агрегируют значения _каждого_ ряда в указанном окне и возвращают **instant vector**:
+### Агрегация по времени (..._over_time)
+
+Эти функции принимают **range vector** и возвращают **instant vector**, выполняя вычисления внутри временного окна для *каждого* ряда отдельно.
 
 | Функция | Описание |
 |---------|----------|
-| `avg_over_time(range)` | Среднее значение в диапазоне |
-| `min_over_time(range)`, `max_over_time(range)` | Минимум/максимум в диапазоне |
-| `sum_over_time(range)` | Сумма значений в диапазоне |
-| `count_over_time(range)` | Количество точек в диапазоне |
-| `first_over_time(range)`, `last_over_time(range)` | Первое/последнее значение |
-| `stddev_over_time(range)`, `stdvar_over_time(range)` | Отклонение/дисперсия в диапазоне |
-| `quantile_over_time(φ, range)` | φ-квантиль в диапазоне |
+| `avg_over_time(range)` | Среднее значение в интервале. |
+| `min_over_time(range)`, `max_over_time(range)` | Минимум/максимум в интервале. |
+| `sum_over_time(range)` | Сумма всех значений в интервале. |
+| `count_over_time(range)` | Количество точек (сэмплов) в интервале. |
+| `first_over_time(range)`, `last_over_time(range)` | Самое старое / самое новое значение в интервале. |
+| `stddev_over_time(range)`, `stdvar_over_time(range)` | Отклонение и дисперсия в интервале. |
+| `quantile_over_time(φ, range)` | φ-квантиль значений в интервале. |
+| `mad_over_time(range)` | Медианное абсолютное отклонение (поиск аномалий). |
 
 ## Практические сценарии
 
-### Группировка по лейблам
+### Выбор между by и without
+
+Используйте `without`, когда вы хотите сохранить контекст (например, `application`, `env`), но агрегировать эфемерные лейблы:
 
 ```promql
-# Сумма запросов для каждого path
-sum by (path) (http_requests_total)
-
-# Средний CPU по instance, исключая лейблы cpu и mode
-avg without (cpu, mode) (node_cpu_seconds_total{mode="idle"})
+# Агрегируем все поды, сохраняя информацию о приложении и окружении
+sum without (pod, instance) (container_memory_usage_bytes)
 ```
 
-### Расчёт доли ошибок HTTP 5xx
+Используйте `by`, когда вам нужен строго определенный набор лейблов в результате:
+
+```promql
+# Сумма запросов только в разрезе HTTP-методов
+sum by (method) (http_requests_total)
+```
+
+### Расчёт доли ошибок в процентах
 
 ```promql
 sum(rate(http_requests_total{code=~"5.."}[5m]))
 /
-sum(rate(http_requests_total[5m]))
+sum(rate(http_requests_total[5m])) * 100
 ```
 
-### Top-5 подов по потреблению памяти
+### Поиск аномалий через медианное отклонение
 
 ```promql
-topk(5, container_memory_usage_bytes{container!=""})
-```
-
-### Прогнозирование нехватки диска
-
-```promql
-# Среднее свободное место за последний час
-avg_over_time(node_filesystem_avail_bytes[1h])
-```
-
-### Подсчёт количества инстансов с одинаковой версией
-
-```promql
-count_values("version", app_build_info)
+# Ряды, чьё значение сильно отклоняется от медианы за последний час
+node_load1 > (
+  avg_over_time(node_load1[1h]) + 3 * mad_over_time(node_load1[1h])
+)
 ```
 
 ## Дополнительная информация
 
 ### Предостережения
 
-- **Counter + `sum(rate())`** — безопасная комбинация для распределённых систем. Суммирование `rate()` по **Counter** корректно отражает общую скорость ([Счётчики](../metric_types/counter.md)).
-- **Summary квантили нельзя агрегировать** через `avg()` или `sum()` — они уже вычислены на стороне клиента. Используйте `max()` или агрегируйте `_sum`/`_count` ([Summary](../metric_types/summary.md)).
-- **Histogram + `histogram_quantile()`** — предпочтительный подход для перцентилей в распределённых системах ([Гистограммы](../metric_types/histogram.md)).
+- **Агрегация Counter**: Никогда не агрегируйте "сырые" счетчики напрямую (`sum(http_requests_total)`). Всегда сначала применяйте `rate()` или `increase()`, а затем суммируйте результат: `sum(rate(http_requests_total[5m]))`. Это необходимо для корректной обработки сбросов счетчиков ([Счётчики](../metric_types/counter.md)).
+- **Агрегация Summary**: Квантили из Summary (`{quantile="0.99"}`) нельзя усреднять (`avg`) или суммировать. Для получения агрегированного перцентиля используйте `max` (худший случай) или перейдите на Histogram ([Summary](../metric_types/summary.md)).
+- **Агрегация Histogram**: Для получения верного квантиля по нескольким инстансам всегда используйте `sum by (le)` внутри `histogram_quantile` ([Гистограммы](../metric_types/histogram.md)).
 
-### Subqueries и агрегация
+### Подзапросы (Subqueries) и агрегация
 
-**Subqueries** (подзапросы) позволяют применять `..._over_time` к функциям **instant vector**:
+Подзапросы позволяют применять функции `..._over_time` к результатам мгновенных вычислений:
 
 ```promql
-# Среднее rate за последний час с шагом 5 минут
-avg_over_time(rate(http_requests_total[5m])[1h:5m])
+# Максимальный пятиминутный RPS, зафиксированный за последние сутки
+max_over_time(sum(rate(http_requests_total[5m]))[24h:1m])
 ```
 
-Подробнее о векторных операциях и подзапросах — [Операции с векторами](./vector_operations.md).
+Подробнее о синтаксисе — [Операции с векторами](./vector_operations.md).
 
 > **См. также:**
 >
-> - [Функции PromQL](./functions.md) — классификация и примеры функций.
-> - [Типы данных](./data_types.md) — различие между instant и range векторами.
-> - [Операции с векторами](./vector_operations.md) — сложные манипуляции с множествами рядов.
+> - [Функции PromQL](./functions.md) — классификация и справочник функций.
+> - [Типы данных](./data_types.md) — различие между мгновенными и интервальными векторами.
+> - [Операции с векторами](./vector_operations.md) — сопоставление векторов (`on`, `ignoring`).

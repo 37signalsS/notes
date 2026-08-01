@@ -1,76 +1,70 @@
-# Управление ролями с Ansible Galaxy
+# Управление ролями и коллекциями через Ansible Galaxy
 
 ## Определения
 
-**Ansible Galaxy** — официальный репозиторий ([galaxy.ansible.com](https://galaxy.ansible.com)) и утилита CLI (Command Line Interface — интерфейс командной строки) для поиска, обмена и управления контентом Ansible (роли, коллекции).
+**Ansible Galaxy** — официальный публичный репозиторий ([galaxy.ansible.com](https://galaxy.ansible.com)) и утилита командной строки для поиска, установки и управления контентом Ansible.
 
-**Коллекция (Collection)** — структура, содержащая роли, модули, плагины и документацию для работы с экосистемой (например, `community.postgresql`).
+**Коллекция (Collection)** — современный стандарт упаковки и распространения контента Ansible (начиная с версии 2.10). Включает в себя роли, модули, плагины и документацию. Коллекции имеют пространство имен (например, `community.docker`).
 
-**Роль (Role)** — базовая единица переиспользования: предопределенная структура файлов для автоматизации компонента системы. Подробнее: [ansible_roles.md](../ansible_roles.md).
+**Роль (Role)** — логическая единица организации задач, переменных и шаблонов для настройки конкретного компонента системы. Роли могут поставляться как отдельно (Legacy-формат), так и внутри коллекций. Подробнее: [ansible_roles.md](../ansible_roles.md).
+
+**Automation Hub / Private Galaxy** — корпоративные альтернативы публичному Galaxy (например, Red Hat Automation Hub, Pulp, Galaxy NG) для хранения приватного или сертифицированного контента.
 
 ---
 
 ## Основные концепции
 
-### Команды управления
+### Команды управления контентом
 
-**Поиск контента:**
+Утилита `ansible-galaxy` разделена на два подраздела: `role` (для классических ролей) и `collection` (для коллекций).
 
+#### Работа с ролями (Legacy)
 ```bash
 # Поиск ролей по ключевому слову
 ansible-galaxy role search postgresql
 
-# Поиск коллекций
-ansible-galaxy collection search community
-```
+# Создание каркаса роли
+ansible-galaxy role init my_new_role
 
-**Создание каркаса роли:**
-
-```bash
-ansible-galaxy role init my_new_role  # → роль успешно инициализирована
-```
-
-**Установка ролей и коллекций:**
-
-```bash
-# Установить роль в директорию по умолчанию
-ansible-galaxy role install geerlingguy.postgresql  # → роль установлена в ~/.ansible/roles
-
-# Установить коллекцию
-ansible-galaxy collection install community.postgresql  # → коллекция установлена в ~/.ansible/collections
+# Установка роли (по умолчанию в ~/.ansible/roles)
+ansible-galaxy role install geerlingguy.postgresql
 
 # Установка в конкретный путь (флаг -p)
-ansible-galaxy role install geerlingguy.nginx -p ./roles/  # → роль установлена в локальную папку проекта
+ansible-galaxy role install geerlingguy.nginx -p ./roles/
 
 # Принудительное обновление (флаг -f)
-ansible-galaxy role install geerlingguy.postgresql -f  # → существующая роль перезаписана
+ansible-galaxy role install geerlingguy.postgresql -f
+
+# Список установленных ролей
+ansible-galaxy role list
 ```
 
-**Просмотр установленных компонентов:**
-
+#### Работа с коллекциями (Modern)
 ```bash
-ansible-galaxy role list  # → список установленных ролей
-ansible-galaxy collection list  # → список установленных коллекций
-```
+# Поиск коллекций
+ansible-galaxy collection search community
 
-**Проверка целостности коллекции:**
+# Установка коллекции (по умолчанию в ~/.ansible/collections)
+ansible-galaxy collection install community.postgresql
 
-```bash
-ansible-galaxy collection verify community.postgresql  # → проверка контрольных сумм файлов коллекции
+# Проверка целостности (контрольных сумм) установленной коллекции
+ansible-galaxy collection verify community.docker
+
+# Просмотр установленных коллекций
+ansible-galaxy collection list
 ```
 
 ### Управление зависимостями через `requirements.yml`
 
-Лучшая практика — определять все внешние роли и коллекции в файле `requirements.yml`. Начиная с Ansible 2.10, можно объединять роли и коллекции в одном файле.
+Лучшая практика — определять все внешние зависимости в файле `requirements.yml`. Начиная с Ansible 2.10, роли и коллекции можно объединять в одном файле.
 
 **Пример `requirements.yml`:**
-
 ```yaml
 # Роли
 roles:
   # 1. Из Ansible Galaxy
   - name: geerlingguy.postgresql
-    version: 1.8.0
+    version: "1.8.0" # Всегда фиксируйте версии
 
   # 2. Из Git-репозитория
   - src: https://github.com/geerlingguy/ansible-role-nginx.git
@@ -81,72 +75,108 @@ roles:
 # Коллекции
 collections:
   # 3. Из Ansible Galaxy
-  - name: community.postgresql
-    version: 2.3.0
+  - name: community.general
+    version: ">=9.0.0"
 
   # 4. Из Git-репозитория
   - name: https://github.com/ansible-collections/community.docker.git
     type: git
     version: main
+
+  # 5. С проверкой подписи
+  - name: my_namespace.secure_collection
+    signatures:
+      - https://example.com/signatures/manifest.json.asc
 ```
 
-**Установка зависимостей из файла:**
-
+**Установка зависимостей:**
 ```bash
-# Установка ролей и коллекций одновременно (Ansible 2.10+)
+# Установка всего содержимого (рекомендуется)
 ansible-galaxy install -r requirements.yml
 
-# Явная установка только ролей или только коллекций
+# Явная установка только ролей или коллекций
 ansible-galaxy role install -r requirements.yml
 ansible-galaxy collection install -r requirements.yml
 ```
 
 ---
 
+## Технические детали и безопасность
+
+### Безопасность и проверка подписей (Signature Verification)
+
+Для предотвращения подмены контента (Supply Chain Security) Ansible поддерживает проверку GPG-подписей.
+
+1.  **Импорт публичного ключа издателя:**
+    ```bash
+    gpg --import --no-default-keyring --keyring ~/.ansible/pubring.kbx publisher-key.asc
+    ```
+2.  **Установка с проверкой:**
+    Используйте флаг `--keyring` для указания пути к связке ключей.
+    ```bash
+    ansible-galaxy collection install my_ns.my_col --keyring ~/.ansible/pubring.kbx
+    ```
+3.  **Верификация уже установленной коллекции:**
+    ```bash
+    ansible-galaxy collection verify my_ns.my_col --keyring ~/.ansible/pubring.kbx
+    ```
+
+### Работа в изолированных средах (Offline / Air-gapped)
+
+Если управляющий узел не имеет доступа к интернету, используйте механизм `download`.
+
+1.  **Загрузка на машине с интернетом:**
+    ```bash
+    ansible-galaxy collection download community.crypto -p ./offline_collections/
+    ```
+    Команда скачает `.tar.gz` файлы, их зависимости и создаст локальный `requirements.yml`.
+2.  **Перенос и установка на целевом узле:**
+    ```bash
+    ansible-galaxy collection install -r ./offline_collections/requirements.yml -p ./collections/
+    ```
+
+---
+
 ## Практические сценарии
 
-### Сценарий 1: Быстрое развертывание с готовыми ролями
+### Сценарий 1: Изоляция зависимостей проекта (CI/CD)
 
-```bash
-# Поиск нужной роли
-ansible-galaxy role search nginx
+В пайплайнах рекомендуется устанавливать роли и коллекции локально в папку проекта, чтобы избежать конфликтов версий.
 
-# Установка роли от Geerlingguy
-ansible-galaxy role install geerlingguy.nginx
+**Конфигурация `ansible.cfg`:**
+```ini
+[defaults]
+roles_path = ./roles
+collections_path = ./collections
 ```
 
-### Сценарий 2: Изоляция зависимостей проекта (CI/CD)
-
-В CI/CD пайплайнах часто требуется устанавливать роли локально в папку проекта, чтобы не загрязнять системные директории:
-
+**Команда установки:**
 ```bash
-# Установка в локальную папку roles/ внутри проекта
 ansible-galaxy install -r requirements.yml -p ./roles/
 ```
 
-### Сценарий 3: Версионирование и "заморозка" зависимостей
+### Сценарий 2: Интеграция с приватным репозиторием (Automation Hub)
 
-Для обеспечения идентичности окружений на Dev/Prod всегда фиксируйте версии:
-
-```yaml
-roles:
-  - name: geerlingguy.postgresql
-    version: "1.8.0" # Кавычки рекомендуются для версий-строк
-```
-
-### Сценарий 4: Интеграция с приватным репозиторием
-
-Для крупных организаций — использование корпоративного Galaxy сервера (например, Automation Hub или Pulp):
+Настройка доступа к корпоративному серверу через токены в `ansible.cfg`.
 
 ```ini
-# ansible.cfg
 [galaxy]
-server_list = my_company_galaxy
+server_list = automation_hub, release_galaxy
 
-[galaxy_server.my_company_galaxy]
-url = https://galaxy.mycompany.com/api/
-token = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx # Рекомендуется использовать переменные окружения вместо записи в файл
+[galaxy_server.automation_hub]
+url = https://console.redhat.com/api/automation-hub/
+auth_url = https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
+token = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx # Безопаснее использовать ANSIBLE_GALAXY_TOKEN
+
+[galaxy_server.release_galaxy]
+url = https://galaxy.ansible.com/
 ```
+
+### Сценарий 3: Создание и публикация собственного контента
+
+1.  **Инициализация:** `ansible-galaxy collection init my_ns.my_col`.
+2.  **Сборка:** `ansible-galaxy collection build` (создает `.tar.gz`).
+3.  **Публикация:** `ansible-galaxy collection publish my_ns-my_col-1.0.0.tar.gz --api-key <secret>`.
 
 ---
 
@@ -154,41 +184,31 @@ token = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx # Рекомендуется исп
 
 ### Пути установки и поиск
 
-По умолчанию `ansible-galaxy` устанавливает контент в:
+Ansible ищет контент в следующем порядке:
+1.  Пути из `ansible.cfg` (`roles_path`, `collections_path`).
+2.  Переменные окружения `ANSIBLE_ROLES_PATH`, `ANSIBLE_COLLECTIONS_PATHS`.
+3.  Пути по умолчанию:
+    - `~/.ansible/roles` (пользовательские).
+    - `/usr/share/ansible/roles` (системные).
 
-1. `~/.ansible/roles` (или `collections`) — пользовательская директория.
-2. `/usr/share/ansible/roles` — системная директория.
+### Кэширование и квоты
 
-**Приоритеты в `ansible.cfg`:**
-Установка и поиск ролей зависят от параметра `roles_path`. Если в проекте есть локальная папка `roles`, добавьте её в конфиг:
-
+Для ускорения работы в CI/CD можно включить кэширование:
 ```ini
-[defaults]
-roles_path = ./roles:~/.ansible/roles:/usr/share/ansible/roles
-```
-
-### Тонкая настройка и кэширование
-
-Для ускорения работы в CI/CD можно использовать кэширование коллекций:
-
-```ini
-# ansible.cfg
 [galaxy]
 cache_dir = ~/.ansible/galaxy_cache
-token_with_client_auth = True
 ```
 
 **Полезные переменные окружения:**
-- `ANSIBLE_GALAXY_SERVER`: URL сервера Galaxy по умолчанию.
-- `ANSIBLE_GALAXY_CACHE_DIR`: Путь к директории кэша.
-- `ANSIBLE_GALAXY_TOKEN`: Токен для аутентификации (безопаснее, чем в файле).
+- `ANSIBLE_GALAXY_SERVER_LIST`: Список серверов.
+- `ANSIBLE_GALAXY_TOKEN`: Токен аутентификации.
 
 ### Сравнение с ручным управлением через Git
 
-Альтернативный подход — использование модуля `ansible.builtin.git` для клонирования ролей напрямую в проект. Это полезно для быстрой правки внешних ролей. Подробнее: [git_management.md](git_management.md#сравнение-с-ansible-galaxy).
+Альтернатива Galaxy — использование модуля `ansible.builtin.git` или Git Submodules. Это полезно для быстрой правки внешних ролей "на месте", но усложняет управление версиями коллекций. Подробнее: [git_management.md](git_management.md#сравнение-с-ansible-galaxy).
 
-### Связанные документы
+### См. также
 
-- [Структура роли](structure.md) — стандартная иерархия каталогов
-- [Создание и использование ролей](usage.md) — практическое руководство
-- [ansible_roles.md](../ansible_roles.md) — общие концепции ролей в Ansible
+- [Создание и использование ролей](usage.md) — технические детали подключения
+- [Структура роли](structure.md) — описание каталогов и meta-файлов
+- [ansible_roles.md](../ansible_roles.md) — обзорная статья о ролях и коллекциях

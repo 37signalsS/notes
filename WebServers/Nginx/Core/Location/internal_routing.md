@@ -1,157 +1,138 @@
-# Nginx: Внутренняя маршрутизация
+# Nginx: внутренняя маршрутизация
 
-> **Надежность: 10** (Подтверждено актуальной документацией Nginx на июнь 2026)
+> **Надежность: 10** (Подтверждено актуальной документацией Nginx на июль 2026)
 
 ## Определения
 
-**Внутренняя маршрутизация (internal routing)** — механизм Nginx, при котором запросы перенаправляются внутри сервера без участия клиента. Клиент не знает о внутренних перенаправлениях — URL (Uniform Resource Locator — унифицированный определитель местонахождения ресурса) в браузере не меняется.
+**Внутренняя маршрутизация (Internal routing)** — механизм Nginx, при котором запросы перенаправляются внутри сервера без участия клиента. Клиент не получает HTTP-редирект (301/302), и URL (Uniform Resource Locator — унифицированный определитель местонахождения ресурса) в браузере остается неизменным.
 
 Ключевые инструменты внутренней маршрутизации:
 
 - **Именованные `location`** (`@name`) — блоки для внутренних перенаправлений, которые невозможно вызвать напрямую внешним запросом.
 - **Директива `internal`** — ограничивает доступ к `location` только внутренними запросами Nginx.
 - **Директива `error_page`** — механизм обработки ошибок через внутренние редиректы.
+- **Заголовок `X-Accel-Redirect`** — позволяет бэкенду инициировать отдачу файла самим Nginx.
+
+---
 
 ## Базовые концепции
 
 ### Именованные location (`@name`)
 
-Именованные `location` используются для внутренних перенаправлений внутри Nginx, например, с помощью директив `try_files` или `error_page`. Они не участвуют в обычном процессе сопоставления URI (Uniform Resource Identifier — унифицированный идентификатор ресурса).
-
-**Синтаксис:** `@name`
-
-**Пример:**
+Именованные `location` не участвуют в обычном сопоставлении URI (Uniform Resource Identifier — унифицированный идентификатор ресурса). Они вызываются только явно через другие директивы, такие как `try_files` или `error_page`.
 
 ```nginx
 location / {
+    # Сначала пытаемся отдать статику, если нет — уходим на @backend
     try_files $uri @backend;
 }
 
 location @backend {
-    proxy_pass http://my_backend_servers;
+    proxy_pass http://upstream_app;
 }
 ```
-
-В этом примере, если Nginx не находит статический файл, он выполняет внутреннее перенаправление на именованный `location @backend`, который проксирует запрос к бэкенд-серверам.
 
 ### Директива `internal`
 
-Директива `internal` внутри блока `location` делает его доступным только для внутренних запросов. Если клиент попытается обратиться к такому пути напрямую, Nginx вернёт ошибку `404 Not Found`.
+Директива `internal` внутри блока `location` делает его доступным только для внутренних перенаправлений. Прямой запрос от клиента вернет `404 Not Found`.
 
-**Пример:**
+**Случаи использования:**
+- Защита страниц ошибок (`error_page`).
+- Защита статики, отдаваемой через `X-Accel-Redirect`.
+- Внутренние API-эндпоинты (например, для модуля `auth_request`).
 
-```nginx
-location /private_data/ {
-    internal;
-    root /var/www/internal_files;
-}
+### Лимиты и предотвращение циклов
 
-location /error_pages/ {
-    internal;
-    root /var/www/errors;
-}
+Nginx ограничивает количество внутренних перенаправлений до **10** на один запрос. Если лимит превышен, Nginx возвращает ошибку `500 Internal Server Error`.
+
+```bash
+tail -f /var/log/nginx/error.log
+# → rewrite or internal redirection cycle while internal redirection to "/index.html"
 ```
 
-Это критически важно для защиты конфиденциальных ресурсов, скриптов или внутренних API (Application Programming Interface — программный интерфейс приложения).
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Обработка ошибок через error_page
+### Сценарий 1: Управление отдачей файлов бэкендом (`X-Accel-Redirect`)
 
-Директива `error_page` позволяет определить кастомные страницы ошибок. Она выполняет внутреннее перенаправление при возникновении указанного HTTP-кода.
+Бэкенд-приложение проверяет права доступа и решает, какой файл отдать, отправляя заголовок `X-Accel-Redirect`. Nginx перехватывает его и отдает файл сам (Zero-Copy).
 
-**Синтаксис:** `error_page code ... [=[response]] uri;`
+```nginx
+# Конфигурация Nginx
+location /internal_files/ {
+    internal;
+    root /var/www/protected;
+}
+
+location /download {
+    proxy_pass http://app_server;
+}
+```
+
+**Логика:**
+1. Клиент запрашивает `/download`.
+2. Бэкенд возвращает заголовок `X-Accel-Redirect: /internal_files/report.pdf`.
+3. Nginx отдает `/var/www/protected/internal_files/report.pdf`.
+
+### Сценарий 2: Рекурсивные страницы ошибок
+
+Если сама страница ошибки вызывает ошибку (например, из-за отсутствия прав), Nginx вернет стандартную заглушку. Директива `recursive_error_pages` позволяет продолжать внутренние перенаправления.
 
 ```nginx
 server {
-    root /var/www/html;
+    recursive_error_pages on;
+    error_page 404 /404.php;
 
-    error_page 404 /404.html;
-    error_page 500 502 503 504 /50x.html;
-
-    location / {
-        try_files $uri $uri/ =404;
-    }
-
-    location = /404.html {
+    location = /404.php {
         internal;
-    }
-
-    location = /50x.html {
-        internal;
+        fastcgi_pass unix:/run/php/php-fpm.sock;
     }
 }
 ```
 
-**Принцип работы:**
+### Сценарий 3: Внутренняя проверка авторизации (`auth_request`)
 
-- `error_page 404 /404.html;` — при возникновении ошибки 404 Nginx переходит к обработке `/404.html`.
-- `location = /404.html { internal; }` — гарантирует, что страница ошибки недоступна для прямого вызова извне.
-
-### Сценарий 2: Fallback на бэкенд для SPA
-
-Типичный паттерн для SPA (Single Page Application — одностраничное приложение) или статических сайтов с динамическим fallback:
+Модуль `auth_request` выполняет внутренний подзапрос для проверки прав доступа.
 
 ```nginx
-server {
-    root /var/www/app;
+location /private/ {
+    auth_request /auth-verify;
+    root /var/www/private;
+}
 
-    location / {
-        try_files $uri $uri/ @app;
-    }
-
-    location @app {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    location /api/ {
-        internal; # Доступ только для внутренних вызовов
-        proxy_pass http://127.0.0.1:8080;
-    }
+location = /auth-verify {
+    internal;
+    proxy_pass http://auth_service/validate;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
 }
 ```
 
-**Логика обработки:**
+### Сценарий 4: Возврат JSON при ошибках API
 
-1. Запрос `/index.html` → отдаётся статический файл.
-2. Запрос `/dashboard` (маршрут на стороне клиента) → файл не найден → внутренний редирект на `@app`.
-3. Прямой запрос клиента к `/api/` → ошибка 404 из-за директивы `internal`.
-
-### Сценарий 3: Возврат JSON при ошибках API
-
-Если Nginx работает как API-шлюз, ошибки должны возвращаться в формате JSON (JavaScript Object Notation).
+Для API (Application Programming Interface — программный интерфейс приложения) ошибки должны быть в формате JSON (JavaScript Object Notation).
 
 ```nginx
 server {
-    error_page 404 = @handle_404;
-    error_page 500 = @handle_500;
+    error_page 404 = @json_404;
 
-    location @handle_404 {
+    location @json_404 {
         internal;
         default_type application/json;
-        return 404 '{"error": "not_found", "path": "$uri"}';
-    }
-
-    location @handle_500 {
-        internal;
-        default_type application/json;
-        return 500 '{"error": "internal_server_error"}';
-    }
-
-    location / {
-        try_files $uri $uri/ =404;
+        return 404 '{"status": 404, "message": "Not Found"}';
     }
 }
 ```
+
+---
 
 ## Дополнительная информация
 
-### Взаимодействие с другими директивами
+### Нюансы использования
 
-- **`try_files`** — основной инициатор внутренних перенаправлений.
-- **`proxy_intercept_errors`** — позволяет перехватывать ошибки от бэкенда для их обработки через локальную директиву `error_page`.
+- **`proxy_intercept_errors on;`** — необходима, если вы хотите, чтобы `error_page` обрабатывала ошибки, пришедшие от бэкенда (`proxy_pass`).
+- **URI при редиректе** — при переходе в именованный `location` переменная `$uri` сохраняет исходное значение запроса.
 
 ### См. также
 

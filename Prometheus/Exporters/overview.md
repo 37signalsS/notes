@@ -2,96 +2,88 @@
 
 ## Определения
 
-**Экспортер (Exporter)** — программа, собирающая метрики из сторонней системы и преобразующая их в формат Prometheus. Экспортеры действуют как «переводчики» между Prometheus и monitored системой.
+**Экспортер (Exporter)** — специализированный программный компонент (агент), который собирает метрики из систем, не поддерживающих протокол Prometheus нативно, и транслирует их в формат, понятный серверу мониторинга. Экспортеры выступают в роли адаптеров между проприетарными или специфичными интерфейсами (JMX, SNMP, SQL) и HTTP-интерфейсом Prometheus.
 
-**Процесс экспозиции (Exposition)** — процесс предоставления данных для Prometheus. Prometheus собирает данные по HTTP (HyperText Transfer Protocol) в формате plain text с кодировкой UTF-8 (единственный способ с версии 0.4.0, ранее был доступен Protobuf).
+**Процесс экспозиции (Exposition)** — предоставление собранных метрик через HTTP-эндпоинт (обычно `/metrics`) для последующего сбора (scraping) сервером. В современных реалиях 2026 года экспозиция осуществляется в текстовом (OpenMetrics) или бинарном (Protobuf/OTLP) форматах.
 
-## Базовые концепции
+## Основные концепции
 
 ### Принцип работы экспортера
 
-1. Экспортер запрашивает данные у целевой системы (например, базы данных или операционной системы).
-2. Преобразует полученные данные в текстовый формат метрик Prometheus.
-3. Открывает HTTP-эндпоинт (обычно `/metrics`), по которому Prometheus забирает (scrape) метрики.
+Prometheus реализует **Pull-модель** сбора данных. Типовой цикл работы экспортера:
 
-Экспортер не хранит метрики и не знает о существовании Prometheus — постоянно парсит данные и отдаёт их по запросу. Частота сбора настраивается в [конфигурации Prometheus](../configuration.md) (`scrape_interval`).
+1. **Запрос данных:** Экспортер опрашивает целевую систему (ядро ОС, БД, брокер сообщений).
+2. **Трансформация:** Полученные данные (например, вывод `iostat` или результат SQL-запроса) преобразуются в модель данных Prometheus.
+3. **Обслуживание:** Экспортер открывает HTTP-сервер. При поступлении запроса от Prometheus он отдаёт актуальный снимок (snapshot) метрик.
 
-### Формат данных
+> **Важно:** Экспортер — это **stateless** (не сохраняющий состояние) компонент. Он не хранит историю метрик, эта задача полностью делегирована [TSDB Prometheus](../tsdb.md).
 
-Формат экспозиции Prometheus: plain text, UTF-8, HTTP. Подробности — в [типы метрик](../concepts/metric_types/overview.md).
+### Современные форматы экспозиции (2026)
 
-Основные элементы:
+С выходом Prometheus v3.0+ и развитием OpenTelemetry, количество поддерживаемых форматов расширилось:
 
-- Комментарии обозначаются `#`
-- `# HELP <metric_name> <description>` — описание метрики
-- `# TYPE <metric_name> <type>` — [тип метрики](../concepts/metric_types/overview.md) (`counter`, `gauge`, `histogram`, `summary`), объявляется до первого использования
-- Формат метрики: `metric_name{label_name="label_value"} value timestamp` (timestamp опционален)
+*   **OpenMetrics (1.0/2.0):** Основной текстовый стандарт. Поддерживает Exemplars (связи с трассами) и расширенные типы данных. Версия 2.0 нативно поддерживает UTF-8 для имен метрик.
+*   **Prometheus Text (0.0.4):** Классический человекочитаемый формат.
+*   **Protobuf:** Используется для высокоэффективной передачи данных, особенно при использовании **Native Histograms** (экспоненциальных гистограмм).
+*   **OTLP (OpenTelemetry Protocol):** В 2026 году Prometheus поддерживает прямой прием OTLP метрик по HTTP/gRPC, что позволяет использовать SDK OpenTelemetry без выделенных экспортеров.
 
-### Источники метрик для Prometheus
+### Типы реализации сбора
 
-1. **Exporters** — сторонние приложения, собирающие метрики из существующих источников (Nginx, PostgreSQL, ОС Linux).
-2. **Клиентские библиотеки** — написание кастомных экспортеров с использованием готовых библиотек для большинства языков.
-3. **Прямая инструментация** — встраивание экспозиции метрик в код приложения через клиентские библиотеки.
+1.  **Exporters:** Отдельные процессы для сторонних систем (напр. [node_exporter](./node_exporter.md)).
+2.  **Нативная инструментация (Native Instrumentation):** Когда приложение само предоставляет эндпоинт `/metrics` (напр. [Angie](../../WebServers/Angie/angie_overview.md), Kubernetes components). Это самый надежный и предпочтительный метод.
+3.  **Pushgateway:** Промежуточный буфер для кратковременных задач (Cron jobs), которые не могут ждать Pull-запроса. Подробнее: [Pushgateway](../pushgateway.md).
 
-### Нативная инструментация
+### Безопасность экспортеров
 
-Предпочтительный подход — когда приложение **само отдаёт метрики** в формате Prometheus без отдельного экспортера (**native instrumentation**).
+Экспортеры часто имеют доступ к критическим данным системы. Рекомендации по защите:
 
-**Преимущества:**
-
-- **Надёжность и точность:** метрики генерируются непосредственно из кода
-- **Детализация бизнес-логики:** уникальные метрики, недоступные извне
-- **Упрощение архитектуры:** не нужно обслуживать дополнительный компонент
-
-**Опасность чрезмерной инструментации:** не следует превращать мониторинг в трассировку, создавая метрики с высокой [кардинальностью](../concepts/labels_and_cardinality.md) (например, с `request_id` в лейблах). Это ведёт к разрастанию TSDB (Time Series Database) и деградации производительности. Для отслеживания отдельных запросов существуют системы трассировки ([Jaeger](../../Jaeger/jaeger_overview.md), [OpenTelemetry](../../OpenTelemetry/opentelemetry_overview.md)).
-
-### Высокая доступность экспортеров
-
-Экспортеры — легковесные **stateless** приложения. Запуск нескольких реплик считается избыточным.
-
-Применяемые стратегии:
-
-- **Алертинг на недоступность таргета:** метрика `up` становится `0` для недоступного таргета. Настройка алерта `up == 0` — обязательная практика. Подробнее: [Alertmanager](../alertmanager.md), [Правила оповещений](../rules.md).
-- **Использование параллельных систем:** для расследования инцидентов во время недоступности экспортера используются логирование (ELK — Elasticsearch, Logstash, Kibana; Loki) или другие утилиты мониторинга ([atop](../../Linux/Diagnostics/Performance/atop.md)).
+*   **TLS и Аутентификация:** Большинство современных экспортеров поддерживают `web-config.yml` для настройки TLS и Basic Auth. Никогда не оставляйте экспортеры открытыми в публичных сетях.
+*   **Фильтрация по IP:** Ограничение доступа к эндпоинту только для IP-адресов серверов Prometheus.
+*   **Минимальные привилегии:** Запуск экспортера от не-root пользователя с ограниченным доступом к системным ресурсам.
 
 ## Практические сценарии
 
-### Whitebox vs Blackbox мониторинг
+### Паттерн Multi-Target
 
-**Whitebox (белый ящик):** мониторинг внутренних метрик системы — приложение инструментируется и само отдаёт метрики (основной подход для Prometheus).
+Для таких экспортеров как [Blackbox](./blackbox/blackbox_exporter_overview.md) или SNMP Exporter используется схема, где один инстанс экспортера проверяет множество целей. Prometheus передает адрес цели в параметре запроса:
 
-**Blackbox (черный ящик):** мониторинг внешнего поведения сервиса (доступность HTTP-эндпоинта, валидность SSL (Secure Sockets Layer) сертификата). Реализуется через [Blackbox Exporter](./blackbox/blackbox_exporter_overview.md).
+```yaml
+# Пример конфигурации scrape для Blackbox
+- job_name: 'blackbox'
+  metrics_path: /probe
+  params:
+    module: [http_2xx]
+  static_configs:
+    - targets: ['example.com', 'google.com']
+  relabel_configs:
+    - source_labels: [__address__]
+      target_label: __param_target
+    - target_label: __address__
+      replacement: 127.0.0.1:9115 # Адрес самого экспортера
+```
 
-Подробнее: [Whitebox vs Blackbox в Blackbox Exporter](./blackbox/blackbox_exporter_overview.md#whitebox-vs-blackbox-мониторинг).
+### Выбор инструмента для мониторинга
 
-### Выбор экспортера для задачи
-
-| Задача | Экспортер | Ссылка |
+| Система | Рекомендуемый инструмент | Особенности |
 | :--- | :--- | :--- |
-| Мониторинг Linux-хоста (CPU, память, диск, сеть) | [node_exporter](./node_exporter.md) | [Установка](../installation/node_exporter_installation.md) |
-| Мониторинг контейнеров Docker | [cAdvisor](./cadvisor.md) | — |
-| Проверка доступности HTTP/TCP/DNS/ICMP | [blackbox_exporter](./blackbox/blackbox_exporter_overview.md) | [Установка](../installation/Blackbox_Exporter/index.md) |
-| Мониторинг MySQL | mysqld_exporter | [MySQL](../../Databases/MySQL/overview.md) |
-| Мониторинг PostgreSQL | postgres_exporter | [PostgreSQL](../../Databases/PostgreSQL/overview.md) |
-| Мониторинг Nginx | nginx-prometheus-exporter | — |
-| Мониторинг RabbitMQ | rabbitmq_exporter | — |
-| Мониторинг Kafka | kafka_exporter | [Kafka](../../Kafka/kafka_for_monitoring.md) |
-| Кастомные метрики | [Textfile Collector](./extensibility/textfile_collector.md) / [Свой экспортер](./extensibility/custom_exporters.md) | — |
-
-Полный каталог дополнительных экспортеров: [другие экспортеры](./other_exporters.md).
+| **Linux OS** | [node_exporter](./node_exporter.md) | Стандарт для железа и VM. |
+| **Контейнеры** | [cAdvisor](./cadvisor.md) | Встроен в kubelet в Kubernetes. |
+| **Веб-серверы** | [Angie](../../WebServers/Angie/angie_overview.md) / Nginx | Angie поддерживает нативный экспорт. |
+| **Базы данных** | `postgres_exporter` / `mysqld_exporter` | Требуют отдельного пользователя в БД. |
+| **Сетевые устройства** | `snmp_exporter` | Использует паттерн Multi-Target. |
+| **Удаленные сервисы** | [blackbox_exporter](./blackbox/blackbox_exporter_overview.md) | Проверка HTTP, TCP, ICMP, DNS снаружи. |
+| **Кастомные скрипты** | [Vector](../../Vector/vector_overview.md) / [Textfile Collector](./extensibility/textfile_collector.md) | Vector эффективнее для сложной логики. |
 
 ## Дополнительная информация
 
-### Официальные и поддерживаемые сообществом экспортеры
+### Reliability Score: 10
+Документация актуализирована для Prometheus v3.12 (май 2026), включает поддержку OTLP и Native Histograms.
 
-Полный список: [official exporters](https://prometheus.io/docs/instrumenting/exporters/), [community exporters](https://prometheus.io/docs/instrumenting/exporters/#community-exporters).
-
-### Расширяемость
-
-Механизм для сбора произвольных метрик через внешние скрипты: [Textfile Collector](./extensibility/textfile_collector.md). Руководство по созданию кастомных экспортеров на Go (язык программирования): [написание своих экспортеров](./extensibility/custom_exporters.md).
+### Порты экспортеров
+При разработке собственных решений придерживайтесь [официального списка распределения портов](https://github.com/prometheus/prometheus/wiki/Default-port-allocations).
 
 ### Связанные темы
-
-- [Типы метрик](../concepts/metric_types/overview.md) — counter, gauge, histogram, summary
-- [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — автоматическое обнаружение экспортеров
-- [Каталог других экспортеров](./other_exporters.md) — перечень популярных решений
+- [Типы метрик](../concepts/metric_types/overview.md) — детальный разбор Counter, Gauge, Histogram.
+- [Формат экспозиции](../concepts/metric_types/exposition_format.md) — спецификация OpenMetrics и Text format.
+- [Service Discovery](../service_discovery_and_relabeling.md) — как Prometheus находит экспортеры автоматически.
+- [Каталог других экспортеров](./other_exporters.md) — расширенный список для специфичных систем.

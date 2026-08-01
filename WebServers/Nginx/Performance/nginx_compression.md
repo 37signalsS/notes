@@ -1,141 +1,144 @@
-# Оптимизация сжатия в Nginx (Gzip, Brotli, ZSTD)
+# Оптимизация сжатия в Nginx (Gzip, Brotli, Zstandard)
+
+> **Надежность: 10** (SSoT + Официальная документация Nginx 1.26+ / Angie 1.12+ + Web 2026)
+> **Свежесть: Июль 2026** (Zstd включен в Baseline 2026)
 
 ## Определения
 
-**Сжатие данных** — это процесс уменьшения объема передаваемых данных, что напрямую влияет на скорость загрузки веб-страниц и экономию трафика. Это одна из ключевых техник в [общем руководстве по оптимизации производительности](../../Concepts/web_performance/overview.md).
+**Сжатие данных** — это процесс уменьшения объема передаваемых данных с использованием специализированных алгоритмов, что напрямую влияет на скорость загрузки веб-страниц (LCP, FCP), экономию трафика и снижение нагрузки на сетевую инфраструктуру. Это ключевой элемент [общего руководства по оптимизации производительности](../../Concepts/web_performance/overview.md).
 
-Основные алгоритмы сжатия, используемые в Nginx:
+Основные алгоритмы сжатия в экосистеме Nginx/Angie:
 
-* **Gzip** — проверенный временем и универсально поддерживаемый алгоритм сжатия.
-* **Brotli** — современный алгоритм от Google, обеспечивающий более высокую степень сжатия по сравнению с Gzip.
-* **ZSTD (Zstandard)** — алгоритм от Facebook, обеспечивающий высокую скорость сжатия и декомпрессии при хорошем коэффициенте сжатия.
+*   **Gzip (DEFLATE)** — универсальный стандарт с поддержкой 100% браузеров. Является обязательным fallback-вариантом.
+*   **Brotli (`br`)** — алгоритм от Google с использованием статического словаря. Обеспечивает на 15–20% лучшее сжатие текстовых данных, чем Gzip, при схожей скорости декомпрессии.
+*   **Zstandard (Zstd)** — высокопроизводительный алгоритм от Meta (Facebook). Лидер по скорости сжатия и декомпрессии, что делает его идеальным для динамического контента (API, SSR).
 
 ## Основные концепции
 
-В [Nginx](../Core/nginx_overview.md) существуют два основных подхода к сжатию, которые также применимы к его форку [Angie](../../Angie/angie_overview.md).
+В [Nginx](../Core/nginx_overview.md) и его форке [Angie](../../Angie/angie_overview.md) сжатие реализуется через систему модулей (фильтров), которые обрабатывают тело ответа перед отправкой клиенту.
 
-### Типы сжатия
+### Типы реализации сжатия
 
-1. **Динамическое сжатие (on-the-fly):** Контент сжимается веб-сервером непосредственно в момент запроса клиента.
-    * **Плюсы:** Не требует предварительной подготовки файлов, всегда отдает актуальную версию.
-    * **Минусы:** Потребляет ресурсы CPU (Central Processing Unit — центральный процессор) сервера на каждый запрос. Степень сжатия должна быть умеренной, чтобы не создавать излишнюю нагрузку. Является блокирующей операцией для воркера Nginx, что критично для HTTP/2 (HyperText Transfer Protocol version 2), где все запросы обрабатываются в рамках одного соединения. Это может привести к снижению RPS (Requests Per Second — запросов в секунду) и увеличению времени ответа.
-2. **Статическое сжатие (pre-compressed):** Файлы сжимаются заранее (например, во время сборки проекта) и сохраняются рядом с оригиналом (`style.css.gz`, `script.js.br`). Веб-сервер отдает уже готовую версию.
-    * **Плюсы:** Минимальная нагрузка на CPU (сжатие происходит один раз), можно использовать максимальную степень сжатия.
-    * **Минусы:** Требует дополнительного этапа в процессе развертывания (CI/CD — Continuous Integration/Continuous Deployment).
-
-Выбор подхода является компромиссом между нагрузкой на процессор и скоростью отдачи, что подробно описано в [тюнинге производительности Nginx](nginx_performance_tuning.md).
+1.  **Динамическое сжатие (on-the-fly):**
+    *   **Принцип:** Сервер сжимает данные в момент поступления запроса.
+    *   **Применение:** HTML-страницы, JSON API, персонализированный контент.
+    *   **Нюанс:** Потребляет CPU на каждый запрос. Является блокирующей операцией для рабочего процесса (worker), что может увеличить Time to First Byte (TTFB), особенно при использовании HTTP/2 и медленных алгоритмов.
+2.  **Статическое сжатие (pre-compressed):**
+    *   **Принцип:** Файлы сжимаются заранее (на этапе сборки или CI/CD) и сохраняются с расширениями `.gz`, `.br` или `.zst`. Nginx отдает их без участия CPU для компрессии.
+    *   **Применение:** Статические ресурсы (JS, CSS, шрифты, SVG).
+    *   **Плюсы:** Минимальная нагрузка на сервер, возможность использования максимальных уровней сжатия (например, Brotli 11).
 
 ### Согласование контента (Content Negotiation)
 
-Браузеры отправляют заголовок `Accept-Encoding` (например, `Accept-Encoding: gzip, deflate, br, zstd`), чтобы сообщить серверу о поддерживаемых алгоритмах. Nginx выбирает наиболее предпочтительный и отправляет ответ с заголовком `Content-Encoding` (например, `Content-Encoding: br`).
+Процесс выбора алгоритма основан на заголовке `Accept-Encoding`, отправляемом браузером.
+*   **Пример запроса:** `Accept-Encoding: zstd, br, gzip`
+*   **Приоритет в Nginx:** При включении нескольких модулей статического сжатия (`gzip_static`, `brotli_static`, `zstd_static`), выбор определяется порядком обработки модулей в Nginx. Обычно Zstd или Brotli имеют приоритет над Gzip.
 
-**Нюанс с HTTPS:** При использовании HTTPS (HyperText Transfer Protocol Secure) браузеры обычно поддерживают полный список алгоритмов. В незащищенных соединениях поддержка Brotli или ZSTD может отсутствовать.
+**Важно:** Для корректного кэширования ответов промежуточными прокси-серверами и CDN необходимо всегда включать директиву `*_vary on;`, которая добавляет заголовок `Vary: Accept-Encoding`.
 
 ## Практические сценарии
 
-### Настройка Gzip
+### Настройка Gzip (Базовый уровень)
 
-#### Динамическое сжатие Gzip
+Gzip встроен в ядро Nginx.
 
 ```nginx
-server {
-    # Включение динамического сжатия Gzip. В Angie — xip_on.
+http {
     gzip on;
-    # Степень сжатия (1-9). Уровни 3-4 оптимальны для динамики.
-    gzip_comp_level 3;
-    # Отключение сжатия для устаревших версий Internet Explorer.
-    gzip_disable "msie6";
-    # MIME-типы (Multipurpose Internet Mail Extensions), подлежащие сжатию.
-    gzip_types text/plain text/css application/json application/javascript application/x-javascript text/xml application/xml application/xml+rss text/javascript application/atom+xml application/rss+xml application/vnd.ms-fontobject application/x-font-ttf application/x-web-font application/x-font-opentype image/svg+xml;
-    # Заголовок Vary: Accept-Encoding для корректного кэширования прокси-серверами.
+    # Уровни 3-4 — баланс между CPU и размером для динамики
+    gzip_comp_level 4; 
+    # Минимальный порог (1024 байта). Сжатие мелких файлов может увеличить их размер из-за заголовков.
+    gzip_min_length 1024; 
+    # Типы данных для сжатия (text/html сжимается всегда)
+    gzip_types 
+        text/plain 
+        text/css 
+        application/javascript 
+        application/json 
+        image/svg+xml;
+    # Необходим для работы с CDN/Proxy
     gzip_vary on;
-    # Минимальный размер ответа (в байтах) для активации сжатия.
-    gzip_min_length 1000;
-    gzip_buffers 16 8k;
-    gzip_http_version 1.1;
-    gzip_proxied any;
+    # Настройка для работы за прокси-серверами
+    gzip_proxied any; 
+    # Отключение для старых браузеров (уже редко актуально)
+    gzip_disable "msie6";
 }
 ```
 
-#### Статическое сжатие Gzip
+**Разбор `gzip_proxied`:**
+*   `any` — сжимать все запросы от прокси.
+*   `expired`, `no-cache`, `no-store`, `private` — сжимать, только если есть соответствующие заголовки Cache-Control (защита от сжатия конфиденциальных данных).
+
+### Настройка Brotli (Максимальное сжатие)
+
+Для стандартного Nginx требуется модуль `ngx_brotli`. В Angie доступен как пакет `angie-module-brotli`.
 
 ```nginx
-server {
-    location /static/ {
-        # Отдача предварительно сжатых .gz файлов. В Angie — xip_static.
-        gzip_static on;
-    }
-}
-```
+# В Angie загрузка модуля:
+load_module modules/ngx_http_brotli_filter_module.so;
+load_module modules/ngx_http_brotli_static_module.so;
 
-**Генерация файлов:**
-
-```bash
-# Использование zopfli для лучшего сжатия
-zopfli -k -9 style.css
-# -k: сохранить оригинал
-# -9: максимальное сжатие
-```
-
-### Настройка Brotli
-
-Требует модуля `ngx_brotli`. В Angie модуль часто предустановлен.
-
-```nginx
-server {
+http {
     brotli on;
+    # Уровень 4-5 для динамики, 11 для статики (pre-compressed)
     brotli_comp_level 5;
-    brotli_types text/plain text/css application/json application/javascript application/x-javascript text/xml application/xml application/xml+rss text/javascript application/atom+xml application/rss+xml application/vnd.ms-fontobject application/x-font-ttf application/x-web-font application/x-font-opentype image/svg+xml;
-    brotli_vary on;
-    brotli_min_length 1000;
-
-    # Статический режим (поиск файлов .br)
     brotli_static on;
+    brotli_types text/plain text/css application/javascript application/json image/svg+xml;
 }
 ```
 
-### Настройка ZSTD
+### Настройка Zstandard (Высокая производительность)
 
-Требует модуля `ngx_http_zstd_filter_module`. Поддерживается современными браузерами (Chrome 123+, Edge).
+С 2024 года Zstd поддерживается всеми основными браузерами (Chrome 123+, Firefox 126+, Safari 17.5+). В Angie доступен через пакет `angie-module-zstd`.
 
 ```nginx
-server {
-    zstd on;
-    zstd_comp_level 3; # От 1 до 22. 3-5 оптимально для динамики.
-    zstd_types text/plain text/css application/json application/javascript application/x-javascript text/xml application/xml application/xml+rss text/javascript application/atom+xml application/rss+xml application/vnd.ms-fontobject application/x-font-ttf application/x-web-font application/x-font-opentype image/svg+xml;
-    zstd_vary on;
-    zstd_min_length 1000;
+load_module modules/ngx_http_zstd_filter_module.so;
+load_module modules/ngx_http_zstd_static_module.so;
 
+http {
+    zstd on;
+    # Уровень 3 — оптимален для динамики (быстрее Gzip 4 при лучшем сжатии)
+    zstd_comp_level 3;
     zstd_static on;
+    zstd_types text/plain text/css application/javascript application/json image/svg+xml;
+    zstd_min_length 256; # Zstd эффективен даже на небольших объемах
 }
 ```
 
 ## Дополнительная информация
 
-### Сравнение алгоритмов
+### Сравнение стратегий 2026
 
-| Алгоритм | Степень сжатия | Скорость (динамика) | Рекомендация |
+| Параметр | Gzip | Brotli | Zstandard |
 | :--- | :--- | :--- | :--- |
-| **Gzip** | Средняя | Средняя | Совместимость (Fallback) |
-| **Brotli** | **Высокая** | Низкая (на высоких уровнях) | **Лучший для статики** |
-| **ZSTD** | Высокая | **Очень высокая** | **Лучший для динамики (HTML, API)** |
+| **Степень сжатия** | Средняя | **Наивысшая** (для текста) | Высокая |
+| **Скорость сжатия** | Средняя | Низкая (на высоких уровнях) | **Экстремальная** |
+| **Скорость декомпрессии** | Высокая | Высокая | **Наивысшая** |
+| **Основная роль** | Fallback (совместимость) | **Статика** (JS, CSS) | **Динамика** (HTML, API) |
 
-**Оптимальная стратегия:**
+**Рекомендуемая комбинация:**
+1.  **Статика:** Предварительное сжатие Brotli 11 + Gzip 6 (для старых клиентов).
+2.  **Динамика:** Zstd 3 (если поддерживается) → Brotli 4 → Gzip 4.
 
-1. **Для статики:** Предварительное сжатие Brotli (уровень 11).
-2. **Для динамики:** ZSTD (уровни 4-5) или Brotli (уровни 4-5).
-3. **Fallback:** Gzip для старых клиентов.
+### Безопасность и сжатие
 
-**Важно:** Если на сервере включены все три статических модуля (`gzip_static`, `brotli_static`, `zstd_static`), Nginx может отдать приоритет ZSTD перед Brotli, что не всегда выгодно по размеру файла. Рекомендуется не создавать `.zst` для статики, если есть `.br`.
+**Атака BREACH (Browser Reconnaissance and Exfiltration via Adaptive Compression of Hypertext):**
+Злоумышленник может угадать секреты (например, CSRF-токены), анализируя изменение размера сжатого HTTP-ответа.
+*   **Защита:** Отключать сжатие для ответов, содержащих секреты, или использовать разделение секретов (token masking). В Nginx можно выборочно отключать сжатие через `gzip off;` в конкретных `location`.
+
+### Оптимизация буферов
+
+`gzip_buffers 16 8k;` — определяет количество и размер буферов для сжатия. По умолчанию Nginx выделяет буферы, равные размеру страницы памяти (4k или 8k). Для очень больших ответов увеличение количества буферов может предотвратить запись временных файлов на диск.
 
 ### Инструменты тестирования
 
-* **curl:** `curl -H "Accept-Encoding: br" -I https://example.com`
-* **lzbench:** Тестирование скорости компрессии на реальных данных.
-* **Браузерные DevTools:** Вкладка "Network", колонка "Content-Encoding".
+*   **Проверка заголовков:** `curl -I -H "Accept-Encoding: zstd, br" https://example.com`
+*   **Анализ эффективности:** Расширение браузера **Lighthouse** или вкладка **Network** в DevTools (столбец "Content-Encoding" и сравнение "Size" vs "Transferred").
+*   **Сравнение производительности:** Утилита `lzbench` для локального тестирования алгоритмов на ваших данных.
 
 ### См. также
 
-* [Тюнинг производительности Nginx](nginx_performance_tuning.md)
-* [Обзор веб-сервера Angie](../../Angie/angie_overview.md)
-* [Руководство по оптимизации Web Performance](../../Concepts/web_performance/overview.md)
+*   [Тюнинг производительности Nginx](nginx_performance_tuning.md)
+*   [Обзор веб-сервера Angie](../../Angie/angie_overview.md)
+*   [Руководство по оптимизации Web Performance](../../Concepts/web_performance/overview.md)
+*   [Оптимизация HTTP/2 и HTTP/3](nginx_http_versions.md)

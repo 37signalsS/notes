@@ -31,6 +31,12 @@
 1. Проверьте наличие ресурсов, на которые ссылается `Deployment`.
 2. Если используется `envFrom`, убедитесь, что ConfigMap/Secret существует в том же namespace.
 
+**Мини-кейс: Отсутствующий файл конфигурации (FileNotFound)**
+Микросервис входит в `CrashLoopBackOff`.
+- **Симптом:** `kubectl logs --previous` показывает ошибку `FileNotFound: /etc/config/config.yaml`.
+- **Диагностика:** `kubectl get pod -o yaml` выявил опечатку в пути `volumeMounts` (вместо `/etc/config` было указано `/etc/conf`).
+- **Решение:** Исправление пути в манифесте `Deployment`. После редеплоя контейнер успешно находит файл.
+
 ```bash
 # Проверка наличия ресурса
 kubectl get configmap app-config -n my-namespace
@@ -64,7 +70,7 @@ initContainers:
 - Логи: `permission denied`, `cannot create directory`, `open /var/run/secrets/...: permission denied`.
 
 **Решение:**
-1. Проверьте контекст безопасности (`securityContext`). Если используется `readOnlyRootFilesystem: true`, приложению могут потребоваться тома `emptyDir` для временных файлов.
+1. Проверьте контекст безопасности (`securityContext`). Если используется `readOnlyRootFilesystem: true`, приложению могут потребоваться тома `emptyDir` для временных файлов. Подробнее см. **[Security Context в Kubernetes](../../../Security/pod_security_context.md)**.
 2. Настройте `fsGroup` или `runAsUser` для соответствия прав на томах.
 
 ```yaml
@@ -125,6 +131,20 @@ kubectl auth can-i list pods --as=system:serviceaccount:default:my-sa
 
 **Решение:**
 Если приложение — это скрипт или миграция, которые должны выполниться один раз, используйте ресурс `Job` или `CronJob` вместо `Deployment`. `Deployment` всегда стремится поддерживать процесс запущенным.
+
+### Сценарий 8: Недостаточно памяти (OOMKilled)
+
+**Симптомы:**
+- Reason: `OOMKilled`.
+- Exit Code: 137.
+
+**Мини-кейс: Java-приложение и жесткие лимиты**
+Java-сервис постоянно перезапускается под нагрузкой.
+- **Симптом:** `kubectl describe pod` показывает `Last State: Terminated`, `Reason: OOMKilled`, `Exit Code: 137`.
+- **Диагностика:** Лимит памяти в манифесте установлен в `256Mi`, что недостаточно для Heap и Non-Heap памяти данной JVM под нагрузкой.
+- **Решение:** Увеличение лимита до `1Gi` и настройка `-XX:MaxRAMPercentage=75.0` в переменных окружения.
+
+Подробнее см. раздел **[Поды, завершенные из-за нехватки памяти (OOMKilled)](../oomkilled_pods.md)**.
 
 ## Дополнительная информация
 

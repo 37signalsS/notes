@@ -1,3 +1,8 @@
+---
+reliability: 10
+updated: 2026-07-31
+---
+
 # Let's Encrypt и Certbot — HTTPS для веб-серверов
 
 ## Определения
@@ -6,19 +11,19 @@
 
 **ACME (Automated Certificate Management Environment)** — протокол автоматизированного управления сертификатами: получение, обновление, отзыв TLS-сертификатов без участия человека.
 
-**Certbot** — инструмент для автоматического получения и обновления сертификатов Let's Encrypt. Поддерживает плагины для Nginx, Apache и метод webroot.
+**Certbot** — официальный инструмент EFF (Electronic Frontier Foundation) для автоматического получения и обновления сертификатов Let's Encrypt. Поддерживает плагины для Nginx, Apache и метод webroot.
 
 **Webroot** — метод авторизации ACME: проверочный файл размещается в `.well-known/acme-challenge/` на веб-сервере.
 
 ### Типы ключей: ECDSA и RSA
 
-**ECDSA (Elliptic Curve Digital Signature Algorithm)** — ключ на основе эллиптических кривых. Быстрее для сервера, меньший размер. Certbot 3.x: ECDSA — тип по умолчанию. Совместимость ниже на устаревших клиентах.
+**ECDSA (Elliptic Curve Digital Signature Algorithm)** — ключ на основе эллиптических кривых. Быстрее для сервера, меньший размер. Certbot 2.x+: ECDSA (P-256) — тип по умолчанию. Обеспечивает высокий уровень безопасности при меньшей нагрузке на CPU.
 
-**RSA (Rivest–Shamir–Adleman)** — классический тип ключа. Отличная совместимость, быстрее для клиента при рукопожатии, но медленнее для сервера и имеет больший размер ключа.
+**RSA (Rivest–Shamir–Adleman)** — классический тип ключа. Отличная совместимость с очень старыми клиентами, но требует больших ресурсов для шифрования (рекомендуется размер 2048 или 4096 бит).
 
-> **Лучшие практики:** Параллельное развёртывание ECDSA + RSA — ECDSA для современных клиентов, RSA для обратной совместимости.
+> **Лучшие практики (2024–2026):** Рекомендуется использовать ECDSA. Let's Encrypt перешел на новые цепочки доверия (R10-R14 для RSA и E5-E9 для ECDSA), которые короче и быстрее. Поддержка ARI (Automated Renewal Information) позволяет Certbot автоматически обновлять сертификаты, если CA рекомендует это сделать раньше срока.
 
-### Лимиты запросов Let's Encrypt
+### Лимиты запросов Let's Encrypt (Rate Limits)
 
 | Лимит | Значение |
 | :--- | :--- |
@@ -81,19 +86,39 @@ certbot --nginx -d example.com               # боевой запуск
 
 ## Практические сценарии
 
-### Установка Certbot
+### Установка Certbot (Рекомендуемый способ — Snap)
 
-**Debian/Ubuntu:**
+Использование **snapd** является официальной рекомендацией EFF, так как позволяет всегда иметь актуальную версию клиента и плагинов.
+
+**Установка (Ubuntu/Debian/CentOS):**
 
 ```bash
-apt install -y certbot python3-certbot-nginx
+# 1. Удаление старых версий (если были установлены через apt/dnf)
+sudo apt-get remove certbot
+
+# 2. Установка через snap
+sudo snap install --classic certbot
+
+# 3. Подготовка команды certbot
+sudo ln -s /snap/bin/certbot /usr/bin/certbot
+
+# 4. Установка плагина для Nginx (если требуется автоматическая настройка)
+sudo snap set certbot trust-plugin-with-root=ok
+sudo snap install certbot-dns-cloudflare # Пример плагина для DNS
 ```
 
-**CentOS/RHEL:**
+### Альтернативная установка (Legacy)
 
+**Debian/Ubuntu (apt):**
 ```bash
-dnf install -y epel-release
-dnf install -y certbot-nginx
+sudo apt update
+sudo apt install certbot python3-certbot-nginx
+```
+
+**CentOS/RHEL (dnf):**
+```bash
+sudo dnf install epel-release
+sudo dnf install certbot python3-certbot-nginx
 ```
 
 ### Предварительная настройка Nginx
@@ -123,7 +148,7 @@ Certbot запросит email, согласование условий и пр�
 **Продвинутый сценарий (ECDSA + RSA):**
 
 ```bash
-# ECDSA (по умолчанию в Certbot 3.x)
+# ECDSA (по умолчанию в Certbot 2.x+)
 certbot certonly --webroot -w /var/www/certbot \
     --key-type ecdsa \
     -d example.com -d www.example.com
@@ -141,31 +166,34 @@ server {
     listen 443 ssl http2;
     server_name example.com;
 
-    ssl_certificate /etc/letsencrypt/live/example.com/fullchain-ecdsa.pem;
-    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey-ecdsa.pem;
+    # ECDSA (Основной)
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
-    ssl_certificate /etc/letsencrypt/live/example.com/fullchain-rsa.pem;
-    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey-rsa.pem;
+    # RSA (Для старых клиентов, если выпущен отдельно)
+    # ssl_certificate /etc/letsencrypt/live/example.com-rsa/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/example.com-rsa/privkey.pem;
 }
 ```
 
-> **Примечание:** Certbot создаёт файлы с суффиксами `-ecdsa`/`-rsa`. Символические ссылки в `live/` указывают на актуальные версии.
+> **Примечание:** При установке через Snap Certbot автоматически настраивает пути и ссылки. ECDSA является стандартом для всех современных браузеров.
 
 ### Автоматическое обновление
 
-Сертификаты Let's Encrypt действительны 45 дней.
+Сертификаты Let's Encrypt действительны 90 дней, обновление рекомендуется при остатке 30 дней.
 
-**Debian/Ubuntu:** таймер `systemd` (`certbot.timer`) — дважды в день, обновление при остатке < 30 дней:
-
+**При установке через Snap:** таймер настраивается автоматически. Проверка:
 ```bash
-systemctl status certbot.timer
+sudo systemctl list-timers | grep certbot
 ```
 
-**CentOS:** задача в `cron`:
+**Классический метод (Legacy):**
+- **Debian/Ubuntu:** таймер `systemd` (`certbot.timer`).
+- **CentOS:** задача в `cron`.
 
 ```bash
-crontab -e
-# 10 4 * * * /usr/bin/certbot renew --quiet
+# Проверка процесса продления вручную
+sudo certbot renew --dry-run
 ```
 
 ## Дополнительная информация

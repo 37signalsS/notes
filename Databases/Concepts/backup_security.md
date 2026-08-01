@@ -106,7 +106,7 @@ restic -r s3:s3.amazonaws.com/bucket backup /var/lib/postgresql/data
 ### Инструменты защиты
 - **[HashiCorp Vault](https://www.vaultproject.io/):** управление секретами и шифрование через Transit Engine.
 - **[BorgBackup](https://www.borgbackup.org/):** отличная дедупликация и сжатие.
-- **[Velero](https://velero.io/):** стандарт бэкапа для Kubernetes.
+- **[Velero](../../Kubernetes/ToolsUtilities/velero-overview.md):** стандарт бэкапа для Kubernetes.
 - **[SOPS](../../Security/Tools/sops_overview.md):** шифрование YAML-файлов (конфигурации бэкапов).
 
 ### Смежные темы

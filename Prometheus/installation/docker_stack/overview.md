@@ -16,7 +16,7 @@
 | **Grafana** | Визуализация, дашборды, единый UI для всех источников данных | [Grafana docker_compose_setup](../../../Grafana/Installation/docker_compose_setup.md) |
 | **Alertmanager** | Дедупликация, группировка, маршрутизация оповещений (Email, Slack, Webhook) | [docker_compose_alertmanager_config.md](./docker_compose_alertmanager_config.md) |
 | **Node Exporter** | Экспорт метрик хоста: CPU, память, диск, сеть | Встроен в [docker-compose_config.md](./docker-compose_config.md) |
-| **cAdvisor** | Экспорт метрик Docker-контейнеров: CPU, RAM, network, fs | Встроен в [docker-compose_config.md](./docker-compose_config.md) |
+| **cAdvisor** | Экспорт детальных метрик Docker-контейнеров (CPU, RAM, Network, I/O) | [cAdvisor SSoT](../../Exporters/cadvisor.md) |
 
 ### Структура проекта
 

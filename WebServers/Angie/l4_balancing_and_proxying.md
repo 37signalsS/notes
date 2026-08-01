@@ -2,150 +2,190 @@
 
 ## Определения
 
-**Модуль `stream` в Angie** — расширение функциональности, предоставляющее возможности балансировки нагрузки и проксирования трафика на **уровне L4 (Transport layer)**. Позволяет работать с протоколами, не основанными на HTTP: базами данных (MySQL, PostgreSQL), DNS, NTP, SSH и др.
+**Модуль `stream` в Angie** — расширение функциональности, предоставляющее возможности балансировки нагрузки и проксирования трафика на транспортном уровне (L4). Он работает напрямую с TCP-сессиями и UDP-пакетами, что позволяет обслуживать протоколы, отличные от HTTP (базы данных, DNS, почтовые серверы, SSH и др.).
 
-**L4 vs L7 проксирование:**
+### Сравнение L4 и L7 проксирования
 
-- **L7 (Application layer):** Angie работает с HTTP-трафиком в контексте `http`, обрабатывая запросы на уровне приложения.
-- **L4 (Transport layer):** Модуль `stream` работает на уровне транспорта (TCP/UDP), проксируя соединения без разбора содержимого.
-- **Ключевые отличия:**
-  - Уровень работы: L4 (TCP/UDP) вместо L7 (HTTP/S)
-  - Протоколы: любые TCP/UDP-протоколы (базы данных, DNS, NTP, SSH)
-  - Обработка: сессии подключения вместо отдельных запросов
-  - Ресурсы: меньше накладных расходов, так как не требуется разбор протокола приложения
+| Характеристика | L4 (Transport Layer) | L7 (Application Layer) |
+| :--- | :--- | :--- |
+| **Уровень модели OSI** | Layer 4 (TCP, UDP) | Layer 7 (HTTP, HTTPS, gRPC) |
+| **Единица обработки** | Сессия или пакет | Запрос и ответ |
+| **Разбор содержимого** | Отсутствует (кроме TLS SNI/ALPN) | Полный (заголовки, куки, тело) |
+| **Накладные расходы** | Минимальные (высокая производительность) | Более высокие (анализ прикладного уровня) |
+| **Возможности** | Балансировка, ограничение соединений | Кэширование, модификация URI, WAF |
+
+**Ключевые преимущества Angie для L4:**
+*   **Active Health Checks:** встроенные активные проверки состояния для TCP/UDP бэкендов.
+*   **Status Zones:** сбор детальной статистики для каждой службы и группы серверов.
+*   **Slow Start:** плавное наращивание нагрузки на восстановленные бэкенды.
+*   **Dynamic API:** изменение параметров `upstream` (веса, статус) без перезагрузки.
 
 ## Основные концепции
 
-Функциональность проксирования на уровне L4 в [Angie](./angie_overview.md) полностью унаследована от Nginx и работает идентично. Все директивы (`server`, `upstream`, `proxy_pass`, `ssl_preread`, `limit_conn`) и переменные в модуле `stream` полностью совпадают.
+### Совместимость и SSoT
 
-Подробный разбор синтаксиса, флагов и детальные сценарии использования приведены в основном справочнике: [Балансировка и проксирование L4-трафика (TCP/UDP) в Nginx](../Nginx/Proxy/nginx_l4_proxying.md).
+Angie полностью сохраняет синтаксис и логику работы модуля `stream`, унаследованные от Nginx. Базовые директивы (`server`, `proxy_pass`, `ssl_preread`) работают идентично.
 
-### Конфигурация и основные директивы
+**SSoT (Единый источник истины) для базовой логики:**
+*   **[Балансировка и проксирование L4 в Nginx](../Nginx/Proxy/nginx_l4_proxying.md)** — алгоритмы, таймауты и стандартные сценарии.
 
-Для использования L4-функциональности в `angie.conf` должен присутствовать блок `stream`.
+### Структура конфигурации
+
+Блок `stream` располагается на верхнем уровне `angie.conf`, вне контекста `http`.
 
 ```nginx
 # /etc/angie/angie.conf
 stream {
+    # Определение формата логов для сессий
     log_format basic '$remote_addr [$time_local] '
                      '$protocol $status $bytes_sent $bytes_received '
                      '$session_time "$upstream_addr"';
 
     access_log /var/log/angie/stream-access.log basic;
 
-    # Включение конфигураций из stream.d
+    # Инфраструктурные пути в Angie
     include /etc/angie/stream.d/*.conf;
 }
 ```
 
-### Инфраструктурные особенности Angie
+**Инфраструктурные особенности Angie:**
+*   **Конфиги:** `/etc/angie/stream.d/` (рекомендуемая директория для include).
+*   **Логи:** `/var/log/angie/stream-access.log` и `stream-error.log`.
 
-| Компонент | Путь в Angie |
-| :--- | :--- |
-| Главный конфигурационный файл | `/etc/angie/angie.conf` |
-| Директория для `stream` конфигов | `/etc/angie/stream.d/` |
-| Лог доступа `stream` | `/var/log/angie/stream-access.log` |
-| Лог ошибок `stream` | `/var/log/angie/stream-error.log` |
+### Детальный мониторинг через `status_zone`
 
-### Ограничение подключений
+Директива `status_zone` активирует сбор метрик в разделяемой памяти. В модуле `stream` её можно использовать в двух местах:
 
-В модуле `stream` можно ограничивать количество одновременных подключений (`limit_conn`), но не частоту запросов (`limit_req`).
+1.  **В блоке `server`:** собирает статистику по входящему порту (количество соединений, принятые/отправленные байты).
+2.  **В блоке `upstream`:** собирает статистику по каждому бэкенду (состояние, количество запросов, время ответа, ошибки).
 
 ```nginx
 stream {
-    limit_conn_zone $binary_remote_addr zone=per_ip:10m;
+    upstream pg_cluster {
+        zone pg_cluster_zone 64k;
+        status_zone pg_upstreams; # Статистика группы бэкендов
+        
+        server 10.0.0.11:5432;
+        server 10.0.0.12:5432;
+    }
 
     server {
-        listen 12345;
-        limit_conn per_ip 10;
-        proxy_pass backend_service;
+        listen 5432;
+        status_zone pg_frontend; # Статистика слушающего порта
+        proxy_pass pg_cluster;
     }
 }
 ```
 
 ## Практические сценарии
 
-### Сценарий 1: Проксирование MySQL (TCP) с балансировкой master/slave
+### 1. Отказоустойчивая балансировка PostgreSQL с Proxy Protocol
 
-Распределение трафика между мастером (на запись) и репликами (на чтение) с использованием [Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md).
-
-**Конфигурация (`/etc/angie/stream.d/mysql.conf`):**
+Использование `proxy_protocol` позволяет передать реальный IP-адрес клиента на бэкенд базы данных, а `slow_start` защищает сервер от перегрузки при включении.
 
 ```nginx
-upstream mysql_master {
-    zone mysql_master_zone 64k;
-    server 192.168.77.14:3307 proxy_protocol;
-}
-
-upstream mysql_slave {
-    zone mysql_slave_zone 64k;
-    server 192.168.77.12:3308 proxy_protocol;
-    server 192.168.77.13:3309 proxy_protocol;
+upstream postgres_backend {
+    zone postgres_zone 64k;
+    
+    # Плавный старт в течение 1 минуты
+    server 192.168.1.50:5432 slow_start=60s;
+    server 192.168.1.51:5432;
 }
 
 server {
-    listen 6306;
-    proxy_pass mysql_master;
-    status_zone mysql_master_status;
-}
-
-server {
-    listen 6307;
-    proxy_pass mysql_slave;
-    status_zone mysql_slave_status;
+    listen 5432;
+    proxy_pass postgres_backend;
+    
+    # Использование Proxy Protocol для передачи IP клиента
+    proxy_protocol on;
+    
+    proxy_connect_timeout 1s;
+    proxy_timeout 1h; # Таймаут неактивности сессии
+    
+    status_zone pg_lb_status;
 }
 ```
 
-### Сценарий 2: SSL Pre-read (HTTPS и SSH на одном порту)
+### 2. Разделение HTTPS и SSH на одном порту (SSL Pre-read)
 
-Маршрутизация трафика на основе анализа начала TCP-соединения без его терминации.
+Angie анализирует первые байты соединения для определения протокола без расшифровки трафика.
 
 ```nginx
-map $ssl_preread_protocol $backend_by_protocol {
-    "TLSv1.2"  http_backend;
-    "TLSv1.3"  http_backend;
-    default    ssh_backend;
+map $ssl_preread_protocol $target_backend {
+    "TLSv1.2"  https_cluster;
+    "TLSv1.3"  https_cluster;
+    default    ssh_local;
 }
 
-upstream http_backend { server 127.0.0.1:8443; }
-upstream ssh_backend  { server 127.0.0.1:22; }
+upstream https_cluster { server 127.0.0.1:4430; }
+upstream ssh_local     { server 127.0.0.1:22; }
 
 server {
     listen 443;
-    ssl_preread on;
-    proxy_pass $backend_by_protocol;
+    ssl_preread on; # Активация анализа начала сессии
+    proxy_pass $target_backend;
+    
+    status_zone port_multiplexer;
 }
 ```
 
-### Сценарий 3: Проксирование UDP (DNS)
+### 3. Высокопроизводительный DNS-прокси (UDP)
 
-Для UDP важно ограничивать количество ответов и устанавливать тайм-ауты.
+При работе с UDP критически важно правильно настроить количество ожидаемых ответов и интервалы ожидания.
 
 ```nginx
-upstream dns_servers {
+upstream dns_upstream {
+    zone dns_upstream_zone 64k;
     server 8.8.8.8:53;
     server 1.1.1.1:53;
 }
 
 server {
     listen 53 udp;
-    listen 53; # TCP
+    listen 53; # Поддержка TCP для больших ответов
+    
+    # Для UDP: ждать 1 ответ и закрыть сессию через 3 секунды
     proxy_responses 1;
     proxy_timeout 3s;
-    proxy_pass dns_servers;
+    
+    proxy_pass dns_upstream;
+    status_zone dns_proxy_status;
 }
 ```
 
 ## Дополнительная информация
 
-### Мониторинг L4-трафика
+### Динамическое управление через API
 
-Для сбора метрик используется директива `status_zone`. Метрики доступны через API Angie и могут быть интегрированы с внешними системами мониторинга.
+Angie предоставляет HTTP API для управления L4-апстримами в реальном времени. Это позволяет:
+*   Временно вывести сервер из балансировки (`drain: true`).
+*   Изменить вес сервера (`weight`).
+*   Посмотреть детальную статистику в JSON.
 
-Подробнее: [Мониторинг Angie](./angie_monitoring/angie_monitoring_concepts.md).
+**Пример получения статистики через curl:**
+```bash
+curl http://localhost:8080/api/v1/stream/upstreams/postgres_backend
+```
+
+### Ограничение ресурсов
+
+Для защиты от злоупотреблений используйте `limit_conn`. Важно помнить, что в L4 невозможно использовать `limit_req`, так как сервер не видит отдельных HTTP-запросов.
+
+```nginx
+stream {
+    limit_conn_zone $binary_remote_addr zone=addr:10m;
+
+    server {
+        listen 12345;
+        limit_conn addr 5; # Не более 5 соединений с одного IP
+        proxy_pass backend_service;
+    }
+}
+```
 
 ### См. также
 
-- [Основы Angie](./angie_overview.md)
-- [Балансировка и проксирование L4-трафика в Nginx](../Nginx/Proxy/nginx_l4_proxying.md)
-- [Концепции проксирования](../../../Networking/Concepts/proxy.md)
+*   **[Обзор архитектуры Angie](./angie_overview.md)** — общие возможности.
+*   **[Балансировка нагрузки HTTP в Angie](./angie_http_load_balancing.md)** — сравнение с L7.
+*   **[Мониторинг Angie: концепции](./angie_monitoring/angie_monitoring_concepts.md)** — подробнее о зонах статуса.
+*   **[Руководство по Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md)** — детали работы протокола.

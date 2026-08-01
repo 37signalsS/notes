@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=64"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "rag-system"
@@ -10,14 +10,17 @@ requires-python = ">=3.9"
 dependencies = [
     "torch>=2.5",
     "sentence-transformers>=3.3",
-    "chromadb>=1.10",
+    "qdrant-client>=1.11",
+    "fastembed>=0.3",
     "langchain>=0.3",
-    "langchain-chroma>=0.2",
     "langchain-community>=0.3",
     "langchain-huggingface>=0.3",
     "langchain-text-splitters>=0.3",
     "tqdm>=4.60",
+    "pymorphy3>=2.0",
+    "pytest>=7.0",
     "pyyaml>=6.0",
 ]
 
-[project.optional-dependencies
+[tool.pytest.ini_options]
+pythonpath = ["."]

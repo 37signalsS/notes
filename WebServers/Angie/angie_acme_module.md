@@ -23,18 +23,17 @@ Angie поддерживает два основных метода подтве
 1. **HTTP-01 Challenge:** Верификация через HTTP-запрос (порт 80). Рекомендуется для большинства стандартных сертификатов.
 2. **DNS-01 Challenge:** Верификация через TXT-записи в DNS. Необходима для выпуска Wildcard-сертификатов (`*.example.com`).
 
-Подробное сравнение методов и их применимость: **[Методы авторизации ACME](../Concepts/https_with_certbot.md#методы-авторизации)**.
+#### Поддержка External Account Binding (EAB)
+Angie поддерживает механизм EAB, необходимый для работы с такими удостоверяющими центрами, как **ZeroSSL** или **Google Trust Services**. Параметры EAB указываются непосредственно в директиве `acme_client`.
 
-#### Особенности реализации DNS-01 в Angie
-
-* **Встроенный DNS-сервер:** Angie может выступать в роли мини-DNS сервера на порту 53 (UDP/TCP) для ответа на проверочные запросы CA. Это требует делегирования поддомена `_acme-challenge` на IP-адрес сервера с Angie.
-* **acme_dns_hook:** Позволяет вызывать внешние скрипты для взаимодействия с API DNS-провайдеров, если прямое делегирование невозможно.
+#### ACME в модуле Stream (L4)
+Модуль ACME полностью поддерживается в блоке `stream`. Это позволяет автоматически получать TLS-сертификаты для проксирования TCP/UDP соединений (например, для баз данных или почтовых серверов).
 
 ### Ограничения и лимиты
 
-* **Рейтлимитинг:** При использовании Let's Encrypt применяются стандартные ограничения (50 сертификатов на домен в неделю). Подробнее: **[Рейтлимиты Let's Encrypt](../Concepts/https_with_certbot.md#рейтлимиты-lets-encrypt)**.
-* **Изоляция клиентов:** Каждый `acme_client` в Angie жестко привязан к одному сертификату. Для разных доменных имен (не входящих в один SAN-сертификат) требуется описание отдельных клиентов.
-* **Отсутствие пост-обновляемых хуков:** Встроенный модуль не умеет выполнять команды после обновления сертификата (например, для уведомления других сервисов).
+* **Рейтлимитинг:** При использовании Let's Encrypt применяются стандартные ограничения. Подробнее: **[Рейтлимиты Let's Encrypt](../Concepts/https_with_certbot.md#рейтлимиты-lets-encrypt)**.
+* **Изоляция клиентов:** Каждый `acme_client` жестко привязан к одному аккаунту и набору параметров.
+* **Требование Resolver:** Для выполнения ACME-запросов и проверки DNS-записей в соответствующем контексте (`http` или `stream`) обязательно должна быть определена директива `resolver`.
 
 ## Практические сценарии
 
@@ -86,32 +85,52 @@ server {
 }
 ```
 
-### Сценарий 2: Wildcard-сертификаты (DNS-01 через встроенный сервер)
+### Сценарий 3: Использование External Account Binding (EAB)
 
-Требует делегирования записи `_acme-challenge.example.com` на ваш сервер.
+Необходимо для коммерческих CA (ZeroSSL, Google Trust Services). Требуется идентификатор ключа (KID) и HMAC-ключ.
 
 ```nginx
 http {
-    resolver 1.1.1.1;
+    resolver 8.8.8.8;
 
-    acme_client letsencrypt_dns {
-        directory "https://acme-v02.api.letsencrypt.org/directory";
-        challenge_type dns-01;
+    # Настройка клиента с EAB
+    # Ключ должен быть в формате base64url
+    acme_client zerossl {
+        directory "https://acme.zerossl.com/v2/DV90";
+        eab kid=YOUR_KID:key=YOUR_HMAC_KEY;
     }
 
     server {
         listen 443 ssl;
-        server_name *.example.com;
+        server_name example.com;
 
-        acme letsencrypt_dns;
-        ssl_certificate $acme_cert_letsencrypt_dns;
-        ssl_certificate_key $acme_cert_key_letsencrypt_dns;
+        acme zerossl;
+        ssl_certificate     $acme_cert_zerossl;
+        ssl_certificate_key $acme_cert_key_zerossl;
+    }
+}
+```
 
-        # Активация DNS-сервера для верификации
-        acme_dns_server {
-            listen 53 udp;
-            listen 53; # TCP
-        }
+### Сценарий 4: ACME в модуле Stream (L4)
+
+Пример автоматического получения сертификата для проксирования базы данных по TLS.
+
+```nginx
+stream {
+    resolver 1.1.1.1;
+
+    acme_client stream_le {
+        directory "https://acme-v02.api.letsencrypt.org/directory";
+    }
+
+    server {
+        listen 5432 ssl; # Порт PostgreSQL с TLS
+        
+        acme stream_le;
+        ssl_certificate     $acme_cert_stream_le;
+        ssl_certificate_key $acme_cert_key_stream_le;
+
+        proxy_pass db_backend;
     }
 }
 ```
@@ -125,8 +144,8 @@ http {
 * **Хранение данных:** По умолчанию сертификаты сохраняются в `/var/lib/angie/acme/<client_name>/`.
 * **Обновление:** Angie автоматически проверяет необходимость обновления за 30 дней до истечения срока действия сертификата.
 
-### См. также
+## См. также
 
-* **[Настройка TLS в Angie](./angie_tls_setup.md)** — особенности TLS-конфигурации Angie.
-* **[Let's Encrypt и Certbot](../Concepts/https_with_certbot.md)** — универсальное руководство по ACME.
-* **[Оптимальная настройка TLS/SSL в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)** — база для настройки безопасного HTTPS.
+* **[Настройка TLS в Angie](./angie_tls_setup.md)**
+* **[Let's Encrypt и Certbot: общие принципы](../Concepts/https_with_certbot.md)**
+* **[Обзор TLS/SSL в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)**

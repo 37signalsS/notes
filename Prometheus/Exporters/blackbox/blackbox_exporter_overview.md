@@ -2,88 +2,92 @@
 
 ## Определения
 
-**Blackbox Exporter** — экспортер Prometheus для blackbox-мониторинга (проверка доступности эндпоинтов снаружи). Проверяет доступность и работоспособность сервисов по сети с использованием протоколов: HTTP(S), TCP, ICMP, DNS, gRPC.
+**Blackbox Exporter** — официальный инструмент Prometheus для реализации **blackbox-мониторинга** (внешнего наблюдения). В отличие от классических экспортеров, он не собирает внутренние метрики приложения, а имитирует поведение клиента, проверяя доступность и корректность работы сервисов по сети.
 
+- **Multi-Target Exporter:** один экземпляр экспортера может опрашивать неограниченное количество целей.
+- **Поддерживаемые протоколы:** HTTP(S), TCP, ICMP (Ping), DNS, gRPC.
 - **Порт по умолчанию:** `9115`
 - **Репозиторий:** [prometheus/blackbox_exporter](https://github.com/prometheus/blackbox_exporter)
-- **Установка и настройка:** [blackbox_exporter_installation_and_setup.md](./blackbox_exporter_installation_and_setup.md)
+- **Связанные документы:**
+    - [Установка и настройка](./blackbox_exporter_installation_and_setup.md)
+    - [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
+    - [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
 
 ## Основные концепции
 
-### Whitebox vs Blackbox мониторинг
+### Сравнение подходов: Whitebox vs Blackbox
 
-| Характеристика | Whitebox | Blackbox |
+| Характеристика | Whitebox (Внутренний) | Blackbox (Внешний) |
 | :--- | :--- | :--- |
-| **Доступ** | Внутренние метрики системы | Внешняя проверка |
-| **Экспортер** | Устанавливается на целевой системе | Запускается отдельно |
+| **Объект наблюдения** | Внутреннее состояние (CPU, RAM, очереди) | Внешнее поведение (доступность, SSL, время ответа) |
+| **Метод сбора** | Прямой опрос `/metrics` приложения | Имитация запроса пользователя через прокси-экспортер |
+| **Точка зрения** | "Как чувствует себя система?" | "Видит ли пользователь сервис?" |
 | **Пример** | `node_exporter`, `mysqld_exporter` | `blackbox_exporter` |
-| **Метрики** | CPU, память, запросы к БД | Доступность, SSL, время ответа |
+| **Применение** | Отладка, профилирование, внутренние алерты | Контроль SLA/SLO, проверка сетевой связности |
 
-### Принцип работы
+### Принцип работы (Multi-Target Scrape)
 
-`blackbox_exporter` работает по особому принципу:
+`blackbox_exporter` использует специфический паттерн опроса. Prometheus отправляет запрос не на целевой сервис, а на эндпоинт `/probe` самого экспортера, передавая параметры цели в URL.
 
-1. Prometheus опрашивает не целевую систему (например, `google.com`), а сам `blackbox_exporter` на эндпоинте `/probe`
-2. Целевой адрес передаётся как параметр `?target=...`
-3. Имя модуля проверки передаётся как параметр `?module=...`
-4. `blackbox_exporter` выполняет проверку и возвращает метрики о результате
+1. **Запрос:** Prometheus обращается к `http://blackbox:9115/probe?target=example.com&module=http_2xx`.
+2. **Выполнение:** Экспортер инициирует проверку (например, GET-запрос к `example.com`).
+3. **Результат:** Экспортер собирает метрики проверки и возвращает их Prometheus в текстовом формате.
 
-**Схема работы:**
-
-```text
-Prometheus → http://blackbox-exporter:9115/probe?target=google.com&module=http_2xx
-                                                      ↓
-blackbox_exporter выполняет проверку google.com
-                                                      ↓
-blackbox_exporter возвращает метрики: probe_success, probe_duration_seconds, ...
-```
-
-**Важно:** По пути `/metrics` `blackbox_exporter` отдаёт метрики о своей работе, а не результаты проверок. Результаты проверок доступны только по пути `/probe`.
+**Важно:**
+- Путь `/metrics` — содержит метрики здоровья самого экспортера (запросы, ошибки, аптайм).
+- Путь `/probe` — содержит результаты проверок целевых систем.
 
 ## Практические сценарии
 
-### Когда использовать Blackbox Exporter
+### Сценарии использования модулей
 
-| Сценарий | Модуль | Что проверяем |
+| Сценарий | Модуль | Ожидаемый результат |
 | :--- | :--- | :--- |
-| Доступность веб-сайта | `http_2xx` | HTTP 200, SSL валиден, время ответа |
-| Доступность API | `http_2xx` / `http_post_2xx` | Endpoint отвечает, корректный статус-код |
-| Проверка порта БД | `tcp_connect` | Порт открыт, соединение устанавливается |
-| Проверка сети (ping) | `icmp` | Хост доступен по сети |
-| Валидность DNS | `dns_*` | Сервер разрешает имена, корректные записи |
-| gRPC health check | `grpc` | Health endpoint отвечает |
-| Проверка редиректа | `http_2xx` + `follow_redirects` | Корректный редирект (301/302) |
-| Проверка HTTP/3 | `http_2xx` + `http3: true` | Поддержка QUIC |
+| **Веб-сайт** | `http_2xx` | Статус 200, валидный SSL, ответ < 2с |
+| **API Endpoint** | `http_post_2xx` | Корректный ответ на POST-запрос с body |
+| **База данных** | `tcp_connect` | TCP-порт (например, 5432) открыт и принимает соединения |
+| **Сетевая связность** | `icmp` | Хост отвечает на Ping (требуются права root/cap_net_raw) |
+| **DNS-резолвинг** | `dns_udp` | Запись `A` возвращает ожидаемый IP-адрес |
+| **gRPC Service** | `grpc` | Сервис поддерживает Health Check Protocol |
+| **SSL-сертификаты** | `http_2xx` | Проверка даты истечения сертификата (`probe_ssl_earliest_cert_expiry`) |
 
-### Relabeling — стандартная конфигурация
+### Стандартная конфигурация Relabeling
 
-Blackbox Exporter требует relabeling для корректной работы. Целевой адрес передаётся как параметр, а `__address__` заменяется на адрес exporter:
+Поскольку адрес цели передается как параметр, стандартная конфигурация Prometheus требует использования `relabel_configs` для подмены `__address__`:
 
 ```yaml
-relabel_configs:
-  - source_labels: [__address__]
-    target_label: __param_target    # target → параметр ?target=
-  - source_labels: [__param_target]
-    target_label: instance          # target → лейбл instance
-  - target_label: __address__
-    replacement: blackbox:9115      # адрес exporter
+scrape_configs:
+  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - https://prometheus.io
+        - https://github.com
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target    # Записываем адрес цели в параметр target
+      - source_labels: [__param_target]
+        target_label: instance          # Сохраняем адрес цели в лейбле instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9115     # Указываем адрес самого Blackbox Exporter
 ```
 
 ## Дополнительная информация
 
-### Новые возможности v0.28.0
+### Нововведения в версии v0.28.0
 
-- **HTTP/3 (QUIC) prober** — поддержка нового протокола
-- **gRPC metadata** — передача метаданных в gRPC-проверках
-- **Byte matching в TCP** — проверка бинарных данных
-- **Unix domain sockets** — проверка через локальные сокеты
-- **Автоматическая перезагрузка конфига** — флаг `--config.enable-auto-reload`
+- **HTTP/3 (QUIC):** возможность проверки сайтов по новейшему протоколу.
+- **Unix Domain Sockets:** поддержка пробинга сервисов, работающих через локальные сокеты.
+- **Auto-Reload:** флаг `--config.enable-auto-reload` позволяет обновлять настройки без перезапуска процесса.
+- **Prober Logging:** расширенное логирование конкретных проверок для упрощения отладки.
 
 ### Официальные ресурсы
 
 - [GitHub Repository](https://github.com/prometheus/blackbox_exporter)
 - [Official Documentation](https://prometheus.io/docs/guides/blackbox-exporter/)
-- [Default Port Allocations](https://github.com/prometheus/prometheus/wiki/Default-port-allocations)
+- [Configuration Reference](https://github.com/prometheus/blackbox_exporter/blob/master/CONFIGURATION.md)
 
 **См. также:**
 

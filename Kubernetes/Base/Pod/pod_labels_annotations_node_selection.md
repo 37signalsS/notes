@@ -123,7 +123,7 @@ spec:
 
 **Связанные темы:**
 
-- [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md) — SSoT по управлению метаданными.
+- [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md) — основной раздел по управлению метаданными.
 - [Node Affinity (Привязка к узлам)](../../Scheduling/affinity.md) — продвинутые правила размещения.
 - [Taints and Tolerations (Тейнты и толерантности)](../../Scheduling/taints_and_tolerations.md) — механизмы отталкивания Pod.
 - [Жизненный цикл Pod](./pod_lifecycle_and_state.md) — описание состояний, включая фазу `Pending`.

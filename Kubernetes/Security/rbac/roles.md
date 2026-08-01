@@ -74,6 +74,19 @@
 ### Примеры манифестов Role
 
 ```yaml
+# Чтение информации о поде (get, list, watch) в пространстве имен dev
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: dev
+  name: pod-reader
+rules:
+- apiGroups: [""] # "" указывает на основную (core) API группу
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+```
+
+```yaml
 # Чтение pods и services в namespace
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

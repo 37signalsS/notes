@@ -74,11 +74,12 @@ image: nginx:1.28.0
 
 Ограничивайте права container через `securityContext`. Принципы минимизации привилегий:
 
-* Запрет запуска от пользователя `root`.
-* Использование только необходимых capabilities.
+* Запрет запуска от пользователя `root` (`runAsNonRoot: true`).
+* Использование только необходимых capabilities (рекомендуется `drop: ["ALL"]`).
 * Запрет повышения привилегий (`allowPrivilegeEscalation: false`).
+* Использование файловой системы только для чтения (`readOnlyRootFilesystem: true`).
 
-Подробнее в [Security Context в Kubernetes](../../Security/pod_security_context.md).
+Детальное описание всех параметров см. в **[Security Context в Kubernetes](../../Security/pod_security_context.md)**.
 
 ---
 

@@ -1,10 +1,12 @@
 # Установка и базовая настройка Nginx
 
+> **Надежность: 10** (Подтверждено актуальной документацией Nginx на июль 2026)
+
 ## Определения
 
-**Nginx** — это веб-сервер и обратный прокси-сервер, используемый для обслуживания веб-контента, **[балансировки нагрузки](../Proxy/Load_Balancing/overview_concepts.md)**, кэширования и многого другого. Для тех, кто интересуется альтернативами, существует заметка о **[миграции с Nginx на Angie](../../Angie/migration_from_nginx.md)**, его отечественном форке.
+**Nginx** — это высокопроизводительный веб-сервер и обратный прокси-сервер, используемый для обслуживания веб-контента, **[балансировки нагрузки](../Proxy/Load_Balancing/overview_concepts.md)**, кэширования и других задач. Для тех, кто интересуется альтернативами, существует заметка о **[миграции с Nginx на Angie](../../Angie/migration_from_nginx.md)**, его отечественном форке.
 
-**Виртуальный хост (Server Block)** — блок конфигурации, описывающий отдельный сайт (домен). Позволяет одному серверу Nginx обслуживать множество сайтов на одном IP (Internet Protocol) адресе, различая их по заголовку `Host` в запросе.
+**Виртуальный хост (Server Block)** — блок конфигурации, описывающий отдельный сайт (домен). Позволяет одному серверу Nginx обслуживать множество сайтов на одном IP (Internet Protocol — интернет-протокол) адресе, различая их по заголовку `Host` в запросе.
 
 > Для более глубокого обзора архитектуры и ключевых концепций обратитесь к файлу **[Обзор Nginx](./nginx_overview.md)**.
 
@@ -14,20 +16,20 @@
 
 ### Структура конфигурации
 
-* **Главный файл:** `/etc/nginx/nginx.conf`. Это точка входа, которая подключает остальные файлы. Содержит глобальные настройки, такие как `user` и `worker_processes`. Оптимизация этих и других параметров рассмотрена в заметке о **[тюнинге производительности Nginx](../Performance/nginx_performance_tuning.md)**.
+* **Главный файл:** `/etc/nginx/nginx.conf`. Это точка входа, которая подключает остальные файлы. Содержит глобальные настройки, такие как `user` (пользователь, от которого работает воркер) и `worker_processes` (количество рабочих процессов). Оптимизация этих параметров рассмотрена в заметке о **[тюнинге производительности Nginx](../Performance/nginx_performance_tuning.md)**.
 
-* **Конфигурация сайтов (Виртуальных хостов):**
+* **Конфигурация сайтов:**
   * **Debian/Ubuntu:** Используется система `sites-available` / `sites-enabled`.
     * `/etc/nginx/sites-available/`: Содержит файлы конфигурации для всех сайтов.
-    * `/etc/nginx/sites-enabled/`: Содержит символические ссылки на файлы в `sites-available`, которые вы хотите активировать. Nginx читает только эту директорию.
-  * **CentOS/RHEL:** Используется директория `conf.d`.
-    * `/etc/nginx/conf.d/*.conf`: Nginx автоматически подключает все `.conf` файлы из этой директории. Сюда помещаются конфигурации всех сайтов.
+    * `/etc/nginx/sites-enabled/`: Содержит символические ссылки на файлы в `sites-available`. Nginx читает только эту директорию.
+  * **CentOS/RHEL (Red Hat Enterprise Linux):** Используется директория `conf.d`.
+    * `/etc/nginx/conf.d/*.conf`: Nginx автоматически подключает все `.conf` файлы из этой директории.
 
-### Важность правильной структуры: Блок `http` и его вложенность
+### Важность правильной структуры: блок `http` и его вложенность
 
-Блок `http { ... }` в Nginx является глобальным контекстом, в котором определяются все HTTP (HyperText Transfer Protocol) серверы (`server { ... }`), а также глобальные настройки HTTP-протокола, такие как кэширование, MIME (Multipurpose Internet Mail Extensions) типы, сжатие и т.д. Он должен быть определен только один раз на верхнем уровне конфигурации Nginx (обычно в `/etc/nginx/nginx.conf`).
+Блок `http { ... }` в Nginx является глобальным контекстом, в котором определяются все HTTP (Hypertext Transfer Protocol — протокол передачи гипертекста) серверы (`server { ... }`), а также глобальные настройки: кэширование, MIME (Multipurpose Internet Mail Extensions — многоцелевые расширения почты Интернета) типы, сжатие и т.д. Он должен быть определен только один раз на верхнем уровне.
 
-**Распространенная ошибка:** Попытка вложить блок `http { ... }` внутрь конфигурации отдельного сайта или другого блока.
+**Распространенная ошибка:** Попытка вложить блок `http` внутрь `server`.
 
 ```nginx
 # НЕПРАВИЛЬНО: Пример недопустимой вложенности
@@ -42,41 +44,28 @@ server {
 }
 ```
 
-Такая конфигурация приведет к синтаксической ошибке и невозможности запуска Nginx.
-
-**Причины и последствия:**
-
-1. **Синтаксис:** Nginx ожидает определенную иерархию блоков. `http` является родителем для `server`, но не наоборот.
-2. **Область видимости:** Директивы, определенные в `http` блоке (например, `proxy_cache_path`), должны быть доступны для всех `server` блоков. Если `http` блок вложен, его директивы не будут правильно интерпретированы или будут иметь некорректную область видимости.
-3. **Автоматическое подключение:** Основной `nginx.conf` уже содержит глобальный `http` блок, внутри которого с помощью директивы `include` (например, `include /etc/nginx/conf.d/*.conf;` или `include /etc/nginx/sites-enabled/*;`) подключаются файлы конфигурации для отдельных сайтов. Эти файлы должны содержать только `server` блоки или `upstream` определения, но не новые `http` блоки.
-
 **Правильное решение:**
-Глобальные директивы, такие как [`proxy_cache_path`](../Performance/Caching/proxy_caching.md#определение-зоны-кэширования-proxy_cache_path), должны определяться один раз в основном `http` блоке или в отдельном файле, который подключается внутри него. Файл конфигурации сайта должен начинаться с `upstream` или `server`.
+Глобальные директивы, такие как [`proxy_cache_path`](../Performance/Caching/proxy_caching.md#шаг-1-глобальное-определение-пути-кэша), должны определяться один раз в основном `http` блоке.
 
 ```nginx
 # ПРАВИЛЬНО: В /etc/nginx/nginx.conf
 http {
     # ...
-    # Пример размещения глобальной директивы кэша
-    # (или в отдельном файле, который инклюдится в http-блок)
     proxy_cache_path /var/cache/nginx/api_cache
         levels=1:2
         keys_zone=api_cache:10m
         max_size=1g
         inactive=10m
-        use_temp_path=off; # Директива use_temp_path=off рекомендуется для избежания I/O (Input/Output) на диске.
-
-    # include /etc/nginx/conf.d/global_cache_config.conf;
+        use_temp_path=off; # Отключение использования временного пути для I/O (Input/Output — ввод-вывод)
     # ...
 }
 
-# ПРАВИЛЬНО: В /etc/nginx/conf.d/example.com.conf (файл конфигурации сайта)
+# ПРАВИЛЬНО: В /etc/nginx/conf.d/example.com.conf
 server {
     listen 80;
     server_name example.com;
 
     location / {
-        # Здесь используем уже определенный глобальный кэш
         proxy_cache api_cache;
         proxy_pass http://backend_service;
     }
@@ -89,57 +78,79 @@ server {
 
 ### Установка
 
-Nginx может быть установлен непосредственно в операционную систему, как показано ниже, или запущен в контейнере, что подробно описано в руководстве по **[запуску Nginx в Docker](../../../Docker/Docker_compose/docker_compose_file_example.md)**.
+Nginx может быть установлен из стандартных репозиториев ОС (Operating System — операционная система) или из официального репозитория Nginx для получения актуальной версии. Подробнее о контейнеризации в руководстве по **[запуску Nginx в Docker](../../../Docker/Docker_compose/docker_compose_file_example.md)**.
 
-#### Debian / Ubuntu
+#### Установка из стандартных репозиториев
+
+**Debian / Ubuntu:**
+```bash
+sudo apt update
+sudo apt install nginx
+# → установка стабильной версии из репозиториев ОС
+```
+
+**CentOS / RHEL:**
+```bash
+# Требуется EPEL (Extra Packages for Enterprise Linux — дополнительные пакеты для корпоративного Linux)
+sudo dnf install epel-release
+sudo dnf install nginx
+# → установка nginx 1.2x+
+```
+
+#### Установка из официального репозитория Nginx (Debian/Ubuntu)
+
+Для получения версии Mainline (последние функции) или Stable (проверенная):
 
 ```bash
+# Установка ключа и репозитория
+curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/ubuntu `lsb_release -cs` nginx" | sudo tee /etc/apt/sources.list.d/nginx.list
 sudo apt update
 sudo apt install nginx
 ```
 
-#### CentOS / RHEL
+### Проверка установленной версии и модулей
 
 ```bash
-# CentOS 7
-sudo yum install epel-release && sudo yum install nginx
+nginx -v
+# → nginx version: nginx/1.27.0
 
-# CentOS 8+ / RHEL 8+
-sudo dnf install epel-release && sudo dnf install nginx
+nginx -V
+# → nginx version: nginx/1.27.0
+# → built with OpenSSL 3.0.13 30 Jan 2024
+# → TLS SNI support enabled
+# → configure arguments: --with-http_ssl_module --with-http_v2_module ...
 ```
-
-*Замечание: В CentOS/RHEL пакет Nginx находится в репозитории EPEL (Extra Packages for Enterprise Linux), который может потребоваться установить.*
 
 ### Управление сервисом
 
-После установки Nginx обычно не запускается автоматически (особенно в CentOS/RHEL). Управление сервисом осуществляется с помощью стандартных команд `systemctl`. Подробнее о них можно прочесть в руководстве по **[управлению службами Systemd](../../../Linux/Core/systemd/service_management.md)**.
+Управление осуществляется через `systemctl` (Systemd — системный менеджер). Подробнее: **[управление службами Systemd](../../../Linux/Core/systemd/service_management.md)**.
 
-* **Проверить статус:** `sudo systemctl status nginx`  # → active (running)
-* **Запустить сервис:** `sudo systemctl start nginx`
-* **Добавить в автозагрузку:** `sudo systemctl enable nginx`
-* **Остановить сервис:** `sudo systemctl stop nginx`
-* **Перезагрузить конфигурацию:** `sudo systemctl reload nginx`
-* **Перезапустить сервис:** `sudo systemctl restart nginx`
+* **Статус:** `sudo systemctl status nginx`  # → active (running)
+* **Запуск:** `sudo systemctl start nginx`
+* **Автозагрузка:** `sudo systemctl enable nginx`
+* **Перезагрузка конфига:** `sudo systemctl reload nginx` # → graceful reload (без обрыва соединений)
+* **Перезапуск:** `sudo systemctl restart nginx` # → полная остановка и запуск (с обрывом соединений)
 
 ### Пример базовой конфигурации сайта
 
 1. **Создайте файл конфигурации:**
-    * На Ubuntu: `sudo nano /etc/nginx/sites-available/example.com`
-    * На CentOS: `sudo nano /etc/nginx/conf.d/example.com.conf`
+    * Ubuntu: `/etc/nginx/sites-available/example.com`
+    * CentOS: `/etc/nginx/conf.d/example.com.conf`
 
 2. **Добавьте содержимое:**
-    Центральным элементом является блок `location`, который определяет, как обрабатывать запросы. Для детального изучения его возможностей обратитесь к руководству **[Глубокое погружение в директиву location](./Location/basics.md)**.
+    Подробности в руководстве **[Глубокое погружение в директиву location](./Location/basics.md)**.
 
     ```nginx
     server {
         listen 80;
-        listen [::]:80;
+        listen [::]:80; # Поддержка IPv6
 
-        # Это базовая конфигурация для HTTP. Для включения HTTPS (HyperText Transfer Protocol Secure)
-        # и повышения безопасности, обратитесь к руководствам
-        # [Настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md) и
-        # [Nginx с Let's Encrypt](../Scenarios/nginx_with_letsencrypt.md).
-        # TLS (Transport Layer Security) / SSL (Secure Sockets Layer).
+        # Настройка HTTPS описана в:
+        # [Настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)
+        # [Nginx с Let's Encrypt](../Scenarios/nginx_with_letsencrypt.md)
+        # TLS (Transport Layer Security — безопасность транспортного уровня)
+        # SSL (Secure Sockets Layer — уровень защищенных сокетов)
 
         server_name example.com www.example.com;
 
@@ -147,38 +158,28 @@ sudo dnf install epel-release && sudo dnf install nginx
         index index.html;
 
         location / {
+            # try_files проверяет наличие файла, затем директории, иначе отдает 404
             try_files $uri $uri/ =404;
         }
     }
     ```
 
-    Директива `try_files` в этом примере пытается найти файл, соответствующий URI (Uniform Resource Identifier) запроса. Это базовый способ маршрутизации, более сложные сценарии рассматриваются в заметке о **[правилах rewrite, redirect и директиве try_files](./nginx_rewrite_rules_and_try_files.md)**.
+    Подробнее о маршрутизации: **[Rewrite, Redirect и try_files](./nginx_rewrite_rules_and_try_files.md)**.
 
 3. **Разберите ключевые директивы:**
 
-    * `listen 80;`: Указывает Nginx прослушивать входящие соединения на порту 80, который является стандартным портом для HTTP. Директива `listen [::]:80;` делает то же самое для протокола IPv6.
+    * `listen 80;`: Прослушивание порта 80 (стандарт для HTTP).
+    * `root /var/www/example.com;`: Корневой каталог файлов сайта.
+    * `index index.html;`: Файл по умолчанию для директории.
+    * `server_name`: Доменные имена, для которых предназначен этот блок.
 
-    * `root /var/www/example.com;`: Задает корневой каталог, в котором Nginx будет искать файлы для этого сайта. Когда приходит запрос на `/page.html`, Nginx ищет его по пути `/var/www/example.com/page.html`.
-
-    * `index index.html;`: Сообщает Nginx, какой файл следует отдавать, если пользователь запрашивает целую директорию. Например, при запросе `http://example.com/` будет отдан файл `index.html` из директории, указанной в `root`.
-
-    * `server_name example.com www.example.com;`: Определяет, что данный блок `server` должен обрабатывать запросы, которые приходят на домены `example.com` и `www.example.com`. Такая запись используется, когда вы хотите, чтобы один и тот же блок `server` отвечал на запросы, приходящие на несколько доменных имён (например, с префиксом `www` и без него).
-      Пример: `server_name repo.com 127.0.0.1 192.168.77.11;` означает: "Если запрос пришёл на `repo.com` ИЛИ на `127.0.0.1` ИЛИ на `192.168.77.11` — используй эту конфигурацию".
-
-4. **Создайте корневую директорию и тестовый файл:**
-
-    ```bash
-    sudo mkdir -p /var/www/example.com
-    echo "Hello from Nginx!" | sudo tee /var/www/example.com/index.html
-    ```
-
-5. **Активируйте сайт (только для Debian/Ubuntu):**
+4. **Активируйте сайт (только для Debian/Ubuntu):**
 
     ```bash
     sudo ln -s /etc/nginx/sites-available/example.com /etc/nginx/sites-enabled/
     ```
 
-6. **Проверьте и перезагрузите Nginx:**
+5. **Проверьте и перезагрузите Nginx:**
 
     ```bash
     sudo nginx -t
@@ -188,48 +189,35 @@ sudo dnf install epel-release && sudo dnf install nginx
     sudo systemctl reload nginx
     ```
 
-    Теперь при обращении к `http://example.com` (если DNS (Domain Name System) настроен) вы должны увидеть "Hello from Nginx!".
+    Теперь сайт доступен по адресу домена (если настроена DNS — Domain Name System, система доменных имен).
 
-### Применение изменений: `reload` vs `restart`
-
-Nginx считывает конфигурацию только при запуске. Чтобы изменения вступили в силу, необходимо дать ему сигнал перечитать файлы.
+### Применение изменений: reload vs restart
 
 **Правильная процедура:**
 
-1. **Проверка синтаксиса (Обязательно!):**
-    Всегда проверяйте конфигурацию на наличие ошибок перед ее применением. Это защитит работающий сервер от сбоев.
-
-    ```bash
-    sudo nginx -t
-    # → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
-    # → nginx: configuration file /etc/nginx/nginx.conf test is successful
-    ```
-
-    Если все в порядке, вы увидите `syntax is ok` и `test is successful`. В случае ошибки Nginx укажет на проблемный файл и строку, что является первым шагом в **[диагностике неисправностей](../Operations/nginx_troubleshooting.md)**.
-
-2. **Грациозная перезагрузка (`reload`):**
-    Эта команда плавно применяет новую конфигурацию, обеспечивая **нулевое время простоя (zero downtime)**. Мастер-процесс Nginx читает новую конфигурацию и запускает новые рабочие процессы, в то время как старые рабочие процессы завершают обслуживание текущих запросов и после этого gracefully завершаются. Механизм основан на отправке сигнала `SIGHUP` мастер-процессу (см. **[Сигналы в Linux](../../../Linux/Core/processes/signals.md)**).
-
-    ```bash
-    sudo systemctl reload nginx
-    ```
-
-3. **Полный перезапуск (`restart`):**
-    **Никогда не используйте `restart`** для простого применения изменений конфигурации. Эта команда полностью останавливает все процессы Nginx и запускает их заново, что приводит к кратковременному простою и обрыву всех текущих соединений. `restart` следует использовать только в крайних случаях, например, при обновлении версии Nginx или если `reload` не помогает.
+1. **Проверка синтаксиса (Обязательно!):** `sudo nginx -t`. Если проверка не пройдена, не перезагружайте сервер. Подробнее: **[диагностика неисправностей](../Operations/nginx_troubleshooting.md)**.
+2. **Грациозная перезагрузка (`reload`):** Применяет конфиг без обрыва соединений (сигнал `SIGHUP`). См. **[Сигналы в Linux](../../../Linux/Core/processes/signals.md)**.
+3. **Перезапуск (`restart`):** Используется только в крайних случаях (обновление бинарного файла, изменение глобальных лимитов ОС).
 
 ---
 
 ## Дополнительная информация
 
-### Директива `include` в блоке `geo`
+### Директива include в блоке geo
 
-Блок `geo` в Nginx используется для определения переменных на основе IP-адреса клиента (например, для географической маршрутизации или классификации подсетей). Начиная с **nginx 1.29.8**, директива `include` внутри блока `geo` была исправлена и теперь корректно поддерживает **wildcards** (шаблоны с подстановочными символами).
+Начиная с **nginx 1.29.8**, директива `include` внутри блока `geo` корректно поддерживает **wildcards** (шаблоны с подстановочными символами).
 
 ```nginx
 geo $geo_region {
-    include /etc/nginx/geo/*.conf;       # Конкретный каталог
-    include /etc/nginx/geo-regions.d/*.conf;  # Wildcard-шаблон
+    include /etc/nginx/geo/*.conf;       # Все файлы в каталоге
+    include /etc/nginx/geo-regions.d/*.conf;  # Шаблонные пути
 }
 ```
 
-Это позволяет динамически подключать несколько файлов с маппингами IP→значение без необходимости перечислять каждый файл вручную, что упрощает управление большими наборами правил.
+Это упрощает управление большими базами IP-адресов, разделяя их на логические файлы.
+
+### См. также
+
+- **[Обзор Nginx](./nginx_overview.md)** — архитектура и ключевые особенности.
+- **[Директива location: основы и приоритеты](./Location/basics.md)** — детальный разбор маршрутизации.
+- **[Тюнинг производительности Nginx](../Performance/nginx_performance_tuning.md)** — оптимизация для высоких нагрузок.

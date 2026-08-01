@@ -4,7 +4,7 @@
 
 **Мониторинг PostgreSQL** — комплексный процесс сбора, хранения и визуализации метрик производительности БД для обеспечения стабильности и быстродействия системы.
 
-**postgres_exporter** — специализированный сервис (экспортер), который опрашивает статистические представления PostgreSQL и предоставляет данные в формате, понятном для Prometheus.
+**postgres_exporter** — специализированный сервис мониторинга PostgreSQL для Prometheus. Подробное описание и параметры порта приведены в **[Каталоге экспортеров](../../Prometheus/Exporters/other_exporters.md#1-базы-данных-databases)**.
 
 **Full-Stack Observability** — подход, при котором мониторинг БД является частью общей системы наблюдаемости инфраструктуры, включающей метрики ОС, сетевого уровня и приложения. Подробнее см. в разделе **[Наблюдаемость PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)**.
 
@@ -14,26 +14,26 @@
 
 Для полноценного наблюдения за базой данных используется классический стек:
 
-| Компонент | Назначение | SSoT-ссылка |
+| Компонент | Назначение | Основная ссылка |
 |---|---|---|
 | **PostgreSQL** | Объект мониторинга (источник данных). | [PostgreSQL](../../Databases/PostgreSQL/overview.md) |
 | **Postgres Exporter** | Агент сбора метрик (9187/TCP). | [Экспортеры](../../Prometheus/Exporters/overview.md) |
 | **Prometheus** | Сбор (scrape) и хранение метрик. | [Prometheus](../../Prometheus/overview.md) |
-| **Grafana** | Визуализация данных (дашборды). | [Grafana](../../Grafana/grafana_alloy_overview.md) |
+| **Grafana** | Визуализация данных (дашборды). | [Grafana](../../Grafana/grafana_overview.md) |
 
 ### Используемые роли и коллекции
 
-Для автоматизации развертывания рекомендуются следующие ресурсы из Ansible Galaxy:
+Для автоматизации развертывания рекомендуются официальные коллекции из Ansible Galaxy:
 
-- **`community.postgresql`**: Настройка БД и создание пользователя для мониторинга.
+- **`community.postgresql`**: Настройка БД, расширений (таких как `pg_stat_statements`) и создание пользователя для мониторинга.
 - **`prometheus.prometheus.postgres_exporter`**: Установка и запуск экспортера.
-- **`cloudalchemy.prometheus`**: Развертывание сервера Prometheus.
+- **`prometheus.prometheus.prometheus`**: Развертывание сервера Prometheus (заменяет устаревшую роль `cloudalchemy.prometheus`).
 
 Установка зависимостей на контрольном узле:
 
 ```bash
 ansible-galaxy collection install community.postgresql # → модули БД установлены
-ansible-galaxy collection install prometheus.prometheus # → коллекция для экспортеров установлена
+ansible-galaxy collection install prometheus.prometheus # → официальная коллекция Prometheus установлена
 ```
 
 ### Безопасность и секреты
@@ -44,9 +44,27 @@ ansible-galaxy collection install prometheus.prometheus # → коллекция
 
 ## Практические сценарии
 
-### Сценарий: Развертывание кластера мониторинга
+### Сценарий 1: Подготовка базы данных (pg_stat_statements)
 
-Данный сценарий настраивает мониторинг PostgreSQL на выделенном сервере.
+Для полноценного мониторинга запросов **обязательно** включение расширения `pg_stat_statements`. Это позволит собирать метрики производительности запросов, а не только системную информацию.
+
+1. Добавление модуля в конфигурацию `postgresql.conf`:
+```ini
+shared_preload_libraries = 'pg_stat_statements'
+# Требуется перезапуск PostgreSQL
+```
+2. Создание расширения в базе данных (может быть выполнено через Ansible):
+```yaml
+- name: Установка расширения pg_stat_statements
+  community.postgresql.postgresql_ext:
+    name: pg_stat_statements
+    db: postgres
+  become_user: postgres
+```
+
+### Сценарий 2: Развертывание кластера мониторинга
+
+Данный сценарий настраивает мониторинг PostgreSQL на выделенном сервере с использованием официальной коллекции.
 
 #### 1. Подготовка инвентаря
 
@@ -60,9 +78,9 @@ db-master ansible_host=192.168.55.10
 monitoring-01 ansible_host=192.168.55.20
 ```
 
-#### 2. Плейбук настройки экспортера
+#### 2. Плейбук настройки базы и экспортера
 
-Плейбук создает пользователя с ограниченными правами и запускает агент сбора метрик.
+Плейбук создает пользователя с ограниченными правами, а также запускает агент сбора метрик с включенной поддержкой автообнаружения баз данных. Одной из лучших практик также является использование `queries.yaml` для сбора кастомных бизнес-метрик (передается в экспортер).
 
 ```yaml
 ---
@@ -88,6 +106,9 @@ monitoring-01 ansible_host=192.168.55.20
     - role: prometheus.prometheus.postgres_exporter
       vars:
         postgres_exporter_dsn: "{{ postgres_exporter_dsn }}"
+        # Включаем автоматическое обнаружение всех БД
+        postgres_exporter_config_flags:
+          auto-discover-databases: true
 
   post_tasks:
     - name: Проверка статуса экспортера
@@ -102,6 +123,8 @@ monitoring-01 ansible_host=192.168.55.20
 ```
 
 #### 3. Настройка сбора данных в Prometheus
+
+Для сервера мониторинга используется роль `prometheus.prometheus.prometheus`.
 
 ```yaml
 ---
@@ -129,10 +152,13 @@ monitoring-01 ansible_host=192.168.55.20
 | `pg_stat_activity_count` | Количество текущих сессий. | Зависит от лимита `max_connections`. |
 | `pg_database_size_bytes` | Размер базы данных на диске. | Постепенный рост без резких скачков. |
 | `pg_stat_database_xact_commit` | Количество зафиксированных транзакций. | Должно быть значительно выше `xact_rollback`. |
+| `pg_stat_statements_calls` | Количество вызовов запроса (требует `pg_stat_statements`). | Зависит от нагрузки приложения. |
 
 ### Визуализация в Grafana
 
-Для быстрого старта рекомендуется использовать официальный дашборд PostgreSQL (ID: **9628**). Он включает графики для всех основных метрик, собираемых `postgres_exporter`.
+Для быстрого старта рекомендуется использовать официальные дашборды:
+- **PostgreSQL Database** (ID: **9628**) — классический дашборд для системных метрик.
+- **PostgreSQL pg_stat_statements** — дашборд для детального анализа производительности конкретных SQL-запросов.
 
 ## Смотрите также
 

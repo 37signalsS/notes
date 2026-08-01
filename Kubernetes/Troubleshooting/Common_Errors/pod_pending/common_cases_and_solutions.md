@@ -20,6 +20,13 @@
 ### 1. Нехватка ресурсов (Standard and Extended Resources)
 
 **Симптом:** события `FailedScheduling` с сообщением `Insufficient cpu`, `Insufficient memory` или `Insufficient nvidia.com/gpu`.
+*   *Пример события:* `0/3 nodes are available: 3 Insufficient memory.`
+
+**Мини-кейс: Слишком амбициозный запрос ресурсов**
+Команда развертывает микросервис с `requests.memory: 4Gi`. В кластере 3 узла, но `kubectl top nodes` показывает, что на каждом доступно только 2Ги аллоцируемой (allocatable) памяти.
+- **Признак:** Pod бесконечно висит в `Pending`.
+- **Диагностика:** `kubectl describe pod` показывает событие `FailedScheduling: 0/3 nodes are available: 3 Insufficient memory`.
+- **Решение:** Сокращение запроса памяти до реалистичных `1Gi`. После применения изменений планировщик мгновенно находит узел.
 
 **Решение:**
 *   **Оптимизация requests:** проверьте реальное потребление через `kubectl top pods` и уменьшите `requests` в манифесте, если они завышены.
@@ -31,6 +38,7 @@
 ### 2. Ограничения размещения (Affinity и Topology Spread)
 
 **Симптом:** сообщение `node(s) didn't match Pod's node affinity/selector` или `node(s) had topology spread constraint slack conflict`.
+*   *Пример события:* `0/3 nodes are available: 3 node(s) didn't match node selector.`
 
 **Решение:**
 *   **Смягчение правил:** замените `requiredDuringSchedulingIgnoredDuringExecution` на `preferredDuringSchedulingIgnoredDuringExecution`, если жесткая привязка не критична.
@@ -85,6 +93,16 @@
 **Решение:**
 *   Проверьте, не блокируют ли `PodDisruptionBudgets` (PDB) удаление низкоприоритетных подов.
 *   Убедитесь, что у подов, которые должны быть вытеснены, нет `priorityClassName` выше или равного текущему поду.
+
+---
+
+### 8. Конфликты HostPort
+
+**Симптом:** использование `hostPort` напрямую привязывает Pod к порту на сетевом интерфейсе узла. Поскольку порт может использоваться только один раз на узел, это создает жесткое ограничение.
+
+**Решение:**
+*   **Избегайте HostPort:** лучшей практикой является использование ресурса `Service` для обеспечения доступа к приложению.
+*   **Проверка занятости:** убедитесь, что другой Pod или процесс на хосте уже не использует этот порт на всех доступных узлах.
 
 ## Дополнительная информация
 

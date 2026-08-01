@@ -2,19 +2,20 @@
 
 ## Определения
 
-**Angie** — эффективный и масштабируемый веб-сервер, форк Nginx, созданный для расширения функциональности при сохранении полной обратной совместимости. Основные отличия включают встроенный HTTP/3, динамические модули и расширенный мониторинг.
+**Angie** — эффективный и масштабируемый веб-сервер, форк Nginx, созданный для расширения функциональности при сохранении полной обратной совместимости. Продукт включен в реестр российского ПО и оптимизирован для работы в высоконагруженных системах и импортозамещающих инфраструктурах.
 
 ## Основные концепции
 
-Существует три основных способа развертывания Angie, выбор которых зависит от целевой среды и требований к поддержке:
+Развертывание Angie адаптировано под различные сценарии эксплуатации:
 
-1. **Установка из официальных репозиториев:** Рекомендуемый метод для серверных ОС (ALMA-Linux, Ubuntu, Debian), обеспечивающий простую установку и обновление через системные пакетные менеджеры (`dnf`, `apt`).
-2. **Контейнеризация (Docker):** Использование официальных образов для изоляции веб-сервера от хостовой системы. Подходит для микросервисных архитектур и сред оркестрации.
-3. **Коммерческая версия (Angie Pro):** Требует лицензии и предоставляет дополнительные функции (Active Health Checks, Feedback Balancing). Использует защищенные репозитории.
+1. **Установка из официальных репозиториев:** Рекомендуемый метод для серверных ОС (AlmaLinux, Ubuntu, Debian), а также специализированных российских дистрибутивов (**Astra Linux**, **ALT Linux**, **РЕД ОС**).
+2. **Контейнеризация (Docker):** Использование официальных образов в реестре `docker.angie.software`.
+3. **Коммерческая версия (Angie Pro):** Требует лицензии и предоставляет расширенные функции (Active Health Checks, динамическое управление апстримами).
+4. **Сборка из исходных кодов:** Необходима для кастомных сборок с нестандартными TLS-библиотеками (BoringSSL, QuicTLS).
 
 ## Практические сценарии
 
-### Сценарий 1: Установка на AlmaLinux (RHEL-based)
+### Сценарий 1: Установка на RHEL-совместимые системы (AlmaLinux, Rocky, RedOS)
 
 1. **Подключите репозиторий:**
    Создайте файл `/etc/yum.repos.d/angie.repo`:
@@ -22,9 +23,9 @@
    ```ini
    [angie]
    name=angie
-   baseurl=https://download.angie.software/rhel/$releasever/$basearch/
+   baseurl=https://download.angie.software/angie/el/$releasever/$basearch/
    gpgcheck=1
-   gpgkey=https://download.angie.software/keys/angie-signing-key.gpg
+   gpgkey=https://angie.software/keys/angie-signing-key.gpg.asc
    enabled=1
    ```
 
@@ -34,27 +35,20 @@
    sudo dnf install -y angie
    ```
 
-3. **Проверьте корректность установки:**
-
-   ```bash
-   sudo angie -t
-   # → angie: the configuration file /etc/angie/angie.conf syntax is ok
-   # → angie: configuration file /etc/angie/angie.conf test is successful
-
-   sudo systemctl enable --now angie
-   sudo systemctl status angie
-   # → active (running)
-   ```
-
 ### Сценарий 2: Установка на Ubuntu / Debian
 
 1. **Добавьте ключи и репозиторий:**
 
    ```bash
    sudo apt update
-   sudo apt install -y curl gpg
-   curl -o /etc/apt/trusted.gpg.d/angie-signing-key.gpg https://download.angie.software/keys/angie-signing-key.gpg
-   echo "deb https://download.angie.software/ubuntu/ `lsb_release -cs` main" | sudo tee /etc/apt/sources.list.d/angie.list >/dev/null
+   sudo apt install -y ca-certificates curl gnupg2 lsb-release
+   
+   # Импорт ключа подписи
+   sudo curl -o /etc/apt/trusted.gpg.d/angie-signing.gpg https://angie.software/keys/angie-signing.gpg
+   
+   # Добавление репозитория
+   echo "deb https://download.angie.software/angie/$(. /etc/os-release && echo "$ID/$VERSION_ID $VERSION_CODENAME") main" \
+   | sudo tee /etc/apt/sources.list.d/angie.list > /dev/null
    ```
 
 2. **Выполните установку:**
@@ -64,14 +58,21 @@
    sudo apt install -y angie
    ```
 
-3. **Запустите сервис и проверьте статус:**
+### Сценарий 3: Установка на российские ОС (Astra Linux, ALT Linux)
 
-   ```bash
-   sudo systemctl status angie
-   # → active (running)
-   ```
+#### Astra Linux (Special Edition)
+Процесс аналогичен Debian, но требует учета версии и режима безопасности.
+1. Добавьте репозиторий Angie, используя кодовое имя `1.7` или `1.8` (в зависимости от версии Astra).
+2. В системах с замкнутой программной средой установите пакет `angie-digsig-key` для проверки подписей.
 
-### Сценарий 3: Запуск в Docker-контейнере
+#### ALT Linux (Сизиф, p10, p11)
+Angie включен в официальные репозитории «Альт».
+```bash
+sudo apt-get update
+sudo apt-get install -y angie
+```
+
+### Сценарий 4: Запуск в Docker-контейнере
 
 1. **Установите Docker:**
    Для установки Docker Engine следуйте руководству: **[Установка Docker на Ubuntu](../../Docker/docker_install_ubuntu.md)**.
@@ -84,7 +85,7 @@
    mkdir -p ~/angie_config ~/angie_html
    
    # Копирование дефолтной конфигурации из временного контейнера
-   docker run --rm --entrypoint cat docker.ngsoftware/angie:latest /etc/angie/angie.conf > ~/angie_config/angie.conf
+   docker run --rm --entrypoint cat docker.angie.software/angie:latest /etc/angie/angie.conf > ~/angie_config/angie.conf
 
    # Запуск постоянного контейнера
    docker run -d --name angie \
@@ -92,7 +93,7 @@
      -v ~/angie_html:/usr/share/nginx/html:ro \
      -v ~/angie_config/angie.conf:/etc/angie/angie.conf:ro \
      --restart always \
-     docker.ngsoftware/angie:latest
+     docker.angie.software/angie:latest
    ```
 
 3. **Применение изменений конфигурации:**
@@ -102,7 +103,7 @@
    docker exec -it angie angie -s reload
    ```
 
-### Сценарий 4: Установка Angie Pro
+### Сценарий 5: Установка Angie Pro
 
 Установка коммерческой версии требует наличия файлов лицензии (`angie-repo.crt`, `angie-repo.key`).
 
@@ -126,10 +127,7 @@
    sudo apt install -y angie-pro
    ```
 
-3. **Активация лицензии:**
-   Разместите файл `license.pem` в `/etc/angie/` и выполните `sudo systemctl reload angie`.
-
-### Сценарий 5: Сборка из исходных кодов
+### Сценарий 6: Сборка из исходных кодов
 
 Сборка из исходников необходима при использовании кастомных TLS-библиотек (например, BoringSSL или AWS-LC), специфических сторонних модулей или при необходимости изменить параметры компиляции, недоступные в пакетной версии.
 
@@ -231,9 +229,8 @@ sudo apt install angie-module-brotli
 load_module modules/ngx_http_brotli_filter_module.so;
 ```
 
-**Связанные темы:**
+## См. также
 
 - [Обзор возможностей Angie](./angie_overview.md)
 - [Миграция с Nginx на Angie](./migration_from_nginx.md)
 - [Настройка TLS в Angie](./angie_tls_setup.md)
-- [Мониторинг Angie](./angie_monitoring/angie_monitoring_concepts.md)

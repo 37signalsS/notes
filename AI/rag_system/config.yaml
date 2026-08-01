@@ -3,23 +3,28 @@ excluded:
   files: ["GEMINI.md", "MEMORY.md", ".DS_Store"]
   extensions: [".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".py"]
 
+qdrant:
+  mode: server          # "local" (on-disk) or "server" (Qdrant Docker)
+  host: localhost
+  port: 6333
+
 engines:
-  mpnet:
-    dir: chroma_db
+  e5:
+    dir: qdrant_db
     collection: notes_rag_v2
-    model: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-    chunk_size: 1200
-    chunk_overlap: 200
+    model: "intfloat/multilingual-e5-base"
+    chunk_size: 2000
+    chunk_overlap: 150
     batch_size: 100
-    label: "MPNet"
-    query_prefix: ""
-    doc_prefix: ""
+    label: "E5"
+    query_prefix: "query: "
+    doc_prefix: "passage: "
   bge:
-    dir: chroma_bge
+    dir: qdrant_bge
     collection: notes_bge
     model: "BAAI/bge-m3"
-    chunk_size: 1500
-    chunk_overlap: 250
+    chunk_size: 2000
+    chunk_overlap: 150
     batch_size: 100
     label: "BGE-M3"
     query_prefix: "Represent this query for searching relevant passages: "

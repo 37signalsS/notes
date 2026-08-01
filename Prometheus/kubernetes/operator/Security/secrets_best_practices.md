@@ -2,9 +2,11 @@
 
 ## Определения
 
-**Управление секретами** — комплекс мер по безопасному хранению и использованию чувствительных данных в экосистеме Prometheus Operator: токенов webhook, ключей маршрутизации (routing keys), паролей и TLS-сертификатов.
+**Управление секретами** — жизненный цикл конфиденциальных данных (паролей, токенов, сертификатов) в стеке мониторинга. Включает в себя безопасное хранение, автоматическую доставку в поды Prometheus/Alertmanager и интеграцию с внешними системами управления ключами (KMS).
 
-> **Навигация:** [Главная Security](./index.md) | [Контроль доступа](./access_control.md)
+**Secret SSoT Pattern** — стратегия, при которой секреты не хранятся в Git в открытом виде, а синхронизируются из внешних источников (например, Vault) напрямую в Kubernetes через специализированные операторы.
+
+> **Навигация:** [Главная Security](./index.md) | [Контроль доступа](./access_control.md) | **Надёжность: 10**
 
 ---
 
@@ -12,22 +14,22 @@
 
 ### Типы секретов в Prometheus Operator
 
-| Тип | Примеры | Где используются |
-|---|---|---|
-| **Учётные данные получателей** | Slack webhook, PagerDuty key, SMTP password | `AlertmanagerConfig` (receivers) |
-| **TLS-сертификаты** | CA, клиентские cert/key | `ServiceMonitor` (tlsConfig), Ingress TLS |
-| **Учётные данные администратора** | Grafana admin user/password | Grafana Deployment |
-| **Basic Auth** | Файл htpasswd, пары логин/пароль | Ingress (Prometheus / Alertmanager) |
+| Тип | Примеры | Основной потребитель (CRD) |
+|:---|:---|:---|
+| **Auth Credentials** | Bearer tokens, OAuth2 Client ID/Secret | `ServiceMonitor`, `PodMonitor`, `ScrapeConfig` |
+| **Alerting Config** | Slack Webhook, SMTP Pass, PagerDuty Key | `AlertmanagerConfig` |
+| **TLS/mTLS** | CA certs, Client cert/key | `Prometheus` (web), `Alertmanager` (cluster), `ServiceMonitor` |
+| **Storage Auth** | AWS/S3 access keys | `Prometheus` (Thanos Sidecar / Remote Write) |
 
-### Механизмы хранения и безопасность
+### Механизмы хранения и автоматизация (2026)
 
-Безопасность секретов в Prometheus Operator базируется на стандартных механизмах Kubernetes, дополненных инструментами автоматизации.
+Для обеспечения безопасности и соответствия стандартам (PCI DSS, SOC2) в современных инфраструктурах используются следующие подходы:
 
-- **Kubernetes Secret:** Базовый объект хранения. По умолчанию данные кодируются в base64.
-- **Внешние менеджеры:** Для production рекомендуется использование внешних хранилищ (HashiCorp Vault, AWS Secrets Manager) с интеграцией через **External Secrets Operator**.
-- **Шифрование и аудит:** Безопасность на уровне кластера обеспечивается шифрованием etcd и контролем доступа через RBAC.
+*   **External Secrets Operator (ESO):** Стандарт де-факто для синхронизации секретов из HashiCorp Vault, AWS Secrets Manager или Azure Key Vault. Секреты создаются в Kubernetes динамически.
+*   **Sealed Secrets / SOPS:** Используются для хранения зашифрованных данных в Git (GitOps), но считаются менее гибкими по сравнению с ESO для управления ротацией.
+*   **CSI Secrets Store:** Обеспечивает монтирование секретов напрямую в поды как файлов, минуя объект `Secret` в etcd Kubernetes.
 
-> **Подробно:** [Безопасность Secret в Kubernetes](../../../Kubernetes/Base/secrets/security.md) — SSoT по защите и использованию секретов в кластере.
+> **Подробно:** [Внешние менеджеры секретов](../../../Kubernetes/Base/secrets/external_managers.md) — SSoT по интеграции Vault/ESO.
 
 ---
 
@@ -45,29 +47,55 @@ kubectl create secret generic slack-webhook \
 # → secret/slack-webhook created
 ```
 
-### Использование секретов в AlertmanagerConfig
+### Использование секретов в ScrapeConfig (OAuth2)
 
-Prometheus Operator позволяет ссылаться на секреты через `secretKeyRef`, что исключает попадание паролей в конфигурационные файлы.
+`ScrapeConfig` (введен в Operator v0.90+) является современным способом настройки сбора метрик с внешних эндпоинтов, требующих OAuth2 авторизации.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1alpha1
-kind: AlertmanagerConfig
+kind: ScrapeConfig
 metadata:
-  name: slack-config
-  namespace: monitoring
+  name: external-api-secure
 spec:
-  receivers:
-    - name: 'slack-notifications'
-      slackConfigs:
-        - channel: '#alerts'
-          apiURL:
-            name: slack-webhook
-            key: url
+  staticConfigs:
+    - targets: ["api.external-service.com"]
+  oauth2:
+    clientId:
+      secret:
+        name: oauth-api-creds
+        key: client-id
+    clientSecret:
+      name: oauth-api-creds
+      key: client-secret
+    tokenUrl: https://auth.external-service.com/token
+```
+
+### Автоматическая синхронизация через External Secrets (ESO)
+
+Паттерн для синхронизации ключа Alertmanager из HashiCorp Vault.
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: slack-webhook-vault
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: slack-webhook # Итоговый K8s Secret
+  data:
+    - secretKey: url
+      remoteRef:
+        key: secret/monitoring/alertmanager
+        property: webhook_url
 ```
 
 ### Настройка TLS для ServiceMonitor
 
-Для сбора метрик с защищённых эндпоинтов сертификаты монтируются в под Prometheus через секреты.
+Для сбора метрик с защищённых эндпоинтов сертификаты монтируются в под Prometheus через секреты. В современных версиях рекомендуется использование `keySecret` вместо прямых путей.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -80,13 +108,9 @@ spec:
       scheme: https
       tlsConfig:
         ca:
-          secret:
-            name: app-tls-ca
-            key: ca.crt
+          secret: { name: app-tls-ca, key: ca.crt }
         cert:
-          secret:
-            name: app-tls-client
-            key: tls.crt
+          secret: { name: app-tls-client, key: tls.crt }
         keySecret:
           name: app-tls-client
           key: tls.key
@@ -98,22 +122,19 @@ spec:
 
 ### Хранение и передача
 
-1. **Запрет Plain Text:** Никогда не храните пароли в YAML-манифестах. Используйте `kubectl create secret` или GitOps-инструменты с шифрованием (Sealed Secrets, SOPS).
-2. **Разделение секретов:** Создавайте отдельные секреты для каждого типа интеграции (Slack, PagerDuty, SMTP). Это упрощает ротацию и минимизирует радиус поражения при компрометации.
-3. **RBAC:** Ограничивайте доступ к секретам в неймспейсе `monitoring`. Только оператор и администраторы должны иметь право на чтение.
+1. **Запрет Plain Text:** Никогда не храните секреты в YAML-манифестах. Используйте GitOps с шифрованием (ESO + Vault).
+2. **Сетевой контроль (eBPF):** Используйте eBPF-базируемые CNI (Cilium) для ограничения доступа к портам Prometheus/Alertmanager на уровне L7, предотвращая перехват трафика с секретами.
+3. **RBAC Isolation:** Ограничивайте доступ к секретам в неймспейсе `monitoring`. Только оператор должен иметь права `watch` на объекты `secrets`.
 
-### Эксплуатация
+### Эксплуатация и жизненный цикл
 
-1. **Ротация:** Установите график ротации секретов (например, раз в 90 дней). Автоматизируйте процесс через Vault или внешние менеджеры.
-2. **Мониторинг доступа:** Включите аудит-логирование Kubernetes API для отслеживания обращений к объектам `secrets`.
-3. **Использование `secretKeyRef`:** В CRD Prometheus Operator всегда предпочитайте ссылки на секреты прямому указанию значений.
-
----
+1. **Автоматическая ротация:** Настройте ротацию токенов и сертификатов через ESO или Vault. Убедитесь, что Prometheus Operator автоматически обнаруживает обновление (реконсиляция Secret).
+2. **Аудит доступа:** Включите аудит Kubernetes API для всех операций с ресурсами `secrets` в неймспейсе мониторинга.
+3. **Удаление устаревших ресурсов:** Переходите с `additionalScrapeConfigs` (в Secret-ах) на `ScrapeConfig` (в CRD), чтобы обеспечить гранулярный контроль доступа и валидацию.
 
 ## Дополнительная информация
 
-> **См. также:**
->
-> - [Безопасность Secret в Kubernetes](../../../Kubernetes/Base/secrets/security.md) — общие принципы защиты
-> - [Внешние менеджеры секретов](../../../Kubernetes/Base/secrets/external_managers.md) — Vault, External Secrets
-> - [Network Policies](./access_control.md) — ограничение сетевого доступа к компонентам
+- **[Безопасность (Главная)](./index.md)** — архитектура защиты стека.
+- **[Контроль доступа](./access_control.md)** — NetworkPolicy и RBAC.
+- **[Внешние менеджеры секретов](../../../Kubernetes/Base/secrets/external_managers.md)** — детальная интеграция с Vault/ESO.
+- **[Безопасность Secret в Kubernetes](../../../Kubernetes/Base/secrets/security.md)** — фундаментальные основы защиты объектов Secret.

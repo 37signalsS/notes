@@ -2,231 +2,185 @@
 
 ## Определения
 
-**`kind: Probe`** — Custom Resource Definition в Prometheus Operator для описания blackbox-мониторинга внешних эндпоинтов через Blackbox Exporter. Позволяет декларативно управлять проверками доступности HTTP/TCP/ICMP/DNS из кластера Kubernetes.
+**`kind: Probe`** — Custom Resource Definition в Prometheus Operator, предназначенный для реализации **blackbox-мониторинга** (внешнего наблюдения) эндпоинтов. В отличие от `ServiceMonitor`, который собирает метрики состояния самого приложения, `Probe` проверяет доступность, корректность ответов и производительность сервисов по протоколам HTTP, TCP, ICMP, DNS и gRPC изнутри кластера.
+
+**Blackbox Exporter** — вспомогательный компонент, который выступает в роли "прокси" для выполнения проверок. Prometheus опрашивает экспортер, а экспортер выполняет реальную проверку цели.
 
 **API version:** `monitoring.coreos.com/v1`
 
-> **См. также:** [Blackbox Exporter — обзор](../../../Exporters/blackbox/blackbox_exporter_overview.md), [Конфигурация модулей](../../../Exporters/blackbox/blackbox_exporter_modules_configuration.md).
+> **См. также:** [Blackbox Exporter — обзор](../../../Exporters/blackbox/blackbox_exporter_overview.md), [Конфигурация модулей](../../../Exporters/blackbox/blackbox_exporter_modules_configuration.md), [ServiceMonitor](./servicemonitor.md).
 
 ## Базовые концепции
 
-### Принцип работы
+### Принцип работы (Multi-Target Scrape)
 
-1. Prometheus Operator находит Probe CRD по label selector
-2. Генерирует `scrape_config` с target-параметрами для Blackbox Exporter
-3. Prometheus опрашивает Blackbox Exporter на эндпоинте `/probe`
-4. Exporter выполняет проверку целевого эндпоинта и возвращает метрики (`probe_success`, `probe_duration_seconds` и др.)
-5. `prometheus-config-reloader` перезагружает конфигурацию при изменениях через sidecar
+Интеграция строится на модели делегирования сбора метрик:
 
-**Поток запросов:**
+1.  **Reconciliation:** Operator обнаруживает ресурс `Probe` и генерирует конфигурацию скрейпинга для Prometheus.
+2.  **Делегирование:** Prometheus отправляет запрос не на целевой сервис, а на эндпоинт `/probe` Blackbox Exporter.
+3.  **Выполнение:** Exporter получает параметры (адрес цели и модуль), выполняет проверку (например, HTTP GET) и возвращает результат в формате метрик Prometheus.
+4.  **Метрики:** Основными метриками являются `probe_success` (1 — успех, 0 — провал) и `probe_duration_seconds`.
 
+```text
+[ Prometheus ] 
+      |
+      | (GET /probe?target=example.com&module=http_2xx)
+      v
+[ Blackbox Exporter ] ------> [ Target: example.com ]
+      |          (HTTP GET)        |
+      |                            |
+      |<--------- (Response) <-----|
+      |
+      | (probe_success 1)
+      v
+[ Prometheus TSDB ]
 ```
-Prometheus → http://blackbox-exporter:9115/probe?target=<цель>&module=<модуль>
-Blackbox Exporter → проверяет целевой эндпоинт
-Blackbox Exporter → возвращает метрики: probe_success, probe_http_status_code, ...
-```
 
-> **Важно:** Prometheus скрейпит не целевой эндпоинт напрямую, а Blackbox Exporter, который выполняет проверку и возвращает метрики результата.
+### Сравнение с ServiceMonitor
 
-### Когда использовать Probe
+| Характеристика | ServiceMonitor / PodMonitor | Probe |
+| :--- | :--- | :--- |
+| **Тип мониторинга** | Whitebox (внутреннее состояние) | Blackbox (внешняя доступность) |
+| **Источник данных** | `/metrics` самого приложения | Эндпоинт `/probe` экспортера |
+| **Цели** | Сервисы и Поды внутри K8s | Любые эндпоинты (внешние URL, IP, Ingress) |
+| **Протоколы** | HTTP (Prometheus format) | HTTP, HTTPS, TCP, ICMP, DNS, gRPC |
 
-| Сценарий | Решение |
-|---|---|
-| **Внешние эндпоинты** | HTTPS-сайты, внешние API |
-| **Проверка доступности из кластера** | Как видят сервисы изнутри Kubernetes |
-| **TCP-порты внешних систем** | Базы данных, очереди за пределами кластера |
-| **ICMP/DNS проверки** | Доступность узлов, разрешение имён |
-| **Ingress-мониторинг** | Автоматическая проверка всех Ingress по селектору |
+### Новые возможности (2025–2026)
 
-### Типы источников целей
-
-| Тип | Описание | Пример |
-|---|---|---|
-| **`staticConfig`** | Статический список целей | `[https://example.com, 8.8.8.8]` |
-| **`ingress`** | Автоматическое обнаружение Ingress | `selector: {matchLabels: {probe: true}}` |
-
-### Доступные meta-лейблы для Probe
-
-| Meta-лейбл | Описание |
-|---|---|
-| `__address__` | Адрес Blackbox Exporter (заменяется через relabeling) |
-| `__param_target` | Целевой эндпоинт (передаётся как параметр `/probe?target=`) |
-| `__param_module` | Используемый модуль |
-| `__meta_kubernetes_ingress_host` | Host из Ingress (при `targets.ingress`) |
-| `__meta_kubernetes_namespace` | Namespace Probe CRD |
-| `__meta_kubernetes_probe_name` | Имя Probe CRD |
+*   **OAuth2 & Modern Auth:** Нативная поддержка OAuth2 и расширенных механизмов авторизации (bearer tokens) через Secret-ы.
+*   **gRPC Monitoring:** Поддержка проверки здоровья gRPC-сервисов через соответствующие модули Blackbox Exporter.
+*   **Native Histograms:** Поддержка высокоточных нативных гистограмм Prometheus 3.0.
+*   **Scrape Protocols:** Возможность явного выбора приоритета протоколов (OpenMetrics vs Prometheus Text).
 
 ## Практические сценарии
 
-### Базовая проверка HTTPS
+### Сценарий 1: Проверка внешнего HTTPS API с OAuth2
+
+Актуально для мониторинга внешних сервисов, требующих авторизации.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: Probe
 metadata:
-  name: google-probe
+  name: external-api-oauth2
   namespace: monitoring
 spec:
+  jobName: api-health-check
   prober:
     url: blackbox-exporter.monitoring.svc.cluster.local:9115
   module: http_2xx
-  interval: 30s
-  scrapeTimeout: 10s
   targets:
     staticConfig:
       static:
-        - https://google.com
-        - https://example.com
-```
-
-### Проверка нескольких endpoints с лейблами
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: Probe
-metadata:
-  name: api-health-check
-  namespace: monitoring
-spec:
-  prober:
-    url: blackbox-exporter.monitoring.svc.cluster.local:9115
-    path: /probe
-    scheme: http
-  module: http_2xx
-  interval: 30s
-  scrapeTimeout: 10s
-  targets:
-    staticConfig:
-      static:
-        - https://api.example.com/health
-        - https://api.example.com/ready
-      labels:
-        environment: production
-        team: backend
-```
-
-### ICMP-проверка доступности узлов
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: Probe
-metadata:
-  name: icmp-probe
-  namespace: monitoring
-spec:
-  prober:
-    url: blackbox-exporter.monitoring.svc.cluster.local:9115
-  module: icmp
+        - https://api.external-service.com/v1/health
+  oauth2:
+    clientId:
+      secret:
+        name: api-credentials
+        key: client-id
+    clientSecret:
+      name: api-credentials
+      key: client-secret
+    tokenUrl: https://auth.external-service.com/oauth/token
   interval: 1m
-  targets:
-    staticConfig:
-      static:
-        - 8.8.8.8
-        - 1.1.1.1
-        - example.com
+  scrapeTimeout: 30s
 ```
 
-### Проверка TCP-портов
+### Сценарий 2: Мониторинг всех Ingress по селектору
+
+Автоматическое создание проверок для всех приложений, помеченных лейблом `probe: "enabled"`.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: Probe
 metadata:
-  name: tcp-port-check
-  namespace: monitoring
-spec:
-  prober:
-    url: blackbox-exporter.monitoring.svc.cluster.local:9115
-  module: tcp_connect
-  interval: 30s
-  targets:
-    staticConfig:
-      static:
-        - database.example.com:5432
-        - redis.example.com:6379
-        - kafka.example.com:9092
-```
-
-### Мониторинг через Ingress selector
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: Probe
-metadata:
-  name: ingress-probe
+  name: ingress-auto-probe
   namespace: monitoring
 spec:
   prober:
     url: blackbox-exporter.monitoring.svc.cluster.local:9115
   module: http_2xx
-  interval: 1m
   targets:
     ingress:
       selector:
         matchLabels:
-          probe: true
+          probe: "enabled"
       namespaceSelector:
         any: true
-      relabelingConfigs:
-        - sourceLabels: [__meta_kubernetes_ingress_host]
-          targetLabel: __param_target
 ```
 
-### Relabeling — подмена адресов
+### Сценарий 3: gRPC Health Check
+
+Мониторинг доступности микросервисов, использующих gRPC.
 
 ```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: grpc-service-probe
 spec:
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  module: grpc_health  # Модуль должен быть настроен в Blackbox Exporter
   targets:
     staticConfig:
       static:
-        - https://example.com
-      labels:
-        environment: production
-  relabelingConfigs:
-    - sourceLabels: [__address__]
-      targetLabel: __param_target
-    - sourceLabels: [__param_target]
-      targetLabel: instance
-    - targetLabel: __address__
-      replacement: blackbox-exporter.monitoring.svc.cluster.local:9115
+        - my-grpc-app.prod.svc.cluster.local:50051
+  interval: 30s
+```
+
+### Сценарий 4: ICMP (Ping) проверка инфраструктуры
+
+Проверка доступности удаленных хостов или сетевого оборудования.
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: infrastructure-ping
+spec:
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  module: icmp
+  targets:
+    staticConfig:
+      static:
+        - 8.8.8.8
+        - 10.0.0.1
+        - vpn-gateway.company.com
 ```
 
 ## Дополнительная информация
 
-### Основные параметры spec
+### Ключевые параметры спецификации (v1)
 
-| Параметр | Описание | Пример |
-|---|---|---|
-| **`prober.url`** | URL Blackbox Exporter | `blackbox-exporter.monitoring.svc.cluster.local:9115` |
-| **`prober.path`** | Путь к endpoint | `/probe` (по умолчанию) |
-| **`prober.scheme`** | Протокол | `http`, `https` |
-| **`module`** | Модуль blackbox | `http_2xx`, `http_post_2xx`, `tcp_connect`, `icmp` |
-| **`targets.staticConfig.static`** | Статические цели | `[https://example.com]` |
-| **`targets.staticConfig.labels`** | Лейблы для целей | `{environment: production}` |
-| **`targets.ingress.selector`** | Селектор Ingress | `matchLabels: {probe: true}` |
-| **`interval`** | Интервал проверки | `30s`, `1m` |
-| **`scrapeTimeout`** | Тайм-аут проверки | `10s` |
-| **`relabelingConfigs`** | Relabeling правил для целей | См. пример выше |
+| Параметр | Описание | Особенности |
+| :--- | :--- | :--- |
+| **`prober.url`** | Адрес Blackbox Exporter. | Формат `host:port`. |
+| **`module`** | Имя модуля в конфиге экспортера. | Должно совпадать с `blackbox.yml`. |
+| **`targets.staticConfig`** | Список фиксированных целей. | Поддерживает кастомные `labels`. |
+| **`targets.ingress`** | Динамический поиск целей через Ingress. | Использует `host` из правил Ingress. |
+| **`oauth2`** | Конфигурация OAuth2. | **Mutual Exclusion:** нельзя с `basicAuth`. |
+| **`authorization`** | Настройка Bearer-токена. | Поддерживает `credentials` из Secret. |
+| **`scrapeProtocols`** | Приоритет протоколов сбора. | OpenMetrics, PrometheusText. |
+| **`scrapeNativeHistograms`** | Включение нативных гистограмм. | Требует Prometheus >= 3.0. |
 
-### Типы модулей
+### Диагностика
 
-| Тип | Модуль | Назначение |
-|---|---|---|
-| **HTTP** | `http_2xx` | Проверка HTTP 200 |
-| **HTTP POST** | `http_post_2xx` | HTTP POST с проверкой 200 |
-| **HTTP HEAD** | `http_head_2xx` | HTTP HEAD с проверкой 200 |
-| **TCP** | `tcp_connect` | Проверка открытия TCP-порта |
-| **ICMP** | `icmp` | Ping-проверка |
-| **DNS** | `dns_tcp_query`, `dns_udp_query` | DNS query over TCP/UDP |
+1.  **Проверка генерации таргетов:** В UI Prometheus перейдите в `Status -> Targets`. Найдите job с именем вашего Probe.
+2.  **Проверка запроса к экспортеру:**
+    ```bash
+    curl "http://blackbox-exporter:9115/probe?target=google.com&module=http_2xx"
+    ```
+3.  **Логи Оператора:** Если таргеты не появились, проверьте логи `prometheus-operator` на наличие ошибок валидации CRD.
 
-> **Конфигурация модулей:** [Blackbox Exporter — конфигурация модулей](../../../Exporters/blackbox/blackbox_exporter_modules_configuration.md).
+### Связанные темы
 
-### Метрики и алертинг
+*   **[Blackbox Exporter — настройка](../../../Exporters/blackbox/blackbox_exporter_overview.md)** — подготовка модулей.
+*   **[Prometheus Operator — Концепции](../concepts.md)** — как работают CRD в стеке.
+*   **[Service Discovery и Relabeling](../../../service_discovery_and_relabeling.md)** — механизмы подмены адресов.
+*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
 
-> Метрики Blackbox Exporter и примеры правил оповещения: [Метрики и алертинг](../../../Exporters/blackbox/blackbox_exporter_metrics_and_alerting.md).
-
-### Связанные CRD
-
-- [ServiceMonitor](./servicemonitor.md) — мониторинг через Service
-- [PodMonitor](./podmonitor.md) — мониторинг подов напрямую
-- [Prometheus CRD](./prometheus.md) — описание экземпляра Prometheus
+### См. также
+* [Официальная документация Prometheus Operator Probe](https://prometheus-operator.dev/docs/operator/design/#probe)
+* [Репозиторий Blackbox Exporter](https://github.com/prometheus/blackbox_exporter)

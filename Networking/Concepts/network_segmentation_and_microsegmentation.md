@@ -69,6 +69,7 @@ spec:
         - method: "POST"
           path: "/query"
 ```
+*Подробный разбор L7-правил и ограничений HTTPS см. в разделе: **[Cilium: Сетевая политика L7](../../Kubernetes/Networking/Network/CNI/cilium.md#сетевая-политика-l7-http)**.*
 
 ## Дополнительная информация
 

@@ -92,10 +92,15 @@ k-etcdctl defrag --cluster
 
 ### Создание снапшота (Online)
 
-Рекомендуется выполнять снапшот перед любыми критическими изменениями в кластере или обновлением версии Kubernetes.
+Рекомендуется выполнять снапшот перед любыми критическими изменениями в кластере или обновлением версии Kubernetes. Поскольку etcd хранит все состояние кластера, наличие актуального снапшота гарантирует возможность восстановления в случае сбоя во время обновления.
 
 ```bash
-k-etcdctl snapshot save /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
+ETCDCTL_API=3 etcdctl snapshot save /var/lib/kube-backups/etcd-snapshot-$(date +%F).db \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key
+# → Snapshot saved at /var/lib/kube-backups/etcd-snapshot-2026-07-22.db
 ```
 
 ### Восстановление при аварии (Offline)

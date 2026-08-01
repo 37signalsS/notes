@@ -2,132 +2,124 @@
 
 ## Определения
 
-**Модули управления службами и системной конфигурацией** — это группа инструментов Ansible для управления жизненным циклом сервисов, настройкой параметров ядра, планированием задач и базовыми параметрами операционной системы (ОС). Эти модули абстрагируют различия между системами инициализации (systemd, SysVinit) и предоставляют унифицированный интерфейс для администрирования.
+**Модули управления службами и системой** — это группа специализированных инструментов Ansible (`ansible.builtin` и `ansible.posix`), предназначенных для администрирования жизненного цикла сервисов, тонкой настройки ядра Linux, управления системными ресурсами и лимитами.
+
+Эти модули обеспечивают декларативный подход: вместо выполнения императивных команд пользователь описывает желаемое конечное состояние (например, «служба должна быть запущена»), а Ansible определяет необходимые действия для его достижения, обеспечивая идемпотентность.
+
+**FQCN (Fully Qualified Collection Name)** — полное имя модуля, включающее пространство имен и коллекцию (например, `ansible.builtin.systemd`). Использование FQCN является обязательным стандартом для предотвращения конфликтов имен и обеспечения предсказуемости выполнения.
 
 ## Основные концепции
 
-### Управление сервисами
-- **`ansible.builtin.service`**: Универсальный модуль для управления службами. Автоматически определяет систему инициализации. Рекомендуется для обеспечения кроссплатформенности.
-- **`ansible.builtin.systemd`**: Специализированный модуль для систем с [systemd](../../Linux/Core/systemd/service_management.md). Поддерживает специфичные функции: `daemon_reload`, управление пользовательскими юнитами (`scope: user`) и маскировку.
-- **`ansible.builtin.service_facts`**: Сбор состояния всех сервисов в переменную `ansible_facts.services`. Позволяет строить логику на основе состояния процессов.
+### Управление жизненным циклом служб
 
-### Настройка системных ресурсов и ядра
-- **`ansible.posix.sysctl`**: Управление параметрами ядра Linux (через `/proc/sys`). Позволяет вносить изменения «на лету» и сохранять их в `sysctl.conf`. См. также: [sysctl в Linux](../../Linux/Core/kernel/sysctl.md).
-- **`ansible.builtin.modprobe`**: Загрузка и выгрузка модулей ядра.
-- **`ansible.builtin.pam_limits`**: Управление лимитами ресурсов (через `/etc/security/limits.conf`).
-- **`ansible.builtin.mount`**: Управление точками монтирования в `/etc/fstab` и активными монтированиями. Подробнее: [Монтирование в Linux](../../Linux/FileSystems/mounting/index.md).
-- **`ansible.posix.selinux`**: Управление состоянием и политиками SELinux (Security-Enhanced Linux).
+1.  **`ansible.builtin.service`**: Модуль-абстракция, работающий через системный менеджер инициализации по умолчанию. Автоматически определяет систему (systemd, SysVinit, OpenRC). Рекомендуется для обеспечения кроссплатформенности.
+2.  **`ansible.builtin.systemd`**: Специализированный модуль для систем с systemd. Поддерживает продвинутые функции:
+    *   **`daemon_reload`**: Перечитывает конфигурацию systemd с диска. Необходимо вызывать после изменения unit-файлов.
+    *   **`daemon_reexec`**: Перезапуск самого процесса systemd (актуально при обновлении пакета systemd).
+    *   **`scope`**: Позволяет управлять юнитами на уровне системы (`system`) или пользователя (`user`). При использовании `user` задачи обычно выполняются без `become: true`.
+    *   **`masked`**: Состояние, полностью блокирующее возможность запуска службы (даже вручную или по зависимости).
+3.  **`ansible.builtin.service_facts`**: Сбор состояния всех сервисов в переменную `ansible_facts.services`. Позволяет строить логику (например, `when`) на основе реального статуса процессов.
 
-### Базовая конфигурация ОС
-- **`ansible.builtin.hostname`**: Установка имени хоста.
-- **`ansible.builtin.timezone`**: Настройка часового пояса системы.
-- **`ansible.builtin.cron`**: Управление заданиями в планировщике [crontab](../../Linux/SystemAdministration/cron.md).
-- **`ansible.builtin.reboot`**: Безопасная перезагрузка хоста с ожиданием доступности.
-- **`ansible.builtin.locale_gen` / `debconf`**: Настройка локалей и параметров конфигурации (преимущественно для Debian-based систем).
+### Настройка ресурсов и ядра
 
-### Сетевая безопасность и брандмауэры
-- **`community.general.ufw`**: Управление [UFW](../../Linux/Networking/Settings/tools/ufw.md) (Uncomplicated Firewall) в Ubuntu/Debian.
-- **`ansible.posix.firewalld`**: Управление [Firewalld](../../Linux/Networking/Settings/tools/firewalld.md) в RHEL/CentOS.
-- **`ansible.builtin.iptables`**: Прямое управление правилами iptables.
+*   **`ansible.posix.sysctl`**: Управление параметрами ядра через интерфейс `/proc/sys`.
+    *   **`sysctl_file`**: Позволяет сохранять настройки в отдельные файлы (например, `/etc/sysctl.d/99-performance.conf`).
+    *   **`reload`**: Применяет параметры немедленно (`sysctl -p`).
+*   **`ansible.builtin.pam_limits`**: Настройка лимитов (nofile, nproc) в `/etc/security/limits.conf`.
+    *   **`limit_type`**: `soft` (предупреждение), `hard` (жесткий запрет) или `-` (оба одновременно).
+*   **`ansible.posix.selinux`**: Управление режимами работы SELinux (enforcing, permissive). Важно помнить, что переход из `disabled` в `enforcing` требует перезагрузки и перемаркировки ФС.
+
+### Управление хранилищем и сетью
+
+*   **`ansible.builtin.mount`**: Декларативное управление точками монтирования.
+    *   **Состояния (`state`)**:
+        *   `mounted`: Добавление в `fstab` и немедленное монтирование.
+        *   `unmounted`: Размонтирование, но сохранение записи в `fstab`.
+        *   `present`: Только добавление записи в `fstab`.
+        *   `absent`: Размонтирование и удаление записи из `fstab`.
+*   **`ansible.posix.firewalld` / `community.general.ufw`**: Высокоуровневое управление правилами брандмауэра. Для `firewalld` критично использовать `permanent: true` и `immediate: true` для синхронизации текущего и сохраненного состояний.
+
+### Системное планирование и обслуживание
+
+*   **`ansible.builtin.cron`**: Управление заданиями в планировщике.
+    *   **`cron_file`**: Позволяет создавать отдельные файлы в `/etc/cron.d/` вместо редактирования общего `crontab`. Это упрощает управление и предотвращает конфликты при автоматизации.
+*   **`ansible.builtin.reboot`**: Модуль для безопасной перезагрузки. Дожидается доступности SSH-порта (или другого условия через `test_command`) перед продолжением плейбука.
+*   **`ansible.builtin.hostname` / `ansible.builtin.timezone`**: Настройка идентификации узла и региональных параметров времени.
 
 ## Практические сценарии
 
-### Управление службой с перезагрузкой конфигурации (`systemd`)
-Использование `daemon_reload` необходимо после ручного изменения unit-файлов на диске.
+### Глубокое управление systemd (User Units)
+Управление сервисом, запущенным от имени конкретного пользователя.
 
 ```yaml
-- name: Обновление и перезапуск кастомного сервиса
+- name: "Запуск пользовательского агента мониторинга"
   ansible.builtin.systemd:
-    name: my_app.service
-    state: restarted
-    enabled: yes
-    daemon_reload: yes
-# → result: сервис my_app перезапущен, конфигурация systemd обновлена
+    name: "user-agent.service"
+    state: started
+    enabled: true
+    scope: user
+  become: false # Выполняется в контексте сессии пользователя
 ```
 
-### Проверка состояния сервиса перед действием
-Использование фактов о сервисах для предотвращения ошибок.
+### Настройка базы данных: лимиты и тюнинг ядра
+Комплексная подготовка системы для работы высоконагруженной СУБД.
 
 ```yaml
-- name: Сбор фактов о сервисах
-  ansible.builtin.service_facts:
-
-- name: Выполнение задачи, только если Nginx запущен
-  ansible.builtin.command: /usr/local/bin/check_nginx_config
-  when: ansible_facts.services['nginx.service'].state == 'running'
-  changed_when: false
-# → result: команда выполняется только при статусе 'running' в ansible_facts
-```
-
-### Настройка параметров ядра (`sysctl`)
-Пример включения пересылки пакетов для настройки NAT (Network Address Translation).
-
-```yaml
-- name: Включение IP Forwarding
+- name: "Тюнинг виртуальной памяти через sysctl"
   ansible.posix.sysctl:
-    name: net.ipv4.ip_forward
-    value: '1'
+    name: vm.swappiness
+    value: '10'
     state: present
-    reload: yes
-# → result: переменная net.ipv4.ip_forward=1 установлена в памяти и в /etc/sysctl.conf
-```
+    sysctl_file: /etc/sysctl.d/database_tuning.conf
 
-### Управление состоянием SELinux
-Переключение режима работы SELinux без перезагрузки (если поддерживается).
-
-```yaml
-- name: Перевод SELinux в режим Permissive
-  ansible.posix.selinux:
-    policy: targeted
-    state: permissive
-# → result: SELinux переведен в режим permissive, изменения внесены в /etc/selinux/config
-```
-
-### Настройка лимитов ресурсов (`pam_limits`)
-Увеличение максимального количества открытых файлов для высоконагруженных приложений.
-
-```yaml
-- name: Установка лимитов для пользователя nginx
+- name: "Установка лимитов открытых файлов для PostgreSQL"
   ansible.builtin.pam_limits:
-    domain: nginx
-    limit_type: soft
+    domain: postgres
+    limit_type: "-"
     limit_item: nofile
-    value: 65536
-# → result: лимит nofile установлен в /etc/security/limits.conf
+    value: 524288
 ```
 
-### Монтирование дисков (`mount`)
-Автоматическое добавление записи в fstab и монтирование.
+### Управление монтированием дисков
+Использование UUID и различных состояний монтирования.
 
 ```yaml
-- name: Монтирование диска с данными
+- name: "Монтирование диска с данными"
   ansible.builtin.mount:
     path: /data
-    src: UUID=b3...
-    fstype: ext4
+    src: UUID=b312a45c-e23f...
+    fstype: xfs
     opts: defaults,noatime
     state: mounted
-# → result: диск смонтирован в /data, запись добавлена в /etc/fstab
 ```
 
-### Планирование периодических задач (`cron`)
+### Планирование через /etc/cron.d
+Использование изолированных файлов для системных задач.
+
 ```yaml
-- name: Ежедневная очистка временных файлов
+- name: "Добавление задачи очистки временных файлов"
   ansible.builtin.cron:
-    name: "Cleanup tmp"
+    name: "Daily cleanup"
     minute: "0"
     hour: "3"
     job: "/usr/bin/find /tmp -type f -atime +7 -delete"
-# → result: задача добавлена в crontab пользователя root
+    cron_file: "system-cleanup"
+    user: root
 ```
+
+### Безопасная перезагрузка системы
+Ожидание готовности после обновления ядра.
+
+```yaml
+- name: "Перезагрузка после обновления ядра"
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+    pre_reboot_delay: 10
+    test_command: "whoami"
+```
+
 ## Дополнительная информация
 
-- [systemd: управление службами](../../Linux/Core/systemd/service_management.md) — основной раздел по системе инициализации.
-- [cron: планировщик задач](../../Linux/SystemAdministration/cron.md) — подробнее о синтаксисе crontab.
-- [sysctl: параметры ядра](../../Linux/Core/kernel/sysctl.md) — документация по тюнингу ядра Linux.
-- [Монтирование в Linux](../../Linux/FileSystems/mounting/index.md) — детальный обзор fstab и монтирования.
-- [Firewalld: динамический межсетевой экран](../../Linux/Networking/Settings/tools/firewalld.md)
-- [UFW: Uncomplicated Firewall](../../Linux/Networking/Settings/tools/ufw.md)
-- [Обработчики (Handlers)](../ansible_core_concepts.md#обработчики-и-уведомления) — стандартный способ перезапуска служб в Ansible.
-- [Официальная документация: builtin модули](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html)
-
+- **[systemd: управление службами](../../Linux/Core/systemd/service_management.md)** — глубокое описание архитектуры systemd и команд управления.
+- **[Планировщик задач cron](../../Linux/SystemAdministration/cron.md)** — справочник по синтаксису и нюансам работы планировщика.
+- **[Обработчики (Handlers)](../ansible_core_concepts.md#обработчики-и-уведомления)** — стандартный способ перезапуска служб в ответ на изменения.

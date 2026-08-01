@@ -123,17 +123,24 @@ replacements:
 | Поле | Назначение | Пример |
 | :--- | :--- | :--- |
 | `resources` | Список YAML-файлов, директорий или URL | `deployment.yaml`, `../base` |
+| `patches` | Список файлов исправлений для применения (унифицированный блок) | См. [Наложения и патчи](./kustomize_overlays_and_patches.md) |
+| `configMapGenerator` | Инструкции по созданию ConfigMaps | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
+| `secretGenerator` | Инструкции по созданию Secret | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
 | `namespace` | Пространство имен для всех ресурсов | `production` |
 | `namePrefix` / `nameSuffix` | Префикс/суффикс к именам всех ресурсов | `prod-`, `-v1` |
 | `commonLabels` | Метки для всех ресурсов и их селекторов | `app: myapp` |
 | `commonAnnotations` | Аннотации для всех ресурсов | `managed-by: kustomize` |
-| `configMapGenerator` | Динамическая генерация ConfigMap | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
-| `secretGenerator` | Динамическая генерация Secret | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
-| `patches` | Унифицированный блок для любых патчей | См. [Наложения и патчи](./kustomize_overlays_and_patches.md) |
 | `images` | Переопределение имени/тега/хеша образа | `newTag: v1.2.0` |
 | `generatorOptions` | Глобальные настройки генераторов | `disableNameSuffixHash: true` |
 | `components` | Использование переиспользуемых модулей | `../components/monitoring` |
 | `replacements` | Копирование данных между полями ресурсов | Замена устаревших `vars` |
+
+---
+
+### Советы для собеседования
+
+**Вопрос:** Какова основная цель файла `kustomization.yaml` в Kustomize?
+**Ответ:** Файл `kustomization.yaml` — это сердце Kustomize; он определяет, как генерируются финальные манифесты Kubernetes. Его основная цель — выступать в роли декларативного руководства по эксплуатации. Он определяет список базовых файлов ресурсов, патчи, которые к ним применяются, и генераторы для создания ConfigMaps и Secrets. Изменяя этот файл, можно управлять сложными настройками для разных сред, не затрагивая исходные базовые YAML-файлы.
 
 ### Ресурсы базового слоя (Base)
 

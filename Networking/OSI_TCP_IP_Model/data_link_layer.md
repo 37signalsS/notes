@@ -79,12 +79,12 @@ L2 является наиболее уязвимым уровнем, так к�
 | Категория | Технологии |
 | :--- | :--- |
 | **Основные** | [Ethernet](../Protocols/ethernet.md), Wi-Fi (802.11), [VLAN (802.1Q)](../Protocols/vlan.md), PPP, HDLC |
-| **Служебные** | [ARP](../Protocols/arp.md) (L2.5), STP, LACP, LLDP/CDP |
+| **Служебные** | [ARP](../Protocols/arp.md) (L2.5), STP, LACP, [LLDP](../Protocols/lldp.md)/CDP |
 | **Облачные L2-over-L3** | [VXLAN](../Tunnels/vxlan.md), NVGRE, GENEVE |
 
 ### См. также
 
 - [MAC-адрес](../Concepts/mac_address.md) — структура и типы адресации
 - [Ethernet](../Protocols/ethernet.md) — детальный разбор кадров и скоростей
-- [Диагностика L2 в Linux](../../Linux/Networking/network_troubleshooting_order.md#1-физика-и-l2) — инструменты `ip link`, `bridge fdb`, `ethtool`
+- [Диагностика L2 в Linux](../../Linux/Networking/network_troubleshooting_order.md#1-физика-и-l2) — инструменты `ip link`, `bridge fdb`, `ethtool`, [LLDP](../../Networking/Protocols/lldp.md)
 - [Модель OSI](./osi_model.md) — структура всех уровней

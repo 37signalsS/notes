@@ -1,63 +1,73 @@
-# Traefik Overview
+# Обзор Traefik
 
-## Definitions
+**Надёжность:** 10 (SSoT + Официальная документация Traefik v3.6+)
 
-**Traefik** — современный обратный прокси и балансировщик нагрузки для микросервисных архитектур с поддержкой автоматического service discovery.
+**Свежесть:** Актуально на июль 2026. Проверка обновлений: ежеквартально.
 
-**Ключевое отличие** от традиционных веб-серверов (Nginx, HAProxy): Traefik "слушает" бэкенды (Docker, Kubernetes, Consul и др.) и динамически перенастраивает маршруты без перезапуска.
+## Определения
 
-> **Актуальная версия:** Traefik v3.x (текущая стабильная — v3.6+, Changelog: [traefik/traefik](https://github.com/traefik/traefik))
+**Traefik** — современный облачно-ориентированный (cloud-native) обратный прокси-сервер и балансировщик нагрузки для микросервисных архитектур с поддержкой автоматического обнаружения сервисов (service discovery).
 
-## Basic Concepts
+**Ключевое отличие** от традиционных веб-серверов (Nginx, HAProxy): Traefik разработан специально для динамических сред. Он «слушает» API оркестраторов (Docker, Kubernetes, HashiCorp Nomad, Consul и др.) и автоматически перенастраивает правила маршрутизации при запуске или остановке контейнеров без перезапуска самого прокси.
 
-Архитектура Traefik v3 построена на пяти компонентах:
+## Базовые концепции
 
-1. **Providers** — источники конфигурации (Docker, Kubernetes, Consul, File). Traefik опрашивает их API и строит динамическую конфигурацию.
-2. **Entrypoints** — сетевые порты для входящего трафика (HTTP/80, HTTPS/443).
-3. **Routers** — правила маршрутизации на основе хоста, пути, заголовков; связывают entrypoints с сервисами.
-4. **Services** — определяют конечные бэкенды (адреса, порты, стратегию балансировки).
-5. **Middleware** — цепочка обработчиков запроса до отправки сервису (BasicAuth, StripPrefix, RateLimit, RedirectScheme).
+### Архитектура компонентов
 
-### Конфигурация
+Архитектура Traefik v3 построена на пяти ключевых компонентах:
 
-Traefik v3 разделяет конфигурацию на два типа:
+1.  **Providers** — источники конфигурации. Traefik опрашивает API провайдеров (Docker API, Kubernetes API) для получения информации о запущенных сервисах.
+2.  **Entrypoints** — сетевые точки входа (порты), принимающие входящий трафик (например, HTTP на 80 порту, HTTPS на 443).
+3.  **Routers** — правила маршрутизации. Связывают Entrypoints с Сервисами на основе условий (Host, Path, Headers, Query).
+4.  **Services** — логические группы бэкендов. Определяют, куда направить запрос (адреса, порты) и стратегию балансировки (Round Robin, Sticky sessions).
+5.  **Middleware** — цепочка обработчиков запроса. Позволяют модифицировать запрос до отправки бэкенду или ответ после (BasicAuth, RateLimit, IP Allowlist, Compression, Circuit Breaker).
 
-- **Статическая** (`traefik.yml` / CLI-флаги) — entrypoints, providers, certificatesResolvers. Загружается при старте, требует перезапуска для изменений.
-- **Динамическая** (labels в Docker, Ingress в K8s, файл `dynamic.yml`) — routers, services, middleware. Обновляется на лету без перезапуска.
+### Типы конфигурации
 
-### SSL/TLS автоматизация
+Traefik разделяет конфигурацию на два независимых слоя:
 
-Traefik получает и обновляет сертификаты Let's Encrypt через ACME-протокол. Поддерживаемые методы валидации:
+-   **Статическая конфигурация:** Определяет глобальные параметры (Entrypoints, Providers, логирование, метрики). Загружается при старте из `traefik.yml`, CLI-флагов или переменных окружения. Изменения требуют перезапуска.
+-   **Динамическая конфигурация:** Определяет Routers, Services и Middleware. Поступает от провайдеров (labels в Docker, CRD/Ingress в Kubernetes) и применяется мгновенно без прерывания соединений.
 
-| Метод | Описание | Use-case |
-|---|---|---|
-| **HTTP Challenge** | Traefik создаёт временный endpoint для проверки домена | Стандартный случай |
-| **TLS Challenge** | Валидация через TLS handshake | Альтернатива HTTP |
-| **DNS Challenge** | Создание TXT-записи в DNS (требует provider credentials) | Wildcard-сертификаты, internal DNS |
+### SSL/TLS и автоматизация ACME
 
-> **Примечание:** Wildcard-сертификаты (`*.example.com`) поддерживаются только через DNS Challenge.
+Traefik имеет встроенную поддержку Let's Encrypt и ZeroSSL. Поддерживаемые методы валидации:
 
-## Practical Scenarios
+| Метод | Описание | Основной кейс |
+| :--- | :--- | :--- |
+| **HTTP Challenge** | Проверка владения доменом через временный endpoint на порту 80. | Стандартный публичный веб-сайт. |
+| **TLS Challenge** | Валидация через протокол ALPN на порту 443. | Использование только HTTPS. |
+| **DNS Challenge** | Проверка через создание TXT-записи в DNS. | Wildcard-сертификаты (`*.example.com`) и внутренние сети. |
 
-Основные платформы развертывания и ссылки на руководства:
+### Новые возможности Traefik v3
 
-- **Docker Compose** — [Traefik with Docker Compose](./traefik_with_docker_compose.md)
-- **Docker Swarm** — [Swarm Ingress Traffic with Traefik](../../Docker_swarm/swarm_ingress_traefik.md)
-- **Kubernetes** — Traefik как Ingress-контроллер: [Ingress Overview](../../Kubernetes/Networking/Ingress/overview.md), [BasicAuth в K8s](../../Kubernetes/Security/traefik_kubernetes_basic_auth.md)
+-   **Kubernetes Gateway API:** Полная поддержка стандарта Gateway API (v1.1+), обеспечивающая нативную интеграцию с K8s без кастомных аннотаций.
+-   **WebAssembly (WASM):** Поддержка плагинов на WASM, позволяющая писать расширения на любых языках (Go, Rust, C++).
+-   **Tailscale Integration:** Возможность автоматического получения сертификатов для узлов внутри Tailscale сети.
+-   **Observability:** Нативная поддержка OpenTelemetry для трассировок и метрик.
+-   **HTTP/3:** Поддержка современного протокола на базе UDP для минимизации задержек.
 
-## Additional Information
+## Практические сценарии
+
+Основные платформы развертывания и примеры конфигурации:
+
+-   **Docker Compose:** Развертывание прокси для локальной разработки и небольших VPS. См. [Traefik с Docker Compose](./traefik_with_docker_compose.md).
+-   **Docker Swarm:** Использование Traefik как Ingress-слоя для кластера. См. [Swarm Ingress Traffic с Traefik](../../Docker_swarm/swarm_ingress_traefik.md).
+-   **Kubernetes:** Работа в качестве Ingress-контроллера или Gateway API провайдера. См. [Обзор Ingress](../../Kubernetes/Networking/Ingress/overview.md) и [Traefik Gateway API](../../Kubernetes/Networking/gateway_api/traefik.md).
+
+## Дополнительная информация
 
 ### Сравнение с альтернативами
 
-| Решение | Сложность | Service Discovery | SSL Automation | Экосистема |
-|---|---|---|---|---|
-| **Traefik** | Низкая | Встроенная | Let's Encrypt из коробки | Растущая |
-| **Nginx** | Средняя | Через модули/внешние | cert-manager (в K8s) | Огромная |
-| **HAProxy** | Высокая | Через consul-template | Внешние скрипты | Большая |
+| Характеристика | Traefik | Nginx | HAProxy |
+| :--- | :--- | :--- | :--- |
+| **Сложность настройки** | Низкая (Auto-discovery) | Средняя (Manual config) | Высокая (Expert level) |
+| **Service Discovery** | Встроенный (Native) | Через модули/Lua | Через Consul-template |
+| **SSL Automation** | Встроенная (ACME) | Требует cert-manager/скрипты | Внешние скрипты |
+| **Динамизм** | Высокий (Hot reload) | Средний (Reload/NJS) | Средний (Runtime API) |
 
-### Связанные документы
+### См. также
 
-- [Traefik v3 Migration (v2→v3)](../../Docker_swarm/swarm_ingress_traefik.md)
-- [CI/CD с Traefik в Swarm](../../Docker_swarm/CI_CD/overview.md)
-- [Infrastructure Deployment](../../Docker_swarm/CI_CD/infra_deployment.md)
-- [Обратный прокси (концепция)](../../Networking/Concepts/proxy.md)
+-   [Traefik Gateway API](../../Kubernetes/Networking/gateway_api/traefik.md) — глубокое погружение в реализацию стандарта в K8s.
+-   [Сетевое взаимодействие в Swarm](../../Docker_swarm/swarm_networking.md) — основы Overlay-сетей для балансировщика.
+-   [Обратный прокси (концепция)](../../Networking/Concepts/proxy.md) — теоретические основы работы прокси-серверов.

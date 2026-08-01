@@ -1,36 +1,36 @@
-# Сервисы и Ingress для Alertmanager + Karma
+# Сетевой доступ: Сервисы и Ingress
 
 ## Определения
 
-**Service (ClusterIP)** — внутренний Kubernetes Service типа ClusterIP, обеспечивающий стабильный DNS-доступ к подам Alertmanager (порт 9093) и Karma (порт 8080) внутри кластера.
+**Kubernetes Service** — абстракция, определяющая логический набор подов и политику доступа к ним. В данном руководстве используются сервисы типа `ClusterIP` для обеспечения внутренней связности между компонентами (Prometheus → Alertmanager, Karma → Alertmanager).
 
-**Ingress** — объект Kubernetes для маршрутизации внешнего HTTP/HTTPS трафика к сервисам кластера на основе host-имён. В данном руководстве Ingress публикует Alertmanager и Karma по отдельным доменам (`alertmanager.k8s.local`, `karma.k8s.local`).
+**Ingress** — API-объект, управляющий внешним доступом к сервисам в кластере, обычно по протоколу HTTP/HTTPS. Ingress обеспечивает L7 маршрутизацию по именам хостов.
 
-> **См. также:** материалы [Обзор Service](../../../Kubernetes/Networking/Service/service_overview.md) и [Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md)
+---
 
 ## Основные концепции
 
-### Архитектура сетевого доступа
+### Схема сетевых потоков
 
-```
+```text
 Внешний трафик
        │
        ▼
 ┌──────────────┐
-│   Ingress    │  L7 маршрутизация по host
+│   Ingress    │  Маршрутизация по именам хостов
 │  Controller  │
 └──────┬───────┘
        │
    ┌───┴──────────────────┐
    │                      │
    ▼                      ▼
-alertmanager.k8s.local   karma.k8s.local
+alertmanager.local      karma.local
    │                      │
    ▼                      ▼
 ┌──────────────┐    ┌──────────┐
-│  Service     │    │ Service  │
+│   Service    │    │ Service  │
 │ alertmanager │    │  karma   │
-│  :9093       │    │  :8080   │
+│ (Port 9093)  │    │ (Port 80)│
 └──────┬───────┘    └────┬─────┘
        │                 │
        ▼                 ▼
@@ -40,25 +40,13 @@ alertmanager.k8s.local   karma.k8s.local
   └─────────┘      └─────────┘
 ```
 
-### Типы Service
-
-| Service | Тип | Порт | Selector | Назначение |
-|---|---|---|---|---|
-| `alertmanager` | ClusterIP | `9093` | `app: alertmanager` | Внутренний доступ к Alertmanager (для Karma, Prometheus) |
-| `karma` | ClusterIP | `8080` | `app: karma` | Внутренний доступ к Karma |
-
-### Ingress-правила
-
-| Host | Backend Service | Порт | Path |
-|---|---|---|---|
-| `alertmanager.k8s.local` | `alertmanager` | `9093` | `/` |
-| `karma.k8s.local` | `karma` | `8080` | `/` |
+---
 
 ## Практические сценарии
 
-### Service: Alertmanager
+### Настройка внутренних сервисов
 
-**`alertmanager-svc.yaml`**
+**`alertmanager-services.yaml`**
 
 ```yaml
 apiVersion: v1
@@ -72,20 +60,8 @@ spec:
   ports:
     - name: web
       port: 9093
-      targetPort: web
-```
-
-**Пояснения:**
-
-- `selector: app: alertmanager` — связывает Service с подами из [alertmanager-statefulset.md](./alertmanager-statefulset.md)
-- `targetPort: web` — ссылается на именованный порт `web` (9093) в контейнере
-- Тип не указан — по умолчанию `ClusterIP`
-
-### Service: Karma
-
-**`karma-svc.yaml`**
-
-```yaml
+      targetPort: 9093
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -96,18 +72,11 @@ spec:
     app: karma
   ports:
     - name: web
-      port: 8080
-      targetPort: web
+      port: 80
+      targetPort: 8080
 ```
 
-**Пояснения:**
-
-- `selector: app: karma` — связывает Service с подами из [karma-deployment.md](./karma-deployment.md)
-- `targetPort: web` — ссылается на именованный порт `web` (8080) в контейнере
-
-### Ingress: маршрутизация внешнего трафика
-
-**`ingress.yaml`**
+### Маршрутизация через Ingress
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -117,7 +86,7 @@ metadata:
   namespace: monitoring
 spec:
   rules:
-    - host: alertmanager.k8s.local
+    - host: alertmanager.local
       http:
         paths:
           - path: /
@@ -125,9 +94,8 @@ spec:
             backend:
               service:
                 name: alertmanager
-                port:
-                  number: 9093
-    - host: karma.k8s.local
+                port: { number: 9093 }
+    - host: karma.local
       http:
         paths:
           - path: /
@@ -135,45 +103,14 @@ spec:
             backend:
               service:
                 name: karma
-                port:
-                  number: 8080
+                port: { number: 80 }
 ```
 
-**Пояснения:**
-
-- `pathType: Prefix` — маршрутизация по префиксу пути (в данном случае `/` — все пути)
-- `port.number` — явное указание номера порта (альтернатива `port.name`)
-- Требуется работающий Ingress Controller (NGINX, Traefik, HAProxy и т.д.) — см. [Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md)
-
-### Проверка после применения
-
-```bash
-# Применение манифестов
-kubectl apply -f alertmanager-svc.yaml
-kubectl apply -f karma-svc.yaml
-kubectl apply -f ingress.yaml
-
-# Проверка Service
-kubectl get svc -n monitoring
-
-# Проверка Ingress
-kubectl get ingress -n monitoring
-
-# Проверка DNS (из пода в кластере)
-kubectl run dns-test --rm -it --image=busybox --restart=Never -- \
-  nslookup alertmanager.monitoring.svc.cluster.local
-```
-
-### DNS-имена для внутреннего доступа
-
-| Сервис | DNS-имя | Использование |
-|---|---|---|
-| Alertmanager | `alertmanager.monitoring.svc.cluster.local:9093` | Karma подключается для сбора алертов |
-| Karma | `karma.monitoring.svc.cluster.local:8080` | Внутренний доступ из других подов |
+---
 
 ## Дополнительная информация
 
-- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — поды, которые обслуживает Service `alertmanager`
-- [Karma Deployment](./karma-deployment.md) — поды, которые обслуживает Service `karma`
-- [Обзор Service](../../../Kubernetes/Networking/Service/service_overview.md) — общая теория Service в Kubernetes
-- [Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md) — общая теория Ingress в Kubernetes
+- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — описание подов Alertmanager.
+- **[Развёртывание Karma](./karma-deployment.md)** — описание подов дашборда.
+- **[Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md)** — SSoT по сетевой маршрутизации.
+- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

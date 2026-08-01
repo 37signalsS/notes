@@ -2,124 +2,122 @@
 
 ## Определения
 
-**Модули управления пользователями и безопасностью** — это инструменты Ansible для управления учетными записями, правами доступа и секретами на управляемых хостах. Они позволяют декларативно описывать состав групп, пользователей, их SSH-ключи и [права доступа (ACL)](../../Linux/Security/Concepts/File_Permissions/overview_definitions.md), гарантируя идентичность настроек безопасности на всем парке серверов.
+**Модули управления пользователями и безопасностью** — это группа специализированных инструментов Ansible (`ansible.builtin` и `ansible.posix`), предназначенных для декларативного управления учетными записями, правами доступа и механизмами аутентификации на управляемых хостах.
 
-Базовые концепции администрирования в Linux (UID, GID, типы учетных записей) описаны в разделе [Определения пользователей и групп](../../Linux/SystemAdministration/Users/users_definitions.md).
+Использование этих модулей гарантирует идентичность настроек безопасности на всем парке серверов, исключая человеческий фактор при настройке привилегий и SSH-доступа.
+
+**FQCN (Fully Qualified Collection Name)** — полное имя модуля (например, `ansible.builtin.user`), использование которого обязательно для предотвращения конфликтов и обеспечения предсказуемости выполнения.
 
 ## Основные концепции
 
-### Группы модулей
+### Группы модулей по назначению
 
-1. **Управление учетными записями и группами:**
-    * **`ansible.builtin.user`**: Создание, модификация и удаление пользователей. Управление домашними директориями, оболочками (shell) и хешированными паролями.
-    * **`ansible.builtin.group`**: Управление системными группами и их GID.
-    * **`ansible.builtin.getent`**: Сбор информации из системных баз данных (passwd, group, shadow) в переменную `ansible_facts.getent_*`.
+1.  **Управление учетными записями и группами:**
+    *   `ansible.builtin.user`: Создание, модификация и удаление пользователей. Управление домашними директориями, оболочками (shell), хешированными паролями и автоматической генерацией SSH-ключей.
+    *   `ansible.builtin.group`: Управление системными группами и их GID.
+    *   `ansible.builtin.getent`: Сбор информации из системных баз данных (passwd, group, shadow) в переменную `ansible_facts.getent_*`.
+2.  **Управление доступом и SSH:**
+    *   `ansible.posix.authorized_key`: Управление публичными ключами в файлах `authorized_keys`.
+    *   `ansible.builtin.known_hosts`: Добавление или удаление ключей хостов в `known_hosts` для предотвращения MITM-атак и интерактивных запросов подтверждения.
+    *   `ansible.posix.acl`: Тонкая настройка списков контроля доступа (Access Control Lists) для объектов файловой системы. Требует поддержки ACL ядром и опций монтирования ФС.
+3.  **Безопасность и секреты:**
+    *   `ansible.builtin.password`: Генерация случайных паролей на контрольном узле.
+    *   `no_log: true`: Параметр задачи (не модуль), критически важный для предотвращения утечки секретов в логи и вывод консоли.
 
-2. **Управление доступом и SSH:**
-    * **`ansible.posix.authorized_key`**: Управление публичными ключами в `authorized_keys`.
-    * **`ansible.builtin.known_hosts`**: Управление записями в `known_hosts` для предотвращения ошибок проверки ключей хоста.
-    * **`ansible.posix.acl`**: Управление списками контроля доступа (Access Control Lists) для тонкой настройки прав на файлы и директории.
+### Критически важные детали реализации
 
-3. **Безопасность и секреты:**
-    * **`ansible.builtin.password`**: Генерация случайных паролей или хешей на контрольном узле.
-    * **`no_log`**: Параметр задачи (не модуль), скрывающий чувствительные данные из вывода и логов выполнения.
+#### Модуль `ansible.builtin.user` и пароли
+*   **Хеширование**: Параметр `password` ожидает **хеш**, а не открытый текст. Если передать строку `12345`, она будет записана в `/etc/shadow` как есть, и пользователь не сможет войти.
+*   **Рекомендация**: Используйте фильтр `password_hash` с солью (salt): `password: "{{ 'mysecret' | password_hash('sha512', 'mysalt') }}"`.
+*   **`update_password`**:
+    *   `on_create`: Пароль устанавливается только при создании. Если пароль на хосте изменен вручную, Ansible его не «вернет» обратно.
+    *   `always`: Сверяет текущий хеш и обновляет его при расхождении (стандарт для комплаенса).
+*   **SSH Key Gen**: Параметры `ssh_key_generate: yes` и `ssh_key_file` позволяют автоматически создать пару ключей для пользователя прямо при его создании.
 
-### Идемпотентность и безопасность
+#### Модуль `ansible.posix.authorized_key`
+*   **`exclusive: yes`**: Критически важный параметр для безопасности. Удаляет из `authorized_keys` все ключи, которые не указаны в задаче. Позволяет гарантировать, что доступ имеют только авторизованные в Ansible ключи.
+*   **`path`**: Позволяет указать нестандартное местоположение файла ключей (например, если используется `AuthorizedKeysFile /etc/ssh/authorized_keys/%u` в `sshd_config`).
 
-Все модули являются идемпотентными. При управлении пользователями крайне важно:
-- Использовать хешированные пароли (SHA-512).
-- Защищать секреты через [Ansible Vault](../Vault/basics.md).
-- Делегировать права гранулярно через [sudoers](../../Linux/SystemAdministration/privilege_management.md#конфигурация-sudoers).
+#### Модуль `ansible.builtin.known_hosts`
+*   **`key`**: Ожидает строку в формате, выдаваемом `ssh-keyscan`.
+*   **`hash_host: yes`**: Скрывает IP/имя хоста в файле `known_hosts`, что является лучшей практикой безопасности.
 
 ## Практические сценарии
 
-### Управление пользователями (`ansible.builtin.user`)
+### Создание системного пользователя с SSH-ключом
+Использование `system: yes` создает техническую учетную запись с UID в системном диапазоне.
 
 ```yaml
-- name: Создание системного пользователя для приложения
+- name: "Создание пользователя для бэкапов"
   ansible.builtin.user:
-    name: app_user
-    comment: "Application Service Account"
-    shell: /sbin/nologin
+    name: backup_mgr
+    shell: /bin/bash
     system: yes
-    groups: developers
-    append: yes
-    state: present
-# → result: создан системный пользователь app_user без возможности входа
+    create_home: yes
+    ssh_key_generate: yes
+    ssh_key_bits: 4096
+    ssh_key_type: rsa
+    ssh_key_comment: "ansible-managed-backup-key"
 ```
 
-**Установка хешированного пароля:**
+### Строгое управление SSH-доступом (`exclusive`)
+Гарантия того, что только текущие ключи администраторов имеют доступ.
 
 ```yaml
-- name: Установка пароля для пользователя
-  ansible.builtin.user:
-    name: admin_user
-    password: "{{ user_password_hash }}" # Использование хеша из Vault
-    update_password: on_create
-  no_log: true
-# → result: установлен пароль, данные скрыты в логах (no_log)
-```
-
-### Управление списками доступа (`ansible.posix.acl`)
-
-Тонкая настройка прав доступа для конкретного пользователя без смены владельца файла.
-
-```yaml
-- name: Предоставление пользователю app_user прав на чтение логов
-  ansible.posix.acl:
-    path: /var/log/myapp.log
-    entity: app_user
-    etype: user
-    permissions: r
-    state: present
-# → result: app_user получил право 'r' через механизм ACL
-```
-
-### Проверка наличия пользователя в системе (`ansible.builtin.getent`)
-
-```yaml
-- name: Получение информации о пользователе root
-  ansible.builtin.getent:
-    database: passwd
-    key: root
-
-- name: Вывод домашней директории root
-  ansible.builtin.debug:
-    msg: "Home: {{ ansible_facts.getent_passwd['root'][4] }}"
-# → result: в ansible_facts доступны данные из /etc/passwd
-```
-
-### Делегирование прав через sudoers
-
-Безопасное добавление прав sudo с валидацией синтаксиса.
-
-```yaml
-- name: Разрешение перезапуска Nginx без пароля
-  ansible.builtin.template:
-    src: sudoers_nginx.j2
-    dest: /etc/sudoers.d/nginx
-    mode: '0440'
-    validate: '/usr/sbin/visudo -cf %s'
-# → result: файл создан только если visudo подтвердил корректность синтаксиса
-```
-
-### Управление SSH-ключами (`ansible.posix.authorized_key`)
-
-```yaml
-- name: Добавление публичного ключа администратора
+- name: "Синхронизация ключей администраторов"
   ansible.posix.authorized_key:
-    user: admin_user
+    user: root
+    key: "{{ lookup('file', 'keys/admin_group.pub') }}"
+    exclusive: yes
     state: present
-    key: "{{ lookup('file', 'keys/admin.pub') }}"
-# → result: ключ добавлен в /home/admin_user/.ssh/authorized_keys
+```
+
+### Тонкая настройка прав через ACL
+Предоставление доступа конкретному пользователю к директории без изменения `owner/group`.
+
+```yaml
+- name: "Разрешение чтения логов для пользователя мониторинга"
+  ansible.posix.acl:
+    path: /var/log/nginx
+    entity: prometheus
+    etype: user
+    permissions: rx
+    state: present
+    recursive: yes
+```
+
+### Проверка безопасности через getent
+Использование данных из `/etc/shadow` для аудита (требует `become: true`).
+
+```yaml
+- name: "Сбор информации о пользователях"
+  ansible.builtin.getent:
+    database: shadow
+    key: "{{ item }}"
+  loop: "{{ users_to_audit }}"
+  register: shadow_info
+
+- name: "Проверка даты истечения пароля"
+  ansible.builtin.debug:
+    msg: "Пароль пользователя {{ item.item }} истекает через {{ item.ansible_facts.getent_shadow[item.item][6] }} дней"
+  loop: "{{ shadow_info.results }}"
+```
+
+### Безопасная инициализация с no_log
+Скрытие секретов при установке паролей.
+
+```yaml
+- name: "Установка пароля администратора"
+  ansible.builtin.user:
+    name: admin
+    password: "{{ admin_password | password_hash('sha512') }}"
+    update_password: always
+  no_log: true
 ```
 
 ## Дополнительная информация
 
-- [Определения пользователей и групп в Linux](../../Linux/SystemAdministration/Users/users_definitions.md) — базовые концепции ОС.
-- [Управление привилегиями: sudo и sudoers](../../Linux/SystemAdministration/privilege_management.md) — делегирование прав.
-- [Права доступа к файлам и ACL](../../Linux/Security/Concepts/File_Permissions/overview_definitions.md) — тонкая настройка доступа.
-- [Ansible Vault: управление секретами](../Vault/basics.md) — защита паролей и ключей.
-- [Рекомендации по безопасности Ansible](../ansible_security_best_practices.md) — общие принципы.
-- [Обзор часто используемых модулей](ansible_modules_overview.md) — контекст применения.
-- [Официальная документация: builtin модули](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html)
+- **[Ansible Vault: управление секретами](../Vault/basics.md)** — хранение хешей и ключей.
+- **[Рекомендации по безопасности Ansible](../ansible_security_best_practices.md)** — архитектурные паттерны защиты.
+- **[Управление привилегиями: sudo и sudoers](../../Linux/SystemAdministration/privilege_management.md)** — делегирование прав.
+- **[Определения пользователей и групп в Linux](../../Linux/SystemAdministration/Users/users_definitions.md)** — теоретическая база.

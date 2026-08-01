@@ -1,139 +1,146 @@
-# Развертывание MongoDB Replica Set с помощью Ansible
+# Ansible: Развертывание MongoDB Replica Set
 
 ## Определения
 
-**MongoDB Replica Set** — группа процессов `mongod`, поддерживающих идентичный набор данных для обеспечения избыточности и высокой доступности (HA — High Availability). Подробное описание механизмов работы приведено в разделе **[Репликация в MongoDB](../../Databases/MongoDB/mongodb.md#репликация-replica-set)**.
+**MongoDB Replica Set** — отказоустойчивый кластер из нескольких узлов `mongod`, обеспечивающий избыточность данных и высокую доступность (High Availability). Подробная теория механизмов кворума и выборов описана в разделе **[Обзор MongoDB](../../Databases/MongoDB/mongodb.md)** (SSoT).
 
-**Автоматизация развертывания через Ansible** — процесс воспроизводимой конфигурации кластера с использованием ролей (Ansible Galaxy) и специализированных модулей коллекции `community.mongodb` или `mongodb.mongodb`.
+**community.mongodb** — основная и единственная рекомендуемая коллекция Ansible для управления MongoDB в 2026 году. Поддерживает работу с локальными инстансами и MongoDB Atlas.
 
-**Идемпотентность** — свойство плейбука, гарантирующее, что повторные запуски не изменят систему, если она уже находится в целевом состоянии. В контексте MongoDB это касается инициализации реплика-сета и управления пользователями.
+**keyFile** — файл с общим секретом, используемый для внутренней аутентификации узлов внутри реплика-сета.
+
+**RBAC (Role-Based Access Control)** — модель управления доступом на основе ролей, обязательная для защиты данных в MongoDB.
 
 ## Базовые концепции
 
-### Инструментарий и зависимости
+### Зависимости и инструментарий
 
-Для управления MongoDB через Ansible необходимы следующие компоненты:
+Для автоматизации MongoDB 8.0+ требуются современные драйверы и коллекции. Старая оболочка `mongo` удалена, используется исключительно `mongosh`.
 
 | Компонент | Где требуется | Назначение |
 |---|---|---|
-| `mongodb.mongodb` | Управляющий узел | Официальная коллекция (рекомендуется для новых проектов) |
-| `community.mongodb` | Управляющий узел | Сообщество модулей (наиболее распространена) |
-| `pymongo` | Целевой хост / Управляющий узел | Python-драйвер для работы модулей Ansible |
+| `community.mongodb` | Управляющий узел | Коллекция модулей (FQCN: `community.mongodb.*`) |
+| `pymongo` | Целевой хост | Python-драйвер для взаимодействия модулей с БД |
+| `mongosh` | Целевой хост | Современная оболочка для выполнения административных команд |
 
-Установка зависимостей:
-
+Установка коллекции:
 ```bash
-ansible-galaxy collection install community.mongodb # → коллекция установлена
-pip install pymongo # → драйвер установлен
+ansible-galaxy collection install community.mongodb  # → коллекция установлена
 ```
 
-### Инициализация кластера
+### Принципы идемпотентности и безопасности
 
-Модуль `community.mongodb.mongodb_replicaset` выполняет инициализацию реплика-сета. Основные правила:
-
-1.  **Run Once**: Задача инициализации должна выполняться строго один раз на одном из узлов (обычно `primary`).
-2.  **Localhost Exception**: Если аутентификация включена, первый запуск должен происходить с локального интерфейса без пароля (особенность MongoDB для первичной настройки).
-3.  **Идемпотентность**: Модуль сравнивает текущий статус `rs.conf()` с описанным в Ansible и применяет изменения только при необходимости.
-
-### Структура инвентаря
-
-Для управления кластером рекомендуется логическое разделение:
-
-- **Группы**: `mongo_primary`, `mongo_secondary`, `mongo_arbiter`.
-- **Общие переменные**: Находятся в `group_vars/mongo_cluster.yml` (например, `mongodb_version`, `replica_set_name`).
-- **Специфичные параметры**: В `host_vars/` (например, `priority` для каждого узла).
+1.  **Порядок инициализации**: Сначала разворачиваются бинарные файлы и конфигурация, затем инициализируется Replica Set, и только после создания первого администратора включается параметр `security.authorization`.
+2.  **Управление секретами**: Все пароли и содержимое `keyFile` должны храниться в **[Ansible Vault](../Vault/basics.md)**.
+3.  **Localhost Exception**: При первом запуске (до создания пользователей) MongoDB позволяет подключаться с `localhost` без аутентификации.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий: Развертывание MongoDB Replica Set
+### Сценарий: Развертывание защищенного кластера MongoDB 8.0
 
-#### 1. Подготовка инвентаря и переменных
-
-**Файл `hosts.ini`:**
-
-```ini
-[mongo_nodes]
-mongo-01 ansible_host=192.168.52.2 priority=10
-mongo-02 ansible_host=192.168.52.3 priority=5
-mongo-03 ansible_host=192.168.52.4 arbiter=true
-```
-
-**Файл `group_vars/mongo_nodes.yml`:**
+#### 1. Подготовка переменных (group_vars/mongo.yml)
 
 ```yaml
-mongodb_replset_name: "rs0"
 mongodb_version: "8.0"
-mongodb_bind_ip: "0.0.0.0"
+mongodb_replset_name: "rs0"
+# vault_mongodb_keyfile_content: "..." (хранится в Vault)
+# vault_mongodb_admin_password: "..." (хранится в Vault)
+
+mongo_config:
+  Debian:
+    packages: ["mongodb-org", "python3-pymongo"]
+  RedHat:
+    packages: ["mongodb-org", "python3-pymongo"]
 ```
 
-#### 2. Плейбук развертывания
+#### 2. Плейбук: Установка и настройка безопасности
 
 ```yaml
 ---
-- name: Install and Configure MongoDB Cluster
+- name: Развертывание узлов MongoDB
   hosts: mongo_nodes
   become: true
   tasks:
-    - name: Install MongoDB and Python dependencies
+    - name: Установка MongoDB и зависимостей Python
       ansible.builtin.package:
-        name:
-          - mongodb-org
-          - python3-pymongo
+        name: "{{ mongo_config[ansible_facts['os_family']].packages }}"
         state: present
+        update_cache: yes
 
-    - name: Configure MongoDB replication
+    - name: Деплой keyFile для внутренней аутентификации
+      ansible.builtin.copy:
+        content: "{{ vault_mongodb_keyfile_content }}"
+        dest: /var/lib/mongodb/keyfile
+        owner: mongodb
+        group: mongodb
+        mode: '0400'
+      no_log: true
+
+    - name: Конфигурация mongod.conf (без авторизации для первого запуска)
       ansible.builtin.template:
         src: mongod.conf.j2
         dest: /etc/mongod.conf
       notify: restart mongodb
 
-    - name: Ensure MongoDB is started
+    - name: Обеспечение запуска службы
       ansible.builtin.service:
         name: mongod
         state: started
         enabled: yes
 
-  handlers:
-    - name: restart mongodb
-      ansible.builtin.service:
-        name: mongod
-        state: restarted
-
-- name: Initialize Replica Set
-  hosts: mongo_nodes
+- name: Инициализация Replica Set и RBAC
+  hosts: mongo_primary # Выполняем только на одном узле
   become: true
   tasks:
-    - name: Initiate replica set configuration
+    - name: Инициализация Replica Set
       community.mongodb.mongodb_replicaset:
         login_host: localhost
         replica_set: "{{ mongodb_replset_name }}"
-        members: "{{ groups['mongo_nodes'] | map('extract', hostvars) | map('attribute', 'ansible_host') | list }}"
+        members: "{{ groups['mongo_nodes'] }}"
       run_once: true
-      # Примечание: для сложной конфигурации (приоритеты, арбитры) 
-      # используйте явный список members или расширенный фильтр.
+
+    - name: Создание администратора кластера
+      community.mongodb.mongodb_user:
+        database: admin
+        name: admin
+        password: "{{ vault_mongodb_admin_password }}"
+        roles:
+          - { db: "admin", role: "root" }
+        state: present
+      run_once: true
+
+    - name: Включение авторизации в конфигурации
+      ansible.builtin.lineinfile:
+        path: /etc/mongod.conf
+        regexp: '^#?security:'
+        line: 'security:'
+      # Далее необходимо добавить authorization: enabled через template или block
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Безопасность
+### Масштабирование: Добавление узлов
 
-В производственных средах обязательна настройка аутентификации (Internal Authentication через keyFile и RBAC). 
+При добавлении нового узла в инвентарь модуль `mongodb_replicaset` автоматически определит изменение и выполнит `rs.reconfig()`. Важно убедиться, что новый узел имеет тот же `keyFile`, что и остальная часть кластера.
 
-1.  **keyFile**: Файл должен быть идентичен на всех узлах.
-2.  **Vault**: Параметры `login_user` и `login_password` должны передаваться в модуль `mongodb_replicaset` после первичной инициализации. Конфиденциальные данные храните в **[Ansible Vault](../Vault/basics.md)**.
+### Использование TLS/SSL
 
-### Масштабирование и мониторинг
+В 2026 году использование TLS является стандартом. Для автоматизации сертификатов используйте коллекцию `community.crypto`. В конфигурации MongoDB (`net.ssl`) укажите пути к `PEMKeyFile` и `CAFile`.
 
-- **Динамический инвентарь**: В облаках используйте **[динамический инвентарь](../dynamic_inventory.md)** для автоматического обнаружения новых узлов.
-- **Роли**: Для сложных инсталляций рекомендуется использовать проверенные роли. Подробнее — в **[ansible_roles.md](../ansible_roles.md)**.
-- **Мониторинг**: Для сбора метрик используйте `mongodb_exporter` совместно с **[Prometheus](../../Prometheus/Exporters/other_exporters.md)**.
+### Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|---|---|---|
+| `keyFile precision too open` | Права на файл выше `0600` | Установите `mode: '0400'` в задаче `copy`. |
+| `mongosh not found` | Используется старая версия MongoDB | Обновите MongoDB до 8.0+; `mongo` shell больше не поддерживается. |
+| `No replica set status available` | Служба не запущена или `bindIp` некорректен | Проверьте `systemctl status mongod` и доступность порта 27017. |
 
 ## Смотрите также
 
-- [MongoDB: Теория репликации](../../Databases/MongoDB/mongodb.md#репликация-replica-set)
+- [Обзор MongoDB (SSoT)](../../Databases/MongoDB/mongodb.md)
+- [Установка MongoDB на Ubuntu](../../Databases/MongoDB/installation_ubuntu.md)
 - [Ansible Vault: Работа с секретами](../Vault/basics.md)
-- [Развертывание PostgreSQL с Ansible](example_postgresql_setup.md)
+- [Мониторинг MongoDB с Prometheus](../../Prometheus/Exporters/other_exporters.md)

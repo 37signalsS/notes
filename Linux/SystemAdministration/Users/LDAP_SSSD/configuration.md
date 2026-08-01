@@ -2,167 +2,150 @@
 
 ## Определения
 
-- **SSSD** (System Security Services Daemon) — системная служба, обеспечивающая доступ к удаленным базам данных пользователей (LDAP, Active Directory) с поддержкой кэширования для работы в автономном режиме.
-- **LDAP** (Lightweight Directory Access Protocol) — сетевой протокол для доступа к распределенным службам каталогов.
-- **NSS** (Name Service Switch) — механизм в Unix-подобных операционных системах, определяющий источники данных для системных баз (пользователи, группы, хосты). Настраивается в `/etc/nsswitch.conf`.
-- **PAM** (Pluggable Authentication Modules) — набор разделяемых библиотек, позволяющих интегрировать различные методы аутентификации в приложения без их перекомпиляции.
-- **TLS/SSL** (Transport Layer Security / Secure Sockets Layer) — криптографические протоколы, обеспечивающие защищенную передачу данных между клиентом и сервером каталогов.
-- **AD** (Active Directory) — служба каталогов от Microsoft, использующая протокол LDAP для предоставления информации об объектах сети.
-- **POSIX** (Portable Operating System Interface) — набор стандартов, определяющих интерфейсы взаимодействия операционной системы и приложений, включая формат записей пользователей и групп.
+- **SSSD (System Security Services Daemon)** — системная служба, обеспечивающая интеграцию локальной ОС с удаленными провайдерами идентификации (LDAP, Active Directory, FreeIPA). Инкапсулирует логику кэширования и переключения между онлайн/офлайн режимами.
+- **NSS (Name Service Switch)** — механизм системной библиотеки C (glibc), определяющий источники данных для системных баз (пользователи, группы). Конфигурируется в файле `/etc/nsswitch.conf`.
+- **PAM (Pluggable Authentication Modules)** — модульная инфраструктура для проверки подлинности пользователей. Использует библиотеку `pam_sss.so` для передачи запросов на аутентификацию в SSSD.
+- **RFC 2307 / RFC 2307bis** — стандарты схем LDAP для хранения POSIX-атрибутов (UID, GID, домашние папки). Различаются способом хранения членства в группах (атрибут `memberUid` vs `member`).
+- **StartTLS** — расширение протокола LDAP, позволяющее установить защищенное соединение поверх стандартного порта 389.
 
----
+## Базовые концепции
 
-## Базовые понятия
+### Трехуровневая модель конфигурации
 
-### Архитектура конфигурации
+Для корректной работы централизованной аутентификации необходимо настроить три уровня:
 
-Процесс настройки интеграции включает три уровня:
+1.  **Демон (SSSD)**: Файл `/etc/sssd/sssd.conf` описывает, *куда* подключаться (LDAP URI) и *как* искать данные (Search Base).
+2.  **Диспетчер (NSS)**: Настройка определяет, что SSSD является доверенным источником имен пользователей.
+3.  **Аутентификатор (PAM)**: Настройка определяет, что SSSD может проверять пароли.
 
-1. **Уровень службы (SSSD):** создание файла конфигурации `sssd.conf`, где описываются параметры подключения к серверу, базы поиска (Search DN) и настройки безопасности.
-2. **Уровень системных баз (NSS):** указание системе, что информацию о пользователях и группах следует искать не только в локальных файлах (`/etc/passwd`), но и запрашивать у службы SSSD.
-3. **Уровень приложений (PAM):** подключение модуля `pam_sss.so`, который перенаправляет запросы на проверку пароля в SSSD.
+### Выбор схемы данных (ldap_schema)
 
-### Ключевые параметры sssd.conf
-
-| Параметр | Описание | Значение |
-| :--- | :--- | :--- |
-| **id_provider** | Провайдер идентификации | `ldap`, `ad`, `ipa` |
-| **auth_provider** | Провайдер аутентификации | Обычно совпадает с `id_provider` |
-| **ldap_schema** | Схема данных | `rfc2307` (стандарт POSIX), `ad` |
-| **cache_credentials** | Кэширование данных | `true` — разрешает вход без связи с сервером |
-| **ldap_tls_reqcert** | Проверка сертификата | `demand` — обязательная проверка CA (Certificate Authority) |
-
----
+- **`rfc2307`**: Классическая схема. Группы содержат список имен пользователей в атрибуте `memberUid`. Эффективна, но не поддерживает вложенные группы.
+- **`rfc2307bis`**: Современная схема. Группы содержат Distinguished Names (DN) участников в атрибуте `member`. Поддерживает иерархические структуры.
 
 ## Практические сценарии
 
-### Установка компонентов
-
-В зависимости от дистрибутива установите необходимые пакеты:
-
-**RHEL (Red Hat Enterprise Linux) и производные (Rocky, AlmaLinux):**
+### 1. Установка пакетов
 
 ```bash
-dnf install sssd sssd-ldap oddjob-mkhomedir
+# RHEL 8/9, Rocky Linux, AlmaLinux
+sudo dnf install sssd sssd-ldap oddjob-mkhomedir
+
+# Debian 12, Ubuntu 22.04/24.04
+sudo apt update && sudo apt install sssd sssd-ldap libnss-sssd libpam-sssd
 ```
 
-**Debian и Ubuntu:**
+### 2. Подготовка TLS-сертификатов
+
+Безопасное соединение обязательно для передачи хэшей паролей.
 
 ```bash
-apt update && apt install sssd sssd-ldap libnss-sssd libpam-sssd
+# Поместите сертификат CA вашего LDAP-сервера в /etc/ssl/certs/ldap-ca.crt
+# Для RHEL систем обновите доверенное хранилище:
+sudo cp ldap-ca.crt /etc/pki/ca-trust/source/anchors/
+sudo update-ca-trust
 ```
 
----
+### 3. Создание /etc/sssd/sssd.conf
 
-### Обеспечение безопасности соединений (TLS/SSL)
-
-Для безопасной передачи учетных данных необходимо доверять сертификату сервера каталогов:
-
-1. **Копирование сертификата CA:** поместите файл `ldap-ca.crt` в системное хранилище.
-2. **Обновление хранилища:**
-    - **Debian/Ubuntu:** `update-ca-certificates`
-    - **RHEL:** `update-ca-trust`
-
----
-
-### Конфигурация /etc/sssd/sssd.conf
-
-Создайте файл с правами доступа `600`:
+Файл **обязательно** должен иметь права доступа `600` (`-rw-------`).
 
 ```ini
 [sssd]
 services = nss, pam
 config_file_version = 2
-domains = ldap_domain
+domains = internal_ldap
 
 [nss]
-filter_groups = root
-filter_users = root
+# Фильтрация системных аккаунтов (ускоряет работу)
+filter_users = root,daemon,bin,sys,sync
+filter_groups = root,daemon,bin,sys,sync
 
 [pam]
+# Срок жизни офлайн-пароля (в днях)
 offline_credentials_expiration = 7
 
-[domain/ldap_domain]
+[domain/internal_ldap]
 id_provider = ldap
 auth_provider = ldap
 access_provider = ldap
 
-# Параметры LDAP-сервера
+# Параметры подключения
 ldap_uri = ldaps://ldap.example.com:636
 ldap_search_base = dc=example,dc=com
 
-# Учётная запись для привязки (Bind DN)
-ldap_default_bind_dn = cn=readonly,dc=example,dc=com
-ldap_default_authtok = secret_password
+# Учетная запись для чтения каталога (Bind DN)
+ldap_default_bind_dn = cn=sssd_user,ou=services,dc=example,dc=com
+ldap_default_authtok = YourSecurePassword
 
-# Схема и поиск пользователей
-ldap_schema = rfc2307
+# Настройки поиска и схемы
+ldap_schema = rfc2307bis
 ldap_user_search_base = ou=users,dc=example,dc=com
-ldap_user_object_class = posixAccount
+ldap_group_search_base = ou=groups,dc=example,dc=com
 
 # Кэширование
 cache_credentials = true
-entry_cache_timeout = 600
+enumerate = false
 
-# Настройка TLS
+# TLS Безопасность
 ldap_tls_cacert = /etc/ssl/certs/ca-certificates.crt
 ldap_tls_reqcert = demand
 ```
 
----
+### 4. Активация интерфейсов (NSS и PAM)
 
-### Интеграция с Active Directory (AD)
+Использование автоматизированных утилит является предпочтительным и исключает риск повреждения файлов конфигурации.
 
-Для работы в доменах Windows используется оптимизированный провайдер `ad`. Подробное руководство по подключению через `realmd` и специфическим настройкам AD см. в отдельной статье: **[Интеграция SSSD с Active Directory](./ad_integration.md)**.
-
----
-
-### Настройка системных интерфейсов (NSS и PAM)
-
-Отредактируйте файлы конфигурации для активации SSSD:
-
-**1. /etc/nsswitch.conf:**
-
+#### Для систем RHEL/CentOS (authselect)
 ```bash
-passwd:     files sss
-group:      files sss
-shadow:     files sss
+# Просмотр доступных профилей
+authselect list
+
+# Активация SSSD с автоматическим созданием домашних директорий
+sudo authselect select sssd with-mkhomedir --force
 ```
 
-**2. PAM (через pam-auth-update в Debian или вручную):**
-В файлах `/etc/pam.d/common-auth` (и аналогичных) должен присутствовать модуль `pam_sss.so`.
+#### Для систем Debian/Ubuntu (pam-auth-update)
+```bash
+# Запустите интерактивную утилиту и выберите "SSS Authentication"
+sudo pam-auth-update
 
----
+# Для автоматического создания папок добавьте в /etc/pam.d/common-session:
+# session required pam_mkhomedir.so skel=/etc/skel umask=0077
+```
 
-### Автоматическое создание домашних директорий
+### 5. Автоматическое создание домашних папок (oddjobd)
 
-Для автоматического создания папок пользователей при первом входе:
-
-- **RHEL:** `systemctl enable --now oddjobd`
-- **Debian/Ubuntu:** убедитесь, что в `/etc/pam.d/common-session` добавлена строка:
-    `session required pam_mkhomedir.so skel=/etc/skel umask=0077`
-
----
-
-### Запуск и верификация
+В RHEL-системах за создание папок отвечает сервис `oddjobd`.
 
 ```bash
-# Активация службы
-systemctl enable --now sssd
+sudo systemctl enable --now oddjobd
+```
 
-# Проверка получения данных о пользователе
+### 6. Запуск и верификация
+
+```bash
+# Запуск демона
+sudo systemctl enable --now sssd
+
+# Проверка получения данных (UID/GID должны соответствовать LDAP)
 id username
 
-# Проверка через системные базы
-getent passwd username
+# Проверка входа без пароля (для уже вошедших в кэш пользователей)
+# Отключите сетевой интерфейс и попробуйте войти
 ```
-
----
 
 ## Дополнительная информация
 
-**Связанные темы:**
+### Тонкая настройка безопасности
 
-- [Централизованное управление (LDAP, SSSD)](./index.md) — обзор архитектуры и общих принципов.
-- [Эксплуатация и отладка](./operations.md) — решение проблем, мониторинг и очистка кэша.
-- [PAM (Pluggable Authentication Modules)](../../../Security/pam_overview.md) — подробное описание работы модулей аутентификации.
+1.  **StartTLS**: Если LDAP работает на порту 389, используйте `ldap_id_use_start_tls = true` в `sssd.conf`.
+2.  **Защита пароля Bind DN**: Вместо хранения пароля в `sssd.conf`, рассмотрите использование провайдеров `ad` или `ipa`, которые используют системный Keytab.
+3.  **Диапазоны UID/GID**: Убедитесь, что `UID_MIN` в `/etc/login.defs` на локальной системе меньше, чем минимальный UID в LDAP (обычно 1000 или 2000), чтобы избежать пересечений.
+
+### Смежные темы
+
+- [Централизованное управление (Index)](./index.md) — общая архитектура.
+- [Эксплуатация и диагностика](./operations.md) — работа с `sssctl` и очистка кэша.
+- [Интеграция с Active Directory](./ad_integration.md) — специфика провайдера `ad`.
+- [Настройка PAM](../../../Security/pam_overview.md) — детальный разбор работы PAM-стека.

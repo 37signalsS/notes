@@ -38,7 +38,7 @@
 2. **Уровень базы данных (PostgreSQL):**
    - **Логи:** `trace_id` из комментариев извлекается и записывается в логи (через настройку `log_line_prefix`).
    - **Трассировка:** Расширение `pg_tracing` (или аналоги) создает спаны для фаз `parsing`, `planning` и `execution`.
-   - **Метрики:** `postgres_exporter` собирает данные из представлений `pg_stat_*`.
+   - **Метрики:** **[postgres_exporter](../../Prometheus/Exporters/other_exporters.md#базы-данных)** собирает данные из представлений `pg_stat_*`.
 
 3. **Агент-коллектор (Grafana Alloy / OpenTelemetry Collector):**
    - Собирает метрики, парсит логи (извлекая `traceid`), принимает трейсы.

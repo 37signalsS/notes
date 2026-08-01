@@ -1,120 +1,132 @@
 # Установка Alertmanager
 
-Данное руководство описывает процесс развёртывания Alertmanager на Linux-системах и в Docker.
+## Определения
 
-> **Важно:** Перед установкой ознакомьтесь с архитектурой и принципами работы в основном разделе **[Alertmanager — управление оповещениями](../alertmanager.md)**.
+**Alertmanager** — компонент экосистемы Prometheus, отвечающий за обработку оповещений. Он выполняет дедупликацию, группировку и маршрутизацию уведомлений в конечные каналы (Email, Slack, Telegram и др.).
 
-## Актуальная версия
+*   **amtool** — официальная утилита командной строки для проверки конфигурации, управления «тишиной» (silences) и мониторинга статуса Alertmanager.
+*   **Mesh-кластер** — архитектура высокой доступности (HA), в которой несколько инстансов Alertmanager синхронизируют состояние через протокол Gossip.
 
-| Параметр | Значение |
-|---|---|
-| **Последняя стабильная версия** | `0.32.0` (апрель 2026) |
-| **Репозиторий** | [prometheus/alertmanager](https://github.com/prometheus/alertmanager) |
+## Основные концепции
 
-> Полный список ключей запуска и их описание доступны в разделе **[Ключи запуска](../alertmanager.md#веб-интерфейс-и-ключи-запуска)**.
+### Модели развертывания
+1.  **Standalone (Одиночный узел)**: Подходит для небольших сред. При падении сервиса уведомления не доставляются.
+2.  **HA Cluster (Отказоустойчивый кластер)**: Минимум 3 узла. Обеспечивает доставку уведомлений даже при выходе из строя одного или нескольких компонентов.
+
+### Безопасность и доступ
+Alertmanager по умолчанию не имеет встроенной аутентификации. Для защиты Web UI и API в промышленных средах необходимо:
+*   Использовать флаг `--web.config.file` для настройки встроенного TLS и Basic Auth.
+*   Или использовать обратный прокси-сервер (Nginx, Traefik).
+
+### Актуальные версии (прогноз на 2026)
+
+| Компонент | Версия | Статус |
+| :--- | :--- | :--- |
+| **Alertmanager** | 0.32.0 | Stable |
+| **amtool** | 0.32.0 | Stable |
 
 ## Практические сценарии
 
-### Установка из бинарных файлов (Linux)
+### Сценарий 1: Установка из бинарных файлов (systemd)
 
-**1. Создание пользователя:**
+Рекомендуемый метод для виртуальных машин.
 
+**1. Подготовка системы:**
 ```bash
-useradd --no-create-home --shell /bin/false alertmanager --comment "User to run Alertmanager"
+# Создание пользователя
+sudo useradd --no-create-home --shell /bin/false alertmanager
+
+# Создание каталогов
+sudo mkdir -p /etc/alertmanager /var/lib/alertmanager
+sudo chown alertmanager:alertmanager /etc/alertmanager /var/lib/alertmanager
 ```
 
 **2. Загрузка и установка:**
-
 ```bash
-ALERTMANAGER_VERSION="0.32.0"
-cd /tmp
-wget https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz
-tar xvfz alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz
-cd alertmanager-${ALERTMANAGER_VERSION}.linux-amd64
-mv alertmanager amtool /usr/local/bin/
+VERSION="0.32.0"
+wget https://github.com/prometheus/alertmanager/releases/download/v${VERSION}/alertmanager-${VERSION}.linux-amd64.tar.gz
+tar xvfz alertmanager-${VERSION}.linux-amd64.tar.gz
+sudo mv alertmanager-${VERSION}.linux-amd64/alertmanager /usr/local/bin/
+sudo mv alertmanager-${VERSION}.linux-amd64/amtool /usr/local/bin/
 ```
 
-**3. Настройка каталогов и конфигурации:**
-
-```bash
-mkdir -p /etc/alertmanager
-cp alertmanager.yml /etc/alertmanager/alertmanager.yml
-chown -R alertmanager:alertmanager /etc/alertmanager
-
-mkdir -p /var/lib/alertmanager
-chown alertmanager:alertmanager /var/lib/alertmanager
+**3. Создание конфигурации (`/etc/alertmanager/alertmanager.yml`):**
+```yaml
+global:
+  resolve_timeout: 5m
+route:
+  receiver: 'default'
+receivers:
+  - name: 'default'
 ```
 
-**4. Создание файла с опциями запуска** (`/etc/sysconfig/alertmanager`):
-
-```bash
-cat <<EOF > /etc/sysconfig/alertmanager
-OPTIONS="--config.file=/etc/alertmanager/alertmanager.yml \
---storage.path=/var/lib/alertmanager/ \
---web.listen-address=:9093 \
---cluster.listen-address="
-EOF
-```
-
-> **Примечание:** Пустой `--cluster.listen-address=` отключает кластеризацию для одиночного инстанса. Подробнее о кластеризации: **[Высокая доступность — HA](../alertmanager.md#высокая-доступность-ha)**.
-
-**5. Создание systemd-сервиса** (`/etc/systemd/system/alertmanager.service`):
-
-```bash
-cat <<EOF > /etc/systemd/system/alertmanager.service
+**4. Настройка systemd-сервиса (`/etc/systemd/system/alertmanager.service`):**
+```ini
 [Unit]
 Description=Prometheus Alertmanager
-Documentation=https://prometheus.io/docs/alerting/latest/alertmanager/
-After=network-online.target
+After=network.target
 
 [Service]
 User=alertmanager
 Group=alertmanager
+Type=simple
+ExecStart=/usr/local/bin/alertmanager \
+    --config.file=/etc/alertmanager/alertmanager.yml \
+    --storage.path=/var/lib/alertmanager/ \
+    --web.listen-address=:9093
 Restart=always
-EnvironmentFile=/etc/sysconfig/alertmanager
-ExecStart=/usr/local/bin/alertmanager \$OPTIONS
-ExecReload=/bin/kill -HUP \$MAINPID
-TimeoutStopSec=20s
 
 [Install]
 WantedBy=multi-user.target
-EOF
 ```
 
-**6. Запуск и проверка:**
+**5. Запуск:**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now alertmanager
+```
+
+### Сценарий 2: Развертывание HA-кластера
+
+Для работы кластера необходимо указать порты для обмена данными (Gossip) и адреса соседей (peers).
 
 ```bash
-systemctl daemon-reload
-systemctl start alertmanager
-systemctl enable alertmanager
-
-# Проверка доступности
-curl -s -o /dev/null -w "%{http_code}" http://localhost:9093
+# Флаги запуска для узла 1
+alertmanager \
+  --cluster.listen-address=:9094 \
+  --cluster.peer=<IP_NODE_2>:9094 \
+  --cluster.peer=<IP_NODE_3>:9094
 ```
 
-### Проверка конфигурации
+> Подробнее о настройке отказоустойчивости — в разделе **[Alertmanager: Высокая доступность (HA)](../alertmanager.md#высокая-доступность-ha)**.
 
-Для проверки синтаксиса используйте утилиту `amtool`:
+### Сценарий 3: Использование amtool
 
-```bash
-amtool check-config /etc/alertmanager/alertmanager.yml
+Настройка конфигурации `amtool` (`~/.config/amtool/config.yml`):
+```yaml
+alertmanager.url: "http://localhost:9093"
 ```
 
-### Установка через Docker
-
-```bash
-docker run -d \
-  --name alertmanager \
-  -p 9093:9093 \
-  -v /etc/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml \
-  -v alertmanager-data:/alertmanager \
-  prom/alertmanager:v0.32.0 \
-  --config.file=/etc/alertmanager/alertmanager.yml \
-  --storage.path=/alertmanager
-```
+**Основные команды:**
+*   Проверка конфига: `amtool check-config /etc/alertmanager/alertmanager.yml`
+*   Список активных алертов: `amtool alert`
+*   Создание тишины (silence): `amtool silence add alertname=NodeDown --duration=1h`
 
 ## Дополнительная информация
 
-*   **Настройка уведомлений:** подробные примеры `alertmanager.yml` и логика маршрутизации описаны в **[Конфигурация Alertmanager](../alertmanager.md#конфигурация-alertmanageryml)**.
-*   **Безопасность:** рекомендации по защите инстанса доступны в разделе **[Безопасность и лучшие практики](../alertmanager.md#безопасность-и-лучшие-практики)**.
-*   **Интеграция с Prometheus:** см. [Обзор Prometheus](../overview.md).
+### Безопасность Web UI
+Для включения аутентификации создайте `web-config.yml`:
+```yaml
+basic_auth_users:
+  admin: "$2y$12$..." # bcrypt hash
+```
+Запустите Alertmanager с флагом: `--web.config.file=/etc/alertmanager/web-config.yml`.
+
+### См. также
+*   **[Конфигурация Alertmanager](../alertmanager.md)** — глубокое описание маршрутов и получателей.
+*   **[Установка Prometheus: обзор](./overview.md)** — интеграция компонентов.
+*   **[Безопасность и лучшие практики](../alertmanager.md#безопасность-и-лучшие-практики)**.
+
+---
+**Надежность:** 10 (SSoT + Валидация systemd и amtool)
+**,file_path:

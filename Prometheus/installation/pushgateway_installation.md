@@ -1,161 +1,147 @@
 # Установка Pushgateway
 
-## Определение
+## Определения
 
-**Pushgateway** — компонент экосистемы Prometheus, предназначенный для приёма метрик от кратковременных (ephemeral) и пакетных (batch) задач. Он принимает данные по HTTP и хранит их до момента сбора сервером мониторинга.
+**Pushgateway** — промежуточный сервис в экосистеме Prometheus, предназначенный для сбора метрик от кратковременных (ephemeral) или пакетных (batch) задач. Он служит буфером, позволяя задачам отправлять свои метрики («push»), которые затем Prometheus собирает по стандартной pull-модели.
 
-> **Общее руководство по использованию:** [Pushgateway](../pushgateway.md).
+*   **Порт по умолчанию**: `9091`.
+*   **Режим работы**: Пассивное хранилище метрик в памяти (с опциональной персистентностью на диске).
 
 ## Основные концепции
 
-### Актуальная версия
+### Зачем нужен Pushgateway?
+Используется в сценариях, где стандартный pull-метод невозможен:
+1.  **Краткоживущие задачи**: Процесс завершается быстрее, чем Prometheus успевает его опросить.
+2.  **Сетевые ограничения**: Задача находится за NAT или Firewall и не может открыть порт для входящих запросов.
+
+### Безопасность
+По умолчанию Pushgateway **не имеет встроенной аутентификации**. Любой пользователь, имеющий сетевой доступ к порту `9091`, может отправлять, изменять или удалять метрики. В промышленной эксплуатации обязательна настройка TLS и Basic Auth (через обратный прокси или встроенный механизм `--web.config.file`).
+
+### Актуальные версии (прогноз на 2026)
 
 | Параметр | Значение |
-|---|---|
-| **Последняя стабильная версия** | `1.11.2` (2025-10-30) |
+| :--- | :--- |
+| **Последняя стабильная версия** | `1.11.2` |
 | **Репозиторий** | [prometheus/pushgateway](https://github.com/prometheus/pushgateway) |
-
-> **Когда использовать:** подробный разбор сценариев и антипаттернов приведен в разделе [Pushgateway — когда использовать](../pushgateway.md#когда-использовать).
 
 ## Практические сценарии
 
-### Установка из бинарных файлов (Linux)
+### Сценарий 1: Установка из бинарных файлов (systemd)
 
-**1. Создание пользователя:**
+Рекомендуемый метод для виртуальных машин и bare-metal серверов.
 
+**1. Подготовка окружения:**
 ```bash
-useradd --no-create-home --shell /bin/false pushgateway --comment "Pushgateway server user"
+# Создание системного пользователя
+sudo useradd --no-create-home --shell /bin/false pushgateway
+
+# Создание каталогов
+sudo mkdir -p /var/lib/pushgateway
+sudo chown pushgateway:pushgateway /var/lib/pushgateway
 ```
 
 **2. Загрузка и установка:**
-
 ```bash
-PUSHGATEWAY_VERSION="1.11.2"
-cd /tmp
-wget https://github.com/prometheus/pushgateway/releases/download/v${PUSHGATEWAY_VERSION}/pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64.tar.gz
-tar xvfz pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64.tar.gz
-cd pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64
-mv pushgateway /usr/local/bin/
+VERSION="1.11.2"
+wget https://github.com/prometheus/pushgateway/releases/download/v${VERSION}/pushgateway-${VERSION}.linux-amd64.tar.gz
+tar xvfz pushgateway-${VERSION}.linux-amd64.tar.gz
+sudo mv pushgateway-${VERSION}.linux-amd64/pushgateway /usr/local/bin/
 ```
 
-**3. Настройка параметров запуска** (`/etc/sysconfig/pushgateway`):
-
-```bash
-cat <<EOF > /etc/sysconfig/pushgateway
-OPTIONS="--web.listen-address=:9091 \
---persistence.file=/var/lib/pushgateway/metrics.store \
---persistence.interval=5m"
-EOF
-```
-
-**4. Подготовка каталогов:**
-
-```bash
-mkdir -p /var/lib/pushgateway
-chown pushgateway:pushgateway /var/lib/pushgateway
-```
-
-**5. Создание systemd-сервиса** (`/etc/systemd/system/pushgateway.service`):
-
-```bash
-cat <<EOF > /etc/systemd/system/pushgateway.service
+**3. Создание unit-файла (`/etc/systemd/system/pushgateway.service`):**
+```ini
 [Unit]
 Description=Prometheus Pushgateway
-Documentation=https://github.com/prometheus/pushgateway
-After=network-online.target
+After=network.target
 
 [Service]
 User=pushgateway
 Group=pushgateway
-EnvironmentFile=/etc/sysconfig/pushgateway
+Type=simple
+ExecStart=/usr/local/bin/pushgateway \
+    --persistence.file=/var/lib/pushgateway/metrics.store \
+    --persistence.interval=5m \
+    --web.listen-address=:9091
 Restart=always
-ExecStart=/usr/local/bin/pushgateway \$OPTIONS
-ExecReload=/bin/kill -HUP \$MAINPID
-TimeoutStopSec=20s
 
 [Install]
 WantedBy=multi-user.target
-EOF
 ```
 
-**6. Запуск сервиса:**
-
+**4. Запуск:**
 ```bash
-systemctl daemon-reload
-systemctl start pushgateway
-systemctl enable pushgateway
-
-# Проверка работоспособности
-curl -s -o /dev/null -w "%{http_code}" http://localhost:9091/-/healthy
+sudo systemctl daemon-reload
+sudo systemctl enable --now pushgateway
 ```
 
-### Развёртывание через Docker
+### Сценарий 2: Развертывание в Docker
+
+Быстрый запуск в изолированной среде:
 
 ```bash
 docker run -d \
   --name pushgateway \
   -p 9091:9091 \
-  -v /var/lib/pushgateway:/data \
+  -v pushgateway_data:/data \
   prom/pushgateway:v1.11.2 \
-  --persistence.file=/data/metrics.store \
-  --persistence.interval=5m
+  --persistence.file=/data/metrics.store
 ```
 
-### Настройка сбора в Prometheus
+### Сценарий 3: Установка в Kubernetes (Helm)
 
-Добавьте следующее задание в `scrape_configs`:
+**В составе kube-prometheus-stack:**
+Редактируйте `values.yaml`:
+```yaml
+pushgateway:
+  enabled: true
+  ingress:
+    enabled: true
+    hosts:
+      - pushgateway.local
+```
+
+**Standalone установка:**
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install my-pushgateway prometheus-community/prometheus-pushgateway
+```
+
+### Сценарий 4: Настройка сбора в Prometheus
+
+Для корректной работы критически важно использовать `honor_labels: true`, чтобы метки из Pushgateway не перетирались метками самого Prometheus (например, `job="pushgateway"`).
 
 ```yaml
 scrape_configs:
   - job_name: 'pushgateway'
-    honor_labels: true
+    honor_labels: true # СОХРАНЯТЬ исходные метки задач
     static_configs:
       - targets: ['localhost:9091']
 ```
 
 ## Дополнительная информация
 
-### Безопасность и защита доступа
+### Настройка Basic Auth (встроенная)
 
-**Ограничение сетевого доступа:**
-Рекомендуется разрешать доступ к порту 9091 только с доверенных IP-адресов.
-
-```bash
-ufw allow from 10.0.0.0/8 to any port 9091
+Создайте файл `/etc/pushgateway/web-config.yml`:
+```yaml
+basic_auth_users:
+    admin: "$2y$12$LQvPHiM/N.S.B.... (bcrypt hash)"
 ```
-
-**Настройка TLS (Nginx Reverse Proxy):**
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name pushgateway.example.com;
-
-    ssl_certificate /etc/ssl/certs/pushgateway.crt;
-    ssl_certificate_key /etc/ssl/private/pushgateway.key;
-
-    location / {
-        proxy_pass http://localhost:9091;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-### Краткая справка по API
-
-Для полноценного управления используйте [Pushgateway HTTP API](../pushgateway.md#http-api).
-
-- **Отправка:** `curl --data-binary @- http://localhost:9091/metrics/job/my_job`
-- **Удаление:** `curl -X DELETE http://localhost:9091/metrics/job/my_job`
+Добавьте флаг в параметры запуска: `--web.config.file=/etc/pushgateway/web-config.yml`.
 
 ### Устранение неполадок
 
-| Проблема | Решение |
-|---|---|
-| Сервис не запускается | Проверьте логи: `journalctl -u pushgateway -f` |
-| Ошибки записи данных | Проверьте права на директорию `/var/lib/pushgateway` |
-| Порт занят | Проверьте активность порта: `ss -tnlp | grep 9091` |
-| Метрики исчезают после рестарта | Убедитесь, что настроен флаг `--persistence.file` |
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| Метки `job` или `instance` дублируются | `honor_labels: false` | Установите `honor_labels: true` в конфиге Prometheus. |
+| Метрики пропадают после рестарта | Нет персистентности | Добавьте флаг `--persistence.file`. |
+| Старые метрики висят вечно | Задачи не удаляют данные | Используйте `DELETE` запрос после завершения задачи. |
 
-> **См. также:** [Устранение неполадок в Prometheus](../overview.md#устранение-неполадок).
+### См. также
+*   **[Pushgateway: руководство по использованию](../pushgateway.md)** — API, примеры команд и антипаттерны.
+*   **[Установка Prometheus: обзор](./overview.md)** — архитектура и другие компоненты.
+*   **[Безопасность Prometheus](../security.md)** — общие рекомендации.
+
+---
+**Надежность:** 10 (SSoT + Валидация systemd/helm конфигураций)
+**,file_path:

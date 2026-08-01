@@ -1,4 +1,7 @@
+import _venv_check; _venv_check.ensure_venv()
+
 import argparse
+from typing import Any
 import rag_utils
 
 log = rag_utils.log
@@ -11,19 +14,24 @@ def check_db(engine_name: str) -> None:
     log.info("  Collection: %s", cfg['collection'])
     log.info("  Model: %s", cfg['model'])
     try:
-        vs, _ = rag_utils.load_chroma(engine_name)
-        data = vs.get(include=[])
-        if data is None:
-            log.error("  DB returned None")
+        client, _ = rag_utils.load_qdrant(engine_name)
+        collection_name = cfg['collection']
+        if not client.collection_exists(collection_name):
+            log.error("  Collection does not exist")
             return
-        count = len(data.get("ids") or [])
-        log.info("  Chunks: %d", count)
-        if count > 0:
-            sample = vs.get(limit=1)
-            src = None
-            if sample and sample.get("metadatas"):
-                src = sample["metadatas"][0].get("source")
-            log.info("  Sample source: %s", src or 'N/A')
+            
+        info = client.get_collection(collection_name)
+        log.info("  Chunks: %d", info.points_count)
+        
+        if info.points_count > 0:
+            sample, _ = client.scroll(
+                collection_name=collection_name,
+                limit=1,
+                with_payload=True
+            )
+            if sample:
+                src = sample[0].payload.get("source")
+                log.info("  Sample source: %s", src or 'N/A')
     except Exception as e:
         log.error("Error: %s", e)
 
@@ -36,5 +44,5 @@ if __name__ == "__main__":
     if args.engine:
         check_db(args.engine)
     else:
-        check_db("mpnet")
+        check_db("e5")
         check_db("bge")

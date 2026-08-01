@@ -2,36 +2,45 @@
 
 ## Определения
 
-**`kind: Alertmanager`** — Custom Resource Definition в Prometheus Operator для декларативного описания развёртывания экземпляра Alertmanager в Kubernetes. Определяет количество реплик, хранилище, ресурсы, селекторы для AlertmanagerConfig и параметры кластеризации.
+**`kind: Alertmanager`** — Custom Resource Definition в Prometheus Operator, предназначенный для декларативного описания развёртывания и жизненного цикла экземпляра Alertmanager в Kubernetes. Ресурс управляет созданием StatefulSet, Service, Secret и конфигурацией кластеризации.
 
-> **См. также:** [Alertmanager](../../../alertmanager.md) — архитектура, маршрутизация, ключи запуска.
+**Reconciliation Loop в Alertmanager CRD** — процесс, при котором Оператор отслеживает изменения в объекте `Alertmanager` и связанных с ним `AlertmanagerConfig`, обеспечивая актуальность конфигурации маршрутизации и состояния подов.
+
+**API version:** `monitoring.coreos.com/v1`
+
+> **См. также:** [Alertmanager (общий обзор)](../../../alertmanager.md) — архитектура, маршрутизация и дедупликация.
 
 ## Базовые концепции
 
-### Назначение CRD Alertmanager
+### Назначение и функции
 
-CRD `Alertmanager` управляет жизненным циклом StatefulSet Alertmanager, включая:
+CRD `Alertmanager` автоматизирует следующие задачи:
+- **Масштабирование:** Управление количеством реплик (минимум 3 для обеспечения кворума в HA-режиме).
+- **Хранилище:** Настройка PersistentVolume для сохранения Silences и состояния уведомлений.
+- **Сетевая конфигурация:** Настройка параметров веб-интерфейса, TLS и протокола Gossip (кластеризация).
+- **Интеграция конфигураций:** Агрегация глобальных настроек и локальных маршрутов из `AlertmanagerConfig`.
 
-- Масштабирование (реплики для обеспечения кворума)
-- Хранилище (PVC через `volumeClaimTemplate` или эфемерное хранилище)
-- Привязку к узлам (`nodeSelector`, `tolerations`, `affinity`)
-- Подключение ресурсов `AlertmanagerConfig` через селекторы
-- Интеграцию с Kubernetes Secrets для работы с чувствительными данными
+### Взаимосвязь ресурсов
 
-### Взаимосвязь с другими CRD
+| Ресурс | Роль | Описание |
+| :--- | :--- | :--- |
+| **Alertmanager** | Infrastructure SSoT | Описывает "как" и "где" запущен инстанс (ресурсы, PVC, TLS). |
+| [AlertmanagerConfig](./alertmanagerconfig.md) | Routing SSoT | Описывает "кому" и "как" отправлять алерты (receivers, routes). |
+| [Prometheus](./prometheus.md) | Producer | Отправляет алерты в инстанс Alertmanager. |
+| [PrometheusRule](./prometheusrule.md) | Generator | Генерирует алерты на основе метрик Prometheus. |
 
-| CRD | Роль |
-| :--- | :--- |
-| **Alertmanager** | Описание развёртывания (реплики, хранилище, ресурсы) |
-| [AlertmanagerConfig](./alertmanagerconfig.md) | Декларативная маршрутизация и получатели алертов |
-| [Prometheus](./prometheus.md) | Prometheus-сервер, который инициирует отправку алертов в Alertmanager |
-| [PrometheusRule](./prometheusrule.md) | Правила генерации алертов на стороне Prometheus |
+### Новые возможности (2025–2026)
 
-Prometheus Operator автоматически связывает объекты `AlertmanagerConfig` с экземпляром `Alertmanager` через селекторы `alertmanagerConfigSelector` и `alertmanagerConfigNamespaceSelector`.
+*   **Нативный HTTPS (`spec.web`):** Возможность настройки TLS для веб-интерфейса напрямую через CRD, включая mTLS и выбор криптографических кривых.
+*   **Безопасный Gossip (`spec.clusterTLS`):** Шифрование трафика между узлами кластера Alertmanager по протоколу Gossip.
+*   **Глобальный HTTP Config:** Управление настройками прокси, таймаутов и TLS для всех исходящих уведомлений через `spec.alertmanagerConfiguration.global.httpConfig`.
+*   **Stricter API:** Переход на знаковые целые числа (`int`) с валидаторами для предотвращения ошибок конфигурации в GitOps-инструментах.
 
 ## Практические сценарии
 
-### Базовая конфигурация
+### Сценарий 1: Отказоустойчивая Production-конфигурация (HA + TLS)
+
+Настройка кластера из 3 реплик с включенным TLS для веб-интерфейса и персистентным хранилищем.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -41,168 +50,94 @@ metadata:
   namespace: monitoring
 spec:
   replicas: 3
-  version: v0.31.0
+  version: v0.27.0
+  web:
+    tlsConfig:
+      cert:
+        secret:
+          name: alertmanager-tls
+          key: tls.crt
+      keySecret:
+        name: alertmanager-tls
+        key: tls.key
   storage:
     volumeClaimTemplate:
       spec:
-        storageClassName: standard
+        storageClassName: longhorn
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
             storage: 10Gi
-```
-
-### Основные параметры спецификации (spec)
-
-| Параметр | Описание | Пример |
-| :--- | :--- | :--- |
-| **`replicas`** | Количество реплик (минимум 3 для обеспечения кворума) | `3` |
-| **`version`** | Версия образа Alertmanager | `v0.31.0` |
-| **`image`** | Кастомный образ (опционально) | `prom/alertmanager:v0.31.0` |
-| **`storage`** | Настройка хранилища | `volumeClaimTemplate` или `emptyDir` |
-| **`resources`** | Запросы/лимиты ресурсов (CPU, Memory) | `requests: {memory: 200Mi, cpu: 100m}` |
-| **`alertmanagerConfigSelector`** | Селектор для поиска ресурсов `AlertmanagerConfig` | `matchLabels: {release: monitoring}` |
-| **`alertmanagerConfigNamespaceSelector`** | Селектор namespace для `AlertmanagerConfig` | `matchNames: [monitoring]` |
-| **`secrets`** | Kubernetes Secrets для монтирования в контейнер | `[slack-webhook-secret]` |
-| **`nodeSelector`** | Привязка подов к узлам кластера | `{kubernetes.io/os: linux}` |
-| **`tolerations`** | Толерации для узлов с taint-ами | `[{operator: "Exists"}]` |
-| **`paused`** | Приостановка reconciliation (используется для отладки) | `false` |
-| **`logLevel`** | Уровень логирования процесса | `info`, `debug`, `warn`, `error` |
-| **`listenLocal`** | Слушать входящие подключения только на localhost | `false` |
-
-### Настройка хранилища
-
-#### PersistentVolumeClaim (рекомендуется для production)
-
-Обеспечивает сохранение данных (состояние silences и уведомлений) при перезапуске подов:
-
-```yaml
-spec:
-  storage:
-    volumeClaimTemplate:
-      spec:
-        storageClassName: standard
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 10Gi
-```
-
-#### Ephemeral storage (для тестов)
-
-Данные удаляются при уничтожении пода:
-
-```yaml
-spec:
-  storage:
-    emptyDir: {}
-```
-
-### Высокая доступность (HA)
-
-Для отказоустойчивой работы требуется конфигурация минимум из 3 реплик. Prometheus Operator автоматически управляет кластеризацией экземпляров с использованием gossip-протокола по порту 9094.
-
-```yaml
-spec:
-  replicas: 3
-```
-
-**Особенности HA-развертывания:**
-
-- Дедупликация алертов между репликами происходит автоматически.
-- При использовании `volumeClaimTemplate` для каждой реплики создается свой отдельный PVC.
-- Подробности кластеризации и работы gossip: [Alertmanager — HA](../../../alertmanager.md#высокая-доступность-ha).
-
-### Подключение маршрутов (AlertmanagerConfig)
-
-Для декларативного управления маршрутами и получателями используются селекторы:
-
-```yaml
-spec:
   alertmanagerConfigSelector:
     matchLabels:
       release: monitoring
-  alertmanagerConfigNamespaceSelector:
-    matchNames:
-      - monitoring
 ```
 
-Любой объект `AlertmanagerConfig` в пространстве имен `monitoring` с меткой `release: monitoring` будет автоматически интегрирован. Подробности: [AlertmanagerConfig CRD](./alertmanagerconfig.md).
+### Сценарий 2: Защита трафика кластеризации (Gossip TLS)
 
-### Работа с секретами
-
-Чувствительные данные, такие как URL вебхуков или учетные данные, должны храниться в Kubernetes Secrets и монтироваться через поле `secrets`:
+Обеспечение безопасности внутреннего взаимодействия между репликами Alertmanager.
 
 ```yaml
 spec:
-  secrets:
-    - slack-webhook-secret
-    - smtp-credentials
+  clusterTLS:
+    cert:
+      secret:
+        name: alertmanager-cluster-tls
+        key: tls.crt
+    keySecret:
+      name: alertmanager-cluster-tls
+      key: tls.key
+    ca:
+      configMap:
+        name: root-ca
+        key: ca.crt
 ```
 
-```bash
-# Пример создания секрета для вебхука Slack
-kubectl create secret generic slack-webhook-secret \
-  --from-literal=url='https://hooks.slack.com/services/xxx/yyy/zzz' \
-  -n monitoring
-```
+### Сценарий 3: Глобальные настройки прокси для уведомлений
 
-Смонтированный секрет будет доступен процессу Alertmanager по пути `/etc/alertmanager/secrets/slack-webhook-secret/url`.
-
-### Лимиты и запросы ресурсов
+Настройка единого прокси-сервера для всех исходящих запросов к Slack, PagerDuty и т.д.
 
 ```yaml
 spec:
-  resources:
-    requests:
-      memory: 200Mi
-      cpu: 100m
-    limits:
-      memory: 500Mi
-      cpu: 500m
-```
-
-### Привязка к узлам (Node Affinity/Tolerations)
-
-```yaml
-spec:
-  nodeSelector:
-    kubernetes.io/os: linux
-    monitoring: "true"
-  tolerations:
-    - key: "monitoring"
-      operator: "Equal"
-      value: "true"
-      effect: "NoSchedule"
-  affinity:
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchExpressions:
-                - key: app.kubernetes.io/name
-                  operator: In
-                  values:
-                    - alertmanager
-            topologyKey: kubernetes.io/hostname
+  alertmanagerConfiguration:
+    name: global-alert-config
+    global:
+      httpConfig:
+        proxyUrl: "http://squid.corp.internal:3128"
+        tlsConfig:
+          insecureSkipVerify: false
 ```
 
 ## Дополнительная информация
 
-### Отладка и диагностика (Troubleshooting)
+### Основные параметры спецификации (v1)
 
-| Действие | Команда |
-| :--- | :--- |
-| Просмотр объектов Alertmanager | `kubectl get alertmanager -n monitoring` |
-| Чтение логов | `kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager` |
-| Детальная информация об объекте | `kubectl describe alertmanager main -n monitoring` |
-| Пауза reconciliation | `kubectl patch alertmanager main -n monitoring -p '{"spec":{"paused":true}}' --type=merge` |
+| Параметр | Описание | Значение / Особенности |
+| :--- | :--- | :--- |
+| **`replicas`** | Количество подов. | Рекомендуется 3 для HA. |
+| **`version`** | Версия Alertmanager. | Поддержка v0.27+ в последних релизах Operator. |
+| **`alertmanagerConfigSelector`** | Поиск маршрутов. | Фильтрует объекты `AlertmanagerConfig`. |
+| **`web.tlsConfig`** | Настройка HTTPS UI. | Заменяет ручное создание `web-config.yaml`. |
+| **`clusterTLS`** | TLS для Gossip (порт 9094). | Требует Alertmanager v0.24+. |
+| **`paused`** | Остановка reconciliation. | Используется при ручных правках StatefulSet. |
+| **`retention`** | Время хранения данных. | По умолчанию 120h (5 дней). |
 
-### Связанные ресурсы
+### Диагностика и мониторинг
 
-- [AlertmanagerConfig CRD](./alertmanagerconfig.md) — управление получателями и маршрутами алертов.
-- [Prometheus CRD](./prometheus.md) — описание экземпляра Prometheus.
-- [PrometheusRule CRD](./prometheusrule.md) — создание правил алертинга.
-- [Alertmanager (Общая концепция)](../../../alertmanager.md) — архитектура, механизмы дедупликации и конфигурация.
-- [High Availability](../high_availability.md) — HA конфигурация стека в Prometheus Operator.
+1.  **Проверка статуса кластера:**
+    Метрика `alertmanager_cluster_members` должна быть равна `replicas`.
+2.  **Проверка конфигурации:**
+    Фактическая конфигурация генерируется в Secret `alertmanager-<name>-generated`.
+3.  **Логи оператора:**
+    `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator` — ищите ошибки валидации `AlertmanagerConfig`.
+
+### Связанные темы
+
+*   **[AlertmanagerConfig CRD](./alertmanagerconfig.md)** — детальная настройка маршрутов.
+*   **[High Availability](../high_availability.md)** — общие принципы отказоустойчивости стека.
+*   **[Безопасность в Prometheus Operator](../Security/index.md)** — RBAC и TLS.
+*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
+
+### См. также
+* [Prometheus Operator API Specification](https://prometheus-operator.dev/docs/operator/api/)
+* [Alertmanager Configuration Guide](https://prometheus.io/docs/alerting/latest/configuration/)

@@ -79,6 +79,52 @@ automountServiceAccountToken: false # Рекомендация: отключат
 
 ## Практические сценарии
 
+### RoleBinding для пользователя
+Предоставление пользователю доступа только для чтения к подам в пространстве имен `dev`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods-binding
+  namespace: dev
+subjects:
+- kind: User
+  name: jane.doe@example.com # Привязка к конкретному пользователю
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### RoleBinding для ServiceAccount приложения
+Рекомендуется создавать уникальные учетные записи для каждого приложения вместо использования `default`.
+
+```yaml
+# 1. Создание ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-service-account
+  namespace: dev
+---
+# 2. Привязка к роли
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-read-pods
+  namespace: dev
+subjects:
+- kind: ServiceAccount
+  name: app-service-account # Привязка к созданной учетной записи
+  namespace: dev
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
 ### RoleBinding с локальной Role
 
 Предоставление прав на чтение подов пользователю и сервисному аккаунту в одном пространстве имён:

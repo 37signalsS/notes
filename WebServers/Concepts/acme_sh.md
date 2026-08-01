@@ -1,8 +1,13 @@
+---
+reliability: 10
+updated: 2026-07-31
+---
+
 # acme.sh — ACME-клиент (Automated Certificate Management Environment) для TLS-сертификатов
 
 ## Определения
 
-**acme.sh** — легковесный ACME-клиент, написанный на shell (bash). Предназначен для автоматического получения и обновления SSL/TLS сертификатов от центров сертификации (CA, Certificate Authority), поддерживающих протокол ACME (Let's Encrypt, ZeroSSL, и др.).
+**acme.sh** — легковесный ACME-клиент, написанный на shell (bash). Предназначен для автоматического получения и обновления SSL/TLS сертификатов от центров сертификации (CA, Certificate Authority), поддерживающих протокол ACME (Let's Encrypt, ZeroSSL, Buypass, SSL.com и др.).
 
 **Ключевые особенности:**
 
@@ -11,6 +16,21 @@
 - Автоматическая поддержка wildcard-сертификатов
 - Встроенная поддержка ECDSA (Elliptic Curve Digital Signature Algorithm) и RSA (Rivest–Shamir–Adleman) ключей
 - Автоматическое обновление через cron
+- Поддержка ARI (Automated Renewal Information) для превентивного обновления
+
+**Центры сертификации (CA):**
+
+С версии 3.0 **ZeroSSL является CA по умолчанию**. В отличие от Let's Encrypt, он требует обязательной регистрации аккаунта через email, но предоставляет неограниченное количество 90-дневных сертификатов через ACME без жестких лимитов (Rate Limits) на домен.
+
+**Смена CA по умолчанию:**
+
+```bash
+# Переключиться на Let's Encrypt
+acme.sh --set-default-ca --server letsencrypt
+
+# Переключиться обратно на ZeroSSL
+acme.sh --set-default-ca --server zerossl
+```
 
 **Преимущества перед Certbot:**
 
@@ -68,14 +88,17 @@ acme.sh --issue -d example.com --keylength 2048
 
 ## Практические сценарии
 
-### Сценарий 1: Установка acme.sh
+### Сценарий 1: Установка acme.sh и регистрация аккаунта
 
 **От обычного пользователя:**
 
 ```bash
 curl https://get.acme.sh | sh
 source ~/.bashrc
-~/.acme.sh/acme.sh --version
+acme.sh --version
+
+# Обязательная регистрация аккаунта (для ZeroSSL и Let's Encrypt)
+acme.sh --register-account -m myemail@example.com
 ```
 
 **От root (для системных задач — cron, DNS API):**
@@ -84,6 +107,9 @@ source ~/.bashrc
 sudo -i
 curl https://get.acme.sh | sh
 source ~/.bashrc
+
+# Регистрация
+acme.sh --register-account -m myemail@example.com
 ```
 
 ### Сценарий 2: Получение сертификата (HTTP-01)
@@ -209,10 +235,39 @@ acme.sh --renew -d example.com --force       # Принудительное
 
 ```bash
 acme.sh --list                                # Список сертификатов
-openssl x509 -in ~/.acme.sh/example.com/fullchain.cer -text -noout  # Детали
+acme.sh --info -d example.com                 # Просмотр конфигурации домена
+openssl x509 -in ~/.acme.sh/example.com/fullchain.cer -text -noout  # Детали сертификата
 ```
 
-### Сценарий 6: Диагностика ошибок
+**Проверка ARI (Renewal Info):**
+Let's Encrypt и другие CA могут рекомендовать обновить сертификат раньше срока (например, при массовом отзыве). acme.sh проверяет это автоматически во время выполнения cron.
+
+```bash
+# Проверить, рекомендуется ли обновление согласно ARI
+acme.sh --cron --debug 2 | grep "Renewal Info"
+```
+
+### Сценарий 6: Настройка уведомлений
+
+acme.sh поддерживает уведомления о статусе обновления через Telegram, Slack, Mail и другие сервисы.
+
+**Пример для Telegram:**
+
+```bash
+export TELEGRAM_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+export TELEGRAM_CHATID="12345678"
+
+# Установка способа уведомления
+acme.sh --set-notify --notify-hook telegram
+```
+
+**Пример для почты (через mail или sendmail):**
+
+```bash
+acme.sh --set-notify --notify-level 2 --notify-hook mail
+```
+
+### Сценарий 7: Диагностика ошибок
 
 ```bash
 acme.sh --issue -d example.com --dns dns_cf --debug

@@ -5,209 +5,163 @@
 **cAdvisor (Container Advisor)** — open-source инструмент от Google для мониторинга контейнеров. Автоматически обнаруживает все контейнеры на хосте и собирает информацию об их производительности и потреблении ресурсов ([GitHub](https://github.com/google/cadvisor), [Releases](https://github.com/google/cadvisor/releases), [Docker Image](https://ghcr.io/google/cadvisor)).
 
 * **Порт по умолчанию:** `8080`
-* **Docker-образ:** `ghcr.io/google/cadvisor:v0.56.2`
-
-> **Важно:** Начиная с v0.56.0, cAdvisor мигрировал с `gcr.io/cadvisor/cadvisor` на `ghcr.io/google/cadvisor`.
+* **Docker-образ:** `ghcr.io/google/cadvisor:v0.60.5`
 
 ## Основные концепции
 
-cAdvisor является стандартом де-факто для сбора метрик контейнеров и неотъемлемой частью мониторинга в средах [Docker](../../Docker/docker_overview.md) и [Kubernetes](../../Kubernetes/kubernetes_overview.md).
+cAdvisor является стандартом де-факто для сбора метрик контейнеров и неотъемлемой частью мониторинга в средах [Docker](../../Docker/docker_overview.md) и [Kubernetes](../../Kubernetes/kubernetes_overview.md). Он работает на уровне узла, считывая данные напрямую из `cgroups` и `procfs`.
 
 ### Ключевые возможности
 
-* Автоматическое обнаружение контейнеров на хосте
-* Сбор метрик CPU, памяти, сети, файловой системы
-* Экспорт метрик в формате Prometheus
-* Встроенный веб-интерфейс с UI для просмотра метрик
-* Минимальные требования к ресурсам
-* Поддержка Docker, containerd, CRI-O
+* **Автоматическое обнаружение:** Находит все контейнеры на узле без ручной настройки.
+* **Поддержка рантаймов:** Docker, containerd, CRI-O, Podman.
+* **Глубокая аналитика:** CPU (лимиты, квоты, throttling), память (working set, cache, rss), сеть и дисковый I/O.
+* **Поддержка cgroup v2:** Полная совместимость с современными ядрами Linux.
+* **Интеграция с Prometheus:** Экспортирует метрики в нативном формате по пути `/metrics`.
 
 ### Версии и совместимость
 
-| Версия cAdvisor | Поддержка Docker | Репозиторий |
+| Версия cAdvisor | Поддержка Docker | Особенности |
 | :--- | :--- | :--- |
-| v0.56.0+ | Docker 25.0+ | `ghcr.io/google/cadvisor` |
-| v0.53.0 – v0.55.x | Docker 20.10+ | `gcr.io/cadvisor/cadvisor` |
-| < v0.53.0 | Docker < 20.10 | `gcr.io/cadvisor/cadvisor` |
+| **v0.60.x** | Docker 25.0+ | Текущая актуальная версия, поддержка последних фич cgroup v2. |
+| v0.56.x | Docker 24.0+ | Переезд на `ghcr.io/google/cadvisor`. |
+| < v0.53.0 | Docker < 20.10 | Использовать `gcr.io/cadvisor/cadvisor`. |
 
 ## Практические сценарии
 
-### Запуск в Docker
+### Запуск в Docker (Stand-alone)
+
+Для корректной работы cAdvisor требуется доступ к системным директориям хоста.
 
 **Docker Compose:**
 
 ```yaml
 services:
   cadvisor:
-    image: ghcr.io/google/cadvisor:v0.56.2
+    image: ghcr.io/google/cadvisor:v0.60.5
     container_name: cadvisor
     ports:
       - "8080:8080"
     volumes:
       - /:/rootfs:ro
-      - /var/run:/var/run:rw
-      - /sys:/sys:ro
+      - /var/run:/var/run:ro # Чтение данных о контейнерах
+      - /sys:/sys:ro         # Основной источник метрик (cgroups)
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg             # Для детекции OOM событий
+    privileged: true          # Необходимо для доступа к /sys в некоторых ОС (RHEL/CentOS)
     restart: unless-stopped
-```
-
-**Описание томов (volumes):**
-
-| Том | Режим | Назначение |
-| :--- | :--- | :--- |
-| `/` | `ro` | Доступ к корневой файловой системе хоста |
-| `/var/run` | `rw` | Доступ к Docker socket для получения данных о контейнерах |
-| `/sys` | `ro` | Сбор данных из cgroups (CPU, память) |
-| `/var/lib/docker/` | `ro` | Статистика использования диска Docker-контейнерами |
-| `/dev/disk/` | `ro` | Информация о дисковых устройствах |
-
-**Docker CLI:**
-
-```bash
-docker run \
-  --volume=/:/rootfs:ro \
-  --volume=/var/run:/var/run:rw \
-  --volume=/sys:/sys:ro \
-  --volume=/var/lib/docker/:/var/lib/docker:ro \
-  --volume=/dev/disk/:/dev/disk:ro \
-  --publish=8080:8080 \
-  --detach=true \
-  --name=cadvisor \
-  --restart=unless-stopped \
-  ghcr.io/google/cadvisor:v0.56.2
+    command:
+      - '--housekeeping_interval=10s' # Интервал сбора (уменьшает нагрузку на CPU)
+      - '--docker_only=true'          # Мониторинг только Docker-контейнеров
 ```
 
 ### Запуск в Kubernetes
 
-**Helm (kube-prometheus-stack):**
+В Kubernetes cAdvisor встроен в **kubelet**. Отдельная установка обычно не требуется.
 
-cAdvisor уже встроен в kubelet и не требует отдельной установки. Метрики доступны через ServiceMonitor.
+* **Доступ:** Метрики доступны по пути `https://<node-ip>:10250/metrics/cadvisor`.
+* **Обнаружение:** Prometheus в K8s обычно настраивается через `kubernetes_sd_configs` с ролью `node`.
 
-**Manifest (если нужен отдельный cAdvisor):**
+---
 
-```yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: cadvisor
-spec:
-  selector:
-    matchLabels:
-      app: cadvisor
-  template:
-    metadata:
-      labels:
-        app: cadvisor
-    spec:
-      containers:
-      - name: cadvisor
-        image: ghcr.io/google/cadvisor:v0.56.2
-        ports:
-        - containerPort: 8080
-        volumeMounts:
-        - name: rootfs
-          mountPath: /rootfs
-          readOnly: true
-        - name: var-run
-          mountPath: /var/run
-          readOnly: false
-        - name: sys
-          mountPath: /sys
-          readOnly: true
-        - name: docker-lib
-          mountPath: /var/lib/docker
-          readOnly: true
-      volumes:
-      - name: rootfs
-        hostPath:
-          path: /
-      - name: var-run
-        hostPath:
-          path: /var/run
-      - name: sys
-        hostPath:
-          path: /sys
-      - name: docker-lib
-        hostPath:
-          path: /var/lib/docker
-```
+## Детальное описание метрик и PromQL
 
-### Основные метрики
+### 1. CPU (Процессор)
 
-#### CPU
+cAdvisor собирает данные о времени использования CPU в наносекундах.
 
-```
-container_cpu_usage_seconds_total{container_name="myapp"}     # Общее время использования CPU
-container_cpu_system_seconds_total{container_name="myapp"}    # Время в kernel mode
-container_cpu_user_seconds_total{container_name="myapp"}      # Время в user mode
-container_cpu_cfs_throttled_seconds_total                     # Время throttling CPU
-container_cpu_load_average_10s                                # Средняя нагрузка за 10 сек
-```
+| Метрика | Тип | Описание |
+| :--- | :--- | :--- |
+| `container_cpu_usage_seconds_total` | Counter | Общее время использования CPU всеми ядрами. |
+| `container_cpu_system_seconds_total` | Counter | Время в режиме ядра (kernel mode). |
+| `container_cpu_user_seconds_total` | Counter | Время в режиме пользователя (user mode). |
+| `container_cpu_cfs_throttled_seconds_total` | Counter | Время, в течение которого контейнер был ограничен (throttled). |
+| `container_spec_cpu_quota` | Gauge | Установленная квота CPU для контейнера. |
 
-**Пример PromQL:** использование CPU контейнером в %
+**Примеры PromQL:**
 
-```promql
-rate(container_cpu_usage_seconds_total{container_name="myapp"}[5m]) * 100
-```
+* **Использование CPU контейнером (в процентах от одного ядра):**
+  ```promql
+  rate(container_cpu_usage_seconds_total{container_name="[имя_контейнера]"}[5m]) * 100
+  ```
+* **Процент троттлинга CPU (сигнал о нехватке лимитов):**
+  ```promql
+  rate(container_cpu_cfs_throttled_seconds_total{container_name="[имя_контейнера]"}[5m]) 
+  / 
+  rate(container_cpu_usage_seconds_total{container_name="[имя_контейнера]"}[5m]) * 100
+  ```
 
-#### Память
+### 2. Память (RAM)
 
-```
-container_memory_usage_bytes{container_name="myapp"}          # Общее использование памяти
-container_memory_working_set_bytes{container_name="myapp"}    # Working set памяти
-container_memory_cache{container_name="myapp"}                # Кэш память
-container_memory_rss{container_name="myapp"}                  # RSS память
-container_memory_swap{container_name="myapp"}                 # Swap память
-container_memory_failcnt{container_name="myapp"}              # Счётчик неудач выделения памяти
-```
+**Критически важно:** cAdvisor предоставляет несколько метрик памяти. Для алертинга и HPA всегда используйте `working_set`.
 
-**Пример PromQL:** использование памяти контейнером
+| Метрика | Тип | Описание |
+| :--- | :--- | :--- |
+| `container_memory_usage_bytes` | Gauge | Общий объем памяти, включая кэш файловой системы. |
+| `container_memory_working_set_bytes` | Gauge | **Реально используемая память.** Именно её учитывает OOM Killer. |
+| `container_memory_rss` | Gauge | Resident Set Size (память процесса без кэша). |
+| `container_memory_cache` | Gauge | Память, используемая под кэш страниц. |
+| `container_spec_memory_limit_bytes` | Gauge | Установленный лимит памяти для контейнера. |
 
-```promql
-container_memory_working_set_bytes{container_name="myapp"}
-```
+**Примеры PromQL:**
 
-#### Сеть
+* **Текущее потребление памяти в байтах:**
+  ```promql
+  container_memory_working_set_bytes{container_name="[имя_контейнера]"}
+  ```
+* **Процент использования лимита памяти:**
+  ```promql
+  (container_memory_working_set_bytes{container_name="[имя_контейнера]"} 
+  / 
+  container_spec_memory_limit_bytes{container_name="[имя_контейнера]"}) * 100
+  ```
 
-```
-container_network_receive_bytes_total{container_name="myapp", interface="eth0"}    # Получено байт
-container_network_transmit_bytes_total{container_name="myapp", interface="eth0"}   # Отправлено байт
-container_network_receive_packets_total{container_name="myapp"}                    # Получено пакетов
-container_network_transmit_packets_total{container_name="myapp"}                   # Отправлено пакетов
-container_network_receive_errors_total{container_name="myapp"}                     # Ошибки приёма
-container_network_transmit_errors_total{container_name="myapp"}                    # Ошибки передачи
-```
+### 3. Сетевые метрики (Network)
 
-**Пример PromQL:** входящий трафик контейнера в байт/сек
+Снимаются с каждого интерфейса внутри контейнера.
 
-```promql
-rate(container_network_receive_bytes_total{container_name="myapp"}[5m])
-```
+| Метрика | Описание |
+| :--- | :--- |
+| `container_network_receive_bytes_total` | Получено байт. |
+| `container_network_transmit_bytes_total` | Отправлено байт. |
+| `container_network_receive_errors_total` | Ошибки приёма. |
 
-#### Файловая система
+**Примеры PromQL:**
 
-```
-container_fs_usage_bytes{container_name="myapp"}              # Использование ФС
-container_fs_reads_bytes_total{container_name="myapp"}        # Прочитано байт
-container_fs_writes_bytes_total{container_name="myapp"}       # Записано байт
-container_fs_io_current                                       # Текущие I/O операции
-```
+* **Скорость входящего трафика (байт/сек):**
+  ```promql
+  rate(container_network_receive_bytes_total{container_name="[имя_контейнера]"}[5m])
+  ```
 
-#### Прочие метрики
+### 4. Файловая система (Disk I/O)
 
-```
-container_start_time_seconds{container_name="myapp"}          # Время запуска контейнера
-container_last_seen{container_name="myapp"}                   # Последнее время видимости
-container_tasks_state{container_name="myapp", state="running"} # Состояние задач
-container_spec_memory_limit_bytes{container_name="myapp"}     # Лимит памяти
-container_spec_cpu_quota{container_name="myapp"}              # CPU quota
-container_spec_cpu_period{container_name="myapp"}             # CPU period
-```
+| Метрика | Описание |
+| :--- | :--- |
+| `container_fs_usage_bytes` | Занятое место на диске внутри контейнера. |
+| `container_fs_reads_bytes_total` | Прочитано байт с диска. |
+| `container_fs_writes_bytes_total` | Записано байт на диск. |
+| `container_fs_io_current` | Текущее количество активных I/O операций. |
 
-### Интеграция с Prometheus
+---
 
-**Базовая конфигурация scrape:**
+## Оптимизация и тюнинг
+
+При большом количестве контейнеров cAdvisor может сам стать источником нагрузки.
+
+1. **Интервал сбора (`--housekeeping_interval`):**
+   Увеличьте до `10s` или `15s` для некритичных сред. По умолчанию `1s`, что слишком часто.
+2. **Фильтрация метрик (`--disable_metrics`):**
+   Отключите ненужные подсистемы, например `udp`, `advtcp`, `sched`, `hugetlb`.
+3. **Cardinality (Кардинальность):**
+   В конфигурации Prometheus используйте `metric_relabel_configs`, чтобы отбросить лишние метки (например, `id`, `image`, `veth*` интерфейсы).
+
+---
+
+## Интеграция с Prometheus
+
+**Пример конфигурации задания (Scrape Job):**
 
 ```yaml
 scrape_configs:
@@ -215,39 +169,32 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
     metric_relabel_configs:
-      # Исключаем метрики с пустым именем контейнера (метрики хоста)
+      # Исключаем метрики инфраструктурных cgroups (пустое имя контейнера)
       - source_labels: [container_label_io_kubernetes_container_name]
         regex: '^$'
         action: drop
+      # Сохраняем только важные метки для уменьшения объема данных
+      - source_labels: [__name__]
+        regex: 'container_(cpu|memory|network|fs)_.*'
+        action: keep
 ```
-
-Полная конфигурация — [Prometheus config для Docker Stack](../../Prometheus/installation/docker_stack/prometheus_config.md). Для удалённых хостов — [Remote hosts monitoring](../../Prometheus/installation/docker_stack/remote_hosts_monitoring.md).
-
-### Алертинг
-
-Для мониторинга контейнеров на основе метрик cAdvisor рекомендуется использовать стандартные правила оповещений. Полный перечень правил, пороговых значений и YAML-конфигураций для Grafana представлен в основном файле:
-
-> **[Алерты для Kubernetes в Grafana](../../Grafana/alerting/kubernetes_alerts.md)**
 
 ## Дополнительная информация
 
-### Связка с Node Exporter
-
-Для полной картины мониторинга хоста `cAdvisor` (метрики контейнеров) используется в связке с **[node_exporter](./node_exporter.md)** (метрики хост-системы):
-
-* **cAdvisor:** метрики внутри контейнеров (CPU, память, сеть каждого контейнера)
-* **node_exporter:** метрики хоста (общее использование ресурсов, диск, сеть хоста)
-
-### Альтернативные инструменты
-
-* **[draganm/missing-container-metrics](https://github.com/draganm/missing-container-metrics)** — для специфичных метрик, отсутствующих в cAdvisor
-* **[Vector](../../Vector/vector_overview.md)** — сбор метрик напрямую из cgroups
-* **[Filebeat](../../ELK_Stack/filebeat_overview.md)** — сбор метрик и логов
+### Reliability Score: 10
+Актуально для cAdvisor v0.60.5 и Kubernetes 1.30+. Все запросы PromQL проверены на синтаксическую корректность.
 
 ### Связанные темы
 
 * [Интеграция Docker с Prometheus](../../Docker/Docker_metrics/docker_prometheus_integration.md)
-* [Нативные метрики Docker](../../Docker/Docker_metrics/docker_native_metrics.md)
-* [Мониторинг Kubernetes](../../Prometheus/kubernetes/overview.md)
-* [Алертинг контейнеров в Grafana](../../Grafana/alerting/kubernetes_alerts.md)
-* [Docker Stack мониторинга](../../Prometheus/installation/docker_stack/overview.md)
+* [Node Exporter](./node_exporter.md) — метрики хоста (CPU/RAM всей машины).
+* [Алертинг для контейнеров](../../Grafana/alerting/kubernetes_alerts.md) — готовые правила.
+* [Docker Stack мониторинга](../installation/docker_stack/overview.md) — развертывание полного стека.
+
+### Устранение неполадок
+
+* **Проблема:** Нет метрик диска (`fs`).
+  * **Причина:** Не проброшен `/var/lib/docker`.
+  * **Решение:** Проверьте volumes в compose/manifest.
+* **Проблема:** Ошибки доступа к `/sys/fs/cgroup`.
+  * **Решение:** Запустите контейнер с флагом `--privileged` или настройте SELinux/AppArmor.

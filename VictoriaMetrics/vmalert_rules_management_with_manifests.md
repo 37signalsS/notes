@@ -2,37 +2,43 @@
 
 ## 1. Определения
 
-**vmalert** — компонент [VictoriaMetrics](./overview.md) для выполнения правил алертинга и правил записи (recording rules). В среде Kubernetes существует два основных подхода к управлению конфигурациями правил:
+**vmalert** — специализированный компонент [VictoriaMetrics](./overview.md), отвечающий за вычисление правил алертинга и записи. В инфраструктуре Kubernetes управление правилами осуществляется двумя основными способами:
 
-1. **Через ConfigMap** — традиционный метод с монтированием файлов конфигурации в файловую систему пода.
-2. **Через VMRule CRD** — современный декларативный подход с использованием VictoriaMetrics Operator (рекомендуемый метод).
+1.  **Декларативный (VMRule CRD)** — использование Custom Resource Definitions и VictoriaMetrics Operator. Это стандарт индустрии (2026), обеспечивающий автоматизацию жизненного цикла правил.
+2.  **Традиционный (ConfigMap)** — монтирование YAML-файлов правил в поды через стандартные механизмы Kubernetes. Используется в случаях, когда установка оператора невозможна или нецелесообразна.
 
 ## 2. Базовые концепции
 
-### Сравнение методов управления
+### Сравнение подходов
 
-| Метод | Преимущества | Недостатки | Область применения |
-| :--- | :--- | :--- | :--- |
-| **ConfigMap** | Работает без оператора, полный контроль над путями | Требует перезапуска или sidecar для обновления | Простые инсталляции, Legacy-системы |
-| **VMRule CRD** | Поддержка Hot reload, декларативность, GitOps-ready | Зависимость от VictoriaMetrics Operator | Продуктивные среды, новые проекты |
+| Характеристика | VMRule (Operator) | ConfigMap (Manual) |
+| :--- | :--- | :--- |
+| **Обновление** | Автоматический Hot reload | Требует перезапуска пода или sidecar (reloader) |
+| **Валидация** | На уровне Admission Webhook (до применения) | Только после запуска компонента (в логах) |
+| **Масштабируемость** | Высокая (Discovery по меткам в любых Namespaces) | Низкая (Ручное управление путями и томами) |
+| **GitOps** | Нативная поддержка (ArgoCD, Flux) | Требует сложной настройки монтирования файлов |
+| **Типы данных** | Метрики (MetricsQL) и Логи (LogsQL) | Любые, поддерживаемые vmalert |
 
 ## 3. Практические сценарии
 
-### Сценарий 1: Управление через VMRule CRD
+### Сценарий 1: Управление через VMRule CRD (Рекомендуемый)
 
-VictoriaMetrics Operator предоставляет кастомный ресурс (Custom Resource) **VMRule** для декларативного описания правил. Это позволяет управлять алертами так же, как и любыми другими ресурсами Kubernetes.
+VictoriaMetrics Operator использует ресурс **VMRule** для определения групп правил. Оператор автоматически сканирует кластер на наличие этих ресурсов и обновляет конфигурацию `vmalert`.
 
-#### Пример VMRule для алертинга
+#### Пример алертинга на основе метрик (MetricsQL)
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
 kind: VMRule
 metadata:
-  name: cpu-alerts
+  name: infrastructure-alerts
   namespace: monitoring
+  labels:
+    role: alert-rules
+    tier: production
 spec:
   groups:
-    - name: cpu-alerts
+    - name: HostMetrics
       interval: 30s
       rules:
         - alert: HighCpuUsage
@@ -41,143 +47,114 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: "High CPU usage on {{ $labels.instance }}"
-            description: "CPU usage is above 85% for more than 5 minutes. Value: {{ $value }}%"
+            summary: "Высокая загрузка CPU на {{ $labels.instance }}"
+            description: "Загрузка CPU превышает 85% более 5 минут. Текущее значение: {{ $value | printf \"%.2f\" }}%"
 ```
 
-#### Пример VMRule для правил записи (recording rules)
+#### Пример алертинга на основе логов (LogsQL)
+
+С выходом VictoriaLogs правила алертинга могут анализировать журналы напрямую через тот же ресурс `VMRule`.
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
 kind: VMRule
 metadata:
-  name: recording-rules
+  name: application-log-alerts
   namespace: monitoring
 spec:
   groups:
-    - name: recording-rules
-      interval: 1m
+    - name: AppErrors
       rules:
-        - record: cluster:node_cpu:avg_rate5m
-          expr: avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+        - alert: HighErrorRateInLogs
+          # Пример LogsQL запроса
+          expr: |
+            _stream:{app="api-gateway"} | filter "status=500" | stats by (host) count() > 20
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Всплеск 500-х ошибок в логах {{ $labels.app }}"
 ```
 
-#### Применение и мониторинг
+### Связывание VMRule и VMAlert (Discovery)
 
-```bash
-# Применение манифестов
-kubectl apply -f vmrule-cpu.yaml
-kubectl apply -f vmrule-memory.yaml
-
-# Просмотр списка правил
-kubectl get vmrule
-
-# Детальная информация
-kubectl describe vmrule cpu-alerts
-```
-
-**Связывание ресурсов:** VMRule автоматически обнаруживается компонентом VMAlert с помощью селекторов меток (label selectors). В манифесте VMAlert необходимо настроить `ruleSelector`:
+Чтобы `vmalert` "увидел" ваши правила, в его конфигурации (ресурс `VMAlert`) должны быть настроены селекторы. Это позволяет реализовать **Multitenancy** (многоарендность).
 
 ```yaml
 apiVersion: operator.victoriametrics.com/v1beta1
 kind: VMAlert
 metadata:
-  name: vmalert
-  namespace: monitoring
+  name: main-vmalert
 spec:
+  # Выбирать правила с определенной меткой
   ruleSelector:
     matchLabels:
-      app: monitoring
+      role: alert-rules
+  # Искать правила во всех Namespaces с меткой мониторинга
   ruleNamespaceSelector:
     matchLabels:
-      monitoring: enabled
+      monitoring-enabled: "true"
+  datasource:
+    url: "http://vmselect:8481/select/0/prometheus"
+  notifier:
+    url: "http://alertmanager:9093"
 ```
 
-#### Преимущества использования CRD
+### Сценарий 2: Управление через ConfigMap
 
-- **Горячая перезагрузка (Hot reload)** — изменения применяются мгновенно без прерывания работы.
-- **Интеграция с GitOps** — полная совместимость с ArgoCD и Flux.
-- **Валидация** — оператор проверяет синтаксис правил перед применением.
-- **Масштабируемость** — упрощенное управление сотнями правил в разных пространствах имен.
+Используется для специфических конфигураций или legacy-сред. Основная сложность — обеспечение обновления правил без простоя.
 
-### Сценарий 2: Управление через ConfigMap (традиционный подход)
-
-Данный подход рекомендуется только для систем, где установка VictoriaMetrics Operator по каким-либо причинам невозможна.
-
-#### Использование отдельных ConfigMap
-
-Для удобства управления рекомендуется разделять группы правил на отдельные файлы ConfigMap вместо использования одного гигантского манифеста.
-
-**Пример манифеста `alert-rules-cpu.yaml`:**
-
+**1. Создание ConfigMap с правилами:**
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vmalert-rules-cpu
-  namespace: monitoring
+  name: vmalert-manual-rules
 data:
-  alert-rules-cpu.yaml: |
+  rules.yaml: |
     groups:
-      - name: cpu-alerts
+      - name: ManualGroup
         rules:
-          - alert: HighCpuUsage
-            expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 85
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "High CPU usage on node {{ $labels.instance }}"
-              description: "CPU usage is above 85% for more than 5 minutes."
+          - alert: ManualAlert
+            expr: up == 0
 ```
 
-#### Конфигурация Deployment для vmalert
+**2. Монтирование в Deployment:**
+При использовании ConfigMap рекомендуется монтировать весь каталог, а не отдельные файлы через `subPath`, так как `subPath` блокирует автоматическое обновление файлов внутри контейнера при изменении ConfigMap.
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: vmalert
-  namespace: monitoring
 spec:
-  template:
-    spec:
-      containers:
-        - name: vmalert
-          args:
-            - -datasource.url=http://victoria-metrics.monitoring.svc:8428/
-            - -notifier.url=http://alertmanager.monitoring.svc:9093/
-            - -rule=/config/rules/cpu/alert-rules-cpu.yaml
-            - -rule=/config/rules/memory/alert-rules-memory.yaml
-          volumeMounts:
-            - name: alert-config-cpu
-              mountPath: /config/rules/cpu/alert-rules-cpu.yaml
-              subPath: alert-rules-cpu.yaml
-      volumes:
-        - name: alert-config-cpu
-          configMap:
-            name: vmalert-rules-cpu
+  containers:
+    - name: vmalert
+      args:
+        - "-rule=/etc/vmalert/rules/*.yaml"
+      volumeMounts:
+        - name: rules-volume
+          mountPath: /etc/vmalert/rules
+  volumes:
+    - name: rules-volume
+      configMap:
+        name: vmalert-manual-rules
 ```
 
-### Поиск и устранение неисправностей (Troubleshooting)
+## 4. Поиск и устранение неисправностей (Troubleshooting)
 
-| Проблема | Возможная причина | Решение |
+| Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| Правила не применяются | VMRule не соответствует `ruleSelector` | Проверить метки в VMRule и селектор в VMAlert |
-| Ошибка валидации | Синтаксическая ошибка в PromQL | Проверить логи оператора: `kubectl logs -l app=victoria-metrics-operator` |
-| ConfigMap не монтируется | Ошибка в имени ресурса или пути | Проверить описание пода: `kubectl describe pod <vmalert-pod>` |
-| Изменения не видны в UI | Отсутствие автоматической перезагрузки | Для ConfigMap: выполнить перезапуск пода (rollout restart) |
+| Правила не отображаются в UI | `ruleSelector` не соответствует меткам VMRule | Проверить соответствие меток (labels) и селекторов в `VMAlert` и `VMRule` |
+| Ошибка в MetricsQL/LogsQL | Синтаксическая ошибка в выражении | Проверить логи оператора или запустить `vmalert-tool check` локально |
+| Правила из другого Namespace не подхватываются | Не настроен `ruleNamespaceSelector` | Убедиться, что `ruleNamespaceSelector` в `VMAlert` разрешает поиск в целевом Namespace |
+| ConfigMap обновился, но vmalert не видит изменений | Использование `subPath` в монтировании | Отказаться от `subPath` или использовать sidecar (stakater/reloader) для рестарта пода |
 
-## 4. Дополнительная информация
+## 5. Дополнительная информация
 
-**Полезные команды:**
+### Лучшие практики (2026)
 
-- `kubectl get vmrule --all-namespaces` — список всех правил в кластере.
-- `kubectl describe vmrule <name>` — детальный статус ресурса.
-- `kubectl rollout restart deployment vmalert` — принудительное обновление конфигурации для ConfigMap.
+- **CI/CD Валидация:** Всегда запускайте `vmalert-tool test` в пайплайне перед деплоем манифестов. Это позволяет протестировать логику алертов на синтетических данных (unit tests для алертов).
+- **Разделение ответственности:** Создавайте отдельные `VMRule` для разных команд/приложений, используя метки для фильтрации в соответствующих инстансах `vmalert`.
+- **Версионирование:** Используйте LTS версии образов (например, `v1.136.0`) для обеспечения стабильности работы движка правил.
 
 **Ссылки:**
-
-- [VMRule CRD Documentation](https://docs.victoriametrics.com/operator/resources/vmrule/)
-- [VictoriaMetrics Operator Guide](https://docs.victoriametrics.com/operator/)
+- [VMAlert Operator CRD Docs](https://docs.victoriametrics.com/operator/resources/vmalert/)
+- [LogsQL Alerting Guide](https://docs.victoriametrics.com/victorialogs/querying/#alerting-rules)
 - [Обзор vmalert](./vmalert_overview.md)

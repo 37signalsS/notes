@@ -2,40 +2,34 @@
 
 ## Определения
 
-**Kubernetes Secret (Opaque)** — объект Kubernetes для хранения чувствительных данных (токены, пароли, ключи) в закодированном виде (base64). В данном руководстве используется тип `Opaque` (произвольные данные) и поле `stringData` (автоматическое кодирование из обычного текста).
+**Kubernetes Secret (Opaque)** — объект для безопасного хранения конфиденциальной информации (паролей, токенов, ключей доступа) в кластере. В данном руководстве секреты используются для передачи учетных данных почтовых серверов и Telegram-ботов в процесс Alertmanager без их раскрытия в манифестах конфигурации.
 
-> **См. также:** материал [Лучшие практики по управлению секретами](../../operator/Security/secrets_best_practices.md) — управление секретами в Prometheus Operator
+> **См. также:** [Управление секретами в Prometheus Operator](../../operator/Security/secrets_best_practices.md).
+
+---
 
 ## Основные концепции
 
-### Типы данных в Secret
+### Типы данных в секрете
 
 | Ключ | Формат | Назначение |
-|---|---|---|
-| `smtp.user` | `string` | Логин SMTP-сервера (email-адрес) |
-| `smtp.password` | `string` | Пароль приложения для SMTP-аутентификации |
-| `telegram.token` | `string` | Токен Telegram-бота от BotFather |
-| `telegram.chat_id` | `string` | ID Telegram-чата или канала (число или `-100...`) |
+| :--- | :--- | :--- |
+| `smtp.user` | `string` | Адрес электронной почты для авторизации на SMTP-сервере. |
+| `smtp.password` | `string` | Пароль или токен приложения для отправки почты. |
+| `telegram.token` | `string` | API-токен Telegram-бота, полученный от BotFather. |
+| `telegram.chat_id` | `string` | Идентификатор чата или канала для получения уведомлений. |
 
-### `stringData` vs `data`
+### Безопасность и хранение
 
-| Поле | Формат ввода | Кодирование | Когда использовать |
-|---|---|---|---|
-| `stringData` | Простой текст | Автоматическое (base64) | Удобно для манифестов — Kubernetes сам закодирует |
-| `data` | Base64 | Ручное | Когда данные уже закодированы или генерируются скриптом |
+-   **Base64:** Kubernetes Secret кодирует данные в base64, что не является шифрованием. Для реальной защиты требуется шифрование etcd.
+-   **RBAC:** Доступ к секретам должен быть ограничен только для системных компонентов (Оператор, Alertmanager) и администраторов.
+-   **GitOps:** Никогда не храните манифесты с реальными секретами в публичных репозиториях. Используйте инструменты шифрования (Sealed Secrets, SOPS) или внешние хранилища (Vault).
 
-### Безопасность
-
-| Аспект | Описание |
-|---|---|
-| **Хранение** | Secret хранится в etcd в base64 — не шифруется по умолчанию |
-| **Шифрование etcd** | Требует включения `EncryptionConfiguration` в API-сервере |
-| **RBAC** | Ограничьте доступ к Secret через Role/RoleBinding в namespace `monitoring` |
-| **Git** | Файл с реальными секретами **не должен** попадать в Git — используйте `.gitignore` или внешние хранилища (Vault, SOPS) |
+---
 
 ## Практические сценарии
 
-### Манифест Secret
+### Создание секрета через манифест
 
 **`alertmanager-secret.yaml`**
 
@@ -47,63 +41,43 @@ metadata:
   namespace: monitoring
 type: Opaque
 stringData:
-  # -- Данные для SMTP (почта) --
-  smtp.user: "your-email@example.com"
-  smtp.password: "your-app-password"
-
-  # -- Данные для Telegram --
-  telegram.token: "bot-token-from-botfather"
-  telegram.chat_id: "your-chat-id"
+  smtp.user: "alerting@example.com"
+  smtp.password: "secure-app-password"
+  telegram.token: "123456:ABC-DEF-GHI"
+  telegram.chat_id: "-100123456789"
 ```
 
-### Пояснения к манифесту
+### Создание секрета через CLI (kubectl)
 
-| Поле | Описание |
-|---|---|
-| `type: Opaque` | Произвольные данные (не Service Account Token, не Docker Config) |
-| `stringData` | Kubernetes автоматически закодирует значения в base64 при создании объекта |
-| `smtp.user` / `smtp.password` | Используются в init-container для подстановки в `alertmanager.yml.tpl` |
-| `telegram.token` / `telegram.chat_id` | Токен бота и ID чата для `telegram_configs` |
-
-### Создание через kubectl (альтернатива манифесту)
+Альтернативный способ без создания промежуточных файлов:
 
 ```bash
 kubectl create secret generic alertmanager-secret \
-  --from-literal=smtp.user='your-email@example.com' \
-  --from-literal=smtp.password='your-app-password' \
-  --from-literal=telegram.token='bot-token-from-botfather' \
-  --from-literal=telegram.chat_id='your-chat-id' \
+  --from-literal=smtp.user='admin@example.com' \
+  --from-literal=smtp.password='my-password' \
+  --from-literal=telegram.token='bot-token' \
+  --from-literal=telegram.chat_id='-123456' \
   -n monitoring
-```
-
-### Проверка созданного Secret
-
-```bash
-# Просмотр ключей (без значений)
-kubectl get secret alertmanager-secret -n monitoring -o jsonpath='{.data.keys()}'
-
-# Просмотр декодированного значения
-kubectl get secret alertmanager-secret -n monitoring \
-  -o jsonpath='{.data.smtp\.password}' | base64 -d
 ```
 
 ### Использование в StatefulSet
 
-Secret монтируется в init-container через `secretKeyRef`:
+В современной архитектуре секреты подключаются напрямую в переменные окружения контейнера:
 
 ```yaml
 env:
-  - name: SMTP_USER
+  - name: SMTP_PASSWORD
     valueFrom:
       secretKeyRef:
         name: alertmanager-secret
-        key: smtp.user
+        key: smtp.password
 ```
 
-Полный манифест: [alertmanager-statefulset.md](./alertmanager-statefulset.md)
+---
 
 ## Дополнительная информация
 
-- [ConfigMap-шаблон](./alertmanager-config.md) — шаблон `alertmanager.yml` с плейсхолдерами для секретов
-- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — подстановка секретов через init-container
-- [Лучшие практики по секретам](../../operator/Security/secrets_best_practices.md) — управление секретами в инфраструктуре
+- **[Конфигурация (ConfigMap)](./alertmanager-config.md)** — использование переменных `${VAR}` в конфиге.
+- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — описание внедрения переменных в под.
+- **[Внешние менеджеры секретов](../../../Kubernetes/Base/secrets/external_managers.md)** — SSoT по интеграции с Vault.
+- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

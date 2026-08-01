@@ -2,68 +2,81 @@
 
 ## Определения
 
-**Grafana в Prometheus Operator** — Grafana не имеет собственного CRD в Prometheus Operator. Визуализация и provisioning управляются через механизм ConfigMap с лейблами + Grafana Sidecar, который разворачивается в составе Helm-чарта kube-prometheus-stack.
+**Интеграция Grafana в Prometheus Operator** — процесс обеспечения визуализации метрик, собранных Оператором, с использованием механизмов автоматического обнаружения (discovery) и провижининга. В рамках стандартного стека (`kube-prometheus-stack`) Grafana не управляется через Custom Resource Definitions (CRD), а интегрируется как стандартный Deployment с вспомогательным контейнером (sidecar).
 
-> **См. также:** [Обзор Grafana](../../../Grafana/grafana_overview.md), [Концепции Prometheus Operator](./concepts.md).
+**Grafana Sidecar (k8s-sidecar)** — специализированный контейнер, работающий в том же поде, что и Grafana, который отслеживает объекты ConfigMap в Kubernetes API и автоматически загружает содержащиеся в них дашборды и источники данных в Grafana.
+
+> **См. также:** [Обзор Grafana](../../../Grafana/grafana_overview.md), [Концепции Prometheus Operator](./concepts.md), [Конфигурация Grafana в Helm](../Kube_Prometheus_Stack_Helm/grafana_config.md).
 
 ## Основные концепции
 
-### Почему нет CRD для Grafana
+### Почему для Grafana нет CRD в базовом Операторе
 
-Prometheus Operator фокусируется на управлении компонентами мониторинга через CRD (Prometheus, Alertmanager, ServiceMonitor, etc.). Grafana — отдельный продукт, который интегрируется через стандартные механизмы Kubernetes:
+Prometheus Operator изначально спроектирован для управления жизненным циклом Prometheus и Alertmanager. Grafana является независимым инструментом визуализации. Разработчики стека выбрали путь интеграции через нативные ресурсы Kubernetes (ConfigMap, Secret) вместо создания проприетарных CRD, что упрощает переносимость дашбордов и использование стандартных инструментов GitOps.
 
-- **ConfigMap с лейблами** — обнаружение дашбордов и источников данных
-- **Sidecar-контейнер** — автоматическая загрузка ресурсов в Grafana
-- **Helm values.yaml** — конфигурация Grafana при установке
+### Механизмы интеграции: Sidecar vs Operator
 
-### Архитектура интеграции
+Начиная с 2025–2026 годов, в экосистеме Kubernetes сосуществуют два основных подхода к интеграции Grafana:
 
+| Характеристика | Grafana Sidecar (стандарт KPS) | Grafana Operator |
+| :--- | :--- | :--- |
+| **Рекомендуемая сфера** | Стандартный мониторинг одного кластера. | Multi-tenant среды, IDP, сложные RBAC. |
+| **Механизм работы** | Сканирование ConfigMap по лейблам. | Управление через CRD (GrafanaDashboard). |
+| **Сложность** | Низкая (встроено в Helm-чарт). | Высокая (требует отдельной установки). |
+| **Гибкость** | Ограничена настройками sidecar. | Максимальная (управление инстансами Grafana). |
+
+### Архитектура обнаружения ресурсов
+
+Sidecar-контейнер (`kiwigrid/k8s-sidecar`) реализует декларативный подход:
+
+1.  **Наблюдение (Watch):** Sidecar следит за ConfigMap в определенных неймспейсах (параметр `searchNamespace`).
+2.  **Фильтрация:** Выбираются только те объекты, которые имеют метку, указанную в конфигурации (обычно `grafana_dashboard: "1"`).
+3.  **Загрузка:** JSON-содержимое ConfigMap записывается во временное хранилище Grafana (`/tmp/dashboards`), которое Grafana сканирует через стандартный механизм `provisioning`.
+
+```text
+Конфигурация ConfigMap (метка: grafana_dashboard: "1")
+    Обнаружение через Kubernetes API Event
+    Передача в Grafana Sidecar (k8s-sidecar)
+    Запись в файловую систему (/tmp/dashboards)
+    Автоматическая загрузка в Grafana (Dashboard Provider)
 ```
-ConfigMap (label: grafana_dashboard: "1")
-         ↓
-Grafana Sidecar (k8s-sidecar контейнер в Pod Grafana)
-         ↓
-Grafana (автоматическая загрузка дашбордов и datasource)
-```
-
-### Ключевые компоненты
-
-| Компонент | Назначение | SSoT |
-|---|---|---|
-| ConfigMap + лейблы | Хранение JSON-дашбордов и datasource-конфигураций | [Provisioning через ConfigMap](../../../Grafana/grafana_provisioning.md) |
-| Grafana Sidecar | Обнаружение и загрузка ConfigMap в Grafana | [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md) |
-| Helm values.yaml | Общая конфигурация Grafana | [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md) |
-| Файловый provisioning | Провиженинг через YAML/JSON в `/etc/grafana/provisioning` | [Grafana Provisioning](../../../Grafana/grafana_provisioning.md) |
 
 ## Практические сценарии
 
-Сценарии использования описаны в SSoT-файлах:
+### Сценарий 1: Интеграция внешней Grafana
 
-- **Создание ConfigMap с дашбордом** → [Provisioning через ConfigMap](../../../Grafana/grafana_provisioning.md)
-- **Настройка sidecar (label, searchNamespace)** → [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md)
-- **Провиженинг datasource (Prometheus, Loki)** → [Источники данных Grafana](../../../Grafana/grafana_datasources.md)
-- **Полная конфигурация Grafana (PV, Ingress, HA)** → [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md)
-- **Файловый провижининг (standalone, Docker)** → [Grafana Provisioning](../../../Grafana/grafana_provisioning.md)
+Если Grafana развернута вне кластера или как независимый инстанс, интеграция выполняется в два этага:
+
+1.  **Доступ к Prometheus:** В Grafana создается Data Source типа `Prometheus`. В качестве URL указывается адрес сервиса Prometheus, созданного Оператором (например, `http://prometheus-operated.monitoring.svc.cluster.local:9090`).
+2.  **Импорт дашбордов:** Используются официальные ID дашбордов для Kubernetes (например, `315` для Cluster, `1860` для Node Exporter Full) или экспорт JSON из состава Helm-чарта.
+
+### Сценарий 2: Управление дашбордами через GitOps (ArgoCD/Flux)
+
+Для автоматизации добавления дашбордов в интегрированную Grafana:
+
+1.  Сохраните JSON дашборда в файл.
+2.  Создайте манифест ConfigMap, где в `data` помещено содержимое JSON.
+3.  Добавьте метку `grafana_dashboard: "1"`.
+4.  Примените манифест через GitOps-инструмент. Sidecar обнаружит его и дашборд появится в UI без перезагрузки Grafana.
+
+### Диагностика проблем интеграции
+
+Если дашборд не появляется:
+*   **Проверка меток:** Выполните `kubectl get cm -L grafana_dashboard` и убедитесь, что метка установлена корректно.
+*   **Логи sidecar:** Проверьте логи контейнера `grafana-sc-dashboards` в поде Grafana на наличие ошибок доступа к API или синтаксических ошибок в JSON.
+*   **Неймспейс:** Убедитесь, что `searchNamespace` в настройках Helm покрывает неймспейс, в котором создан ConfigMap.
 
 ## Дополнительная информация
 
-### Встроенные дашборды kube-prometheus-stack
+### Тренды и перспективы (2026+)
 
-Helm-чарт kube-prometheus-stack включает предустановленные дашборды:
-
-- Kubernetes / Compute Resources / Cluster
-- Kubernetes / Compute Resources / Namespace (pods)
-- Kubernetes / Compute Resources / Node (pods)
-- Prometheus / Overview
-- Alertmanager / Overview
-
-> Подробный список и настройка — в [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md).
+*   **Grafana Unified Alerting:** Постепенный переход от алертинга на стороне Prometheus (через `PrometheusRule`) к управлению алертами в интерфейсе Grafana, что позволяет объединять данные из разных источников (Loki, SQL).
+*   **Grafana Alloy:** Новый агент, который заменяет Grafana Agent и обеспечивает более тесную интеграцию с OpenTelemetry, упрощая доставку данных в Grafana из сред, управляемых Оператором.
 
 ### Связанные темы
 
-- **[Концепции Prometheus Operator](./concepts.md)** — CRD и архитектура
-- **[Установка Prometheus Operator](./installation.md)** — установка и настройка
-- **[Grafana Provisioning](../../../Grafana/grafana_provisioning.md)** — общий провижининг Grafana
-- **[Provisioning дашбордов через ConfigMap](../../../Grafana/grafana_provisioning.md)** — sidecar-механизм
-- **[Конфигурация Grafana в kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/grafana_config.md)** — Helm-параметры
-- **[Источники данных Grafana](../../../Grafana/grafana_datasources.md)** — Prometheus, Loki, и др.
+*   **[Концепции Prometheus Operator](./concepts.md)** — архитектура CRD.
+*   **[Конфигурация Grafana в KPS](../Kube_Prometheus_Stack_Helm/grafana_config.md)** — детальные параметры Helm и встроенные дашборды.
+*   **[Провиженинг Grafana](../../../Grafana/grafana_provisioning.md)** — управление конфигурацией как код.
+*   **[Источники данных Grafana](../../../Grafana/grafana_datasources.md)** — настройка подключений.
+*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

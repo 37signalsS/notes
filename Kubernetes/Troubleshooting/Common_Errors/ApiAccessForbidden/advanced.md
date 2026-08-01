@@ -74,7 +74,7 @@ unrestricted capabilities, runAsNonRoot != true
 ```
 
 **Анализ:** Это не проблема RBAC. Namespace помечен меткой `pod-security.kubernetes.io/enforce=restricted`.
-**Решение:** Привести манифест пода в соответствие с профилем безопасности (см. [../../Security/Concepts/pod_security_admission.md](../../Security/Concepts/pod_security_admission.md)).
+**Решение:** Привести манифест пода в соответствие с профилем безопасности (см. [Security Context в Kubernetes — Раздел PSA](../../../Security/pod_security_context.md#pod-security-standards-pss-и-pod-security-admission-psa)).
 
 ### Сценарий 3: NodeRestriction (Безопасность узлов)
 

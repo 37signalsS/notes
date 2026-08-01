@@ -10,7 +10,11 @@
 
 **ngx_http_auth_request_module** — модуль для авторизации запросов на основе ответа внешнего подзапроса. Позволяет реализовать сложную логику аутентификации (например, через OAuth2 или кастомные сервисы).
 
-**ngx_http_auth_pam_module** — сторонний (или встроенный в Angie Pro) модуль для интеграции с системными механизмами аутентификации Linux через **PAM (Pluggable Authentication Modules)**.
+**ngx_http_auth_pam_module** — модуль для интеграции с системными механизмами аутентификации Linux через **PAM (Pluggable Authentication Modules)**.
+
+**ngx_http_auth_jwt_module** — официальный динамический модуль Angie для проверки JSON Web Tokens (JWT). В отличие от Nginx OSS, доступен в официальных репозиториях Angie.
+
+**ngx_http_auth_ldap_module** — официальный динамический модуль для аутентификации пользователей через протокол LDAP (Active Directory, OpenLDAP).
 
 **JWT (JSON Web Token)** — компактный формат токенов для безопасной передачи информации между сторонами, часто используемый для аутентификации в API.
 
@@ -168,15 +172,70 @@ location /system-admin/ {
 }
 ```
 
+### 6. Валидация JWT (JSON Web Token)
+
+Позволяет проверять токены без обращения к внешним сервисам. Требует установки пакета `angie-module-auth-jwt`.
+
+**Настройка Angie:**
+
+```nginx
+# В основном контексте (angie.conf)
+load_module modules/ngx_http_auth_jwt_module.so;
+
+http {
+    server {
+        location /api/ {
+            auth_jwt "Closed API";
+            # Путь к публичному ключу для проверки подписи
+            auth_jwt_key_file /etc/angie/keys/public_key.jwk;
+            
+            # (Опционально) Проверка конкретного поля (claim) в токене
+            # auth_jwt_require $jwt_payload_sub "admin";
+
+            proxy_pass http://backend;
+        }
+    }
+}
+```
+
+### 7. Аутентификация через LDAP / Active Directory
+
+Используется для интеграции с корпоративными каталогами. Требует пакета `angie-module-auth-ldap`.
+
+```nginx
+# В основном контексте (angie.conf)
+load_module modules/ngx_http_auth_ldap_module.so;
+
+http {
+    # Определение параметров сервера LDAP
+    ldap_server ad_srv {
+        url ldap://ad.example.com:389/dc=example,dc=com?sAMAccountName?sub?(objectClass=person);
+        binddn "cn=svc_angie,ou=services,dc=example,dc=com";
+        binddn_passwd "service_password";
+        require valid_user;
+    }
+
+    server {
+        location /corporate/ {
+            auth_ldap "Domain Authentication";
+            auth_ldap_servers ad_srv;
+            proxy_pass http://internal_app;
+        }
+    }
+}
+```
+
 ## Дополнительная информация
 
 ### Продвинутые модули
 
-- **JWT**: Валидация токенов через `auth_jwt`. Подробнее о концепциях: **[Аутентификация vs Авторизация](../../Security/Concepts/authentication_vs_authorization.md)**.
-- **LDAP**: Интеграция с корпоративными каталогами. См. **[LDAP и SSSD](../../Linux/SystemAdministration/Users/LDAP_SSSD/operations.md)**.
-- **mTLS**: Аутентификация клиентов по TLS-сертификатам. См. **[mTLS в Angie](./angie_client_cert_auth.md)**.
+- **JWT**: Детальное описание формата и безопасности: **[JWT Overview](../../Security/Concepts/jwt_overview.md)**.
+- **LDAP**: Интеграция на уровне ОС: **[LDAP и SSSD](../../Linux/SystemAdministration/Users/LDAP_SSSD/operations.md)**.
+- **mTLS**: Аутентификация по клиентским сертификатам: **[mTLS в Angie](./angie_client_cert_auth.md)**.
 
-### См. также
+## См. также
 
-- **[Общий обзор безопасности Nginx](../Nginx/Security/nginx_security_guide.md)**
 - **[Логирование в Angie](./angie_logging.md)** — для аудита попыток доступа.
+- **[Взаимная аутентификация (mTLS) в Angie](./angie_client_cert_auth.md)**
+- **[Общий обзор безопасности Nginx](../Nginx/Security/nginx_security_guide.md)**
+

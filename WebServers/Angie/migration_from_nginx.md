@@ -53,31 +53,41 @@
 
 #### Этап 2: Перенос конфигурации
 
-1. **Глобальные настройки:**
-    Перенесите кастомные параметры из блока `http` в `/etc/nginx/nginx.conf` в соответствующий блок в `/etc/angie/angie.conf`. Убедитесь, что директива `user` совпадает.
+Процесс заключается в копировании файлов и массовой замене путей. Angie полностью совместим с синтаксисом Nginx, но использует собственные каталоги.
 
-2. **Копирование сайтов:**
+1. **Копирование файлов конфигурации:**
+    Рекомендуется использовать `rsync` для сохранения прав доступа и структуры.
 
     ```bash
-    sudo cp -r /etc/nginx/sites-available /etc/angie/
-    sudo cp -r /etc/nginx/sites-enabled /etc/angie/
-    sudo cp -r /etc/nginx/conf.d /etc/angie/
+    sudo rsync -a --no-links /etc/nginx/ /etc/angie/
     ```
 
-3. **Восстановление символических ссылок:**
+2. **Переименование главного файла:**
+    Angie по умолчанию ищет `angie.conf`.
 
     ```bash
-    cd /etc/angie/sites-enabled
-    find . -type l -exec sh -c 'echo "ln -snf /etc/angie/sites-available/$(basename {}) $(basename {})"' \; | sudo sh
+    sudo mv /etc/angie/nginx.conf /etc/angie/angie.conf
     ```
 
-4. **Адаптация путей:**
-    Замените пути к конфигурации и логам во всех файлах:
+3. **Адаптация путей и PID-файла:**
+    Замените пути к конфигурации, логам и PID-файлу во всех файлах:
 
     ```bash
-    # Автоматическая замена путей
+    # Замена путей в конфигах и инклудах
     sudo find /etc/angie/ -type f -exec sed -i 's|/etc/nginx|/etc/angie|g' {} +
+    # Замена путей к логам
     sudo find /etc/angie/ -type f -exec sed -i 's|/var/log/nginx|/var/log/angie|g' {} +
+    # Замена пути к PID (важно для systemd)
+    sudo sed -i 's|/run/nginx.pid|/run/angie.pid|g' /etc/angie/angie.conf
+    ```
+
+4. **Динамические модули:**
+    Модули от Nginx несовместимы с Angie. Их необходимо переустановить из репозитория Angie и обновить пути в `load_module`.
+
+    ```bash
+    # Установка аналогов
+    sudo apt install angie-module-brotli
+    # В angie.conf путь обычно: /usr/lib64/angie/modules/
     ```
 
 5. **SSL-сертификаты и зависимости:**
@@ -124,12 +134,12 @@
     - Выполните замену путей в файлах: `sed -i 's|/etc/nginx|/etc/angie|g'`.
 
 2. **Обновление Docker Compose:**
-    Используйте официальный образ `docker.ngsoftware/angie:latest`.
+    Используйте официальный образ `docker.angie.software/angie:latest`.
 
     ```yaml
     services:
       web:
-        image: docker.ngsoftware/angie:latest
+        image: docker.angie.software/angie:latest
         volumes:
           - ./angie:/etc/angie:ro
           - ./logs:/var/log/angie
@@ -148,6 +158,6 @@
 
 ### См. также
 
-- [Обзор Angie](./angie_overview.md) — ключевые особенности и отличия.
-- [Установка Angie](./angie_installation.md) — подробные инструкции по развертыванию.
+- [Установка Angie](./angie_installation.md) — актуальные репозитории и пакеты.
 - [Настройка TLS в Angie](./angie_tls_setup.md) — конфигурация HTTPS и сертификатов.
+- [Мониторинг Angie](./angie_monitoring/angie_monitoring_concepts.md) — новые возможности после миграции.

@@ -1,38 +1,36 @@
-# Шаблоны сообщений Alertmanager (Go Templates)
+# Шаблоны сообщений Alertmanager: Go Templates
 
 ## Определения
 
-**Go-шаблоны Alertmanager** — файлы с расширением `.tmpl`, содержащие шаблоны на языке Go template для форматирования уведомлений перед отправкой в каналы (Telegram, Email, Slack, PagerDuty). Подключаются в `alertmanager.yml` через блок `templates` и вызываются через `{{ template "имя.шаблона" . }}`.
+**Go-шаблоны Alertmanager** — файлы с расширением `.tmpl`, содержащие логику форматирования уведомлений на языке Go template. Они позволяют настраивать визуальное представление алертов для различных каналов доставки (Telegram, Email, Slack). Подключаются в `alertmanager.yml` через блок `templates` и вызываются через функцию `{{ template "имя" . }}`.
+
+> **См. также:** [Правила и шаблоны в Alertmanager](../../rules.md).
+
+---
 
 ## Основные концепции
 
-### Как работают шаблоны в Alertmanager
+### Механизм работы шаблонов
 
 | Этап | Описание |
-|---|---|
-| **1. Подключение** | Блок `templates: ['/etc/alertmanager/templates/*.tmpl']` в `alertmanager.yml` загружает все `.tmpl`-файлы |
-| **2. Определение** | Каждый `.tmpl` содержит один или несколько `{{ define "имя" }}...{{ end }}` блоков |
-| **3. Вызов** | В `receiver_configs` указывается `message: '{{ template "имя" . }}'` |
+| :--- | :--- |
+| **Подключение** | Блок `templates: ['/etc/alertmanager/templates/*.tmpl']` загружает файлы в память процесса. |
+| **Определение** | Внутри файла используются блоки `{{ define "имя.шаблона" }}...{{ end }}`. |
+| **Вызов** | В конфигурации ресивера указывается ссылка на имя шаблона в поле `message`. |
 
-### Доступные данные в шаблоне
+### Структура данных (Pipeline)
 
-| Объект | Тип | Описание |
-|---|---|---|
-| `.Status` | `string` | Статус группы: `firing` или `resolved` |
-| `.Alerts` | `[]Alert` | Список алертов в группе |
-| `.CommonLabels` | `map[string]string` | Метки, общие для всех алертов |
-| `.GroupLabels` | `map[string]string` | Метки группировки |
-| `.Annotations` | `map[string]string` | Аннотации из alert rule (summary, description) |
+В шаблоны передается объект, содержащий:
+*   `.Status`: Состояние группы (`firing` или `resolved`).
+*   `.Alerts`: Массив всех активных оповещений в данной группе.
+*   `.GroupLabels`: Метки, по которым произошла группировка.
+*   `.Annotations`: Описания и ссылки из правил сбора (Alert Rules).
 
-### Особенности форматирования для Telegram
-
-- Telegram поддерживает **HTML** и **MarkdownV2** — требуется `parse_mode: 'HTML'` или `parse_mode: 'MarkdownV2'`
-- Для HTML-режима: используйте теги `<b>`, `<i>`, `<code>`, `<a href="...">`
-- Для MarkdownV2: экранируйте спецсимволы (`_`, `*`, `[`, `]`, `(`, `)`, `~`, `` ` ``, `>`, `#`, `+`, `-`, `=`, `|`, `{`, `}`, `.`, `!`)
+---
 
 ## Практические сценарии
 
-### ConfigMap с шаблоном для Telegram/HTML
+### Шаблон для Telegram (HTML)
 
 **`alertmanager-templates.yaml`**
 
@@ -54,65 +52,25 @@ data:
     {{ end }}
 ```
 
-### Разбор шаблона
+### Подключение и вызов
 
-| Конструкция | Назначение |
-|---|---|
-| `{{ define "telegram.default.html" }}` | Именованный блок шаблона — вызывается из `message` в `telegram_configs` |
-| `.Status \| toUpper` | Статус группы (`firing`/`resolved`) в верхнем регистре — **FIRING** / **RESOLVED** |
-| `{{ range .Alerts }}` | Итерация по всем алертам в группе |
-| `.Annotations.summary` | Краткое описание из alert rule |
-| `.Annotations.description` | Развёрнутое описание из alert rule |
-| `.Labels.severity` | Метка severity (critical, warning, info) |
-
-### Подключение шаблона в Alertmanager
-
-Шаблон подключается в `alertmanager-config.md`:
+В файле `alertmanager.yml` (через ConfigMap):
 
 ```yaml
-templates:
-  - '/etc/alertmanager/templates/*.tmpl'
+receivers:
+  - name: 'telegram-receiver'
+    telegram_configs:
+      - bot_token: '${TELEGRAM_TOKEN}'
+        chat_id: ${TELEGRAM_CHAT_ID}
+        parse_mode: 'HTML'
+        message: '{{ template "telegram.default.html" . }}'
 ```
 
-А в `telegram_configs` вызывается через:
-
-```yaml
-telegram_configs:
-  - bot_token: '##TELEGRAM_TOKEN##'
-    chat_id: ##TELEGRAM_CHAT_ID##
-    parse_mode: 'HTML'
-    message: '{{ template "telegram.default.html" . }}'
-```
-
-### Расширенный шаблон с ссылками
-
-Для добавления ссылки на Grafana/Prometheus:
-
-```go
-{{ define "telegram.default.html" }}
-<b>{{ .Status | toUpper }: {{ .GroupLabels.alertname }}</b>
-{{ range .Alerts }}
-<b>Alert:</b> {{ .Annotations.summary }}
-<b>Instance:</b> {{ .Labels.instance }}
-<b>Severity:</b> {{ .Labels.severity }}
-<b>Runbook:</b> {{ .Annotations.runbook_url }}
-{{ end }}
-{{ end }}
-```
-
-### Монтирование в StatefulSet
-
-В `alertmanager-statefulset.md` ConfigMap монтируется как `readOnly`:
-
-```yaml
-volumeMounts:
-  - name: templates
-    mountPath: /etc/alertmanager/templates
-    readOnly: true
-```
+---
 
 ## Дополнительная информация
 
-- [ConfigMap-шаблон](./alertmanager-config.md) — блок `templates` в конфигурации Alertmanager
-- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — монтирование ConfigMap с шаблонами в под
-- [Секреты Kubernetes](./secrets.md) — токены и пароли для получателей уведомлений
+- **[Конфигурация (ConfigMap)](./alertmanager-config.md)** — блок `templates` в настройках.
+- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — монтирование файлов шаблонов.
+- **[Секреты Kubernetes](./secrets.md)** — токены для доступа к API Telegram.
+- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

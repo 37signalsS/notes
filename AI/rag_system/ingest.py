@@ -1,26 +1,42 @@
+import _venv_check; _venv_check.ensure_venv()
+
 import os
 import sys
 import json
+import re
 import shutil
 import tempfile
+import threading
 import argparse
-from typing import Optional
+from typing import Optional, Any
+
+import torch
 
 from tqdm import tqdm
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma as ChromaStore
+from qdrant_client import models
+from qdrant_client import QdrantClient
+import uuid
 
 import rag_utils
 
 from unified_search import bust_cache
+
+_COLLECTION_LOCK = threading.Lock()
 
 log = rag_utils.log
 MANIFEST_FILE = os.path.join(rag_utils.SCRIPT_DIR, "manifest.json")
 MANIFEST_LOCK_FILE = MANIFEST_FILE + ".lock"
 
 
+def _delete_chunk_ids(client: QdrantClient, collection_name: str, ids_to_remove: list[str]) -> None:
+    if ids_to_remove:
+        valid_uuids = [str(uuid.uuid5(uuid.NAMESPACE_URL, i)) for i in ids_to_remove]
+        client.delete(collection_name=collection_name, points_selector=models.PointIdsList(points=valid_uuids))
+
+
 class _ManifestLock:
-    def __init__(self, path: str):
+    def __init__(self, path: str) -> None:
         self.path = path
         self.fd: Optional[int] = None
         self._cleanup_stale()
@@ -36,13 +52,13 @@ class _ManifestLock:
         except OSError:
             pass
 
-    def __enter__(self):
+    def __enter__(self) -> "_ManifestLock":
         import fcntl
         self.fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o644)
         fcntl.flock(self.fd, fcntl.LOCK_EX)
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> None:
         import fcntl
         if self.fd is not None:
             fcntl.flock(self.fd, fcntl.LOCK_UN)
@@ -77,16 +93,16 @@ def save_manifest(manifest: dict) -> None:
 
 def get_changed_files(
     engine_name: str, files: list[tuple[str, str]], force: bool, db_dir: str
-) -> tuple[list, list, dict, dict, dict]:
+) -> tuple[list[tuple[str, str]], list[str], dict, dict]:
     manifest = load_manifest()
     engine_state = manifest.get(engine_name, {})
     files_meta = engine_state.get("files", {})
 
     if os.path.isdir(db_dir) and not files_meta:
-        return files, [], manifest, engine_state, {}
+        return files, [], manifest, engine_state
 
-    changed = []
-    deleted = []
+    changed: list[tuple[str, str]] = []
+    deleted: list[str] = []
     existing_paths = {rel for _, rel in files}
 
     for file_path, rel_path in files:
@@ -99,16 +115,13 @@ def get_changed_files(
         if rel_path not in existing_paths:
             deleted.append(rel_path)
 
-    return changed, deleted, manifest, engine_state, files_meta
+    return changed, deleted, manifest, engine_state
 
 
-def delete_chunks(vectorstore: ChromaStore, ids_to_remove: list[str]) -> None:
-    if ids_to_remove and vectorstore is not None:
-        vectorstore.delete(ids_to_remove)
 
 
-def _revalidate_changed(changed: list, fresh_files: dict) -> list:
-    still_valid = []
+def _revalidate_changed(changed: list[tuple[str, str]], fresh_files: dict) -> list[tuple[str, str]]:
+    still_valid: list[tuple[str, str]] = []
     for file_path, rel_path in changed:
         entry = fresh_files.get(rel_path)
         if entry is None:
@@ -126,7 +139,55 @@ def _revalidate_deleted(deleted: list[str], fresh_files: dict) -> list[str]:
     return [r for r in deleted if r in fresh_files]
 
 
-def build_text_splitters(cfg: dict) -> tuple:
+def _ensure_collection(client: QdrantClient, collection_name: str, dense_embeddings: Any) -> None:
+    with _COLLECTION_LOCK:
+        if not client.collection_exists(collection_name=collection_name):
+            test_emb = dense_embeddings.embed_query("test")
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config={
+                    "dense": models.VectorParams(size=len(test_emb), distance=models.Distance.COSINE, hnsw_config=models.HnswConfigDiff(m=16, ef_construct=200))
+                },
+                sparse_vectors_config={
+                    "sparse": models.SparseVectorParams(index=models.SparseIndexParams(on_disk=False))
+                }
+            )
+
+
+def _update_manifest(
+    engine_name: str,
+    client: QdrantClient,
+    collection_name: str,
+    changed: list[tuple[str, str]],
+    deleted: list[str],
+    file_chunk_info: list[tuple[str, list[str], float]],
+) -> None:
+    with _ManifestLock(MANIFEST_LOCK_FILE):
+        fresh_manifest = load_manifest()
+        fresh_files = fresh_manifest.get(engine_name, {}).get("files", {})
+        valid_deleted = _revalidate_deleted(deleted, fresh_files)
+        valid_changed = _revalidate_changed(changed, fresh_files)
+
+        old_ids = []
+        for rel_path in valid_deleted:
+            entry = fresh_files.pop(rel_path, None)
+            if entry:
+                old_ids.extend(entry.get("chunk_ids", []))
+        for _, rel_path in valid_changed:
+            entry = fresh_files.pop(rel_path, None)
+            if entry:
+                old_ids.extend(entry.get("chunk_ids", []))
+        _delete_chunk_ids(client, collection_name, old_ids)
+
+        changed_rel = {rel for _, rel in valid_changed}
+        for rel_path, ids, mtime in file_chunk_info:
+            if rel_path in changed_rel:
+                fresh_files[rel_path] = {"mtime": mtime, "chunk_ids": ids}
+        fresh_manifest[engine_name] = {"files": fresh_files}
+        save_manifest(fresh_manifest)
+
+
+def build_text_splitters(cfg: dict) -> tuple[MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter]:
     header_splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=[
             ("#", "H1"), ("##", "H2"), ("###", "H3"),
@@ -145,9 +206,9 @@ def process_files(
     changed_files: list[tuple[str, str]],
     header_splitter: MarkdownHeaderTextSplitter,
     text_splitter: RecursiveCharacterTextSplitter,
-) -> tuple[list, list]:
+) -> tuple[list, list[tuple[str, list[str], float]]]:
     all_docs = []
-    file_chunk_ids = []
+    file_chunk_ids: list[tuple[str, list[str], float]] = []
 
     for file_path, rel_path in tqdm(changed_files, desc="  Splitting"):
         try:
@@ -161,12 +222,20 @@ def process_files(
                 s.metadata["source"] = rel_path
                 docs.extend(text_splitter.split_documents([s]))
             if docs:
-                ids = [
-                    rag_utils.make_chunk_id(rel_path, i, d.page_content)
-                    for i, d in enumerate(docs)
-                ]
-                all_docs.extend(docs)
-                file_chunk_ids.append((rel_path, ids, os.path.getmtime(file_path)))
+                for d in docs:
+                    h_levels = [(k, v) for k, v in d.metadata.items() if re.match(r"^H(\d+)$", k)]
+                    h_levels.sort(key=lambda kv: int(kv[0][1:]))
+                    header_chain = " > ".join(v for _, v in h_levels)
+                    if header_chain:
+                        d.page_content = f"{header_chain} > {d.page_content}"
+                clean_docs = [d for d in docs if not rag_utils.is_garbled_chunk(d.page_content)]
+                if clean_docs:
+                    ids = [
+                        rag_utils.make_chunk_id(rel_path, i, d.page_content)
+                        for i, d in enumerate(clean_docs)
+                    ]
+                    all_docs.extend(clean_docs)
+                    file_chunk_ids.append((rel_path, ids, os.path.getmtime(file_path)))
         except Exception as e:
             log.error("Error %s: %s", rel_path, e)
 
@@ -186,9 +255,10 @@ def ingest(engine_name: str = "", force: bool = False) -> None:
     log.info("  Total .md files: %d", len(files))
 
     with _ManifestLock(MANIFEST_LOCK_FILE):
-        changed, deleted, manifest, engine_state, files_meta = get_changed_files(
+        changed, deleted, manifest, engine_state = get_changed_files(
             engine_name, files, force, db_dir
         )
+        files_meta = engine_state.get("files", {})
 
         for rel_path in list(files_meta.keys()):
             if rag_utils.is_excluded(rel_path):
@@ -202,45 +272,23 @@ def ingest(engine_name: str = "", force: bool = False) -> None:
 
         log.info("  Changed/new: %d, deleted: %d", len(changed), len(deleted))
 
-    doc_prefix = cfg.get("doc_prefix", "")
-    embeddings = rag_utils.get_embeddings(cfg["model"], device, doc_prefix)
+        client, cfg = rag_utils.load_qdrant(engine_name)
+        collection_name = cfg["collection"]
+        doc_prefix = cfg.get("doc_prefix", "")
+
+        dense_embeddings = rag_utils.get_embeddings(cfg["model"], device, doc_prefix)
+        sparse_model = rag_utils.get_sparse_embedding_model()
+
+        if force and client.collection_exists(collection_name=collection_name):
+            client.delete_collection(collection_name=collection_name)
+
+        _ensure_collection(client, collection_name, dense_embeddings)
+
     header_splitter, text_splitter = build_text_splitters(cfg)
-
-    vectorstore: Optional[ChromaStore] = None
-    if os.path.exists(db_dir):
-        if force:
-            shutil.rmtree(db_dir)
-        else:
-            try:
-                vectorstore = ChromaStore(
-                    persist_directory=db_dir,
-                    embedding_function=embeddings,
-                    collection_name=cfg["collection"],
-                )
-                vectorstore.similarity_search("", k=1)
-            except Exception:
-                vectorstore = None
-
     docs, file_chunk_info = process_files(changed, header_splitter, text_splitter)
 
     if not docs:
-        with _ManifestLock(MANIFEST_LOCK_FILE):
-            fresh_manifest = load_manifest()
-            fresh_files = fresh_manifest.get(engine_name, {}).get("files", {})
-            valid_deleted = _revalidate_deleted(deleted, fresh_files)
-            valid_changed = _revalidate_changed(changed, fresh_files)
-            old_ids = []
-            for rel_path in valid_deleted:
-                entry = fresh_files.pop(rel_path, None)
-                if entry:
-                    old_ids.extend(entry.get("chunk_ids", []))
-            for _, rel_path in valid_changed:
-                entry = fresh_files.pop(rel_path, None)
-                if entry:
-                    old_ids.extend(entry.get("chunk_ids", []))
-            delete_chunks(vectorstore, old_ids)
-            fresh_manifest[engine_name] = {"files": fresh_files}
-            save_manifest(fresh_manifest)
+        _update_manifest(engine_name, client, collection_name, changed, deleted, [])
         log.info("  No new documents. Index updated.")
         return
 
@@ -250,47 +298,41 @@ def ingest(engine_name: str = "", force: bool = False) -> None:
 
     total = len(docs)
     batch_size = cfg.get("batch_size", 100)
-    if vectorstore is None:
-        vectorstore = ChromaStore(
-            persist_directory=db_dir,
-            embedding_function=embeddings,
-            collection_name=cfg["collection"],
-        )
 
-    with tqdm(total=total, desc="  Embeddings", unit="chunk") as pbar:
+    with tqdm(total=total, desc="  Embeddings & Upload", unit="chunk") as pbar:
         for i in range(0, total, batch_size):
-            vectorstore.add_documents(
-                docs[i:i + batch_size],
-                ids=all_ids[i:i + batch_size],
-            )
+            batch_docs = docs[i:i + batch_size]
+            batch_ids = all_ids[i:i + batch_size]
+            
+            texts = [d.page_content for d in batch_docs]
+            with torch.no_grad():
+                dense_vecs = dense_embeddings.embed_documents(texts)
+                sparse_iter = list(sparse_model.embed(texts))
+            
+            points = []
+            for j, doc in enumerate(batch_docs):
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, batch_ids[j]))
+                sv = sparse_iter[j]
+                
+                points.append(
+                    models.PointStruct(
+                        id=point_id,
+                        vector={
+                            "dense": dense_vecs[j],
+                            "sparse": models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
+                        },
+                        payload={
+                            "source": doc.metadata.get("source", ""),
+                            "page_content": doc.page_content,
+                            "original_id": batch_ids[j]
+                        }
+                    )
+                )
+            
+            client.upsert(collection_name=collection_name, points=points)
             pbar.update(min(batch_size, total - i))
 
-    with _ManifestLock(MANIFEST_LOCK_FILE):
-        fresh_manifest = load_manifest()
-        fresh_files = fresh_manifest.get(engine_name, {}).get("files", {})
-        valid_deleted = _revalidate_deleted(deleted, fresh_files)
-        valid_changed = _revalidate_changed(changed, fresh_files)
-
-        changed_rel = {rel for _, rel in valid_changed}
-        processed_rel = {rel for rel, _, _ in file_chunk_info}
-
-        deleted_ids = []
-        for rel_path in valid_deleted:
-            entry = fresh_files.pop(rel_path, None)
-            if entry:
-                deleted_ids.extend(entry.get("chunk_ids", []))
-        for _, rel_path in valid_changed:
-            entry = fresh_files.pop(rel_path, None)
-            if entry:
-                deleted_ids.extend(entry.get("chunk_ids", []))
-        delete_chunks(vectorstore, deleted_ids)
-
-        for rel_path, ids, mtime in file_chunk_info:
-            if rel_path in changed_rel:
-                fresh_files[rel_path] = {"mtime": mtime, "chunk_ids": ids}
-
-        fresh_manifest[engine_name] = {"files": fresh_files}
-        save_manifest(fresh_manifest)
+    _update_manifest(engine_name, client, collection_name, changed, deleted, file_chunk_info)
 
     log.info("  --- %s ready! ---", cfg['label'])
     bust_cache()

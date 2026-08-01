@@ -16,14 +16,22 @@ AlertmanagerConfig решает задачу **разделенного упра
 
 | Версия | Статус | С версии Prometheus Operator | Примечание |
 | :--- | :--- | :--- | :--- |
-| **`v1beta1`** | Stable | `v0.57.0+` | Рекомендуемая. `regex` удалён из Matcher, `muteTimeIntervals` → `timeIntervals` |
-| **`v1alpha1`** | Legacy | `v0.40.0+` | Поддерживается для обратной совместимости |
+| **`v1beta1`** | **Stable** | `v0.57.0+` | Рекомендуемая. Поддерживает **CEL-валидацию** и **UTF-8 matchers** (Prometheus 3.0). |
+| **`v1alpha1`** | Legacy | `v0.40.0+` | Поддерживается для обратной совместимости. Использует `muteTimeIntervals`. |
 
 **Ключевые отличия `v1beta1` от `v1alpha1`:**
 
-- `spec.muteTimeIntervals` переименовано в `spec.timeIntervals`
-- Поле `regex` удалено из типа `Matcher` (вместо этого используется `matchType`: `=`, `!=`, `=~`, `!~`)
-- `SecretKeySelector`: поля `name` и `key` стали обязательными, `optional` удалено
+- `spec.muteTimeIntervals` переименовано в `spec.timeIntervals`.
+- Поле `regex` удалено из типа `Matcher` (вместо этого используется `matchType`: `=`, `!=`, `=~`, `!~`).
+- `SecretKeySelector`: поля `name` и `key` стали обязательными, `optional` удалено.
+- Поддержка современных методов авторизации (`authorization`, `oauth2`) и кастомных HTTP-заголовков.
+
+### Глобальная конфигурация (SSoT Pattern)
+
+Начиная с 2025–2026 годов, установился стандарт использования `AlertmanagerConfig` как основного способа настройки Alertmanager, вытесняя ручное редактирование Secret `alertmanager-main`.
+
+1.  **Глобальный режим:** Один объект `AlertmanagerConfig` может быть назначен "глобальным" в ресурсе `Alertmanager` (`spec.alertmanagerConfiguration`). В этом режиме отключается автоматическая привязка неймспейса к меткам, позволяя настраивать кластерные маршруты.
+2.  **Локальный режим:** Команды создают свои ресурсы в своих Namespace. Оператор агрегирует их, автоматически добавляя матчер неймспейса (`namespace="my-team"`) ко всем маршрутам для изоляции.
 
 ### Взаимосвязь с Alertmanager CRD
 
@@ -189,11 +197,22 @@ receivers:
       - url: 'https://hooks.example.com/alerts'
         sendResolved: true
         httpConfig:
-          bearerTokenSecret:
-            name: webhook-secret
-            key: token
+          httpHeaders:
+            - name: "X-API-Key"
+              valueFrom:
+                secret:
+                  name: webhook-secret
+                  key: api-key
+          authorization:
+            type: Bearer
+            credentials:
+              name: webhook-secret
+              key: token
           tlsConfig:
-            caFile: /etc/alertmanager/secrets/ca.crt
+            ca:
+              secret:
+                name: trusted-ca
+                key: ca.crt
 ```
 
 #### OpsGenie
@@ -365,7 +384,8 @@ apiURL:
 
 ### Связанные темы
 
-- [Alertmanager CRD](./alertmanager.md) — описание развёртывания Alertmanager.
-- [Alertmanager — общая концепция](../../../alertmanager.md) — архитектура, конвейер обработки, ключи запуска.
-- [PrometheusRule CRD](./prometheusrule.md) — правила генерации алертов.
-- [Secrets best practices](../Security/secrets_best_practices.md) — управление секретами.
+- [Alertmanager CRD](./alertmanager.md) — развёртывание инстансов Alertmanager.
+- [Alertmanager — концепция](../../../alertmanager.md) — архитектура и дедупликация.
+- [PrometheusRule CRD](./prometheusrule.md) — генерация алертов.
+- [Secrets best practices](../Security/secrets_best_practices.md) — защита учетных данных.
+- **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

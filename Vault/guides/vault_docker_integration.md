@@ -119,7 +119,7 @@ exec "$@"
 
 ### См. также
 
-*   **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — SSoT по нативным механизмам Docker.
+*   **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — основной раздел по нативным механизмам Docker.
 *   **[Vault Agent: основы](./vault_agent/basics.md)** — детальная настройка шаблонов.
 *   **[Аутентификация через AppRole](./vault_auth_approle.md)** — детали машинной аутентификации.
 *   **[Подход Zero Trust](../zero_trust.md)** — концепция федерации идентичности (WIF).

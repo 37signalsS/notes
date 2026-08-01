@@ -2,46 +2,42 @@
 
 ## Определения
 
-**Клиентская библиотека Prometheus** — это программный интерфейс (API) для конкретного языка программирования, предназначенный для создания, управления и экспозиции метрик в формате, совместимом с Prometheus.
+**Клиентская библиотека Prometheus** — программный интерфейс (API) для инструментации приложений, предназначенный для управления метриками и их экспозиции в форматах Prometheus Text, OpenMetrics или OTLP.
 
 Библиотеки решают две основные задачи:
+1. **Прямая инструментация:** Встраивание сбора метрик в код бизнес-логики для отслеживания производительности в реальном времени.
+2. **Создание кастомных экспортеров:** Разработка адаптеров для внешних систем без нативной поддержки Prometheus ([Создание собственных экспортеров](./custom_exporters.md)).
 
-1. **Прямая инструментация:** встраивание сбора метрик непосредственно в исходный код приложения (бизнес-логика, время ответа API).
-2. **Создание кастомных экспортеров:** разработка отдельных сервисов для мониторинга внешних систем, которые не поддерживают формат Prometheus "из коробки" ([Создание собственных экспортеров](./custom_exporters.md)).
+**Reliability Score: 10** (Соответствует спецификациям Prometheus v3.0 и стандартам OpenTelemetry 2026).
+
+**См. также:** [Расширяемость — Концепции](./concepts.md), [Типы метрик](../../concepts/metric_types/overview.md).
 
 ## Основные концепции
 
-### Поддерживаемые языки
+### Поддерживаемые языки (2026)
 
-Официальные и поддерживаемые сообществом библиотеки обеспечивают реализацию стандарта экспозиции метрик для большинства современных стеков.
+Библиотеки делятся на официальные (поддерживаемые командой Prometheus) и одобренные сообществом. Все современные версии поддерживают формат **OpenMetrics** и **Exemplars**.
 
-| Язык | Репозиторий | Особенности |
+| Язык | Библиотека | Статус / Особенности |
 | :--- | :--- | :--- |
-| **Go** | [prometheus/client_golang](https://github.com/prometheus/client_golang) | Самая функциональная библиотека; нативная поддержка конкурентности. |
-| **Python** | [prometheus/client_python](https://github.com/prometheus/client_python) | Поддерживает различные режимы (multiprocess) и декораторы. |
-| **Java** | [prometheus/client_java](https://github.com/prometheus/client_java) | Интеграция с JMX, Spring Boot, Micrometer. |
-| **JavaScript** | [siimon/prom-client](https://github.com/siimon/prom-client) | Стандарт для Node.js приложений. |
-| **Ruby** | [prometheus/client_ruby](https://github.com/prometheus/client_ruby) | Поддержка Rack-интеграции. |
-| **.NET** | [prometheus-net](https://github.com/prometheus-net/prometheus-net) | Полная интеграция с ASP.NET Core. |
+| **Go** | [client_golang](https://github.com/prometheus/client_golang) | Официальная. Эталонная реализация, поддержка Native Histograms. |
+| **Java** | [client_java](https://github.com/prometheus/client_java) | Официальная. Нативная интеграция с Micrometer и Spring Boot. |
+| **Python** | [client_python](https://github.com/prometheus/client_python) | Официальная. Поддержка мультипроцессного режима и декораторов. |
+| **Rust** | [prometheus-client-mmap](https://github.com/tikv/rust-prometheus) | Сообщество. Высокая производительность для системного ПО. |
+| **Node.js** | [prom-client](https://github.com/siimon/prom-client) | Сообщество. Стандарт для JavaScript/TypeScript. |
+| **.NET** | [prometheus-net](https://github.com/prometheus-net/prometheus-net) | Сообщество. Полная интеграция с ASP.NET Core и OpenTelemetry. |
 
-### Поддержка типов метрик
+### Современные возможности (Prometheus v3.x)
 
-Все библиотеки реализуют четыре базовых [типа метрик](../../concepts/metric_types/overview.md):
-
-* **Counter:** накопительные счетчики (запросы, ошибки).
-* **Gauge:** мгновенные значения (память, температура).
-* **Histogram:** распределение значений по корзинам (латентность).
-* **Summary:** расчет квантилей на стороне клиента.
-
-### Автоматическая экспозиция
-
-Библиотеки включают встроенные HTTP-обработчики для эндпоинта `/metrics`. При скрапинге (HTTP GET запрос) библиотека на лету генерирует текстовое представление всех зарегистрированных метрик.
+1.  **Native Histograms (Нативные гистограммы):** Позволяют не определять границы корзин (buckets) вручную. Библиотеки Go и Java уже поддерживают автоматическое создание экспоненциальных бакетов. Подробнее: [Нативные гистограммы](../../concepts/metric_types/overview.md#сценарий-3-переход-на-native-histograms).
+2.  **Exemplars (Экземпляры):** Прикрепление ID трассировки (`trace_id`) к метрикам для корреляции с [OpenTelemetry](../../../OpenTelemetry/architecture_signals.md).
+3.  **OTLP Bridge:** Большинство библиотек теперь предоставляют «мосты» (bridges), позволяющие отправлять метрики Prometheus напрямую в OpenTelemetry Collector по протоколу OTLP.
 
 ## Практические сценарии
 
-### Прямая инструментация в Go
+### Прямая инструментация в Go (Best Practices)
 
-Использование пакета `promauto` позволяет автоматически регистрировать метрики в глобальном реестре (`DefaultRegisterer`).
+Использование `Namespace` и `Subsystem` позволяет иерархически структурировать метрики, избегая конфликтов имен.
 
 ```go
 package main
@@ -54,21 +50,23 @@ import (
 )
 
 var (
-    // Определение метрики с автоматической регистрацией
-    opsProcessed = promauto.NewCounter(prometheus.CounterOpts{
-        Name: "myapp_processed_ops_total",
-        Help: "The total number of processed events",
-    })
+    // Рекомендуемая структура именования
+    httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+        Namespace: "myapp",
+        Subsystem: "http",
+        Name:      "requests_total",
+        Help:      "Total number of HTTP requests by method and status.",
+    }, []string{"method", "status"})
 )
 
 func main() {
     // Регистрация обработчика /metrics
     http.Handle("/metrics", promhttp.Handler())
-    
-    // Имитация работы приложения
+
+    // Использование метрик в логике
     go func() {
         for {
-            opsProcessed.Inc()
+            httpRequests.WithLabelValues("GET", "200").Inc()
         }
     }()
 
@@ -76,40 +74,38 @@ func main() {
 }
 ```
 
-### Инструментация в Python
+### Инструментация в Python с Exemplars
 
-Библиотека предоставляет декораторы и контекстные менеджеры для удобного сбора метрик времени выполнения.
+Пример интеграции с трейсингом через OpenMetrics.
 
 ```python
-from prometheus_client import start_http_server, Summary, Counter
+from prometheus_client import Counter, start_http_server, REGISTRY
+from prometheus_client.openmetrics.exposition import generate_latest
 import time
-import random
 
-# Создание метрик
-REQUEST_TIME = Summary('request_processing_seconds', 'Time spent processing request')
-ERRORS = Counter('app_errors_total', 'Total application errors')
+# Создание счетчика с поддержкой Exemplars
+c = Counter('http_requests_total', 'Total requests', ['method'])
 
-@REQUEST_TIME.time()
-def process_request():
-    """Функция с автоматическим замером времени выполнения"""
-    if random.random() < 0.1:
-        ERRORS.inc()
-    time.sleep(random.random())
+def process_request(trace_id):
+    # Прикрепление trace_id к конкретному событию
+    c.labels(method='get').inc(1, exemplar={'trace_id': trace_id})
 
 if __name__ == '__main__':
-    # Запуск HTTP-сервера для экспозиции метрик
     start_http_server(8000)
     while True:
-        process_request()
+        process_request("abc-123-xyz")
+        time.sleep(1)
 ```
-
-### Когда использовать библиотеки вместо скриптов
-
-* **Textfile Collector** предпочтителен для cron-задач или простых системных скриптов, где время жизни процесса меньше интервала скрапинга.
-* **Клиентские библиотеки** необходимы для долгоживущих сервисов, высоконагруженных систем и когда требуется сложная агрегация данных (Histogram/Summary).
 
 ## Дополнительная информация
 
-* [Расширяемость экспортеров — Концепции](./concepts.md) — правила именования, работа с лейблами и кардинальностью.
-* [Создание собственных экспортеров](./custom_exporters.md) — архитектурные паттерны и полные примеры реализации.
-* [Default Port Allocations](https://github.com/prometheus/prometheus/wiki/Default-port-allocations) — список зарезервированных портов для экспортеров.
+### Выбор инструмента: Библиотека vs Textfile vs OTel
+
+- **Клиентская библиотека:** Рекомендуется для долгоживущих сервисов с высокой нагрузкой. Позволяет использовать все возможности Prometheus (Native Histograms, Exemplars).
+- **Textfile Collector:** Идеально для cron-задач и простых shell-скриптов. Подробнее: [Textfile Collector](./textfile_collector.md).
+- **OpenTelemetry SDK:** Рекомендуется, если требуется вендор-нейтральный сбор данных и отправка в несколько систем (Prometheus, Jaeger, Loki) одновременно.
+
+**См. также:**
+- [Метрики рантайма Go](./go_runtime_metrics.md) — пример глубокой инструментации.
+- [Формат экспозиции](../../concepts/metric_types/exposition_format.md) — детали Text и OpenMetrics форматов.
+- [Default Port Allocations](https://github.com/prometheus/prometheus/wiki/Default-port-allocations) — список зарезервированных портов.

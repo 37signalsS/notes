@@ -109,6 +109,7 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=20s \
 4. **Видимость:** Результаты последних проверок можно увидеть в `docker inspect <id>`.
 
 **См. также:**
+- **[Autoheal в Docker](../../Docker_troubleshooting/docker_autoheal.md)** — автоматический перезапуск unhealthy-контейнеров.
 - **[Директивы Docker Compose](../../Docker_compose/docker_compose_directives.md)** — переопределение healthcheck в YAML.
 - **[Проблемы с сигналами (PID 1)](./runtime_execution.md#проблема-pid-1-и-сигналы)** — почему приложение может не останавливаться.
 - **[Healthchecks в Podman](../../Podman/podman_healthchecks.md)** — архитектурные отличия в бездемоновом режиме.

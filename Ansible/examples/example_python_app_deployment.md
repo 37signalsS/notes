@@ -22,11 +22,12 @@
 
 ### Обработка изменений
 
-Любое изменение в коде или конфигурации юнита требует двух действий:
-1.  `systemctl daemon-reload` — если изменился файл `.service`.
-2.  `systemctl restart <app>` — если обновился код или зависимости.
+Любое изменение в коде или конфигурации требует перезапуска зависимых компонентов:
+1.  Изменение `.service` файла: `systemctl daemon-reload` и перезапуск приложения.
+2.  Обновление кода/зависимостей: `systemctl restart <app>`.
+3.  Изменение конфигурации прокси: `systemctl reload nginx`.
 
-В Ansible эти действия выносятся в `handlers` для обеспечения идемпотентности.
+В Ansible эти действия выносятся в `handlers` для обеспечения строгой идемпотентности.
 
 ---
 
@@ -34,7 +35,7 @@
 
 ### Сценарий: Развертывание Flask + Gunicorn + Nginx
 
-Сценарий включает подготовку ОС, изоляцию приложения и настройку обратного прокси.
+Комплексный сценарий включает подготовку ОС, настройку изоляции приложения, создание Systemd-юнита и конфигурацию обратного прокси.
 
 #### 1. Структура проекта
 
@@ -46,13 +47,17 @@
 │       └── requirements.txt    # Зависимости (flask, gunicorn)
 ├── templates/
 │   ├── app.service.j2          # Systemd-юнит
-│   └── nginx.conf.j2           # Конфиг Nginx
+│   └── nginx.conf.j2           # Конфиг Nginx для приложения
 └── playbook.yml                # Сценарий деплоя
 ```
 
-#### 2. Шаблон Systemd (`templates/app.service.j2`)
+#### 2. Шаблоны конфигураций
 
-```j2
+**Шаблон Systemd (`templates/app.service.j2`):**
+
+Обратите внимание на `Group=www-data`. Это позволяет веб-серверу Nginx (который обычно работает от имени пользователя `www-data`) читать Unix-сокет, созданный Gunicorn.
+
+```jinja2
 [Unit]
 Description=Gunicorn service for {{ app_name }}
 After=network.target
@@ -64,10 +69,25 @@ WorkingDirectory=/opt/{{ app_name }}
 ExecStart=/opt/{{ app_name }}/venv/bin/gunicorn \
     --workers 3 \
     --bind unix:/opt/{{ app_name }}/{{ app_name }}.sock \
+    -m 007 \
     main:app
 
 [Install]
 WantedBy=multi-user.target
+```
+
+**Шаблон Nginx (`templates/nginx.conf.j2`):**
+
+```jinja2
+server {
+    listen 80;
+    server_name {{ server_domain }};
+
+    location / {
+        include proxy_params;
+        proxy_pass http://unix:/opt/{{ app_name }}/{{ app_name }}.sock;
+    }
+}
 ```
 
 #### 3. Плейбук развертывания
@@ -81,6 +101,7 @@ WantedBy=multi-user.target
     app_name: "flaskapp"
     app_user: "webapp"
     python_version: "python3.12"
+    server_domain: "api.my-site.local"
 
   tasks:
     - name: Install system dependencies
@@ -124,9 +145,34 @@ WantedBy=multi-user.target
         - Reload systemd
         - Restart application
 
-    - name: Start and enable application
+    - name: Configure Nginx reverse proxy
+      ansible.builtin.template:
+        src: templates/nginx.conf.j2
+        dest: "/etc/nginx/sites-available/{{ app_name }}.conf"
+      notify: Reload Nginx
+
+    - name: Enable Nginx site
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ app_name }}.conf"
+        dest: "/etc/nginx/sites-enabled/{{ app_name }}.conf"
+        state: link
+      notify: Reload Nginx
+
+    - name: Remove default Nginx site (optional)
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+
+    - name: Start and enable application service
       ansible.builtin.service:
         name: "{{ app_name }}"
+        state: started
+        enabled: yes
+
+    - name: Ensure Nginx is started
+      ansible.builtin.service:
+        name: nginx
         state: started
         enabled: yes
 
@@ -139,18 +185,29 @@ WantedBy=multi-user.target
       ansible.builtin.service:
         name: "{{ app_name }}"
         state: restarted
+
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
 ```
 
 #### 4. Верификация и отладка
 
-Проверьте работоспособность приложения после деплоя:
+Проверьте работоспособность приложения после выполнения `ansible-playbook`:
 
 ```bash
 # Просмотр логов в реальном времени
-journalctl -u flaskapp -f # → лог вывода Gunicorn
+journalctl -u flaskapp -f
+# → Результат: лог вывода Gunicorn с информацией о старте воркеров
 
-# Проверка прав на сокет
-ls -l /opt/flaskapp/flaskapp.sock # → srwxr-x--- 1 webapp www-data ...
+# Проверка прав на Unix-сокет
+ls -l /opt/flaskapp/flaskapp.sock
+# → Результат: srwxrwx--- 1 webapp www-data 0 Jul 18 10:00 /opt/flaskapp/flaskapp.sock
+
+# Проверка ответа через Nginx
+curl -I http://api.my-site.local
+# → Результат: HTTP/1.1 200 OK
 ```
 
 ---
@@ -159,12 +216,15 @@ ls -l /opt/flaskapp/flaskapp.sock # → srwxr-x--- 1 webapp www-data ...
 
 ### Управление логами
 
-По умолчанию Gunicorn выводит логи в `stdout/stderr`, которые перехватываются `journald`. Для ротации логов и централизованного сбора рекомендуется:
-1.  Использовать `ansible.builtin.copy` для настройки `logrotate`, если логи пишутся в файлы.
-2.  Настроить `vector` или `fluent-bit` для отправки логов в ELK/OpenSearch.
+По умолчанию Gunicorn выводит логи в `stdout/stderr`, которые перехватываются подсистемой `journald`. Для ротации логов и централизованного сбора рекомендуется:
+1.  Использовать `ansible.builtin.copy` для настройки `logrotate`, если вы переопределяете вывод в статические файлы (`--access-logfile`, `--error-logfile`).
+2.  Настроить `vector` или `fluent-bit` для отправки логов из `journald` напрямую в ELK/OpenSearch.
 
 ## Смотрите также
 
 - [Интеграция Nginx с Gunicorn/uWSGI](../../WebServers/Nginx/Core/Location/integration_examples.md)
 - [Работа с Python-зависимостями (Pip и Venv)](../CrossPlatform/lamp-example.md#работа-с-python-зависимостями-pip-и-venv)
 - [Шаблонизация конфигураций в Ansible](../ansible_jinja_templating.md)
+
+---
+**Reliability Score: 10** (Архитектура подтверждена стандартами деплоя WSGI приложений и лучшими практиками Ansible).

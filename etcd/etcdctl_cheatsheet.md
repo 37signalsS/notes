@@ -139,16 +139,28 @@ export ETCDCTL_USER="admin:password"
     etcdctl check perf --load="s" # s (small), m (medium), l (large), xl (x-large)
     # → PASS: Throughput is 150 writes/s
     ```
-
 ### Резервное копирование и восстановление
 
 *   **Создание снапшота (Online):**
     ```bash
+    # Базовая команда
     etcdctl snapshot save backup.db
-    # → Snapshot saved at backup.db
+
+    # Полная команда с TLS и эндпоинтами (рекомендуется для HA кластеров)
+    ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
+      --endpoints=https://etcd1.example.com:2379,https://etcd2.example.com:2379,https://etcd3.example.com:2379 \
+      --cacert=/etc/etcd/pki/ca.pem \
+      --cert=/etc/etcd/pki/etcd.pem \
+      --key=/etc/etcd/pki/etcd-key.pem
     ```
+    **Разбор флагов:**
+    *   `ETCDCTL_API=3`: Принудительное использование API v3.
+    *   `snapshot save`: Создает снимок и сохраняет его по указанному пути.
+    *   `--endpoints`: Список URL-адресов всех серверов etcd в кластере.
+    *   `--cacert`, `--cert`, `--key`: Пути к сертификатам и ключам для безопасной аутентификации.
 
 *   **Проверка статуса снапшота (Offline):**
+
     ```bash
     # В 3.6+ рекомендуется использовать etcdutl
     etcdutl snapshot status backup.db -w table

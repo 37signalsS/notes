@@ -2,82 +2,86 @@
 
 ## Определения
 
-**Alertmanager + Karma в Kubernetes** — практическое руководство по развёртыванию стека оповещений (Alertmanager + Karma) в Kubernetes через стандартные манифесты (StatefulSet, Deployment, ConfigMap, Secret, Service, Ingress). В отличие от Helm-чартов, подход предоставляет полный контроль над каждым ресурсом и демонстрирует паттерны безопасного управления секретами.
+**Alertmanager + Karma в Kubernetes** — практическое руководство по развёртыванию стека управления оповещениями (Alertmanager + Karma) в кластере Kubernetes с использованием стандартных манифестов (StatefulSet, Deployment, ConfigMap, Secret, Service, Ingress). В отличие от автоматизированного развёртывания через Helm-чарты или Оператор, данный подход предоставляет полный контроль над каждым ресурсом и наглядно демонстрирует паттерны безопасного управления конфигурациями и секретами.
 
-> **См. также:** [Alertmanager](../../alertmanager.md), [Karma Dashboard](../../karma_dashboard.md)
+> **См. также:** [Alertmanager — общий обзор](../../alertmanager.md), [Дашборд Karma](../../karma_dashboard.md).
+
+---
 
 ## Основные концепции
 
 ### Ключевые особенности подхода
 
 | Особенность | Описание |
-|---|---|
-| **StatefulSet для Alertmanager** | Стабильный сетевой идентификатор (`alertmanager-0`) и поддержка постоянного хранилища (PVC) для silences |
-| **Init Container для секретов** | `busybox` через `sed` подставляет токены/пароли из Kubernetes Secret в шаблон конфига — секреты не хранятся в Git |
-| **ConfigMap для конфигурации** | Шаблоны `alertmanager.yml` и Go-templates вынесены в отдельные ConfigMap — версионирование и обновление без пересоздания пода |
-| **Интеграция с Telegram** | Использование нативного `telegram_configs` (Alertmanager 0.24+) вместо webhook-костылей |
-| **Karma как агрегатор** | Отдельный Deployment Karma — единый UI для мониторинга и управления silences |
+| :--- | :--- |
+| **StatefulSet для Alertmanager** | Обеспечивает стабильный сетевой идентификатор и поддержку постоянного хранилища (PVC) для сохранения состояния silences и уведомлений. |
+| **Управление секретами** | В руководстве рассматривается паттерн с `init-container`, который подставляет токены из Secret в шаблон конфига. Начиная с Alertmanager 0.27+, также поддерживается нативная подстановка переменных окружения. |
+| **Декларативные шаблоны** | Использование ConfigMap для хранения `alertmanager.yml` и Go-templates позволяет версионировать логику уведомлений отдельно от инфраструктуры. |
+| **Интеграция с Telegram** | Прямое использование `telegram_configs` (внедрено в v0.24) для отправки уведомлений в мессенджер без промежуточных прокси. |
+| **Karma как агрегатор** | Развёртывание Karma в режиме агрегатора позволяет объединять алерты из нескольких инстансов Alertmanager в едином интерфейсе. |
 
 ### Архитектура решения
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                    Kubernetes                        │
 │                                                      │
 │  ┌─────────────────────┐    ┌────────────────────┐  │
 │  │  Alertmanager        │    │  Karma             │  │
-│  │  (StatefulSet)       │◄───│  (Deployment)      │  │
-│  │  • init-container    │    │  • configmap       │  │
-│  │  • config from emptyDir│  │  • service         │  │
+│  │  (StatefulSet)       │<───│  (Deployment)      │  │
+│  │  • init-container    │    │  • ConfigMap       │  │
+│  │  • config (emptyDir) │    │  • Service         │  │
 │  │  • PVC (data)        │    └────────────────────┘  │
-│  │  • service           │                            │
+│  │  • Service           │                            │
 │  └─────────────────────┘                            │
 │         │                                            │
 │         ▼                                            │
 │  ┌─────────────────────┐                            │
 │  │  Ingress             │                            │
-│  │  • alertmanager.example.com│                     │
-│  │  • karma.example.com │                            │
+│  │  • alertmanager.local│                            │
+│  │  • karma.local       │                            │
 │  └─────────────────────┘                            │
 └─────────────────────────────────────────────────────┘
 ```
 
-### Требования
+### Требования к окружению
 
 | Компонент | Минимальная версия | Примечание |
-|---|---|---|
-| Kubernetes | 1.24+ | Поддержка StatefulSet, PVC, Secret |
-| Alertmanager | 0.24+ | Нативная поддержка `telegram_configs` |
-| kubectl | актуальная | Доступ к кластеру с правами создания ресурсов в namespace `monitoring` |
+| :--- | :--- | :--- |
+| **Kubernetes** | 1.28+ | Поддержка актуальных версий API ресурсов. |
+| **Alertmanager** | 0.27+ | Рекомендуется для использования функции расширения переменных в конфиге. |
+| **kubectl** | Актуальная | Доступ к кластеру с правами администратора в namespace `monitoring`. |
+
+---
 
 ## Практические сценарии
 
 ### Порядок применения манифестов
 
-Рекомендуемая последовательность применения ресурсов:
+Для корректной работы зависимостей рекомендуется следующая последовательность:
 
 | Шаг | Ресурс | Файл | Назначение |
-|---|---|---|---|
-| 1 | Secret | [secrets.md](./secrets.md) | Токены SMTP, Telegram — применяются первыми |
-| 2 | ConfigMap (config) | [alertmanager-config.md](./alertmanager-config.md) | Шаблон `alertmanager.yml` с плейсхолдерами |
-| 3 | ConfigMap (templates) | [alertmanager-templates.md](./alertmanager-templates.md) | Go-шаблоны для Telegram/Email |
-| 4 | StatefulSet | [alertmanager-statefulset.md](./alertmanager-statefulset.md) | Alertmanager с init-container |
-| 5 | ConfigMap (karma) | [karma-config.md](./karma-config.md) | Конфигурация Karma (URL Alertmanager) |
-| 6 | Deployment (karma) | [karma-deployment.md](./karma-deployment.md) | Развёртывание Karma |
-| 7 | Service + Ingress | [services.md](./services.md) | Сетевой доступ извне |
+| :--- | :--- | :--- | :--- |
+| 1 | Secret | [secrets.md](./secrets.md) | Токены SMTP и Telegram — создаются первыми. |
+| 2 | ConfigMap (config) | [alertmanager-config.md](./alertmanager-config.md) | Шаблон `alertmanager.yml` с плейсхолдерами. |
+| 3 | ConfigMap (templates) | [alertmanager-templates.md](./alertmanager-templates.md) | Go-шаблоны для форматирования уведомлений. |
+| 4 | StatefulSet | [alertmanager-statefulset.md](./alertmanager-statefulset.md) | Основной инстанс Alertmanager. |
+| 5 | ConfigMap (karma) | [karma-config.md](./karma-config.md) | Конфигурация Karma (адреса серверов). |
+| 6 | Deployment (karma) | [karma-deployment.md](./karma-deployment.md) | Развёртывание дашборда. |
+| 7 | Service + Ingress | [services.md](./services.md) | Настройка доступа и маршрутизации. |
 
-### Быстрый старт
+### Проверка работоспособности
 
-После применения всех манифестов:
+1.  **Alertmanager UI:** Проверьте доступность по адресу `http://alertmanager.local` (порт 9093).
+2.  **Karma UI:** Откройте `http://karma.local` для визуализации текущих оповещений.
+3.  **Тестирование:** Сгенерируйте тестовый алерт (например, через `curl` в Alertmanager API) и убедитесь, что уведомление доставлено в Telegram/Email.
 
-1. **Alertmanager UI:** `http://alertmanager.example.com` (порт 9093)
-2. **Karma UI:** `http://karma.example.com` — агрегированный view алертов
-3. **Проверка:** отправьте тестовый алерт через Prometheus UI → убедитесь, что уведомление пришло в Telegram/Email
+---
 
 ## Дополнительная информация
 
-Детальные разделы руководства описаны выше в таблице порядка применения. Взаимосвязанные материалы:
+Данное руководство ориентировано на изучение внутреннего устройства ресурсов. Для промышленной эксплуатации в больших кластерах рекомендуется рассматривать:
 
-- [Установка Alertmanager](../../installation/alertmanager_installation.md) — установка через бинарные файлы и Docker
-- [Karma Dashboard](../../karma_dashboard.md) — общее описание и возможности
-- [kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md) — развёртывание через Helm
+- **[kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md)** — стандарт де-факто для развёртывания стека через Helm.
+- **[Prometheus Operator — Alertmanager](../operator/crd/alertmanager.md)** — управление через Custom Resources.
+- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

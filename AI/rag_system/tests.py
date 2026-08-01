@@ -4,6 +4,7 @@ import sys
 import json
 import shutil
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -160,13 +161,13 @@ class TestManifestAtomicity(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.orig_script_dir = rag_utils.SCRIPT_DIR
-        rag_utils.SCRIPT_DIR = self.tmpdir
+        rag_utils.set_script_dir(self.tmpdir)
         import ingest
         self.orig_manifest = ingest.MANIFEST_FILE
         ingest.MANIFEST_FILE = os.path.join(self.tmpdir, "manifest.json")
 
     def tearDown(self):
-        rag_utils.SCRIPT_DIR = self.orig_script_dir
+        rag_utils.set_script_dir(self.orig_script_dir)
         import ingest
         ingest.MANIFEST_FILE = self.orig_manifest
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -214,11 +215,11 @@ class TestGetEmbeddingsDocPrefix(unittest.TestCase):
             return_value=self.mock_emb,
         )
         self.patcher.start()
-        rag_utils._load_embedding_model.cache_clear()
+        rag_utils._clear_model_caches()
 
     def tearDown(self):
         self.patcher.stop()
-        rag_utils._load_embedding_model.cache_clear()
+        rag_utils._clear_model_caches()
 
     def test_get_embeddings_returns_wrapper_when_prefix_given(self):
         result = rag_utils.get_embeddings("fake-model", "cpu", doc_prefix="TEST: ")
@@ -255,22 +256,35 @@ class TestBM25Scores(unittest.TestCase):
 
 
 class TestPerformSearchIntegration(unittest.TestCase):
-    @unittest.mock.patch("rag_utils.load_chroma")
+    @unittest.mock.patch("rag_utils.load_qdrant")
     @unittest.mock.patch("rag_utils.get_reranker")
-    def test_search_returns_results(self, mock_reranker, mock_load_chroma):
+    @unittest.mock.patch("rag_utils.get_embeddings")
+    @unittest.mock.patch("rag_utils.get_sparse_embedding_model")
+    def test_search_returns_results(self, mock_sparse, mock_dense, mock_reranker, mock_load_qdrant):
         from unified_search import perform_search, bust_cache
         bust_cache()
 
         mock_reranker.return_value = None
+        
+        mock_dense.return_value.embed_query.return_value = [0.1, 0.2]
+        
+        mock_sparse_res = unittest.mock.MagicMock()
+        mock_sparse_res.indices = unittest.mock.MagicMock(tolist=lambda: [1, 2])
+        mock_sparse_res.values = unittest.mock.MagicMock(tolist=lambda: [0.5, 0.6])
+        mock_sparse.return_value.embed.return_value = [mock_sparse_res]
 
-        fake_doc = unittest.mock.MagicMock()
-        fake_doc.metadata = {"source": "test.md"}
-        fake_doc.page_content = "test content about useradd and usermod"
+        fake_point = unittest.mock.MagicMock()
+        fake_point.payload = {"source": "test.md", "page_content": "test content about useradd and usermod"}
+        fake_point.score = 0.5
+        fake_point.vector = {"dense": [0.1, 0.2]}
+
+        fake_result = unittest.mock.MagicMock()
+        fake_result.points = [fake_point]
 
         fake_vs = unittest.mock.MagicMock()
-        fake_vs.similarity_search_with_score.return_value = [(fake_doc, 0.5)]
+        fake_vs.query_points.return_value = fake_result
         fake_cfg = {"query_prefix": "", "model": "fake", "dir": "/tmp", "collection": "test"}
-        mock_load_chroma.return_value = (fake_vs, fake_cfg)
+        mock_load_qdrant.return_value = (fake_vs, fake_cfg)
 
         results = perform_search("unique_returns_test", engine_names=["bge"], top_k=5, use_rerank=False)
         self.assertIsInstance(results, list)
@@ -279,38 +293,69 @@ class TestPerformSearchIntegration(unittest.TestCase):
         self.assertIn("content", results[0])
         self.assertIn("score", results[0])
 
-    @unittest.mock.patch("rag_utils.load_chroma")
+    @unittest.mock.patch("rag_utils.load_qdrant")
     @unittest.mock.patch("rag_utils.get_reranker")
-    def test_search_deduplicates(self, mock_reranker, mock_load_chroma):
+    @unittest.mock.patch("rag_utils.get_embeddings")
+    @unittest.mock.patch("rag_utils.get_sparse_embedding_model")
+    def test_search_deduplicates(self, mock_sparse, mock_dense, mock_reranker, mock_load_qdrant):
         from unified_search import perform_search, bust_cache
         bust_cache()
 
         mock_reranker.return_value = None
 
-        fake_doc = unittest.mock.MagicMock()
-        fake_doc.metadata = {"source": "test.md"}
-        fake_doc.page_content = "duplicate content"
+        mock_dense.return_value.embed_query.return_value = [0.1, 0.2]
+        
+        mock_sparse_res = unittest.mock.MagicMock()
+        mock_sparse_res.indices = unittest.mock.MagicMock(tolist=lambda: [1, 2])
+        mock_sparse_res.values = unittest.mock.MagicMock(tolist=lambda: [0.5, 0.6])
+        mock_sparse.return_value.embed.return_value = [mock_sparse_res]
+
+        fake_point1 = unittest.mock.MagicMock()
+        fake_point1.payload = {"source": "test.md", "page_content": "duplicate content"}
+        fake_point1.score = 0.3
+        fake_point1.vector = {"dense": [0.1, 0.2]}
+        
+        fake_point2 = unittest.mock.MagicMock()
+        fake_point2.payload = {"source": "test.md", "page_content": "duplicate content"}
+        fake_point2.score = 0.5
+        fake_point2.vector = {"dense": [0.1, 0.2]}
+
+        fake_result = unittest.mock.MagicMock()
+        fake_result.points = [fake_point1, fake_point2]
 
         fake_vs = unittest.mock.MagicMock()
-        fake_vs.similarity_search_with_score.return_value = [(fake_doc, 0.3), (fake_doc, 0.5)]
+        fake_vs.query_points.return_value = fake_result
         fake_cfg = {"query_prefix": "", "model": "fake", "dir": "/tmp", "collection": "test"}
-        mock_load_chroma.return_value = (fake_vs, fake_cfg)
+        mock_load_qdrant.return_value = (fake_vs, fake_cfg)
 
         results = perform_search("unique_dedup_test", engine_names=["bge"], top_k=5, use_rerank=False)
         self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["score"], 0.5)
 
-    @unittest.mock.patch("rag_utils.load_chroma")
+    @unittest.mock.patch("rag_utils.load_qdrant")
     @unittest.mock.patch("rag_utils.get_reranker")
-    def test_search_empty_results(self, mock_reranker, mock_load_chroma):
+    @unittest.mock.patch("rag_utils.get_embeddings")
+    @unittest.mock.patch("rag_utils.get_sparse_embedding_model")
+    def test_search_empty_results(self, mock_sparse, mock_dense, mock_reranker, mock_load_qdrant):
         from unified_search import perform_search, bust_cache
         bust_cache()
 
         mock_reranker.return_value = None
 
+        mock_dense.return_value.embed_query.return_value = [0.1, 0.2]
+        
+        mock_sparse_res = unittest.mock.MagicMock()
+        mock_sparse_res.indices = unittest.mock.MagicMock(tolist=lambda: [1, 2])
+        mock_sparse_res.values = unittest.mock.MagicMock(tolist=lambda: [0.5, 0.6])
+        mock_sparse.return_value.embed.return_value = [mock_sparse_res]
+
+        fake_result = unittest.mock.MagicMock()
+        fake_result.points = []
+
         fake_vs = unittest.mock.MagicMock()
-        fake_vs.similarity_search_with_score.return_value = []
+        fake_vs.query_points.return_value = fake_result
         fake_cfg = {"query_prefix": "", "model": "fake", "dir": "/tmp", "collection": "test"}
-        mock_load_chroma.return_value = (fake_vs, fake_cfg)
+        mock_load_qdrant.return_value = (fake_vs, fake_cfg)
 
         results = perform_search("unique_empty_test", engine_names=["bge"], top_k=5, use_rerank=False)
         self.assertEqual(results, [])
@@ -442,13 +487,13 @@ class TestIngestHelpers(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.orig_script_dir = rag_utils.SCRIPT_DIR
-        rag_utils.SCRIPT_DIR = self.tmpdir
+        rag_utils.set_script_dir(self.tmpdir)
         self.ingest = __import__("ingest")
         self.orig_manifest_file = self.ingest.MANIFEST_FILE
         self.ingest.MANIFEST_FILE = os.path.join(self.tmpdir, "manifest.json")
 
     def tearDown(self):
-        rag_utils.SCRIPT_DIR = self.orig_script_dir
+        rag_utils.set_script_dir(self.orig_script_dir)
         self.ingest.MANIFEST_FILE = self.orig_manifest_file
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
@@ -474,10 +519,10 @@ class TestIngestHelpers(unittest.TestCase):
         self.assertTrue(os.path.exists(mf))
 
     def test_get_changed_files_new_db(self):
-        db_dir = os.path.join(self.tmpdir, "chroma_db")
+        db_dir = os.path.join(self.tmpdir, "qdrant_db")
         os.makedirs(db_dir)
         files = [("/tmp/a.md", "a.md"), ("/tmp/b.md", "b.md")]
-        changed, deleted, manifest, es, fm = self.ingest.get_changed_files("mpnet", files, force=False, db_dir=db_dir)
+        changed, deleted, manifest, es = self.ingest.get_changed_files("e5", files, force=False, db_dir=db_dir)
         self.assertEqual(len(changed), 2)
         self.assertEqual(len(deleted), 0)
 
@@ -489,29 +534,29 @@ class TestIngestHelpers(unittest.TestCase):
 
     def test_get_changed_files_force(self):
         fpath = self._make_file("a.md", "data")
-        self._write_manifest("mpnet", {"a.md": {"mtime": 1.0, "chunk_ids": ["id1"]}})
-        db_dir = os.path.join(self.tmpdir, "chroma_db")
+        self._write_manifest("e5", {"a.md": {"mtime": 1.0, "chunk_ids": ["id1"]}})
+        db_dir = os.path.join(self.tmpdir, "qdrant_db")
         os.makedirs(db_dir)
         files = [(fpath, "a.md")]
-        changed, deleted, manifest, es, fm = self.ingest.get_changed_files("mpnet", files, force=True, db_dir=db_dir)
+        changed, deleted, manifest, es = self.ingest.get_changed_files("e5", files, force=True, db_dir=db_dir)
         self.assertEqual(len(changed), 1)
 
     def test_get_changed_files_no_changes(self):
         fpath = self._make_file("test.md", "hello")
-        db_dir = os.path.join(self.tmpdir, "chroma_db")
+        db_dir = os.path.join(self.tmpdir, "qdrant_db")
         os.makedirs(db_dir)
-        self._write_manifest("mpnet", {"test.md": {"mtime": os.path.getmtime(fpath), "chunk_ids": ["id1"]}})
+        self._write_manifest("e5", {"test.md": {"mtime": os.path.getmtime(fpath), "chunk_ids": ["id1"]}})
         files = [(fpath, "test.md")]
-        changed, deleted, manifest, es, fm = self.ingest.get_changed_files("mpnet", files, force=False, db_dir=db_dir)
+        changed, deleted, manifest, es = self.ingest.get_changed_files("e5", files, force=False, db_dir=db_dir)
         self.assertEqual(len(changed), 0)
         self.assertEqual(len(deleted), 0)
 
     def test_get_changed_files_deleted(self):
-        self._write_manifest("mpnet", {"old.md": {"mtime": 1.0, "chunk_ids": ["id1"]}})
-        db_dir = os.path.join(self.tmpdir, "chroma_db")
+        self._write_manifest("e5", {"old.md": {"mtime": 1.0, "chunk_ids": ["id1"]}})
+        db_dir = os.path.join(self.tmpdir, "qdrant_db")
         os.makedirs(db_dir)
         files = []
-        changed, deleted, manifest, es, fm = self.ingest.get_changed_files("mpnet", files, force=False, db_dir=db_dir)
+        changed, deleted, manifest, es = self.ingest.get_changed_files("e5", files, force=False, db_dir=db_dir)
         self.assertEqual(len(changed), 0)
         self.assertEqual(len(deleted), 1)
         self.assertIn("old.md", deleted)
@@ -552,27 +597,178 @@ class TestIngestHelpers(unittest.TestCase):
 
     def test_revalidate_deleted(self):
         result = self.ingest._revalidate_deleted(["a.md", "b.md"], {"a.md": {"mtime": 1.0}})
-        self.assertEqual(result, ["a.md"])
+        self.assertEqual(result, ["b.md"])
 
-    def test_delete_chunks_empty(self):
-        mock_vs = unittest.mock.MagicMock()
-        self.ingest.delete_chunks(mock_vs, [])
-        mock_vs.delete.assert_not_called()
+    def test_revalidate_deleted_all_fresh(self):
+        result = self.ingest._revalidate_deleted(["a.md"], {"a.md": {"mtime": 1.0}})
+        self.assertEqual(result, [])
 
-    def test_delete_chunks_with_ids(self):
-        mock_vs = unittest.mock.MagicMock()
-        self.ingest.delete_chunks(mock_vs, ["id1", "id2"])
-        mock_vs.delete.assert_called_once_with(["id1", "id2"])
+    def test_revalidate_deleted_all_stale(self):
+        result = self.ingest._revalidate_deleted(["a.md", "b.md"], {})
+        self.assertEqual(result, ["a.md", "b.md"])
 
-    def test_delete_chunks_none_vectorstore(self):
-        self.ingest.delete_chunks(None, ["id1"])
+
+class TestComputeCosineSimMatrix(unittest.TestCase):
+    def test_empty_input(self):
+        result = rag_utils.compute_cosine_sim_matrix([])
+        self.assertEqual(result, [])
+
+    def test_single_vector(self):
+        result = rag_utils.compute_cosine_sim_matrix([[1.0, 0.0]])
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(result[0][0], 1.0)
+
+    def test_identical_vectors(self):
+        result = rag_utils.compute_cosine_sim_matrix([[1.0, 0.0], [1.0, 0.0]])
+        self.assertAlmostEqual(result[0][1], 1.0)
+        self.assertAlmostEqual(result[1][0], 1.0)
+
+    def test_orthogonal_vectors(self):
+        result = rag_utils.compute_cosine_sim_matrix([[1.0, 0.0], [0.0, 1.0]])
+        self.assertAlmostEqual(result[0][1], 0.0, places=6)
+        self.assertAlmostEqual(result[1][0], 0.0, places=6)
+
+
+class TestConfigLoading(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cfg_path = rag_utils._CFG_PATH
+        rag_utils._CFG_PATH = os.path.join(self.tmpdir, "config.yaml")
+
+    def tearDown(self):
+        rag_utils._CFG_PATH = self.orig_cfg_path
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_load_config_no_file(self):
+        result = rag_utils._load_config()
+        self.assertIn("engines", result)
+        self.assertIn("excluded_dirs", result)
+        self.assertIn("excluded_files", result)
+
+    def test_load_config_bad_yaml(self):
+        with open(rag_utils._CFG_PATH, "w") as f:
+            f.write("{bad: yaml: unclosed")
+        result = rag_utils._load_config()
+        self.assertIn("engines", result)
+
+    def test_load_config_custom_engine(self):
+        cfg = {
+            "engines": {
+                "test_engine": {
+                    "dir": "/tmp/qdrant_test",
+                    "collection": "test_coll",
+                    "model": "test-model",
+                    "chunk_size": 500,
+                    "chunk_overlap": 50,
+                    "batch_size": 10,
+                    "label": "Test",
+                    "query_prefix": "q: ",
+                    "doc_prefix": "d: ",
+                }
+            }
+        }
+        import yaml
+        with open(rag_utils._CFG_PATH, "w") as f:
+            yaml.dump(cfg, f)
+        result = rag_utils._load_config()
+        self.assertIn("test_engine", result["engines"])
+        self.assertEqual(result["engines"]["test_engine"]["collection"], "test_coll")
+
+
+class TestHybridSearch(unittest.TestCase):
+    @unittest.mock.patch("rag_utils.get_embeddings")
+    @unittest.mock.patch("rag_utils.get_sparse_embedding_model")
+    def test_hybrid_search_no_results(self, mock_sparse, mock_dense):
+        from unified_search import hybrid_search
+        mock_dense.return_value.embed_query.return_value = [0.1, 0.2]
+
+        mock_sparse_res = unittest.mock.MagicMock()
+        mock_sparse_res.indices = unittest.mock.MagicMock(tolist=lambda: [1, 2])
+        mock_sparse_res.values = unittest.mock.MagicMock(tolist=lambda: [0.5, 0.6])
+        mock_sparse.return_value.embed.return_value = [mock_sparse_res]
+
+        fake_result = unittest.mock.MagicMock()
+        fake_result.points = []
+
+        fake_vs = unittest.mock.MagicMock()
+        fake_vs.query_points.return_value = fake_result
+        fake_cfg = {"query_prefix": "", "model": "fake", "dir": "/tmp", "collection": "test", "doc_prefix": ""}
+
+        results = hybrid_search("bge", "test query", 10, fake_vs, fake_cfg)
+        self.assertEqual(results, [])
+
+    @unittest.mock.patch("rag_utils.get_embeddings")
+    @unittest.mock.patch("rag_utils.get_sparse_embedding_model")
+    def test_hybrid_search_filters_excluded(self, mock_sparse, mock_dense):
+        from unified_search import hybrid_search
+        mock_dense.return_value.embed_query.return_value = [0.1, 0.2]
+
+        mock_sparse_res = unittest.mock.MagicMock()
+        mock_sparse_res.indices = unittest.mock.MagicMock(tolist=lambda: [1, 2])
+        mock_sparse_res.values = unittest.mock.MagicMock(tolist=lambda: [0.5, 0.6])
+        mock_sparse.return_value.embed.return_value = [mock_sparse_res]
+
+        fake_point = unittest.mock.MagicMock()
+        fake_point.payload = {"source": "GEMINI.md", "page_content": "excluded content"}
+        fake_point.score = 0.9
+        fake_point.vector = {"dense": [0.1, 0.2]}
+
+        fake_result = unittest.mock.MagicMock()
+        fake_result.points = [fake_point]
+
+        fake_vs = unittest.mock.MagicMock()
+        fake_vs.query_points.return_value = fake_result
+        fake_cfg = {"query_prefix": "", "model": "fake", "dir": "/tmp", "collection": "test", "doc_prefix": ""}
+
+        results = hybrid_search("bge", "test", 10, fake_vs, fake_cfg)
+        self.assertEqual(len(results), 0)
+
+
+class TestManifestLock(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.lock_path = os.path.join(self.tmpdir, "test.lock")
+        import ingest
+        self.ManifestLock = ingest._ManifestLock
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_lock_acquire_release(self):
+        lock = self.ManifestLock(self.lock_path)
+        with lock:
+            self.assertTrue(os.path.exists(self.lock_path))
+        self.assertIsNone(lock.fd)
+
+    def test_lock_serializes(self):
+        results = []
+        def worker():
+            with self.ManifestLock(self.lock_path):
+                results.append(1)
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        self.assertEqual(len(results), 2)
+
+
+class TestBustCache(unittest.TestCase):
+    def test_bust_cache_clears(self):
+        import unified_search
+        v = unified_search._SEARCH_CACHE_VERSION
+        unified_search._SEARCH_CACHE["key"] = (1.0, ["data"])
+        unified_search.bust_cache()
+        self.assertEqual(len(unified_search._SEARCH_CACHE), 0)
+        self.assertEqual(unified_search._SEARCH_CACHE_VERSION, v + 1)
 
 
 class TestVenvReexec(unittest.TestCase):
     def test_venv_check_present(self):
-        import unified_search
-        self.assertTrue(hasattr(unified_search, "_VENV_PYTHON"))
-        self.assertTrue(os.path.exists(unified_search._VENV_PYTHON))
+        import _venv_check
+        self.assertTrue(hasattr(_venv_check, "_VENV_PYTHON"))
+        self.assertTrue(os.path.exists(_venv_check._VENV_PYTHON))
 
 
 if __name__ == '__main__':

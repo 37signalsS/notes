@@ -2,88 +2,84 @@
 
 ## Определения
 
-Концепции перенаправлений и перезаписи URI в [Angie](./angie_overview.md) полностью унаследованы от [Nginx](../Nginx/Core/nginx_overview.md).
+Механизмы перенаправлений и перезаписи URI в **[Angie](./angie_overview.md)** полностью унаследованы от **[Nginx](../Nginx/Core/nginx_overview.md)** и работают на базе движка регулярных выражений PCRE (Perl Compatible Regular Expressions).
 
-- **Rewrite (перезапись)** — внутреннее изменение URI запроса сервером без уведомления клиента.
-- **Redirect (редирект)** — внешнее перенаправление, при котором сервер возвращает код `3xx` и заголовок `Location`, инициируя новый запрос от браузера.
+- **Rewrite (перезапись)** — внутреннее изменение URI запроса сервером. Процесс происходит незаметно для клиента, браузер продолжает отображать оригинальный URL.
+- **Redirect (редирект)** — внешнее перенаправление. Сервер возвращает ответ с кодом `3xx` и заголовком `Location`, принуждая браузер выполнить новый запрос по указанному адресу.
 
-Полные определения и разбор типов редиректов приведены в основном справочнике: [Nginx: Rewrite, Redirect и try_files](../Nginx/Core/nginx_rewrite_rules_and_try_files.md#definitions).
+**SSoT (Единый источник истины) для базовой логики:**
+*   **[Nginx: Rewrite, Redirect и try_files](../Nginx/Core/nginx_rewrite_rules_and_try_files.md)** — подробный разбор синтаксиса, флагов (`last`, `break`, `permanent`, `redirect`) и теории.
 
 ## Основные концепции
 
-Все директивы управления URI (`rewrite`, `return`, `try_files`, `map`) работают в Angie идентично Nginx. Подробный разбор синтаксиса, флагов и рекомендации по использованию приведены в [справочнике Nginx](../Nginx/Core/nginx_rewrite_rules_and_try_files.md#basic-concepts).
+Все директивы управления URI (`rewrite`, `return`, `try_files`, `map`) в Angie функционально идентичны Nginx.
 
 **Инфраструктурные особенности Angie:**
 
 | Параметр | Путь / Значение |
 | :--- | :--- |
-| Основной конфиг | `/etc/angie/angie.conf` |
-| Имя сервиса | `angie` |
-| Директория логов | `/var/log/angie/` |
+| Основной файл конфигурации | `/etc/angie/angie.conf` |
+| Имя системного сервиса | `angie` |
+| Стандартная директория логов | `/var/log/angie/` |
 
-Для Angie также актуально предостережение об использовании `if` (сценарий «If is Evil»). Рекомендуется отдавать приоритет директивам `try_files` и `map`.
+**Приоритет безопасности:**
+В Angie, как и в Nginx, следует избегать использования директивы `if` для проверки URI (сценарий «If is Evil»). Для большинства задач маршрутизации следует использовать комбинацию `location`, `try_files` и `map`.
 
 ## Практические сценарии
 
-Ниже приведены примеры конфигурации с использованием путей и переменных, актуальных для Angie.
+### 1. Безусловный редирект на HTTPS
 
-### Редирект с HTTP на HTTPS
+Наиболее эффективный способ через директиву `return`, которая работает быстрее `rewrite`, так как не использует регулярные выражения.
 
 ```nginx
 server {
     listen 80;
-    server_name example.com;
+    server_name example.com www.example.com;
 
+    # 301 Moved Permanently для SEO-дружелюбного перенаправления
     return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name example.com;
-    # Настройки SSL...
 }
 ```
 
-### «Красивые» URL для современных фреймворков
+### 2. Поддержка ЧПУ (Человекопонятных URL)
 
-Использование `try_files` для направления всех запросов на фронт-контроллер:
+Использование `try_files` для работы современных SPA (Single Page Applications) и PHP-фреймворков (Laravel, Symfony).
 
 ```nginx
 location / {
+    # Пытаемся отдать файл, затем директорию, иначе передаем на index.php
     try_files $uri $uri/ /index.php?$args;
 }
 ```
 
-### Внутренняя перезапись с флагом `last`
+### 3. Внутренняя маршрутизация через `rewrite`
+
+Пример изменения пути к ресурсам без изменения URL в браузере.
 
 ```nginx
-location / {
-    rewrite ^/old-page\.html$ /new-page/ last;
-}
-
-location /new-page/ {
-    # Обработка нового URI
+location /legacy-api/ {
+    # Флаг 'last' останавливает текущий цикл и инициирует новый поиск location
+    rewrite ^/legacy-api/(.*)$ /api/v2/$1 last;
 }
 ```
 
-### Блокировка ботов через `map`
+### 4. Сложная фильтрация трафика через `map`
 
-Объявление в блоке `http` (обычно в `/etc/angie/angie.conf`):
+Директива `map` позволяет создавать переменные на основе заголовков или других данных запроса. Это самый производительный способ реализации условий.
 
+В блоке `http` (`/etc/angie/angie.conf` или отдельный файл в `conf.d/`):
 ```nginx
-http {
-    map $http_user_agent $is_bot {
-        default 0;
-        "~*(Googlebot|Bingbot|curl)" 1;
-    }
+map $http_user_agent $is_unwanted {
+    default 0;
+    "~*(Googlebot|Bingbot)" 0; # Разрешаем доверенных ботов
+    "~*(curl|wget|libwww-perl)" 1; # Блокируем инструменты автоматизации
 }
 ```
 
 Применение в блоке `server`:
-
 ```nginx
 server {
-    if ($is_bot) {
+    if ($is_unwanted) {
         return 403;
     }
 }
@@ -91,38 +87,38 @@ server {
 
 ## Дополнительная информация
 
-### Отладка правил rewrite
+### Отладка правил перезаписи
 
-Для диагностики регулярных выражений и логики перезаписи:
+Для диагностики сложных регулярных выражений используйте механизм `rewrite_log`.
 
-1. **Включите логирование:**
-
+1.  **Включите логирование в контексте сервера или локации:**
     ```nginx
     server {
         rewrite_log on;
     }
     ```
-
-2. **Настройте уровень логов в `angie.conf`:**
-
+2.  **Настройте уровень детализации в основном конфиге:**
+    В Angie сообщения `rewrite_log` записываются на уровне `notice`.
     ```nginx
     error_log /var/log/angie/error.log notice;
     ```
+3.  **Применение настроек:**
+    ```bash
+    angie -t && angie -s reload
+    ```
 
-После применения настроек (`angie -s reload`) подробности перезаписи будут доступны в `/var/log/angie/error.log`. Подробнее см. [Логирование в Angie](./angie_logging.md).
+### Выбор оптимальной директивы
 
-### Рекомендации по выбору директивы
-
-| Задача | Директива |
-| :--- | :--- |
-| Простой редирект (301/302) | `return` |
-| Сложный редирект с Regex | `rewrite ... permanent/redirect` |
-| Скрытая замена URI | `rewrite ... last/break` |
-| Fallback на файл/директорию | `try_files` |
-| Условная логика | `map` |
+| Задача | Рекомендуемая директива | Почему? |
+| :--- | :--- | :--- |
+| Редирект всего домена | `return 301 ...` | Максимальная скорость, нет Regex |
+| Изменение части пути с редиректом | `rewrite ^... ... permanent` | Гибкость регулярных выражений |
+| Внутренняя подмена пути | `rewrite ^... ... last` | Прозрачность для клиента |
+| Маршрутизация на index.php | `try_files` | Надежность и отсутствие `if` |
+| Групповые условия (GeoIP, Agent) | `map` | Чистота конфига и производительность |
 
 ### См. также
 
-- [Директивы location в Angie](./angie_location_directives.md)
-- [Логирование в Angie](./angie_logging.md)
-- [Nginx: Rewrite, Redirect и try_files](../Nginx/Core/nginx_rewrite_rules_and_try_files.md) — основной справочник
+*   **[Директивы location в Angie](./angie_location_directives.md)**
+*   **[Логирование в Angie](./angie_logging.md)**
+*   **[Nginx: Rewrite, Redirect и try_files](../Nginx/Core/nginx_rewrite_rules_and_try_files.md)** — основной теоретический справочник.

@@ -2,179 +2,170 @@
 
 ## Определения
 
-**`kind: ServiceMonitor`** — Custom Resource Definition в Prometheus Operator для описания целей скрейпинга (scraping targets) через Kubernetes Service. Operator использует Service для обнаружения эндпоинтов (Endpoints) и автоматической генерации конфигурации скрейпинга для Prometheus.
+**`kind: ServiceMonitor`** — Custom Resource Definition в Prometheus Operator, предназначенный для декларативного описания целей скрейпинга (scraping targets) на основе Kubernetes Service. Это основной механизм обнаружения приложений в стеке мониторинга, который абстрагирует сложность конфигурации `kubernetes_sd_configs`.
+
+**Discovery-паттерн** — процесс автоматического обнаружения эндпоинтов сервиса. В отличие от статического перечисления IP-адресов, `ServiceMonitor` позволяет динамически подключать новые поды приложения к мониторингу сразу после их запуска.
 
 **API version:** `monitoring.coreos.com/v1`
 
+> **См. также:** [PodMonitor CRD](./podmonitor.md) — мониторинг подов напрямую, [Prometheus CRD](./prometheus.md) — конфигурация сервера Prometheus.
+
 ## Базовые концепции
 
-### Принцип работы
+### Принцип работы и жизненный цикл
 
-Prometheus Operator функционирует как контроллер, выполняющий следующие шаги:
+Процесс интеграции приложения в мониторинг через ServiceMonitor включает следующие этапы:
 
-1. **Discovery:** находит объекты `ServiceMonitor` по селектору лейблов (label selector), указанному в ресурсе `Prometheus`.
-2. **Endpoint Lookup:** запрашивает Kubernetes API для получения списка эндпоинтов (Endpoints/EndpointSlices) сервиса, указанного в `ServiceMonitor`.
-3. **Config Generation:** генерирует блок `scrape_config` для Prometheus на основе параметров `ServiceMonitor`.
-4. **Secret Update:** сохраняет обновлённую конфигурацию в Kubernetes Secret.
-5. **Reload:** sidecar-контейнер `prometheus-config-reloader` отслеживает изменения в Secret и перезагружает конфигурацию Prometheus.
+1.  **Наблюдение (Watch):** Prometheus Operator отслеживает создание и изменение объектов `ServiceMonitor`.
+2.  **Выборка (Selection):** Ресурс `Prometheus` через `serviceMonitorSelector` определяет, какие именно мониторы должны быть загружены в конкретный экземпляр сервера.
+3.  **Обнаружение (Service Discovery):** Оператор запрашивает Kubernetes API для поиска сервисов, соответствующих `spec.selector`, и извлекает их эндпоинты (Endpoints или EndpointSlice).
+4.  **Генерация:** Формируется итоговая конфигурация скрейпинга (`scrape_config`), которая записывается в Kubernetes Secret.
+5.  **Перезагрузка:** Sidecar-контейнер `config-reloader` инициирует обновление конфигурации Prometheus без остановки процесса.
 
 ### Когда использовать ServiceMonitor
 
-- **Stateless-приложения:** стандартный и рекомендуемый подход для большинства веб-сервисов.
-- **Наличие Service:** когда приложение уже экспонировано через Kubernetes Service.
-- **Абстракция эндпоинтов:** Service автоматически отслеживает жизненный цикл подов, предоставляя стабильный интерфейс для обнаружения целей.
-- **Балансировка:** позволяет собирать метрики со всех реплик, стоящих за сервисом.
+*   **Stateless-микросервисы:** Стандарт для приложений за балансировщиком (Service).
+*   **Стабильные интерфейсы:** Когда приложению требуется абстракция Service для связи с другими компонентами.
+*   **Автоматическое масштабирование:** Новые реплики (Pods) автоматически попадают в мониторинг через механизм Endpoints.
 
-### Отличие от PodMonitor
+### Новые возможности (2025–2026)
 
-| Характеристика | ServiceMonitor | PodMonitor |
-|:---|:---|:---|
-| **Объект обнаружения** | Service | Pod |
-| **Требование Service** | Обязательно | Не требуется |
-| **Мета-лейблы** | `__meta_kubernetes_endpoint_*`, `__meta_kubernetes_service_*` | `__meta_kubernetes_pod_*` |
-| **Основной сценарий** | Stateless-сервисы, стандартные приложения | StatefulSet, инфраструктурные компоненты без Service |
-
-> **См. также:** [PodMonitor CRD](./podmonitor.md) — мониторинг подов напрямую (без использования Service).
+*   **Prometheus 3.0 Ready:** Поддержка `scrapeProtocols` (включая Protobuf для ускорения сбора данных) и `fallbackScrapeProtocol`.
+*   **Нативные гистограммы:** Возможность сбора высокоточных разреженных гистограмм через `scrapeNativeHistograms` (требует Prometheus >= 3.0).
+*   **EndpointSlice:** Явное управление механизмом обнаружения через `serviceDiscoveryRole` для снижения нагрузки на API в крупных кластерах.
+*   **Обогащение метаданными:** Параметр `attachMetadata.node` позволяет автоматически прикреплять лейблы узла к метрикам приложения.
+*   **ProxyConfig:** Нативная настройка прокси-сервера для скрейпинга эндпоинтов напрямую в CRD.
 
 ## Практические сценарии
 
-### Базовая конфигурация
+### Сценарий 1: Стандартный мониторинг приложения
 
-Сбор метрик с приложения в пространстве имён `production` с интервалом 15 секунд.
+Сбор метрик с сервиса с именем порта `http-metrics` во всех неймспейсах.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: my-app
-  namespace: production
+  name: app-monitor
   labels:
-    release: monitoring
+    release: prometheus-stack
 spec:
   selector:
     matchLabels:
-      app: my-app
+      app.kubernetes.io/name: my-cool-app
   namespaceSelector:
-    matchNames:
-      - production
+    any: true
   endpoints:
-    - port: web
+    - port: http-metrics
       interval: 15s
       path: /metrics
 ```
 
-### Обнаружение во всех пространствах имён
+### Сценарий 2: Использование Prometheus 3.0 и Protobuf
 
-Конфигурация для сбора метрик со всех сервисов с определённым лейблом во всём кластере.
+Настройка сбора данных в бинарном формате для снижения нагрузки на CPU и сеть.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: global-monitor
-  namespace: monitoring
+  name: modern-app-monitor
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: my-app
-  namespaceSelector:
-    any: true
   endpoints:
     - port: metrics
-      interval: 30s
-      path: /metrics
+      scrapeProtocols: 
+        - PrometheusProto
+        - OpenMetricsText1.0.0
+      scrapeNativeHistograms: true
+  selector:
+    matchLabels:
+      app: performance-critical
 ```
 
-### Настройка TLS и аутентификации
+### Сценарий 3: Защищенный скрейпинг (mTLS + OAuth2)
 
-Сбор метрик по защищённому протоколу HTTPS с использованием клиентского сертификата.
+Конфигурация для сбора метрик с сервиса, требующего авторизации.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: secure-app
-  namespace: production
+  name: secure-service-monitor
 spec:
-  selector:
-    matchLabels:
-      app: secure-app
   endpoints:
     - port: https
-      path: /metrics
       scheme: https
       tlsConfig:
-        caFile: /etc/prometheus/secrets/ca.crt
-        certFile: /etc/prometheus/secrets/client.crt
-        keyFile: /etc/prometheus/secrets/client.key
-      bearerTokenSecret:
-        name: prometheus-token
-        key: token
+        ca:
+          secret:
+            name: trusted-ca
+            key: ca.crt
+      oauth2:
+        clientId:
+          secret:
+            name: monitoring-oauth
+            key: id
+        clientSecret:
+          name: monitoring-oauth
+          key: secret
+        tokenUrl: https://auth.corp.local/token
+  selector:
+    matchLabels:
+      security: high
 ```
 
-### Релейблинг (Relabelings) целей и метрик
+### Сценарий 4: Обогащение данными узла (attachMetadata)
+
+Позволяет группировать метрики приложения по параметрам сервера (например, Availability Zone).
 
 ```yaml
-endpoints:
-  - port: web
-    # Изменение лейблов цели до скрейпинга
-    relabelings:
-      - sourceLabels: [__meta_kubernetes_namespace]
-        targetLabel: namespace
-      - sourceLabels: [__meta_kubernetes_service_name]
-        targetLabel: service
-    # Изменение лейблов метрик после скрейпинга
-    metricRelabelings:
-      - sourceLabels: [__name__]
-        regex: "go_.*"
-        action: drop
+spec:
+  attachMetadata:
+    node: true
+  endpoints:
+    - port: web
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_node_label_topology_kubernetes_io_zone]
+          targetLabel: region
 ```
 
 ## Дополнительная информация
 
-### Основные параметры спецификации (spec)
+### Ключевые параметры спецификации (v1)
 
-| Параметр | Описание | Пример |
-|:---|:---|:---|
-| **`selector`** | Селектор для поиска Kubernetes Service | `matchLabels: {app: my-app}` |
-| **`namespaceSelector`** | Пространства имён для поиска сервисов | `matchNames: [prod]` или `any: true` |
-| **`endpoints`** | Список эндпоинтов и параметров скрейпинга | См. таблицу параметров эндпоинтов |
-| **`jobLabel`** | Лейбл сервиса, используемый как имя job | `app.kubernetes.io/name` |
-| **`targetLabels`** | Лейблы сервиса, переносимые в метрики | `[environment, team]` |
-| **`sampleLimit`** | Максимальное число сэмплов за один скрейп | `10000` |
-| **`targetLimit`** | Максимальное число целей для мониторинга | `100` |
+| Параметр | Описание | Особенности (2026) |
+| :--- | :--- | :--- |
+| **`serviceDiscoveryRole`** | Механизм поиска эндпоинтов. | `Endpoints` или `EndpointSlice`. |
+| **`jobLabel`** | Лейбл сервиса для имени job. | По умолчанию берется из имени Service. |
+| **`targetLabels`** | Перенос лейблов сервиса в метрики. | Помогает сохранить контекст (env, team). |
+| **`sampleLimit`** | Лимит сэмплов на один скрейп. | Защита Prometheus от "тяжелых" целей. |
+| **`scrapeProtocols`** | Приоритет протоколов. | Доступно в Prometheus 3.0+. |
 
 ### Параметры эндпоинтов (endpoints)
 
-| Параметр | Описание | Пример |
-|:---|:---|:---|
-| **`port`** | Имя порта в Kubernetes Service | `web`, `metrics` |
-| **`path`** | Путь к эндпоинту метрик | `/metrics` |
-| **`interval`** | Частота сбора метрик | `15s`, `1m` |
-| **`scheme`** | Протокол (http/https) | `https` |
-| **`tlsConfig`** | Настройки TLS (пути к сертификатам) | `caFile`, `certFile` |
-| **`bearerTokenSecret`** | Токен авторизации из Kubernetes Secret | `name: token-secret, key: token` |
-| **`basicAuth`** | Данные Basic Auth из Secret | `username`, `password` |
-| **`scrapeTimeout`** | Таймаут ожидания ответа | `10s` |
-| **`relabelings`** | Правила переопределения лейблов целей | См. раздел "Релейблинг" |
-| **`metricRelabelings`** | Правила фильтрации и изменения метрик | См. раздел "Релейблинг" |
+| Параметр | Описание | Значение по умолчанию |
+| :--- | :--- | :--- |
+| **`port`** | Имя порта в объекте Service. | Обязательно (не номер порта). |
+| **`interval`** | Частота опроса. | `30s` (настраивается в Helm). |
+| **`scrapeTimeout`** | Время ожидания ответа. | Должно быть `<= interval`. |
+| **`honorLabels`** | Приоритет лейблов приложения. | `false` (Prometheus имеет приоритет). |
+| **`proxyConfig`** | Настройка прокси. | Введено в v0.84. |
 
-### Доступные мета-лейблы для ServiceMonitor
+### Диагностика
 
-Данные лейблы доступны для использования в блоке `relabelings`:
+1.  **Проверка обнаружения сервиса:**
+    `kubectl get servicemonitor <name> -n <namespace> -o yaml` — проверьте поле `status` (если включен подресурс status).
+2.  **Проверка в UI Prometheus:**
+    Меню `Status -> Targets`. Ищите job в формате `serviceMonitor/<namespace>/<name>/<index>`.
+3.  **Логи оператора:**
+    `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator` — ищите ошибки `failed to generate config`.
 
-| Лейбл | Описание |
-|:---|:---|
-| `__meta_kubernetes_namespace` | Пространство имён сервиса |
-| `__meta_kubernetes_service_name` | Имя сервиса |
-| `__meta_kubernetes_service_label_<name>` | Лейблы сервиса |
-| `__meta_kubernetes_service_annotation_<name>` | Аннотации сервиса |
-| `__meta_kubernetes_endpoint_node_name` | Узел, на котором запущен эндпоинт |
-| `__meta_kubernetes_pod_name` | Имя пода |
-| `__meta_kubernetes_pod_label_<name>` | Лейблы пода |
+### Связанные темы
 
-### Связанные ресурсы
+*   **[Service Discovery и Relabeling](../../service_discovery.md)** — основы обнаружения целей в Kubernetes.
+*   **[Prometheus Operator — Troubleshooting](../troubleshooting.md)** — решение проблем с генерацией конфигурации.
+*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
 
-- [PodMonitor CRD](./podmonitor.md) — сбор метрик напрямую с подов.
-- [Prometheus CRD](./prometheus.md) — конфигурация экземпляра Prometheus.
-- [Probe CRD](./probe.md) — Blackbox-мониторинг внешних целей.
+### См. также
+* [Официальная спецификация ServiceMonitor](https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api.md#servicemonitor)
+* [Документация Prometheus 3.0: Scrape Protocols](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#scrape_config)

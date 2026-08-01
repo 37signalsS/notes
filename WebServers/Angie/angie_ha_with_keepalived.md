@@ -2,230 +2,239 @@
 
 ## Определения
 
-- **HA (High Availability — высокая доступность):** характеристика системы, направленная на минимизацию времени простоя за счет дублирования компонентов и механизмов автоматического переключения.
-- **Цель:** обеспечить непрерывную доступность сервиса (например, веб-сайта или API (Application Programming Interface)), размещенного на двух или более серверах Angie. При отказе одного из серверов трафик должен автоматически перенаправляться на рабочий.
-- **Компоненты:**
-  - **Angie:** высокопроизводительный веб-сервер, основной сервис, доступность которого мы обеспечиваем. Подробнее в [общем обзоре Angie](./angie_overview.md).
-  - **Keepalived:** сервис, реализующий протокол VRRP для управления виртуальным IP-адресом. Детали в [обзоре Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md).
-  - **VRRP (Virtual Router Redundancy Protocol — протокол резервирования виртуальных маршрутизаторов):** сетевой протокол, позволяющий нескольким узлам разделять один виртуальный IP-адрес.
-  - **VIP (Virtual IP — виртуальный IP-адрес):** единый IP-адрес, который назначается активному серверу в кластере и мигрирует на резервный в случае сбоя.
+- **HA (High Availability — высокая доступность):** архитектурный подход, обеспечивающий минимальное время простоя сервиса за счет дублирования компонентов. Подробности — в **[обзоре High Availability](../../Concepts/High_Availability/ha_overview.md)**.
+- **Angie:** современный веб-сервер, форк Nginx с расширенными возможностями. Подробнее в **[общем обзоре Angie](./angie_overview.md)**.
+- **Keepalived:** сервис для управления виртуальным IP-адресом (VIP) на базе протокола VRRP. Является стандартом для Linux-окружений. Детали в **[обзоре Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md)**.
+- **VRRP (Virtual Router Redundancy Protocol):** сетевой протокол, позволяющий группе серверов совместно владеть одним виртуальным IP-адресом.
+- **VIP (Virtual IP — виртуальный IP-адрес):** плавающий адрес, который назначается активному узлу (`MASTER`) и мигрирует на резервный (`BACKUP`) при сбое.
 
 ## Основные концепции
 
 ### Принцип работы кластера
 
-Схема состоит из двух или более серверов с Angie и Keepalived.
+Кластер состоит из двух или более узлов с установленными Angie и Keepalived.
 
-1. **Роли:** один сервер назначается `MASTER` (основной), остальные — `BACKUP` (резервные). `MASTER` обладает более высоким приоритетом.
-2. **Обмен состоянием:** `MASTER` сервер периодически отправляет в сеть мультикаст-сообщения (**VRRP advertisements**), объявляя о своем состоянии и владении VIP.
-3. **Владение VIP:** пока `MASTER` активен, VIP-адрес принадлежит ему, и весь клиентский трафик поступает на этот узел.
-4. **Проверка сервиса (Health Check):** Keepalived на каждом узле постоянно проверяет работоспособность локального сервиса Angie с помощью скрипта. Если сервис Angie не отвечает, Keepalived на этом узле добровольно понижает свой приоритет, давая возможность другому узлу стать `MASTER`.
-5. **Отказ (Failover):**
-    - **Отказ сервиса:** если скрипт проверки на `MASTER` узле завершается с ошибкой, его приоритет падает. `BACKUP`-сервер, видя, что его собственный приоритет стал выше, захватывает роль `MASTER` и VIP-адрес.
-    - **Полный отказ узла:** если `MASTER` прекращает отправлять VRRP-сообщения, `BACKUP`-сервер с наивысшим приоритетом после короткого тайм-аута также становится `MASTER`. Для уведомления сети используется **ARP (Address Resolution Protocol — протокол определения адреса)**, в частности **Gratuitous ARP**, чтобы обновить таблицы коммутаторов.
-6. **Восстановление (Failback):** когда оригинальный `MASTER` восстанавливается, он снова начинает отправлять VRRP-анонсы с более высоким приоритетом и по умолчанию забирает VIP-адрес обратно.
+1.  **Роли и приоритеты:** Один узел назначается `MASTER` (высокий приоритет), остальные — `BACKUP`.
+2.  **Обмен состоянием (Advertisements):** `MASTER` периодически отправляет VRRP-пакеты. Если `BACKUP` не получает анонсы в течение заданного времени, он инициирует перехват роли.
+3.  **Мониторинг (Health Checks):**
+    - **vrrp_script:** выполнение внешнего скрипта (например, `curl` к эндпоинту).
+    - **track_process:** встроенный мониторинг состояния процесса (рекомендуется для Keepalived 2.x+).
+4.  **Переключение (Failover):** При сбое Angie или всего узла VIP перемещается на исправный сервер. Для обновления таблиц коммутаторов используется **Gratuitous ARP**.
+5.  **Режимы вещания:**
+    - **Multicast:** классический режим (224.0.0.18), может блокироваться в облаках.
+    - **Unicast:** прямая передача пакетов между IP узлов (рекомендуется для публичных облаков и современных ЦОД).
+
+### Системные требования
+
+Для корректной работы VIP и Angie необходимо разрешить привязку IP-адресов, которые еще не назначены интерфейсу (нелокальные адреса):
+
+```bash
+echo "net.ipv4.ip_nonlocal_bind=1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
 
 ## Практический сценарий
 
-### Шаг 1: Подготовка
+### Шаг 1: Подготовка инфраструктуры
 
-Предположим, у нас два сервера в одном сегменте сети L2 (Layer 2 — канальный уровень модели OSI (Open Systems Interconnection)):
+Схема для примера (L2-сегмент):
 
 - `node1` (Master): `192.168.1.101`
 - `node2` (Backup): `192.168.1.102`
 - Виртуальный IP (VIP): `192.168.1.100`
 
+Установка Keepalived:
+```bash
+sudo apt update && sudo apt install keepalived curl -y
+```
+
 ### Шаг 2: Конфигурация Keepalived
 
-#### Скрипт проверки Angie (`/etc/keepalived/check_angie.sh`)
+#### Вариант А: Проверка через скрипт (`vrrp_script`)
 
-Скрипт проверяет, что Angie отдает код 200 на специальный эндпоинт. Создайте этот файл на обоих узлах.
-
+Создайте `/etc/keepalived/check_angie.sh`:
 ```bash
 #!/bin/bash
-# Проверка доступности Angie через HTTP-эндпоинт
-# -f: exit code != 0 при HTTP-ошибках (4xx, 5xx)
-# -s: тихий режим, без прогресс-бара
-# -o /dev/null: тело ответа не сохранять
-# -w "%{http_code}": вывести только HTTP-код
-STATUS_CODE=$(/usr/bin/curl -f -s -o /dev/null -w "%{http_code}" http://127.0.0.1/health_check)
-if [ "$STATUS_CODE" -eq 200 ]; then
+# Проверка доступности локального эндпоинта
+if curl -sf http://127.0.0.1/health_check > /dev/null 2>&1; then
   exit 0
 else
   exit 1
 fi
 ```
+`chmod +x /etc/keepalived/check_angie.sh`
 
-Сделайте скрипт исполняемым: `chmod +x /etc/keepalived/check_angie.sh`.
+#### Вариант Б: Мониторинг процесса (`track_process`)
 
-#### Конфигурация для MASTER (`node1`)
+Более легкий способ (без вызова bash), доступен в Keepalived 2.x+. В этом случае `vrrp_script` не требуется.
+
+```keepalived
+vrrp_instance VI_1 {
+    # ...
+    track_process {
+        nm_angie {
+            process angie
+            weight 20
+        }
+    }
+}
+```
+
+#### Конфигурация MASTER (Unicast)
 
 Файл: `/etc/keepalived/keepalived.conf`
 
 ```keepalived
 global_defs {
    router_id angie_node_1
+   vrrp_garp_master_delay 5
 }
 
+# Используется для Варианта А
 vrrp_script chk_angie {
     script "/etc/keepalived/check_angie.sh"
-    interval 1   # Проверять каждую 1 секунду
-    timeout 1    # Таймаут выполнения скрипта
-    weight 20    # Если скрипт успешен, повысить приоритет на 20
-    fall 2       # Считать сервис упавшим после 2 неудачных проверок
-    rise 2       # Считать сервис поднявшимся после 2 удачных проверок
-}
-
-vrrp_instance VI_1 {
-    state MASTER            # Изначальное состояние - MASTER
-    interface enp1s0        # Сетевой интерфейс для VRRP
-    virtual_router_id 51    # Уникальный ID для кластера, должен быть одинаковым на всех узлах
-    priority 101            # Приоритет. У MASTER он должен быть выше.
-
-    advert_int 1            # Интервал отправки VRRP-анонсов (в секундах)
-
-    # Аутентификация для VRRP-пакетов. Пароль должен совпадать на всех узлах.
-    authentication {
-        auth_type PASS
-        auth_pass your_secret_password
-    }
-
-    # Виртуальный IP-адрес, который будет мигрировать
-    virtual_ipaddress {
-        192.168.1.100/24
-    }
-
-    # Применение скрипта проверки
-    track_script {
-        chk_angie
-    }
-}
-```
-
-#### Конфигурация для BACKUP (`node2`)
-
-Конфигурация почти идентична, но с `state BACKUP` и `priority 100`.
-
-```keepalived
-global_defs {
-   router_id angie_node_2
-}
-
-vrrp_script chk_angie {
-    script "/etc/keepalived/check_angie.sh"
-    interval 1
-    timeout 1
+    interval 2
     weight 20
     fall 2
     rise 2
 }
 
 vrrp_instance VI_1 {
-    state BACKUP            # Изначальное состояние - BACKUP
-    interface enp1s0
-    virtual_router_id 51    # Тот же ID
-    priority 100            # Приоритет ниже, чем у MASTER
-
+    state MASTER
+    interface enp1s0        # Уточните имя интерфейса: ip a
+    virtual_router_id 51
+    priority 101
     advert_int 1
+
+    # Рекомендуемый режим Unicast
+    unicast_src_ip 192.168.1.101
+    unicast_peer {
+        192.168.1.102
+    }
 
     authentication {
         auth_type PASS
-        auth_pass your_secret_password # Тот же пароль
+        auth_pass Secr3tPass    # Максимум 8 символов (ограничение VRRPv2)
     }
 
     virtual_ipaddress {
-        192.168.1.100/24
+        192.168.1.100/24 dev enp1s0 label enp1s0:vip
     }
 
-    track_script {
-        chk_angie
-    }
+    # Для Варианта А расскомментируйте:
+    # track_script {
+    #     chk_angie
+    # }
+
+    # Для Варианта Б (Keepalived 2.x+) расскомментируйте:
+    # track_process {
+    #     nm_angie {
+    #         process angie
+    #         weight 20
+    #     }
+    # }
 }
 ```
 
-### Шаг 3: Конфигурация Angie
+#### Конфигурация BACKUP
 
-На обоих серверах Angie должен быть настроен легковесный эндпоинт для проверок.
+Отличия: `priority 100`, `unicast_src_ip` и `unicast_peer`.
+
+```keepalived
+vrrp_instance VI_1 {
+    state BACKUP
+    interface enp1s0
+    virtual_router_id 51
+    priority 100
+    
+    unicast_src_ip 192.168.1.102
+    unicast_peer {
+        192.168.1.101
+    }
+    # ... остальные параметры идентичны MASTER ...
+}
+```
+
+### Шаг 3: Настройка Angie
+
+На обоих серверах добавьте блок для проверки состояния:
 
 ```nginx
 server {
     listen 80;
-    server_name example.com;
+    
+    # Добавление заголовка для идентификации узла (отладка)
+    add_header X-Backend-Server $hostname always;
 
-    # (Опционально) Заголовок для отладки
-    # Позволяет видеть, какой сервер реально ответил.
-    add_header X-Front-Node "master" always;
-
-    location / {
-        # Ваша основная конфигурация, например, отдача статики или проксирование
-        root /usr/share/nginx/html;
-        index index.html index.htm;
-    }
-
-    # Health check для Keepalived
     location /health_check {
-        # Разрешаем доступ только с локального хоста (для скрипта Keepalived)
         allow 127.0.0.1;
         deny all;
-
-        # Возвращаем простой и быстрый ответ.
         return 200 "OK";
-        
-        # Указываем, что логи для этих запросов не нужны, чтобы не засорять access.log
         access_log off;
+    }
+
+    location / {
+        root /usr/share/angie/html;
+        index index.html;
     }
 }
 ```
 
-### Шаг 4: Диагностика и проверка
+### Шаг 4: Сетевой экран (Firewall)
 
-1. **Проверка VIP:**
-    На активном узле (MASTER) команда `ip a` или `ip addr show <interface>` покажет виртуальный IP на указанном интерфейсе. На `BACKUP` узле его быть не должно.
+Необходимо разрешить VRRP-трафик.
 
+**ufw:**
+```bash
+# Для Multicast
+sudo ufw allow in proto vrrp
+# Для Unicast (между узлами)
+sudo ufw allow in from 192.168.1.0/24 proto vrrp
+```
+
+### Шаг 5: Диагностика
+
+1.  **Проверка VIP:**
     ```bash
     ip addr show enp1s0
-    # → inet 192.168.1.101/24 brd 192.168.1.255 scope global enp1s0
-    # → inet 192.168.1.100/24 scope global secondary enp1s0
+    # → inet 192.168.1.100/24 scope global secondary enp1s0:vip
     ```
-
-2. **Проверка логов Keepalived:**
-    Изучите статус и логи сервиса, чтобы увидеть переходы состояний (`Entering MASTER STATE`, `Entering BACKUP STATE`).
-
+2.  **Логи перехода состояний:**
     ```bash
-    sudo systemctl status keepalived
     journalctl -u keepalived -f
     ```
-
-3. **Проверка ответа от VIP:**
-    С любой машины в той же сети выполните `curl` к виртуальному IP.
-
-    ```bash
-    curl -I http://192.168.1.100
-    # → HTTP/1.1 200 OK
-    # → X-Front-Node: master
-    ```
-
-4. **Тестирование переключения:**
-    Остановите сервис Angie на `MASTER` узле: `sudo systemctl stop angie`. Через несколько секунд `curl -I http://192.168.1.100` должен показать заголовок от `BACKUP` узла.
+3.  **Тест переключения:**
+    Остановите Angie на мастере (`systemctl stop angie`) и убедитесь, что VIP переместился на backup.
 
 ## Дополнительная информация
 
-### Важные моменты и ограничения
+### Вытеснение (Preemption)
 
-- **Требования к сети:** все узлы кластера должны находиться в одном L2-сегменте сети.
-- **Split-Brain (разделение мозга):** ситуация, когда узлы теряют связь и оба решают, что они `MASTER`. Это приводит к конфликту IP-адресов.
-- **Preemption (вытеснение):** по умолчанию восстановленный `MASTER` забирает VIP обратно. Чтобы избежать лишнего переключения, на `BACKUP` узлах можно добавить директиву `nopreempt`. В этом случае `BACKUP`, ставший мастером, останется им до собственного отказа.
-- **Версии VRRP:** конфигурация использует VRRPv2. Для поддержки IPv6 следует использовать VRRPv3.
+По умолчанию восстановленный `MASTER` сразу забирает роль обратно. Если это нежелательно (лишнее мигание VIP), добавьте в конфиг:
+```keepalived
+vrrp_instance VI_1 {
+    state BACKUP
+    nopreempt
+    # ...
+}
+```
+*Важно: `nopreempt` работает только если изначальное состояние `BACKUP`.*
 
-### Синхронизация конфигураций и состояния
+### Синхронизация данных
 
-Keepalived отвечает только за миграцию VIP и не синхронизирует данные между узлами.
+Keepalived перемещает только IP. Синхронизация конфигурации Angie и контента должна выполняться внешними средствами:
+- **CI/CD / Ansible:** предпочтительный метод для production.
+- **Shared Storage:** NFS/Ceph для контента.
+- **rsync + lsyncd:** для простых инсталляций.
 
-- **Конфигурация Angie:** конфигурационные файлы Angie, включая SSL (Secure Sockets Layer) сертификаты, на всех узлах кластера должны быть идентичны. Для их синхронизации используйте внешние инструменты (Ansible, `rsync`).
-- **Состояние сессий:** при переключении все активные TCP (Transmission Control Protocol) соединения с бывшим `MASTER` разрываются. Для трафика HTTP (HyperText Transfer Protocol) это обычно не является проблемой, так как клиенты автоматически переподключаются к VIP, попадая уже на новый `MASTER`.
+### Мониторинг HA-статуса
+
+Для алертинга о переключении ролей рекомендуется использовать:
+- **keepalived-exporter:** для сбора метрик в Prometheus.
+- **SNMP:** классический метод мониторинга Keepalived.
 
 ## См. также
 
-- [Обзор Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md) — общие принципы работы Keepalived, VRRPv3, unicast-режим
-- [Обзор Angie](./angie_overview.md) — возможности и архитектура Angie
-- [HA для Kubernetes с Keepalived и HAProxy](../../Kubernetes/Installation/kubeadm/keepalived_haproxy_setup.md) — аналогичный паттерн для kube-apiserver
+- **[Обзор Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md)** — теория, VRRPv3, BFD.
+- **[Обзор Angie](./angie_overview.md)** — возможности и отличия от Nginx.
+- **[HA для Kubernetes с Keepalived и HAProxy](../../Kubernetes/Installation/kubeadm/keepalived_haproxy_setup.md)** — пример с балансировщиком.

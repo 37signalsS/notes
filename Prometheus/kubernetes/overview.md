@@ -2,157 +2,134 @@
 
 ## Определения
 
-**Мониторинг Kubernetes** — практика наблюдения за состоянием кластера, его компонентов (control plane, worker nodes) и workload'ов (Pods, Deployments, Services) с использованием метрик, логов и трейсов.
+**Мониторинг Kubernetes** — комплексная практика наблюдения за состоянием инфраструктуры кластера (Control Plane, Worker Nodes) и развернутых приложений (Workloads) с использованием метрик, логов и трассировок.
 
-**kube-prometheus-stack** — Helm-чарт для развёртывания полного стека мониторинга (Prometheus, Alertmanager, Grafana, Exporters, Prometheus Operator) в Kubernetes.
+**Prometheus Operator** — Kubernetes-контроллер, автоматизирующий жизненный цикл стека мониторинга через Custom Resource Definitions (CRD).
+
+**Prometheus Agent Mode** — режим работы Prometheus (с версии 2.32+), оптимизированный для сбора метрик и их отправки через Remote Write без локального хранения в TSDB.
+
+**kube-prometheus-stack** — основной Helm-чарт для развёртывания экосистемы мониторинга (Prometheus, Alertmanager, Grafana, Exporters) в Kubernetes.
 
 > **См. также:** [kube-prometheus-stack — Helm](./Kube_Prometheus_Stack_Helm/overview.md), [Prometheus Operator](./operator/concepts.md), [Service Discovery](./service_discovery.md).
 
 ## Основные концепции
 
-### Экосистема Prometheus
+### Экосистема Prometheus в Kubernetes
 
-* **[Prometheus Server](../overview.md):** Центральный компонент для сбора, хранения и обработки метрик.
-* **[Alertmanager](../alertmanager.md):** Дедупликация, группировка и маршрутизация оповещений.
-* **[Push Gateway](../pushgateway.md):** Сбор метрик от кратковременных задач (batch jobs).
-* **[Экспортеры](../Exporters/overview.md):** Сбор метрик из различных систем (ОС, БД, приложения).
-* **[Grafana](../../Grafana/grafana_overview.md):** Визуализация метрик, дашборды, алерты.
+*   **[Prometheus Server](../overview.md):** Сбор, хранение и обработка метрик. В K8s обычно разворачивается как StatefulSet.
+*   **[Prometheus Agent Mode](../overview.md):** Легковесный вариант для Edge-кластеров или шардирования сбора метрик.
+*   **[Alertmanager](../alertmanager.md):** Группировка и маршрутизация уведомлений.
+*   **[Экспортеры](../Exporters/overview.md):** Адаптеры для сбора метрик из компонентов, не имеющих нативной поддержки Prometheus (Node Exporter, Kube-State-Metrics).
+*   **[Grafana](../../Grafana/grafana_overview.md):** Визуализация и аналитика.
 
-### Архитектура мониторинга в Kubernetes
+### Архитектура мониторинга
 
-**Компоненты стека:**
+Мониторинг в Kubernetes строится на декларативном управлении через CRD Prometheus Operator.
 
-| Компонент | Тип объекта | Назначение |
-|---|---|---|
-| **Prometheus Server** | StatefulSet | Сбор и хранение метрик |
-| **Alertmanager** | StatefulSet | Обработка оповещений |
-| **Grafana** | Deployment | Визуализация |
-| **Prometheus Operator** | Deployment | Управление стеком через CRD |
-| **Node Exporter** | DaemonSet | Метрики хостов |
-| **Kube-State-Metrics** | Deployment | Метрики объектов K8s |
+**Основные компоненты и объекты:**
 
-### Service Discovery в Kubernetes
+| Компонент | Тип объекта (CRD) | Назначение |
+| :--- | :--- | :--- |
+| **Prometheus Server** | `Prometheus` | Полнофункциональный сервер мониторинга |
+| **Prometheus Agent** | `PrometheusAgent` | Сборщик метрик без локального хранения |
+| **Alertmanager** | `Alertmanager` | Управление оповещениями |
+| **Service Discovery** | `ServiceMonitor` / `PodMonitor` | Декларативное описание целей скрейпинга |
+| **Rules** | `PrometheusRule` | Правила алертинга и агрегации (Recording Rules) |
 
-Prometheus использует Kubernetes API для автоматического обнаружения целей:
+### Механизмы сбора метрик
 
-* **endpoints** — обнаружение Endpoint объектов
-* **service** — обнаружение Service объектов
-* **pod** — обнаружение Pod объектов
-* **node** — обнаружение Node объектов
-* **ingress** — обнаружение Ingress объектов
+**1. Инфраструктурные метрики (Kubelet & cAdvisor):**
+В современных версиях Kubernetes cAdvisor интегрирован в Kubelet. Prometheus собирает данные напрямую с эндпоинтов нод:
+*   `/metrics` — метрики самого Kubelet (runtime, операции с подами).
+*   `/metrics/cadvisor` — детальные метрики контейнеров (CPU, Memory, Disk, Network).
+*   `/metrics/resource` — облегченные метрики ресурсов (используются Metrics Server).
+
+**2. Метрики объектов Kubernetes (Kube-State-Metrics):**
+Генерирует метрики на основе состояния объектов API (Deployments, Pods, PV/PVC), которые нельзя получить изнутри контейнеров.
+
+**3. Автоматическое обнаружение (Service Discovery):**
+Prometheus использует Kubernetes API для поиска целей:
+*   **endpoints** — обнаружение через Service (рекомендуемый способ).
+*   **pod** — прямой сбор с подов (для sidecar-контейнеров или mesh-сетей).
+*   **node** — мониторинг хостов и системных компонентов.
 
 > **См. также:** [Service Discovery](./service_discovery.md) — детальное руководство.
 
-### Ключевые метрики Kubernetes
+### Ключевые метрики
 
-**Control Plane:**
+Для эффективного управления кластером необходимо отслеживать метрики на нескольких уровнях:
 
-* `apiserver_request_total` — количество запросов к API Server
-* `etcd_server_has_leader` — наличие лидера в etcd
-* `scheduler_schedule_attempts_total` — попытки планирования подов
+**1. Метрики узлов (Node Metrics):**
+*   **Использование ЦП:** Загрузка и средняя нагрузка (Load Average) для выявления конкуренции за ресурсы.
+*   **Использование памяти:** Потребление RAM и Swap для предотвращения вытеснения подов.
+*   **Дисковый ввод-вывод (Disk I/O):** IOPS и время ожидания (latency) хранилища.
+*   **Сетевой ввод-вывод (Network I/O):** Объем трафика для поиска узких мест в сети.
 
-**Workloads:**
+**2. Метрики подов (Pod Metrics):**
+*   **Ресурсы (CPU/Mem):** Соответствие фактического потребления запросам (requests) и лимитам (limits).
+*   **Количество перезапусков:** Индикатор нестабильности приложения или нехватки ресурсов.
+*   **Диск (Persistent Storage):** Доступное пространство для Stateful-приложений.
 
-* `kube_deployment_status_replicas_unavailable` — недоступные реплики
-* `kube_pod_container_status_restart_total` — перезапуски контейнеров
-* `kube_pod_container_status_ready` — готовность контейнера
-* `kube_pod_status_phase` — фаза пода (Running, Pending, Failed)
+**3. Состояние кластера и Control Plane:**
+*   **API Server:** Количество запросов и время их обработки (latency).
+*   **Планировщик (Scheduler):** Количество и длительность попыток планирования подов.
+*   **Ресурсы кластера:** Агрегированные данные об утилизации ресурсов для планирования емкости (Capacity Planning).
 
-**Nodes:**
-
-* `kube_node_status_capacity_memory_bytes` — ёмкость памяти ноды
-* `kube_node_status_condition` — состояние ноды (Ready, MemoryPressure, DiskPressure)
-* `kubelet_running_pods` — количество запущенных подов на ноде
-* `node_cpu_seconds_total` — утилизация CPU (Node Exporter)
+**4. Безопасность и трафик:**
+*   **Журналы аудита:** Мониторинг всех запросов к API-серверу для контроля соответствия.
+*   **Политики доступа (OPA/Gatekeeper):** Отслеживание нарушений политик безопасности.
+*   **Входящий/Исходящий трафик:** Метрики Ingress-контроллеров (напр., Nginx) и Service Mesh для анализа производительности и безопасности.
+*   **Внешние проверки:** Использование **Blackbox Exporter** для мониторинга доступности сервисов с точки зрения пользователя.
 
 ## Практические сценарии
 
-### Подходы к мониторингу
+### Выбор режима работы (Server vs Agent)
 
-**1. Whitebox (внутренний):**
+**Сценарий 1: Автономный мониторинг (Server)**
+Используется для большинства кластеров. Prometheus хранит данные локально, выполняет алертинг и предоставляет UI.
+*   **Плюсы:** Независимость от внешней сети для хранения данных.
+*   **Минусы:** Высокие требования к ресурсам (RAM/Storage).
 
-Экспортеры работают внутри кластера или на хостах, собирают метрики через Kubernetes Service:
+**Сценарий 2: Архитектура со сбором на границе (Agent Mode)**
+Используется в мультикластерных средах с централизованным хранилищем (Thanos, VictoriaMetrics, Mimir).
+*   **Плюсы:** Минимальное потребление ресурсов на узлах, отсутствие локальных дисков.
+*   **Минусы:** Зависимость от доступности центрального хранилища.
 
-* Node Exporter → метрики хостов
-* cAdvisor → метрики контейнеров
-* Kube-State-Metrics → метрики объектов K8s
+### Управление ресурсами мониторинга
 
-> **См. также:** [Экспортеры](../Exporters/overview.md).
+Для стабильной работы стека в Kubernetes критически важно задавать `requests` и `limits`:
+*   **Prometheus:** RAM request должен составлять ~1.5x от расчетного объема In-Memory chunks. Установка слишком низкого Limit приведет к OOM при всплесках нагрузки или чтении тяжелых запросов.
+*   **Alertmanager:** Минимальные требования, но важна доступность (минимум 3 реплики).
 
-**2. Blackbox (внешний):**
-
-Проверка доступности эндпоинтов (HTTP/TCP/ICMP/DNS) извне через Probe CRD:
-
-* Доступность Ingress
-* Health-check эндпоинты
-* DNS-резолвинг
-
-> **См. также:** [Blackbox Exporter](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md), [Probe CRD](./operator/crd/probe.md).
-
-**3. Мониторинг внешних ресурсов:**
-
-Интеграция внешних серверов с экспортерами через `additionalScrapeConfigs` + `static_configs`:
-
-> **См. также:** [Внешний мониторинг через static_configs](./Kube_Prometheus_Stack_Helm/practical_scenarios/external_monitoring.md).
+```yaml
+# Пример настройки ресурсов в Prometheus CRD
+spec:
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: 1000m
+```
 
 ## Дополнительная информация
 
-### Observability: Метрики, Логи, Трассировка
+### Концепция Observability
 
-| Тип | Инструменты | Вопрос |
-|---|---|---|
-| **Метрики** | Prometheus, Grafana | **Что происходит?** |
-| **Логи** | ELK Stack, Grafana Loki | **Почему это произошло?** |
-| **Трассировка** | Jaeger, OpenTelemetry | **Как это произошло?** |
+| Слой | Инструменты | Назначение |
+| :--- | :--- | :--- |
+| **Метрики** | Prometheus, VictoriaMetrics | Числовые показатели, тренды, алертинг |
+| **Логи** | Grafana Loki, ELK | Детальная информация о событиях |
+| **Трассировка** | Jaeger, Tempo, OpenTelemetry | Анализ пути запроса в микросервисах |
 
 > **См. также:** [Observability overview](../../Concepts/Observability_and_Monitoring/observability_definitions.md).
 
-### Рекомендации по безопасности
+### Безопасность и отказоустойчивость
 
-**1. Аутентификация Prometheus:**
+1.  **RBAC:** Prometheus требует прав на чтение API (Nodes, Services, Endpoints, Pods).
+2.  **Network Policies:** Ограничение доступа к портам Prometheus (9090) и Alertmanager (9093) только для Grafana и администраторов.
+3.  **Высокая доступность (HA):** Развертывание минимум 2 реплик Prometheus с дедупликацией алертов на стороне Alertmanager.
 
-* Встроенная аутентификация (новые версии Prometheus)
-* Basic-auth на Ingress + Network Policies
+> **См. также:** [Prometheus Security](../security.md), [Scaling](../scaling/overview.md), [HA](./operator/high_availability.md).
 
-**2. Network Policies:**
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: prometheus-network-policy
-  namespace: monitoring
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: prometheus
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: monitoring
-        - podSelector:
-            matchLabels:
-              app: grafana
-      ports:
-        - port: 9090
-          protocol: TCP
-```
-
-**3. TLS:**
-
-* Ingress с TLS для внешнего доступа к UI
-* mTLS для внутренних соединений (опционально)
-
-> **См. также:** [Prometheus Security](../security.md).
-
-### Высокая доступность
-
-| Компонент | Минимум реплик | Механизм |
-|---|---|---|
-| **Prometheus** | 2 | StatefulSet, одинаковая конфигурация |
-| **Alertmanager** | 3 | Кластеризация, кворум, дедупликация |
-
-> **См. также:** [Scaling](../scaling/overview.md), [Thanos](../scaling/thanos_overview.md), [HA](./operator/high_availability.md).

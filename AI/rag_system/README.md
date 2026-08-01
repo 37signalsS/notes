@@ -1,56 +1,148 @@
-# Инструкция по развертыванию RAG-системы
+# RAG-система для поиска по заметкам
 
-Полное восстановление системы поиска RAG (Retrieval-Augmented Generation) после клонирования репозитория на новую машину.
+Гибридная RAG-система (Retrieval-Augmented Generation) с двумя эмбеддинг-движками (E5 + BGE-M3), BM25-поиском и cross-encoder реранкером. Поиск объединяется через RRF (Reciprocal Rank Fusion) с диверсификацией через MMR.
 
-## Требования
-- **macOS / Linux**
-- **Python 3.9+**
-- **Git**
+---
 
-## Быстрый старт
+## Перенос на новую машину (полная ручная установка)
+
+### 1. Требования
+
+- macOS / Linux
+- Python 3.9+
+- Docker (для режима Qdrant-сервера) *или* режим `local` (без Docker)
+- ~3 ГБ свободного места для моделей эмбеддингов
+
+### 2. Клонирование и окружение
 
 ```bash
-# 1. Перейти в директорию RAG
+# Перейти в директорию с RAG-системой
 cd AI/rag_system
 
-# 2. Создать виртуальное окружение
+# Создать виртуальное окружение
 python3 -m venv venv
 
-# 3. Активировать и установить зависимости
+# Активировать и установить зависимости
 source venv/bin/activate
 pip install -r requirements.txt
+```
 
-# 4. Собрать поисковые индексы
+### 3. Запуск Qdrant
+
+**Вариант A — Docker (серверный режим, рекомендуется):**
+
+```bash
+# Запустить Qdrant в Docker-контейнере
+./qdrant_server.sh start
+
+# Другие команды:
+# ./qdrant_server.sh stop   — остановить
+# ./qdrant_server.sh status — проверить статус
+```
+
+**Вариант B — Локальный режим (без Docker):**
+
+В файле `config.yaml` заменить `mode: server` на `mode: local`. Данные будут храниться на диске в `qdrant_db/` и `qdrant_bge/`.
+
+### 4. Сборка индексов
+
+```bash
+# Полная сборка (BGE-M3 + E5) — потребуется интернет для загрузки моделей (~2-3 ГБ)
 chmod +x refresh_rag.sh
 ./refresh_rag.sh
 ```
 
-**Внимание:** При первом запуске система скачает модели эмбеддингов (BGE-M3 и MPNet) с HuggingFace (~2-3 ГБ). Требуется интернет.
-
-## Что попадает в Git
-
-В репозиторий сохраняются только исходные скрипты и конфигурация:
-
-| В Git | Игнорируются |
-|-------|-------------|
-| `*.py` — движок RAG | `chroma_db/`, `chroma_bge/` — векторные индексы |
-| `requirements.txt` | `venv/` — виртуальное окружение |
-| `*.sh` — скрипты управления | `manifest.json` — привязан к конкретной машине |
-| `README.md` | `__pycache__/`, `*.log`, `.pyc` |
-
-## Использование
+Или по отдельности:
 
 ```bash
-# Поиск через объединённый движок (MPNet + BGE-M3 + гибридный поиск)
-python unified_search.py "твой запрос"
-
-# Поиск только через MPNet
-python query.py "твой запрос"
-
-# Сравнение результатов двух движков
-python query_compare.py mpnet "твой запрос"
-python query_compare.py bge "твой запрос"
+python3 ingest.py bge
+python3 ingest.py e5
 ```
+
+### 5. Проверка
+
+```bash
+# Статус коллекций
+python3 check_db.py
+```
+
+---
+
+## Использование: задаём вопросы и получаем ответы
+
+### Сценарий 1 — быстрый вопрос через скрипт `ask.sh`
+
+```bash
+./ask.sh "Что такое attention mechanism?"
+```
+
+### Сценарий 2 — гибридный поиск (E5 + BGE-M3 + реранкер)
+
+```bash
+python3 unified_search.py "Как работает backpropagation?"
+```
+
+### Сценарий 3 — с ограничением количества результатов
+
+```bash
+python3 unified_search.py "Transformer architecture" --top-k 10
+```
+
+### Сценарий 4 — исключить источники
+
+```bash
+python3 unified_search.py "RLHF" --exclude "AI/ML"
+```
+
+### Сценарий 5 — без реранкера (быстрее)
+
+```bash
+python3 unified_search.py "Что такое LoRA?" --no-rerank
+```
+
+### Сценарий 6 — сравнение движков
+
+```bash
+# Только E5
+python3 query.py "Knowledge distillation"
+
+# Только BGE-M3
+python3 query_compare.py bge "Preference optimization"
+
+# Сравнить E5 vs BGE-M3
+python3 query_compare.py e5 "DPO vs PPO"
+```
+
+### Сценарий 7 — BM25 (ключевые слова)
+
+```bash
+python3 rag_bm25.py "градиентный спуск learning rate"
+```
+
+### Сценарий 8 — произвольный вопрос одной строкой (если `ask.sh` уже `chmod +x`)
+
+```bash
+./ask.sh "Как устроен GPT?"
+```
+
+### Формат вывода
+
+Результаты возвращаются в JSON:
+
+```json
+[
+  {
+    "engine": "BGE-M3",
+    "source": "AI/ML/attention.md",
+    "content": "# Attention > Scaled Dot-Product Attention\n...",
+    "rerank_score": 8.4321
+  }
+]
+```
+
+Поля: `engine` (какой движок нашёл), `source` (путь к файлу), `content` (текст чанка), `rerank_score` или `score` (оценка релевантности).
+
+---
 
 ## Обслуживание
 
@@ -59,12 +151,14 @@ python query_compare.py bge "твой запрос"
 ./refresh_rag.sh
 
 # Полная перестройка с очисткой
-python ingest.py mpnet --force
-python ingest.py bge --force
+python3 ingest.py e5 --force
+python3 ingest.py bge --force
 
 # Проверка состояния индексов
-python check_db.py
+python3 check_db.py
 ```
+
+---
 
 ## Исключение файлов из поиска
 
@@ -78,3 +172,32 @@ excluded:
 ```
 
 После добавления нового исключения запустите `ingest.py` — система сама удалит старые чанки из индекса.
+
+---
+
+## Структура репозитория
+
+| Файл | Назначение |
+|---|---|
+| `unified_search.py` | Главный поисковый движок (гибридный поиск + реранкер + MMR) |
+| `ingest.py` | Индексирование markdown-файлов в Qdrant |
+| `query.py` | Поиск только через E5 |
+| `query_compare.py` | Сравнение результатов E5 и BGE-M3 |
+| `rag_bm25.py` | Классический BM25-поиск |
+| `rag_utils.py` | Общие утилиты (загрузка моделей, конфиг, работа с Qdrant) |
+| `rag_config.py` | Загрузка и мерж конфигурации |
+| `rag_models.py` | Модели данных |
+| `config.yaml` | Конфигурация движков, реранкера, исключений |
+| `ask.sh` | Удобная обёртка для `unified_search.py` |
+| `refresh_rag.sh` | Перестроение индексов (BGE-M3 + E5) |
+| `qdrant_server.sh` | Управление Qdrant в Docker |
+| `check_db.py` | Проверка состояния коллекций |
+| `requirements.txt` | Зависимости |
+| `pyproject.toml` | Метаданные проекта |
+
+| В Git | Игнорируются |
+|---|---|
+| `*.py` — движок RAG | `qdrant_db/`, `qdrant_bge/` — векторные индексы |
+| `requirements.txt` | `venv/` — виртуальное окружение |
+| `*.sh` — скрипты управления | `manifest.json` — привязан к конкретной машине |
+| `config.yaml`, `README.md` | `__pycache__/`, `*.log`, `.pyc` |

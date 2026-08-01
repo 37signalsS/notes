@@ -2,171 +2,151 @@
 
 ## Определения
 
-**Шаблоны запросов (Query Patterns)** — повторно используемые PromQL-выражения для типовых задач мониторинга. Каждый шаблон решает конкретную задачу: расчёт утилизации, скорости событий, перцентилей или алертинга. Шаблоны комбинируют [функции PromQL](./functions.md), [операторы агрегации](./aggregation.md) и [селекторы](./selectors_operators.md) в единое выражение.
+**Шаблоны запросов (Query Patterns)** — проверенные на практике PromQL-выражения для решения типовых задач мониторинга. Каждый шаблон комбинирует [функции](./functions.md), [операторы агрегации](./aggregation.md) и [селекторы](./selectors_operators.md) в единую логическую конструкцию.
 
-**Принцип построения:** выбор метрики → фильтрация по лейблам → обработка функцией (`rate()`, `histogram_quantile()`) → агрегация (`sum by`, `avg by`) → математическая операция (проценты, доли).
+Для системного подхода к мониторингу рекомендуется использовать стандартные методологии:
+- **RED (Rate, Errors, Duration)** — для анализа состояния сервисов и приложений.
+- **USE (Utilization, Saturation, Errors)** — для анализа состояния ресурсов и инфраструктуры.
+- **Four Golden Signals** (Latency, Traffic, Errors, Saturation) — фундамент мониторинга SRE.
 
 ## Базовые концепции
 
-### Утилизация ресурсов
+### Принцип построения запроса
+Выбор метрики → Фильтрация по лейблам → Сдвиг во времени (`offset`) → Вычисление скорости/прироста (`rate`/`increase`) → Агрегация (`sum by`, `avg by`) → Арифметические операции (проценты, отношения).
 
-Для расчёта утилизации используется формула `(1 - available / total) × 100`. Для CPU — средняя скорость idle-времени через `rate()` или `irate()`.
-
-### Доли и отношения
-
-Доля событий вычисляется как `rate(нужные_события) / rate(все_события)`. Используется для SLO/SLI — например, доля успешных HTTP-запросов.
-
-### Перцентили
-
-Вычисляются через `histogram_quantile(φ, sum by (le) (rate(..._bucket[interval])))`. Показывают распределение латентности, размеров запросов и других величин ([Гистограммы](../metric_types/histogram.md)).
-
-### Алертинг по отсутствию метрики
-
-Функция `absent()` возвращает `1`, если метрика не найдена. Используется для обнаружения упавших exporter'ов или сервисов.
-
-## Практические сценарии
-
-### Мониторинг инфраструктуры (Node Exporter)
-
-**Утилизация CPU по instance (в %):**
-
+### Расчёт долей и процентов
+Общая формула отношения событий:
 ```promql
-avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
-```
-
-Использует `irate()` для мгновенной скорости idle-времени. Инверсия (`* 100`) даёт процент использования. Подробнее о метриках — [Node Exporter](../../Exporters/node_exporter.md).
-
-**Использование памяти (в %):**
-
-```promql
-(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
-```
-
-Gauge-метрики, не требуют `rate()`. Показывают текущее состояние.
-
-**Использование диска (в %):**
-
-```promql
-(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100
-```
-
-Рекомендуется фильтровать по `mountpoint` для избежания дублирования виртуальных ФС.
-
-**Входящий сетевой трафик (байт/сек):**
-
-```promql
-rate(node_network_receive_bytes_total{device="eth0"}[5m])
-```
-
-Counter — обязательно `rate()`. Фильтр по `device` для конкретного интерфейса.
-
-### Мониторинг приложений
-
-**Доля ошибок HTTP 5xx:**
-
-```promql
-sum(rate(http_requests_total{code=~"5.."}[5m]))
+# Доля успешных запросов (SLA/SLI)
+sum(rate(http_requests_total{status=~"2.."}[5m]))
 /
 sum(rate(http_requests_total[5m]))
 ```
+Результат — значение от 0 до 1. Для получения процентов умножьте на `100`.
 
-Отношение rate'ов — ключевой SLO/SLI для доступности. Результат — доля (0.05 = 5%).
-
-**95-й перцентиль времени ответа:**
-
+### Перцентили и квантили
+Вычисляются исключительно через `histogram_quantile` над агрегированными корзинами:
 ```promql
-histogram_quantile(0.95,
-  sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+# Обязательная агрегация sum(rate(...)) by (le)
+histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+```
+Подробнее об устройстве — [Гистограммы](../metric_types/histogram.md).
+
+## Практические сценарии
+
+### Методология RED (Мониторинг сервисов)
+
+**Rate (Интенсивность трафика):**
+```promql
+# Суммарный RPS всех инстансов сервиса
+sum(rate(http_requests_total[5m])) by (service)
+```
+
+**Errors (Ошибки):**
+```promql
+# Интенсивность ошибок 5xx по путям (path)
+sum(rate(http_requests_total{code=~"5.."}[5m])) by (path)
+```
+
+**Duration (Длительность/Латентность):**
+```promql
+# 95-й перцентиль времени ответа по методам
+histogram_quantile(0.95, 
+  sum by (le, method) (rate(http_request_duration_seconds_bucket[5m]))
 )
 ```
 
-Обязательна агрегация `sum by (le)` перед `histogram_quantile()` — иначе перцентиль посчитается для каждого инстанса отдельно ([Перцентили](../metric_types/percentiles.md)).
+### Методология USE (Инфраструктура)
 
-**RPS (запросов в секунду):**
-
+**Utilization (Утилизация ресурсов):**
 ```promql
-sum(rate(http_requests_total[5m]))
+# Утилизация CPU (инверсия idle) по узлам
+100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+# Использование оперативной памяти (в %)
+(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
+
+# Использование дискового пространства (фильтр по mountpoint обязателен)
+(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100
 ```
 
-Суммарная скорость запросов по всем инстансам — единственно корректный способ агрегации Counter ([Счётчики](../metric_types/counter.md)).
+**Saturation (Насыщенность/Очереди):**
+```promql
+# Нагрузка относительно количества ядер (Saturation)
+node_load1 / count by (instance) (node_cpu_seconds_total{mode="idle"})
 
-### Мониторинг Kubernetes
+# Дисковый I/O (Saturation через время операций)
+rate(node_disk_io_time_seconds_total[5m])
+```
+
+**Errors (Ошибки оборудования/сети):**
+```promql
+# Скорость ошибок на сетевом интерфейсе (eth0)
+rate(node_network_receive_bytes_total{device="eth0"}[5m])
+```
+
+### Мониторинг ресурсов Kubernetes
+
+**Потребление памяти контейнерами (RSS):**
+```promql
+# Топ-5 потребителей памяти в неймспейсе
+topk(5, sum by (pod) (container_memory_rss{container!="", namespace="prod"}))
+```
+
+**CPU Throttling (Saturation):**
+```promql
+# Процент времени, когда CPU контейнера ограничивался (throttled)
+sum by (container, pod) (rate(container_cpu_cfs_throttled_seconds_total[5m]))
+/
+sum by (container, pod) (rate(container_cpu_usage_seconds_total[5m])) * 100
+```
 
 **Количество подов в состоянии Running:**
-
 ```promql
-sum(kube_pod_status_phase{phase="Running"})
+sum by (namespace) (kube_pod_status_phase{phase="Running"})
 ```
 
-Метрика из kube-state-metrics. Gauge — агрегация через `sum()`. Подробнее — [Kubernetes](../../kubernetes/overview.md).
+### Продвинутые паттерны и обнаружение аномалий
 
-**Использование CPU контейнером (в ядрах):**
-
+**Z-Score (Детекция всплесков):**
+Сравнивает текущий rate со средним и стандартным отклонением за период.
 ```promql
-rate(container_cpu_usage_seconds_total{container!=""}[5m])
+# Отклонение более чем на 3 сигмы
+(
+  rate(http_requests_total[5m]) - avg_over_time(rate(http_requests_total[5m])[1h:5m])
+) 
+/ 
+stddev_over_time(rate(http_requests_total[5m])[1h:5m]) > 3
 ```
 
-Counter — `rate()` даёт ядра CPU. Фильтр `container!=""` исключает мета-контейнеры. Подробнее — [cAdvisor](../../Exporters/cadvisor.md).
-
-**Использование памяти контейнером:**
-
+**Прогноз исчерпания диска (Linear Prediction):**
 ```promql
-container_memory_usage_bytes{container!=""}
-```
-
-Gauge — показывает текущее потребление без обработки.
-
-### Алертинг
-
-**Проверка отсутствия метрики:**
-
-```promql
-absent(up{job="my-critical-service"})
-```
-
-Возвращает `1`, если сервис не скрейпится — алерт для Alertmanager ([Rules](../../rules.md)).
-
-**Сервис недоступен:**
-
-```promql
-up{job="api-server"} == 0
-```
-
-Метрика `up` = 0 — таргет не отвечает.
-
-**Прогноз нехватки диска через 4 часа:**
-
-```promql
+# Место на диске закончится через 4 часа (на основе данных за 1 час)
 predict_linear(node_filesystem_free_bytes{mountpoint="/"}[1h], 3600 * 4) < 0
 ```
 
-Линейная экстраполяция по данным за последний час. Срабатывает **до** того, как место закончится ([Измерители](../metric_types/gauge.md)).
-
-**Высокая загрузка CPU (>80% в течение 10 минут):**
-
+**Нативные гистограммы (Prometheus 3.x):**
 ```promql
-avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 < 20
+# Расчёт перцентиля без лейбла 'le' (Native Histograms)
+histogram_quantile(0.99, sum by (service) (rate(http_request_duration_seconds[5m])))
 ```
-
-Инверсия idle (< 20% idle = > 80% usage). Порог 10 минут снижает ложные срабатывания при кратковременных всплесках.
 
 ## Дополнительная информация
 
 ### Предостережения
 
-- **`irate()` vs `rate()` для алертинга** — `irate()` чувствителен к шуму, для алертов предпочтительнее `rate()` с длительным окном ([Реальное поведение метрик](./real_world_behavior.md)).
-- **Гистограммы без `sum by (le)`** — `histogram_quantile()` без агрегации посчитает перцентиль для каждого инстанса, что приведёт к множеству линий на графике.
-- **`$__rate_interval` в Grafana** — используйте вместо `$__interval` для корректного расчёта rate, минимум 4×scrape_interval.
-- **Counter vs Gauge** — не применяйте `rate()` к Gauge и `deriv()` к Counter. Counter только растёт, Gauge — произвольно меняется ([Типы метрик](../metric_types/overview.md)).
+- **`irate()` vs `rate()`**: `irate()` чувствителен к мгновенным скачкам и подходит для графиков с высокой детализацией. Для алертов и долгосрочных трендов всегда используйте `rate()`, чтобы не пропустить данные между скрейпами.
+- **Агрегация и Counter**: Никогда не суммируйте значения Counter напрямую. Сначала `rate()`, потом `sum()`. Нарушение этого правила ведет к некорректным данным при рестартах.
+- **Агрегация квантилей**: Квантили (например, из Summary) нельзя усреднять. Если нужно объединить несколько инстансов, используйте Histogram.
+- **Grafana и `$__rate_interval`**: Всегда используйте эту переменную в Grafana вместо фиксированных интервалов для корректного отображения `rate` на разных масштабах времени.
 
 ### Выбор интервала
-
-- **Ручные запросы:** 5m для сглаженных графиков, 1–2m для детального анализа.
-- **Grafana:** переменная `$__rate_interval`, минимум 1m (2×scrape_interval).
-- **Алертинг:** 5–15m для снижения шума, с `for` для задержки срабатывания.
+- **Оперативный мониторинг**: 1m–5m (сглаживание шума).
+- **Анализ трендов**: 30m–1h.
+- **Алертинг**: Должен соответствовать `for` в правилах алертинга. Рекомендуется интервал функции как минимум в 2–3 раза больше `scrape_interval`.
 
 > **См. также:**
 >
-> - [Функции PromQL](./functions.md) — подробное описание встроенных функций.
-> - [Агрегация в PromQL](./aggregation.md) — модификаторы `by` и `without`.
-> - [Поведение метрик в реальных сценариях](./real_world_behavior.md) — нюансы работы с репликами и рестартами.
+> - [Функции PromQL](./functions.md) — детальное описание встроенных функций.
+> - [Агрегация в PromQL](./aggregation.md) — группировка и модификаторы `by`/`without`.
+> - [Реальное поведение метрик](./real_world_behavior.md) — нюансы экстраполяции и рестартов.

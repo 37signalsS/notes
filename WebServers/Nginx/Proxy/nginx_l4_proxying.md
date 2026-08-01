@@ -1,13 +1,18 @@
 # Балансировка и проксирование L4-трафика (TCP/UDP) в Nginx
 
+**Надёжность:** 10 (SSoT + Официальная документация Nginx 1.26)
+**Свежесть:** Май 2024 (Актуально для Nginx 1.25.5+, 1.26.0+)
+
 ## Определения
 
 **Модуль stream в Nginx** — расширение функциональности Nginx, предоставляющее возможности для балансировки нагрузки и проксирования трафика на транспортном уровне (L4). Позволяет работать с протоколами, не основанными на HTTP: базами данных (MySQL, PostgreSQL), DNS, NTP, SSH и другими.
 
 **L4 vs L7 проксирование**:
 
-- **L4 (Transport layer)**: Модуль stream работает на уровне транспорта (TCP/UDP), проксируя соединения без разбора содержимого.
+- **L4 (Transport layer)**: Модуль stream работает на уровне транспорта (TCP/UDP), проксируя соединения без разбора содержимого (до версии 1.25.5).
 - **L7 (Application layer)**: Nginx работает с HTTP-трафиком в контексте http, обрабатывая запросы на уровне приложения.
+
+*Примечание:* Начиная с версии 1.25.5, модуль stream поддерживает директиву `server_name`, что позволяет выполнять маршрутизацию на основе SNI (Server Name Indication) для TLS-трафика, сближая возможности L4 и L7.
 
 ## Основные концепции
 
@@ -15,10 +20,11 @@
 
 Ключевые отличия L4-проксирования от L7:
 
-- Уровень работы: L4 (TCP/UDP) вместо L7 (HTTP/S).
-- Протоколы: любые TCP/UDP-протоколы (базы данных, DNS, NTP, SSH).
-- Обработка: сессии подключения вместо отдельных запросов.
-- Ресурсы: меньше накладных расходов, так как не требуется разбор протокола приложения.
+- **Уровень работы**: L4 (TCP/UDP) вместо L7 (HTTP/S).
+- **Протоколы**: любые TCP/UDP-протоколы (базы данных, DNS, NTP, SSH).
+- **Обработка**: сессии подключения вместо отдельных запросов.
+- **Ресурсы**: меньше накладных расходов на CPU/RAM, так как не требуется разбор протокола приложения (headers, cookies).
+- **Видимость**: на уровне L4 Nginx не видит URL, заголовки и Cookies (если не используется SNI).
 
 ### Конфигурация и основные директивы
 
@@ -42,16 +48,30 @@ stream {
 
 По умолчанию логирование в модуле `stream` отключено. Настраивается через директиву `access_log`. В данном режиме фиксируются параметры сессии, а не отдельных запросов.
 
-**Переменные для логирования:**
+**Ключевые переменные:**
 
-- `$remote_addr` — IP-адрес клиента.
+- `$remote_addr` / `$remote_port` — IP-адрес и порт клиента.
 - `$time_local` — локальное время.
 - `$protocol` — используемый протокол (TCP/UDP).
-- `$status` — статус сессии.
-- `$bytes_sent` — количество отправленных байтов.
-- `$bytes_received` — количество полученных байтов.
-- `$session_time` — продолжительность сессии.
-- `$upstream_addr` — адрес upstream-сервера.
+- `$status` — статус сессии (например, 200 — успешно, 403 — доступ запрещен, 500 — внутренняя ошибка).
+- `$bytes_sent` / `$bytes_received` — количество отправленных/полученных байтов.
+- `$session_time` — продолжительность сессии в секундах с точностью до миллисекунд.
+- `$upstream_addr` — адрес выбранного upstream-сервера.
+- `$upstream_connect_time` — время установления соединения с бэкендом.
+- `$upstream_first_byte_time` — время до получения первого байта данных от бэкенда.
+- `$ssl_preread_server_name` — имя сервера, извлеченное из SNI (требует `ssl_preread on`).
+
+### Оптимизация производительности
+
+Для высоконагруженных L4-сервисов (например, прокси для баз данных) критически важна минимальная задержка и эффективное использование ресурсов.
+
+**Директивы оптимизации:**
+
+- `tcp_nodelay on;` — (по умолчанию `on`) отключает алгоритм Нагла. Критично для интерактивных протоколов и БД, так как пакеты отправляются сразу, не ожидая заполнения буфера.
+- `proxy_buffer_size <size>;` — задает размер буфера для чтения данных от клиента и бэкенда. Значение по умолчанию обычно составляет 16k.
+- `proxy_download_rate` / `proxy_upload_rate` — позволяет ограничить скорость передачи данных на уровне сессии.
+- `listen ... deferred;` — (Linux) включает `TCP_DEFER_ACCEPT`, заставляя ядро передавать сокет Nginx только после поступления первых данных от клиента.
+- `worker_processes auto;` — в основном `nginx.conf` позволяет Nginx масштабироваться на все ядра CPU.
 
 ### Ограничение подключений
 
@@ -71,7 +91,7 @@ stream {
 
 ## Практические сценарии
 
-### Проксирование MySQL (TCP) с балансировкой master/slave
+### Проксирование MySQL (TCP) с балансировкой Master/Slave и проверками состояния
 
 Сценарий распределения нагрузки между master-сервером БД (для записи) и slave-серверами (для чтения).
 
@@ -80,50 +100,98 @@ stream {
 ```nginx
 # Группа для мастера (запись)
 upstream mysql_master {
-    zone mysql_master_zone 64k;
-    server 192.168.77.14:3307 proxy_protocol;
+    server 192.168.77.14:3306 max_fails=3 fail_timeout=30s;
 }
 
 # Группа для слейвов (чтение)
 upstream mysql_slave {
-    zone mysql_slave_zone 64k;
-    server 192.168.77.12:3308 proxy_protocol;
-    server 192.168.77.13:3309 proxy_protocol;
+    zone mysql_slave_zone 64k; # Только Nginx Plus / Angie
+    server 192.168.77.12:3306 max_fails=3 fail_timeout=30s;
+    server 192.168.77.13:3306 max_fails=3 fail_timeout=30s;
 }
 
-# Виртуальный сервер для мастера
+# Сервер для записи (Master)
 server {
     listen 6306;
     proxy_pass mysql_master;
+    proxy_connect_timeout 1s;
+    proxy_timeout 1h;
 
     # Ограничение подключений для защиты мастера
-    limit_conn_zone $binary_remote_addr zone=per_ip_conn:10m;
-    limit_conn per_ip_conn 10;
-
-    access_log /var/log/nginx/mysql-master-access.log basic;
-    error_log /var/log/nginx/mysql-master-error.log warn;
-    status_zone mysql_master_status;
+    limit_conn_zone $binary_remote_addr zone=per_ip_master:10m;
+    limit_conn per_ip_master 5;
 }
 
-# Виртуальный сервер для слейвов
+# Сервер для чтения (Slaves)
 server {
     listen 6307;
     proxy_pass mysql_slave;
-    status_zone mysql_slave_status;
+    proxy_connect_timeout 5s;
+    proxy_timeout 1h;
 }
 ```
 
 **Разбор конфигурации:**
 
-1. **Блоки upstream**:
-   - `zone <name> 64k;` — выделяет общую память для хранения состояния группы (статистика соединений, динамическое управление).
-   - `server ... proxy_protocol;` — включает [Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md), который добавляет к TCP-соединению заголовок с реальным IP-адресом клиента.
+1. **Таймауты**:
+   - `proxy_connect_timeout` — время ожидания установления TCP-соединения с бэкендом.
+   - `proxy_timeout` — время между двумя операциями чтения или записи (как со стороны клиента, так и со стороны бэкенда). Если данных нет дольше этого времени, соединение закрывается. Для БД важно ставить большие значения.
+2. **Health Checks**:
+   - **Пассивные проверки (OSS)**: Nginx отслеживает ошибки соединения. Если сервер не отвечает `max_fails` раз в течение `fail_timeout`, он помечается как недоступный на время `fail_timeout`.
+   - **Активные проверки (Plus/Angie)**: Nginx сам отправляет периодические запросы («пробы») к бэкендам независимо от клиентского трафика.
+3. **Ограничения**:
+   - `limit_conn` используется для предотвращения исчерпания пула соединений БД одним клиентом.
 
-2. **Блоки server**:
-   - `listen 6306;` — виртуальный TCP-сервер на порту 6306.
-   - `proxy_pass mysql_master;` — направление трафика в upstream-группу mysql_master.
-   - `limit_conn_*` — ограничение одновременных соединений с одного IP.
-   - `status_zone <name>;` — зона статистики для мониторинга через API Nginx.
+### Маршрутизация на основе SNI (Nginx 1.25.5+)
+
+С версии 1.25.5 Nginx поддерживает виртуальные серверы в модуле `stream` через SNI.
+
+```nginx
+stream {
+    # Анализ SNI без терминации SSL
+    ssl_preread on;
+
+    server {
+        listen 443;
+        server_name db.example.com;
+        proxy_pass db_backend;
+    }
+
+    server {
+        listen 443;
+        server_name app.example.com;
+        proxy_pass app_backend;
+    }
+}
+```
+
+Это позволяет использовать один IP и порт 443 для проксирования разных TCP-сервисов, разделяя их по доменному имени.
+
+### Передача соединения между модулями (pass)
+
+Модуль `ngx_stream_pass_module` позволяет передать уже принятое соединение в другой модуль (http, mail) без создания нового прокси-соединения.
+
+```nginx
+stream {
+    server {
+        listen 443 ssl;
+        ssl_certificate /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+
+        # Передача расшифрованного трафика в HTTP-модуль
+        pass 127.0.0.1:8000;
+    }
+}
+
+http {
+    server {
+        listen 127.0.0.1:8000;
+        location / {
+            return 200 "Hello from HTTP via Stream pass!";
+        }
+    }
+}
+```
 
 ### SSL/TLS терминация на L4
 
@@ -173,7 +241,7 @@ server {
 
 ### SSL Pre-read (маршрутизация TLS vs SSH)
 
-Функция SSL Pre-read позволяет Nginx анализировать начало TCP-соединения и определять тип трафика без полной терминации сессии.
+Функция SSL Pre-read позволяет Nginx анализировать начало TCP-соединения (Client Hello) и определять тип трафика или имя сервера (SNI) без терминации SSL.
 
 **Пример: мультиплексирование HTTPS и SSH на порту 443**
 
@@ -185,29 +253,17 @@ map $ssl_preread_server_name $backend_by_sni {
     www.example.com http_backend;
 }
 
-upstream http_backend {
-    server 127.0.0.1:8080;
-}
-upstream ssh_backend {
-    server 127.0.0.1:22;
-}
+upstream http_backend { server 127.0.0.1:8080; }
+upstream ssh_backend { server 127.0.0.1:22; }
 
 server {
     listen 443;
-
     ssl_preread on; # Включаем анализ Client Hello
     proxy_pass $backend_by_sni;
-
-    status_zone ssl_preread_status;
 }
 ```
 
-**Особенности:**
-
-- **map** — определяет `$backend_by_sni` на основе SNI (`$ssl_preread_server_name`). Если SNI отсутствует (например, SSH), используется значение `default`.
-- **listen 443** — без флага `ssl`, так как Nginx не терминирует соединение самостоятельно.
-- **ssl_preread on** — включает анализ Client Hello.
-- **proxy_pass $backend_by_sni** — динамическое проксирование на основе переменной.
+*Примечание:* В современных версиях Nginx для SNI-маршрутизации TLS-трафика предпочтительнее использовать директиву `server_name` внутри блоков `server`, однако `map` по-прежнему необходим для мультиплексирования разных протоколов (например, SSH vs TLS).
 
 ### Использование Proxy Protocol
 
@@ -262,19 +318,18 @@ server {
 
 ### Мониторинг L4-трафика
 
-Для сбора метрик используется `status_zone` в блоке `server` модуля `stream`.
+Для сбора метрик в модуле `stream` используется директива `status_zone`.
+
+- **Nginx OSS**: Не поддерживает `status_zone` и встроенный API для метрик. Требуется использование сторонних модулей (например, `nginx-module-vts`) или анализ логов.
+- **Nginx Plus / Angie**: Поддерживают `status_zone` для сбора детальной статистики (соединения, байты, ошибки) по каждому виртуальному серверу и upstream-группе. Данные доступны через REST API.
 
 ```nginx
-stream {
-    server {
-        listen 12345;
-        proxy_pass backend_service;
-        status_zone my_l4_service; # Зона для сбора метрик
-    }
+server {
+    listen 12345;
+    proxy_pass backend_service;
+    status_zone my_l4_service; # Только Plus / Angie
 }
 ```
-
-Метрики (активные соединения, трафик и т.д.) доступны через API Nginx (модуль `ngx_http_stub_status_module` или NGINX Plus API).
 
 ### Связанные документы
 

@@ -170,6 +170,31 @@ secrets:
 
 **Пояснение:** Сервис `web_app` не запустит свою `command` до тех пор, пока `healthcheck` сервиса `database` не завершится успешно. Это надежный и декларативный способ управления зависимостями.
 
+### Пример: Самовосстановление с Autoheal
+
+Интеграция внешнего монитора для автоматического перезапуска зависших контейнеров (статус `unhealthy`). Подробнее см. **[Autoheal в Docker](../Docker_troubleshooting/docker_autoheal.md)**.
+
+```yaml
+services:
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+    labels:
+      - "autoheal=true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/ || exit 1"]
+      interval: 30s
+      retries: 3
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: always
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
 ## Дополнительная информация
 
 ### Связанные документы

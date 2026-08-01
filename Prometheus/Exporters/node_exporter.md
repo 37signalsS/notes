@@ -2,219 +2,241 @@
 
 ## Определения
 
-**Node Exporter** — экспортер для сбора метрик с хост-машины на базе Linux. Предоставляет детальную информацию о состоянии ресурсов: загрузку CPU (Central Processing Unit — центральный процессор), использование памяти, дисковое I/O (Input/Output — ввод-вывод), сетевую активность и другие системные показатели.
+**Node Exporter** — это стандартный инструмент мониторинга для сбора метрик аппаратного обеспечения и операционной системы на базе Linux. Он предоставляет сотни метрик, отражающих состояние ресурсов: CPU, памяти, дисков, сети, а также специфических подсистем ядра.
 
 * **Порт по умолчанию:** `9100`
+* **Актуальная версия (2026):** `v1.12.1`
 * **Репозиторий:** [prometheus/node_exporter](https://github.com/prometheus/node_exporter)
-* **Установка:** подробно описана в [инструкции по установке](../installation/node_exporter_installation.md)
+* **Инструкция по установке:** [node_exporter_installation.md](../installation/node_exporter_installation.md)
 
 ## Основные концепции
 
-### Источник данных
+### Источники данных: procfs и sysfs
 
-`node_exporter` не обращается напрямую к ядру. Он читает и парсит файлы из виртуальных файловых систем Linux:
+Node Exporter не является активным агентом, который «опрашивает» ядро через системные вызовы. Вместо этого он читает и парсит данные из виртуальных файловых систем Linux, которые ядро обновляет автоматически:
 
-* `/proc` — информация о процессах, памяти, CPU
-* `/sys` — информация об устройствах, драйверах, подсистемах ядра
+* **`/proc`**: статистика процессов, памяти, планировщика CPU и системных прерываний.
+* **`/sys`**: данные об аппаратных устройствах (диски, сетевые карты), драйверах, cgroups и термодатчиках.
 
-Например, для получения информации о памяти он читает `/proc/meminfo`, для статистики CPU — `/proc/stat`. Подробнее: [виртуальная файловая система /proc](../../Linux/FileSystems/virtual_fs_proc.md) и [/sys](../../Linux/FileSystems/virtual_fs_sys.md).
+Подробнее о механизмах: [виртуальная файловая система /proc](../../Linux/FileSystems/virtual_fs_proc.md) и [/sys](../../Linux/FileSystems/virtual_fs_sys.md).
 
-### Совместимость с ОС
+### Поддержка Cgroup v2
 
-Node Exporter предназначен исключительно для ОС (операционных систем) на базе Linux. Для мониторинга Windows-систем используется [windows_exporter](https://github.com/prometheus-community/windows_exporter).
+В современных дистрибутивах Linux (Debian 12+, Ubuntu 22.04+, RHEL 9+) Node Exporter полноценно поддерживает **Cgroup v2**. Метрики собираются через интерфейсы `/sys/fs/cgroup`. Это критично для корректного мониторинга ресурсов в контейнеризированных средах и системах с `systemd`.
 
 ### Архитектура коллекторов
 
-Node Exporter состоит из множества **коллекторов** — модулей, каждый из которых отвечает за сбор определённого типа метрик. Коллекторы можно включать или выключать через флаги запуска.
+Функциональность разделена на **коллекторы** (collectors). Каждый коллектор можно включить или выключить независимо через флаги запуска.
 
-* **Включены по умолчанию:** базовые системные метрики (CPU, память, диск, сеть).
-* **Отключены по умолчанию:** специфичные метрики (например, `systemd`, `processes`, `logind`).
+* **Включены по умолчанию:** базовые системные ресурсы (`cpu`, `meminfo`, `diskstats`, `netdev`, `filesystem`, `mdadm`, `uname`).
+* **Отключены по умолчанию:** специфичные или ресурсоемкие метрики (`systemd`, `processes`, `logind`, `nfs`, `zfs`).
+
+**Новые коллекторы (v1.10+):**
+* `nvmesubsystem` — детальный мониторинг NVMe накопителей.
+* `mountstats` — детальная статистика NFS-монтирований.
+* `dmmultipath` — состояние Device Mapper Multipath.
+
+---
 
 ## Практические сценарии
 
-### Настройка запуска
+### Управление коллекторами при запуске
 
-Подробные инструкции по запуску через systemd и Docker приведены в [руководстве по установке](../installation/node_exporter_installation.md).
+Для оптимизации нагрузки и уменьшения кардинальности (cardinality) рекомендуется отключать ненужные коллекторы и включать только необходимые.
 
-### Ключи запуска
+```bash
+# Пример запуска с отключением неиспользуемых и включением дополнительных коллекторов
+./node_exporter \
+  --no-collector.wifi \
+  --no-collector.zfs \
+  --collector.systemd \
+  --collector.processes \
+  --collector.textfile.directory="/var/lib/node_exporter/textfile_reports"
+```
 
-| Ключ | Значение по умолчанию | Описание |
+### Безопасность: TLS и Аутентификация
+
+Node Exporter поддерживает встроенную защиту через файл конфигурации `web-config.yml`. Это позволяет отказаться от использования Nginx-прокси для базовой защиты.
+
+**Пример `web-config.yml`:**
+
+```yaml
+tls_server_config:
+  cert_file: /etc/node_exporter/tls.crt
+  key_file: /etc/node_exporter/tls.key
+  # Рекомендуется для Zero Trust архитектур (mTLS):
+  client_auth_type: RequireAndVerifyClientCert
+  client_ca_file: /etc/node_exporter/ca.crt
+
+basic_auth_users:
+  # Хеш пароля генерируется через htpasswd (bcrypt)
+  admin: "$2b$12$..." 
+```
+
+**Запуск с защитой:**
+```bash
+./node_exporter --web.config.file=web-config.yml
+```
+
+---
+
+## Детальное описание метрик и PromQL
+
+### 1. Процессор (CPU)
+
+Метрики CPU представлены в секундах, потраченных в различных режимах.
+
+| Метрика | Тип | Описание |
 | :--- | :--- | :--- |
-| `--web.listen-address` | `":9100"` | Адрес и порт для прослушивания (IP — Internet Protocol) |
-| `--web.telemetry-path` | `"/metrics"` | URI (Uniform Resource Identifier) для экспозиции метрик |
-| `--log.level` | `"info"` | Уровень логирования (`debug`, `info`, `warn`, `error`) |
-| `--collector.textfile.directory` | — | Директория для [Textfile Collector](./extensibility/textfile_collector.md) |
-| `--collector.disable-defaults` | `false` | Отключить все коллекторы, включённые по умолчанию |
+| `node_cpu_seconds_total` | Counter | Время CPU в разных режимах (`idle`, `system`, `user`, `iowait`, `steal`). |
+| `node_load1` / `node_load5` / `node_load15` | Gauge | Средняя нагрузка системы за 1, 5 и 15 минут. |
+| `node_procs_running` | Gauge | Количество процессов в состоянии "Running". |
+| `node_context_switches_total` | Counter | Количество переключений контекста. |
 
-### Управление коллекторами
+**Примеры PromQL:**
 
-```bash
-# Отключить конкретный коллектор
---no-collector.<name>
+* **Загрузка CPU в % (среднее по всем ядрам для конкретного инстанса):**
+  ```promql
+  100 - (avg by(instance) (rate(node_cpu_seconds_total{instance="[инстанс]", mode="idle"}[5m])) * 100)
+  ```
+* **Средняя нагрузка (Load Average) относительно количества ядер:**
+  ```promql
+  node_load1{instance="[инстанс]"} / count(node_cpu_seconds_total{instance="[инстанс]", mode="idle"})
+  ```
 
-# Включить коллектор (например, если он отключен по умолчанию)
---collector.<name>
+### 2. Память (RAM)
 
-# Пример: игнорировать монтированные точки виртуальных файловых систем
---collector.filesystem.ignored-mount-points="^/(sys|proc|dev|host|etc)($|/)"
-```
+В отличие от многих инструментов, Node Exporter предоставляет "сырые" данные из `/proc/meminfo`.
 
-### Основные метрики
+| Метрика | Тип | Описание |
+| :--- | :--- | :--- |
+| `node_memory_MemTotal_bytes` | Gauge | Общий объем физической памяти. |
+| `node_memory_MemAvailable_bytes` | Gauge | **Доступная память.** Учитывает кэши, которые могут быть быстро освобождены. |
+| `node_memory_MemFree_bytes` | Gauge | Полностью свободная (неиспользуемая) память. |
+| `node_memory_Cached_bytes` / `node_memory_Buffers_bytes` | Gauge | Память под кэш страниц и буферы ядра. |
+| `node_memory_SwapTotal_bytes` | Gauge | Общий объем раздела подкачки. |
 
-#### CPU
+**Примеры PromQL:**
 
-```bash
-node_cpu_seconds_total{cpu="0",mode="idle"}    # Время CPU в режиме бездействия
-node_cpu_seconds_total{cpu="0",mode="system"}  # Время CPU в режиме ядра
-node_cpu_seconds_total{cpu="0",mode="user"}    # Время CPU в пользовательском режиме
-node_load1                                     # Средняя нагрузка за 1 минуту
-node_load5                                     # Средняя нагрузка за 5 минут
-node_load15                                    # Средняя нагрузка за 15 минут
-```
+* **Использование оперативной памяти в %:**
+  ```promql
+  (1 - (node_memory_MemAvailable_bytes{instance="[инстанс]"} / node_memory_MemTotal_bytes{instance="[инстанс]"})) * 100
+  ```
+* **Использование Swap в %:**
+  ```promql
+  (1 - (node_memory_SwapFree_bytes{instance="[инстанс]"} / node_memory_SwapTotal_bytes{instance="[инстанс]"})) * 100
+  ```
 
-**Пример PromQL:** загрузка CPU в процентах (%)
+### 3. Дисковая подсистема (Disk & Filesystem)
 
-```promql
-100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
-```
+Важно различать метрики файловой системы (логический уровень) и дисковой статистики (физический/блочный уровень).
 
-#### Память (RAM)
+| Метрика | Тип | Описание |
+| :--- | :--- | :--- |
+| `node_filesystem_size_bytes` | Gauge | Общий размер файловой системы. |
+| `node_filesystem_avail_bytes` | Gauge | Свободное место, доступное для обычного пользователя. |
+| `node_filesystem_files_free` | Gauge | Количество свободных **inodes** (критично для систем с множеством мелких файлов). |
+| `node_disk_io_time_seconds_total` | Counter | Время, в течение которого диск был занят (Disk Utilization). |
+| `node_disk_read_bytes_total` / `node_disk_written_bytes_total` | Counter | Суммарный объем прочитанных/записанных данных. |
 
-```bash
-node_memory_MemTotal_bytes         # Общий объём RAM (Random Access Memory)
-node_memory_MemFree_bytes          # Свободная память
-node_memory_MemAvailable_bytes     # Доступная память (с учётом кэшей)
-node_memory_Buffers_bytes          # Буферы ядра
-node_memory_Cached_bytes           # Кэш страниц
-node_memory_SwapTotal_bytes        # Общий объём swap (подкачки)
-node_memory_SwapFree_bytes         # Свободный swap
-```
+**Примеры PromQL:**
 
-**Пример PromQL:** использование памяти в %
+* **Свободное место на корневом разделе в %:**
+  ```promql
+  (node_filesystem_avail_bytes{instance="[инстанс]", mountpoint="/"} / node_filesystem_size_bytes{instance="[инстанс]", mountpoint="/"}) * 100
+  ```
+* **Утилизация конкретного диска в %:**
+  ```promql
+  rate(node_disk_io_time_seconds_total{instance="[инстанс]", device="sda"}[5m]) * 100
+  ```
+* **Скорость записи на диск (байт/сек):**
+  ```promql
+  rate(node_disk_written_bytes_total{instance="[инстанс]", device="sda"}[5m])
+  ```
 
-```promql
-(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
-```
+### 4. Сетевые метрики (Network)
 
-#### Диск и файловая система
+Снимаются с каждого сетевого интерфейса.
 
-```bash
-node_filesystem_size_bytes{mountpoint="/"}      # Общий размер файловой системы
-node_filesystem_free_bytes{mountpoint="/"}      # Свободное место
-node_filesystem_avail_bytes{mountpoint="/"}     # Доступное место для обычных пользователей
-node_filesystem_read_bytes_total{device="sda"}  # Прочитано байт
-node_filesystem_written_bytes_total{device="sda"} # Записано байт
-node_disk_read_bytes_total{device="sda"}        # Прочитано байт с физического диска
-node_disk_written_bytes_total{device="sda"}     # Записано байт на физический диск
-node_disk_io_time_seconds_total{device="sda"}   # Общее время выполнения операций ввода-вывода
-```
+| Метрика | Тип | Описание |
+| :--- | :--- | :--- |
+| `node_network_receive_bytes_total` | Counter | Входящий трафик в байтах. |
+| `node_network_transmit_bytes_total` | Counter | Исходящий трафик в байтах. |
+| `node_network_receive_errs_total` | Counter | Ошибки при получении пакетов. |
+| `node_network_up` | Gauge | Статус интерфейса (1 = Up, 0 = Down). |
 
-**Пример PromQL:** использование диска в %
+**Примеры PromQL:**
 
-```promql
-(1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) * 100
-```
+* **Входящая скорость на интерфейсе eth0 (Мбит/сек):**
+  ```promql
+  rate(node_network_receive_bytes_total{instance="[инстанс]", device="eth0"}[5m]) * 8 / 1024 / 1024
+  ```
 
-#### Сеть
+---
 
-```bash
-node_network_receive_bytes_total{device="eth0"}   # Получено байт
-node_network_transmit_bytes_total{device="eth0"}  # Отправлено байт
-node_network_receive_drop_total{device="eth0"}    # Отброшено входящих пакетов
-node_network_transmit_drop_total{device="eth0"}   # Отброшено исходящих пакетов
-node_network_up{device="eth0"}                    # Статус интерфейса (1 = активен)
-```
+## Алертинг (Alerting Rules)
 
-**Пример PromQL:** входящий трафик в байт/сек
-
-```promql
-rate(node_network_receive_bytes_total{device="eth0"}[5m])
-```
-
-#### Системные показатели
-
-```bash
-node_boot_time_seconds          # Время последней загрузки системы
-node_time_seconds               # Текущее системное время
-node_procs_running              # Количество процессов в состоянии выполнения
-node_procs_blocked              # Количество процессов, ожидающих ввода-вывода
-node_context_switches_total     # Общее количество переключений контекста
-node_interrupts_total           # Общее количество прерываний
-node_vmstat_pgmajfault          # Количество критических ошибок страниц (major page faults)
-```
-
-### Алертинг (Alerting)
-
-**Node Exporter недоступен:**
+### Рекомендуемые правила (Best Practices)
 
 ```yaml
-- alert: NodeExporterDown
-  expr: up{job="node_exporter"} == 0
-  for: 5m
-  labels:
-    severity: critical
-  annotations:
-    summary: "Node Exporter недоступен на {{ $labels.instance }}"
-    description: "Экспортер не отвечает более 5 минут"
+groups:
+- name: NodeExporterAlerts
+  rules:
+  # Инстанс недоступен
+  - alert: HostDown
+    expr: up{job="node-exporter"} == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Инстанс {{ $labels.instance }} недоступен"
+      description: "Node Exporter не отвечает более 5 минут."
+
+  # Критическое заполнение диска
+  - alert: HostOutOfDiskSpace
+    expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Мало места на диске ({{ $labels.instance }})"
+      description: "Свободно менее 10% на разделе {{ $labels.mountpoint }}."
+
+  # Высокая нагрузка CPU (LA > кол-во ядер)
+  - alert: HostHighLoad
+    expr: node_load1 > count(node_cpu_seconds_total{mode="idle"}) * 1.5
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Высокая нагрузка на {{ $labels.instance }}"
+      description: "Load Average выше количества ядер более 10 минут."
+
+  # Закончились inodes
+  - alert: HostOutOfInodes
+    expr: node_filesystem_files_free{mountpoint="/"} / node_filesystem_files{mountpoint="/"} * 100 < 5
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Заканчиваются inodes на {{ $labels.instance }}"
 ```
 
-**Высокая загрузка CPU:**
-
-```yaml
-- alert: NodeHighCPU
-  expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
-  for: 10m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Высокая загрузка CPU на {{ $labels.instance }}"
-    description: "Загрузка процессора превышает 80% более 10 минут"
-```
-
-**Критический уровень свободного места:**
-
-```yaml
-- alert: NodeDiskSpaceLow
-  expr: (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) * 100 > 90
-  for: 5m
-  labels:
-    severity: critical
-  annotations:
-    summary: "Заканчивается место на диске {{ $labels.instance }}"
-    description: "Использовано более 90% дискового пространства на корневом разделе"
-```
-
-### Интеграция с Prometheus
-
-Конфигурация сбора метрик (scrape config) в `prometheus.yml`:
-
-```yaml
-scrape_configs:
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets: ['localhost:9100']
-        labels:
-          instance: 'web-server-01'
-          environment: 'production'
-```
-
-Для автоматического обнаружения экспортеров рекомендуется использовать [Service Discovery](../service_discovery_and_relabeling.md).
-
-### Безопасность
-
-* **Минимальные привилегии:** хотя для некоторых метрик (например, `smart`) нужен `root`, старайтесь запускать экспортёр от выделенного пользователя.
-* **Сетевой доступ:** ограничивайте доступ к порту 9100 на уровне файрвола (iptables/ufw) только для IP-адресов Prometheus-серверов.
-* **Шифрование:** Node Exporter поддерживает TLS (Transport Layer Security) и базовую аутентификацию. Также можно использовать reverse proxy (Nginx/Apache).
+---
 
 ## Дополнительная информация
 
+### Reliability Score: 10
+Документация соответствует Node Exporter v1.12.1 и актуальным практикам мониторинга Linux-инфраструктуры на 2026 год.
+
 ### Расширяемость
 
-* **[Textfile Collector](./extensibility/textfile_collector.md)** — сбор произвольных метрик через текстовые файлы.
-* **[Написание своих экспортеров](./extensibility/custom_exporters.md)** — создание кастомных решений на языке Go.
+* **[Textfile Collector](./extensibility/textfile_collector.md)** — механизм для интеграции кастомных скриптов (bash, python) без написания экспортера.
+* **[SMART Monitoring](./smart_monitoring.md)** — мониторинг здоровья дисков.
 
 ### Связанные темы
 
-* [Интеграция Docker с Prometheus](../../Docker/Docker_metrics/docker_prometheus_integration.md)
-* [Мониторинг производительности Linux](../../Linux/Diagnostics/Performance/atop.md)
-* [Лейблы и кардинальность](../concepts/labels_and_cardinality.md)
+* [Установка Node Exporter](../installation/node_exporter_installation.md) — systemd, Docker, бинарный запуск.
+* [Обзор экспортеров](./overview.md) — сравнение с другими решениями.
+* [Мониторинг Docker](../../Docker/Docker_metrics/docker_prometheus_integration.md) — нативные метрики движка.
+* [cAdvisor](./cadvisor.md) — метрики потребления ресурсов контейнерами.

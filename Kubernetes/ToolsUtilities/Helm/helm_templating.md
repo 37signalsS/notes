@@ -18,13 +18,15 @@ Helm использует Go template engine (движок шаблонов Go) 
 
 ## Базовые концепции
 
-### Синтаксис и пайплайны
+### Разработка шаблонов и синтаксис Go Templates
 
-Шаблоны Helm заключаются в двойные фигурные скобки `{{ }}`. Одной из ключевых особенностей является использование пайплайнов (`|`) для передачи результата одной функции в другую.
+Шаблоны в каталоге `templates/` используют мощные возможности языка шаблонов Go:
 
-- **Вставка значения:** `{{ .Values.image.repository }}`
-- **Пайплайн:** `{{ .Values.name | upper | quote }}` (переводит в верхний регистр и заключает в кавычки)
-- **Управление пробелами:** Использование `{{-` или `-}}` позволяет удалять лишние пробелы и пустые строки вокруг блока шаблона.
+*   **Встроенные объекты**: Доступ к данным через объекты `.Chart` (метаданные чарта), `.Values` (параметры пользователя) и `.Release` (данные о текущем выпуске: имя, пространство имен).
+*   **Ссылки на значения**: Вставка параметров синтаксисом `{{ .Values.key }}`.
+*   **Функции и конвейеры (Pipelines)**: Преобразование данных с помощью функций и их цепочек, например: `{{ .Values.key | quote }}` или `{{ .Values.key | default "default-value" }}`.
+*   **Управление потоком (Flow Control)**: Использование условий `if/else` для логики включения ресурсов и циклов `range` для итерации по спискам.
+*   **Именованные шаблоны (Named Templates)**: Повторно используемые фрагменты кода, реализующие принцип **DRY** (Don't Repeat Yourself).
 
 Подробности синтаксиса см. в разделе **[Синтаксис шаблонов](./templating/syntax.md)**.
 
@@ -56,6 +58,56 @@ Helm предоставляет доступ к нескольким глоба�
 ---
 
 ## Практические сценарии
+
+### Расширенный пример шаблона (ConfigMap + Deployment)
+
+Этот пример демонстрирует использование встроенных объектов, условной логики, функций пайплайнов и циклов.
+
+**templates/configmap.yaml:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    app: {{ .Chart.Name }}
+data:
+  favoriteDrink: {{ .Values.favorite.drink | default "coffee" | quote }}
+  greeting: {{ if .Values.greeting }}{{ .Values.greeting | quote }}{{ else }}"Hello World!"{{ end }}
+  items: |
+{{- range .Values.items }}
+    - {{ . | quote }}
+{{- end }}
+```
+
+**templates/deployment.yaml:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-deployment
+spec:
+  replicas: {{ .Values.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}-container
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
+        ports:
+        - containerPort: {{ .Values.service.port }}
+        env:
+        - name: CONFIG_GREETING
+          valueFrom:
+            configMapKeyRef:
+              name: {{ .Release.Name }}-config
+              key: greeting
+```
 
 ### Условная логика (if/else)
 

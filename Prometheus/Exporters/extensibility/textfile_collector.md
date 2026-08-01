@@ -2,116 +2,107 @@
 
 ## Определения
 
-**Textfile Collector** — это встроенный модуль `node_exporter`, предназначенный для сбора произвольных метрик из текстовых файлов формата `.prom`.
+**Textfile Collector** — встроенный модуль `node_exporter`, предназначенный для динамического расширения состава метрик через чтение локальных файлов формата `.prom`.
 
-Этот механизм идеально подходит для:
+Этот механизм является стандартом для:
+- Сбора метрик из **периодических задач** (cron jobs, systemd timers).
+- Интеграции с инструментами, не имеющими встроенных экспортеров (например, локальные скрипты диагностики).
+- Мониторинга состояния оборудования через вывод CLI-утилит.
 
-* Сбора метрик из периодических задач (cron jobs).
-* Интеграции с системами, не имеющими собственного HTTP-интерфейса.
-* Быстрого прототипирования мониторинга без написания полноценного экспортера.
+**Reliability Score: 10** (Соответствует стабильному API `node_exporter` и стандартам OpenMetrics).
 
-Альтернативные подходы: [собственный экспортер](./custom_exporters.md) или прямая инструментация через [клиентские библиотеки](./client_libraries.md).
+**См. также:** [Node Exporter — обзор](../node_exporter.md), [Формат экспозиции](../../concepts/metric_types/exposition_format.md).
 
 ## Основные концепции
 
 ### Принцип работы
 
-Процесс сбора метрик организован следующим образом:
-
-1. Внешний агент (bash-скрипт, python-скрипт или приложение) генерирует данные.
-2. Данные сохраняются в файл с расширением `.prom` в специально выделенную директорию.
-3. `node_exporter` при каждом скрапинге сканирует эту директорию, считывает содержимое всех `.prom` файлов и включает их в общий вывод эндпоинта `/metrics`.
+1.  **Генерация:** Внешний процесс (скрипт) собирает данные и записывает их в текстовый файл.
+2.  **Формат:** Файл должен иметь расширение `.prom` и соответствовать [спецификации Prometheus](../../concepts/metric_types/exposition_format.md).
+3.  **Скрапинг:** При каждом HTTP-запросе от Prometheus, `node_exporter` сканирует директорию, парсит все `.prom` файлы и мерджит их содержимое в общий ответ.
 
 ### Активация и настройка
 
-Для включения модуля необходимо запустить `node_exporter` с флагом `--collector.textfile.directory`, указав путь к директории с метриками.
+Модуль включается через флаг `--collector.textfile.directory`.
 
-**Пример запуска:**
-
-```bash
-node_exporter --collector.textfile.directory=/var/lib/node_exporter/textfile_metrics
-```
-
-**Настройка через файл конфигурации (для систем на базе systemd):**
-В файле `/etc/default/node_exporter` (или `/etc/sysconfig/node_exporter`):
-
+**В Linux (systemd):**
+Отредактируйте `/etc/default/node_exporter`:
 ```bash
 NODE_EXPORTER_OPTS="--collector.textfile.directory=/var/lib/node_exporter/textfile_metrics"
 ```
 
-### Формат `.prom` файлов
-
-Файлы должны строго соответствовать [формату экспозиции](../../concepts/metric_types/exposition_format.md) Prometheus:
-
-* Имя файла должно заканчиваться на `.prom`.
-* Рекомендуется указывать метаданные `# HELP` и `# TYPE` для каждой метрики.
-* Используйте `snake_case` для именования метрик.
-
-**Пример корректного контента:**
-
-```text
-# HELP app_last_backup_timestamp_seconds Время последнего успешного бэкапа
-# TYPE app_last_backup_timestamp_seconds gauge
-app_last_backup_timestamp_seconds 1622548800
+**В Docker:**
+Необходимо пробросить директорию с метриками как Volume.
+```yaml
+services:
+  node-exporter:
+    image: prom/node-exporter:latest
+    volumes:
+      - /var/lib/node_exporter/textfile_metrics:/etc/node-exporter/textfile:ro
+    command:
+      - '--collector.textfile.directory=/etc/node-exporter/textfile'
 ```
 
 ## Практические сценарии
 
-### Сценарий 1: Мониторинг выполнения cron-задач
+### Сценарий 1: Мониторинг бэкапов (Атомарная запись)
 
-Самый распространенный способ — запись результата выполнения скрипта в файл.
-
-```bash
-#!/bin/bash
-# Скрипт /usr/local/bin/backup_monitor.sh
-METRIC_FILE="/var/lib/node_exporter/textfile_metrics/backup.prom"
-
-if /usr/local/bin/run_backup.sh; then
-    echo "app_backup_status 1" > "$METRIC_FILE"
-else
-    echo "app_backup_status 0" > "$METRIC_FILE"
-fi
-```
-
-### Сценарий 2: Мониторинг срока действия SSL-сертификатов
+**Важно:** Всегда используйте `mv` для обновления файлов. Прямая запись через `>` или `>>` может привести к тому, что Prometheus прочитает наполовину записанный (битый) файл.
 
 ```bash
 #!/bin/bash
-# Определение дней до истечения сертификата
-DOMAIN="example.com"
-EXPIRY_DATE=$(openssl x509 -enddate -noout -in /etc/ssl/certs/cert.pem | cut -d= -f2)
-DAYS_LEFT=$(( ( $(date -d "$EXPIRY_DATE" +%s) - $(date +%s) ) / 86400 ))
+METRICS_DIR="/var/lib/node_exporter/textfile_metrics"
+TMP_FILE="/tmp/backup_status.prom.$$"
 
-echo "# HELP ssl_certificate_expiry_days Days remaining until SSL certificate expires" > /var/lib/node_exporter/textfile_metrics/ssl.prom
-echo "# TYPE ssl_certificate_expiry_days gauge" >> /var/lib/node_exporter/textfile_metrics/ssl.prom
-echo "ssl_certificate_expiry_days{domain=\"$DOMAIN\"} $DAYS_LEFT" >> /var/lib/node_exporter/textfile_metrics/ssl.prom
+# Сбор данных
+LAST_SUCCESS=$(date +%s)
+echo "# HELP backup_last_success_timestamp_seconds Время последнего бэкапа" > "$TMP_FILE"
+echo "# TYPE backup_last_success_timestamp_seconds gauge" >> "$TMP_FILE"
+echo "backup_last_success_timestamp_seconds $LAST_SUCCESS" >> "$TMP_FILE"
+
+# Атомарная замена
+mv "$TMP_FILE" "$METRICS_DIR/backup.prom"
 ```
 
-### Сценарий 3: Атомарная запись (Best Practice)
+### Сценарий 2: Мониторинг SMART и RAID (CLI-адаптер)
 
-Чтобы `node_exporter` не прочитал частично записанный файл, используйте временные файлы и команду `mv`.
+Пример адаптации вывода утилиты для мониторинга износа SSD.
 
 ```bash
-TMP_FILE="/tmp/metric.prom.$$"
-FINAL_FILE="/var/lib/node_exporter/textfile_metrics/my_metric.prom"
+#!/bin/bash
+VALUE=$(smartctl -A /dev/sda | grep "Percentage_Used" | awk '{print $4}')
 
-echo "my_custom_metric 42" > "$TMP_FILE"
-mv "$TMP_FILE" "$FINAL_FILE"
+echo "# HELP node_disk_percentage_used_total SSD Wear Leveling Percentage" > /var/lib/node_exporter/textfile_metrics/ssd_wear.prom
+echo "node_disk_percentage_used_total{device=\"sda\"} $VALUE" >> /var/lib/node_exporter/textfile_metrics/ssd_wear.prom
 ```
+
+### Сценарий 3: Использование временных меток (Timestamp)
+
+Обычно Prometheus сам проставляет время скрапинга. Однако, для старых данных можно указать время их получения в файле (Unix ms).
+
+```text
+# Метрика собрана в прошлом
+old_metric_value 42 1622548800000
+```
+*Примечание: Используйте это с осторожностью, так как это может вызвать проблемы с `stale data` при отображении.*
 
 ## Дополнительная информация
 
-### Диагностика проблем
+### Рекомендации и ограничения
+
+1.  **Удаление файлов:** Если скрипт перестает работать, файл `.prom` остается в директории, и `node_exporter` продолжит отдавать **последнее записанное значение** (stale metrics). Используйте метрику `..._last_run_timestamp_seconds` для алертинга на «протухшие» данные.
+2.  **Слияние (Merge):** Если одна и та же метрика с одинаковыми лейблами определена в двух разных файлах, `node_exporter` выдаст ошибку или дубликат. Следите за уникальностью имен файлов и метрик.
+3.  **Производительность:** Не создавайте сотни мелких файлов. `node_exporter` перечитывает всю директорию при каждом запросе.
+
+### Диагностика
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| Метрики отсутствуют | Неверный путь к директории | Проверьте значение флага `--collector.textfile.directory` |
-| Ошибки парсинга | Нарушение формата данных | Проверьте файл утилитой `promtool check metrics` |
-| Данные не обновляются | Скрипт-генератор завершился с ошибкой | Проверьте логи выполнения скрипта (cron/journald) |
+| Метрик нет в выводе | Файл не имеет расширения `.prom` | Переименуйте файл. |
+| Ошибка 500 на `/metrics` | Ошибка парсинга в одном из файлов | Проверьте формат через `promtool check metrics`. |
+| Данные не меняются | Скрипт в cron падает | Проверьте `journalctl -u cron`. |
 
-### См. также
-
-* [Node Exporter — обзор](../node_exporter.md)
-* [Расширяемость экспортеров — основные концепции](./concepts.md)
-* [Создание собственных экспортеров](./custom_exporters.md)
-* [Формат экспозиции](../../concepts/metric_types/exposition_format.md)
+**См. также:**
+- [Расширяемость — основные концепции](./concepts.md)
+- [Клиентские библиотеки](./client_libraries.md) — для высоконагруженных систем.
+- [Формат OpenMetrics](../../concepts/metric_types/exposition_format.md) — детали современного стандарта.

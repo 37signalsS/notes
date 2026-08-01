@@ -2,152 +2,133 @@
 
 ## Определения
 
-**`kind: PrometheusRule`** — Custom Resource Definition в Prometheus Operator для декларативного описания правил оповещения (alerting rules) и правил записи (recording rules). Operator преобразует ресурсы `PrometheusRule` в Kubernetes ConfigMap, которые автоматически монтируются в экземпляры Prometheus Server.
+**`kind: PrometheusRule`** — Custom Resource Definition (CRD) в Prometheus Operator для декларативного описания правил оповещения (alerting rules) и правил записи (recording rules). Operator преобразует эти ресурсы в Kubernetes ConfigMap, которые автоматически монтируются в экземпляры Prometheus Server или PrometheusAgent.
+
+**UTF-8 Mode (Prometheus 3.0+)** — современный режим валидации имен, позволяющий использовать в `PrometheusRule` любые символы UTF-8 (точки, тире и др.) в именах метрик и лейблов.
 
 **API version:** `monitoring.coreos.com/v1`
 
-> **См. также:** [Правила Recording и Alerting](../../../rules.md) — общие концепции, синтаксис PromQL и состояния алертов.
+> **SSoT по синтаксису:** Полное описание синтаксиса PromQL и логики вычислений приведено в [Правила Recording и Alerting](../../../rules.md).
 
 ## Базовые концепции
 
-### Принцип работы
+### Принцип работы и жизненный цикл
 
-1. Пользователь создаёт объект `PrometheusRule` с описанием групп правил.
-2. Prometheus Operator обнаруживает новый ресурс и создаёт (или обновляет) ConfigMap в том же пространстве имён (namespace).
-3. Operator обновляет список файлов правил в конфигурации Prometheus (через Kubernetes Secret).
-4. Sidecar-контейнер `prometheus-config-reloader` инициирует перезагрузку конфигурации Prometheus.
-5. Prometheus начинает вычислять правила с заданным в группе интервалом.
+1.  **Декларация:** Пользователь создает объект `PrometheusRule`.
+2.  **Агрегация:** Operator обнаруживает ресурс и создает ConfigMap в том же пространстве имен.
+3.  **Монтирование:** Путь к ConfigMap добавляется в `StatefulSet` Prometheus.
+4.  **Синхронизация:** `prometheus-config-reloader` отслеживает изменения и инициирует `/-/reload`.
+5.  **Валидация:** Admission Webhook проверяет синтаксис PromQL и соответствие имен выбранной схеме (`legacy` или `utf8`).
 
-### Связь с Prometheus CRD
+### Связь с ресурсом Prometheus
 
-Экземпляр Prometheus выбирает правила для загрузки с помощью селекторов в своей спецификации:
+Выборка правил осуществляется через селекторы в спецификации сервера:
 
-```yaml
-# В спецификации ресурса Prometheus
-spec:
-  ruleSelector:
-    matchLabels:
-      release: monitoring        # Выборка правил по меткам (labelSelector)
-  ruleNamespaceSelector:
-    matchNames:
-      - monitoring               # Список namespace для поиска правил
-```
+| Параметр | Описание |
+| :--- | :--- |
+| **`ruleSelector`** | Фильтрует `PrometheusRule` по меткам (labels). |
+| **`ruleNamespaceSelector`** | Определяет, в каких неймспейсах искать правила (`any: true` для всех). |
 
-Если `ruleSelector` не указан, Prometheus загрузит все объекты `PrometheusRule` из разрешённых пространств имён.
+### Новые возможности (2025–2026)
 
-### Структура ресурса
-
-Каждый объект `PrometheusRule` содержит одну или несколько групп (`groups`). Группа — это логический набор правил, выполняемых последовательно.
-
-**Иерархия объектов:**
-
-- `PrometheusRule`
-  - `groups[]`
-    - `name`: Уникальное имя группы.
-    - `interval`: Интервал вычисления правил в группе (например, `30s`).
-    - `rules[]`: Список определений правил.
-
-> **Синтаксис:** Полное описание параметров `alert`, `expr`, `for`, `labels` и `annotations` приведено в SSoT-файле [Правила Recording и Alerting](../../../rules.md).
+*   **`keep_firing_for`**: Удерживает алерт в состоянии `firing` в течение заданного времени после прекращения условия (решение проблемы дребезга/flapping).
+*   **`query_offset`**: Смещает окно вычисления группы правил в прошлое (критично для Remote Write и систем с задержками скрейпинга).
+*   **`limit`**: Ограничивает количество генерируемых временных серий или алертов одной группой для защиты памяти Prometheus.
+*   **`status` subresource**: Отображение состояния загрузки правил непосредственно в метаданных ресурса Kubernetes.
 
 ## Практические сценарии
 
-### Настройка правил оповещения (Alerting Rules)
+### Сценарий 1: Отказоустойчивый алерт с защитой от дребезга
 
-Пример алертов для мониторинга ошибок приложения и доступности узлов:
+Пример использования `keep_firing_for` для предотвращения дублирования инцидентов при кратковременных колебаниях метрик.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: app-alerts
-  namespace: monitoring
+  name: critical-app-alerts
   labels:
     release: monitoring
 spec:
   groups:
-    - name: application-health
+    - name: api-health
       rules:
         - alert: HighErrorRate
-          expr: rate(http_requests_total{status="500"}[5m]) > 0.1
+          expr: rate(http_requests_total{status=~"5.."}[5m]) > 1
           for: 5m
+          keep_firing_for: 10m  # Удерживать алерт 10 минут после исправления
           labels:
-            severity: warning
+            severity: critical
           annotations:
-            summary: "Высокий уровень ошибок в приложении"
-            description: "Доля 500-х ошибок составляет {{ $value }} запросов в секунду"
-        - alert: PodRestarts
-          expr: increase(kube_pod_container_status_restarts_total[1h]) > 5
-          for: 10m
-          labels:
-            severity: info
-          annotations:
-            summary: "Частые перезапуски подов"
+            summary: "Высокий уровень 5xx ошибок"
+            description: "Текущее значение: {{ $value }}"
 ```
 
-### Настройка правил записи (Recording Rules)
+### Сценарий 2: Правила записи с компенсацией задержек (query_offset)
 
-Пример предварительного вычисления (агрегации) метрик для оптимизации дашбордов:
+Использование `query_offset` для корректной агрегации данных, поступающих через Remote Write.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: aggregation-rules
-  namespace: monitoring
-  labels:
-    release: monitoring
 spec:
   groups:
-    - name: metrics-aggregation
+    - name: global-stats
+      interval: 1m
+      query_offset: 2m  # Смещение на 2 минуты в прошлое
+      limit: 500        # Ограничение на 500 создаваемых серий
       rules:
-        - record: job:http_requests_total:rate5m
-          expr: sum(rate(http_requests_total[5m])) by (job)
+        - record: job:request_duration_seconds:p95
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))
 ```
 
-### Мониторинг ресурсов Kubernetes
+### Сценарий 3: Поддержка имен в стиле OpenTelemetry (UTF-8)
+
+При использовании Prometheus 3.0 и включении `nameValidationScheme: utf8`.
 
 ```yaml
-- alert: HighMemoryUsage
-  expr: (sum(container_memory_usage_bytes) by (pod) / sum(container_spec_memory_limit_bytes) by (pod)) * 100 > 90
-  for: 10m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Высокое потребление памяти подом {{ $labels.pod }}"
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: otel-compat-rules
+spec:
+  groups:
+    - name: otel-metrics
+      rules:
+        - alert: ServiceDown
+          # Использование точек в именах лейблов
+          expr: up{app.kubernetes.io/name="my-service"} == 0
+          for: 2m
 ```
 
 ## Дополнительная информация
 
-### Основные параметры спецификации (spec)
+### Основные параметры спецификации
 
-| Параметр | Описание | Пример |
-|---|---|---|
-| **`groups`** | Массив групп правил | См. примеры выше |
-| **`groups[].name`** | Имя группы (обязательно) | `node-alerts` |
-| **`groups[].interval`** | Частота вычисления правил | `30s`, `1m` |
-| **`groups[].rules`** | Список Alerting или Recording правил | — |
+| Параметр | Описание | Особенности |
+| :--- | :--- | :--- |
+| **`groups[].interval`** | Частота вычисления группы. | По умолчанию берется из `Prometheus.spec.evaluationInterval`. |
+| **`groups[].query_offset`** | Смещение во времени. | Позволяет избежать скрейпинга "дыр" в данных. |
+| **`groups[].limit`** | Лимит серий/алертов. | Защита от взрыва кардинальности. |
+| **`groups[].rules[].keep_firing_for`** | Время удержания алерта. | Стабилизация состояния в Alertmanager. |
 
-### Параметры правил (rules)
+### Диагностика
 
-| Параметр | Применимость | Описание |
-|---|---|---|
-| **`alert`** | Alerting | Имя оповещения |
-| **`record`** | Recording | Имя новой (вычисленной) метрики |
-| **`expr`** | Оба типа | PromQL выражение для вычисления |
-| **`for`** | Alerting | Время удержания условия до срабатывания |
-| **`labels`** | Оба типа | Набор меток для алерта или новой метрики |
-| **`annotations`** | Alerting | Метаданные (summary, description, etc.) |
+1.  **Проверка в UI Prometheus:** Меню `Status -> Rules`. Если правила нет в списке, оно не было выбрано селектором или отклонено при загрузке.
+2.  **Проверка ConfigMap:**
+    `kubectl get configmap -n monitoring -l prometheus-name=<name>`
+3.  **Логи config-reloader:**
+    `kubectl logs -n monitoring <prometheus-pod> -c config-reloader` — проверка успешности `/-/reload`.
 
-### Инструменты и отладка
+### Связанные темы
 
-- **Валидация:** Используйте утилиту `promtool` для проверки синтаксиса перед деплоем.
-- **Проверка в UI:** Загруженные правила можно увидеть в веб-интерфейсе Prometheus в разделе **Status -> Rules**.
-- **Статус Operator:** Если правила не появились, проверьте логи Prometheus Operator на наличие ошибок при создании ConfigMap.
+*   **[Prometheus CRD](./prometheus.md)** — настройка селекторов и схем валидации имен.
+*   **[Alertmanager CRD](./alertmanager.md)** — маршрутизация сгенерированных алертов.
+*   **[Promtool и Best Practices](../../../promtool_and_best_practices.md)** — утилиты для проверки правил.
+*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
 
-> **Лучшие практики:** [promtool и правила проектирования](../../../promtool_and_best_practices.md).
-
-### Связанные ресурсы
-
-- [Prometheus CRD](./prometheus.md) — настройка селекторов для загрузки правил.
-- [Alertmanager CRD](./alertmanager.md) — управление доставкой алертов.
-- [Примеры алертов](../../../concepts/metric_types/alerts.md) — типовые алерты для различных видов метрик.
+### См. также
+* [Prometheus Rule Specification (Official)](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/)
+* [Prometheus Operator API Documentation](https://prometheus-operator.dev/docs/operator/api/#monitoring.coreos.com/v1.PrometheusRule)

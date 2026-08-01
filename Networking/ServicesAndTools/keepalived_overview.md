@@ -116,6 +116,7 @@ vrrp_instance VI_1 {
 
 ### Сценарии использования
 
+- **HA для Angie:** Отказоустойчивый веб-сервер с плавающим VIP. См. **[Настройка Angie с Keepalived](../../WebServers/Angie/angie_ha_with_keepalived.md)**.
 - **HA для OpenSearch:** Плавающий VIP перед узлами. См. **[Отказоустойчивость OpenSearch с помощью Keepalived](../../ELK_Stack/OpenSearch/opensearch_high_availability_keepalived.md)**.
 - **HA для балансировщика Kubernetes (Bare-metal):** VIP "плавает" между двумя HAProxy, обеспечивая единую точку входа для `kubectl` и Ingress.
 - **HA для API-сервера Kubernetes:** Использование VIP для `kube-apiserver`. См. **[Настройка HA API-сервера](../../Kubernetes/Installation/kubeadm/ha_concepts.md)**.

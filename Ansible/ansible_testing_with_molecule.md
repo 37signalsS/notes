@@ -32,18 +32,18 @@
 
 ### Установка
 
-Molecule является Python-пакетом и устанавливается через `pip`. Современные версии (v5+) требуют отдельной установки драйверов через плагины.
+Molecule является Python-пакетом. Современные версии (v5+, v6+) требуют явной установки драйверов через систему плагинов, а `ansible-lint` больше не устанавливается по умолчанию как зависимость, его нужно указывать отдельно.
 
 ```bash
-# Установка Molecule с поддержкой Docker и ansible-lint
-pip install "molecule-plugins[docker]" ansible-lint
+# Рекомендуемая установка в виртуальное окружение
+pip install "molecule-plugins[docker]" ansible-lint pytest-testinfra
 
 # Проверка установки
 molecule --version
 # → molecule 24.x.x using python 3.x
 ```
 
-> **Примечание:** Molecule тесно связан с версией Ansible. Рекомендуется использовать виртуальные окружения Python для изоляции зависимостей.
+> **Примечание:** Рекомендуется использовать виртуальные окружения Python (`venv`) для изоляции зависимостей тестов от системы.
 
 ## Практические сценарии
 
@@ -56,10 +56,13 @@ molecule --version
 ```bash
 # Создание структуры роли
 ansible-galaxy role init nginx
+# → - Role nginx was created successfully
+
 cd nginx
 
 # Инициализация сценария default
 molecule init scenario
+# → INFO     Initializing new scenario default...
 ```
 
 Это создаст поддиректорию `molecule/default/` с базовыми конфигурационными файлами.
@@ -76,17 +79,18 @@ driver:
   name: docker
 platforms:
   - name: instance
-    image: "geerlingguy/docker-ubuntu2004-ansible:latest"
+    image: "geerlingguy/docker-ubuntu2204-ansible:latest"
     pre_build_image: true
 provisioner:
   name: ansible
 verifier:
-  name: ansible
+  # Можно использовать "ansible" (модули assert) или "testinfra" (Python)
+  name: testinfra
 ```
 
 #### Драйвер Docker
 
-Для работы с Docker Molecule использует плагин `molecule-plugins[docker]`. Он автоматически управляет жизненным циклом контейнеров (создание, удаление, подключение), поэтому файлы `create.yml` и `destroy.yml` в большинстве случаев создавать вручную не требуется.
+Для работы с Docker Molecule использует плагин `molecule-plugins[docker]`. Он автоматически управляет жизненным циклом контейнеров (создание, удаление, подключение), поэтому файлы `create.yml` и `destroy.yml` создавать вручную не требуется.
 
 Основные настройки контейнера задаются в `molecule.yml` в секции `platforms`.
 
@@ -112,7 +116,7 @@ verifier:
 
 #### Шаг 4: Основной плейбук (`molecule/default/converge.yml`)
 
-`converge.yml` — точка входа, которую Molecule выполняет для применения роли. Минимальный converge.yml просто подключает тестируемую роль. Если роль требует предварительных задач (например, запуск nginx через command), они добавляются до `include_role`.
+`converge.yml` — точка входа, которую Molecule выполняет для применения роли.
 
 ```yaml
 ---
@@ -125,31 +129,32 @@ verifier:
         name: nginx
 ```
 
-#### Шаг 5: Написание тестов (`molecule/default/verify.yml`)
+#### Шаг 5: Написание тестов с помощью Testinfra (`molecule/default/tests/test_default.py`)
 
-Это плейбук, который проверяет, что роль отработала корректно.
+Индустриальным стандартом для сложных инфраструктурных тестов является **Testinfra** (плагин для `pytest`). Создайте папку `tests` и добавьте туда Python-файл.
 
-```yaml
----
-- name: Verify
-  hosts: all
-  gather_facts: true
-  tasks:
-    - name: Gather package facts
-      ansible.builtin.package_facts:
-        manager: auto
+```python
+import os
+import testinfra.utils.ansible_runner
 
-    - name: Check that nginx is installed
-      ansible.builtin.assert:
-        that:
-          - "'nginx' in ansible_facts.packages"
+testinfra_hosts = testinfra.utils.ansible_runner.AnsibleRunner(
+    os.environ['MOLECULE_INVENTORY_FILE']
+).get_hosts('all')
 
-    - name: Check that nginx is running
-      ansible.builtin.command: pidof nginx
-      changed_when: false
+def test_nginx_is_installed(host):
+    nginx = host.package("nginx")
+    assert nginx.is_installed
+
+def test_nginx_running_and_enabled(host):
+    nginx = host.service("nginx")
+    assert nginx.is_running
+    assert nginx.is_enabled
+
+def test_nginx_listens_on_port_80(host):
+    assert host.socket("tcp://0.0.0.0:80").is_listening
 ```
 
-> `service_facts` полагается на systemd и не работает в Docker-контейнерах без него (см. Типовые проблемы №4). Вместо него используется `package_facts` (проверка установки) + `pidof` (проверка работы). `gather_facts: true` требует увеличения `ansible_timeout` (см. Типовые проблемы №1).
+> **Альтернатива:** Вы можете использовать `verifier: name: ansible` и писать тесты на чистом YAML с помощью `ansible.builtin.assert`, но `testinfra` обеспечивает большую гибкость при сложных проверках (например, анализ конфигурационных файлов через регулярные выражения).
 
 #### Шаг 6: Запуск тестов
 
@@ -157,6 +162,12 @@ verifier:
 
 ```bash
 molecule test
+# → INFO     Running default > dependency
+# → ...
+# → INFO     Running default > idempotence
+# → ...
+# → INFO     Running default > verify
+# → ... (100% PASS)
 ```
 
 Если все шаги пройдены успешно, вы увидите зеленый вывод, подтверждающий, что ваша роль работает как ожидалось и является идемпотентной.
