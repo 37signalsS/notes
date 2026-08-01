@@ -1,8 +1,6 @@
 .obsidian/**
 
 AI/rag_system/venv/
-AI/rag_system/chroma_db/
-AI/rag_system/chroma_bge/
 AI/rag_system/qdrant_bge/
 AI/rag_system/qdrant_db/
 AI/rag_system/qdrant_storage/
