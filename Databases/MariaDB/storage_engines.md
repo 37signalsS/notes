@@ -59,6 +59,12 @@
 **Connect:** Интеграция с внешними источниками.
 - **Функция:** Доступ к CSV, JSON, Excel, XML или другим СУБД (через JDBC/ODBC) как к локальным таблицам.
 
+**Mroonga:** Высокопроизводительный полнотекстовый поиск.
+- **Особенности:** Интеграция с движком Groonga. Поддерживает быстрый поиск по CJK (китайский, японский, корейский), лингвистический анализ и высокую скорость индексации.
+
+**OQGRAPH:** Графовый движок для реляционных данных.
+- **Функция:** Позволяет выполнять графовые вычисления (кратчайший путь, обход дерева) над обычными таблицами с использованием SQL-интерфейса.
+
 ## Практические сценарии
 
 ### Мониторинг состояния движков
@@ -94,6 +100,41 @@ ALTER TABLE historical_logs ENGINE=S3 COMPRESSION_ALGORITHM=zlib;
 
 -- Проверка статуса (таблица станет доступна только для чтения)
 SHOW TABLE STATUS LIKE 'historical_logs';
+
+### Шардирование данных (Spider)
+
+```sql
+-- Настройка линка на удаленный сервер
+CREATE SERVER 'backend_node1' FOREIGN DATA WRAPPER mysql 
+OPTIONS (HOST '192.168.1.50', DATABASE 'remote_db', PORT 3306);
+
+-- Создание таблицы-прокси
+CREATE TABLE users_shard1 (
+    id INT PRIMARY KEY,
+    name VARCHAR(100)
+) ENGINE=Spider COMMENT='wrapper "backend_node1", table "users"';
+```
+
+### Генерация последовательностей (Sequence)
+
+```sql
+-- Генерация списка дат за последние 7 дней для отчета
+SELECT CURDATE() - INTERVAL seq DAY AS report_date
+FROM seq_0_to_6;
+```
+
+### Полнотекстовый поиск (Mroonga)
+
+```sql
+CREATE TABLE news (
+    id INT PRIMARY KEY,
+    content TEXT,
+    FULLTEXT INDEX (content)
+) ENGINE=Mroonga;
+
+-- Быстрый поиск с лингвистическим разбором
+SELECT * FROM news WHERE MATCH(content) AGAINST('DevOps SRE' IN BOOLEAN MODE);
+```
 ```
 
 ## Дополнительная информация
@@ -106,6 +147,9 @@ SHOW TABLE STATUS LIKE 'historical_logs';
 | **Aria** | Частично | B+Tree | Системные и временные задачи |
 | **MyRocks** | Да | LSM-Tree | Сжатие, интенсивная запись |
 | **ColumnStore** | Да | Columnar | Аналитика (OLAP), Big Data |
+| **Spider** | XA | Remote-based | Шардинг, Масштабирование |
+| **Mroonga** | Нет | Inverted Index | Полнотекстовый поиск |
+| **OQGRAPH** | Нет | Graph | Графовые алгоритмы |
 | **S3** | Нет | Aria-based cache | Архивное холодное хранение |
 | **Memory** | Нет | Hash, B-Tree | Временные данные, сверхвысокая скорость |
 

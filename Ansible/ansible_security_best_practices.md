@@ -121,3 +121,4 @@ callbacks_enabled = ansible.builtin.timer, ansible.builtin.profile_tasks
 *   **[Ansible Vault: Лучшие практики](./Vault/best_practices.md)** — глубокое погружение в управление секретами и шифрование.
 *   **[Антипаттерны Ansible](./ansible_bad_practices.md)** — архитектурные ошибки, ведущие к снижению безопасности (например, глобальный `become`).
 *   **[Semaphore](./ansible_semaphore.md)** — управление доступом через современный веб-интерфейс (RBAC) вместо прямого доступа по SSH.
+*   **[Автоматизация Wazuh через Ansible](../Security/Tools/Wazuh/ansible-automation-per-agent.md)** — пример реализации **Policy-driven security** и управления правилами SIEM.

@@ -2,79 +2,114 @@
 
 ## Определения
 
-**Мониторинг миграций** — это процесс непрерывного наблюдения за выполнением изменений в схеме и данных базы данных. Целью является минимизация времени простоя (Downtime), предотвращение каскадных сбоев из-за блокировок и обеспечение наблюдаемости (Observability) за состоянием данных в процессе трансформации.
+- **Мониторинг миграций** — это процесс непрерывного наблюдения за выполнением изменений в схеме (DDL) и данных (DML) базы данных.
+- **Наблюдаемость миграций (Migration Observability)** — способность системы предоставлять данные о внутреннем состоянии процесса трансформации (блокировки, прогресс, влияние на ресурсы) через метрики, логи и трейсы.
+- **Дрейф схемы (Schema Drift)** — расхождение между ожидаемым состоянием схемы (описанным в коде) и фактическим состоянием в БД, которое мониторинг должен выявлять.
 
 ## Основные концепции
 
-Эффективный мониторинг строится на пересечении метрик приложения (библиотеки миграций) и глубоких метрик самой СУБД.
+Эффективный мониторинг строится на трех уровнях: уровне СУБД, уровне инструментов миграций и уровне приложения.
 
 ### Ключевые метрики (SRE Golden Signals)
 
-1. **Успешность (Errors):** количество упавших миграций. Алертинг на любой ненулевой показатель `failure_total`.
-2. **Длительность (Latency/Duration):** время выполнения DDL/DML операций. Помогает выявить «тяжелые» миграции, требующие оптимизации.
-3. **Насыщенность (Saturation):** влияние миграции на ресурсы БД (CPU, I/O, Lock Wait).
-4. **Лаг репликации:** критический показатель при миграции данных в больших таблицах. Рост лага может привести к чтению устаревших данных на репликах.
+1. **Успешность (Errors):** Отслеживание неудачных попыток применения миграций. Алертинг должен срабатывать на любой `failure_total > 0`.
+2. **Длительность (Latency):** Время выполнения конкретных шагов. Позволяет выявить деградацию производительности на больших объемах данных.
+3. **Насыщенность (Saturation):** Влияние миграции на системные ресурсы (CPU, I/O, Disk Space). Критично для Online Schema Change (OSC) инструментов.
+4. **Блокировки (Traffic/Concurrency):** Количество запросов, ожидающих освобождения ресурсов, захваченных миграцией.
 
-### Инструменты наблюдения СУБД (PostgreSQL)
+### Объекты наблюдения в СУБД
 
-- **`pg_stat_activity`:** мониторинг текущих запросов и типов блокировок (`wait_event_type`).
-- **`pg_stat_progress_create_index`:** отслеживание прогресса создания индексов в реальном времени.
-- **`pg_stat_progress_analyze` / `vacuum`:** наблюдение за сопутствующими процессами обслуживания.
+#### PostgreSQL
+- **`pg_stat_activity`:** Текущие сессии, их состояние и `wait_event` (события ожидания).
+- **`pg_stat_progress_*`:** Специализированные представления для отслеживания прогресса:
+    - `pg_stat_progress_create_index` — прогресс построения индексов.
+    - `pg_stat_progress_analyze` / `vacuum` — фоновое обслуживание после массовых DML.
+    - `pg_stat_progress_cluster` — прогресс пересоздания таблиц.
+- **`pg_locks`:** Детальная информация о типах удерживаемых и запрашиваемых блокировок.
+
+#### MySQL
+- **`information_schema.innodb_trx`:** Список текущих транзакций и их длительность.
+- **`performance_schema.data_locks`** (MySQL 8.0+) или `innodb_lock_waits`: Диагностика конфликтов доступа к данным.
+- **`performance_schema.events_stages_current`:** Прогресс выполнения текущих стадий запроса.
 
 ## Практические сценарии
 
-### Сценарий 1: Мониторинг блокировок (Prometheus Exporter)
+### Сценарий 1: Диагностика блокировок в реальном времени (PostgreSQL)
 
-Использование **[postgres_exporter](../../Prometheus/Exporters/other_exporters.md#базы-данных)** для обнаружения транзакций, блокирующих выполнение миграции или заблокированных ею.
+Обнаружение транзакций, которые мешают выполнению миграции (`lock_timeout`).
 
 ```sql
--- SQL-запрос для кастомного метрика экспортера
-SELECT 
-    count(*) as blocked_queries,
-    wait_event_type
-FROM pg_stat_activity 
-WHERE wait_event IS NOT NULL 
-GROUP BY wait_event_type;
+-- Поиск блокирующего и заблокированного PID
+SELECT
+    blocked_locks.pid AS blocked_pid,
+    blocking_locks.pid AS blocking_pid,
+    blocked_activity.query AS blocked_statement,
+    blocking_activity.query AS blocking_statement
+FROM pg_catalog.pg_locks blocked_locks
+JOIN pg_catalog.pg_stat_activity blocked_activity ON blocked_activity.pid = blocked_locks.pid
+JOIN pg_catalog.pg_locks blocking_locks 
+    ON blocking_locks.locktype = blocked_locks.locktype
+    AND blocking_locks.database IS NOT DISTINCT FROM blocked_locks.database
+    AND blocking_locks.relation IS NOT DISTINCT FROM blocked_locks.relation
+    AND blocking_locks.page IS NOT DISTINCT FROM blocked_locks.page
+    AND blocking_locks.tuple IS NOT DISTINCT FROM blocked_locks.tuple
+    AND blocking_locks.virtualxid IS NOT DISTINCT FROM blocked_locks.virtualxid
+    AND blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid
+    AND blocking_locks.classid IS NOT DISTINCT FROM blocked_locks.classid
+    AND blocking_locks.objid IS NOT DISTINCT FROM blocked_locks.objid
+    AND blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid
+    AND blocking_locks.pid != blocked_locks.pid
+JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid
+WHERE NOT blocked_locks.granted;
 ```
 
-### Сценарий 2: Алертинг на лаг репликации (Prometheus Alerts)
+### Сценарий 2: Алертинг на лаг репликации (Prometheus)
 
-Предотвращение деградации реплик при массовых обновлениях данных.
+Критический показатель при миграции данных в больших таблицах. Рост лага может привести к чтению устаревших данных на репликах.
 
 ```yaml
 groups:
-- name: MigrationSafety
+- name: DatabaseMigrationSafety
   rules:
-  - alert: HighReplicationLagDuringMigration
-    expr: pg_replication_lag_seconds > 30
-    for: 1m
+  - alert: CriticalReplicationLag
+    expr: pg_replication_lag_seconds > 60
+    for: 2m
     labels:
       severity: critical
     annotations:
-      summary: "Критический лаг репликации"
-      description: "Лаг репликации превысил 30 секунд. Миграция данных может перегружать WAL."
+      summary: "Критический лаг репликации БД"
+      description: "Лаг репликации на {{ $labels.instance }} превысил 60 секунд во время выполнения миграции."
 ```
 
-### Сценарий 3: Визуализация прогресса (Grafana Dashboard)
+### Сценарий 3: Сквозная трассировка (Distributed Tracing)
 
-Рекомендуется создавать временный дашборд ("Migration War Room") со следующими панелями:
-- Статус текущей миграции (Active/Idle).
-- Топ блокирующих запросов (Blokers).
-- Загрузка дисковой подсистемы (I/O Wait).
-- Процент выполнения для прогресс-баров (`pg_stat_progress_*`).
+Использование **sqlcommenter** (или аналогов) для добавления `trace_id` в SQL-запросы миграций. Это позволяет связать выполнение DDL в логах базы данных с конкретным запуском пайплайна в CI/CD или сервисом миграций.
+
+```sql
+-- Пример запроса, видимого в pg_stat_activity
+ALTER TABLE users ADD COLUMN age INT; /* traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' */
+```
+
+### Сценарий 4: Метрики инструментов (Flyway / Atlas)
+
+Современные инструменты экспортируют собственные метрики:
+- `flyway_release_info`: Версия текущей схемы.
+- `atlas_migration_duration_seconds`: Время выполнения.
+- `atlas_migration_errors_total`: Счетчик ошибок.
 
 ## Дополнительная информация
 
 ### Рекомендации
 
-- **Throttle:** при обнаружении роста лага репликации или нагрузки на I/O выше 80%, процесс миграции данных должен автоматически замедляться (увеличение `sleep` между батчами).
-- **Логирование SQL:** включите временное логирование всех запросов длительностью более 1 секунды (`log_min_duration_statement = 1s`).
-- **Audit-логи:** храните историю выполнения миграций с указанием пользователя и времени для упрощения расследования инцидентов.
+- **Throttle (Троттлинг):** При обнаружении нагрузки на I/O выше 80% или лага репликации > 30с, процесс миграции данных должен автоматически замедляться (увеличение `sleep` между батчами или пауза OSC-инструмента).
+- **War Room Dashboard:** Создайте в Grafana дашборд, объединяющий метрики ресурсов БД, статус блокировок и прогресс миграции (`pg_stat_progress`).
+- **Audit-логи:** Храните историю выполнения миграций с указанием исполнителя (через `SET application_name`) для быстрого расследования инцидентов.
+- **Линтинг схем:** Интегрируйте инструменты мониторинга дрейфа схемы в CI/CD для обнаружения изменений, сделанных в обход процесса миграций.
 
 ### Смежные темы
 
 - **[Типовые сценарии миграций](scenarios.md)** — реализация батчинга и безопасных DDL.
 - **[Безопасные массовые операции](../safe_large_scale_data_modification.md)** — глубокий разбор пакетной обработки и лимитов.
 - **[Стратегии отката (Rollback)](rollback_strategies.md)** — действия при срабатывании алертов.
-- **[Метрики SRE](../../../Concepts/sre_concepts_main.md)** — общие принципы надежности систем.
-- **[Обзор PostgreSQL](../../../Databases/PostgreSQL/postgresql_overview.md)** — специфика работы со статистикой.
+- **[Метрики SRE](../../Concepts/sre_concepts_main.md)** — общие принципы надежности систем.
+- **[Наблюдаемость PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)** — специфика сбора метрик и логов.

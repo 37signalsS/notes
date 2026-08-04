@@ -2,68 +2,46 @@
 
 ## Определения
 
-- **Review App:** Временное, изолированное окружение, автоматически создаваемое для каждой `feature-ветки` или `Merge Request`. Позволяет тестировать изменения в реальных условиях до слияния с основной веткой.
-- **Оператор Kubernetes:** Специализированный контроллер, который расширяет API Kubernetes для управления сложными приложениями. В данном контексте оператор будет управлять жизненным циклом Review Apps.
+**Review App** — временное, изолированное окружение, автоматически создаваемое для каждой ветки (Merge Request). Позволяет тестировать изменения в реальных условиях до слияния (Merge) в основную ветку.
+
+**GitLab Agent for Kubernetes (KAS)** — основной механизм интеграции, обеспечивающий безопасный доступ пайплайнов к кластеру через **CI/CD Tunnel**. Подробнее см. **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)**.
+
+**Эфемерный Namespace (Ephemeral Namespace)** — временное пространство имен в Kubernetes, в которое разворачивается Review App. Оно должно быть удалено вместе с окружением.
+
+**Wildcard DNS & Ingress** — конфигурация, позволяющая автоматически направлять трафик на динамические URL (например, `https://feature-123.review.example.com`).
 
 ## Основные концепции
 
-Использование оператора для управления Review Apps — надежный и масштабируемый подход. Оператор следит за состоянием Merge Requests в GitLab и автоматически создает/удаляет ресурсы в Kubernetes.
+Использование динамических окружений в Kubernetes строится на трех столпах:
+1. **Изоляция:** Каждое MR-окружение разворачивается в свой Namespace или имеет уникальный префикс ресурсов.
+2. **Динамическая маршрутизация:** Ingress-контроллер (Nginx, Traefik) обрабатывает запросы на основе `Host` заголовков, соответствующих именам веток.
+3. **Автоматическая очистка:** Использование хуков `on_stop` и параметра `auto_stop_in` в GitLab CI для удаления ресурсов в кластере.
 
-Общие концепции динамических окружений описаны в **[Окружения и деплой в GitLab CI](../Concepts/environments_and_deployments.md)**.
+Общие принципы описаны в **[Окружения и развертывания в GitLab CI](../Concepts/environments_and_deployments.md)**.
 
-## Практический сценарий: Пошаговая настройка
+## Практический сценарий: Развертывание через KAS и Helm
 
-Это пошаговое руководство демонстрирует настройку динамических окружений с помощью оператора в Kubernetes.
+Современный подход исключает использование статических токенов `ClusterAdmin`. Доступ осуществляется через защищенный туннель Агента.
 
-### Шаг 1: Подготовка кластера и деплой Оператора
+### Шаг 1: Подготовка инфраструктуры
 
-Оператору, управляющему динамическими окружениями, нужен доступ к API Kubernetes.
+Для корректной работы Review Apps в кластере должны быть настроены:
+1. **Wildcard A-запись в DNS:** `*.review.example.com` указывает на IP Ingress-контроллера.
+2. **Wildcard Сертификат:** Рекомендуется использовать **Cert-Manager** с DNS-01 challenge для получения валидных SSL-сертификатов на динамические поддомены.
 
-1. **Создайте `ServiceAccount` и `ClusterRoleBinding`:**
-    Это создаст специального пользователя `deploy-admin` в `namespace` `users` с правами администратора кластера.
+### Шаг 2: Настройка доступа к кластеру
 
-    ```bash
-    kubectl create namespace users
-    # → namespace/users created
-    kubectl create serviceaccount deploy-admin -n users
-    # → serviceaccount/deploy-admin created
-    kubectl create clusterrolebinding deploy-admin-binding --clusterrole=cluster-admin --serviceaccount=users:deploy-admin
-    # → clusterrolebinding.rbac.authorization.k8s.io/deploy-admin-binding created
-    ```
+Убедитесь, что GitLab Agent установлен и пайплайн имеет к нему доступ.
 
-2. **Получите токен доступа:**
-    Этот токен будет использоваться для аутентификации оператора в Kubernetes. Начиная с Kubernetes 1.24, токены не создаются автоматически для ServiceAccounts. Используйте следующую команду для генерации временного токена:
+```yaml
+# .gitlab-ci.yml (фрагмент)
+variables:
+  KUBE_CONTEXT: "path/to/project:my-agent" # Путь к агенту
+```
 
-    ```bash
-    KUBE_TOKEN=$(kubectl create token deploy-admin -n users)
-    echo $KUBE_TOKEN
-    # → eyJhbGciOiJSUzI1NiIsImtpZCI6InV...
-    ```
+### Шаг 3: Конфигурация пайплайна
 
-3. **Настройте и запустите пайплайн Оператора:**
-    - Форкните репозиторий оператора в свой GitLab.
-    - В `Settings > CI/CD > Variables` проекта оператора добавьте переменные:
-        - `KUBE_URL`: URL API-сервера вашего Kubernetes кластера.
-        - `KUBE_TOKEN`: Полученный на предыдущем шаге токен.
-    - Запустите пайплайн для ветки `main`, чтобы задеплоить оператор в кластер.
-
-### Шаг 2: Настройка основного приложения для работы с Review Apps
-
-1. **Создайте токены доступа в GitLab:**
-    - **GitLab API Access Token:** Перейдите в `User Settings > Access Tokens` и создайте токен с правами (scopes) `api`.
-    - **Container Registry Deploy Token:** Перейдите в `Project Settings > Repository > Deploy Tokens` и создайте токен с правами `read_registry` и `write_registry`.
-
-2. **Настройте переменные CI/CD в проекте приложения:**
-    Перейдите в `Settings > CI/CD > Variables` и добавьте следующие переменные:
-    - `KUBE_URL` и `KUBE_TOKEN` (из предыдущего шага).
-    - `GITLAB_API_TOKEN` (созданный токен API).
-    - `CR_DEPLOY_USER` и `CR_DEPLOY_PASSWORD` (имя пользователя и пароль из Deploy Token).
-
-    > **Важно:** Секреты, такие как токены, рекомендуется хранить в защищенном виде. Используйте переменные типа `File` для многострочных секретов и `Masked` для однострочных, чтобы они не отображались в логах. Для максимальной безопасности используйте интеграцию с **[HashiCorp Vault](../Tutorials/vault_kubernetes_integration.md)**.
-
-### Шаг 3: Конфигурация `.gitlab-ci.yml`
-
-Теперь настроим пайплайн основного приложения для создания и удаления Review Apps.
+Использование Helm для деплоя позволяет легко управлять набором ресурсов и их удалением.
 
 ```yaml
 stages:
@@ -73,47 +51,86 @@ stages:
 
 build_image:
   stage: build
-  # ... задача сборки Docker-образа и загрузки его в GitLab Registry ...
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG .
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
 
 deploy_review:
   stage: deploy
+  image: alpine/k8s:1.30.0
+  variables:
+    NAMESPACE: "review-$CI_COMMIT_REF_SLUG"
   script:
-    - ./deploy-review-app.sh # Скрипт, который обращается к оператору
-    # → Deploying Review App for MR-123...
-  environment:
-    name: review/$CI_COMMIT_REF_SLUG # Уникальное имя окружения
-    url: https://$CI_COMMIT_REF_SLUG.example.com
-    on_stop: stop_review_app       # Задача для очистки
-    auto_stop_in: 1 day            # Автоматическое удаление через 1 день
-  rules:
-    - if: $CI_MERGE_REQUEST_ID # Запускать только для Merge Requests
-
-stop_review_app:
-  stage: cleanup
-  script:
-    - ./cleanup-review-app.sh # Скрипт, который обращается к оператору
-    # → Cleaning up Review App for MR-123...
-  when: manual # Запускается по кнопке "Stop" или триггеру on_stop
+    - kubectl config use-context $KUBE_CONTEXT
+    - kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+    # Деплой через Helm
+    - helm upgrade --install review-$CI_COMMIT_REF_SLUG ./charts/my-app
+        --namespace $NAMESPACE
+        --set ingress.host=$CI_COMMIT_REF_SLUG.review.example.com
+        --set image.tag=$CI_COMMIT_REF_SLUG
   environment:
     name: review/$CI_COMMIT_REF_SLUG
-    action: stop # Явно указывает, что задача останавливает окружение
+    url: https://$CI_COMMIT_REF_SLUG.review.example.com
+    on_stop: stop_review
+    auto_stop_in: 1 day # Автоматическая очистка через 24 часа неактивности
   rules:
     - if: $CI_MERGE_REQUEST_ID
-      when: manual # Позволяет вручную удалять окружение из MR
+
+stop_review:
+  stage: cleanup
+  image: alpine/k8s:1.30.0
+  variables:
+    NAMESPACE: "review-$CI_COMMIT_REF_SLUG"
+    GIT_STRATEGY: none # Не скачивать репозиторий для очистки
+  script:
+    - kubectl config use-context $KUBE_CONTEXT
+    - helm uninstall review-$CI_COMMIT_REF_SLUG --namespace $NAMESPACE || true
+    - kubectl delete namespace $NAMESPACE --ignore-not-found
+  environment:
+    name: review/$CI_COMMIT_REF_SLUG
+    action: stop
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      when: manual # Позволяет вручную удалить среду из интерфейса MR
 ```
 
-### Жизненный цикл в действии
+## Технические нюансы и ограничения
 
-1. Создайте `feature-ветку` и **Merge Request (MR)** в `main`.
-2. Пайплайн автоматически запустит задачу `deploy_review`, которая через оператор создаст изолированное окружение в Kubernetes.
-3. В виджете MR появится ссылка **"View app"** для тестирования.
-4. Для ручного удаления окружения нажмите кнопку **Stop** на странице **Deployments > Environments** или в виджете MR. Это запустит задачу `stop_review_app`.
-5. После слияния (merge) или закрытия MR, `auto_stop_in` автоматически инициирует удаление окружения.
+### Квоты ресурсов (Resource Quotas)
+Динамические окружения могут быстро исчерпать ресурсы кластера. **Обязательно** устанавливайте `ResourceQuota` и `LimitRange` в namespaces для Review Apps:
+
+```yaml
+# k8s/quota.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: review-quota
+spec:
+  hard:
+    requests.cpu: "500m"
+    requests.memory: "1Gi"
+    limits.cpu: "1000m"
+    limits.memory: "2Gi"
+```
+
+### Хранение данных (PV/PVC)
+Review Apps обычно являются **Stateless**. Если приложению нужна БД, рекомендуется:
+1. Использовать эфемерную БД внутри пода (без Persistent Volume).
+2. Или использовать общую Staging-БД с разделением схем по имени ветки (не рекомендуется из-за риска повреждения данных).
+
+### Удаление Registry-образов
+После удаления Review App и слияния MR, в Container Registry остаются временные образы. Настройте **Registry Cleanup Policy** в настройках проекта для удаления тегов, не соответствующих `main` или `tags`.
 
 ## Дополнительная информация
 
 ### Смотрите также
 
-- **[Окружения и деплой в GitLab CI](../Concepts/environments_and_deployments.md)** — общие концепции динамических окружений.
-- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — основы работы с переменными.
-- **[Интеграция GitLab CI с HashiCorp Vault](vault_kubernetes_integration.md)** — продвинутое управление секретами.
+- **[Окружения и деплой в GitLab CI](../Concepts/environments_and_deployments.md)** — общие концепции и tiers.
+- **[ArgoCD: Динамические окружения с Crossplane](../../../GitOps/ArgoCD/dynamic_environments_crossplane.md)** — продвинутый GitOps-подход с использованием ApplicationSet.
+- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — настройка Агента и CI/CD Tunnel.
+- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — управление доступом к секретам.
+- **[Интеграция GitLab CI с HashiCorp Vault](vault_kubernetes_integration.md)** — если Review App нужны секреты из Vault.

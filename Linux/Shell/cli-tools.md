@@ -113,6 +113,8 @@ export VISUAL='vim'
 ```
 
 ### См. также
+- **[Поиск файлов и программ](./file_and_program_search.md)** — использование `which`, `whereis` и `locate`.
 - [Шорткаты и горячие клавиши Shell](./shell_shortcuts.md)
 - [Введение в Shell](./shell_intro.md)
 - [Управление сессиями SSH (Tmux/Screen)](../Security/ssh/ssh_session_management.md)
+

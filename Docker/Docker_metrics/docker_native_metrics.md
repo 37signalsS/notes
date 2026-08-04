@@ -10,8 +10,6 @@
 
 Docker полагается на механизм ядра Linux **[cgroups (Control Groups)](../../Linux/Core/cgroups.md)** для изоляции и учета ресурсов. Демон Docker считывает данные из псевдофайловой системы `cgroupfs` и агрегирует их для пользователя.
 
-Структура путей зависит от версии cgroups, используемой в операционной системе:
-
 #### Cgroups v1 (Устаревающий стандарт)
 Метрики разделены по отдельным иерархиям контроллеров:
 - **Память:** `/sys/fs/cgroup/memory/docker/<container_id>/memory.stat`
@@ -22,16 +20,26 @@ Docker полагается на механизм ядра Linux **[cgroups (Con
 Используется единая унифицированная иерархия. Пути зависят от используемого драйвера (`cgroupfs` или `systemd`):
 - **Общий путь (cgroupfs):** `/sys/fs/cgroup/docker/<container_id>/`
 - **Общий путь (systemd):** `/sys/fs/cgroup/system.slice/docker-<container_id>.scope/`
-- **Файлы метрик:** `memory.current` (текущая память), `cpu.stat` (статистика CPU), `io.stat` (статистика ввода-вывода).
+
+**Ключевые файлы метрик v2:**
+- `memory.current`: Текущее потребление памяти (включая кеш).
+- `memory.events`: Счетчик событий (low, high, max, oom, oom_kill). Позволяет подтвердить факт OOM без чтения `dmesg`.
+- `cpu.stat`: Статистика использования CPU, включая `nr_throttled` и `throttled_usec`.
+- `io.stat`: Статистика ввода-вывода (rbytes, wbytes, riops, wiops).
+- `cpu.pressure`, `memory.pressure`, `io.pressure`: **[PSI (Pressure Stall Information)](../../Linux/Core/kernel/psi.md)** — показывают процент времени задержки из-за нехватки ресурса.
+
+### Сетевые метрики
+Docker собирает статистику сети напрямую из виртуальных интерфейсов внутри сетевого пространства имен (network namespace) контейнера. Метрики включают входящий/исходящий трафик (Rx/Tx) и ошибки. При использовании `network: host` нативные метрики сети контейнера будут идентичны метрикам хоста.
 
 ### Docker API
-Все нативные инструменты (stats, df) работают через Docker Engine API. Вызов эндпоинта `/containers/<id>/stats` возвращает подробный JSON-объект с сырыми данными, которые затем форматируются CLI-клиентом.
+Все нативные инструменты (stats, df) работают через Docker Engine API. Вызов эндпоинта `/containers/<id>/stats` возвращает подробный JSON-объект с сырыми данными. 
+*Примечание:* Постоянный опрос `/stats` для большого количества контейнеров (>100) может создавать заметную нагрузку на Docker-демон.
 
 ## Практические сценарии
 
 ### Мониторинг в реальном времени: docker stats
 
-Команда `docker stats` (или её полный эквивалент `docker container stats`) выводит динамический поток данных о потреблении ресурсов.
+Команда `docker stats` выводит динамический поток данных о потреблении ресурсов.
 
 **Примеры использования:**
 
@@ -39,61 +47,68 @@ Docker полагается на механизм ядра Linux **[cgroups (Con
 # Базовый мониторинг всех запущенных контейнеров
 docker stats
 
-# Вывод статистики для конкретных контейнеров
-docker stats nginx_proxy db_main
-
 # Однократный вывод (удобно для скриптов)
 docker stats --no-stream
-# → CONTAINER ID   NAME          CPU %     MEM USAGE / LIMIT     MEM %     NET I/O          BLOCK I/O   PIDS
-# → a1b2c3d4e5f6   web_app       0.15%     120MiB / 2GiB         5.86%     1.2kB / 0B       0B / 0B     8
+
+# Вывод в формате JSON
+docker stats --no-stream --format json
 ```
 
 **Расширенное форматирование:**
-Использование флага `--format` позволяет выводить данные в кастомном виде или в JSON для последующей обработки.
+Позволяет извлекать конкретные числовые значения для парсинга.
 
 ```bash
-# Вывод только имени и процента CPU в виде таблицы
-docker stats --format "table {{.Name}}\t{{.CPUPerc}}"
+# Вывод CPU, памяти и лимита в удобном виде
+docker stats --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+# → NAME       CPU %     MEM USAGE / LIMIT
+# → web_app    0.15%     120MiB / 2GiB
+```
 
-# Вывод в формате JSON (одна строка на контейнер)
-docker stats --no-stream --format json
-# → {"BlockIO":"0B / 0B","CPUPerc":"0.00%","Container":"a1b2c3...","ID":"a1b2c3...","MemPerc":"0.50%",...}
+### Диагностика троттлинга (Throttling)
+
+Если контейнер работает медленно, необходимо проверить, не ограничивает ли его ядро из-за превышения лимитов.
+
+1. **CPU Throttling:**
+Проверьте файл `cpu.stat` внутри cgroup контейнера.
+```bash
+cat /sys/fs/cgroup/system.slice/docker-<ID>.scope/cpu.stat | grep throttled
+# → nr_throttled 50      # Количество периодов, когда CPU был ограничен
+# → throttled_usec 1000  # Суммарное время ограничения в микросекундах
+```
+
+2. **I/O Throttling:**
+Для cgroup v2 статистика видна в `io.stat`. Если значения `riops`/`wiops` стабильно держатся на уровне установленных в `docker run --device-write-iops`, значит, достигнут предел.
+Подробнее: **[Сценарии диагностики I/O](../../Linux/Diagnostics/Performance/DiskIO/troubleshooting_scenarios.md)**.
+
+### Мониторинг событий: docker events
+
+Позволяет отслеживать жизненный цикл контейнеров и критические ошибки в реальном времени.
+
+```bash
+# Отслеживание OOM событий и завершения контейнеров
+docker events --filter 'event=oom' --filter 'event=die'
+# → 2024-05-20T... container oom a1b2c3... (image=nginx, name=web_app)
 ```
 
 ### Анализ дискового пространства: docker system df
 
-Команда позволяет оценить, сколько места занимают образы, контейнеры, тома и кеш сборки.
+Команда оценивает использование места на диске объектами Docker.
 
 ```bash
-# Общая сводка
-docker system df
-# → TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
-# → Images          15        6         2.4GB     1.1GB (45%)
-# → Containers      10        2         150MB     100MB (66%)
-# → Local Volumes   5         3         1.2GB     500MB (41%)
-# → Build Cache     22        0         4.5GB     4.5GB
-
-# Подробный вывод по каждому объекту
 docker system df -v
 ```
 
-*   **RECLAIMABLE** — объем данных, которые будут удалены при выполнении команд очистки (`docker image prune`, `docker container prune` и т.д.).
-
-### Проверка конфигурации ресурсов: docker inspect
-
-Хотя `inspect` не является инструментом сбора метрик, он критически важен для сопоставления текущего потребления с установленными лимитами.
-
-```bash
-# Проверка лимитов памяти и CPU для контейнера
-docker inspect <id> --format '{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}}'
-# → 536870912 1000000000  # (512MB и 1 CPU в нано-единицах)
-```
+*   **RECLAIMABLE**: Объем, который можно освободить.
+    *   **Images**: "Dangling" образы (без тегов и зависимых контейнеров).
+    *   **Containers**: Остановленные контейнеры.
+    *   **Local Volumes**: Тома, не подключенные ни к одному запущенному или остановленному контейнеру.
 
 ## Дополнительная информация
 
-Нативные метрики идеальны для ручной отладки, но для промышленной эксплуатации (Production) следует использовать внешние коллекторы, которые умеют хранить историю и строить графики.
+Нативные метрики идеальны для ручной отладки, но для промышленной эксплуатации следует использовать внешние коллекторы.
 
-- **[Интеграция Docker с Prometheus](./docker_prometheus_integration.md)** — использование встроенного в Docker экспортера.
-- **[cAdvisor](../../Prometheus/Exporters/cadvisor.md)** — стандарт де-факто для глубокого сбора метрик контейнеров.
+- **[Интеграция Docker с Prometheus](./docker_prometheus_integration.md)** — использование встроенного экспортера (`daemon.json`).
+- **[cAdvisor](../../Prometheus/Exporters/cadvisor.md)** — стандарт для глубокого сбора метрик контейнеров (включая детали cgroup).
 - **[Vector](../../Vector/vector_overview.md)** — высокопроизводительный агент для сбора и маршрутизации метрик.
-- **[Cgroups (Контрольные группы)](../../Linux/Core/cgroups.md)** — теоретическая база механизмов ограничения ресурсов.
+- **[Контрольные группы (cgroups)](../../Linux/Core/cgroups.md)** — теоретическая база механизмов ограничения ресурсов.
+- **[Pressure Stall Information (PSI)](../../Linux/Core/kernel/psi.md)** — глубокая диагностика задержек на уровне ядра.

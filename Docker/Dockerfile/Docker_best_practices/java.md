@@ -1,131 +1,152 @@
 # Dockerfile: Лучшие практики для Java
 
-> **Надежность: 10** (Актуализировано согласно стандартам 2026 года, Java 21/25)
-
 ## Определения
 
-- **JDK (Java Development Kit):** Комплект разработчика, необходимый для компиляции исходного кода в байт-код. Содержит компилятор `javac` и инструменты сборки.
-- **JRE (Java Runtime Environment):** Минимальный набор компонентов для запуска Java-приложений. В современных версиях (Java 9+) рекомендуется создавать кастомные JRE через **JLink**.
-- **Layered JAR:** Технология (внедренная в Spring Boot), позволяющая разделить JAR-файл на слои (зависимости, ресурсы, код) для эффективного кэширования в Docker.
-- **CDS (Class Data Sharing):** Механизм ускорения запуска JVM за счет сохранения метаданных классов в архив при сборке и их быстрого отображения в память при старте.
-- **Distroless:** Образы, содержащие только приложение и его рантайм-зависимости, без оболочки (shell), пакетного менеджера и других утилит.
+- **JDK (Java Development Kit):** Полный комплект разработчика (компилятор `javac`, инструменты сборки, библиотеки). Используется исключительно на этапе сборки в multi-stage Dockerfile.
+- **JRE (Java Runtime Environment):** Минимальная среда выполнения. В 2026 году рекомендуется использовать модульные сборки через **JLink** или специализированные JRE-образы (например, Wolfi/Chainguard).
+- **Wolfi / Chainguard:** Современные "un-distro" образы, ориентированные на максимальную безопасность (0 CVE) и использующие `glibc`. Являются отраслевым стандартом для безопасных Java-приложений.
+- **Layered JAR:** Технология (впервые представленная в Spring Boot), позволяющая разделить JAR-файл на логические слои (зависимости, ресурсы, код) для максимально эффективного кэширования слоев Docker.
+- **CDS (Class Data Sharing):** Механизм ускорения старта JVM путем создания архива `.jsa` с предварительно загруженными метаданными классов.
+- **GraalVM Native Image:** Технология компиляции Java-кода в автономный нативный бинарный файл, не требующий JVM для запуска. Обеспечивает мгновенный старт и минимальное потребление памяти.
+- **Project Leyden:** Инициатива по улучшению времени запуска и прогрева Java-приложений за счет статического анализа и оптимизации на этапе сборки.
+- **CRaC (Coordinated Restore at Checkpoint):** Технология для создания дампа памяти работающего Java-приложения и его мгновенного восстановления, что позволяет достигать времени старта <100 мс.
+- **SBOM (Software Bill of Materials):** Декларативный список всех компонентов и зависимостей, входящих в состав образа, необходимый для аудита безопасности.
 
 ## Базовые концепции
 
-### Многоэтапная сборка (Multi-stage)
+### Эволюция рантайма в контейнерах (Java 21/25/26)
 
-Для Java-приложений разделение этапа сборки и запуска является обязательным.
-1. **Этап сборки:** Используется полный образ JDK (например, `eclipse-temurin:21-jdk`). Здесь происходит компиляция и выполнение тестов.
-2. **Этап выполнения:** Используется легковесный JRE, Distroless или кастомный образ, созданный через JLink. Это сокращает размер образа с ~500 МБ до ~100-150 МБ и повышает безопасность.
+Начиная с версий Java 21 и 25 (LTS), платформа стала полностью адаптированной для облачных сред и контейнеризации.
 
-### Выбор базового образа
+*   **Compact Object Headers (Java 25+):** Снижает потребление Heap на **15–30%** за счет уменьшения размера заголовков объектов. Включается через `-XX:+UseCompactObjectHeaders`.
+*   **Generational ZGC:** Обеспечивает паузы сборщика мусора **<1 мс** даже на очень больших объемах памяти, эффективно разделяя объекты по поколениям.
+*   **Container Awareness:** Современные JVM (11+) нативно поддерживают лимиты CPU и RAM из cgroups v1/v2, корректно определяя количество доступных ядер и объем памяти.
+*   **GOMEMLIMIT-like tuning:** Использование `-XX:MaxRAMPercentage=75.0` является стандартом для защиты от OOM Kill, оставляя 25% памяти на Metaspace, стеки потоков и нужды ОС.
 
-| Тип образа | Преимущества | Недостатки |
-| :--- | :--- | :--- |
-| **Alpine (`-alpine`)** | Минимальный размер, безопасность. | Использует `musl` вместо `glibc`, что может вызвать проблемы с некоторыми нативными библиотеками. |
-| **Ubuntu/Debian (`-slim`)** | Высокая совместимость, стандартная `glibc`. | Больший размер по сравнению с Alpine. |
-| **Distroless** | Максимальная безопасность (нет shell). | Сложность отладки (требуются эфемерные контейнеры). |
+### Выбор базового образа (Сравнение 2026)
 
-### Оптимизация кэширования зависимостей
+| Тип образа | Преимущества | Недостатки | Рекомендация |
+| :--- | :--- | :--- | :--- |
+| **Wolfi (Chainguard)** | **0 CVE**, нативный `glibc`, non-root. | Требует настройки путей SDK. | **Основной выбор для Prod**. |
+| **Alpine (`-alpine`)** | Минимальный размер. | `musl` требует тестирования производительности. | Для простых утилит. |
+| **Distroless** | Максимальная безопасность (нет shell). | Сложность диагностики внутри. | Для стабильных микросервисов. |
+| **Ubuntu (`-noble`)** | Максимальная совместимость. | Большой размер, наличие CVE. | Для сложных legacy-систем. |
 
-Java-зависимости (библиотеки в `~/.m2` или `~/.gradle`) меняются реже, чем код. Использование `--mount=type=cache` в BuildKit позволяет сохранять кэш между сборками, не раздувая при этом слои образа.
+### Оптимизация управления памятью
 
-### Осведомленность о лимитах (Container Awareness)
-
-Современные версии Java (8u191+, 11+) корректно распознают лимиты памяти и ЦП в контейнере. Настройка параметров памяти (`-XX:MaxRAMPercentage`) должна производиться согласно SSoT-файлу [Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md).
+*   **Heap Hard Limit:** Всегда ограничивайте кучу через `%` от памяти контейнера, а не абсолютные значения, для гибкости при масштабировании.
+*   **Soft Max Heap Size:** Используйте `-XX:SoftMaxHeapSize`, чтобы GC активнее возвращал память операционной системе при низкой нагрузке.
 
 ## Практические сценарии
 
-### Сценарий 1: Spring Boot 3 + Layered JAR (Оптимальный для Spring)
+### Сценарий 1: Spring Boot 3.5+ с Layered JAR (Золотой стандарт)
 
-Разделение JAR на слои позволяет обновлять только слой с кодом (несколько КБ), не перекачивая сотни МБ зависимостей.
+Разделение JAR на слои гарантирует, что при изменении одной строки кода Docker пересоберет только верхний слой весом в несколько КБ.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-# --- Этап 1: Сборка и разделение на слои ---
-FROM eclipse-temurin:21-jdk-alpine AS builder
+# --- Stage 1: Build & Extract ---
+FROM cgr.dev/chainguard/jdk:latest AS builder
 WORKDIR /app
 COPY . .
-# Сборка и извлечение слоев через специальный режим Spring Boot
+# Кэширование Maven зависимостей через BuildKit
 RUN --mount=type=cache,target=/root/.m2 \
     ./mvnw clean package -DskipTests && \
     java -Djarmode=layertools -jar target/*.jar extract
 
-# --- Этап 2: Финальный образ ---
-FROM eclipse-temurin:21-jre-alpine
+# --- Stage 2: Hardened Runtime ---
+FROM cgr.dev/chainguard/jre:latest
 WORKDIR /app
-# Копируем слои по отдельности (от редко меняющихся к часто меняющимся)
+# Копируем слои: от самых стабильных к часто меняющимся
 COPY --from=builder /app/dependencies/ ./
 COPY --from=builder /app/spring-boot-loader/ ./
 COPY --from=builder /app/snapshot-dependencies/ ./
 COPY --from=builder /app/application/ ./
 
-# Запуск через Launcher для поддержки слоев
-ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
+# Тюнинг для Java 25/26: Компактные заголовки и ZGC
+ENTRYPOINT ["java", \
+    "-XX:+UseZGC", \
+    "-XX:+UseCompactObjectHeaders", \
+    "-XX:MaxRAMPercentage=75.0", \
+    "-XX:+ExitOnOutOfMemoryError", \
+    "org.springframework.boot.loader.launch.JarLauncher"]
 ```
 
-### Сценарий 2: Кастомная JRE через JLink (Минимальный размер)
+### Сценарий 2: Кастомная модульная JRE через JLink
 
-Создание образа, содержащего только необходимые модули Java.
+Создание минимального рантайма, содержащего только необходимые модули JDK.
 
 ```dockerfile
-# --- Этап 1: Сборка и JLink ---
-FROM eclipse-temurin:21-jdk-alpine AS jre-builder
+# syntax=docker/dockerfile:1
+FROM eclipse-temurin:25-jdk-alpine AS jre-builder
 WORKDIR /app
 COPY . .
 RUN ./mvnw clean package -DskipTests
 
-# Создание кастомного JRE
+# Создание кастомной JRE (удаляем неиспользуемые модули)
 RUN $JAVA_HOME/bin/jlink \
-    --add-modules java.base,java.logging,java.naming,java.desktop,java.management,java.security.jgss,java.instrument \
+    --add-modules java.base,java.logging,java.naming,java.security.jgss,java.instrument \
     --strip-debug \
     --no-man-pages \
     --no-header-files \
     --compress=2 \
     --output /javaruntime
 
-# --- Этап 2: Финальный образ ---
 FROM alpine:3.24
 WORKDIR /app
 ENV JAVA_HOME=/opt/java/jre
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
-
-# Копируем кастомный JRE и JAR
 COPY --from=jre-builder /javaruntime $JAVA_HOME
 COPY --from=jre-builder /app/target/*.jar app.jar
 
-RUN adduser -S appuser && chown appuser /app
+# Безопасность: запуск от не-root пользователя
+RUN adduser -S appuser && chown -R appuser /app
 USER appuser
-
 ENTRYPOINT ["java", "-jar", "app.jar"]
 ```
 
-### Сценарий 3: Ускорение старта через CDS (Class Data Sharing)
+### Сценарий 3: GraalVM Native Image (Максимальная плотность)
 
-Полезно для Serverless и систем с частым масштабированием.
-
-```dockerfile
-# ... (после этапа сборки) ...
-# Генерация CDS архива
-RUN java -XX:ArchiveClassesAtExit=app.jsa -jar app.jar || true
-
-# Запуск с использованием архива
-ENTRYPOINT ["java", "-XX:SharedArchiveFile=app.jsa", "-jar", app.jar"]
-```
-
-### Сценарий 4: Безопасный Distroless образ
+Идеально для Serverless и систем с мгновенным масштабированием.
 
 ```dockerfile
-FROM gcr.io/distroless/java21-debian12
-WORKDIR /app
-COPY --from=builder /app/target/*.jar app.jar
-USER nonroot:nonroot
-CMD ["app.jar"]
+# syntax=docker/dockerfile:1
+FROM ghcr.io/graalvm/native-image-community:21 AS builder
+WORKDIR /build
+COPY . .
+RUN ./mvnw -Pnative native:compile -DskipTests
+
+FROM cgr.dev/chainguard/static:latest
+COPY --from=builder /build/target/app-binary /app
+USER 65532
+# Нативный бинарник стартует за 20-50 мс
+ENTRYPOINT ["/app"]
 ```
+
+## Отладка и мониторинг
+
+### Инспекция Container Awareness
+
+JVM должна видеть лимиты контейнера, а не хоста:
+```bash
+docker exec <id> java -XshowSettings:system -version
+```
+
+### Наблюдаемость (Observability)
+
+*   **JFR (Java Flight Recorder):** Включайте в контейнерах для низкоуровневой диагностики без оверхеда: `-XX:StartFlightRecording=disk=true,dumponexit=true`.
+*   **Prometheus:** Используйте `jmx_exporter` как Java-агент для сбора метрик в формате Prometheus.
+
+### Обработка сигналов и завершение
+
+Всегда используйте `ENTRYPOINT` в форме массива `["java", "-jar", ...]`, чтобы JVM была PID 1 (или дочерним процессом Tini) и корректно принимала сигнал `SIGTERM` для выполнения Graceful Shutdown.
 
 ## Дополнительная информация
 
-- [Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md) — SSoT по настройке памяти и флагов.
-- [Оптимизация сборки Docker-образов](./build_optimization.md) — общие принципы кэширования и multi-stage.
-- [Безопасность в Dockerfile](./security.md) — работа с пользователями и сканирование образов.
-- [Docker Buildx: Мультиплатформенная сборка](../docker_buildx.md) — сборка под разные архитектуры процессоров.
+### Смотрите также
+
+- **[Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md)** — SSoT по параметрам памяти и GC.
+- **[Оптимизация сборки Docker-образов](./build_optimization.md)** — общие принципы кэширования.
+- **[Безопасность в Dockerfile](./security.md)** — работа с non-root и SBOM.
+- **[Docker Buildx: Мультиплатформенная сборка](../docker_buildx.md)** — поддержка ARM64/AMD64.
+- **[Проблема зомби-процессов (PID 1)](./container_execution.md)** — теория обработки сигналов.

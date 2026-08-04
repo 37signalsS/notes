@@ -1,101 +1,105 @@
-# Деплой Spring Boot в GitLab CI с использованием Docker
+# Деплой Spring Boot в GitLab CI/CD с использованием Docker
 
 ## Определения
 
-- **Spring Boot** — фреймворк для создания standalone Java-приложений с минимальной конфигурацией. В контексте CI/CD требует сборки JAR-артефакта и последующей контейнеризации.
-- **GitLab CI/CD пайплайн** — автоматизированный конвейер для сборки, тестирования и деплоя кода. Базовые концепции (Pipeline, Stage, Job, Runner, Artifact) описаны в **[Основах GitLab CI/CD](../Concepts/gitlab_ci_basics.md)**.
-- **Kaniko** — инструмент для сборки Docker-образов внутри контейнера без использования демона Docker. Подробное описание в **[Сборке образов с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**.
-- **SSH-агент** — программа для хранения приватных ключей, используемая для аутентификации при SSH-подключениях без интерактивного ввода пароля.
+**Spring Boot** — фреймворк для создания автономных Java-приложений. В CI/CD процессе требует компиляции исходного кода (Maven/Gradle), сборки JAR/WAR артефакта и последующей контейнеризации.
+
+**GitLab CI/CD пайплайн** — автоматизированный конвейер, управляемый через `.gitlab-ci.yml`. Основные компоненты описаны в **[Основах GitLab CI/CD](../Concepts/gitlab_ci_basics.md)**.
+
+**Kaniko** — инструмент для сборки Docker-образов внутри контейнера без доступа к сокету хоста (`/var/run/docker.sock`), что является стандартом безопасности для Kubernetes-раннеров. Подробнее см. **[Сборка образов с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**.
+
+**Quality Gates (Ворота качества)** — набор автоматических проверок (тесты, линтеры), которые должны пройти успешно для перехода на следующий этап деплоя.
 
 ## Основные концепции
 
-### Архитектура пайплайна
+### Архитектура пайплайна (Modern Workflow)
 
 ```text
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Коммит    │────▶│  Build Stage │────▶│ Deploy Stage│
-│   в GitLab  │     │   (Kaniko)   │     │  (SSH + Compose)│
-└─────────────┘     └──────────────┘     └─────────────┘
-                           │                      │
-                           ▼                      ▼
-                    GitLab Container Registry  Production Server
+┌────────┐     ┌──────┐     ┌───────┐     ┌─────────┐     ┌────────┐
+│ Commit │────▶│ Test │────▶│ Build │────▶│ Migrate │────▶│ Deploy │
+└────────┘     └──────┘     └───────┘     └─────────┘     └────────┘
+                  │            │               │               │
+                  ▼            ▼               ▼               ▼
+               Reports     Registry       Database      Production
 ```
 
-### Этапы деплоя
+### Ключевые этапы
 
-1. **Сборка (Build)**: Компиляция приложения и сборка Docker-образа с помощью Kaniko. Образ публикуется во встроенном **[GitLab Container Registry](../../../Docker/docker_registries.md)**.
-2. **Деплой (Deploy)**: Подключение к целевому серверу по SSH, загрузка (pull) новой версии образа и перезапуск контейнера через Docker Compose.
-
-### Требования к инфраструктуре
-
-- **GitLab Runner**: С настроенным Docker executor (см. **[Регистрация GitLab Runner](./runner_registration.md)**).
-- **Удаленный сервер**: С установленными Docker и Docker Compose (см. **[Установку Docker на Ubuntu](../../../Docker/docker_install_ubuntu.md)**).
-- **Сетевой доступ**: Открытый SSH-порт на сервере и корректно настроенные переменные CI/CD для аутентификации.
+1. **Тестирование (Test):** Запуск Unit и интеграционных тестов с использованием Testcontainers.
+2. **Сборка (Build):** Компиляция через Maven с использованием кэширования зависимостей и сборка образа через Kaniko.
+3. **Миграция (Migrate):** Применение изменений схемы БД через Flyway или Liquibase до развертывания новой версии приложения.
+4. **Развертывание (Deploy):** Обновление контейнеров на удаленном хосте через SSH и Docker Compose.
+5. **Верификация (Verify):** Выполнение Smoke-тестов для проверки доступности эндпоинтов после деплоя.
 
 ## Практические сценарии
 
-### Шаг 1: Подготовка сервера и переменных
+### Шаг 1: Подготовка инфраструктуры и секретов
 
-Перед настройкой пайплайна необходимо подготовить среду исполнения.
-
-1. **Установка Docker**: Убедитесь, что на целевом сервере установлены Docker Engine и Docker Compose. Инструкции доступны в **[Установке Docker на Ubuntu](../../../Docker/docker_install_ubuntu.md)**.
-2. **Настройка SSH-доступа**:
-    - Сгенерируйте SSH-ключ для нужд CI/CD.
-    - Добавьте публичный ключ в файл `~/.ssh/authorized_keys` на сервере.
-3. **Переменные GitLab CI/CD**: В интерфейсе GitLab (`Settings > CI/CD > Variables`) добавьте следующие переменные:
+1. **Сервер:** Убедитесь, что на целевом сервере установлены Docker 24+ и Docker Compose v2. См. **[Установку Docker на Ubuntu](../../../Docker/docker_install_ubuntu.md)**.
+2. **Переменные CI/CD:** В `Settings > CI/CD > Variables` добавьте:
 
 | Переменная | Тип | Описание |
 | :--- | :--- | :--- |
-| `SSH_PRIVATE_KEY` | **File** | Содержимое приватного SSH-ключа. |
-| `SERVER_USER` | Variable | Имя пользователя для подключения (например, `root`). |
-| `SERVER_HOST` | Variable | IP-адрес или DNS-имя сервера. |
-| `ENV_FILE` | **File** | Содержимое файла `.env` для конфигурации Docker Compose. |
+| `SSH_PRIVATE_KEY` | **File** | Приватный ключ для доступа к серверу. Добавьте соответствующий `public key` в `~/.ssh/authorized_keys` на сервере. |
+| `SSH_KNOWN_HOSTS` | Variable | Результат команды `ssh-keyscan <ip_сервера>`. Защищает от MitM. |
+| `SERVER_USER` | Variable | Имя пользователя (например, `deploy-user`). |
+| `SERVER_HOST` | Variable | IP или FQDN сервера. |
+| `SPRING_PROFILES_ACTIVE` | Variable | Активный профиль (например, `prod`). |
 
 ### Шаг 2: Конфигурация проекта
 
-Для работы пайплайна в корне репозитория должны находиться следующие файлы.
-
-#### `Dockerfile`
-
-Использование многостадийной сборки (multi-stage) позволяет уменьшить размер итогового образа.
+#### `Dockerfile` (Оптимизированный multi-stage)
 
 ```dockerfile
-FROM maven:3.8-openjdk-17-slim AS build
-WORKDIR /home/app
+# Stage 1: Build
+FROM maven:3.9-eclipse-temurin-21-jammy AS build
+WORKDIR /app
+# Кэширование зависимостей Maven
 COPY pom.xml .
+RUN mvn dependency:go-offline -B
 COPY src ./src
 RUN mvn clean package -DskipTests
-# → Сборка JAR-файла завершена
 
-FROM openjdk:17-jdk-slim
+# Stage 2: Runtime
+FROM eclipse-temurin:21-jre-jammy
+RUN useradd -m springuser
+USER springuser
 WORKDIR /app
-COPY --from=build /home/app/target/*.jar app.jar
+COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8080
-CMD ["java", "-jar", "app.jar"]
-```
-
-#### `docker-compose.yml`
-
-```yaml
-version: '3.9'
-services:
-  app:
-    image: ${CI_REGISTRY_IMAGE}:latest
-    container_name: spring-boot-app
-    env_file: .env
-    ports:
-      - "8080:${APP_PORT:-8080}"
-    restart: always
+ENTRYPOINT ["java", "-jar", "app.jar"]
 ```
 
 #### `.gitlab-ci.yml`
 
 ```yaml
 stages:
+  - test
   - build
+  - migrate
   - deploy
+  - verify
 
-build:
+variables:
+  DOCKER_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+
+# Кэширование Maven зависимостей
+cache:
+  paths:
+    - .m2/repository
+
+test_job:
+  stage: test
+  image: maven:3.9-eclipse-temurin-21-jammy
+  script:
+    - mvn test
+  artifacts:
+    when: always
+    reports:
+      junit: target/surefire-reports/*.xml
+
+build_image:
   stage: build
   image:
     name: gcr.io/kaniko-project/executor:v1.24.0-debug
@@ -104,63 +108,67 @@ build:
     - /kaniko/executor
       --context "${CI_PROJECT_DIR}"
       --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${DOCKER_IMAGE}"
       --destination "${CI_REGISTRY_IMAGE}:latest"
-    # → Публикация образа в Registry завершена
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
 
-deploy:
+db_migration:
+  stage: migrate
+  image: maven:3.9-eclipse-temurin-21-jammy
+  script:
+    - mvn flyway:migrate -Dflyway.url=$DB_URL -Dflyway.user=$DB_USER -Dflyway.password=$DB_PASSWORD
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy_prod:
   stage: deploy
   image: docker:27.3
   variables:
     DOCKER_HOST: "ssh://${SERVER_USER}@${SERVER_HOST}"
   before_script:
-    - mkdir -p ~/.ssh
-    - chmod 700 ~/.ssh
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
     - eval $(ssh-agent -s)
-    # → Agent pid 123
     - echo "${SSH_PRIVATE_KEY}" | tr -d '\r' | ssh-add -
-    # → Identity added: (stdin)
-    - '[[ -f /.dockerenv ]] && echo -e "Host *\n  StrictHostKeyChecking no\n\n" > ~/.ssh/config'
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    # → Login Succeeded
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
   script:
-    - cp "$ENV_FILE" .env
     - docker compose pull
-    # → Pulling app ... done
     - docker compose up -d --remove-orphans
-    # → Container spring-boot-app Started
     - docker image prune -f
-    # → Total reclaimed space: 1.2GB
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
+
+smoke_test:
+  stage: verify
+  image: curlimages/curl:latest
+  script:
+    - sleep 30 # Ожидание запуска приложения
+    - curl -f http://${SERVER_HOST}:8080/actuator/health | grep "UP"
+    # → {"status":"UP"}
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Шаг 3: Анализ работы пайплайна
+## Технические нюансы и Тюнинг
 
-1. **Этап Build**: Kaniko собирает образ и пушит его в Registry. Мы используем тег `latest` для упрощения деплоя, но в production рекомендуется использовать `$CI_COMMIT_SHORT_SHA` (см. **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)**).
-2. **Этап Deploy**:
-    - Переменная `DOCKER_HOST` указывает Docker CLI подключаться к удаленному серверу через SSH-тунлель.
-    - `ssh-agent` обеспечивает аутентификацию без пароля.
-    - `docker compose pull` гарантирует, что на сервер будет загружена самая свежая версия образа из Registry.
-    - `docker image prune -f` удаляет старые (dangling) образы, освобождая место на диске.
+### Оптимизация производительности
+1. **Maven Offline:** Использование `dependency:go-offline` в первом слое Docker-образа позволяет эффективно использовать Docker-кэш для библиотек.
+2. **Local Repository:** Переопределение `MAVEN_OPTS` для хранения репозитория в папке проекта позволяет GitLab CI кэшировать его между запусками пайплайнов.
+
+### Безопасность SSH
+Всегда используйте `SSH_KNOWN_HOSTS`. Без этого шага задача деплоя уязвима для атак типа "человек посередине" (Man-in-the-Middle), так как Runner будет слепо доверять любому ключу сервера при первом подключении.
+
+### База данных
+Миграции (`db_migration`) должны выполняться **до** деплоя приложения. Если миграция ломает обратную совместимость, используйте стратегии Blue/Green деплоя.
 
 ## Дополнительная информация
 
-### Безопасность
-
-- **Секреты**: Никогда не храните пароли или ключи в коде. Используйте переменные типа `File` для ключей и сертификатов (подробнее в **[Управлении секретами](../Concepts/gitlab_ci_variables_secrets.md)**).
-- **Изоляция**: Kaniko работает без доступа к Docker-сокету хоста, что повышает безопасность Runner'а.
-
-### Альтернативные подходы
-
-- **Kubernetes**: Для крупных проектов рекомендуется переход на **[интеграцию с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** и использование Helm.
-- **GitOps**: Рассмотрите использование Push-модели через **[ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)** для более надежного деплоя.
+### Мониторинг
+Для Spring Boot приложений рекомендуется настроить **Spring Boot Actuator** и интегрировать его с **[Prometheus](../../../Prometheus/overview.md)** для отслеживания состояния JVM и бизнес-метрик.
 
 ### Смотрите также
 
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)**
-- **[Сборка образов с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**
-- **[Docker Registry](../../../Docker/docker_registries.md)**
-- **[GitLab CI/CD Variables](../Concepts/gitlab_ci_variables_secrets.md)**
+- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — база.
+- **[Сборка образов с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** — безопасность сборки.
+- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — работа с типами `File` и `Masked`.
+- **[Docker Registry](../../../Docker/docker_registries.md)** — управление образами.

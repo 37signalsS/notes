@@ -1,80 +1,105 @@
 # Автоматизация резервного копирования PostgreSQL
 
-## Использование Shell-скриптов и Cron
+## Определения
 
-Для регулярного создания логических копий удобно использовать скрипты, которые не только создают дамп, но и управляют ротацией (удалением старых файлов).
+**Автоматизация бэкапов** — процесс систематического создания, верификации и удаления резервных копий без участия человека. Для PostgreSQL автоматизация охватывает два уровня:
+- **Логический уровень:** Использование `pg_dump` для создания SQL-скриптов. Подходит для небольших БД и миграций.
+- **Физический уровень:** Использование инструментов `pgBackRest`, `WAL-G` или `Barman` для инкрементального копирования файлов данных и архивации WAL.
 
-### Пример скрипта для pg_dump
-Создайте файл `/etc/scripts/pg_backup.sh`:
+**Ротация бэкапов** — политика удаления старых копий для экономии места при сохранении возможности восстановления на заданную глубину (Retention Policy).
+
+## Основные концепции
+
+### Выбор стратегии автоматизации
+
+| Инструмент | Уровень | Хранилище | Особенности |
+| :--- | :--- | :--- | :--- |
+| **Shell + Cron** | Логический | Локальный диск / NFS | Простота, подходит для БД < 50 ГБ. |
+| **pgBackRest** | Физический | S3, Azure, GCS, Local | **Золотой стандарт**. Поддерживает инкрементальные бэкапы и сжатие. |
+| **WAL-G** | Физический | S3-совместимые | Высокая скорость, нативная работа с облаками. |
+| **Barman** | Физический | Диск / S3 | Удобный менеджер для множества серверов БД. |
+
+## Практические сценарии
+
+### Сценарий 1: Логический бэкап через Shell и Cron
+
+Для небольших баз данных достаточно простого скрипта с ротацией.
+
+**Скрипт `/usr/local/bin/pg_backup.sh`:**
 ```bash
 #!/bin/bash
-
 # Настройки
 BACKUP_DIR="/mnt/backups/postgresql"
-DB_USER="dbadmin"
 DATABASE="mydb"
-# Пароль можно задать через переменную окружения (небезопасно) 
-# или использовать ~/.pgpass
-export PGPASSWORD="your_password"
+# Рекомендуется использовать ~/.pgpass для аутентификации
+DATE=$(date "+%Y-%m-%d_%H-%M-%S")
 
-# Дата для имени файла
-DATE=$(date "+%Y-%m-%d")
+# Создание дампа в кастомном формате (сжатый)
+pg_dump -Fc $DATABASE > $BACKUP_DIR/pgsql_$DATE.dump
 
-# Создание дампа и сжатие
-pg_dump -U $DB_USER $DATABASE | gzip > $BACKUP_DIR/pgsql_$DATE.sql.gz
+# Ротация: удаление файлов старше 30 дней
+find $BACKUP_DIR -name "*.dump" -mtime +30 -delete
 
-# Ротация: удаление файлов старше 60 дней, 
-# исключая бэкапы за 15-е число месяца (для долгого хранения)
-find $BACKUP_DIR \( -name "*.sql.gz" -a ! -name "*-15.sql.gz" \) -ctime +60 -delete
-
-# Очистка переменной
-unset PGPASSWORD
+# → результат: файл pgsql_2026-08-03_03-00-00.dump создан
 ```
 
-### Настройка расписания в Crontab
+### Сценарий 2: Физический бэкап через pgBackRest (Best Practice)
+
+`pgBackRest` поддерживает параллелизм и дельта-восстановление.
+
+**Настройка `pgbackrest.conf`:**
+```ini
+[global]
+repo1-path=/var/lib/pgbackrest
+repo1-retention-full=2
+process-max=4
+log-level-console=info
+
+[main]
+pg1-path=/var/lib/postgresql/16/main
+```
+
+**Команды автоматизации:**
 ```bash
-# Выполнять ежедневно в 03:00 ночи
-0 3 * * * /bin/bash /etc/scripts/pg_backup.sh
+# Инициализация строфы (stanza)
+pgbackrest stanza-create --stanza=main
+
+# Выполнение полного бэкапа
+pgbackrest backup --stanza=main --type=full
 ```
 
-## Использование WAL-G для резервного копирования в S3
+### Сценарий 3: Облачные бэкапы через WAL-G
 
-**WAL-G** позволяет автоматизировать процесс физического копирования и архивации WAL-логов в S3-совместимые хранилища.
+WAL-G (преемник WAL-E) оптимизирован для S3.
 
-### 1. Установка
+**Конфигурация переменных окружения:**
 ```bash
-curl -L "https://github.com/wal-g/wal-g/releases/download/v2.0.1/wal-g-pg-ubuntu-20.04-amd64.tar.gz" -o wal-g.tar.gz
-tar -xzf wal-g.tar.gz
-sudo mv wal-g /usr/local/bin/
+export WALG_S3_PREFIX=s3://bucket/path
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
 ```
 
-### 2. Конфигурация (~/postgres/.walg.json)
-```json
- {
-     "WALG_S3_PREFIX": "s3://my-backup-bucket",
-     "AWS_ENDPOINT": "https://s3.example.com",
-     "AWS_ACCESS_KEY_ID": "key_id",
-     "AWS_SECRET_ACCESS_KEY": "secret_key",
-     "WALG_COMPRESSION_METHOD": "brotli",
-     "PGDATA": "/var/lib/postgresql/14/main",
-     "PGHOST": "/var/run/postgresql/.s.PGSQL.5432"
- }
-```
-
-### 3. Настройка PostgreSQL (postgresql.conf)
+**Настройка `postgresql.conf` для автоматического архивирования:**
 ```conf
-wal_level = replica
 archive_mode = on
-archive_command = '/usr/local/bin/wal-g wal-push %p'
+archive_command = 'wal-g wal-push %p'
 archive_timeout = 60
-restore_command = '/usr/local/bin/wal-g wal-fetch %f %p'
 ```
 
-### 4. Создание базового бэкапа
-```bash
-sudo -u postgres wal-g backup-push /var/lib/postgresql/14/main
-```
+## Дополнительная информация
 
-### См. также
-*   [Теория бэкапов](../Concepts/backup_and_recovery.md)
-*   [Управление ролями и БД](./role_management.md)
+### Верификация бэкапов
+
+Бэкап считается существующим только после успешного пробного восстановления.
+- **pg_verifybackup:** (доступно с PG 13+) позволяет проверить целостность физического бэкапа без его полного развертывания.
+  ```bash
+  pg_verifybackup /path/to/backup
+  ```
+- **Автоматизированное восстановление:** рекомендуется еженедельно разворачивать последний бэкап на стейджинг-сервере для проверки консистентности.
+
+### Связанные документы
+
+- [Теория бэкапов и восстановления](../Concepts/backup_and_recovery.md) — RPO/RTO и типы копий.
+- [Управление ролями](./role_management.md) — настройка прав для пользователя бэкапа.
+- [Наблюдаемость PostgreSQL](./observability.md) — мониторинг успешности выполнения заданий.
+- [Журнал предзаписи (WAL)](../../Concepts/write_ahead_log.md) — как работает архивация логов.

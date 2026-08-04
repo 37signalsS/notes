@@ -1,37 +1,41 @@
-# Dockerfile: Лучшие практики для Frontend (SPA)
+# Dockerfile: Лучшие практики для Frontend (SPA и SSR)
 
 ## Определения
 
-- **SPA (Single Page Application):** Веб-приложение, загружающееся как одна страница и динамически обновляющее содержимое без полной перезагрузки (React, Vue, Angular, Svelte).
-- **Static Serving:** Раздача предварительно собранных статических файлов (HTML, JS, CSS) веб-сервером.
-- **Multi-stage Build:** Метод разделения процесса на этап сборки (Node.js) и этап раздачи (Nginx), что позволяет исключить исходный код и `node_modules` из финального образа.
-- **History API Fallback:** Настройка сервера, перенаправляющая все запросы на `index.html`, чтобы роутинг SPA (на стороне клиента) работал корректно при обновлении страницы.
-- **Content Security Policy (CSP):** Механизм защиты, предотвращающий выполнение недоверенного кода в браузере.
+- **SPA (Single Page Application):** Веб-приложение, которое загружает одну HTML-страницу и динамически обновляет её при взаимодействии с пользователем (React, Vue, Angular, Svelte).
+- **SSR (Server-Side Rendering):** Метод рендеринга страниц на стороне сервера при каждом запросе. Требует наличия Node.js в рантайме (Next.js, Nuxt.js, Remix).
+- **Static Serving:** Раздача предварительно собранных статических файлов (HTML, JS, CSS) веб-сервером (Nginx, Caddy).
+- **Multi-stage Build:** Техника сборки образа, разделенная на этапы (сборка артефакта и финальный рантайм), позволяющая исключить исходный код и `node_modules` из итогового образа.
+- **History API Fallback:** Конфигурация веб-сервера, перенаправляющая все запросы на `index.html` для корректной работы клиентского роутинга SPA.
+- **Content Security Policy (CSP):** Заголовок безопасности, ограничивающий источники загрузки ресурсов для предотвращения XSS и других атак.
 
 ## Базовые концепции
 
-### Особенности сборки Frontend
+### Разделение сред: Build-time vs Runtime
 
-Фронтенд-приложения требуют компиляции (транспиляции) из современных стандартов (TypeScript, JSX) в бандлы, понятные браузеру.
-*   **Инструменты:** Vite (стандарт 2026 года), Webpack (legacy), pnpm (рекомендуемый менеджер пакетов).
-*   **Артефакт:** Папка `dist` или `build` с минифицированными файлами.
-*   **Рантайм:** После сборки Node.js **не нужен**. Достаточно веб-сервера (Nginx, Caddy).
+Главная сложность фронтенда в Docker — это момент подстановки конфигурации.
 
-### Кэширование и хеширование
+1.  **SPA (Static):** Приложение компилируется в статику. Переменные окружения (`VITE_`, `REACT_APP_`) подставляются **в момент сборки** (Build-time). Если нужно менять API URL без пересборки, требуются специальные методы (см. Практические сценарии).
+2.  **SSR (Next.js/Nuxt):** Приложение работает как сервер. Оно может читать `process.env` **в рантайме**, как обычный бэкенд на Node.js.
 
-Современные сборщики добавляют уникальный хеш к именам файлов (например, `main.8f2a1c.js`).
-- **Ассеты (JS, CSS, изображения):** Могут кэшироваться браузером «навсегда» (Cache-Control: `max-age=31536000`), так как при изменении кода хеш изменится.
-- **index.html:** Никогда не должен кэшироваться, так как он ссылается на актуальные версии ассетов.
+### Кэширование и оптимизация BuildKit
 
-### Проблема переменных окружения (Runtime Env)
+Фронтенд-проекты часто имеют огромные `node_modules`.
+- **pnpm:** Рекомендуемый менеджер пакетов (стандарт 2026 года). Использует контентно-адресуемое хранилище.
+- **Mount Cache:** Использование `--mount=type=cache` в Dockerfile позволяет сохранять кэш пакетов между сборками на хосте, радикально ускоряя процесс.
 
-SPA собирается в статику. Переменные `process.env` подставляются **в момент сборки**.
-- **Плохо:** Хардкодить URL API в образ. Это заставляет пересобирать образ для каждого окружения (dev/staging/prod).
-- **Хорошо:** Использовать `envsubst` в Nginx для подстановки переменных в `index.html` или JS-конфиг при старте контейнера.
+### Стратегия раздачи статики
+
+Для SPA после сборки Node.js **не нужен**.
+- **Nginx:** Оптимальный выбор для production. Обеспечивает сжатие, кэширование и безопасность.
+- **Immutable Assets:** Файлы с хешами в именах (`app.a1b2c3.js`) должны кэшироваться браузером "навсегда".
+- **Mutable Assets:** `index.html` и `service-worker.js` никогда не должны кэшироваться.
 
 ## Практические сценарии
 
-### Сценарий 1: Современная сборка Vite + Nginx (BuildKit + Multi-stage)
+### Сценарий 1: Оптимизированный SPA (Vite + pnpm + Nginx)
+
+Самый быстрый и легкий способ сборки современного SPA.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -39,29 +43,30 @@ SPA собирается в статику. Переменные `process.env` �
 FROM node:24-alpine AS builder
 WORKDIR /app
 
-# Активируем pnpm для скорости
+# Активируем pnpm и настраиваем кэш
 RUN corepack enable && corepack prepare pnpm@latest --activate
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 
-# Кэшируем зависимости
+# Кэшируем зависимости отдельно от кода
 COPY pnpm-lock.yaml package.json ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
-# Копируем исходники и собираем
+# Копируем код и собираем
 COPY . .
 RUN pnpm build
 
 # --- Этап 2: Финальный образ (Nginx) ---
 FROM nginx:1.27-alpine
 
-# Копируем конфиг
+# Копируем кастомный конфиг (см. сценарий 2)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Копируем статику из builder
+# Копируем только статику
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Настройка безопасности: запуск от непривилегированного пользователя
-# В Alpine образах Nginx обычно требует создания пользователя вручную для портов > 1024
+# Запуск от непривилегированного пользователя (Security Best Practice)
 RUN touch /var/run/nginx.pid && \
     chown -R nginx:nginx /var/run/nginx.pid /var/cache/nginx /var/log/nginx /usr/share/nginx/html
 USER nginx
@@ -70,63 +75,89 @@ EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-### Сценарий 2: Оптимальный nginx.conf для SPA (Gzip, CSP, Caching)
+### Сценарий 2: Правильный nginx.conf для SPA
 
 ```nginx
 server {
     listen 8080;
-    server_name _;
     root /usr/share/nginx/html;
     index index.html;
 
-    # Сжатие (Gzip)
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml;
-    gzip_proxied any;
-    gzip_min_length 1000;
-
-    # Безопасность (Заголовки)
-    add_header X-Frame-Options "SAMEORIGIN";
-    add_header X-XSS-Protection "1; mode=block";
-    add_header X-Content-Type-Options "nosniff";
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';";
-
+    # Поддержка клиентского роутинга (React Router, Vue Router)
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # Кэширование ассетов (хешированные файлы)
-    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|svg)$ {
+    # Кэширование хешированных ассетов (1 год)
+    location ~* \.(?:js|css|woff2?|png|jpg|jpeg|gif|svg|ico)$ {
         expires 1y;
         add_header Cache-Control "public, no-transform";
         access_log off;
     }
 
-    # index.html кэшировать нельзя
+    # Запрет кэширования для index.html
     location = /index.html {
         expires -1;
         add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
     }
+
+    # Сжатие
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json;
+    gzip_min_length 1000;
 }
 ```
 
-### Сценарий 3: Подстановка Runtime переменных через envsubst
+### Сценарий 3: Docker-образ для Next.js (SSR Mode)
 
-Если вам нужно менять API_URL без пересборки образа:
+Next.js требует Node.js в рантайме. Используем `standalone` режим для минимизации размера.
 
-1.  В `index.html` добавьте плейсхолдер: `<script>window.ENV_API_URL = "${API_URL}";</script>`
-2.  В Dockerfile измените `CMD`:
 ```dockerfile
-# Требуется пакет gettext для envsubst
-RUN apk add --no-cache gettext
-CMD ["/bin/sh", "-c", "envsubst < /usr/share/nginx/html/index.html > /usr/share/nginx/html/index.html.tmp && mv /usr/share/nginx/html/index.html.tmp /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"]
+# syntax=docker/dockerfile:1
+FROM node:24-alpine AS builder
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@latest --activate
+COPY pnpm-lock.yaml package.json ./
+RUN pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+
+FROM node:24-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Создаем пользователя
+RUN addgroup -S nodejs -g 1001 && adduser -S nextjs -u 1001
+
+# Копируем только необходимые файлы из standalone билда
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+### Сценарий 4: Runtime переменные для SPA (метод config.json)
+
+Вместо сложного `envsubst` в HTML, используйте внешний JSON.
+
+1.  В приложении делайте запрос: `fetch('/config.json')`.
+2.  В `nginx.conf` добавьте мапинг.
+3.  При запуске контейнера генерируйте файл:
+
+```dockerfile
+# entrypoint.sh
+echo "{\"API_URL\": \"${API_URL}\"}" > /usr/share/nginx/html/config.json
+exec "$@"
 ```
 
 ## Дополнительная информация
 
 ### Смотрите также
 
-- [Dockerfile: Лучшие практики для Node.js](./nodejs.md) — оптимизация этапа сборки.
-- [Оптимизация сборки Docker-образов](./build_optimization.md) — детали multi-stage и кэширования.
-- [Безопасность в Dockerfile](./security.md) — заголовки и права доступа.
-- [Docker Buildx: Мультиплатформенная сборка](../docker_buildx.md)
+- **[Dockerfile: Лучшие практики для Node.js](./nodejs.md)** — глубокая оптимизация сборки зависимостей.
+- **[Оптимизация сборки Docker-образов](./build_optimization.md)** — механизмы кэширования BuildKit.
+- **[Безопасность в Dockerfile](./security.md)** — работа с пользователями и заголовками.
+- **[Nginx: Раздача статики](../../WebServers/Nginx/Core/Location/serving_files.md)** — продвинутая настройка веб-сервера.

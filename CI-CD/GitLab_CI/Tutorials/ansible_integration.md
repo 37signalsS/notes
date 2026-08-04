@@ -1,260 +1,154 @@
 # Интеграция Ansible с GitLab CI/CD
 
+## Надежность и актуальность
+
+- **Оценка надежности:** 10 (SSoT + Проверенные практики)
+- **Триггеры обновления:** Выход мажорных версий Ansible (10.x+), изменения в механизмах ID Tokens GitLab, обновление best-practices по безопасности.
+
 ## Определения
 
-**Интеграция Ansible с GitLab CI/CD** — это процесс автоматизации выполнения плейбуков Ansible с помощью системы непрерывной интеграции и доставки GitLab. Код конфигурации (плейбуки, роли) хранится в Git-репозитории, а GitLab CI/CD реагирует на изменения в нем, запуская задачи по деплою или управлению инфраструктурой.
+**Интеграция Ansible с GitLab CI/CD** — это процесс автоматизации управления конфигурациями, подготовки инфраструктуры (Provisioning) и развертывания приложений через выполнение плейбуков Ansible в конвейерах GitLab. Подход реализует парадигму **Infrastructure as Code (IaC)**, обеспечивая версионирование и автоматическое применение изменений.
 
-- **Ansible:** Система управления конфигурациями, которая автоматизирует деплой приложений, настройку систем и выполнение IT-задач.
-- **GitLab CI/CD:** Встроенный в GitLab инструмент для создания конвейеров (пайплайнов) сборки, тестирования и деплоя ПО.
-- **GitLab Runner:** Агент, который выполняет задания (jobs) из пайплайна GitLab CI/CD. Он устанавливается на отдельный сервер и должен иметь доступ к целевым хостам и необходимым инструментам, таким как Ansible.
-- **`.gitlab-ci.yml`:** YAML-файл в корне репозитория, описывающий структуру и правила CI/CD пайплайна.
+- **Ansible Control Node (в CI):** Среда выполнения (GitLab Runner), в которой запускаются команды `ansible-playbook`. Может быть shell-окружением, Docker-контейнером или специализированным **Execution Environment (EE)**.
+- **Динамический инвентарь (Dynamic Inventory):** Механизм автоматического получения списка хостов из API облачных провайдеров (Yandex Cloud, AWS) или CMDB (NetBox) в момент выполнения пайплайна.
+- **CI/CD ID Tokens (JWT):** Современный механизм аутентификации, позволяющий GitLab Runner получать временные права в облаках без использования долгоживущих секретов (паролей, ключей).
+- **Артефакты (Artifacts):** Файлы, генерируемые плейбуком (логи, отчеты о состоянии, сгенерированные конфиги), сохраняемые в GitLab для аудита и отладки.
 
 ## Основные концепции
 
 ### Преимущества интеграции
 
-1. **Автоматизация запусков:** Плейбуки выполняются автоматически после событий в репозитории (например, слияние в `main`), исключая ошибки, связанные с ручным запуском.
-2. **Контроль доступа:** Прямой доступ к продуктивным серверам имеет только GitLab Runner. Права разработчиков и администраторов разграничиваются на уровне GitLab (например, через защищенные ветки и правила `merge request`).
-3. **Версионирование и аудит:** Каждое изменение инфраструктуры проходит через Git, оставляя четкий след: кто, когда и какое изменение внес. Любое изменение можно откатить.
-4. **Централизованное управление секретами:** CI/CD пайплайн позволяет безопасно управлять доступом к SSH-ключам, паролям и файлам инвентаря.
+1. **Идемпотентность и повторяемость:** Гарантия соответствия инфраструктуры коду, исключение ручных правок («дрейф конфигурации»).
+2. **Безопасность (Least Privilege):** Доступ к серверам имеет только Runner. Использование **Masked Variables** и временных JWT-токенов минимизирует риски утечки.
+3. **Скорость и масштабируемость:** Параллельный деплой на сотни хостов, использование `needs` для ускорения цепочек задач.
+4. **Аудит и отслеживаемость:** Полная история изменений с привязкой к коммитам, авторам и результатам выполнения плейбуков.
 
-### Принцип работы
+### Среды выполнения: Docker vs Execution Environments
 
-Интеграция основана на двух компонентах: **GitLab Runner** и файле **`.gitlab-ci.yml`**.
+В современных пайплайнах существует два подхода к подготовке Control Node:
 
-- **GitLab Runner** устанавливается на выделенную машину, регистрируется в проекте GitLab и опрашивает его на предмет новых задач. Получив задачу, он выполняет описанные в ней скрипты на машине, где установлен Ansible.
-- **`.gitlab-ci.yml`** определяет стадии (`stages`) и задачи (`jobs`) пайплайна. Задачи выполняются последовательно по стадиям (например, `lint` -> `test` -> `deploy`).
+1. **Docker-образы (Custom Images):** Создание `Dockerfile` с установленным `ansible-core`, коллекциями и системными зависимостями (sshpass, git). Быстрый старт, но сложность поддержки при большом количестве коллекций.
+2. **Ansible Execution Environments (EE):** Стандартизированные образы, собранные через `ansible-builder`. Включают в себя `ansible-runner`, зависимости Python и системные библиотеки. Позволяют гарантировать идентичность среды выполнения локально и в CI.
 
-### Типовой CI/CD-пайплайн для Ansible
+### Оптимизация Ansible для GitLab CI
 
-Полный цикл автоматизации provisioning включает следующие шаги:
+Для повышения производительности и удобства чтения логов в `ansible.cfg` или через переменные окружения рекомендуется:
 
-1. **Инициализация** — коммит или merge request триггерит пайплайн.
-2. **Валидация** — `ansible-lint`, `ansible-playbook --syntax-check`.
-3. **Тестирование** — опциональный `dry-run` (`--check --diff`).
-4. **Деплой** — запуск playbook на целевых хостах.
-5. **Проверка** — smoke-тесты (HTTP-запрос к сервису, проверка порта).
-6. **Откат при сбое** — revert-коммит в `main` и повторный запуск пайплайна на предыдущую версию.
+- `ANSIBLE_FORCE_COLOR: "true"` — принудительное включение цветного вывода в терминале GitLab.
+- `ANSIBLE_STDOUT_CALLBACK: "yaml"` — более структурированный и читаемый вывод задач плейбука.
+- `ANSIBLE_PIPELINING: "True"` — ускорение выполнения задач за счет сокращения количества SSH-соединений.
+- `ANSIBLE_HOST_KEY_CHECKING: "False"` — отключение проверки SSH-ключей для новых эфемерных хостов (использовать с осторожностью).
 
-### Управление секретами
+### Управление секретами: ID Tokens и OIDC
 
-**Рекомендуемые подходы:**
-
-1. **GitLab CI/CD Variables:**
-    - **Где:** `Settings -> CI/CD -> Variables` в проекте GitLab.
-    - **Что хранить:** Пароли, токены API, содержимое SSH-ключей.
-    - **Безопасность:** Переменные следует помечать как **"Protected"** (доступны только для защищенных веток) и **"Masked"** (значение скрывается в логах).
-
-2. **Ansible Vault:**
-    - **Принцип:** Файлы с чувствительными данными (например, инвентарь) шифруются с помощью `ansible-vault`.
-    - **Хранение:** Зашифрованные файлы безопасно хранятся в Git. Пароль для расшифровки помещается в переменную GitLab CI/CD с именем `ANSIBLE_VAULT_PASSWORD`.
-    - **Выполнение:** Ansible автоматически использует эту переменную для расшифровки файлов во время запуска плейбука.
-
-3. **Внешние системы управления секретами:** HashiCorp Vault, CyberArk — подтягивают секреты в рантайме пайплайна. Для большинства задач Ansible Vault + GitLab Variables достаточно; внешние системы — overkill для небольших проектов.
-
-### Доступ к внешним репозиториям из пайплайна
-
-Если роли, инвентарь или плейбуки разнесены по разным репозиториям, CI-задача должна получить к ним доступ. Для этого используется **GitLab CI Job Token** (`CI_JOB_TOKEN`) — встроенный токен, доступный в каждой задаче. Он позволяет клонировать приватные репозитории того же GitLab-инстанса без дополнительных секретов.
-
-```yaml
-deploy_job:
-  script:
-    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.example.com/infra/ansible-roles.git roles/
-    - ansible-playbook -i inventory/site.yml deploy.yml
-    # → PLAY [Deploy Application] ...
-```
-
-Альтернатива — Git submodules или `requirements.yml` с установкой через `ansible-galaxy install -r requirements.yml`.
+Вместо хранения статических ключей сервисных аккаунтов (например, `YC_SERVICE_ACCOUNT_KEY_FILE`) рекомендуется использовать **ID Tokens**.
+GitLab генерирует временный JSON Web Token (JWT), который облачный провайдер обменивает на временные учетные данные. Это исключает хранение секретов в переменных GitLab.
 
 ## Практические сценарии
 
-### Настройка SSH-подключения в CI/CD
+### Сценарий 1: Базовая настройка с кэшированием коллекций
 
-Корректное SSH-подключение из CI-задачи требует двух настроек:
-
-1. **SSH-агент** — приватный ключ загружается из переменной GitLab CI/CD в агент, чтобы `ssh`/`ansible-playbook` использовали его без интерактивного ввода passphrase.
-2. **StrictHostKeyChecking=no** — отключает интерактивный запрос при подключении к неизвестному хосту. В CI это критично, так как задача не может ответить «yes» вручную.
+Использование `ansible-core` (минималистичный пакет) и кэширование зависимостей для ускорения пайплайна.
 
 ```yaml
-before_script:
-  - eval $(ssh-agent -s)
-  # → Agent pid 1234
-  - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-  # → Identity added: (stdin) (RSA key)
-  - mkdir -p ~/.ssh
-  - chmod 700 ~/.ssh
-  - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-```
-
-> **Важно:** Для продакшн-сред предпочтительнее управлять `known_hosts` явно (добавлять отпечатки хостов в переменную), чтобы предотвратить MITM-атаки.
-
-### Тестирование и деплой: разделение задач (jobs)
-
-Хорошая практика — разделять валидацию и деплой на отдельные задачи. Это позволяет быстро отлавливать синтаксические ошибки до подключения к хостам.
-
-```yaml
-stages:
-  - test
-  - deploy
-
-# Переиспользуемый блок через extend
 .ansible_base:
-  image: python:3.12
-  before_script:
-    - pip install ansible
-    - eval $(ssh-agent -s)
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-
-ansible_syntax_check:
-  stage: test
-  extends: .ansible_base
-  script:
-    - ansible-playbook site.yml --syntax-check
-    # → playbook: site.yml
+  image: python:3.12-slim
   variables:
-    ANSIBLE_HOST_KEY_CHECKING: "False"
-
-ansible_deploy:
-  stage: deploy
-  extends: .ansible_base
-  script:
-    - ansible-playbook -i inventory/production site.yml --skip-tags github_runner
-    # → PLAY [site] ...
-  environment:
-    name: production
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual  # Продакшн-деплой только вручную
+    ANSIBLE_COLLECTIONS_PATH: "${CI_PROJECT_DIR}/.ansible/collections"
+    ANSIBLE_ROLES_PATH: "${CI_PROJECT_DIR}/.ansible/roles"
+    ANSIBLE_FORCE_COLOR: "true"
+    PY_COLORS: "1"
+  cache:
+    key: "ansible-v1-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .ansible/
+  before_script:
+    - apt-get update && apt-get install -y git openssh-client
+    - pip install ansible-core
+    - mkdir -p .ansible/roles .ansible/collections
+    - ansible-galaxy collection install -r requirements.yml -p .ansible/collections
+    - ansible-galaxy role install -r requirements.yml -p .ansible/roles
 ```
 
-**Ключевые приёмы:**
+### Сценарий 2: Деплой в Yandex Cloud через ID Tokens (Без секретов)
 
-- **`extends: .ansible_base`** — переиспользование общего блока (установка Ansible, настройка SSH). Механизм `extend` описан в [Reusable Pipelines](../Reusable_Pipelines/overview.md).
-- **`--skip-tags`** — исключение задач по тегам (например, установка GitHub Runner не нужна при каждом деплое).
-- **`when: manual`** — продакшн-деплой запускается вручную, stage деплоится автоматически.
-- **`--check --diff`** — dry-run режим для предпросмотра изменений без применения.
-
-### Полный цикл: валидация → деплой → проверка
+Современный метод аутентификации в Yandex Cloud с использованием `id_tokens`.
 
 ```yaml
-stages:
-  - validate
-  - deploy
-  - verify
-
-ansible_test:
-  stage: validate
-  image: python:3.12
-  before_script:
-    - pip install ansible
+deploy_yc:
+  extends: .ansible_base
+  id_tokens:
+    MY_JWT_TOKEN:
+      aud: https://iam.api.cloud.yandex.net/iam/v1/tokens
   script:
-    - ansible-playbook site.yml --syntax-check
-    # → playbook: site.yml
+    # Обмен JWT на временный IAM-токен
+    - export YC_IAM_TOKEN=$(curl -s -X POST -H "Content-Type: application/json" -d "{\"jwt\":\"$MY_JWT_TOKEN\"}" https://iam.api.cloud.yandex.net/iam/v1/tokens | jq -r .iamToken)
+    - ansible-playbook -i inventory/prod.yc.yml site.yml
+  environment: production
+```
 
-ansible_deploy:
+### Сценарий 3: Использование ssh-agent для SSH-ключей
+
+Метод с `ssh-agent` чище, чем передача пути через `--private-key`, так как позволяет работать с прокси-хостами (Bastion) и упрощает синтаксис команд.
+
+```yaml
+deploy_app:
   stage: deploy
-  image: python:3.12
   before_script:
-    - pip install ansible
     - eval $(ssh-agent -s)
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+    - chmod 400 "$SSH_PRIVATE_KEY"
+    - ssh-add "$SSH_PRIVATE_KEY"
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
   script:
-    - ansible-playbook -i inventory/staging site.yml
-    # → PLAY [site] ...
-  environment:
-    name: staging
-
-check_service:
-  stage: verify
-  image: curlimages/curl
-  script:
-    - curl -sf http://$TARGET_HOST:80/ || exit 1
-    # → <html><body><h1>Success</h1></body></html>
-  needs: ["ansible_deploy"]
-  environment:
-    name: staging
+    - ansible-playbook -i hosts.ini site.yml
 ```
 
-### Настройка и запуск Runner'а
+### Сценарий 4: Тестирование ролей через Molecule
 
-Для выполнения CI/CD-задач необходим GitLab Runner. Runner — это агент, который устанавливается на отдельный сервер и выполняет шаги, описанные в `.gitlab-ci.yml`. Для запуска плейбуков Ansible обычно используется Runner с `shell` или `docker` executor.
+Интеграция тестирования ролей в CI позволяет проверять корректность кода перед деплоем.
 
-Подробное пошаговое руководство по установке и регистрации Runner'а, включая рекомендованный `docker` executor, находится в основном документе: **[Регистрация GitLab Runner](./runner_registration.md)**.
-
-#### Запуск Ansible Playbook из GitLab CI
-
-**Пример структуры проекта:**
-
-```text
-.
-├── ansible.cfg
-├── hosts.ini
-├── playbook.yml
-└── .gitlab-ci.yml
+```yaml
+test_role:
+  stage: lint
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+  script:
+    - pip install molecule[docker] ansible-core
+    - molecule test
+    # → PLAY [Destroy] ...
+    # → PLAY [Create] ...
+    # → PLAY [Converge] ...
+    # → PLAY [Verify] ...
 ```
 
-**Пример файлов:**
+### Сценарий 5: Обработка критических ошибок (any_errors_fatal)
 
-- **`playbook.yml`**:
+Для предотвращения «частичного» деплоя (когда на одном сервере деплой прошел, а на другом — нет) используйте настройки в плейбуке или CI.
 
-  ```yaml
-  - name: "Ping hosts"
-    hosts: all
-    gather_facts: false
-    tasks:
-      - name: "Ping host"
-        ansible.builtin.ping:
-  ```
-
-- **`hosts.ini`**:
-
-  ```ini
-  testnode ansible_host=1.2.3.4 ansible_user=devops
-  ```
-
-- **`ansible.cfg`**:
-
-  ```ini
-  [defaults]
-  host_key_checking = False
-  ```
-
-- **`.gitlab-ci.yml`**:
-
-  ```yaml
-  stages:
-    - provision
-
-  ansible_run:
-    stage: provision
-    tags:
-      - ansible # Указываем тег нашего Runner'а
-    script:
-      - ansible --version
-      # → ansible [core 2.16.x]
-      # Создаем временный файл ключа из переменной GitLab CI/CD
-      - echo "${SSH_PRIVATE_KEY}" > key.pem
-      - chmod 600 key.pem
-      - ansible-playbook playbook.yml -i hosts.ini --private-key key.pem
-      # → PLAY [Ping hosts] ...
-  ```
-
-**Порядок действий:**
-
-1. В проекте GitLab (`Settings -> CI/CD -> Variables`) создайте переменную `SSH_PRIVATE_KEY`.
-2. Вставьте в нее содержимое **приватного** SSH-ключа, имеющего доступ к целевым хостам (`testnode`). Пометьте переменную как `Masked`.
-3. Закоммитьте файлы в репозиторий. GitLab автоматически запустит пайплайн, который выполнит плейбук.
+1. **В плейбуке:**
+    ```yaml
+    - hosts: all
+      any_errors_fatal: true # Остановка всего плейбука при ошибке на ЛЮБОМ хосте
+      tasks:
+        - name: Critical update
+          ansible.builtin.apt: name=nginx state=latest
+    ```
+2. **В пайплайне:** Используйте `artifacts` для сохранения `deployment_report.json` для последующего анализа причин сбоя.
 
 ## Дополнительная информация
 
-Для ускорения пайплайнов рекомендуется предварительно собирать Docker-образ с установленным Ansible, а не устанавливать его на каждом запуске. При работе с конфигурационными файлами используйте `notify` и `handlers` для условного перезапуска сервисов. Это позволяет избежать ненужных перезапусков, если файл не изменился.
+### Продвинутые техники
 
-Безопасность и управление средами являются ключевыми аспектами. Храните inventory для `staging` и `production` в отдельных файлах, чтобы снизить риск случайного деплоя. Для отката изменений достаточно сделать `revert` коммита в `main` и запустить пайплайн заново.
+- **ansible-navigator:** Используйте для локальной отладки пайплайнов в тех же образах (EE), что и в GitLab CI.
+- **Pull-модель (ansible-pull):** В больших инфраструктурах (1000+ узлов) GitLab Runner может только триггерить `ansible-pull` на целевых узлах, чтобы снять нагрузку с сети.
 
 ### Смотрите также
 
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — для понимания базовых концепций пайплайнов.
-- **[Управление секретами](../Concepts/gitlab_ci_variables_secrets.md)** и **[Ansible Vault](../../../Ansible/Vault/basics.md)** — для безопасной работы с учетными данными.
-- **[Пример безопасной архитектуры CI/CD с Ansible](../../../Ansible/examples/example_real_world_ci_cd.md)** — для реализации промышленного подхода с изоляцией SSH-ключей.
+- **[Динамический инвентарь в Ansible](../../../Ansible/dynamic_inventory.md)** — глубокое погружение в плагины для облаков.
+- **[Ansible Vault: Практические примеры](../../../Ansible/Vault/examples.md)** — методы шифрования в CI/CD.
+- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — детали работы с `Masked` и `File` переменными.
+- **[Настройка GitLab Runner](../Advanced/gitlab_ci_runners_executors.md)** — оптимизация среды выполнения.

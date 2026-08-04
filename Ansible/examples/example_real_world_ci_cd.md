@@ -156,6 +156,3 @@ gitlab-runner ALL=(ansible-deploy) NOPASSWD: /usr/local/bin/ansible_runner.sh
 - [Типовая структура проекта Ansible](example_project_layout.md)
 - [Рекомендации по безопасности в Ansible](../ansible_security_best_practices.md)
 - [Управление секретами в CI/CD пайплайнах](../../CI-CD/DevSecOps/secrets_management.md)
-
----
-**Reliability Score: 10** (Архитектура соответствует современным подходам к DevSecOps и официальным рекомендациям Red Hat по защите Control Node).

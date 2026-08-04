@@ -109,6 +109,81 @@ limits_config:
 | **Сложность** | Низкая (не нужны маппинги) | Высокая (шарды, рефреши, схемы) |
 | **Корреляция** | Нативная с Prometheus и Tempo | Требует настройки через Logstash/OTel |
 
+### Опасность высокой кардинальности (High Cardinality)
+
+Это самая частая причина отказа Loki. **Никогда** не используйте в качестве меток (labels) значения с высокой вариативностью:
+- Идентификаторы запросов (`request_id`, `trace_id`).
+- IP-адреса пользователей.
+- Email-адреса.
+- Метки времени.
+
+Для этих данных используйте **Structured Metadata** (Loki 3.x) или храните их внутри тела лога (JSON). Метки должны описывать только источник данных (кластер, пространство имен, сервис).
+
+### Минимальная Production-конфигурация (Локальное хранилище)
+
+Для одиночного Linux-сервера без использования S3.
+
+**Файл `loki-config.yaml`:**
+```yaml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /var/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+  replication_factor: 1
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 30d
+```
+
+### Продвинутые запросы LogQL
+
+Использование логов как источника метрик:
+
+1. **Скорость появления ошибок (ошибок в минуту):**
+   `sum by (app) (rate({job="fluent-bit"} |= "ERROR" [5m])) * 60`
+
+2. **95-й перцентиль времени ответа из логов Nginx:**
+   `quantile_over_time(0.95, {app="nginx"} | json | unwrap duration [5m])`
+
+3. **Топ-10 путей с ошибками 5xx:**
+   `topk(10, sum by (path) (count_over_time({app="gateway"} | json | status >= 500 [1h])))`
+
+## Устранение неполадок
+
+### Диагностика готовности
+```bash
+# Проверка готовности компонентов
+curl http://localhost:3100/ready
+
+# Проверка списка активных меток
+curl http://localhost:3100/loki/api/v1/labels
+```
+
+### Частые ошибки
+- **"Entry out of order"**: Данные с одинаковыми метками пришли не в хронологическом порядке. Решение: добавить уникальную метку (например, `host`) для каждого источника.
+- **"Limit exceeded"**: Превышен лимит на количество потоков или скорость записи. Решение: увеличить лимиты в `limits_config`.
+
 ## Дополнительная информация
 
 ### Инструменты экосистемы

@@ -35,6 +35,51 @@ def _delete_chunk_ids(client: QdrantClient, collection_name: str, ids_to_remove:
         client.delete(collection_name=collection_name, points_selector=models.PointIdsList(points=valid_uuids))
 
 
+def _get_source_counts(client: QdrantClient, collection_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    next_offset = None
+    while True:
+        pts, next_offset = client.scroll(
+            collection_name=collection_name,
+            limit=1000,
+            with_payload=["source", "original_id"],
+            with_vectors=False,
+            offset=next_offset,
+        )
+        for p in pts:
+            src = (p.payload or {}).get("source")
+            if src is None:
+                src = "<none>"
+            counts[src] = counts.get(src, 0) + 1
+        if next_offset is None:
+            break
+    return counts
+
+
+def _delete_stray_points(client: QdrantClient, collection_name: str, rel_path: str, manifest_ids: set[str]) -> None:
+    ids_to_remove = []
+    next_offset = None
+    while True:
+        pts, next_offset = client.scroll(
+            collection_name=collection_name,
+            limit=1000,
+            with_payload=["original_id"],
+            with_vectors=False,
+            offset=next_offset,
+            scroll_filter=models.Filter(
+                must=[models.FieldCondition(key="source", match=models.MatchValue(value=rel_path))]
+            ),
+        )
+        for p in pts:
+            oid = (p.payload or {}).get("original_id")
+            if oid is None or oid not in manifest_ids:
+                ids_to_remove.append(str(p.id))
+        if next_offset is None:
+            break
+    if ids_to_remove:
+        client.delete(collection_name=collection_name, points_selector=models.PointIdsList(points=ids_to_remove))
+
+
 class _ManifestLock:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -168,6 +213,10 @@ def _update_manifest(
         valid_deleted = _revalidate_deleted(deleted, fresh_files)
         valid_changed = _revalidate_changed(changed, fresh_files)
 
+        new_ids: set[str] = set()
+        for _, ids, _ in file_chunk_info:
+            new_ids.update(ids)
+
         old_ids = []
         for rel_path in valid_deleted:
             entry = fresh_files.pop(rel_path, None)
@@ -176,7 +225,9 @@ def _update_manifest(
         for _, rel_path in valid_changed:
             entry = fresh_files.pop(rel_path, None)
             if entry:
-                old_ids.extend(entry.get("chunk_ids", []))
+                for cid in entry.get("chunk_ids", []):
+                    if cid not in new_ids:
+                        old_ids.append(cid)
         _delete_chunk_ids(client, collection_name, old_ids)
 
         changed_rel = {rel for _, rel in valid_changed}
@@ -242,7 +293,7 @@ def process_files(
     return all_docs, file_chunk_ids
 
 
-def ingest(engine_name: str = "", force: bool = False) -> None:
+def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> None:
     if not engine_name:
         engine_name = next(iter(rag_utils.ENGINES))
     cfg = rag_utils.ENGINES[engine_name]
@@ -253,6 +304,10 @@ def ingest(engine_name: str = "", force: bool = False) -> None:
 
     files = rag_utils.get_files()
     log.info("  Total .md files: %d", len(files))
+
+    client, cfg = rag_utils.load_qdrant(engine_name)
+    collection_name = cfg["collection"]
+    doc_prefix = cfg.get("doc_prefix", "")
 
     with _ManifestLock(MANIFEST_LOCK_FILE):
         changed, deleted, manifest, engine_state = get_changed_files(
@@ -266,15 +321,28 @@ def ingest(engine_name: str = "", force: bool = False) -> None:
                     deleted.append(rel_path)
                     log.info("  Excluded from index: %s", rel_path)
 
+        if repair:
+            counts = _get_source_counts(client, collection_name)
+            changed_rel = {rel for _, rel in changed}
+            repaired: list[tuple[str, str]] = []
+            for rel_path, entry in files_meta.items():
+                expected = len(entry.get("chunk_ids", []))
+                actual = counts.get(rel_path, 0)
+                if expected and actual != expected and rel_path not in changed_rel:
+                    file_path = os.path.join(rag_utils.NOTES_DIR, rel_path)
+                    if os.path.isfile(file_path):
+                        manifest_ids = set(entry.get("chunk_ids", []))
+                        _delete_stray_points(client, collection_name, rel_path, manifest_ids)
+                        repaired.append((file_path, rel_path))
+            if repaired:
+                log.info("  Repair: %d files with mismatched vectors, re-indexing", len(repaired))
+                changed.extend(repaired)
+
         if not changed and not deleted:
             log.info("  Index is up to date. Skipping.")
             return
 
         log.info("  Changed/new: %d, deleted: %d", len(changed), len(deleted))
-
-        client, cfg = rag_utils.load_qdrant(engine_name)
-        collection_name = cfg["collection"]
-        doc_prefix = cfg.get("doc_prefix", "")
 
         dense_embeddings = rag_utils.get_embeddings(cfg["model"], device, doc_prefix)
         sparse_model = rag_utils.get_sparse_embedding_model()
@@ -342,10 +410,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ingest files into RAG vector store")
     parser.add_argument("engine", nargs="?", default="", help=f"Engine name: {', '.join(rag_utils.ENGINES)}")
     parser.add_argument("--force", "-f", action="store_true", help="Force full rebuild")
+    parser.add_argument("--repair", "-r", action="store_true",
+                        help="Reconcile manifest vs collection: clean stray points and re-index mismatched files")
     args = parser.parse_args()
 
     if args.engine not in rag_utils.ENGINES:
         log.error("Unknown engine: %s. Available: %s", args.engine, ', '.join(rag_utils.ENGINES))
         sys.exit(1)
 
-    ingest(args.engine, force=args.force)
+    ingest(args.engine, force=args.force, repair=args.repair)

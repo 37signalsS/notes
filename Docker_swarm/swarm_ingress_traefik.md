@@ -2,7 +2,7 @@
 
 Миграция с версии v2 на v3: конфигурация обновлена для Traefik v3.x. В новой версии провайдер Swarm выделен в отдельный компонент: вместо `--providers.docker.swarmMode=true` используется флаг `--providers.swarm=true`.
 
-При работе с несколькими веб-сервисами в кластере Docker Swarm стандартный механизм Routing Mesh (сетчатая маршрутизация) выполняет балансировку на уровне L4, но не поддерживает разграничение запросов по доменным именам на уровне L7. Traefik решает эту задачу, выступая в роли динамического обратного прокси-сервера.
+При работе с несколькими веб-сервисами в кластере Docker Swarm стандартный механизм Routing Mesh (сетчатая маршрутизация) выполняет балансировку на уровне L4, но не поддерживает разграничение запросов по доменным именам на уровне L7. Traefik решает эту задачу, выступая в роли динамического обратного прокси-сервера и Edge Router.
 
 ## Определения
 
@@ -10,58 +10,83 @@
 
 **Routing Mesh (Сетчатая маршрутизация)** — встроенный механизм Swarm, позволяющий обращаться к сервису через любой узел кластера. По умолчанию выполняет SNAT (Source Network Address Translation), что приводит к потере реального IP-адреса клиента.
 
-**Host Mode (Режим хоста)** — способ публикации портов, при котором контейнер слушает порт непосредственно на сетевом интерфейсе узла кластера. Позволяет сохранять реальный IP-адрес клиента и минимизировать задержки.
+**Host Mode (Режим хоста)** — способ публикации портов, при котором контейнер слушает порт непосредственно на сетевом интерфейсе узла кластера (`mode: host`). Позволяет сохранять реальный IP-адрес клиента и минимизировать задержки.
 
-**Docker Socket Proxy** — вспомогательный сервис, который предоставляет ограниченный доступ к Docker API по сети (TCP), защищая основной сокет демона `/var/run/docker.sock` от прямого доступа потенциально уязвимых веб-сервисов.
+**Docker Socket Proxy** — вспомогательный сервис, который предоставляет ограниченный доступ к Docker API по сети (TCP), защищая основной сокет демона `/var/run/docker.sock` от прямого доступа.
+
+**Middleware (Промежуточное ПО)** — компоненты Traefik для модификации запросов (авторизация, заголовки, ограничение скорости) перед их отправкой в Backend.
 
 ## Базовые концепции
 
 ### Принцип работы в Swarm
 
 1. **Обнаружение сервисов (Service Discovery):** Traefik опрашивает API менеджеров Swarm и динамически строит таблицу маршрутов на основе меток (labels) сервисов.
-2. **Оверлейные сети (Overlay Networks):** Traefik и приложения должны находиться в общей оверлейной сети для передачи трафика внутри кластера.
-3. **Декларативность:** Вся конфигурация маршрутизации (правила Host, middleware, TLS) описывается в секции `deploy.labels` файла `docker-compose.yml`.
+2. **Оверлейные сети (Overlay Networks):** Traefik и приложения должны находиться в общей оверлейной сети. Рекомендуется создавать одну внешнюю сеть `traefik-public` для всех входящих подключений.
+3. **Декларативность:** Вся конфигурация маршрутизации (правила Host, middleware, TLS) описывается в секции `deploy.labels` каждого сервиса.
 
 ### Сохранение реального IP-адреса
 
-По умолчанию Swarm балансирует трафик через VIP (Virtual IP) и Ingress-сеть, заменяя IP клиента на внутренний IP узла. Чтобы Traefik видел реальные адреса для логирования или безопасности (например, Fail2Ban), порты должны быть опубликованы в режиме `host`:
+По умолчанию Swarm балансирует трафик через VIP (Virtual IP), заменяя IP клиента на внутренний IP узла. Чтобы Traefik видел реальные адреса (важно для логирования, WAF или `IPWhiteList`), порты должны быть опубликованы в режиме `host`.
 
-```yaml
-ports:
-  - target: 80
-    published: 80
-    protocol: tcp
-    mode: host
-  - target: 443
-    published: 443
-    protocol: tcp
-    mode: host
-```
+### Проблема High Availability (HA) и ACME
 
-### Безопасность Docker Socket
+При использовании встроенного ACME (Let's Encrypt) возникают сложности при масштабировании Traefik (`replicas > 1`):
+- Файл `acme.json` не может быть одновременно записан несколькими инстансами Traefik.
+- **Решение 1:** Использование `replicas: 1` с привязкой к конкретному узлу (через `placement constraints`).
+- **Решение 2:** Использование внешних сертификатов (через `docker secret` или `docker config`).
+- **Решение 3:** Использование внешнего хранилища (Consul, Redis) для сертификатов (доступно в Traefik Enterprise) или DNS-01 challenge с внешним менеджером сертификатов.
 
-Запуск Traefik с прямым монтированием `/var/run/docker.sock` на менеджере является риском безопасности. Рекомендуется использовать `docker-socket-proxy`, который разрешает только `GET` запросы к `/containers/*`, `/services/*` и `/tasks/*`.
+### Безопасность и Socket Proxy
+
+Запуск Traefik с прямым монтированием `/var/run/docker.sock` на менеджере является критическим риском (позволяет получить полный контроль над кластером). Использование `socket-proxy` ограничивает доступ Traefik только необходимыми операциями чтения.
 
 ## Практические сценарии
 
-### Развертывание Traefik v3
+### Развертывание эталонного стека Traefik v3
 
-#### 1. Создание внешней оверлейной сети
+Этот сценарий использует `docker config` для статической конфигурации и `socket-proxy` для безопасности.
+
+#### 1. Подготовка инфраструктуры
 
 ```bash
+# Создание сети для входящего трафика
 docker network create --driver=overlay traefik-public
-# → <NETWORK_ID>
+
+# Создание конфигурационного файла
+cat <<EOF > traefik.yml
+providers:
+  swarm:
+    endpoint: "tcp://socket-proxy:2375"
+    exposedByDefault: false
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+certificatesResolvers:
+  myresolver:
+    acme:
+      email: admin@example.com
+      storage: /letsencrypt/acme.json
+      tlsChallenge: {}
+EOF
+
+docker config create traefik-config traefik.yml
 ```
 
-#### 2. Стек Traefik с проксированием сокета
+#### 2. Развертывание стека
 
-Файл `docker-compose.traefik.yml`:
+Файл `traefik-stack.yml`:
 
 ```yaml
 version: '3.8'
 
 services:
-  # Прокси для безопасного доступа к API
   socket-proxy:
     image: tecnativa/docker-socket-proxy
     networks:
@@ -76,11 +101,17 @@ services:
       - SWARM=1
     deploy:
       placement:
-        constraints:
-          - node.role == manager
+        constraints: [node.role == manager]
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
 
   traefik:
     image: traefik:v3.1
+    configs:
+      - source: traefik-config
+        target: /etc/traefik/traefik.yml
     ports:
       - target: 80
         published: 80
@@ -88,29 +119,20 @@ services:
       - target: 443
         published: 443
         mode: host
-    command:
-      - "--providers.swarm=true"
-      - "--providers.swarm.endpoint=tcp://socket-proxy:2375"
-      - "--providers.swarm.exposedByDefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      # Авто-редирект на HTTPS
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      # Настройка SSL (Let's Encrypt)
-      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
-      - "--certificatesresolvers.myresolver.acme.email=admin@example.com"
-      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
     volumes:
-      - "letsencrypt-data:/letsencrypt"
+      - letsencrypt-data:/letsencrypt
     networks:
       - traefik-public
       - traefik-internal
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     deploy:
       replicas: 1
       placement:
-        constraints:
-          - node.role == manager
+        constraints: [node.role == manager]
 
 networks:
   traefik-public:
@@ -122,58 +144,82 @@ volumes:
   letsencrypt-data:
 ```
 
-### Настройка приложения (Backend)
+### Настройка Middlewares для приложений
 
-Метки **обязательно** должны находиться в секции `deploy.labels`, а не в `services.labels`.
+Middlewares позволяют добавлять функциональность к маршрутам без изменения кода приложения.
 
 ```yaml
 services:
-  my-app:
-    image: nginx:alpine
+  api:
+    image: my-api:latest
     networks:
       - traefik-public
     deploy:
-      replicas: 3
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.myapp.rule=Host(`myapp.example.com`)"
-        - "traefik.http.routers.myapp.entrypoints=websecure"
-        - "traefik.http.routers.myapp.tls.certresolver=myresolver"
-        - "traefik.http.services.myapp.loadbalancer.server.port=80"
+        - "traefik.http.routers.api.rule=Host(`api.example.com`)"
+        - "traefik.http.routers.api.entrypoints=websecure"
+        - "traefik.http.routers.api.tls.certresolver=myresolver"
+        # Подключение Middleware
+        - "traefik.http.routers.api.middlewares=api-auth,api-headers"
+        # Basic Auth (user:password_hash)
+        - "traefik.http.middlewares.api-auth.basicauth.users=user:\$$apr1\$$...hash"
+        # Безопасные заголовки
+        - "traefik.http.middlewares.api-headers.headers.browserXssFilter=true"
+        - "traefik.http.middlewares.api-headers.headers.contentTypeNosniff=true"
+        - "traefik.http.services.api.loadbalancer.server.port=8080"
 ```
 
-### Диагностика
+### Мониторинг и логирование
+
+Для интеграции с Prometheus добавьте в `traefik.yml`:
+
+```yaml
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addServicesLabels: true
+
+accessLog:
+  filePath: "/var/log/traefik/access.log"
+  bufferingSize: 100
+  fields:
+    names:
+      StartUTC: drop
+```
+
+## Диагностика
 
 ```bash
-# Просмотр логов Traefik
+# Проверка статуса сервисов
+docker service ls
+# Просмотр логов (поиск ошибок конфигурации провайдера)
 docker service logs -f traefik_traefik
-# → level=info msg="Configuration loaded from flags."
-# → level=info msg="Starting provider *swarm.Provider"
-
-# Проверка конфигурации через Dashboard (если включен)
-# curl -I http://localhost:8080/api/rawdata
 ```
 
-#### Частые ошибки
+### Типовые проблемы
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **404 Not Found** | Метки в `services.labels` вместо `deploy.labels` | Перенести метки в секцию `deploy` |
-| **Gateway Timeout** | Приложение не в сети `traefik-public` | Добавить сеть в описание сервиса |
-| **SSL handshake error** | `acme.json` имеет слишком широкие права | `chmod 600 /path/to/acme.json` |
+| **404 Not Found** | Метки в `services.labels` | Перенести в `deploy.labels` |
+| **Gateway Timeout** | Разные сети | Проверить наличие `traefik-public` у обоих сервисов |
+| **SSL Error** | Права на `acme.json` | Убедиться в `chmod 600` на томе |
+| **IP не совпадает** | SNAT в Swarm | Использовать `mode: host` для портов Traefik |
 
 ## Дополнительная информация
 
-### Сравнение режимов публикации портов
+### Сравнение с другими решениями
 
-| Функция | Ingress Mode (default) | Host Mode |
-| :--- | :--- | :--- |
-| **Балансировка** | Встроенный Swarm L4 LB | Прямое попадание на узел |
-| **Client IP** | Теряется (SNAT) | Сохраняется |
-| **Порты** | Виртуализированы | Привязаны к узлу (конфликт портов) |
+| Характеристика | Traefik | Nginx Ingress | HAProxy |
+| :--- | :--- | :--- | :--- |
+| **Service Discovery** | Нативно (Swarm API) | Требует Nginx-скриптов | Требует Consul/DNS |
+| **Auto SSL** | Встроено (ACME) | Cert-manager / Shell | Внешние скрипты |
+| **Динамичность** | 10/10 | 6/10 | 5/10 |
 
 ### Смотрите также
 
-- **[Обзор Traefik](../../WebServers/Traefik/traefik_overview.md)** — общие концепции v3.
+- **[Обзор Traefik (SSoT)](../../WebServers/Traefik/traefik_overview.md)** — архитектура и компоненты.
 - **[Сетевое взаимодействие в Swarm](./swarm_networking.md)** — подробности работы Overlay-сетей.
 - **[Продвинутые стратегии деплоя](./swarm_stack_advanced.md)** — Canary и Blue-Green через Traefik.
+- **[Диагностика сетевой связности](../Docker/Docker_troubleshooting/network_connectivity_issues.md)**

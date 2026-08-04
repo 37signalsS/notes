@@ -126,6 +126,3 @@ app_user: "appuser" # Может быть переопределено в vars/R
 - [Модули управления пакетами](../Modules/ansible_package_management_modules.md) — сравнение `package`, `apt` и `dnf`.
 - [Переменные в Ansible](../PlaybookStructure/variables.md) — приоритеты и типы переменных.
 - [Роли: Стратегии проектирования](../Roles/strategies.md) — организация структуры кроссплатформенных ролей.
-
----
-**Reliability Score: 10** (Подтверждено архитектурными паттернами Ansible и документацией Core-модулей).

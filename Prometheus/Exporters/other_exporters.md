@@ -28,7 +28,7 @@
 | **mysqld_exporter** | Мониторинг MySQL/MariaDB | [GitHub](https://github.com/prometheus/mysqld_exporter) | 9104 | **[MySQL](../../Databases/MySQL/overview.md)** |
 | **postgres_exporter** | Мониторинг PostgreSQL | [GitHub](https://github.com/prometheus-community/postgres_exporter) | 9187 | **[PostgreSQL](../../Databases/PostgreSQL/overview.md)** |
 | **redis_exporter** | Мониторинг Redis (Кэш и очереди) | [GitHub](https://github.com/oliver006/redis_exporter) | 9121 | **[Redis](../../Databases/redis_overview.md)** |
-| **mongodb_exporter** | Мониторинг MongoDB | [GitHub](https://github.com/percona/mongodb_exporter) | 9216 | **[MongoDB](../../Databases/MongoDB/overview.md)** |
+| **mongodb_exporter** | Мониторинг MongoDB | [GitHub](https://github.com/percona/mongodb_exporter) | 9216 | **[MongoDB](../../Databases/MongoDB/mongodb.md)** |
 | **elasticsearch_exporter** | Мониторинг Elasticsearch | [GitHub](https://github.com/prometheus-community/elasticsearch_exporter) | 9114 | **[Elasticsearch](../../ELK_Stack/Elasticsearch/elasticsearch_overview.md)** |
 | **consul_exporter** | Мониторинг KV и Health Checks Consul | [GitHub](https://github.com/prometheus/consul_exporter) | 9107 | **[Consul](../../Consul/consul_overview.md)** |
 | **memcached_exporter** | Мониторинг Memcached | [GitHub](https://github.com/prometheus/memcached_exporter) | 9150 | **[Memcached](../../Databases/memcached_overview.md)** |

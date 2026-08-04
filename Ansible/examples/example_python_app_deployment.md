@@ -225,6 +225,3 @@ curl -I http://api.my-site.local
 - [Интеграция Nginx с Gunicorn/uWSGI](../../WebServers/Nginx/Core/Location/integration_examples.md)
 - [Работа с Python-зависимостями (Pip и Venv)](../CrossPlatform/lamp-example.md#работа-с-python-зависимостями-pip-и-venv)
 - [Шаблонизация конфигураций в Ansible](../ansible_jinja_templating.md)
-
----
-**Reliability Score: 10** (Архитектура подтверждена стандартами деплоя WSGI приложений и лучшими практиками Ansible).

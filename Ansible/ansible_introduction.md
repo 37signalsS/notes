@@ -82,3 +82,4 @@ ansible all -m shell -a "df -h | grep /dev/sda"
 
 - [Основные концепции Ansible](./ansible_core_concepts.md) — архитектура, идемпотентность, модули и плагины.
 - [Установка и настройка](./ansible_setup_and_config.md) — подготовка рабочего окружения узла управления.
+- [Интеграция Ansible с ArgoCD](../GitOps/ArgoCD/argocd_api_automation.md) — управление приложениями через API.

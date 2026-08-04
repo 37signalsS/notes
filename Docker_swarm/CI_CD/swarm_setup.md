@@ -1,172 +1,146 @@
-# CI/CD с Docker Swarm: Подготовка кластера
+# CI/CD в Docker Swarm: Подготовка и настройка кластера
 
 ## Определения
 
-- **[Docker Swarm Mode](../docker_swarm_overview.md):** Нативный режим оркестрации Docker Engine для управления кластером из нескольких хостов.
-- **[mTLS (mutual TLS)](../../Networking/Protocols/tls.md#сценарий-2-взаимная-аутентификация-mtls):** Протокол взаимной аутентификации, обеспечивающий защищенное соединение между GitLab Runner и Docker API.
-- **[Docker Context](./docker_context_setup.md):** Механизм управления удаленными окружениями, позволяющий абстрагироваться от параметров подключения (хост, сертификаты) в командах CLI.
-- **[Join Token](../swarm_advanced_topics.md):** Секретный токен, используемый для безопасного включения новых узлов в состав кластера.
+- **[Docker Swarm Mode](../docker_swarm_overview.md):** Встроенный механизм оркестрации Docker, превращающий группу хостов в единый отказоустойчивый кластер.
+- **[mTLS (mutual TLS)](../../Networking/Protocols/tls.md#сценарий-2-взаимная-аутентификация-mtls):** Протокол двусторонней проверки сертификатов. Обеспечивает шифрование трафика и проверку подлинности как CI-раннера (клиента), так и Swarm-менеджера (сервера).
+- **[Docker Context](./docker_context_setup.md):** Абстракция в CLI Docker, объединяющая параметры подключения (URL эндпоинта и пути к сертификатам) под коротким именем.
+- **[Advertising Address (`--advertise-addr`):](../swarm_advanced_topics.md)** IP-адрес или интерфейс, который узел сообщает остальным участникам кластера для связи. Критичен в мульти-интерфейсных системах.
+- **[Listening Address (`--listen-addr`):](../swarm_advanced_topics.md)** Адрес и порт, на которых демон слушает входящий трафик управления Swarm (по умолчанию 0.0.0.0:2377).
 
 ## Базовые концепции
 
-### Архитектура удаленного доступа
+### Архитектура безопасного удаленного доступа
 
-Для автоматизации развертывания требуется организовать безопасное взаимодействие GitLab Runner с менеджером кластера. Рекомендуется использовать удаленное управление по TCP (порт 2376) с mTLS-авторизацией.
+Для интеграции Swarm с внешними CI/CD системами (GitLab, GitHub) необходимо организовать защищенный канал управления. Использование порта 2376 с mTLS является промышленным стандартом, так как:
 
-Преимущества удаленного управления:
+- **Безопасность:** Исключает несанкционированный доступ к API (в отличие от открытого порта 2375).
+- **Изоляция:** CI-система взаимодействует с кластером как удаленный клиент, не требуя установки агентов на менеджер-ноды.
+- **Централизация:** Один CI-раннер может управлять множеством кластеров через переключение контекстов.
 
-- Изоляция среды сборки от продуктивной инфраструктуры.
-- Возможность управления несколькими кластерами из одного пайплайна.
-- Отсутствие необходимости установки Runner на узлы Swarm.
+### Сетевые требования
 
-### Необходимые компоненты
+Для корректной работы Swarm и его API необходимо открыть следующие порты в Firewall:
 
-| Компонент | Назначение |
-|:---|:---|
-| Docker Daemon | Прием и выполнение API-команд по TCP/2376 |
-| CA Certificate | Центр сертификации для проверки подлинности участников |
-| Server Certificate | Подтверждение личности узла Swarm |
-| Client Certificate | Подтверждение личности GitLab Runner |
+| Порт / Протокол | Назначение | Описание |
+|:---|:---|:---|
+| **2376 / TCP** | Docker TLS API | Удаленное управление кластером (CI/CD) |
+| **2377 / TCP** | Cluster Management | Коммуникации между менеджерами |
+| **7946 / TCP + UDP** | Node Discovery | Обнаружение узлов и обмен состоянием |
+| **4789 / UDP** | Overlay Traffic | Трафик сетей Overlay (VXLAN) |
 
-### Требования к инфраструктуре
+> **Важно:** Синхронизация времени (NTP) критически важна для алгоритма Raft. Разница во времени между менеджерами более чем в несколько секунд может привести к потере кворума.
 
-- **Кворум:** Рекомендуется нечетное количество менеджеров (3 или 5).
-- **Сеть:** Статический IP или DNS-имя для менеджеров Swarm.
-- **Доступность:** Открытый порт 2376 (TCP) для входящих TLS-подключений.
+### Кворум и надежность
+
+- **Нечетное количество:** Для обеспечения отказоустойчивости используйте 3 или 5 менеджеров.
+- **Availability:** Менеджеры также выполняют роль рабочих узлов по умолчанию. В нагруженных кластерах рекомендуется переводить менеджеры в режим `drain` (`docker node update --availability drain <NODE>`), чтобы они занимались только управлением.
 
 ## Практические сценарии
 
-### Сценарий 1: Создание Swarm-кластера
+### Сценарий 1: Инициализация кластера
 
-1. Инициализация первого менеджера:
-
+1. **Создание первого менеджера:**
    ```bash
-   docker swarm init --advertise-addr <MANAGER-IP>
+   # --advertise-addr указывает IP, доступный другим узлам
+   docker swarm init --advertise-addr 10.0.0.1
    ```
 
-   В Ansible — модуль `community.docker.docker_swarm` (см. [пример](../../Ansible/examples/docker_management.md#сценарий-инициализация-и-управление-swarm-кластером)).
-
-2. Получение токенов для подключения дополнительных узлов:
-
+2. **Получение токенов присоединения:**
    ```bash
+   # Для рабочих узлов
    docker swarm join-token worker
+   # Для дополнительных менеджеров
    docker swarm join-token manager
    ```
 
-3. Добавление worker-ноды:
-
+3. **Подключение узла:**
    ```bash
-   docker swarm join --token <токен> <MANAGER-IP>:2377
+   docker swarm join --token <TOKEN> 10.0.0.1:2377
    ```
 
-   В Ansible — `state: join` с `join_token` и `remote_addrs`.
+### Сценарий 2: Создание PKI инфраструктуры (mTLS)
 
-4. Проверка состояния узлов:
+Для генерации сертификатов используется `openssl`. Убедитесь, что `Common Name (CN)` и `Subject Alternative Name (SAN)` настроены корректно.
 
-   ```bash
-   docker node ls
-   ```
-
-### Сценарий 2: Генерация сертификатов для mTLS
-
-Процесс создания PKI-инфраструктуры для безопасного доступа:
-
-1. Создание CA (корневого сертификата):
-
+1. **Корневой CA:**
    ```bash
    openssl genrsa -aes256 -out ca-key.pem 4096
    openssl req -new -x509 -days 3650 -key ca-key.pem -sha256 -out ca.pem
    ```
 
-2. Подготовка сертификата сервера (Swarm Manager):
-
+2. **Сертификат сервера (Manager):**
    ```bash
    openssl genrsa -out server-key.pem 4096
    openssl req -subj "/CN=$(hostname -f)" -sha256 -new -key server-key.pem -out server.csr
-   echo "subjectAltName = DNS:$(hostname -f),IP:$(hostname -I | awk '{print $1}')" > extfile.cnf
+   # Укажите ВСЕ IP и DNS имена менеджера в SAN
+   echo "subjectAltName = DNS:swarm.example.com,IP:10.0.0.1,IP:127.0.0.1" > extfile.cnf
    openssl x509 -req -days 3650 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
      -CAcreateserial -out server-cert.pem -extfile extfile.cnf
    ```
 
-3. Подготовка сертификата клиента (GitLab Runner):
-
+3. **Сертификат клиента (CI Runner):**
    ```bash
    openssl genrsa -out key.pem 4096
-   openssl req -subj "/CN=client" -new -key key.pem -out client.csr
+   openssl req -subj "/CN=ci-client" -new -key key.pem -out client.csr
    echo "extendedKeyUsage = clientAuth" > extfile-client.cnf
    openssl x509 -req -days 3650 -sha256 -in client.csr -CA ca.pem -CAkey ca-key.pem \
      -CAcreateserial -out cert.pem -extfile extfile-client.cnf
    ```
 
-### Сценарий 3: Настройка Docker Daemon
+### Сценарий 3: Конфигурация Docker Daemon
 
-Для активации TLS-доступа необходимо настроить параметры запуска демона.
+Рекомендуется использовать Systemd override для управления параметрами запуска.
 
-**Вариант 1: Файл daemon.json**
+1. Создайте директорию: `sudo mkdir -p /etc/systemd/system/docker.service.d`
+2. Создайте файл `override.conf`:
+   ```ini
+   [Service]
+   # Сброс ExecStart обязателен
+   ExecStart=
+   ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2376 --tlsverify \
+     --tlscacert=/etc/docker/certs/ca.pem \
+     --tlscert=/etc/docker/certs/server-cert.pem \
+     --tlskey=/etc/docker/certs/server-key.pem
+   # Лимиты для стабильности при высокой нагрузке
+   LimitNOFILE=infinity
+   LimitNPROC=infinity
+   ```
+3. Примените настройки:
+   ```bash
+   sudo systemctl daemon-reload && sudo systemctl restart docker
+   ```
 
-```json
-{
-  "tls": true,
-  "tlscert": "/etc/docker/certs/server-cert.pem",
-  "tlskey": "/etc/docker/certs/server-key.pem",
-  "tlscacert": "/etc/docker/certs/ca.pem",
-  "hosts": ["unix:///var/run/docker.sock", "tcp://0.0.0.0:2376"]
-}
-```
-
-**Вариант 2: Systemd override (рекомендуется)**
-Создайте файл `/etc/systemd/system/docker.service.d/override.conf`:
-
-```ini
-[Service]
-ExecStart=
-ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2376 --tlsverify \
-  --tlscacert=/etc/docker/certs/ca.pem \
-  --tlscert=/etc/docker/certs/server-cert.pem \
-  --tlskey=/etc/docker/certs/server-key.pem
-```
-
-После внесения изменений выполните:
+### Сценарий 4: Проверка и диагностика
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart docker
-```
-
-### Сценарий 4: Верификация подключения
-
-Проверка корректности настройки TLS:
-
-```bash
-# Проверка конфигурации демона
-docker info | grep -i tls
-
-# Тестирование подключения через порт
-telnet <MANAGER-IP> 2376
+# Проверка, что API доступен по TLS
+docker --tlsverify --tlscacert=ca.pem --tlscert=cert.pem --tlskey=key.pem \
+  -H 10.0.0.1:2376 info
 ```
 
 ## Дополнительная информация
 
-### Надежность и безопасность
+### Безопасность и эксплуатация
 
-- **Ограничение IP:** Настройте Firewall (iptables/nftables) для разрешения доступа к порту 2376 только с IP-адресов системы CI/CD.
-- **Ротация:** Обновляйте клиентские и серверные сертификаты не реже одного раза в год.
-- **Конфиденциальность:** Никогда не передавайте `ca-key.pem` и `server-key.pem` в переменные CI/CD.
+- **Firewall:** Ограничьте входящий трафик на порт 2376 только с IP-адресов CI-раннеров (например, через `ufw allow from <CI_IP> to any port 2376`).
+- **Ротация:** Сертификаты Swarm (внутренние) ротируются автоматически. Сертификаты для CI/CD (внешние) необходимо обновлять вручную (рекомендуется раз в год).
+- **Секреты:** Никогда не храните `ca-key.pem` в репозитории. Используйте защищенные хранилища (HashiCorp Vault, GitLab Secrets).
 
-### Диагностика проблем
+### Устранение неисправностей
 
-| Ошибка | Возможная причина | Решение |
+| Ошибка | Причина | Решение |
 |:---|:---|:---|
-| `certificate signed by unknown authority` | Клиент не имеет правильного CA сертификата | Проверить переменную `CA_PEM` |
-| `remote error: tls: bad certificate` | Ошибка в Subject Alternative Names (SAN) | Перевыпустить сертификат с корректным IP/DNS |
-| `Cannot connect to the Docker daemon` | Порт 2376 закрыт Firewall | Проверить `telnet <IP> 2376` |
+| `certificate signed by unknown authority` | Несоответствие CA | Проверьте, что `ca.pem` на клиенте совпадает с тем, которым подписан `server-cert.pem`. |
+| `x509: certificate is valid for <IP1>, not <IP2>` | SAN mismatch | Перевыпустите серверный сертификат, добавив `<IP2>` в `extfile.cnf`. |
+| `context deadline exceeded` | Проблемы MTU | Если контейнеры в Overlay сети не видят друг друга, проверьте MTU (должен быть 1450 для VXLAN). |
+| `No manager nodes are currently reachable` | Потеря кворума | Проверьте NTP на всех менеджерах. Если кворум потерян безвозвратно, используйте `docker swarm init --force-new-cluster`. |
 
 ### Связанные документы
 
-- **[Docker Context в CI/CD](./docker_context_setup.md)** — профили подключения.
-- **[Обзор Docker Swarm](../docker_swarm_overview.md)** — основы оркестрации.
-- **[Ansible: управление Docker](../../Ansible/examples/docker_management.md)** — автоматизация через Ansible.
-- **[Продвинутые темы Swarm](../swarm_advanced_topics.md)** — Raft и токены.
-- **[Развертывание Traefik](./infra_deployment.md)** — настройка Ingress.
-- **[Пайплайн приложения](./app_deployment.md)** — автоматизация деплоя.
-- **[Лучшие практики](./best_practices.md)** — рекомендации по эксплуатации.
+- **[Настройка Docker Context](./docker_context_setup.md)** — управление подключениями.
+- **[Общий обзор CI/CD в Swarm](./overview.md)** — архитектура конвейера.
+- **[Справочник CLI Swarm](../swarm_management_cli.md)** — полезные команды управления.
+- **[Ansible: Управление кластером](../../Ansible/examples/docker_management.md)** — автоматизация через роли.
+- **[Секреты и конфиги Swarm](../swarm_secrets_configs.md)** — безопасная доставка данных.
+

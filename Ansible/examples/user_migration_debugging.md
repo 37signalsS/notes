@@ -160,6 +160,3 @@ ansible_user: "ansible-deploy"
 - [Рекомендации по безопасности в Ansible](../ansible_security_best_practices.md)
 - [Модули управления пользователями и безопасностью](../Modules/ansible_security_and_user_management_modules.md)
 - [Основы Ansible Vault](../Vault/basics.md)
-
----
-**Reliability Score: 10** (Подтверждено официальной документацией Ansible по Privilege Escalation и лучшими практиками безопасности ОС Linux).

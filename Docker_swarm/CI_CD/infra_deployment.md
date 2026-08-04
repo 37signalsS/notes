@@ -1,92 +1,88 @@
-# CI/CD в Docker Swarm: Развертывание инфраструктуры
+# Развертывание инфраструктуры Docker Swarm через CI/CD
 
 ## Определения
 
-- **Инфраструктурный стек (Infrastructure Stack):** Набор общих сервисов (Traefik, базы данных, системы мониторинга), развертываемых в Docker Swarm как единый логический блок.
-- **Общие сервисы (Shared Services):** Компоненты инфраструктуры, используемые несколькими приложениями одновременно (например, Ingress-прокси или централизованный реестр секретов).
-- **Оверлейная сеть (Overlay Network):** Виртуальная сеть Docker Swarm, обеспечивающая сетевую связность между контейнерами на разных узлах кластера.
-- **[Traefik](../swarm_ingress_traefik.md):** Динамический обратный прокси-сервер, выступающий в роли Ingress-контроллера для Swarm-кластера.
+- **Инфраструктурный стек (Infrastructure Stack):** Логическая группа общекластерных сервисов (Ingress-прокси, мониторинг, логирование), управляемая как единый объект. Служит фундаментом для запуска прикладных приложений.
+- **Общие сервисы (Shared Services):** Компоненты, предоставляющие функциональность нескольким стекам одновременно (например, Traefik для маршрутизации или Redis как общий кэш).
+- **Внешняя оверлейная сеть (External Overlay Network):** Сеть Swarm, создаваемая вне жизненного цикла конкретного приложения. Позволяет сервисам из разных стеков взаимодействовать друг с другом.
+- **[Traefik](../swarm_ingress_traefik.md):** Cloud Native Ingress-прокси. В Swarm-кластере автоматически обнаруживает новые сервисы через Docker API и настраивает маршрутизацию на основе меток (labels).
 
 ## Базовые концепции
 
-### Архитектура инфраструктурного стека
+### Архитектура системного слоя кластера
 
-Вынос инфраструктурных сервисов в отдельный репозиторий (`infra-stack`) обеспечивает:
+Вынос базовых компонентов в отдельный репозиторий (`infra-stack`) реализует принцип **Infrastructure as Code (IaC)** и обеспечивает:
 
-- **Изоляцию изменений:** Модернизация прокси или БД не затрагивает пайплайны приложений.
-- **Контроль версий:** Отдельная история конфигураций всей базовой инфраструктуры.
-- **Безопасность:** Разграничение прав доступа (RBAC в GitLab/GitHub) к критическим настройкам кластера.
-- **Стабильность:** Единая точка входа для трафика и централизованные сетевые политики.
+1. **Изоляцию критических изменений:** Обновление версии Traefik или конфигурации Prometheus не требует перезапуска прикладных пайплайнов.
+2. **Централизованное сетевое управление:** Все общие сети (`public`, `monitoring`, `db_net`) создаются и описываются в одном месте.
+3. **Безопасность (POLP):** Доступ к репозиторию инфраструктуры ограничивается узким кругом системных администраторов/SRE.
+4. **Preservation of Source IP:** Использование режима `mode: host` для портов 80/443 позволяет Traefik видеть реальные IP-адреса клиентов, что критично для логирования и систем защиты (WAF/Fail2Ban).
 
-### Механизм развертывания через CI/CD
+### Механизм автоматизации деплоя
 
-1. **Декларативное описание:** Конфигурация хранится в виде Docker Compose файлов версии 3.8+.
-2. **Безопасное соединение:** GitLab Runner подключается к Swarm Manager через **[mTLS](../../Networking/Protocols/tls.md#сценарий-2-взаимная-аутентификация-mtls)** (порт 2376).
-3. **Использование контекстов:** **[Docker Context](./docker_context_setup.md)** абстрагирует параметры подключения (хост, сертификаты) для CLI.
-4. **Оркестрация стека:** Команда `docker stack deploy` обновляет состояние сервисов, используя механизмы Rolling Update.
+1. **Декларативность:** Вся структура инфраструктуры описана в `docker-compose.yml` (v3.8+).
+2. **Безопасное соединение:** Использование порта 2376 с **mTLS** аутентификацией для удаленного управления менеджерами.
+3. **Docker Context:** Позволяет пайплайну переключаться между кластерами (staging/production) без изменения скриптов деплоя.
 
 ## Практические сценарии
 
-### Сценарий 1: Подготовка внешних сетей
+### Сценарий 1: Автоматизация подготовки сетей
 
-Перед развертыванием инфраструктуры необходимо вручную или через автоматизацию создать общие overlay-сети с флагом `--attachable`, чтобы сервисы из других стеков могли к ним подключаться.
+Общие сети должны существовать *до* того, как прикладные стеки попытаются к ним подключиться.
 
 ```bash
-# Создание публичной сети для входящего трафика
-docker network create --driver overlay --attachable public
+# Создание сети с поддержкой шифрования трафика и корректным MTU
+docker network create \
+  --driver overlay \
+  --attachable \
+  --opt encrypted \
+  --opt mtu=1450 \
+  public_net
 ```
-# → Сеть доступна на всех узлах Swarm
+# Результат: Сеть доступна на всех узлах Swarm для динамического подключения контейнеров.
 
-### Сценарий 2: Конфигурация инфраструктурного стека (Traefik)
+### Сценарий 2: Конфигурация Ingress-слоя (Traefik v3)
 
-Пример отказоустойчивого `docker-compose.yml` для Traefik с лимитами и проверками здоровья:
+Пример оптимального `docker-compose.yml` для высокодоступного Ingress:
 
 ```yaml
 version: '3.8'
 services:
   traefik:
-    image: traefik:v3.6
+    image: traefik:v3.1 # Используйте фиксированные версии
     command:
       - "--providers.swarm=true"
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      # Редирект HTTP -> HTTPS
+      # Редирект на HTTPS на уровне Entrypoint
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       # Включение Dashboard
       - "--api.dashboard=true"
     ports:
       - target: 80
         published: 80
-        mode: host    # Прямая публикация на хосте для сохранения IP клиента
+        mode: host # Важно для сохранения Client IP
       - target: 443
         published: 443
         mode: host
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro" # Доступ только на чтение
     networks:
-      - public
-    healthcheck:
-      test: ["CMD", "traefik", "healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - public_net
     deploy:
-      replicas: 2
+      replicas: 3
       placement:
         constraints:
-          - "node.role==manager"
+          - "node.role==manager" # Traefik должен быть там, где есть Docker API
       update_config:
         parallelism: 1
         order: start-first
       resources:
         limits:
-          cpus: '0.50'
-          memory: 256M
+          memory: 512M
         reservations:
-          cpus: '0.10'
-          memory: 64M
+          memory: 128M
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.api.rule=Host(`traefik.example.com`)"
@@ -98,45 +94,45 @@ services:
         - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$..."
 
 networks:
-  public:
+  public_net:
     external: true
 ```
 
-### Сценарий 3: Настройка переменных GitLab CI
+### Сценарий 3: Переменные GitLab CI для инфраструктуры
 
-Для работы пайплайна задайте переменные в **Settings → CI/CD → Variables**:
+Для безопасного управления кластером настройте следующие переменные (тип **File**):
 
-| Переменная | Тип | Назначение |
+| Переменная | Назначение | Описание |
 |:---|:---|:---|
-| `DOCKER_HOST` | Variable | Адрес Docker API (tcp://<IP>:2376) |
-| `CA_PEM` | File | Корневой сертификат CA |
-| `CERT_PEM` | File | Клиентский сертификат для Runner |
-| `KEY_PEM` | File | Клиентский приватный ключ |
+| `DOCKER_CA` | File | Содержимое `ca.pem` |
+| `DOCKER_CERT` | File | Содержимое `cert.pem` |
+| `DOCKER_KEY` | File | Содержимое `key.pem` |
+| `DOCKER_HOST` | Variable | Строка вида `tcp://<MANAGER_IP>:2376` |
 
-### Сценарий 4: Пайплайн развертывания инфраструктуры
+### Сценарий 4: Пайплайн доставки инфраструктуры
 
-Пример `.gitlab-ci.yml` с автоматической очисткой и верификацией:
+Пример `.gitlab-ci.yml`, реализующий чистый деплой через Docker Context:
 
 ```yaml
 deploy_infra:
   stage: deploy
   image: docker:27.x
   before_script:
-    - mkdir -p ~/.docker
-    - echo "$CA_PEM" > ~/.docker/ca.pem
-    - echo "$CERT_PEM" > ~/.docker/cert.pem
-    - echo "$KEY_PEM" > ~/.docker/key.pem
-    - chmod 600 ~/.docker/key.pem
-    - docker context create swarm-ctx \
-      --docker "host=$DOCKER_HOST,ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
-    - docker context use swarm-ctx
+    # Удаление старого контекста, если он остался от прошлых запусков
+    - docker context rm swarm-prod -f || true
+    - docker context create swarm-prod \
+      --docker "host=$DOCKER_HOST,ca=$DOCKER_CA,cert=$DOCKER_CERT,key=$DOCKER_KEY"
+    - docker context use swarm-prod
   script:
-    - docker stack deploy -c docker-compose.yml shared-infra --with-registry-auth
-    - # Верификация деплоя
-    - docker service ls --filter name=shared-infra
+    # Авторизация в Registry для скачивания образов мониторинга/прокси
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    # Развертывание стека
+    - docker stack deploy -c docker-compose.yml infra --with-registry-auth --prune
+    # Верификация деплоя
+    - docker service ls --filter name=infra
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
+      when: manual # Инфраструктурные изменения требуют ручного подтверждения
 ```
 
 ## Дополнительная информация
@@ -151,15 +147,16 @@ deploy_infra:
 
 | Проблема | Причина | Решение |
 |:---|:---|:---|
-| `network public not found` | Сеть не создана заранее | Выполнить `docker network create` на менеджере |
-| `context already exists` | Повторный запуск `create` | Добавить `docker context rm swarm-ctx -f` перед созданием |
-| Traefik не находит бэкенды | Приложения не в сети `public` | Проверить секцию `networks` в Compose-файлах приложений |
-| 404 Not Found | Ошибка в метках (labels) | Проверить соответствие `Host()` и `entrypoints` |
+| `network public_net not found` | Сеть не была создана вручную | Запустите Сценарий 1 на одном из менеджеров. |
+| `context already exists` | Повторный запуск `create` без очистки | Добавить `docker context rm -f` в `before_script`. |
+| Traefik не видит сервисы | Ошибка в `constraints` | Проверьте, что Traefik запущен на узле с ролью `manager`. |
+| SSL не работает | Порт 443 закрыт или лимит LE | Проверьте Firewall и логи Traefik (`docker service logs`). |
+| 502 Bad Gateway | Приложение не в сети `public_net` | Проверьте секцию `networks` в Compose-файле приложения. |
 
 ### Связанные документы
 
-- **[Подготовка кластера (mTLS)](./swarm_setup.md)** — генерация сертификатов.
-- **[Docker Context для CI/CD](./docker_context_setup.md)** — управление профилями подключения.
-- **[Traefik в Swarm](../swarm_ingress_traefik.md)** — глубокая настройка Ingress.
-- **[Развертывание приложения](./app_deployment.md)** — интеграция с инфраструктурным стеком.
-- **[Лучшие практики](./best_practices.md)** — безопасность и оптимизация.
+- **[Подготовка кластера (mTLS)](./swarm_setup.md)** — генерация сертификатов и настройка API.
+- **[Настройка Docker Context](./docker_context_setup.md)** — глубокое погружение в управление контекстами.
+- **[Traefik в Swarm](../swarm_ingress_traefik.md)** — детальная настройка маршрутизации.
+- **[Развертывание прикладных приложений](./app_deployment.md)** — пайплайны для бизнес-логики.
+- **[Лучшие практики CI/CD](./best_practices.md)** — стандарты безопасности и оптимизации.

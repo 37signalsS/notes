@@ -1,78 +1,107 @@
-# Инструменты для работы с Docker (TUI)
+# Инструменты управления Docker (TUI, GUI, CLI)
 
 ## Определения
 
-**TUI (Terminal User Interface)** — интерактивные консольные клиенты для управления Docker. Позволяют мониторить и управлять контейнерами, образами, сетями и томами в реальном времени без использования GUI.
+**TUI (Terminal User Interface)** — интерактивные консольные клиенты для управления Docker. Позволяют мониторить и управлять контейнерами, образами, сетями и томами в реальном времени внутри терминала.
 
 ## Основные концепции
 
-### Сравнение TUI-инструментов
+### Классификация инструментов управления
 
-| Инструмент | Язык | Особенности | Когда использовать |
+| Категория | Инструмент | Особенности | Когда использовать |
 | :--- | :--- | :--- | :--- |
-| **lazydocker** | Go | Полнофункциональный UI, Docker Compose, ASCII-графики | Ежедневная работа, глубокий мониторинг |
-| **oxker** | Rust | Высокая скорость, современный интерфейс | Быстрый просмотр и управление |
-| **docker-tui** | Rust | Поддержка MCP (Model Context Protocol), логи | Интеграция с ИИ-агентами (Claude и др.) |
-| **ctop** | Go | Мониторинг метрик в стиле `htop` | Быстрая диагностика нагрузки CPU/Mem |
-| **dry** | Go | Управление без мыши, поддержка Swarm | Работа в чистом CLI, Swarm-кластеры |
+| **TUI** | **lazydocker** | Поддержка Docker Compose, ASCII-графики, логи | Ежедневная работа, быстрая отладка |
+| **TUI** | **oxker** | Написан на Rust, экстремально быстрый | Мониторинг на слабых машинах |
+| **TUI** | **docker-tui** | Поддержка MCP (Model Context Protocol) | Интеграция с ИИ-агентами (Claude и др.) |
+| **TUI** | **ctop** | Интерфейс в стиле `htop` | Диагностика потребления ресурсов (CPU/Mem) |
+| **GUI** | **Portainer** | Управление стеками, пользователями, RBAC | Управление парком серверов, доступ для команд |
+| **GUI** | **Yacht** | Упор на шаблоны приложений и простоту | Домашние лаборатории, простые проекты |
+| **Utility CLI** | **Skopeo** | Работа с образами без Docker-демона | Синхронизация реестров, инспекция манифестов |
 
-### Интеграция с экосистемой
+### Взаимодействие с Docker API
 
-TUI-инструменты взаимодействуют с Docker через API (Unix-сокет `/var/run/docker.sock` или TCP). Это позволяет им работать без установки дополнительных фоновых процессов (демонов).
+Все инструменты взаимодействуют с Docker через API. Основные способы подключения:
+1. **Unix Socket:** `/var/run/docker.sock` — стандарт для локального управления.
+2. **TCP Socket:** Дистанционное управление (требует настройки TLS для безопасности). См. **[Безопасность хоста и демона](./Docker_security/host_daemon_hardening.md)**.
+3. **SSH:** Современный и безопасный способ удаленного подключения через Docker Context.
 
-**Специализированные инструменты:**
-
-- **[dive](./Dockerfile/dockerfile_optimization_tools.md)** — анализ слоев образа (TUI)
-- **[dockle](./Dockerfile/dockerfile_optimization_tools.md)** — аудит безопасности образов
-- **Dozle** — легковесный веб-интерфейс для логов (альтернатива TUI)
+### Специализированные инструменты анализа
+Для глубокого анализа безопасности и структуры образов используются специализированные средства:
+- **[dive](./Dockerfile/dockerfile_optimization_tools.md)** — исследование слоев образа и поиск лишних данных.
+- **[dockle](./Dockerfile/dockerfile_optimization_tools.md)** — проверка образов на соответствие лучшим практикам безопасности.
+- **Dozle** — специализированный веб-интерфейс только для просмотра логов в реальном времени.
 
 ## Практические сценарии
 
-### lazydocker: Полнофункциональное управление
+### lazydocker: Полнофункциональное TUI-управление
 
-Наиболее популярный инструмент с поддержкой Docker Compose и наглядными графиками ресурсов.
+Инструмент предоставляет наиболее полную визуализацию состояния Docker-окружения, включая графы потребления ресурсов.
 
-**Установка:**
-
+**Установка (версия v0.25.x+):**
 ```bash
-# Официальный скрипт для Linux/macOS
-curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash
-
-# Через Homebrew (macOS)
+# Для macOS через Homebrew
 brew install jesseduffield/lazydocker/lazydocker
+
+# Для Linux
+curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash
 ```
 
-**Основные горячие клавиши:**
+**Ключевые возможности:**
+- Просмотр логов контейнеров в реальном времени с поддержкой скроллинга.
+- Визуализация Docker Compose проектов и связей между сервисами.
+- Выполнение Bulk-команд (остановка всех контейнеров, очистка неиспользуемых данных).
 
-| Клавиша | Действие |
-| :--- | :--- |
-| **Стрелки / hjkl** | Навигация по спискам |
-| **Enter** | Просмотр деталей или логов |
-| **b** | Меню команд (Bulk commands) |
-| **s** | Остановить контейнер |
-| **r** | Перезапустить |
-| **d** | Удалить (с подтверждением) |
-| **x** | Выполнить команду внутри (exec) |
+### docker-tui: Интеграция с ИИ (MCP)
 
-### docker-tui: Интеграция с ИИ
-
-Современный инструмент на Rust, который примечателен встроенным MCP-сервером.
-
-**Особенности:**
-- Позволяет ИИ-агентам (например, Claude Desktop) напрямую взаимодействовать с вашим Docker-окружением.
-- Высокая производительность и низкое потребление ресурсов.
+Инструмент примечателен встроенным сервером **Model Context Protocol (MCP)**, который позволяет ИИ-агентам (например, Claude Desktop) напрямую взаимодействовать с Docker-окружением.
 
 **Установка:**
 ```bash
-# Через cargo
+# Через cargo (требуется Rust)
 cargo install docker-tui
 ```
 
-### ctop: Быстрая диагностика метрик
+**Особенности:**
+- Предоставляет ИИ-контекст о запущенных контейнерах и их состоянии.
+- Высокая производительность и низкое потребление ресурсов хоста.
 
-Идеален для случаев, когда нужно быстро увидеть, какой контейнер потребляет больше всего ресурсов, без переключения между вкладками.
+### Skopeo: Копирование образов между реестрами
 
-**Установка (Linux):**
+`skopeo` уникален тем, что позволяет манипулировать образами без их предварительного скачивания (`docker pull`) и без запущенного Docker-демона.
+
+**Сценарий: Копирование из Docker Hub в локальный реестр:**
+```bash
+# Копирование образа с авторизацией
+skopeo copy --src-creds user:pass --dest-creds user:pass \
+    docker://docker.io/library/nginx:latest \
+    docker://registry.local/infra/nginx:latest
+
+# Инспекция манифеста удаленного образа без скачивания
+skopeo inspect docker://docker.io/library/alpine:latest
+```
+
+### Portainer: Централизованное GUI-управление
+
+Используется для предоставления графического интерфейса к Docker-хостам или кластерам Swarm.
+
+**Быстрый запуск Portainer Community Edition (CE):**
+```bash
+# Создание тома для данных
+docker volume create portainer_data
+
+# Запуск контейнера с монтированием сокета
+docker run -d -p 8000:8000 -p 9443:9443 --name portainer --restart=always \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v portainer_data:/data \
+    portainer/portainer-ce:latest
+```
+*Результат:* Интерфейс доступен по адресу `https://localhost:9443`.
+
+### ctop: Мониторинг в реальном времени
+
+Позволяет быстро идентифицировать контейнеры, вызывающие перегрузку системы.
+
+**Установка (v0.7.7):**
 ```bash
 sudo wget https://github.com/bcicen/ctop/releases/download/v0.7.7/ctop-0.7.7-linux-amd64 -O /usr/local/bin/ctop
 sudo chmod +x /usr/local/bin/ctop
@@ -80,14 +109,14 @@ sudo chmod +x /usr/local/bin/ctop
 
 ## Дополнительная информация
 
-**Официальные репозитории:**
-- [lazydocker](https://github.com/jesseduffield/lazydocker)
-- [oxker](https://github.com/mrvillage/oxker)
-- [docker-tui](https://github.com/skanehira/docker-tui)
-- [ctop](https://github.com/bcicen/ctop)
-- [dry](https://github.com/moncho/dry)
+**Официальные ресурсы:**
+- [lazydocker GitHub](https://github.com/jesseduffield/lazydocker)
+- [Portainer Official Site](https://www.portainer.io/)
+- [Skopeo GitHub](https://github.com/containers/skopeo)
+- [oxker GitHub](https://github.com/mrvillage/oxker)
 
 **Связанные темы:**
-- [Альтернативные среды выполнения](./alternative_runtimes_and_tools.md)
-- [Инструменты оптимизации Dockerfile](./Dockerfile/dockerfile_optimization_tools.md)
-- [Безопасность Docker](./Docker_security/overview.md)
+- **[Альтернативные среды выполнения](./alternative_runtimes_and_tools.md)** — Podman, Buildah и другие.
+- **[Инструменты оптимизации Dockerfile](./Dockerfile/dockerfile_optimization_tools.md)** — dive, dockle, hadolint.
+- **[Безопасность Docker: Обзор](./Docker_security/overview.md)** — общие принципы защиты контейнеров.
+- **[Docker Context](./docker_context.md)** — управление подключениями к удаленным хостам.

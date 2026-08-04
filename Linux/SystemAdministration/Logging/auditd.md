@@ -113,9 +113,76 @@ sudo aureport -au
 sudo aureport --summary
 ```
 
+## FinTech и Compliance (Регулируемые среды)
+
+В системах обработки платежей (FinTech) аудит является не просто мерой безопасности, а жестким требованием регуляторов (PCI-DSS, PSD2, GDPR, CESOP).
+
+### Требования PCI-DSS (v4.0) и CESOP
+
+| Требование | Описание | Реализация в auditd/Linux |
+| :--- | :--- | :--- |
+| **Retention** | Хранение минимум 1 год (3 месяца в онлайн-доступе) | `MaxRetentionSec` в journald, политики жизненного цикла S3/GCS. |
+| **Tamper-evident** | Защита от модификации и удаления | `Seal=yes` в journald, `-e 2` в auditd, S3 Object Lock (WORM). |
+| **Privileged Access** | Логирование всех действий root/sudo | Правило `-a always,exit -S execve -F euid=0 -k root_action`. |
+| **Access Control** | Логирование доступа к данным держателей карт | `Watch` на специфические директории БД: `-w /var/lib/pgsql -p wa`. |
+| **Log Integrity** | Регулярная проверка целостности журналов | `journalctl --verify` с внешним Verification Key (FSS). |
+
+### Разделение обязанностей (Separation of Duties)
+
+Для соответствия SOX и PCI-DSS данные логов должны быть недоступны пользователям, за которыми ведется наблюдение.
+1. **Auditor Role:** Создайте отдельную группу `auditors` с доступом только на чтение к `/var/log/audit/`.
+2. **Remote Immutable Storage:** Немедленная пересылка логов через TLS в изолированное хранилище (SIEM), к которому нет доступа у системных администраторов хоста.
+
+### Практические правила для FinTech
+
+Добавьте в `/etc/audit/rules.d/fintech.rules`:
+```bash
+# Мониторинг попыток изменения времени (защита от манипуляций с таймстемпами)
+-a always,exit -F arch=b64 -S adjtimex -S settimeofday -S stime -k time_change
+-a always,exit -F arch=b64 -S clock_settime -k time_change
+
+# Мониторинг загрузки модулей ядра (rootkits)
+-w /sbin/insmod -p x -k kernel_modules
+-w /sbin/rmmod -p x -k kernel_modules
+-w /sbin/modprobe -p x -k kernel_modules
+-a always,exit -F arch=b64 -S init_module -S delete_module -k kernel_modules
+
+# Мониторинг сетевых соединений (подозрительный outbound)
+-a always,exit -F arch=b64 -S connect -F success=1 -k network_outbound
+```
+
+### Практический сценарий: Детекция эксплуатации ядра (Page Cache Write)
+
+Атаки класса Page Cache Write (Dirty Frag, Copy Fail) используют специфические системные вызовы для изменения памяти файлов. Мониторинг этих вызовов позволяет выявить признаки эксплойта на ранних стадиях.
+
+**Конфигурация правил (`/etc/audit/rules.d/kernel_exploit.rules`):**
+
+```bash
+# 1. Создание сокетов AF_ALG (интерфейс криптографии ядра, используется в Copy Fail)
+-a always,exit -F arch=b64 -S socket -F a0=38 -k af_alg_socket
+
+# 2. Использование splice() — основной примитив для атак на Page Cache
+-a always,exit -F arch=b64 -S splice -k splice_call
+
+# 3. sendmsg с подозрительными флагами (например, MSG_SPLICE_PAGES = 0x8000000)
+-a always,exit -F arch=b64 -S sendmsg -k sendmsg_call
+
+# 4. Мониторинг загрузки и выгрузки модулей ядра (закрепление злоумышленника)
+-a always,exit -F arch=b64 -S init_module -S finit_module -k kernel_module_load
+-a always,exit -F arch=b64 -S delete_module -k kernel_module_unload
+
+# 5. Изменение критических параметров ядра через /proc и /sys
+-w /proc/sys/kernel/ -p wa -k kernel_params_modify
+-w /sys/module/ -p wa -k module_params_modify
+```
+
+**Анализ событий:**
+При обнаружении событий с ключами `af_alg_socket` или `splice_call` от непривилегированных пользователей следует провести немедленный аудит процесса (PID) и его сетевой активности.
+
 ## Дополнительная информация
 
 ### Оптимизация производительности (`auditd.conf`)
+... (остальной текст без изменений)
 
 На высоконагруженных системах (БД, веб-серверы) неправильная настройка может привести к деградации производительности:
 
@@ -147,3 +214,4 @@ sudo aureport --summary
 - [Обзор системных журналов в Linux](./logging_overview.md)
 - [Безопасность Docker: Hardening](../../Docker/Docker_security/host_daemon_hardening.md)
 - [Анализ сбоев и ошибок](../../Linux/Diagnostics/Troubleshooting/error_and_crash_analysis.md)
+- [Wazuh: расширение декодера auditd](../../Security/Tools/Wazuh/custom-decoders.md#2-расширение-стандартного-декодера-auditd) — для мониторинга дополнительных аргументов syscalls.

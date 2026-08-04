@@ -6,6 +6,7 @@
 - **Bundler:** Инструмент для управления зависимостями Ruby-проекта. Использует `Gemfile` для описания необходимых библиотек.
 - **Gemfile / Gemfile.lock:** Манифест зависимостей и файл фиксации их точных версий.
 - **YJIT (Yet Another JIT):** Компилятор «на лету», встроенный в Ruby (начиная с 3.1+), существенно повышающий производительность веб-приложений.
+- **jemalloc:** Аллокатор памяти, который снижает фрагментацию и потребление RAM в Ruby-приложениях.
 - **Asset Pipeline:** Система обработки фронтенд-ресурсов (CSS, JS, изображения) в Rails.
 - **Precompilation:** Процесс подготовки ассетов для продакшена (минификация, добавление хешей), выполняемый на этапе сборки образа.
 
@@ -17,9 +18,11 @@
 *   **Артефакт:** Исходный код и установленные библиотеки (gems) в папке `vendor/bundle` или системных директориях.
 *   **Multi-stage:** Критически важен. Сборочное окружение (gcc, make, заголовки библиотек `-dev`) необходимо только для установки гемов с нативными расширениями и должно быть удалено в финальном образе.
 
-### Включение YJIT
+### Включение YJIT и jemalloc
 
-YJIT значительно ускоряет выполнение Ruby-кода (особенно в Rails). В Docker-контейнерах он включается через переменную окружения `RUBY_YJIT_ENABLE=1`. Рекомендуется для всех приложений на Ruby 3.2+.
+Для максимальной производительности рекомендуется совместное использование YJIT и jemalloc.
+- **YJIT:** Включается через `RUBY_YJIT_ENABLE=1`.
+- **jemalloc:** Требует установки библиотеки (`libjemalloc2`) и подключения через `LD_PRELOAD`.
 
 ### Кэширование зависимостей (BuildKit)
 
@@ -29,10 +32,10 @@ RUN --mount=type=cache,target=/usr/local/bundle/cache \
     bundle install
 ```
 
-### Обработка ассетов (Precompilation)
+### Логирование и Healthcheck
 
-В Rails ассеты должны быть скомпилированы **до** запуска контейнера в продакшене. Это делается на этапе сборки.
-**Важно:** Для `assets:precompile` часто требуются фиктивные значения `SECRET_KEY_BASE` и доступ к БД (или заглушка), если инициализаторы приложения зависят от них.
+*   **Логирование:** Rails должен писать логи в STDOUT для корректной обработки Docker-демоном. Настройка: `RAILS_LOG_TO_STDOUT=true`.
+*   **Healthcheck:** Начиная с Rails 7+, доступен стандартный эндпоинт `/up`. В Dockerfile следует использовать `HEALTHCHECK` для мониторинга состояния контейнера.
 
 ### Решение проблемы PID 1 и server.pid
 
@@ -42,7 +45,7 @@ Ruby-приложения (особенно Puma) должны корректн�
 
 ## Практические сценарии
 
-### Сценарий 1: Современная Rails-сборка (BuildKit + Multi-stage)
+### Сценарий 1: Современная Rails-сборка (BuildKit + Multi-stage + jemalloc)
 
 Оптимальный подход для Ruby 3.4+ и Rails 7/8.
 
@@ -69,7 +72,7 @@ ENV RAILS_ENV="production" \
     BUNDLE_PATH="/usr/local/bundle" \
     BUNDLE_WITHOUT="development test"
 
-# Копируем только файлы зависимостей для эффективного кэширования
+# Копируем файлы зависимостей
 COPY Gemfile Gemfile.lock ./
 RUN --mount=type=cache,target=/usr/local/bundle/cache \
     bundle install && \
@@ -86,12 +89,13 @@ RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
 # --- Этап 2: Финальный образ ---
 FROM ruby:3.4-slim
 
-# Установка только необходимых рантайм-зависимостей
+# Установка рантайм-зависимостей, включая jemalloc
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y \
     curl \
     libpq5 \
-    vips && \
+    vips \
+    libjemalloc2 && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 WORKDIR /rails
@@ -101,9 +105,11 @@ ENV RAILS_ENV="production" \
     BUNDLE_DEPLOYMENT="1" \
     BUNDLE_PATH="/usr/local/bundle" \
     BUNDLE_WITHOUT="development test" \
-    RUBY_YJIT_ENABLE="1"
+    RAILS_LOG_TO_STDOUT="true" \
+    RUBY_YJIT_ENABLE="1" \
+    LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libjemalloc.so.2"
 
-# Копируем только то, что нужно из builder
+# Копируем результат сборки
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 COPY --from=builder /rails /rails
 
@@ -112,7 +118,10 @@ RUN useradd rails --create-home --shell /bin/bash && \
     chown -R rails:rails db log storage tmp
 USER rails:rails
 
-# Используем скрипт-обертку
+# Проверка здоровья
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/up || exit 1
+
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
 
 EXPOSE 3000
@@ -121,29 +130,43 @@ CMD ["./bin/rails", "server"]
 
 ### Сценарий 2: Правильный Entrypoint-скрипт (`bin/docker-entrypoint`)
 
-Этот скрипт должен быть в проекте и иметь права на выполнение (`chmod +x`).
-
 ```bash
 #!/bin/bash
 set -e
 
-# Удаление старого PID-файла, если он существует
+# Удаление старого PID-файла
 if [ -f /rails/tmp/pids/server.pid ]; then
   rm /rails/tmp/pids/server.pid
 fi
 
-# Если передан аргумент "server", выполняем миграции (опционально)
+# Выполнение миграций при старте сервера
 if [ "$1" = "./bin/rails" ] && [ "$2" = "server" ]; then
   ./bin/rails db:prepare
 fi
 
-# Выполняем основную команду контейнера через exec (заменяет процесс bash на ruby)
 exec "$@"
 ```
 
-### Сценарий 3: Оптимизация на базе Alpine
+### Сценарий 3: Sidekiq и фоновые задачи
 
-Для случаев, когда критичен размер образа (например, простые API без тяжелых зависимостей).
+Для Sidekiq рекомендуется использовать тот же образ, что и для основного приложения, переопределяя команду запуска.
+
+```yaml
+# Пример в docker-compose.yml
+services:
+  app:
+    build: .
+    command: ./bin/rails server
+  
+  sidekiq:
+    build: .
+    command: bundle exec sidekiq
+    depends_on:
+      - redis
+      - db
+```
+
+### Сценарий 4: Оптимизация на базе Alpine
 
 ```dockerfile
 FROM ruby:3.4-alpine AS builder
@@ -155,12 +178,17 @@ RUN bundle config set --local without 'development test' && \
     bundle install --jobs $(nproc)
 
 FROM ruby:3.4-alpine
-RUN apk add --no-cache libpq tzdata
+# jemalloc в Alpine ставится через пакет jemalloc
+RUN apk add --no-cache libpq tzdata curl jemalloc
 WORKDIR /app
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 COPY . .
-# Активация YJIT
-ENV RUBY_YJIT_ENABLE=1
+
+ENV RUBY_YJIT_ENABLE=1 \
+    LD_PRELOAD="/usr/lib/libjemalloc.so.2"
+
+HEALTHCHECK CMD curl -f http://localhost:3000/up || exit 1
+
 CMD ["bundle", "exec", "puma"]
 ```
 

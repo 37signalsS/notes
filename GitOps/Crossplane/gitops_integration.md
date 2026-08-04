@@ -133,6 +133,11 @@ spec:
         namespace: crossplane-system
 ```
 
+### Сценарий 3: Динамические окружения (Review Apps)
+
+Связка ApplicationSet + Crossplane позволяет автоматически создавать полные стеки (приложение + БД) для каждой ветки разработчика.
+Подробное руководство: **[ArgoCD: Динамические окружения с Crossplane](../ArgoCD/dynamic_environments_crossplane.md)**.
+
 ## Исправление дрейфа (Drift Detection)
 
 Связка Crossplane + GitOps обеспечивает двухуровневую защиту от изменений вручную:

@@ -114,7 +114,7 @@ spec:
 | :--- | :--- | :--- |
 | **Helm** | Нативная поддержка | Через Helm Controller |
 | **OCI Artifacts** | Поддержка как Helm-чартов и манифестов | Нативная поддержка через `OCIRepository` |
-| **Image Automation** | Отдельный ArgoCD Image Updater | Встроенный image-automation-controller |
+| **Image Automation** | Отдельный **[ArgoCD Image Updater](./ArgoCD/argocd_image_updater.md)**. Использует отдельный файл `.argocd-source-...` для записи тегов, что минимизирует конфликты. | Встроенный **image-automation-controller**. Правит `values.yaml` напрямую (через маркеры в комментариях), что может вызывать merge-конфликты. |
 | **Прогрессивная доставка** | Argo Rollouts (Canary, Blue-Green) | Flagger (Canary, A/B, Blue-Green) |
 | **Интервалы синхронизации** | Глобальный для контроллера | Индивидуальный для каждого ресурса |
 | **Обнаружение дрейфа** | Визуальный анализ в UI | Автоматическая коррекция контроллером |

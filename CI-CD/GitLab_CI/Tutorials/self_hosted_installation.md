@@ -1,191 +1,178 @@
 # Установка Self-Hosted GitLab CE с помощью Docker
-
 ## Определения
 
 **GitLab CE (Community Edition)** — бесплатная и открытая версия платформы GitLab для самостоятельного размещения (self-hosted).
 
-**Self-Hosted** — модель деплоя, при которой программное обеспечение устанавливается и обслуживается на собственной инфраструктуре организации.
+**Self-Hosted** — модель деплоя, при которой программное обеспечение устанавливается и обслуживается на собственной инфраструктуре организации, обеспечивая полный контроль над данными.
 
-**Docker-образ GitLab** — официально поддерживаемый предварительно сконфигурированный пакет, содержащий все компоненты GitLab (Nginx, PostgreSQL, Redis, Sidekiq).
+**GitLab Omnibus** — программный пакет, объединяющий Nginx, PostgreSQL, Redis, Puma и Sidekiq. Docker-образ GitLab является контейнеризированной версией этого пакета.
 
 ## Основные концепции
 
-### Ограничения Docker для Production
+### Docker для Production: Нюансы и Тюнинг
 
-Несмотря на удобство запуска, использование GitLab в Docker для продуктивных сред имеет ряд критических ограничений:
+Хотя Omnibus-пакет на VM считается "золотым стандартом", Docker-инсталляция при правильной настройке подходит для большинства задач.
 
-- **"Ошибка выжившего":** Многие пользователи сообщают, что Docker-инсталляция работает стабильно, до момента первого серьезного сбоя.
-- **Отсутствие поддержки сообщества:** Эксперты GitLab редко соглашаются помогать с отладкой сложных проблем в кастомных Docker-окружениях.
-- **Производительность:** Базы данных (PostgreSQL) в Docker-томах могут работать медленнее, чем на "голом железе" или в VM.
-- **Сложность отладки:** Внутри контейнера GitLab скрыта сложная многокомпонентная система, отладка которой через `docker exec` менее удобна, чем в нативной Omnibus-инсталляции.
+- **Производительность:** Для исключения задержек I/O используйте SSD/NVMe и драйвер `overlay2`.
+- **Изоляция:** GitLab — ресурсоемкое приложение. Всегда ограничивайте CPU и RAM для контейнера, чтобы избежать OOM (Out of Memory) на хосте.
+- **Отладка:** Все основные утилиты (`gitlab-ctl`, `gitlab-rails`, `gitlab-rake`) доступны внутри контейнера через `docker exec`.
 
-> **Рекомендация:** Используйте Docker-версию для тестирования, домашних лабораторий или небольших внутренних проектов. Для критически важного Production выбирайте установку через Omnibus-пакет на виртуальную или физическую машину.
+### Критичные параметры конфигурации (`gitlab.rb`)
 
-### Файл конфигурации `gitlab.rb`
-
-Основной файл для настройки GitLab. Расположен по пути `/etc/gitlab/gitlab.rb` внутри контейнера. Все изменения применяются через этот файл с последующей реконфигурацией командой `gitlab-ctl reconfigure`.
-
-### Внешний URL (`external_url`)
-
-Критически важный параметр в `gitlab.rb`, определяющий основной адрес GitLab. Используется для:
-
-- Генерации ссылок в уведомлениях и письмах
-- Настройки интеграций и протокола OAuth
-- Автоматического выпуска SSL-сертификатов от Let's Encrypt (при внешнем доступе)
-
-### Сохранение данных (Data Volumes)
-
-Ключевые директории из контейнера монтируются на хост-машину для обеспечения сохранности данных:
-
-| Директория | Назначение |
-| :--- | :--- |
-| `/etc/gitlab` | Конфигурация |
-| `/var/log/gitlab` | Логи всех компонентов |
-| `/var/opt/gitlab` | Данные приложений (репозитории, базы данных, артефакты) |
+- **`external_url`:** Определяет протокол (HTTP/HTTPS) и домен. При указании `https` GitLab попытается автоматически настроить Let's Encrypt.
+- **`shm_size`:** Docker-контейнеру GitLab требуется минимум 256MB общей памяти (shared memory), иначе сервис Puma будет работать нестабильно.
 
 ## Практические сценарии
 
 ### Предварительные требования
 
 **Сервер:**
+- Минимум 4 ядра CPU и 8 ГБ RAM (рекомендуется 16 ГБ для комфортной работы).
+- Docker Engine 24.0+ и Docker Compose v2+.
+- Свободное место: от 50 ГБ (SSD).
 
-- Linux (Ubuntu 22.04+, Debian 12+, RHEL 9+) с `sudo` доступом
-- Минимум 4 ядра CPU и 8 ГБ RAM (рекомендуется 16 ГБ для production)
-- Установленный Docker Engine 24.0+
-- Свободное место на диске: минимум 50 ГБ
+**Сеть:**
+- DNS `A`-запись для домена (например, `gitlab.example.com`).
+- Открытые порты: `80`, `443` и `22` (или альтернативный порт для SSH).
 
-**Домен и сеть:**
+### Шаг 1: Подготовка инфраструктуры
 
-- Доменное имя (например, `gitlab.example.com`)
-- DNS `A`-запись, указывающая на публичный IP-адрес сервера
-- Открытые порты в брандмауэре: `80` (HTTP/Let's Encrypt) и `443` (HTTPS)
-
-### Шаг 1: Подготовка директорий на хосте
-
-Вся конфигурация, логи и данные GitLab хранятся в `/srv/gitlab`:
+Создайте структуру директорий для сохранения данных между перезапусками контейнера:
 
 ```bash
 sudo mkdir -p /srv/gitlab/{config,logs,data}
-sudo chown -R $(whoami) /srv/gitlab/
+sudo chmod -R 755 /srv/gitlab/
 ```
 
-### Шаг 2: Создание базовой конфигурации
+### Шаг 2: Выбор метода запуска
 
-1. Создайте файл `gitlab.rb`:
+#### Вариант А: Docker Compose
 
-    ```bash
-    touch /srv/gitlab/config/gitlab.rb
-    ```
+Создайте `/srv/gitlab/docker-compose.yml`:
 
-2. Задайте основной URL (замените `gitlab.example.com` на ваш домен):
+```yaml
+services:
+  gitlab:
+    image: 'gitlab/gitlab-ce:18.10.3-ce.0'
+    container_name: gitlab
+    restart: always
+    hostname: 'gitlab.example.com'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://gitlab.example.com'
+        # Настройка SSH, если 22 порт занят на хосте
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+    ports:
+      - '80:80'
+      - '443:443'
+      - '2222:22'
+    volumes:
+      - '/srv/gitlab/config:/etc/gitlab'
+      - '/srv/gitlab/logs:/var/log/gitlab'
+      - '/srv/gitlab/data:/var/opt/gitlab'
+    shm_size: '256m'
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+```
 
-    ```bash
-    echo "external_url 'https://gitlab.example.com'" | tee /srv/gitlab/config/gitlab.rb
-    # → external_url 'https://gitlab.example.com'
-    ```
+Запуск: `cd /srv/gitlab && sudo docker compose up -d`
 
-    > При доступности домена извне GitLab автоматически выпустит SSL-сертификат от Let's Encrypt при первом запуске.
-
-### Шаг 3: Запуск Docker-контейнера GitLab
+#### Вариант Б: Docker Run (Для тестов)
 
 ```bash
 sudo docker run --detach \
   --hostname gitlab.example.com \
-  --publish 443:443 --publish 80:80 \
+  --publish 443:443 --publish 80:80 --publish 2222:22 \
   --name gitlab \
   --restart always \
   --volume /srv/gitlab/config:/etc/gitlab \
   --volume /srv/gitlab/logs:/var/log/gitlab \
   --volume /srv/gitlab/data:/var/opt/gitlab \
+  --shm-size 256m \
   gitlab/gitlab-ce:18.10.3-ce.0
-# → a1b2c3d4e5f6... (ID контейнера)
 ```
 
-**Параметры:**
+### Шаг 3: Первоначальная настройка
 
-| Параметр | Описание |
-| :--- | :--- |
-| `--detach` | Запуск в фоновом режиме |
-| `--hostname` | Имя хоста контейнера (должно совпадать с доменом) |
-| `--publish` | Проброс портов 443 (HTTPS) и 80 (HTTP) |
-| `--name gitlab` | Имя контейнера для управления |
-| `--restart always` | Автоматический перезапуск при сбоях |
-| `--volume` | Монтирование директорий для сохранения данных |
-| `gitlab/gitlab-ce:18.10.3-ce.0` | Фиксированная версия образа (актуальна на апрель 2026) |
+1. **Ожидание:** Инициализация занимает до 15 минут. Следите через `docker logs -f gitlab`.
+2. **Пароль администратора:**
+   ```bash
+   sudo docker exec gitlab cat /etc/gitlab/initial_root_password
+   ```
+   *Пароль удаляется через 24 часа. Смените его сразу после входа.*
 
-### Шаг 4: Ожидание и проверка
+## Техническое обслуживание и Безопасность
 
-Первый запуск занимает **5-15 минут** (внутренняя конфигурация сервисов):
+### Резервное копирование (Backup & Restore)
 
+**Ручное создание бэкапа:**
+Утилита `gitlab-backup` создает архив со всеми репозиториями и базой данных.
 ```bash
-sudo docker logs -f gitlab
-# → gitlab Reconfigured!
-```
-
-Процесс инициализации завершен, когда в логах появится сообщение `gitlab Reconfigured!` и вывод прекратится.
-
-### Шаг 5: Получение пароля администратора
-
-После полного запуска всех сервисов:
-
-```bash
-sudo docker exec gitlab cat /etc/gitlab/initial_root_password
-# → Password: abc123def456...
-```
-
-> **Внимание:** файл автоматически удаляется через 24 часа после первой реконфигурации. Скопируйте пароль немедленно.
-
-### Шаг 6: Первый вход
-
-1. Откройте `https://gitlab.example.com` в браузере
-2. Войдите как `root` с полученным паролем
-3. Смените пароль при первом входе
-
-## Дополнительная информация
-
-### Администрирование
-
-**Учетные записи:**
-
-- Используйте `root` только для первоначальной настройки
-- Создайте отдельного пользователя с правами администратора для повседневных задач
-- Отключите публичную регистрацию: **Admin Area → Settings → General → Sign-up restrictions**
-
-**Безопасность:**
-
-- Включите принудительную многофакторную аутентификацию (MFA) для всех пользователей
-- Настройте ограничения по IP для доступа к Admin Area
-- Регулярно обновляйте экземпляр GitLab до последних версий
-
-**Резервное копирование:**
-
-Настройте регулярное резервное копирование утилитой `gitlab-backup`:
-
-```bash
-# Создание бэкапа
+# Создание архива
 sudo docker exec gitlab gitlab-backup create
-# → Creating backup archive: 123456789_2026_04_13_18.10.3_gitlab_backup.tar ... done
-
-# Восстановление из бэкапа
-sudo docker exec gitlab gitlab-backup restore BACKUP=123456789_2026_04_13_18.10.3
-# → Unpacking backup ... done
+# → Создан файл в /var/opt/gitlab/backups/123456789_2026_04_13_18.10.3_gitlab_backup.tar
 ```
 
-> Бэкапы сохраняются в `/var/opt/gitlab/backups` внутри контейнера. Для автоматизации используйте `gitlab_rails['backup_schedule']`.
+**Восстановление из бэкапа:**
+1. Поместите файл в `/srv/gitlab/data/backups/`.
+2. Остановите сервисы, работающие с БД:
+   ```bash
+   sudo docker exec gitlab gitlab-ctl stop puma
+   sudo docker exec gitlab gitlab-ctl stop sidekiq
+   ```
+3. Запустите восстановление:
+   ```bash
+   sudo docker exec gitlab gitlab-backup restore BACKUP=123456789_2026_04_13_18.10.3
+   ```
+4. Перезапустите и проверьте: `sudo docker exec gitlab gitlab-ctl restart`.
 
-**Обновление:**
+**Облачные бэкапы (S3):**
+Для автоматической выгрузки бэкапов в S3 добавьте в `gitlab.rb`:
+```ruby
+gitlab_rails['backup_upload_connection'] = {
+  'provider' => 'AWS',
+  'region' => 'us-east-1',
+  'aws_access_key_id' => 'KEY',
+  'aws_secret_access_key' => 'SECRET',
+  'endpoint' => 'https://s3.example.com'
+}
+gitlab_rails['backup_upload_remote_directory'] = 'my-gitlab-backups'
+```
 
-- Проверяйте [release notes](https://about.gitlab.com/releases/) перед обновлением
-- Обновляйте поэтапно: сначала до последней patch-версии текущей минорной версии, затем переходите на следующую
-- Не пропускайте мажорные версии при обновлении
+### Безопасность (Hardening)
 
-### Рекомендуемая версия
+1. **Отключение регистрации:** `Admin Area -> Settings -> General -> Sign-up restrictions`.
+2. **MFA:** Принудительно включите 2FA для администраторов.
+3. **SSH:** Если используется нестандартный порт (2222), обновите `external_url` или `gitlab_shell_ssh_port`, чтобы ссылки `git clone` были корректными.
 
-Текущая стабильная версия: **GitLab 18.10.3** (апрель 2026). Фиксируйте версию в `docker run` или Docker Compose для предсказуемости обновлений.
+## Дополнительная информация (Белые пятна)
+
+### Работа за внешним Reverse Proxy (Nginx/Traefik)
+
+Если SSL терминируется на внешнем прокси, GitLab не должен пытаться выпустить сертификат. В `gitlab.rb`:
+```ruby
+external_url 'https://gitlab.example.com'
+nginx['listen_port'] = 80
+nginx['listen_https'] = false
+nginx['proxy_set_headers'] = {
+  "X-Forwarded-Proto" => "https",
+  "X-Forwarded-Ssl" => "on"
+}
+```
+
+### Оптимизация памяти (Small Instance)
+
+Если у вас всего 8 ГБ RAM, уменьшите количество воркеров:
+```ruby
+puma['worker_processes'] = 2
+sidekiq['max_concurrency'] = 10
+prometheus_monitoring['enable'] = false # Отключение для экономии ~500MB
+```
 
 ### Смотрите также
 
-- [Архитектура и масштабирование GitLab](../Concepts/gitlab_platform_architecture.md) — обзор компонентов и стратегий роста
-- [Регистрация GitLab Runner](./runner_registration.md) — настройка CI/CD исполнителей
-- [GitLab Flow](./gitlab_flow.md) — методология разработки
-- [GitLab + Runner через Docker Compose](./gitlab_runner_docker_compose.md) — учебный сценарий с единой конфигурацией
+- **[Архитектура GitLab](../Concepts/gitlab_platform_architecture.md)** — глубокий разбор компонентов.
+- **[Регистрация GitLab Runner](./runner_registration.md)** — настройка CI/CD.
+- **[GitLab + Runner через Docker Compose](./gitlab_runner_docker_compose.md)** — готовый стек.

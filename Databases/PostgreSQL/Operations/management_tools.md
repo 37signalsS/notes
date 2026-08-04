@@ -1,47 +1,100 @@
 # Инструменты управления PostgreSQL
 
-## pgAdmin 4
-pgAdmin — самое популярное графическое средство администрирования PostgreSQL.
+## Определения
 
-### Установка
-*   **Windows / macOS:** Скачайте инсталлятор с [официального сайта pgAdmin](https://www.pgadmin.org/download/).
-*   **Ubuntu/Debian:**
-    ```bash
-    curl -fsS https://www.pgadmin.org/static/packages_pgadmin_org.pub | sudo gpg --dearmor -o /usr/share/keyrings/packages-pgadmin-org.gpg
-    sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/packages-pgadmin-org.gpg] https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/$(lsb_release -cs) pgadmin4 main" > /etc/apt/sources.list.d/pgadmin4.list && apt update'
-    sudo apt install pgadmin4
-    ```
+**Инструменты управления PostgreSQL** — набор программных средств (CLI, TUI, GUI, Web) для администрирования, мониторинга, отладки и разработки баз данных PostgreSQL.
 
-### Управление ролями в pgAdmin
-1.  Подключитесь к серверу.
-2.  В дереве объектов раскройте раздел **Login/Group Roles**.
-3.  Нажмите правой кнопкой → **Create** → **Login/Group Role**.
-4.  Вкладки настройки:
-    *   **General:** Имя роли (пользователя) и комментарий.
-    *   **Definition:** Пароль и срок его действия.
-    *   **Privileges:** Права на вход (`Login?`), создание БД, суперпользователь и др.
-    *   **Membership:** Добавление пользователя в группы (например, `pg_monitor` или созданные вами группы).
-    *   **SQL:** Предварительный просмотр генерируемых SQL-команд.
+**Ключевые категории:**
+- **CLI (Command Line Interface):** Стандартные утилиты командной строки (`psql`).
+- **TUI (Terminal User Interface):** Интерактивные консольные инструменты для мониторинга в реальном времени (`pg_activity`, `pgcenter`).
+- **GUI (Graphical User Interface):** Полнофункциональные графические клиенты (`pgAdmin`, `DBeaver`).
+- **Web-интерфейсы:** Легковесные инструменты для доступа через браузер (`pgweb`, `phpPgAdmin`).
 
-## phpPgAdmin
-Легковесный веб-интерфейс, доступный в репозиториях Ubuntu.
+## Основные концепции
 
-### Установка и настройка
-1.  Установите пакет:
-    ```bash
-    sudo apt install phppgadmin
-    ```
-2.  Настройка доступа в Apache (`/etc/apache2/conf-available/phppgadmin.conf`):
-    Закомментируйте `Require local` и добавьте `Allow From all` для внешнего доступа.
-3.  Перезагрузите веб-сервер:
-    ```bash
-    sudo systemctl restart apache2
-    ```
+### Выбор инструмента по сценарию
 
-## Другие инструменты
-*   **DBeaver**: Универсальный клиент для работы с множеством СУБД. Поддерживает визуальное управление пользователями.
-*   **DataGrip**: Профессиональная IDE от JetBrains для работы с SQL.
+| Сценарий | Рекомендуемый инструмент | Особенности |
+| :--- | :--- | :--- |
+| Быстрая отладка на сервере | **psql** | Всегда доступен, минимальные накладные расходы. |
+| Мониторинг "живой" нагрузки | **pg_activity** / **pgcenter** | Визуализация процессов, блокировок и I/O в консоли. |
+| Проектирование и разработка | **DBeaver** / **DataGrip** | Визуализация схем, автодополнение, работа с множеством СУБД. |
+| Облачное управление (K8s) | **kubectl cnpg** | Управление жизненным циклом через оператор. |
 
-### См. также
-*   [Управление ролями и правами](./role_management.md)
-*   [Установка PostgreSQL на Ubuntu](./installation_ubuntu.md)
+## Практические сценарии
+
+### pgAdmin 4 — универсальный GUI
+
+Самое популярное графическое средство, поставляется в настольной и серверной (Web) версиях.
+
+#### Установка в Ubuntu/Debian
+```bash
+# Добавление репозитория
+curl -fsS https://www.pgadmin.org/static/packages_pgadmin_org.pub | sudo gpg --dearmor -o /usr/share/keyrings/packages-pgadmin-org.gpg
+sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/packages-pgadmin-org.gpg] https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/$(lsb_release -cs) pgadmin4 main" > /etc/apt/sources.list.d/pgadmin4.list && apt update'
+
+# Установка (desktop-версия)
+sudo apt install pgadmin4-desktop
+```
+
+#### Управление ролями
+1. В дереве объектов: **Server** → **Login/Group Roles** → **Create**.
+2. Вкладка **Privileges**: Настройка прав на вход (`Login?`), создание БД, статус суперпользователя.
+3. Вкладка **Membership**: Наследование системных ролей (например, `pg_monitor`).
+
+### Терминальные интерфейсы (TUI)
+
+#### pg_activity
+Аналог утилиты `top` для PostgreSQL. Позволяет мониторить активные сессии, ожидания (Wait Events) и нагрузку на диск.
+- **Установка:** `sudo apt install pg-activity`
+- **Запуск:** `pg_activity -U postgres`
+- **Ключевые функции:** Сортировка по CPU/Mem, завершение запросов (Kill), отображение блокировок.
+
+#### pgcenter
+Более мощный инструмент для анализа статистики из системных представлений `pg_stat_*`.
+- **Особенности:** Отображение статистики по таблицам, индексам, функциям и репликации в реальном времени.
+
+### Профессиональные IDE и клиенты
+
+- **DBeaver Community**:
+  - Поддержка NoSQL (MongoDB, Redis) и классических SQL.
+  - Мощный визуальный конструктор запросов и ER-диаграмм.
+  - Встроенный редактор данных с поддержкой экспорта в 10+ форматов.
+- **DataGrip (JetBrains)**:
+  - Лучшее в классе автодополнение и инспекция кода.
+  - Глубокая интеграция с системами контроля версий (Git).
+  - Инструменты рефакторинга SQL-схем.
+
+### Веб-интерфейсы
+
+- **pgweb**: Современный, сверхлегкий (один бинарный файл на Go) просмотрщик БД. Идеален для быстрого развертывания в Docker-окружении.
+- **phpPgAdmin (Legacy)**: Классический веб-интерфейс. В современных инсталляциях рекомендуется заменять на pgAdmin (Server Mode) или pgweb из-за проблем с безопасностью и устаревшим интерфейсом.
+
+### Облачное управление (Kubernetes)
+
+При использовании **CloudNativePG** управление выполняется через плагин `cnpg` для `kubectl`:
+```bash
+# Проверка состояния кластера
+kubectl cnpg status cluster-name
+
+# Подключение к консоли psql
+kubectl cnpg psql cluster-name
+```
+
+## Дополнительная информация
+
+### Сравнение функциональности
+
+| Функция | psql | pg_activity | pgAdmin | DBeaver |
+| :--- | :---: | :---: | :---: | :---: |
+| Просмотр данных | Да | Нет | Да | Да |
+| Мониторинг Wait Events | Вручную | Авто | Да | Нет |
+| Визуальный ER-дизайн | Нет | Нет | Да | Да |
+| Работа через SSH-туннель | Да | Да | Да | Да |
+
+### Связанные документы
+
+- [Основы работы в psql](./console_basics.md) — мастерство владения CLI.
+- [Управление ролями и правами](./role_management.md) — теоретическая база доступа.
+- [Наблюдаемость PostgreSQL](./observability.md) — метрики и трассировка.
+- [PostgreSQL в Kubernetes](./kubernetes_deployment.md) — детали работы с операторами.

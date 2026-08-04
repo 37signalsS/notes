@@ -4,65 +4,35 @@
 
 ## Определения
 
-- **Docker-in-Docker (dind):** Специальный образ-сервис (`docker:dind`), который позволяет запускать Docker-команды (например, `docker build`, `docker push`) внутри задачи GitLab CI, которая сама выполняется в Docker-контейнере. Подробнее: **[Обзор Runner'ов и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**.
-- **GitLab Container Registry:** Встроенный в GitLab приватный реестр (Registry) для хранения Docker-образов. Доступ к нему упрощается с помощью предопределенных переменных. Подробнее: **[Реестры Docker](../../../Docker/docker_registries.md)**.
-- **`$CI_JOB_TOKEN`:** Предопределенная переменная GitLab CI, содержащая временный токен аутентификации. Используется для беспарольного доступа к GitLab Container Registry в рамках одного проекта. Подробнее: **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)**.
-- **Атомарный деплой (Atomic Deployment):** Принцип деплоя, при котором обновление либо полностью успешно, либо полностью отменяется, возвращая систему в исходное стабильное состояние. В Helm это достигается флагом `--atomic`. Подробнее: **[Проверки здоровья и откат деплоя](../../Deployment_Strategies/deployment_health_checks_and_rollback.md)**.
+- **GitLab Agent for Kubernetes (KAS):** Современный механизм интеграции, обеспечивающий безопасный доступ к кластеру через **CI/CD Tunnel**. Исключает передачу `KUBECONFIG` через переменные.
+- **`id_tokens` (OIDC):** Механизм генерации временных JWT-токенов для аутентификации в облаках и K8s без использования паролей.
+- **Docker-in-Docker (dind):** Специальный образ-сервис, позволяющий запускать Docker-команды внутри контейнера задачи.
+- **Атомарный деплой (Atomic Deployment):** Принцип, при котором обновление либо полностью успешно, либо автоматически откатывается при малейшей ошибке (флаг `--atomic` в Helm).
 
 ## Основные концепции
 
-### Этап 1: Сборка (Build)
-
-- **Задача:** Сборка Docker-образа из `Dockerfile`.
-- **Тегирование:** Каждой сборке присваивается уникальный тег, обычно короткий хеш коммита (`$CI_COMMIT_SHORT_SHA`), чтобы напрямую связать образ с версией кода.
-
-### Этап 2: Тестирование (Test)
-
-- **Задача:** Проверка работоспособности приложения в изолированном окружении.
-- **Инструмент:** Часто используется `docker-compose` для запуска тестов, требующих внешних зависимостей (например, базы данных).
-
-### Этап 3: Публикация (Push)
-
-- **Задача:** Публикация собранного и протестированного Docker-образа в GitLab Container Registry.
-- **Условие:** Выполняется только после успешного прохождения всех предыдущих этапов, как правило, только для основной ветки (`main`).
-
-### Этап 4: Деплой (Deploy)
-
-- **Сценарий А (Kubernetes):** Пайплайн с помощью `helm` или `kubectl` применяет обновленную конфигурацию в кластере, указывая новый тег Docker-образа.
-- **Сценарий Б (Docker-хост):** Пайплайн подключается к серверу по SSH, скачивает новый образ из Registry и перезапускает контейнер.
+### Жизненный цикл артефакта
+1. **Сборка (Build):** Создание Docker-образа с тегом коммита (`$CI_COMMIT_SHORT_SHA`).
+2. **Валидация (Quality Gates):** Линтинг, Unit-тесты, сканирование уязвимостей.
+3. **Публикация (Push):** Загрузка проверенного образа в Registry.
+4. **Развертывание (Deploy):** Применение манифестов в целевое окружение.
 
 ## Практические сценарии
 
-### Сценарий 1: Деплой в Kubernetes с помощью Helm
+### Сценарий 1: Деплой в Kubernetes через Агент (KAS)
 
-#### Шаг 1: Настройка доступа Kubernetes к GitLab Registry
-
-1. **Создайте Deploy Token в GitLab:** `Settings > Repository > Deploy Tokens`, право `read_registry`. Сохраните имя пользователя и пароль.
-2. **Создайте секрет `docker-registry` в Kubernetes:**
-
-    ```bash
-    kubectl create secret docker-registry gitlab-registry-secret \
-      --namespace my-app-production \
-      --docker-server=registry.gitlab.com \
-      --docker-username=<имя-пользователя-из-deploy-token> \
-      --docker-password=<пароль-из-deploy-token>
-    # → secret/gitlab-registry-secret created
-    ```
-
-    Убедитесь, что Helm-чарт использует этот секрет через `imagePullSecrets`.
-
-#### Шаг 2: Создание файла `.gitlab-ci.yml`
+Использование Агента — стандарт безопасности. Вам не нужно создавать секреты `docker-registry` вручную, так как Агент может использовать права пайплайна.
 
 ```yaml
 stages:
   - build
-  - test
-  - push
   - deploy
 
 variables:
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
   FULL_IMAGE_NAME: $CI_REGISTRY_IMAGE:$IMAGE_TAG
+  # Формат: путь/к/проекту-агента:имя-агента
+  KUBE_CONTEXT: "group/infra/k8s-connection:prod-agent"
 
 build_job:
   stage: build
@@ -70,236 +40,159 @@ build_job:
   services: [docker:24.0-dind]
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
-    # → Login Succeeded
     - docker build -t $FULL_IMAGE_NAME .
-    # → Successfully built ...
+    - docker push $FULL_IMAGE_NAME
 
-test_job:
-  stage: test
-  image: docker/compose:v2.24.6
-  services: [docker:dind]
-  script:
-    - export FULL_IMAGE_NAME
-    - docker-compose -p ${CI_PIPELINE_ID} up --abort-on-container-exit --exit-code-from app
-    # → Container test-app-1  Exited with code 0
-  after_script:
-    - docker-compose -p ${CI_PIPELINE_ID} down
-    # → Removing network ...
-
-push_job:
-  stage: push
-  image: docker:24.0
-  services: [docker:24.0-dind]
-  script:
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
-    # → Login Succeeded
-    - docker push "$FULL_IMAGE_NAME"
-    # → The push refers to repository ...
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-
-deploy_k8s_job:
+deploy_k8s:
   stage: deploy
-  image: dtzar/helm-kubectl
+  image: dtzar/helm-kubectl:3.14
   script:
-    - echo "$KUBECONFIG" > kubeconfig.yaml
-    - export KUBECONFIG=kubeconfig.yaml
+    - kubectl config use-context $KUBE_CONTEXT
     - >
-      helm upgrade --install my-release-name ./path/to/chart \
-        --namespace my-app-production \
-        --set image.tag=$IMAGE_TAG \
-        --wait --atomic --timeout 5m0s
-    # → Release "my-release-name" has been upgraded. Happy Helming!
+      helm upgrade --install my-app ./chart
+        --namespace production
+        --set image.tag=$IMAGE_TAG
+        --wait --atomic --timeout 5m
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Сценарий 2: Деплой на Docker-хост по SSH
+### Сценарий 2: Деплой на Docker-хост по SSH (Безопасный метод)
 
-#### Шаг 1: Настройка переменных в GitLab CI/CD
-
-- `PRODUCTION_SERVER_IP`: IP-адрес Docker-хоста.
-- `SSH_PRIVATE_KEY`: Приватный ключ SSH для доступа к серверу.
-- `SSH_USER`: Имя пользователя для подключения.
-
-#### Шаг 2: Добавление задачи деплоя в `.gitlab-ci.yml`
+Использование `ssh-agent` и проверка ключей хоста предотвращают перехват данных (MitM).
 
 ```yaml
-deploy_ssh_job:
+deploy_ssh:
   stage: deploy
-  image: alpine
+  image: alpine:latest
   before_script:
     - apk add --no-cache openssh-client
-    # → OK: 5 MiB in 16 packages
     - eval $(ssh-agent -s)
-    # → Agent pid 123
-    - echo "$SSH_PRIVATE_KEY" | ssh-add -
-    # → Identity added: (stdin)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    - ssh-keyscan $PRODUCTION_SERVER_IP >> ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
+    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
   script:
     - >
-      ssh $SSH_USER@"$PRODUCTION_SERVER_IP" "
-        echo $CI_JOB_TOKEN | docker login -u ${CI_REGISTRY_USER} --password-stdin ${CI_REGISTRY} &&
+      ssh $SSH_USER@"$PRODUCTION_IP" "
+        docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY &&
+        docker pull $FULL_IMAGE_NAME &&
         docker stop my-app || true &&
         docker rm my-app || true &&
         docker run --name my-app -d -p 80:8080 $FULL_IMAGE_NAME
       "
-    # → Login Succeeded
-    # → [container_id]
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
 ```
 
-### Сценарий 3: Автоматическое создание Merge Request, тесты и комментарий
+### Сценарий 3: Автоматическое создание Merge Request и уведомление через API
 
-Пайплайн, который при пуше в не-default ветку создаёт MR, запускает тесты и постит результат комментарием.
-
-Ключевые механизмы:
-- `workflow:rules` — пайплайн запускается только на feature-ветках, не на `main`.
-- `artifacts:reports:dotenv` — передача `MR_IID` между задачами.
-- `needs` — явная цепочка зависимостей (DAG).
-- API `POST /merge_requests` / `POST .../notes` — создание MR и комментарий.
-- `artifacts:reports:junit` — нативный отчёт в UI MR (без комментария).
-- `GL_ACCESS_TOKEN` — project access token (masked, protected) в CI/CD variables.
+Позволяет автоматизировать процесс код-ревью при пуше в feature-ветки.
 
 ```yaml
 stages:
-  - create-mr
+  - automation
   - test
-  - notify
 
 variables:
   GL_PROJECT_API: "$CI_API_V4_URL/projects/$CI_PROJECT_ID"
 
-# Все задачи — только на не-default ветках
-workflow:
-  rules:
-    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
-
-create-mr:
-  stage: create-mr
+create_mr_automation:
+  stage: automation
+  image: python:3.12-slim
   script:
     - |
       MR_IID=$(curl -s --request POST "$GL_PROJECT_API/merge_requests" \
         --header "PRIVATE-TOKEN: $GL_ACCESS_TOKEN" \
         --form "source_branch=$CI_COMMIT_BRANCH" \
         --form "target_branch=$CI_DEFAULT_BRANCH" \
-        --form "title=Draft: $CI_COMMIT_TITLE" \
-        --form "remove_source_branch=true" \
+        --form "title=Auto-MR: $CI_COMMIT_TITLE" \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('iid',''))")
       echo "MR_IID=$MR_IID" > mr.env
-    # → MR_IID=42
   artifacts:
     reports:
-      dotenv: mr.env  # MR_IID станет переменной в downstream задачах
+      dotenv: mr.env
+  rules:
+    - if: '$CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
 
-run-tests:
+post_comment:
   stage: test
-  needs: [create-mr]
+  needs: [create_mr_automation]
   script:
-    - go test -v ./... 2>&1 | tee test-results.txt
-    # → PASS: TestMain (0.00s)
-    - echo "EXIT_CODE=${PIPESTATUS[0]}" >> test-summary.env
-  artifacts:
-    paths: [test-results.txt]
-    reports:
-      dotenv: test-summary.env
-      junit: report.xml
-
-post-comment:
-  stage: notify
-  needs: [create-mr, run-tests]
-  script:
-    - BODY=$(cat test-results.txt | tail -20)
     - |
-      curl -s --request POST \
-        "$GL_PROJECT_API/merge_requests/$MR_IID/notes" \
+      curl -s --request POST "$GL_PROJECT_API/merge_requests/$MR_IID/notes" \
         --header "PRIVATE-TOKEN: $GL_ACCESS_TOKEN" \
-        --form "body=\`\`\`\n$BODY\n\`\`\`"
-    # → {"id":123,"body":"...","author":...}
+        --form "body=Пайплайн запущен для ветки $CI_COMMIT_BRANCH. Ссылка на артефакты: $CI_JOB_URL"
 ```
 
-### Сценарий 4: MR-triggered pipeline (тесты + комментарий в MR)
+### Сценарий 4: Quality Gates (JUnit, Coverage и блокировка MR)
 
-Пайплайн, который запускается только при создании или обновлении Merge Request, прогоняет тесты, публикует JUnit-отчёт (нативно в UI) и оставляет кастомный комментарий.
-
-**Ключевые отличия от Сценария 3:** MR уже существует — пайплайн не создаёт его, а реагирует на событие `merge_request_event`. `$CI_MERGE_REQUEST_IID` доступен как built-in переменная.
+Пайплайн визуализирует результаты тестов и покрытие кода прямо в интерфейсе Merge Request.
 
 ```yaml
-stages:
-  - test
-  - notify
-
-workflow:
-  rules:
-    # Запускать только для событий Merge Request
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    # Для остальных триггеров — не запускать
-    - when: never
-
-variables:
-  # Built-in переменная GitLab API
-  GITLAB_API: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID"
-
-run-tests:
+test_job:
   stage: test
+  image: python:3.12-slim
   script:
-    - pytest --junitxml=report.xml
-    # → 15 passed, 1 warning in 2.34s
+    - pip install pytest pytest-cov
+    - pytest --junitxml=report.xml --cov=src/ --cov-report=xml:coverage.xml
   artifacts:
+    when: always
     reports:
-      junit: report.xml  # GitLab рендерит в виджет MR
-  # failing tests блокируют merge
-  allow_failure: false
-
-post-comment:
-  stage: notify
-  needs: [run-tests]
-  script:
-    - |
-      curl -s --request POST "$GITLAB_API/notes" \
-        --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-        --form "body=Tests passed: $(grep -c 'testsuite' report.xml 2>/dev/null || echo 0)"
-    # → {"id":124,"body":"Tests passed: 1"}
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  allow_failure: false # Блокирует Merge при падении тестов
   rules:
-    # Комментарий — только после завершения тестов
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 ```
 
-**JUnit-отчёт** — GitLab рендерит результаты тестов на вкладке `Tests` в MR без единой строчки API-кода. Кастомный комментарий через `POST .../notes` используется для дополнительной информации (статистика, ссылки, артефакты).
+### Сценарий 5: Оптимизация сборки через BuildKit и кэширование
 
-`allow_failure: false` — если тесты падают, пайплайн завершается с ошибкой, и кнопка `Merge` блокируется до исправления.
+Ускорение пайплайна за счет переиспользования слоев Docker из Registry.
 
-### Сценарий 5: Диагностика и ускорение медленного пайплайна
+```yaml
+build_optimized:
+  stage: build
+  image: docker:24.0
+  services: [docker:24.0-dind]
+  variables:
+    DOCKER_BUILDKIT: 1
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
+    - >
+      docker build 
+        --cache-from $CI_REGISTRY_IMAGE:cache
+        --build-arg BUILDKIT_INLINE_CACHE=1
+        -t $FULL_IMAGE_NAME 
+        -t $CI_REGISTRY_IMAGE:cache .
+    - docker push $FULL_IMAGE_NAME
+    - docker push $CI_REGISTRY_IMAGE:cache
+```
 
-Если пайплайн занимает 40+ минут, сначала профилировать — посмотреть, что именно долго.
+## Технические нюансы и Безопасность
 
-**Типичные виновники и их исправление:**
+### Безопасность ID Tokens
+С версии **17.0** вместо `CI_JOB_JWT` рекомендуется использовать `id_tokens`. Это позволяет настроить доверительные отношения (Trust Relationship) с AWS/GCP/Vault на основе конкретных параметров пайплайна (проект, ветка).
 
-**1. Зависимости каждый раз с нуля.**  
-Fix: `cache:` в GitLab CI по ключу `go.sum`/`package-lock.json`; в Dockerfile — `COPY go.mod go.sum && RUN go mod download` до `COPY . .`.
+### Маскирование секретов
+Никогда не используйте `echo $SECRET` в скриптах. GitLab автоматически маскирует переменные в логах, если они помечены как **Masked**, но принудительный вывод через команды отладки может обойти эту защиту.
 
-**2. Линейные стадии, когда можно параллельно.**  
-Fix: `needs:` (DAG) — scan и validate могут идти одновременно с тестами, а не ждать своей очереди.
-
-**3. Тесты не распараллелены.**  
-Fix: `parallel: matrix:` для sharding тестов; разделить unit (быстрые) и integration (медленные) в разные стадии (stages) с разным расписанием.
-
-**4. Docker build без layer-кэша.**  
-Fix: `--cache-from registry/image:cache + --cache-to type=registry,...` (BuildKit); или Kaniko с `--cache=true`.
-
-**5. Большой build context.**  
-Fix: `.dockerignore`.
-
-**6. Тяжёлый образ раннера.**  
-Fix: использовать pre-pulled образы, пинить версии.
+### Использование CI/CD Components
+Для типичных задач (сборка, деплой) рекомендуется переходить на компоненты:
+```yaml
+include:
+  - component: $CI_SERVER_FQDN/gitlab-components/sast/sast@1.2.0
+    inputs:
+      stage: test
+```
 
 ## Дополнительная информация
 
-### Поведение деплоя при сбое в Kubernetes (Helm)
+### Смотрите также
 
-- Команда `helm upgrade --install --atomic` пытается задеплоить новую версию.
-- Если новые поды не запускаются (например, уходят в `CrashLoopBackOff`), флаг `--wait` не дожидается их готовности, и деплой считается проваленным.
-- Благодаря флагу `--atomic`, Helm автоматически выполняет откат (`helm rollback`) к предыдущей стабильной версии.
-- Для конечных пользователей сбой проходит прозрачно, а пайплайн в GitLab завершается с ошибкой, давая команде четкий сигнал о проблеме.
+- **[Основы GitLab CI](../Concepts/gitlab_ci_basics.md)** — архитектура и стадии.
+- **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление доступом.
+- **[Интеграция с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — глубокая настройка KAS.
+- **[Кэширование в GitLab CI](../Advanced/gitlab_ci_caching/caching_overview.md)** — стратегии ускорения.

@@ -109,6 +109,80 @@ Loki индексирует только метаданные (лейблы), а
     Labels job=systemd, unit=$_SYSTEMD_UNIT, hostname=$hostname
 ```
 
+### Сценарий 3: Production-конфигурация для Linux-сервера (без K8s)
+
+Пример конфигурации, собирающей системный журнал и логи Nginx с маскированием чувствительных данных.
+
+**Файл `fluent-bit.conf`:**
+```ini
+[SERVICE]
+    Flush           5
+    Daemon          Off
+    Log_Level       info
+    Parsers_File    parsers.conf
+    storage.path    /var/log/flb-storage/  # Буферизация на диске для надежности
+    storage.sync    normal
+
+[INPUT]
+    Name            systemd
+    Tag             systemd.*
+    DB              /var/log/flb_journal.db
+    Read_From_Tail  On
+    Strip_Underscores On
+
+[INPUT]
+    Name            tail
+    Path            /var/log/nginx/access.log
+    Tag             nginx.access
+    DB              /var/log/flb_nginx.db
+    Parser          nginx
+
+[FILTER]
+    Name            lua
+    Match           *
+    script          /etc/fluent-bit/redact.lua
+    call            redact_pci
+
+[OUTPUT]
+    Name            loki
+    Match           *
+    Host            loki.internal
+    Port            3100
+    Labels          job=fluent-bit, host=${HOSTNAME}
+    line_format     json
+```
+
+**Маскирование данных (redact.lua):**
+```lua
+-- Lua-фильтр для маскирования номеров карт
+function redact_pci(tag, timestamp, record)
+    if record["message"] then
+        -- Заменяет 16-значные числа на маску
+        record["message"] = string.gsub(record["message"], "%d%d%d%d%s?%d%d%d%d%s?%d%d%d%d%s?%d%d%d%d", "****-****-****-****")
+    end
+    return 1, timestamp, record
+end
+```
+
+### Настройка производительности и буферизации
+
+Для высоконагруженных сред необходимо настроить гибридную буферизацию (Memory + Disk):
+
+```ini
+[INPUT]
+    Name          tail
+    Path          /var/log/app.log
+    storage.type  filesystem  # Использовать диск при переполнении RAM
+    Mem_Buf_Limit 50MB        # Лимит в оперативной памяти
+    Buffer_Max_Size 5MB       # Размер чанка
+```
+
+| Параметр | Описание |
+| :--- | :--- |
+| `storage.path` | Директория для хранения буферов при сбоях сети. |
+| `Mem_Buf_Limit` | Предотвращает OOM-killer при резких всплесках объема логов. |
+| `Flush` | Интервал сброса данных в Loki (обычно 1-5 сек). |
+
 ## Устранение неполадок
 
 ### Ошибки при передаче данных

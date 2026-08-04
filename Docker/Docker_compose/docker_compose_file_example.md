@@ -4,30 +4,27 @@
 
 **Файл `compose.yml`** — центральный файл декларативного описания ресурсов в Docker Compose. В нем определяются сервисы, сети, тома, секреты, конфигурации и AI-модели, составляющие единый стек приложения.
 
-Этот документ содержит эталонные примеры конфигураций для различных сценариев разработки и эксплуатации. Техническое описание каждой директивы представлено в [справочнике по директивам](./docker_compose_directives.md).
+Этот документ содержит эталонные примеры конфигураций для различных сценариев разработки и эксплуатации. Техническое описание каждой директивы представлено в [Справочнике по директивам](./docker_compose_directives.md).
 
 ## Базовые концепции
 
 ### Современный стандарт (Compose v5+)
 
 В современных конфигурациях (начиная с 2025 года) приняты следующие стандарты:
-- **Отсутствие версии:** поле `version: "3.x"` удалено и официально признано устаревшим.
+- **Отсутствие версии:** поле `version: "3.x"` удалено.
 - **Модульность:** активное использование `include` для разделения ответственности.
 - **Инструменты разработки:** интеграция секции `develop` для автоматизации синхронизации кода.
 - **Безопасность по умолчанию:** использование `secrets` и `configs` вместо переменных окружения для чувствительных данных.
+- **Ресурсные ограничения:** обязательное использование `deploy.resources` для предотвращения деградации хоста.
 
 ## Практические сценарии
 
-### Сценарий 1: Веб-приложение с базой данных и кэшем
+### Сценарий 1: Веб-приложение с базой данных и кэшем (Best Practice)
 
-Классический стек (Python/Node.js + PostgreSQL + Redis) с настроенным режимом разработки и проверками готовности.
+Классический стек с настроенным режимом разработки, проверками готовности и ротацией логов.
 
 ```yaml
 name: production-ready-stack
-
-include:
-  - path: ./infrastructure/networks.yml
-  - path: ./infrastructure/volumes.yml
 
 services:
   database:
@@ -48,16 +45,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
+    user: "1001:1001"
     depends_on:
       database:
         condition: service_healthy
-      cache:
-        condition: service_started
     develop:
       watch:
         - action: sync
@@ -70,29 +71,33 @@ services:
     networks:
       - backend_net
       - frontend_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   cache:
     image: redis:7.4-alpine
     networks:
       - backend_net
 
+volumes:
+  postgres_data:
+
+networks:
+  frontend_net:
+  backend_net:
+    internal: true
+
 secrets:
   db_password:
-    file: ./secrets/db_prowd.txt
-```
-
-**Результат запуска:**
-```bash
-docker compose up -d
-# → [OK] Network production-ready-stack_backend_net created
-# → [OK] Volume production-ready-stack_postgres_data created
-# → [OK] Service database: healthy
-# → [OK] Service backend: started
+    file: ./secrets/db_pass.txt
 ```
 
 ### Сценарий 2: AI-сервис с использованием секции models
 
-Пример интеграции LLM-модели в локальную среду разработки.
+Интеграция LLM-модели с поддержкой GPU.
 
 ```yaml
 name: ai-assistant-project
@@ -117,12 +122,11 @@ services:
 
 networks:
   ai_net:
-    driver: bridge
 ```
 
 ### Сценарий 3: Масштабируемый стек с Nginx (Load Balancing)
 
-Балансировка нагрузки между несколькими экземплярами бэкенда.
+Балансировка нагрузки между несколькими экземплярами приложения.
 
 ```yaml
 name: scalable-web-app
@@ -151,31 +155,61 @@ networks:
   web_net:
 ```
 
-**Конфигурация Nginx (`nginx.conf`):**
-```nginx
-upstream myapp {
-    server web:5000; # Docker DNS автоматически распределит запросы между репликами
-}
+### Сценарий 4: Корпоративный стек с профилями и модулями
 
-server {
-    listen 80;
-    location / {
-        proxy_pass http://myapp;
-    }
-}
+Использование профилей для выборочного запуска инструментов мониторинга и отладки.
+
+```yaml
+name: enterprise-app
+
+include:
+  - path: ./infrastructure/monitoring.yml # Импорт сторонней конфигурации
+
+services:
+  app:
+    image: my-corp-app:latest
+    networks:
+      - app_net
+
+  debug-tools:
+    image: nicolaka/netshoot
+    profiles:
+      - debug
+    network_mode: "service:app"
+
+networks:
+  app_net:
 ```
+
+### Сценарий 5: Стек для CI/CD тестирования
+
+Конфигурация, оптимизированная для быстрого завершения после тестов.
+
+```yaml
+services:
+  test-runner:
+    build: .
+    command: npm test
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:17-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+```
+*Запуск:* `docker compose up --build --abort-on-container-exit --exit-code-from test-runner`
 
 ## Дополнительная информация
 
-### Рекомендации по безопасности
+### Рекомендации по эксплуатации
 
-1.  **Файлы секретов:** Никогда не фиксируйте файлы из секции `secrets` в Git. Добавьте их в `.gitignore`.
-2.  **Пользователи:** Всегда указывайте директиву `user: "1000:1000"` в сервисах, если образ поддерживает запуск не от root.
-3.  **Лимиты ресурсов:** В производственных конфигурациях всегда описывайте секцию `deploy.resources.limits` для предотвращения OOM (Out Of Memory) на хосте.
+- **Безопасность:** Файлы секретов (`secrets`) никогда не должны попадать в систему контроля версий (Git). Добавляйте их в `.gitignore`.
+- **Права доступа:** Всегда стремитесь запускать контейнеры от имени не-root пользователя (`user: "1001:1001"`).
+- **Сетевая изоляция:** Используйте `internal: true` для баз данных и внутренних сервисов, которым не нужен доступ в интернет.
 
 ### См. также
 
-- **[Справочник по директивам](./docker_compose_directives.md)** — описание всех ключей YAML.
-- **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — интерполяция переменных и YAML-якоря.
-- **[Режим watch](./docker_compose_watch_mode.md)** — детали настройки горячей перезагрузки кода.
-- **[Сравнение версий](./docker_compose_versions_comparison.md)** — почему мы больше не используем поле `version`.
+- **[Справочник по директивам](./docker_compose_directives.md)** — детальное описание ключей YAML.
+- **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — модульность, `include` и профили.
+- **[Режим watch](./docker_compose_watch_mode.md)** — настройка горячей перезагрузки кода.

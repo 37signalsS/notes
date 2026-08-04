@@ -110,7 +110,8 @@ argocd app terminate-op <app-name>
 
 ### См. также
 
-- [Обзор Argo CD](./argocd_overview.md)
-- [Синхронизация и политики](./synchronization.md)
+- [Арго CD: Обзор системы](./argocd_overview.md)
+- [Арго CD: Настройка SSO через GitLab](./argocd_sso_gitlab.md) — федеративная аутентификация и RBAC.
+- [Арго CD: Синхронизация и политики](./synchronization.md)
 - [Установка и настройка Argo CD](./argocd_installation_and_setup.md)
 - [Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)

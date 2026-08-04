@@ -9,22 +9,19 @@
 
 ## Работа с системной ролью postgres
 
-### Вход через переключение пользователя
-```bash
-sudo -i -u postgres
-psql
-```
+### Вход в консоль управления
+Подробные способы подключения и конфигурации клиента описаны в разделе **[Основы работы в psql](./console_basics.md)**.
 
-### Прямой вход через sudo
+**Прямой вход через sudo:**
 ```bash
 sudo -u postgres psql
 ```
 
-**Базовые команды консоли psql:**
-*   `\conninfo` — информация о текущем подключении.
-*   `\help` — справка по SQL-командам.
-*   `\?` — справка по командам psql.
-*   `\q` — выход из консоли.
+**Переключение на системного пользователя:**
+```bash
+sudo -i -u postgres
+psql
+```
 
 ## Создание новых ролей
 
@@ -32,14 +29,34 @@ sudo -u postgres psql
 SQL-команды `CREATE ROLE` и `CREATE USER` практически идентичны, за исключением значения параметра `LOGIN` по умолчанию.
 
 ```sql
--- Создание пользователя (LOGIN по умолчанию)
-CREATE USER app_user WITH PASSWORD 'secure_pass' VALID UNTIL '2026-12-31';
+-- Создание пользователя с расширенными атрибутами
+CREATE USER app_user 
+WITH PASSWORD 'secure_pass' 
+VALID UNTIL '2026-12-31'
+CONNECTION LIMIT 50        -- Ограничение кол-ва одновременных сессий
+BYPASSRLS;                 -- Обход политик Row-Level Security (только для сервисных ролей)
+
+-- Атрибуты прав на уровне кластера (использовать с осторожностью):
+-- SUPERUSER | CREATEDB | CREATEROLE | REPLICATION
 
 -- Создание роли без права входа (групповая роль)
-CREATE ROLE read_only_group;
+CREATE ROLE read_only_group NOLOGIN;
+```
 
--- Создание пользователя через CREATE ROLE (нужно явно указать LOGIN)
-CREATE ROLE another_user LOGIN PASSWORD 'pass';
+### Предопределенные системные роли (PG 10+)
+PostgreSQL предоставляет набор ролей для делегирования прав без выдачи статуса `SUPERUSER`:
+
+| Роль | Назначение |
+| :--- | :--- |
+| `pg_monitor` | Чтение всей статистики, настроек и статусов (идеально для Prometheus/Zabbix). |
+| `pg_read_all_data` | (PG 14+) Глобальное право `SELECT` на все таблицы и представления. |
+| `pg_write_all_data` | (PG 14+) Глобальное право `INSERT`, `UPDATE`, `DELETE`. |
+| `pg_read_all_settings` | Чтение всех конфигурационных параметров, даже защищенных. |
+| `pg_signal_backend` | Право на завершение (`kill`) чужих запросов и сессий. |
+
+**Пример выдачи:**
+```sql
+GRANT pg_monitor TO monitoring_user;
 ```
 
 ### Создание через системную утилиту createuser
@@ -63,16 +80,36 @@ sudo -u postgres createdb mydb
 
 ## Управление правами доступа (GRANT / REVOKE)
 
+### Иерархия прав
+В PostgreSQL права выдаются последовательно сверху вниз: `DATABASE` → `SCHEMA` → `TABLE` (или другой объект).
+
+```sql
+-- 1. Доступ к базе данных
+GRANT CONNECT ON DATABASE mydb TO app_user;
+
+-- 2. Доступ к схеме
+-- USAGE позволяет видеть объекты, CREATE позволяет создавать новые
+GRANT USAGE, CREATE ON SCHEMA public TO app_user;
+
+-- 3. Доступ к таблицам
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO read_only_group;
+```
+
+### Права по умолчанию (Default Privileges)
+Частая проблема: права выданы на существующие таблицы, но новые таблицы создаются без них. Это решается через `ALTER DEFAULT PRIVILEGES`.
+
+```sql
+-- Выполняется пользователем, который БУДЕТ создавать таблицы (или суперпользователем)
+ALTER DEFAULT PRIVILEGES IN SCHEMA public 
+GRANT SELECT ON TABLES TO read_only_group;
+```
+
 ### Наследование через группы (рекомендуемый способ)
 Использование групповых ролей упрощает администрирование: права назначаются группе, а пользователи просто включаются в эту группу.
 
-1.  **Создание групп и назначение прав:**
+1.  **Назначение прав группе:**
     ```sql
-    -- Права только на чтение
     GRANT SELECT ON TABLE my_table TO read_only_group;
-    
-    -- Полные права
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE my_table TO read_write_group;
     ```
 
 2.  **Назначение группы пользователю:**
@@ -80,19 +117,19 @@ sudo -u postgres createdb mydb
     GRANT read_only_group TO app_user;
     ```
 
-3.  **Отзыв прав/группы:**
-    ```sql
-    -- Исключить пользователя из группы
-    REVOKE read_only_group FROM app_user;
-    
-    -- Отозвать конкретное право у группы
-    REVOKE UPDATE ON TABLE my_table FROM read_write_group;
-    ```
+### Безопасность: Row-Level Security (RLS)
+RLS позволяет ограничить доступ к конкретным **строкам** в зависимости от того, какой пользователь выполняет запрос.
 
-### Прямое назначение прав
-Вы можете назначить все привилегии на объект конкретному пользователю напрямую:
 ```sql
-GRANT ALL PRIVILEGES ON TABLE second_table TO app_user;
+-- 1. Включение RLS для таблицы
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+
+-- 2. Создание политики (доступ только к своим заказам)
+CREATE POLICY user_orders_policy ON orders
+    FOR SELECT
+    USING (user_id = current_user);
+
+-- → результат: SELECT * FROM orders вернет только строки текущего пользователя.
 ```
 
 ## Изменение ролей и смена пароля
@@ -104,6 +141,16 @@ ALTER USER app_user PASSWORD 'new_secure_pass';
 
 -- Запрет входа в систему
 ALTER ROLE app_user NOLOGIN;
+```
+
+## Администрирование и очистка
+
+### Смена владельца (Ownership)
+Если необходимо удалить пользователя, нужно сначала передать его объекты другому владельцу.
+```sql
+REASSIGN OWNED BY old_user TO new_admin;
+DROP OWNED BY old_user;
+DROP USER old_user;
 ```
 
 ## Доступ под новой ролью
@@ -123,6 +170,7 @@ ALTER ROLE app_user NOLOGIN;
     ```
 
 ### См. также
-*   [Базовые операции с данными (CRUD)](./crud_operations.md)
-*   [Обзор PostgreSQL](../overview.md)
-*   [Графические интерфейсы (pgAdmin)](./management_tools.md)
+*   [Основы работы в psql](./console_basics.md) — мета-команды инспекции ролей (`\du`, `\drds`).
+*   [Наблюдаемость PostgreSQL](./observability.md) — настройка роли для мониторинга.
+*   [Обзор PostgreSQL](../overview.md) — архитектура и основные возможности.
+*   [Базовые операции с данными (CRUD)](./crud_operations.md) — использование прав в запросах.

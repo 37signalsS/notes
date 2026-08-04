@@ -97,14 +97,13 @@ kubectl rollout restart deployment/my-app
 
 ### Диагностика при сбоях
 
-При «зависании» обновления (например, `ImagePullBackOff`):
-1. Проверить события: `kubectl describe deployment <name>`.
-2. Проверить статус rollout: `kubectl rollout status deployment <name>`.
-3. Изучить состояние подов нового ReplicaSet: `kubectl get pods -l app=<label>`.
+Подробный алгоритм действий при зависании обновлений, разбор параметров `maxSurge`/`maxUnavailable` и реальные кейсы сбоев доступны в отдельном руководстве:
+👉 **[Устранение неполадок Deployment и RollingUpdate](./troubleshooting.md)**.
 
 ## 4. Дополнительная информация
 
 - [Манифест и лучшие практики](./deployment_manifest.md) — детальный разбор YAML, ресурсов и проб.
+- [Устранение неполадок и RollingUpdate](./troubleshooting.md) — глубокая диагностика и разбор стратегий обновления.
 - [Управление жизненным циклом](./lifecycle_management.md) — пауза, возобновление и глубокое управление ревизиями.
 - [Сравнение стратегий развертывания](../../../CI-CD/Deployment_Strategies/comparison.md) — детальное сравнение RollingUpdate, Canary и Blue-Green.
 - [HPA (Horizontal Pod Autoscaler)](../../Autoscaling/hpa_overview.md) — автоматическое масштабирование Deployment на основе метрик.

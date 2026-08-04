@@ -2,165 +2,180 @@
 
 ## Определения
 
-**MySQL в Docker** — подход, при котором сервер БД MySQL запускается в изолированном контейнере Docker. Обеспечивает переносимость, консистентность окружения, упрощает развертывание и масштабирование.
+**MySQL в Docker** — метод развертывания СУБД MySQL в изолированных контейнерах. Официальные образы поддерживают две модели релизов:
+- **LTS (Long Term Support):** Стабильные версии для Production (например, **8.4 LTS**). Поддержка до 8 лет.
+- **Innovation:** Версии с новыми функциями (например, **9.0 Innovation**). Короткий цикл поддержки, рекомендуются для тестирования новых возможностей (например, Vector types).
 
 ## Базовые концепции
 
 ### Персистентность данных: Volumes
 
-**Категорически запрещено** хранить данные базы данных внутри файловой системы контейнера — при удалении контейнера данные будут утеряны. Для сохранения данных используются **именованные тома (named volumes)**.
+**Категорически запрещено** хранить данные внутри файловой системы контейнера. Для сохранения данных используются **именованные тома (named volumes)**.
 
-- **Принцип:** Том (`mysql-data`) монтируется в директорию `/var/lib/mysql`. Данные физически сохраняются в управляемой Docker области на хосте.
-- **Преимущество:** Тома существуют независимо от контейнеров. Можно удалить и запустить новый контейнер с тем же томом — данные сохранятся.
+- **Принцип:** Директория `/var/lib/mysql` монтируется на том.
+- **Преимущество:** Данные сохраняются при удалении, обновлении или перезапуске контейнера.
 
 ### Конфигурация
 
-Для применения кастомных настроек используется монтирование файла `my.cnf` из хоста в контейнер. Подробности — в [конфигурации MySQL](./configuration.md).
+Настройки применяются путем монтирования кастомного `my.cnf` (или файлов в `/etc/mysql/conf.d/`) либо через аргументы команды запуска (`command`).
+Подробности — в [конфигурации MySQL](./configuration.md).
 
 ### Инициализация
 
-Официальные образы MySQL поддерживают автоматическую инициализацию при первом запуске на пустом томе. Скрипты (`.sh`, `.sql`, `.sql.gz`) из директории `/docker-entrypoint-initdb.d/` выполняются в алфавитном порядке.
+При первом запуске на пустом томе MySQL выполняет скрипты из `/docker-entrypoint-initdb.d/` (форматы `.sh`, `.sql`, `.sql.gz`) в алфавитном порядке. Это удобно для создания схем, пользователей и начального наполнения данными.
 
 ### Проверка состояния (Healthcheck)
 
-Для мониторинга готовности БД к приему соединений используется встроенная в Docker функция `healthcheck`. В качестве команды проверки рекомендуется использовать `mysqladmin ping`.
-
+Используется для уведомления Docker и зависимых сервисов о готовности БД.
 - **Команда:** `mysqladmin ping -h localhost -u root -p$MYSQL_ROOT_PASSWORD`
-- **Значение:** Позволяет зависимым сервисам (например, API) ждать полной готовности базы перед запуском.
+- **Параметры:** Рекомендуется устанавливать `start_period` (около 30с), так как инициализация БД требует времени.
 
-### Безопасность
+### Безопасность и аутентификация
 
-- **Переменные окружения:** Использование `MYSQL_ROOT_PASSWORD` в открытом виде в `docker run` или `docker-compose.yml` небезопасно (пароль виден в истории команд и процессах).
-- **Рекомендация:** Использовать Docker Secrets (в Swarm/Stack) или файлы переменных окружения (`.env`) с ограниченными правами доступа.
-- **Минимальные привилегии:** Не рекомендуется запускать приложение под пользователем `root`. Используйте `MYSQL_USER` и `MYSQL_PASSWORD` для создания обычного пользователя.
+- **Плагины аутентификации:** 
+  - В MySQL 8.4 `mysql_native_password` отключен по умолчанию (но доступен).
+  - В MySQL 9.0+ `mysql_native_password` **полностью удален**. 
+  - Рекомендуется использовать `caching_sha2_password`.
+- **Docker Secrets:** В Swarm или через Docker Compose (с версии 3.5+) рекомендуется передавать пароли через секреты, а не через переменные окружения напрямую.
+- **Привилегии:** Используйте `MYSQL_USER` и `MYSQL_PASSWORD` для создания ограниченного пользователя вместо работы под `root`.
+
+### Журналирование (Logging)
+
+По умолчанию MySQL в Docker направляет логи ошибок в `stderr`.
+- **Доступ к логам:** `docker logs <container_id>`.
+- **Бинарные логи:** Критичны для репликации и восстановления. В Docker важно настраивать их ротацию (`binlog_expire_logs_seconds`), чтобы не переполнить диск хоста.
 
 ### Производительность: Host vs Docker
 
-Производительность зависит от **дискового I/O** и **сетевого режима**.
-
-- **Дисковый I/O:** При использовании `docker volume` накладные расходы минимальны — операции транслируются напрямую в ФС хоста.
-- **Сетевой режим:**
-  - **`bridge` (по умолчанию):** Трафик проходит через `docker-proxy`, что создает накладные расходы на CPU. Падение производительности на read-only нагрузках — до **50%**.
-  - **`host` (`--network host`):** Контейнер использует сетевой стек хоста напрямую. Максимальная производительность, **рекомендовано для production**. Недостатки — снижение изоляции и риск конфликта портов.
-
-См. также: [сети Docker](../../Docker/Docker_network/docker_network.md), [драйвер host](../../Docker/Docker_network/drivers/host.md).
+- **Дисковый I/O:** Накладные расходы минимальны при использовании Volumes. Рекомендуется использовать файловые системы `Ext4` или `XFS` на хосте.
+- **Сеть:** 
+  - `bridge` (default): Накладные расходы на NAT и проксирование (до 10-20% падения пропускной способности).
+  - `host`: Контейнер использует сеть хоста. Максимальная производительность, рекомендуется для высоконагруженных Production-баз. См. [драйвер host](../../Docker/Docker_network/drivers/host.md).
 
 ## Практические сценарии
 
-### 1. Базовый запуск с именованным томом
+### 1. Базовый запуск (LTS 8.4)
 
 ```bash
-# 1. Создаем именованный том для данных
-docker volume create mysql-data
-# -> mysql-data
+# Создание тома
+docker volume create mysql_data
 
-# 2. Запускаем контейнер MySQL, монтируя том
+# Запуск с ограничением ресурсов
 docker run -d --name mysql-db \
   -p 3306:3306 \
-  -e MYSQL_ROOT_PASSWORD=my-secret-pw \
-  -v mysql-data:/var/lib/mysql \
+  --memory="2g" \
+  --cpus="1.5" \
+  -e MYSQL_ROOT_PASSWORD=secret_pass \
+  -v mysql_data:/var/lib/mysql \
   mysql:8.4
 # -> <container_id>
 ```
 
-### 2. Запуск с кастомной конфигурацией
+### 2. Запуск с Docker Secrets (Compose)
 
-```bash
-# Пробрасываем свой my.cnf в контейнер
-docker run -d --name mysql-db-custom-config \
-  -p 3307:3306 \
-  -e MYSQL_ROOT_PASSWORD=my-secret-pw \
-  -v mysql-data:/var/lib/mysql \
-  -v ./my.cnf:/etc/mysql/conf.d/custom.cnf \
-  mysql:8.4
-# -> <container_id>
-```
-
-### 3. Запуск со скриптами инициализации
-
-```bash
-# Монтируем директорию со скриптами для первоначальной настройки
-docker run -d --name mysql-db-initialized \
-  -p 3308:3306 \
-  -e MYSQL_ROOT_PASSWORD=my-secret-pw \
-  -v mysql-data:/var/lib/mysql \
-  -v ./init-scripts:/docker-entrypoint-initdb.d \
-  mysql:8.4
-# -> <container_id>
-```
-
-### 4. Запуск для максимальной производительности
-
-```bash
-# Используем сетевой режим 'host' для минимизации задержек
-docker run -d --name mysql-db-high-perf \
-  --network host \
-  -e MYSQL_ROOT_PASSWORD=my-secret-pw \
-  -v mysql-data:/var/lib/mysql \
-  mysql:8.4
-# -> <container_id>
-```
-
-> **Примечание:** В режиме `--network host` проброс портов (`-p`) не работает. MySQL доступен напрямую по порту 3306 на IP-адресе хоста.
-
-### 5. Запуск через Docker Compose
-
-Для управления многоконтейнерными приложениями предпочтительнее использовать `docker-compose.yml`. Данный пример включает проверку состояния и лимиты ресурсов.
+Безопасный способ передачи паролей без отображения в `docker inspect` или истории команд.
 
 ```yaml
 # docker-compose.yml
 services:
   db:
     image: mysql:8.4
-    container_name: mysql-compose-db
-    restart: always
+    secrets:
+      - mysql_root_password
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: my_database
-      MYSQL_USER: user
-      MYSQL_PASSWORD: password
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$MYSQL_ROOT_PASSWORD"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
 
-volumes:
-  mysql-data:
+secrets:
+  mysql_root_password:
+    file: ./root_password.txt
 ```
 
-Запуск сервисов:
+### 3. Настройка бинарных логов и GTID
+
+Для подготовки к репликации или инкрементальному бэкапу.
 
 ```bash
-docker compose up -d
-# -> [+] Running 2/2
-# ->  Network my_network        Created
-# ->  Container mysql-compose-db Started
+docker run -d --name mysql-binlog \
+  -e MYSQL_ROOT_PASSWORD=pass \
+  -v mysql_data:/var/lib/mysql \
+  mysql:8.4 \
+  --server-id=1 \
+  --log-bin=mysql-bin \
+  --gtid-mode=ON \
+  --enforce-gtid-consistency=ON \
+  --binlog_expire_logs_seconds=604800
 ```
 
-### 6. Создание бэкапа (mysqldump)
+### 4. Репликация (Source-Replica) через Docker Compose
 
-Для создания дампа базы данных, запущенной в контейнере, используется выполнение команды `mysqldump` через `docker exec`.
+Современный стек с использованием терминологии Source/Replica и GTID.
+
+```yaml
+# docker-compose.yml
+services:
+  mysql-source:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+    networks:
+      - mysql-net
+
+  mysql-replica:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass
+    command:
+      - --server-id=2
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+      - --read-only=1
+    depends_on:
+      - mysql-source
+    networks:
+      - mysql-net
+
+networks:
+  mysql-net:
+    driver: bridge
+```
+
+### 5. Создание бэкапа и восстановление
 
 ```bash
-# Создание бэкапа всех баз данных
-docker exec mysql-db mysqldump -u root -p"my-secret-pw" --all-databases > backup.sql
+# Создание логического дампа (все базы)
+docker exec mysql-db mysqldump -u root -p"pass" --all-databases > full_backup.sql
 
-# Восстановление из бэкапа
-cat backup.sql | docker exec -i mysql-db mysql -u root -p"my-secret-pw"
+# Восстановление из дампа
+docker exec -i mysql-db mysql -u root -p"pass" < full_backup.sql
 ```
+
+### 6. Процедура обновления (например, 8.0 -> 8.4)
+
+1. **Бэкап:** Создать полный дамп данных.
+2. **Проверка аутентификации:** Убедиться, что пользователи не используют `mysql_native_password` (если планируется переход на 9.0).
+3. **Остановка:** `docker stop mysql-db`.
+4. **Запуск новой версии:** Запустить контейнер с новым тегом образа, примонтировав старый том. MySQL автоматически выполнит `upgrade` словаря данных при старте.
+5. **Проверка:** Изучить логи `docker logs mysql-db` на предмет ошибок миграции.
+
+## Устранение проблем
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Access denied (root)** | Неверный пароль или плагин | Проверить `MYSQL_ROOT_PASSWORD`. Для 9.0 использовать `caching_sha2_password` в клиенте. |
+| **Permission denied (volume)** | Права доступа на хосте | Выполнить `chown -R 999:999` на директорию тома (999 — стандартный UID mysql в Docker). |
+| **Container keeps restarting** | Ошибка в `my.cnf` или init-скрипте | Проверить логи: `docker logs <id>`. Проверить синтаксис конфига. |
+| **Authentication plugin '...' not loaded** | Использование удаленного плагина | Обновить клиентские библиотеки или включить плагин в настройках (только для 8.4). |
 
 ## Дополнительная информация
 
+- [Конфигурация MySQL (my.cnf)](./configuration.md)
+- [Мониторинг MySQL](./monitoring.md)
+- [Репликация MySQL: Обзор](./replication/overview.md)
 - [Docker: Тома и персистентное хранение](../../Docker/Docker_fs/docker_volumes.md)
 - [Docker: Справочник по сетям](../../Docker/Docker_network/docker_network.md)
+- [Официальная документация MySQL Docker (Hub)](https://hub.docker.com/_/mysql)

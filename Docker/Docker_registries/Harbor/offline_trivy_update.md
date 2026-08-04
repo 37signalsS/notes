@@ -4,121 +4,114 @@
 
 * **Trivy**: Сканер уязвимостей для контейнеров и других артефактов. Использует базы данных уязвимостей (Trivy DB и Java DB) для идентификации CVE в образах.
 * **Оффлайн-режим (Air-gapped)**: Режим работы системы в изолированной среде без прямого доступа к интернету. Требует ручной загрузки и доставки обновлений.
-* **Trivy DB**: Основная база данных уязвимостей, содержащая сведения о пакетах ОС и зависимостях приложений.
+* **ORAS (OCI Registry As Storage)**: CLI-инструмент для работы с OCI-артефактами (включая базы Trivy), позволяющий скачивать файлы напрямую без использования Docker-демона.
+* **Trivy DB (v2)**: Основная база данных уязвимостей, содержащая сведения о пакетах ОС и зависимостях приложений.
 * **Trivy Java DB**: Специализированная база данных для анализа уязвимостей в Java-библиотеках.
 
 ## Основные концепции
 
-Сканер Trivy в составе Harbor требует регулярного обновления баз для обнаружения актуальных угроз. В изолированных средах автоматическое обновление невозможно, поэтому применяется процедура ручной синхронизации:
+Сканер Trivy в составе Harbor требует регулярного обновления баз для обнаружения актуальных угроз. В изолированных средах автоматическое обновление невозможно, поэтому применяется процедура ручной синхронизации.
 
-1.  Загрузка актуальных баз на хосте с доступом в интернет.
-2.  Извлечение файлов баз из OCI-артефактов (образов).
-3.  Перенос архивов на изолированный сервер Harbor.
-4.  Обновление файлов в директории данных Trivy-адаптера.
-5.  Перезапуск сервиса для инициализации новых данных.
+### Жизненный цикл обновления
 
-**Периодичность:** Рекомендуется выполнять обновление не реже одного раза в неделю.
+1.  **Загрузка**: Получение актуальных баз из GitHub Container Registry (GHCR) на хосте с интернетом.
+2.  **Извлечение**: Распаковка баз из OCI-артефактов в виде файлов (обычно `trivy.db` и `metadata.json`).
+3.  **Транспортировка**: Перенос архивов во внутренний контур.
+4.  **Развертывание**: Размещение файлов в директории данных Harbor с корректными правами доступа.
+5.  **Валидация**: Проверка статуса сканера в интерфейсе Harbor.
 
-**Требования:**
-
-* Хост с доступом к интернету и установленным Docker.
-* Доступ к серверу Harbor с правами sudo.
-* Способ переноса файлов (USB, SCP через промежуточный хост).
+**Периодичность:** Рекомендуется обновлять базы не реже одного раза в неделю.
 
 ## Практические сценарии
 
-### 1. Подготовка баз на машине с интернетом
+### Сценарий 1: Подготовка баз с использованием ORAS (Рекомендуется)
 
-Загрузите актуальные образы баз уязвимостей из GitHub Container Registry:
+Использование `oras` является наиболее современным и быстрым способом, так как оно не требует запуска контейнеров.
 
 ```bash
-# Загрузка основной базы (версия v2 является актуальной)
+# 1. Скачивание баз
+oras pull ghcr.io/aquasecurity/trivy-db:2
+oras pull ghcr.io/aquasecurity/trivy-java-db:1
+
+# 2. Проверка скачанных файлов
+# Должны появиться файлы: db.tar.gz и javadb.tar.gz
+
+# 3. Подготовка архива для переноса
+mkdir -p trivy-offline && cd trivy-offline
+mv ../db.tar.gz ../javadb.tar.gz .
+tar -czf trivy-update-bundle.tgz *
+```
+
+### Сценарий 2: Подготовка баз через Docker (Legacy)
+
+Если `oras` недоступен, можно использовать стандартный Docker.
+
+```bash
+# 1. Загрузка образов
 docker pull ghcr.io/aquasecurity/trivy-db:2
-
-# Загрузка базы для Java
 docker pull ghcr.io/aquasecurity/trivy-java-db:1
+
+# 2. Извлечение файлов через временный контейнер
+docker run --rm -v $(pwd):/out ghcr.io/aquasecurity/trivy-db:2 cp /db/trivy.db /db/metadata.json /out/
+docker run --rm -v $(pwd):/out ghcr.io/aquasecurity/trivy-java-db:1 cp /java-db/trivy-java.db /java-db/metadata.json /out/
+
+# 3. Упаковка
+tar -czf trivy-db.tgz trivy.db metadata.json
+tar -czf trivy-java-db.tgz trivy-java.db metadata.json
 ```
 
-Извлеките файлы баз из контейнеров:
+### Сценарий 3: Обновление баз на сервере Harbor
+
+1.  Перенесите архивы на сервер Harbor.
+2.  Распакуйте файлы в директории `trivy-adapter`. Пути зависят от `data_volume` в `harbor.yml` (по умолчанию `/data`).
 
 ```bash
-# Извлечение Trivy DB
-cid=$(docker create ghcr.io/aquasecurity/trivy-db:2)
-docker cp $cid:/db ./db
-docker rm $cid
+# Пути для Harbor на Docker Compose
+DB_DIR="/data/trivy-adapter/trivy/db"
+JAVA_DB_DIR="/data/trivy-adapter/trivy/java-db"
 
-# Извлечение Java DB
-cid=$(docker create ghcr.io/aquasecurity/trivy-java-db:1)
-docker cp $cid:/java-db ./java-db
-docker rm $cid
-```
+sudo mkdir -p $DB_DIR $JAVA_DB_DIR
 
-Упакуйте данные для переноса:
+# Распаковка (пример для файлов из Сценария 2)
+sudo tar -xzf trivy-db.tgz -C $DB_DIR
+sudo tar -xzf trivy-java-db.tgz -C $JAVA_DB_DIR
 
-```bash
-tar czf trivy-db.tgz db
-tar czf trivy-java-db.tgz java-db
-```
-
-### 2. Установка баз на сервере Harbor
-
-Перенесите файлы `trivy-db.tgz` и `trivy-java-db.tgz` в закрытый контур.
-
-Распакуйте архивы в рабочую директорию Trivy (пути по умолчанию для Harbor):
-
-```bash
-# Создание структуры директорий
-sudo mkdir -p /data/trivy-adapter/trivy/db
-sudo mkdir -p /data/trivy-adapter/trivy/java-db
-
-# Распаковка с очисткой путей
-sudo tar -xzf trivy-db.tgz -C /data/trivy-adapter/trivy/db --strip-components=1
-sudo tar -xzf trivy-java-db.tgz -C /data/trivy-adapter/trivy/java-db --strip-components=1
-
-# Установка прав доступа (ID 10000 соответствует пользователю trivy внутри контейнера)
+# УСТАНОВКА ПРАВ (Критически важно!)
+# Пользователь внутри контейнера имеет UID 10000
 sudo chown -R 10000:10000 /data/trivy-adapter/trivy
+sudo chmod -R 755 /data/trivy-adapter/trivy
 ```
 
-Примените изменения, перезапустив компонент:
-
+3.  Перезапустите сервис:
 ```bash
 docker restart trivy-adapter
 ```
 
-Проверьте логи на предмет успешной загрузки баз:
-
-```bash
-docker logs trivy-adapter | grep -i "database"
-# → "msg":"Sever-side update of Trivy database is skipped"
-# → "msg":"Trivy database is up to date"
-```
-
 ## Дополнительная информация
 
-### Настройка конфигурации Harbor
+### Настройка конфигурации harbor.yml
 
-Для корректной работы в закрытом контуре в файле `harbor.yml` должны быть установлены соответствующие флаги:
+Для предотвращения попыток Harbor выйти в интернет за обновлениями, установите следующие параметры:
 
 ```yaml
 trivy:
-  skip_update: true           # Запрет обновления основной базы
-  skip_java_db_update: true    # Запрет обновления Java-базы
-  offline_scan: true          # Включение режима оффлайн-сканирования
+  skip_update: true
+  skip_java_db_update: true
+  offline_scan: true
 ```
 
-После изменения конфигурации необходимо перезапустить Harbor:
-`sudo ./prepare && docker compose up -d`
+После редактирования выполните: `sudo ./prepare && docker compose up -d`.
 
-### Проверка в интерфейсе
+### Устранение неполадок
 
-Статус баз можно отследить в веб-интерфейсе: **Administration → Interrogation Services**. В разделе **Vulnerability Scanning** должна обновиться дата в поле **Last Update** для Trivy.
-
-### Автоматизация процесса
-
-При наличии "полуоткрытого" контура (доступ через jump-host) рекомендуется использовать скрипт на базе `rsync` для синхронизации содержимого директории `/data/trivy-adapter/trivy/` с доверенным источником.
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `database error: schema mismatch` | Версия базы (v2) не совпадает с версией Trivy | Обновите Harbor до версии, поддерживающей Trivy DB v2. |
+| `permission denied` | Неверный владелец файлов на хосте | Выполните `chown -R 10000:10000` на директорию данных. |
+| `scan fails: metadata.json missing` | Не перенесен файл метаданных | Файл `metadata.json` обязателен для работы сканера. |
 
 ### Связанные документы
 
-* **[Установка Harbor](./installation.md)** — развертывание и базовая конфигурация.
-* **[Обзор Harbor](./overview.md)** — архитектура и возможности компонентов.
-* **[Сканирование уязвимостей](../../Docker_security/vulnerability_scanning.md)** — общие принципы работы со сканерами безопасности.
+* **[Установка Harbor](./installation.md)** — развертывание в закрытых контурах.
+* **[Обзор Harbor](./overview.md)** — архитектура Trivy-адаптера.
+* **[Сканирование уязвимостей](../../Docker_security/vulnerability_scanning.md)** — методология анализа CVE.

@@ -25,97 +25,108 @@ MariaDB ищет конфигурационные файлы в определе
 - `[mariadb]` или `[server]`: Настройки, специфичные для сервера MariaDB. Рекомендуется использовать `[mariadb]`.
 - `[client-server]`: Параметры, которые должны быть одинаковыми и для клиента, и для сервера (например, номер порта или путь к сокету).
 - `[mysqld]`: Секция для совместимости с MySQL; MariaDB также считывает её.
+- `[mariadb-X.Y]`: Специфичные настройки для конкретной версии (например, `[mariadb-12.3]`).
+
+### Переменные окружения и суффиксы
+
+Начиная с версии 12.3 LTS, MariaDB поддерживает расширенное использование переменной `MARIADB_GROUP_SUFFIX`. Если она установлена, сервер будет считывать секции с соответствующим суффиксом (например, `[mariadb.production]`), что упрощает управление конфигурациями для разных сред (Dev/Stage/Prod) без изменения файлов.
 
 ## Практические сценарии
 
-### Пример оптимальной настройки сервера (`50-server.cnf`)
+### Оптимальная настройка сервера для MariaDB 12.3 LTS (SSD/NVMe)
 
-Пример для MariaDB 10.11 LTS / 11.4 LTS на системе с 4ГБ+ ОЗУ и SSD:
+Пример конфигурации для высоконагруженного сервера (16ГБ+ ОЗУ, SSD):
 
 ```ini
 [mariadb]
 # -- Сетевые настройки --
-# 127.0.0.1 - только локально, 0.0.0.0 - все интерфейсы
-bind-address = 0.0.0.0
-port = 3306
+bind-address            = 0.0.0.0
+port                    = 3306
+max_connections         = 500
+# Использование Thread Pool для эффективной обработки соединений
+thread_handling         = pool-of-threads
+thread_pool_size        = 16 # Обычно равно количеству ядер CPU
 
-# -- Кодировка (Modern Standard) --
-character-set-server = utf8mb4
-collation-server = utf8mb4_unicode_ci
+# -- Кодировка --
+character-set-server    = utf8mb4
+collation-server        = utf8mb4_unicode_ci
 
-# -- Производительность InnoDB --
-# Рекомендуется 70-80% ОЗУ на выделенном сервере. 
-# В MariaDB этот параметр не автоматизирован так, как в MySQL 8.
-innodb_buffer_pool_size = 2G
-# Оптимизация для SSD: прямой ввод-вывод в обход кэша ОС
-innodb_flush_method = O_DIRECT
-# Размер лога транзакций (влияет на скорость записи)
-innodb_log_file_size = 512M
+# -- Производительность InnoDB (12.3 LTS) --
+innodb_buffer_pool_size = 12G
+# Прямой ввод-вывод для SSD
+innodb_flush_method     = O_DIRECT
+# Атомарные бинарные логи внутри InnoDB (Новое в 12.3)
+binlog_storage_engine   = innodb
+# Оптимизация изоляции для консистентных снапшотов
+innodb_snapshot_isolation = ON
 
-# -- Логирование --
-# Лог ошибок
-log_error = /var/log/mysql/error.log
-# Медленные запросы (дольше 1 секунды)
-slow_query_log = 1
-long_query_time = 1.0
-# Расширенная информация в логе (план выполнения) - фишка MariaDB
-log_slow_extra = 1
+# -- Векторный поиск (AI Workloads) --
+# Потоки для создания векторных индексов mHNSW
+innodb_mhnsw_index_creation_threads = 4
+
+# -- Логирование и диагностика --
+log_error               = /var/log/mysql/error.log
+slow_query_log          = 1
+long_query_time         = 1.0
+log_slow_extra          = 1 # Расширенные данные для MariaDB
 
 # -- Безопасность --
-# Лимит подключений
-max_connections = 150
-# Запрет на использование символических ссылок для безопасности
-symbolic-links = 0
+# Плагин unix_socket для root включен по умолчанию в современных дистрах
+# Не требует пароля при входе через sudo
 ```
 
-### Настройка беспарольного доступа (unix_socket)
+### Настройка Thread Pool
 
-В MariaDB (начиная с 10.4+) по умолчанию для пользователя `root` часто используется плагин `unix_socket`. Это позволяет пользователю ОС `root` входить в БД без пароля через сокет:
-
-```bash
-# Вход под root через sudo без ввода пароля БД
-sudo mariadb
-```
-Это избавляет от необходимости хранить пароль root в текстовых файлах типа `.my.cnf`.
-
-### Настройка клиента для пользователя
-
-Для автоматизации подключений (например, для скриптов бэкапа) создайте файл `~/.my.cnf`:
+**Thread Pool** — ключевое преимущество MariaDB над MySQL Community. Он позволяет избежать деградации производительности при огромном количестве подключений (1000+).
 
 ```ini
-[client]
-host = localhost
-user = backup_user
-password = "secure_password"
+[mariadb]
+thread_handling = pool-of-threads
+# Количество групп потоков (рекомендуется число ядер CPU)
+thread_pool_size = 8
+# Максимальное количество потоков в пуле
+thread_pool_max_threads = 1000
+# Время ожидания перед созданием нового потока (мс)
+thread_pool_stall_limit = 500
 ```
-**Безопасность:** Обязательно ограничьте права доступа к файлу: `chmod 600 ~/.my.cnf`.
+
+### Конфигурация для S3 Storage Engine
+
+Для использования S3 в качестве движка для архивных таблиц:
+
+```ini
+[mariadb]
+# Настройки подключения к S3-совместимому хранилищу
+s3_protocol_version = TLV1
+s3_bucket           = my-archive-bucket
+s3_endpoint         = s3.amazonaws.com
+s3_region           = us-east-1
+s3_access_key       = YOUR_ACCESS_KEY
+s3_secret_key       = YOUR_SECRET_KEY
+```
 
 ## Дополнительная информация
 
 ### Диагностика и проверка
 
-Проверить, какие файлы и в каком порядке считывает MariaDB, можно командой:
+Проверить, какие файлы и в каком порядке считывает MariaDB:
 ```bash
 mariadb --help --verbose | grep -A 1 "Default options"
 ```
 
-Посмотреть текущие значения параметров в работающей БД:
+Проверить состояние Thread Pool:
 ```sql
--- Проверка версии и путей
-SELECT @@version, @@datadir, @@socket;
-
--- Поиск конкретного параметра
-SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
+SHOW STATUS LIKE 'threadpool%';
 ```
 
 ### Основные отличия от MySQL в конфигурации
 
-1. **Плагин unix_socket:** В MariaDB он часто включен по умолчанию, что меняет подход к безопасности root-доступа.
-2. **Отсутствие `innodb_dedicated_server`:** В отличие от MySQL 8.4, MariaDB не умеет полностью автоматически рассчитывать размер буферного пула, его нужно задавать вручную.
-3. **Расширенные логи:** Параметры типа `log_slow_extra` предоставляют больше деталей для оптимизации, чем стандартный slow log в MySQL.
+1. **Отсутствие `innodb_dedicated_server`:** В MariaDB параметры памяти (Buffer Pool) необходимо задавать явно. Автоматизация в стиле MySQL 8 отсутствует.
+2. **Атомарные логи:** В версии 12.3 MariaDB предлагает хранение бинарного лога в InnoDB (`binlog_storage_engine`), что исключает необходимость в `prepare`-фазе XA-транзакций между СУБД и файлом лога.
+3. **Удаление Change Buffer:** В версиях 11.0+ параметр `innodb_change_buffering` удален, так как MariaDB оптимизирована под SSD, где эта функция не дает преимуществ.
 
 ### См. также
-- **[Обзор MariaDB](overview.md)** — архитектура и ключевые особенности.
-- **[Движки хранения](storage_engines.md)** — как настройки `my.cnf` влияют на InnoDB и MyRocks.
-- **[Клиентские утилиты MariaDB](client_utilities.md)** — работа с `mariadb-admin` и `mariadb-dump`.
-- **[Multi-Source репликация в MySQL](../MySQL/replication/multi-source.md)** — концепции применимы и к MariaDB.
+- **[Обзор MariaDB](overview.md)** — архитектура и стратегия развития.
+- **[Движки хранения](storage_engines.md)** — глубокий разбор InnoDB, MyRocks и S3.
+- **[Клиентские утилиты MariaDB](client_utilities.md)** — работа с переменными окружения и суффиксами групп.
+- **[Безопасная установка СУБД](../installation_security.md)** — общие принципы закалки конфигурации.

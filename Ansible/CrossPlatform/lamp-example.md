@@ -158,6 +158,3 @@ location ~ \.php$ {
 - [Установка и настройка MySQL/MariaDB](../examples/mysql_setup.md) — профильное руководство по БД.
 - [Модули управления пакетами](../Modules/ansible_package_management_modules.md) — подробнее об `apt`, `dnf` и `package`.
 - [Роли: Стратегии проектирования](../Roles/strategies.md) — организация структуры ролей.
-
----
-**Reliability Score: 10** (Подтверждено практиками развертывания в RHEL 9/Ubuntu 24.04 и стандартами SELinux).

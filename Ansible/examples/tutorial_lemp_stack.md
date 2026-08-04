@@ -266,6 +266,3 @@ ansible-playbook playbook.yml -i hosts.ini --ask-vault-pass
 - [Установка и настройка MySQL/MariaDB через Ansible](mysql_setup.md)
 - [Кроссплатформенный пример развертывания LAMP](../CrossPlatform/lamp-example.md)
 - [Обзор возможностей Nginx](../../WebServers/Nginx/Core/nginx_overview.md)
-
----
-**Reliability Score: 10** (Подтверждено актуальными практиками DevOps и официальной документацией Ansible).

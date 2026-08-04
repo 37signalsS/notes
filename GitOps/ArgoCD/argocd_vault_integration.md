@@ -8,7 +8,9 @@
 
 **HashiCorp Vault** — централизованная система управления секретами, обеспечивающая их безопасное хранение, аудит доступа и динамическую генерацию учетных данных.
 
-**CMP v2 (Config Management Plugin)** — механизм расширения Argo CD, представленный в версии 2.4, который использует sidecar-контейнеры для изоляции и запуска плагинов генерации манифестов.
+- **CMP v2 (Config Management Plugin)** — механизм расширения Argo CD, представленный в версии 2.4, который использует sidecar-контейнеры для изоляции и запуска плагинов генерации манифестов.
+- **App-of-Apps** — паттерн проектирования в Argo CD, при котором одно «корневое» приложение управляет жизненным циклом множества дочерних приложений (включая специализированные «приложения с секретами»).
+
 
 ## Базовые концепции
 
@@ -59,8 +61,12 @@ vault auth enable kubernetes
 
 # Настройка связи с API Kubernetes
 vault write auth/kubernetes/config \
-    kubernetes_host="https://kubernetes.default.svc:443" \
+    issuer="https://kubernetes.default.svc.cluster.local" \
+    token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+    kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443" \
     kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+> **Важный нюанс:** Параметр `issuer` стал обязательным начиная с Vault 1.9.0 для работы с Kubernetes 1.20+. Без него аутентификация может возвращать ошибку `claim "iss" is invalid`.
 
 # Создание роли для Argo CD
 vault write auth/kubernetes/role/argocd-role \
@@ -238,7 +244,14 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c avp
 Убедитесь, что `argocd-repo-server` имеет сетевой доступ к `VAULT_ADDR`.
 
 **3. Ошибки Permission Denied:**
-Проверьте, что ServiceAccount `argocd-repo-server` привязан к правильной роли в Vault и политики разрешают `read` по указанному пути.
+Проверьте, что ServiceAccount `argocd-repo-server` (должен иметь `create: true` в Helm-values) привязан к правильной роли в Vault и политики разрешают `read` по указанному пути.
+
+**4. Секреты не обновляются:**
+Если вы изменили значение в Vault, но Argo CD не видит изменений (так как манифест в Git не менялся), выполните принудительную синхронизацию:
+```bash
+argocd app sync <app-name> --force
+```
+Или используйте метод с хешированием аннотаций (см. Сценарий 5).
 
 ## См. также
 

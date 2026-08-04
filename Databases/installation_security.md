@@ -64,27 +64,24 @@ GRANT CONNECT ON DATABASE my_db TO app_user;
 
 ### MongoDB: Авторизация и сетевая привязка
 
-По умолчанию MongoDB 7.x/8.x слушает только `localhost`, но авторизация может быть выключена.
+По умолчанию MongoDB 8.x ограничивает доступ к `localhost`, но авторизация требует явного включения в конфигурации.
 
 **Настройка в `mongod.conf`:**
 ```yaml
 net:
   port: 27017
-  bindIp: 127.0.0.1  # Привязка только к локальному интерфейсу
+  bindIp: 127.0.0.1  # Рекомендуется ограничить доступ только доверенными IP
 
 security:
-  authorization: enabled  # Обязательно для включения RBAC
+  authorization: enabled  # Включение Role-Based Access Control (RBAC)
 ```
 
-**Создание администратора (до включения авторизации):**
-```javascript
-use admin
-db.createUser({
-  user: "admin",
-  pwd: passwordPrompt(), // безопасный ввод
-  roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
-})
-```
+**Ключевые меры:**
+- **RBAC:** Настройка ролей (`root`, `readWrite`) обязательна.
+- **TLS/SSL:** Обязательное шифрование трафика.
+- **Управление пользователями:** Создание администратора кластера через `mongosh`.
+
+Подробное руководство по безопасности и ролям: **[Обзор MongoDB: Безопасность](./MongoDB/mongodb.md#безопасность)**.
 
 ### Системная закалка (OS Level)
 

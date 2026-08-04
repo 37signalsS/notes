@@ -183,7 +183,7 @@ spec:
 
 ### Сценарий: Изоляция критических нагрузок и GPU
 
-Karpenter позволяет создавать специализированные пулы для тяжелых вычислений.
+Karpenter позволяет создавать специализированные пулы для тяжелых вычислений (AI/ML, GenAI).
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -197,6 +197,9 @@ spec:
         - key: "karpenter.k8s.aws/instance-gpu-manufacturer"
           operator: In
           values: ["nvidia"]
+        - key: "karpenter.k8s.aws/instance-family"
+          operator: In
+          values: ["p4", "g5", "g6"] # Выбор семейств для обучения и инференса
         - key: "karpenter.sh/capacity-type"
           operator: In
           values: ["on-demand"] # GPU обычно не берут в Spot для обучения
@@ -207,6 +210,10 @@ spec:
   disruption:
     consolidationPolicy: WhenEmpty # Не прерывать обучение при недогрузе CPU
 ```
+
+**Особенности для GenAI:**
+- **MIG (Multi-Instance GPU)**: Если узлы поддерживают MIG, в `requirements` можно указать конкретные типы инстансов, поддерживающие нарезку GPU на изолированные инстансы.
+- **MPS (Multi-Process Service)**: Karpenter может подготавливать узлы с включенным MPS для обеспечения высокой плотности инференса мелких LLM-моделей.
 
 ## Дополнительная информация
 

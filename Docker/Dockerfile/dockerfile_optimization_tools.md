@@ -2,102 +2,103 @@
 
 ## Определения
 
-**Оптимизация размера образа** — уменьшение размера Docker-образов для ускорения сборки, развертывания и сокращения поверхности атаки.
+**Инструментарий анализа и оптимизации** — набор утилит для статического и динамического исследования Docker-образов и Dockerfile с целью уменьшения их размера, повышения безопасности и соответствия индустриальным стандартам.
 
-**Линтинг** — статический анализ `Dockerfile` на соответствие лучшим практикам до начала сборки.
-
-**Анализ безопасности** — сканирование образов на уязвимости (CVE), небезопасные конфигурации и секреты.
+Ключевые направления:
+- **Линтинг:** Статический анализ текста Dockerfile для выявления синтаксических ошибок и неоптимальных инструкций.
+- **Анализ слоев:** Исследование файловой структуры образа для поиска дубликатов и лишних данных.
+- **Сканирование безопасности:** Поиск известных уязвимостей (CVE), секретов и мисконфигураций.
+- **Управление составом (SBOM):** Генерация и анализ перечня программных компонентов образа.
 
 ## Основные концепции
 
-### Анализ и оптимизация размера
+### Линтинг и статический анализ
+
+| Инструмент | Назначение | Особенности |
+| :--- | :--- | :--- |
+| **BuildKit Checks** | Встроенный линтер Docker | Запускается через `docker build --check`. Нативный стандарт с v1.8+. |
+| **hadolint** | Индустриальный стандарт линтинга | Проверяет инструкции на соответствие лучшим практикам (DLxxxx правила). |
+| **Checkov** | Сканер IaC-безопасности | Находит мисконфигурации (запуск от root, открытый SSH и др.). |
+| **D-roast** | "Прожарка" Dockerfile | Rust-утилита, дающая ироничные, но полезные советы по оптимизации. |
+
+### Оптимизация и аудит слоев
+
+Для глубокого анализа файловой системы образов используются специализированные инструменты, позволяющие визуализировать процесс сборки.
 
 | Инструмент | Назначение | Репозиторий |
 | :--- | :--- | :--- |
-| **dive** | Интерактивное исследование слоев образа, поиск файлов, увеличивающих размер | [github.com/wagoodman/dive](https://github.com/wagoodman/dive) |
-| **docker-slim** | Автоматическое уменьшение размера образов (до 30 раз) | [github.com/docker-slim/docker-slim](https://github.com/docker-slim/docker-slim) |
-| **strip** | Удаление отладочной информации из бинарных файлов (GNU Binutils) | — |
+| **dive** | Интерактивный анализ слоев | [wagoodman/dive](https://github.com/wagoodman/dive) |
+| **Docker Scout** | Платформа анализа Docker | Встроена в Docker CLI. Дает рекомендации по смене базового образа. |
+| **docker-slim** | Автоматическая минимизация | Создает "худые" образы, удаляя всё неиспользуемое в рантайме. |
 
-### Линтинг
+> Подробный разбор работы со слоями см. в **[Анализ и управление слоями образа](../Docker_fs/images/layer_management.md)**.
 
-| Инструмент | Назначение | Репозиторий |
+### Безопасность и сканирование CVE
+
+Современный подход (Shift Left) подразумевает проверку образов на всех этапах жизненного цикла.
+
+| Инструмент | Назначение | SSoT документ |
 | :--- | :--- | :--- |
-| **hadolint** | Линтер `Dockerfile`, проверка синтаксиса и лучших практик. | [github.com/hadolint/hadolint](https://github.com/hadolint/hadolint) |
-| **D-roast** | Rust-утилита для "прожарки" (roasting) Dockerfile. Дает советы по оптимизации (например, замена `npm install` на `npm ci`) в ироничном или обычном стиле. | [github.com/nottheshrimp/d-roast](https://github.com/nottheshrimp/d-roast) |
-| **semgrep** | Универсальный SAST-сканер, поддерживающий `Dockerfile`. | [github.com/semgrep/semgrep](https://github.com/semgrep/semgrep) |
+| **Trivy** | Универсальный сканер (CVE, секреты) | **[Сканирование уязвимостей](../Docker_security/vulnerability_scanning.md)** |
+| **Grype** | Быстрый сканер уязвимостей | **[Сканирование уязвимостей](../Docker_security/vulnerability_scanning.md)** |
+| **Syft** | Генерация SBOM | **[SBOM для Docker](../Docker_security/docker_sbom.md)** |
+| **dockle** | Проверка на соответствие CIS | — |
+| **Copacetic** | Патчинг образов без пересборки | — |
 
-### Анализ и мониторинг рантайма
+### Мониторинг и рантайм-анализ
 
-| Инструмент | Назначение | Репозиторий |
+| Инструмент | Назначение | Особенности |
 | :--- | :--- | :--- |
-| **Dozle** | Легковесный веб-интерфейс для мониторинга логов и метрик контейнеров в реальном времени. | [github.com/amir20/dozzle](https://github.com/amir20/dozzle) |
-| **ctop** | Интерфейс в стиле top для контейнеров (метрики CPU, Mem). Подробное сравнение в **[TUI инструментах](../docker_tools.md)**. | [github.com/bcicen/ctop](https://github.com/bcicen/ctop) |
-
-### Сканирование безопасности
-
-| Инструмент | Назначение | Репозиторий |
-| :--- | :--- | :--- |
-| **dockle** | Проверка образа на соответствие CIS Benchmarks. Находит забытые папки `.git`, пароли в переменных, неочищенный кэш. *Особенности:* возможны false positives (например, ругается на сам факт установки `sudo`). | [github.com/goodwithtech/dockle](https://github.com/goodwithtech/dockle) |
-| **checkov** | Инструмент для сканирования IaC (Infrastructure as Code). В `Dockerfile` находит открытые опасные порты (например, 22), запуск под `root`, а также небезопасные флаги в командах (отключение проверки SSL в `curl`/`wget`). Правила пишутся на Python и YAML. | [github.com/bridgecrewio/checkov](https://github.com/bridgecrewio/checkov) |
-| **kics** | Open-source сканер от Checkmarx. *Преимущество:* умеет сканировать мисконфигурации не только в `Dockerfile`, но и в `docker-compose.yml`, что отличает его от многих других инструментов. | [github.com/Checkmarx/kics](https://github.com/Checkmarx/kics) |
-| **docker-bench-security** | Аудит безопасности хоста Docker (CIS Docker Benchmark) | [github.com/docker/docker-bench-security](https://github.com/docker/docker-bench-security) |
+| **Dozzle** | Веб-интерфейс для логов | Легковесный просмотрщик логов в реальном времени. |
+| **ctop** | TUI для мониторинга ресурсов | Показывает CPU/Mem/Net в стиле top. |
+| **Lazydocker** | Полноценный TUI для Docker | Управление контейнерами, образами и логами из терминала. |
 
 ## Практические сценарии
 
-### Сценарий 1: Анализ слоев с dive
+### Сценарий 1: Нативный линтинг через BuildKit (Стандарт 2026)
 
-Инструмент `dive` предназначен для интерактивного исследования структуры слоев Docker-образа и поиска возможностей для уменьшения его размера.
-
-Подробные инструкции по установке и использованию `dive` для оптимизации образов см. в разделе **[Анализ и управление слоями образа](../Docker_fs/images/layer_management.md)**.
-
-### Сценарий 2: Линтинг Dockerfile с hadolint
+Начиная с Docker Buildx v0.14+ и BuildKit v1.8, проверки встроены непосредственно в процесс сборки.
 
 ```bash
-# Запуск через Docker
-docker run --rm -i hadolint/hadolint < Dockerfile
+# Проверка Dockerfile без выполнения сборки
+docker build --check .
 
-# Локальная установка (macOS)
-brew install hadolint
-hadolint Dockerfile
+# Перевод предупреждений в ошибки для CI/CD
+# syntax=docker/dockerfile:1
+# check=error=true
 ```
 
-**Пример вывода:**
+### Сценарий 2: Комплексный аудит образа (Scout + Trivy)
 
-```
-Dockerfile:5 DL3008: Pin versions in apt get install.
-Dockerfile:12 DL3002: Warning: Last USER should not be root
-```
-
-### Сценарий 3: Сканирование безопасности с dockle
+Использование Docker Scout для получения рекомендаций и Trivy для глубокого сканирования.
 
 ```bash
-# Запуск через Docker
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/goodwithtech/dockle:v0.4.15 my-image:latest
+# 1. Быстрый обзор и рекомендации по базовому образу
+docker scout quickview my-app:latest
 
-# Локальная установка
-dockle my-image:latest
+# 2. Сканирование только исправляемых (fixed) критических уязвимостей
+trivy image --severity CRITICAL --ignore-unfixed my-app:latest
 ```
 
-**Пример вывода:**
-
-```
-FATAL - CIS-DI-0010: Suspicious mount: '/var/run/docker.sock'
-WARN  - CIS-DI-0001: Create a user for the container
-```
-
-### Сценарий 4: Автоматическая оптимизация с docker-slim
+### Сценарий 3: Поиск "мусора" в слоях с dive
 
 ```bash
-# Запуск через Docker
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  dockerslim/docker-slim:latest build my-app:latest
+# Запуск анализа
+dive my-app:latest
+```
+В интерфейсе обратите внимание на колонку **Efficiency**. Если она ниже 90%, образ содержит файлы, которые были созданы и затем удалены в разных слоях (типичная ошибка — `apt-get clean` в отдельной инструкции `RUN`).
 
-# Результат: my-app.slim:latest (уменьшенная версия)
+### Сценарий 4: Генерация SBOM для комплаенса
+
+```bash
+# Генерация в формате CycloneDX JSON
+syft my-app:latest -o cyclonedx-json > sbom.json
 ```
 
 ## Дополнительная информация
 
-- **[Оптимизация сборки](./Docker_best_practices/build_optimization.md)** — принципы кэширования и multi-stage сборок
-- **[Docker Images](../Docker_fs/images/docker_images_basics.md)** — основы работы с образами
-- **[Docker Security](../Docker_security/overview.md)** — комплексная защита контейнеров
+### Смотрите также
+- **[Оптимизация сборки Docker-образов](./Docker_best_practices/build_optimization.md)** — архитектурные приемы.
+- **[Безопасность в Dockerfile](./Docker_best_practices/security.md)** — правила написания защищенного кода.
+- **[Анализ и управление слоями образа](../Docker_fs/images/layer_management.md)** — SSoT по работе с `dive`.
+- **[Сканирование уязвимостей](../Docker_security/vulnerability_scanning.md)** — SSoT по работе с `Trivy` и `Grype`.

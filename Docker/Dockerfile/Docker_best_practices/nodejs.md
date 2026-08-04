@@ -1,115 +1,154 @@
 # Dockerfile: Лучшие практики для Node.js
 
-> **Надежность: 10** (Актуализировано согласно стандартам 2026 года, Node.js v20/v22/v24)
-
 ## Определения
 
 - **package.json / package-lock.json:** Манифест проекта и файл фиксации точных версий зависимостей. Для Yarn это `yarn.lock`, для Pnpm — `pnpm-lock.yaml`.
-- **npm ci (Clean Install):** Команда для установки зависимостей в CI-средах, которая строго следует lock-файлу и удаляет существующие `node_modules`.
-- **node-gyp:** Инструмент для компиляции нативных аддонов (написанных на C/C++) для Node.js. Требует наличия Python и компилятора в образе.
+- **Corepack:** Встроенный в Node.js менеджер менеджеров пакетов. Позволяет использовать `pnpm` и `yarn` без их глобальной установки в образе.
+- **npm ci (Clean Install):** Команда для установки зависимостей в CI-средах. Строго следует lock-файлу, удаляет существующие `node_modules` и работает быстрее обычного `install`.
+- **node-gyp:** Инструмент для компиляции нативных аддонов (C/C++). Требует наличия Python и компилятора (build-essential) в образе на этапе сборки.
 - **Tini:** Легковесный инициализатор (init), решающий проблему PID 1 (обработка сигналов и удаление "зомби-процессов") в контейнерах.
 - **Pruning:** Процесс удаления `devDependencies` из папки `node_modules` после этапа сборки для минимизации финального образа.
+- **Graceful Shutdown:** Процесс корректного завершения работы приложения (закрытие соединений с БД, HTTP-сервера) при получении сигналов `SIGTERM` или `SIGINT`.
+- **Bun / Deno:** Альтернативные среды выполнения JavaScript/TypeScript, предлагающие встроенную поддержку TypeScript и более высокую производительность сборки.
 
 ## Базовые концепции
 
 ### Выбор базового образа
 
-Рекомендуется использовать официальные образы на базе **Alpine** для минимального размера или **Debian Slim** для максимальной совместимости.
-- `node:22-alpine` — ~50 МБ, идеален для большинства приложений.
-- `node:22-slim` — ~70 МБ, если требуются сложные системные зависимости или нативные модули.
+В 2026 году стандартом остаются образы на базе **Alpine** и **Debian Slim**:
+- `node:24-alpine` (LTS) — ~50 МБ. Минимальный размер, но требует осторожности с нативными модулями из-за `musl libc`.
+- `node:24-slim` (LTS) — ~70 МБ. База Debian, лучшая совместимость с нативными зависимостями.
+- **Google Distroless:** `gcr.io/distroless/nodejs24-debian12` — максимальная безопасность (нет shell, нет пакетных менеджеров).
 
-### Проблема PID 1 и Tini
+### Управление ресурсами и V8
 
-Node.js не предназначен для работы в качестве PID 1. Он не пересылает сигналы (например, `SIGTERM`) дочерним процессам и не очищает "зомби". Это приводит к тому, что контейнеры долго останавливаются и могут потреблять лишние ресурсы.
-**Решение:** Использование `tini` в качестве `ENTRYPOINT`.
+Node.js в контейнерах часто требует ручной настройки лимитов V8, особенно в средах с cgroups v2:
+*   **Memory Limit:** Используйте `NODE_OPTIONS="--max-old-space-size=X"`, где X составляет 75-80% от лимита памяти контейнера, чтобы оставить место для стека и системных вызовов.
+*   **CPU:** Node.js однопоточен для выполнения JS, но использует дополнительные потоки для I/O и `worker_threads`. Для корректного масштабирования в K8s используйте лимиты минимум в 1 CPU.
 
-### Кэширование зависимостей (BuildKit)
+### Обработка сигналов и PID 1
 
-Современный подход требует использования `--mount=type=cache` для сохранения кэша менеджера пакетов (`~/.npm` или `/pnpm/store`) между сборками. Это значительно ускоряет сборку в CI/CD, не раздувая при этом слои образа.
+Использование `node` напрямую как PID 1 не рекомендуется, так как он не обрабатывает системные сигналы корректно.
+1.  **Решение:** Используйте `tini` или флаг `--init` в Docker.
+2.  **Graceful Shutdown:** Приложение должно явно обрабатывать сигналы:
+    ```javascript
+    const shutdown = () => server.close(() => process.exit(0));
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+    ```
 
-### Исключение devDependencies (--omit=dev)
+### Безопасность и аудит
 
-Флаг `--omit=dev` (ранее `--production`) критически важен. Он гарантирует, что в финальный образ не попадут инструменты тестирования, линтеры и компиляторы (TypeScript), что уменьшает размер образа на 60–80% и сокращает поверхность атаки.
+*   **npm audit:** Интегрируйте в процесс сборки: `RUN npm audit --audit-level=high`.
+*   **Rootless:** Никогда не запускайте приложение от `root`. Используйте встроенного пользователя `node`.
+*   **Секреты:** Используйте `--mount=type=secret,id=npmrc,target=/app/.npmrc` для безопасной установки приватных пакетов.
 
 ## Практические сценарии
 
 ### Сценарий 1: Многоэтапная сборка (TypeScript + BuildKit + Tini)
 
-Оптимальный шаблон для современного веб-приложения.
+Эталонный шаблон для Node.js 24 LTS.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
+# check=error=true
+
 # --- Этап 1: Сборка (builder) ---
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
-# Копируем манифесты
+# Копируем манифесты для кэширования слоев
 COPY package.json package-lock.json ./
 
-# Используем монтирование кэша для npm
+# Используем монтирование кэша npm для ускорения последующих сборок
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+    npm ci && \
+    npm audit --audit-level=high
 
-# Копируем исходный код и собираем (например, из TS в JS)
+# Копируем код и собираем проект
 COPY . .
 RUN npm run build && \
-    # Удаляем devDependencies прямо здесь
+    # Оставляем только production зависимости
     npm prune --omit=dev
 
-# --- Этап 2: Финальный образ ---
-FROM node:22-alpine
-# Установка tini для корректной обработки сигналов
+# --- Этап 2: Финальный образ (runtime) ---
+FROM node:24-alpine
 RUN apk add --no-cache tini
 WORKDIR /app
 
-ENV NODE_ENV=production
+# Настройки окружения
+ENV NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=1024"
 
-# Копируем только необходимые артефакты
+# Копируем только артефакты
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
-# Безопасность: запуск от пользователя node (встроен в образ)
+# Безопасность
 USER node
 
-# Tini гарантирует корректную остановку приложения
+# Проверка здоровья через встроенный fetch (Node.js 20+)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node --eval "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1))"
+
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/main.js"]
 ```
 
-### Сценарий 2: Использование Pnpm и Corepack
+### Сценарий 2: Использование Pnpm и Corepack (Рекомендуется в 2026)
 
-Pnpm является наиболее эффективным менеджером пакетов по скорости и использованию диска.
+Pnpm значительно быстрее npm и эффективнее использует дисковое пространство.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
-# Активируем pnpm через встроенный corepack
+# Активируем pnpm через corepack
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 COPY pnpm-lock.yaml package.json ./
 
-# Кэшируем store pnpm
+# Монтирование хранилища pnpm
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY . .
 RUN pnpm build && pnpm prune --prod
 
-# --- Финальный этап ---
-FROM node:22-alpine
-# ... (остальное аналогично сценарию 1)
+FROM node:24-alpine
+# ... (аналогично сценарию 1)
 ```
 
-### Сценарий 3: Нативные модули (node-gyp)
+### Сценарий 3: Сборка монорепозитория (Turborepo / Nx)
 
-Если вам нужны пакеты вроде `bcrypt` или `sharp`, их нужно собирать на этапе `builder`.
+Использование `turbo prune` для копирования только необходимых пакетов.
 
 ```dockerfile
-FROM node:22-alpine AS builder
-# Устанавливаем инструменты компиляции
+# syntax=docker/dockerfile:1
+FROM node:24-alpine AS pruner
+WORKDIR /app
+RUN npm install -g turbo
+COPY . .
+# Генерируем срез только для конкретного микросервиса
+RUN turbo prune my-api --docker
+
+FROM node:24-alpine AS builder
+WORKDIR /app
+COPY --from=pruner /app/out/json/ ./
+COPY --from=pruner /app/out/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install
+COPY --from=pruner /app/out/full/ ./
+RUN pnpm build --filter=my-api
+```
+
+### Сценарий 4: Нативные модули (node-gyp)
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM node:24-alpine AS builder
+# Установка инструментов сборки (напр. для bcrypt или sharp)
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package*.json ./
@@ -122,7 +161,9 @@ RUN --mount=type=cache,target=/root/.npm \
 
 ### Смотрите также
 
-- [Оптимизация сборки Docker-образов](./build_optimization.md) — общие принципы кэширования.
-- [Безопасность в Dockerfile](./security.md) — детали работы с пользователями.
-- [Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)
-- [Выполнение приложений в контейнере](./container_execution.md) — подробнее про PID 1 и Tini.
+- **[Оптимизация сборки Docker-образов](./build_optimization.md)** — общие принципы кэширования и multi-stage.
+- **[Безопасность в Dockerfile](./security.md)** — работа с пользователями и SBOM.
+- **[Выполнение приложений в контейнере](./container_execution.md)** — глубокий разбор PID 1 и сигналов.
+- **[Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)**
+- **[Docker Buildx: Мультиплатформенная сборка](../docker_buildx.md)**
+- **[Инструменты оптимизации Dockerfile](../dockerfile_optimization_tools.md)** — использование `D-roast` для Node.js.

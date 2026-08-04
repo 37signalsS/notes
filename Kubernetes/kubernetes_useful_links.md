@@ -6,3 +6,4 @@
 * **[Kubelab](https://github.com/natrontech/kubelab):** Набор интерактивных лабораторных работ для изучения основ Kubernetes.
 * **[CK-X](https://github.com/sailor-sh/CK-X):** Проект с практическими заданиями для подготовки к экзаменам Certified Kubernetes Administrator (CKA), Developer (CKAD) и Specialist (CKS).
 * **K8sQuest:** Локальная, практическая игра для обучения поиску и устранению неисправностей в Kubernetes.
+* **[Packt Library](https://www.packtpub.com/):** Цифровая библиотека с доступом к тысячам книг и видео по Kubernetes и DevOps. Позволяет составлять индивидуальные планы развития и использовать инструменты поиска по техническому контенту.

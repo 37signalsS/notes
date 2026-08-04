@@ -187,5 +187,6 @@ PUT /_cluster/settings
 ## Дополнительная информация
 
 * **[OpenSearch: Обзор системы](./opensearch_overview.md)** — архитектура и основные компоненты.
+* **[OpenSearch Dashboards: Визуализация и Управление](./opensearch_dashboards.md)** — подробное руководство по веб-интерфейсу.
 * **[Управление жизненным циклом (ISM)](./opensearch_ism_lifecycle.md)** — автоматизация ротации индексов.
 * **[Официальная документация OpenSearch](https://opensearch.org/docs/latest/)** — первоисточник по всем API.

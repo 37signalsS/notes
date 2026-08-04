@@ -186,6 +186,3 @@ postgres_replica
 - [Репликация в PostgreSQL: Теория](../../Databases/PostgreSQL/Concepts/replication.md)
 - [Отказоустойчивый кластер PostgreSQL (Patroni)](../../Databases/PostgreSQL/Operations/high_availability_patroni.md)
 - [Работа с коллекциями в Ansible Galaxy](../Roles/galaxy.md)
-
----
-**Reliability Score: 10** (Подтверждено актуальной документацией коллекции `community.postgresql` и рекомендациями по обеспечению безопасности PostgreSQL).

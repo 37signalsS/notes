@@ -1,134 +1,142 @@
-# Harbor: Создание ЦА и подписание сертификатов
+# Harbor: Управление сертификатами и TLS
 
 ## Определения
 
 * **Центр сертификации (CA, Certificate Authority)**: Доверенный источник (якорь доверия), выпускающий цифровые сертификаты. Клиенты, доверяющие корневому CA, автоматически доверяют всем им подписанным сертификатам.
 * **Сертификат сервера (CRT)**: Публичный документ, удостоверяющий подлинность сервера Harbor и обеспечивающий шифрование трафика по протоколу HTTPS/TLS.
-* **Приватный ключ (Key)**: Секретный файл, используемый сервером для расшифровки трафика и установки защищенного соединения. Требует максимальной защиты (права 600).
 * **Запрос на подпись (CSR, Certificate Signing Request)**: Файл-заявка, содержащий открытый ключ и данные организации, передаваемый в CA для выпуска итогового сертификата.
-* **SAN (Subject Alternative Name)**: Расширение сертификата X.509, позволяющее защитить несколько доменных имен или IP-адресов одним сертификатом. Современные браузеры и Docker требуют обязательного наличия SAN.
+* **SAN (Subject Alternative Name)**: Расширение сертификата X.509, позволяющее защитить несколько доменных имен или IP-адресов одним сертификатом. Современные клиенты (Docker, Containerd, Go) требуют обязательного наличия SAN.
+* **Cert-manager**: Kubernetes-оператор для автоматизации управления жизненным циклом сертификатов (выпуск, обновление, ротация).
 
 ## Основные концепции
 
-Для работы Harbor по HTTPS в закрытых контурах (без доступа к публичным центрам сертификации вроде Let's Encrypt) необходимо создать собственный частный CA.
+Для обеспечения безопасности и доверия в корпоративной среде Harbor должен работать исключительно по протоколу HTTPS. В изолированных контурах (Air-gapped) это требует создания внутренней инфраструктуры PKI.
 
-### Методы выпуска
+### Методы выпуска сертификатов
 
 | Метод | Описание | Применение |
 | :--- | :--- | :--- |
-| **Быстрый** | Прямая подпись через `openssl x509`. Не требует базы данных. | Тестовые среды, быстрая настройка. |
-| **Формальный** | Использование структуры директорий, базы `index.txt` и серийных номеров. | Production, необходимость отзыва (CRL). |
+| **Ручной (OpenSSL)** | Прямая генерация через CLI. Высокий риск человеческой ошибки при ротации. | Тестовые стенды, оффлайн-установка (Docker Compose). |
+| **Автоматический (Cert-manager)** | Декларативное описание в K8s. Автоматическое продление и интеграция с Ingress. | Продакшен-кластеры Kubernetes. |
+| **Публичный (Let's Encrypt)** | Использование доверенных мировых центров через протокол ACME. | Публичные инстансы Harbor с доступом в интернет. |
 
-Подробное сравнение методов и теорию PKI см. в **[Обзоре одноуровневого CA](../../../Security/Tools/openssl_ca/single_tier/overview.md)**.
+### Технические требования
 
-### Требования к сертификату Harbor
-
-1. **Соответствие Hostname**: Поле `CN` (Common Name) или `DNS` в SAN должно в точности совпадать с параметром `hostname` из `harbor.yml`.
-2. **Наличие SAN**: Обязательно укажите как доменное имя, так и IP-адрес сервера в расширении SAN, иначе Docker может выдать ошибку `x509: certificate relies on legacy Common Name field`.
-3. **Цепочка доверия**: Для корректной работы `docker push/pull` корневой сертификат CA (`root-ca.crt`) должен быть установлен в доверенные хранилища клиентов.
+1.  **Hostname Matching**: Поле `CN` или `DNS` в SAN должно в точности совпадать с параметром `hostname` в `harbor.yml` или внешним DNS-именем.
+2.  **SAN (Subject Alternative Name)**: Обязательно укажите все IP-адреса и DNS-имена сервера. Отсутствие SAN приведет к ошибке `x509: certificate relies on legacy Common Name field`.
+3.  **Цепочка доверия**: Корневой сертификат (Root CA) должен быть распределен на все узлы, которые будут выполнять операции `push` или `pull`.
 
 ## Практические сценарии
 
-Ниже приведен быстрый метод создания сертификатов, адаптированный для Harbor.
+### Сценарий 1: Ручная генерация (OpenSSL) для Docker Compose
 
-### 1. Создание корневого CA
-
-Создайте рабочую директорию и сгенерируйте корневой ключ и сертификат.
+Подходит для быстрой настройки на выделенном сервере.
 
 ```bash
 mkdir -p ~/harbor/certs && cd ~/harbor/certs
 
-# Генерируем ключ корневого CA (4096 бит)
+# 1. Создание корневого CA
 openssl genrsa -out root-ca.key 4096
-
-# Генерируем самоподписанный сертификат CA (срок 10 лет)
 openssl req -x509 -new -nodes -sha256 -days 3650 \
   -key root-ca.key -out root-ca.crt \
   -subj "/C=RU/ST=Moscow/L=Moscow/O=HomeLab/CN=Internal-Harbor-CA"
 
-# → root-ca.crt, root-ca.key
-```
-
-### 2. Генерация серверного сертификата
-
-Задайте переменные окружения для вашего сервера:
-
-```bash
+# 2. Генерация серверного ключа и CSR
 export HARBOR_HOST=harbor.example.local
-export HARBOR_IP=192.168.1.50
-```
-
-Создайте конфигурационный файл для CSR с расширениями SAN:
-
-```bash
-# Генерация серверного ключа
 openssl genrsa -out ${HARBOR_HOST}.key 4096
 
-# Создание конфигурации SAN
 cat > ${HARBOR_HOST}.cnf <<EOF
 [req]
 prompt = no
 distinguished_name = dn
 req_extensions = v3_req
-
 [dn]
-C = RU
-ST = Moscow
-L = Moscow
-O = HomeLab
 CN = ${HARBOR_HOST}
-
 [v3_req]
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = ${HARBOR_HOST}
-IP.1  = ${HARBOR_IP}
+subjectAltName = DNS:${HARBOR_HOST},IP:192.168.1.50
 EOF
 
-# Создание запроса (CSR)
 openssl req -new -key ${HARBOR_HOST}.key -out ${HARBOR_HOST}.csr -config ${HARBOR_HOST}.cnf
 
-# Подпись серверного сертификата (срок 2 года)
+# 3. Подпись сертификата
 openssl x509 -req -in ${HARBOR_HOST}.csr -CA root-ca.crt -CAkey root-ca.key -CAcreateserial \
-  -out ${HARBOR_HOST}.crt -days 730 -sha256 \
-  -extensions v3_req -extfile ${HARBOR_HOST}.cnf
+  -out ${HARBOR_HOST}.crt -days 730 -sha256 -extensions v3_req -extfile ${HARBOR_HOST}.cnf
 ```
 
-### 3. Установка доверия на клиентах
+### Сценарий 2: Автоматизация через Cert-manager в Kubernetes
 
-Чтобы Docker доверял Harbor, корневой сертификат должен быть известен системе или самому Docker-демону.
+Современный стандарт для управления TLS в K8s.
 
-#### Вариант А: Системное хранилище (рекомендуется)
+1.  **Создание Issuer** (источника сертификатов):
 
-**Ubuntu / Debian:**
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: harbor-ca-issuer
+spec:
+  ca:
+    secretName: harbor-root-ca-secret # Секрет с root-ca.crt и root-ca.key
+```
+
+2.  **Запрос сертификата**:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: harbor-tls
+  namespace: harbor
+spec:
+  secretName: harbor-tls-secret
+  issuerRef:
+    name: harbor-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+  - harbor.example.local
+  - registry.example.local
+```
+
+### Сценарий 3: Установка доверия на клиентах (Docker и Containerd)
+
+Без установки корневого сертификата клиенты будут выдавать ошибку `x509: certificate signed by unknown authority`.
+
+#### Настройка ОС (Ubuntu/Debian)
 ```bash
 sudo cp root-ca.crt /usr/local/share/ca-certificates/harbor-ca.crt
 sudo update-ca-certificates
 ```
 
-**RHEL / CentOS:**
-```bash
-sudo cp root-ca.crt /etc/pki/ca-trust/source/anchors/harbor-ca.crt
-sudo update-ca-trust extract
-```
-
-#### Вариант Б: Только для Docker (без изменения системы)
-
-Docker поддерживает установку сертификатов в свою директорию конфигурации. Файл должен обязательно называться `ca.crt`.
-
+#### Настройка Docker
+Создайте директорию по имени хоста и положите туда сертификат под именем `ca.crt`:
 ```bash
 sudo mkdir -p /etc/docker/certs.d/harbor.example.local/
 sudo cp root-ca.crt /etc/docker/certs.d/harbor.example.local/ca.crt
 ```
 
-**Важно:** После установки доверия любым способом необходимо перезапустить Docker (`systemctl restart docker`).
+#### Настройка Containerd (K8s Nodes)
+Рекомендуется использовать механизм `hosts.toml` (современный способ):
+```bash
+# /etc/containerd/certs.d/harbor.example.local/hosts.toml
+server = "https://harbor.example.local"
+
+[host."https://harbor.example.local"]
+  ca = "/etc/containerd/certs.d/harbor.example.local/ca.crt"
+```
+
+### Сценарий 4: Ротация сертификатов
+
+1.  **Ручной метод**: Повторите шаги из Сценария 1, обновите файлы в директории Harbor и выполните `docker-compose down && docker-compose up -d`.
+2.  **Cert-manager**: Ротация происходит автоматически. Для принудительного обновления используйте команду:
+    ```bash
+    kubectl cert-manager renew harbor-tls -n harbor
+    ```
 
 ## Дополнительная информация
 
-### Использование в Harbor
+### Использование в конфигурации harbor.yml
 
-При установке укажите пути к файлам в `harbor.yml`. Обратите внимание, что Harbor ожидает полный путь внутри контейнеров или на хосте, где запущен `install.sh`.
+Пути к сертификатам в `harbor.yml` должны быть абсолютными и указывать на файлы внутри томов, доступных контейнеру Nginx.
 
 ```yaml
 https:
@@ -137,15 +145,14 @@ https:
   private_key: /data/cert/harbor.example.local.key
 ```
 
-### Безопасность
+### Безопасность и хранение ключей
 
-* **Права доступа**: Файлы ключей (`.key`) должны иметь права `600` (`chmod 600 *.key`).
-* **Разделение**: Никогда не храните `root-ca.key` на сервере Harbor в рабочем режиме. Используйте его только на изолированной машине для подписи новых сертификатов.
-* **Срок действия**: Не выпускайте серверные сертификаты на срок более 2 лет. Многие современные клиенты (включая Go-приложения) могут отклонять сертификаты с чрезмерно долгим сроком жизни.
+* **Приватные ключи**: Всегда устанавливайте права `600` на `.key` файлы.
+* **Дистрибуция Root CA**: В крупных кластерах используйте **trust-manager** для автоматического распространения CA-бандла во все Namespace.
+* **Срок действия**: Не выпускайте серверные сертификаты более чем на 398 дней (стандарт безопасности современных браузеров). Корневой CA может иметь срок 5-10 лет.
 
 ### Связанные документы
 
 * **[Установка Harbor](./installation.md)** — применение сертификатов при развертывании.
-* **[Диагностика SSL](../../../Security/Tools/ssl_certificate_diagnostics.md)** — поиск и устранение ошибок TLS.
-* **[Настройка одноуровневого CA](../../../Security/Tools/openssl_ca/single_tier/ca_setup.md)** — формальный метод выпуска с базой данных.
-
+* **[Работа с Harbor](./usage.md)** — аутентификация и использование реестра.
+* **[Диагностика SSL](../../../Security/Tools/ssl_certificate_diagnostics.md)** — отладка ошибок TLS.

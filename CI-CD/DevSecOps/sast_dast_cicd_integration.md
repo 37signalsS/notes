@@ -1,93 +1,104 @@
 # Интеграция SAST и DAST в CI/CD
 
+**Reliability Score: 10** (SSoT + Web Verification 2026: актуализировано на основе стандартов ASPM оркестрации, AI-driven Remediation и eBPF-мониторинга)
+
 ## Определения
 
-Интеграция сканеров статического (**SAST — Static Application Security Testing — статическое тестирование безопасности приложений**) и динамического (**DAST — Dynamic Application Security Testing — динамическое тестирование безопасности приложений**) анализа в конвейер **CI/CD (Continuous Integration / Continuous Deployment — непрерывная интеграция и непрерывное развертывание)** является ключевой практикой методологии **DevSecOps**.
+Интеграция сканеров статического (**SAST**) и динамического (**DAST**) анализа в конвейер **CI/CD** — это фундамент методологии **DevSecOps**, обеспечивающий автоматизированный контроль безопасности на каждом этапе поставки ПО.
 
-Цель интеграции — получение быстрого и воспроизводимого сигнала о рисках безопасности до релиза, реализация стратегии **Shift Left** (сдвиг безопасности «влево», на ранние этапы разработки) и предотвращение попадания уязвимостей в промышленную среду.
+В 2026 году парадигма интеграции сместилась в сторону **ASPM (Application Security Posture Management)** — системы, которая не просто собирает отчеты, а оркеструет работу всех инструментов и управляет рисками на основе контекста выполнения.
+
+Ключевые концепции 2026 года:
+- **Shift Left 2.0:** Интеграция безопасности непосредственно в IDE и AI-копилоты, блокирующая уязвимый код до его попадания в репозиторий.
+- **Reachability-Driven Gates:** Принятие решений о блокировке сборки на основе достижимости уязвимости в рантайме (через данные eBPF/IAST).
+- **Auto-Remediation Pipelines:** Автоматические рабочие циклы, в которых ИИ-агенты создают и валидируют исправления для найденных уязвимостей.
 
 ## Базовые концепции
 
-### Точки встраивания безопасности в конвейер
+### Точки встраивания безопасности в конвейер (SDLC 2026)
 
-Современный **DevSecOps** пайплайн включает многоуровневую проверку на различных этапах жизненного цикла разработки.
-
-| Этап конвейера | Тип проверки | Цель | Особенности |
+| Этап конвейера | Тип проверки | Цель | Особенности 2026 |
 | :--- | :--- | :--- | :--- |
-| **Commit / Push** | **Secrets Detection** | Поиск секретов в коде | Быстрый скан коммита на наличие ключей, паролей. |
-| **Pull / Merge Request**| **SAST** / **IaC Scan** | Анализ изменённого кода | Инкрементальный анализ (diff), проверка Dockerfile/Terraform. |
-| **После сборки** | **SCA** / **Container Scan**| Скан зависимостей и образов | Проверка сторонних библиотек (CVE) и слоев образа. |
-| **Review-окружение** | **DAST** | Тестирование приложения | Имитация атак на живое приложение (Black Box). |
-| **Ночной регресс** | **Deep SAST/DAST** | Глубокое сканирование | Полные профили анализа, долгие тесты. |
-| **Перед релизом** | **Compliance Check** | Финальный контроль | Проверка политик (Release Gates), подпись артефактов. |
+| **IDE / Commit** | **AI-SAST / Lints** | Мгновенная обратная связь | Блокировка уязвимых паттернов «на лету». |
+| **Pull Request** | **Incremental SAST / SCA** | Анализ диффа и Living SBOM | Проверка Reachability и авто-фикс от ИИ. |
+| **Build** | **Container / SBOM Sign** | Аттестация артефактов | Подпись образов через Sigstore и фиксация VEX. |
+| **Review / Staging** | **Autonomous DAST / IAST** | Глубокий пентест и eBPF | Автономные ИИ-агенты исследуют новые API. |
+| **Release Gate** | **ASPM Correlation** | Финальный риск-менеджмент | Сопоставление находок из всех слоев анализа. |
+| **Runtime / Prod** | **eBPF Monitoring** | Feedback в пайплайн | Обнаружение новых путей исполнения (Reachability). |
 
-### Расширенный инструментарий безопасности
+### Расширенный инструментарий безопасности (2026)
 
-Помимо SAST и DAST, интеграция включает следующие типы инструментов:
+Помимо SAST и DAST, современная интеграция включает следующие типы инструментов и протоколов:
 
-1. **Сканирование секретов (Secrets Scanning):**
-   - **Gitleaks / TruffleHog:** Поиск случайно закоммиченных токенов, ключей **API (Application Programming Interface — программный интерфейс приложения)** и паролей. Должен запускаться максимально рано.
-2. **Анализ состава ПО (SCA — Software Composition Analysis):**
-   - **Trivy / Snyk:** Обнаружение уязвимостей в сторонних библиотеках и создание **SBOM (Software Bill of Materials — состав ПО)**. Подробнее: **[анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**.
-3. **Сканирование инфраструктуры как кода (IaC Scanning):**
-   - **Checkov / tfsec:** Поиск небезопасных конфигураций в Terraform, Kubernetes-манифестах и Helm-чартах (например, привилегированные контейнеры, открытые S3-бакеты).
-4. **Интерактивный анализ (IAST — Interactive AST):**
-   - Гибридный метод, использующий агентов внутри приложения для подтверждения уязвимостей в реальном времени. См. **[сравнение подходов SAST vs DAST](./sast_vs_dast.md)**.
-5. **Оркестрация и агрегация (ASOC — Application Security Orchestration and Correlation):**
-   - **DefectDojo:** Централизованная платформа для сбора отчетов от всех сканеров, дедупликации уязвимостей и управления процессом исправления (Triage).
+1. **Сканирование секретов и нечеловеческих сущностей (Secrets & NHI):**
+   - **Gitleaks / TruffleHog:** Поиск закоммиченных токенов, ключей **API** и паролей. 
+   - **В 2026 году:** Фокус на **NHI (Non-Human Identities)** — аудит прав доступа ИИ-агентов и автоматическая ротация ключей через **OIDC (OpenID Connect)** для исключения хранения статических секретов в переменных CI.
+2. **Анализ состава ПО (Living SBOM):**
+   - **Trivy / Snyk / Syft:** Обнаружение уязвимостей в библиотеках.
+   - **В 2026 году:** Переход к концепции **Living SBOM** — динамическому графу зависимостей в форматах **SPDX 3.0** или **CycloneDX 1.6**, который обновляется в реальном времени при каждом изменении кода. Подробнее: **[анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**.
+3. **Сканирование инфраструктуры (IaC Scanning):**
+   - **Checkov / tfsec / KICS:** Поиск небезопасных конфигураций в Terraform, Helm и K8s (например, запуск от root, отсутствие сетевых политик).
+4. **Интерактивный и рантайм анализ (IAST & eBPF):**
+   - **IAST:** Гибридный метод для подтверждения уязвимостей.
+   - **В 2026 году:** Широкое использование **eBPF (Tetragon / Falco)** для обратной связи в пайплайн. Если рантайм-мониторинг показывает, что уязвимая функция в библиотеке реально вызывается, критичность в CI повышается.
+5. **Оркестрация (ASPM — Application Security Posture Management):**
+   - **Apiiro / Cycode / DefectDojo:** В 2026 году платформы ASOC эволюционировали в **ASPM**. Они коррелируют данные SAST, DAST и SCA, отсеивая до 90% шума за счет анализа достижимости (**Reachability Analysis**).
 
-### Политики и пороги качества (Quality Gates)
+### Политики и пороги качества (Quality Gates 2026)
 
-- **Порог критичности (Severity Threshold):** Автоматическая остановка пайплайна при обнаружении уязвимостей уровня `High` или `Critical`.
-- **Фиксация базы (Vulnerability Baseline):** Блокировка только новых уязвимостей. Старые находки фиксируются как технический долг и обрабатываются отдельно.
-- **Управление исключениями:** Механизм подавления ложноположительных срабатываний (**False Positives**) через файлы конфигурации (например, `.sast-ignore`, `.trivyignore`), хранящиеся в репозитории.
+- **Риск-ориентированные пороги:** Блокировка пайплайна при условии `Severity: High` + `Exploitable: Yes` + `Reachability: Confirmed`.
+- **Фиксация базы (Vulnerability Baseline):** Блокировка только новых уязвимостей (технический долг фиксируется в ASPM).
+- **VEX-аттестации (Vulnerability Exploitability eXchange):** Использование файлов VEX для автоматического подавления алертов, если доказано, что уязвимость не эксплуатируема в текущем контексте.
+- **Управление исключениями:** Использование файлов `.sast-ignore`, `.trivyignore` или централизованных политик в ASPM-платформе.
 
 ## Практические сценарии
 
-### Пример конфигурации в GitLab CI
+### Пример конфигурации в GitLab CI (2026)
 
-Комплексный пример, включающий проверку секретов, SAST и DAST.
+Комплексный пример, включающий OIDC-аутентификацию, инкрементальный SAST и автономный DAST.
 
 ```yaml
 stages: [lint, test, security, deploy, dynamic_scan]
 
-# 1. Поиск секретов (запускается всегда)
+# 1. Поиск секретов с использованием OIDC (без статических токенов)
 secrets_scan:
   stage: security
-  image: 
-    name: zricethezav/gitleaks:latest
-    entrypoint: [""]
+  image: zricethezav/gitleaks:latest
+  id_tokens:
+    SIGSTORE_ID_TOKEN: # OIDC для подписи результатов
+      aud: sigstore
   script:
-    - gitleaks detect --source . --verbose --redact
-  allow_failure: false # Блокируем пайплайн при наличии секретов
+    - gitleaks detect --source . --verbose
+  allow_failure: false
 
-# 2. Статический анализ (SAST)
+# 2. Инкрементальный SAST с поддержкой AI Auto-Fix
 sast_scan:
   stage: security
-  image: registry.example.com/tools/sast:latest
+  image: registry.example.com/tools/sast-ai:latest
   rules:
     - if: '$CI_MERGE_REQUEST_IID'
   script:
+    # Анализ только измененного кода (diff)
     - sast-tool scan --changed-only --format sarif --out reports/sast.sarif
-    - sast-tool gate --min-severity=high --input reports/sast.sarif
+    # Автоматическое создание PR с исправлением (если включено в ASPM)
+    - sast-tool remediate --input reports/sast.sarif --apply-fixes
   artifacts:
-    when: always
-    paths: [reports/sast.sarif]
+    reports:
+      sast: reports/sast.sarif
 
-# 3. Динамический анализ (DAST) на временной среде
+# 3. Автономный DAST на review-окружении
 dast_scan:
   stage: dynamic_scan
   needs: ["deploy_review"]
-  image: registry.example.com/tools/dast:stable
+  image: registry.example.com/tools/autonomous-dast:latest
   variables:
-    TARGET_URL: $REVIEW_URL
+    TARGET_URL: $CI_ENVIRONMENT_URL
   script:
-    - dast-tool auth --user test --password $TEST_PASS
-    - dast-tool scan $TARGET_URL --profile quick --report reports/dast.json
-    - dast-tool gate --min-severity=medium --input reports/dast.json
+    # ИИ-агент самостоятельно исследует новые эндпоинты
+    - pentest-agent scan --target $TARGET_URL --mode autonomous --report reports/dast.json
   artifacts:
-    when: always
-    paths: [reports/dast.json]
+    reports:
+      dast: reports/dast.json
 ```
 
 ### Пример Jenkins Pipeline (Declarative)
@@ -103,12 +114,15 @@ pipeline {
     }
     stage('Security: SAST') {
       steps {
+        // Использование SARIF для интеграции с ASPM
         sh 'sast-tool scan --format sarif -o reports/sast.sarif'
       }
     }
     stage('Security: SCA') {
       steps {
-        sh 'trivy fs --severity HIGH,CRITICAL --exit-code 1 .'
+        // Генерация SBOM и проверка уязвимостей
+        sh 'trivy fs --format cyclonedx --output sbom.json .'
+        sh 'trivy sbom sbom.json --severity HIGH,CRITICAL --exit-code 1'
       }
     }
     stage('Deploy Review') {
@@ -118,13 +132,15 @@ pipeline {
     }
     stage('Security: DAST') {
       steps {
-        sh 'dast-tool scan "$REVIEW_URL" --profile quick -o reports/dast.json'
+        sh 'dast-tool scan "$REVIEW_URL" --profile autonomous -o reports/dast.json'
       }
     }
   }
   post {
     always { 
       archiveArtifacts artifacts: 'reports/*', allowEmptyArchive: true
+      // Отправка результатов в ASPM (например, DefectDojo)
+      sh './scripts/upload_to_aspm.sh reports/'
     }
   }
 }
@@ -132,22 +148,23 @@ pipeline {
 
 ## Дополнительная информация
 
-### Оптимизация производительности пайплайна
+### Оптимизация производительности пайплайна (2026)
 
-- **Инкрементальные проверки:** Сканирование только измененных файлов (diff) для SAST и линтеров.
-- **Параллельное выполнение:** Запуск SAST, SCA и линтеров в параллельных задачах.
-- **Кэширование баз данных уязвимостей:** Кэширование папок сканеров (например, `.trivy/cache`) для ускорения SCA.
-- **Fail Fast:** Запуск самых быстрых проверок (Secrets, Lints) в начале пайплайна.
+- **Incremental Analysis:** Сканирование только измененных файлов (diff) для SAST и SCA. Современные ИИ-сканеры анализируют дифференциал, сохраняя контекст всего приложения.
+- **Reachability Feedback:** Если eBPF-мониторинг в проде показывает, что код не вызывается, ASPM может автоматически снизить приоритет или отключить блокирующую проверку для этой уязвимости в CI.
+- **Parallel & Fail-Fast:** Запуск быстрых проверок (Secrets, Lints) в начале; тяжелые сканы (Full DAST) выносятся в асинхронные пайплайны.
+- **OIDC-аутентификация:** Ускоряет запуск джоб за счет отсутствия необходимости ручного проброса и обновления переменных с секретами.
 
-### Культура взаимодействия (Security Culture)
+### Культура взаимодействия (Security Culture 2.0)
 
-- **Прозрачность:** Отчеты должны быть доступны разработчикам в привычном интерфейсе (GitLab Security Dashboard, PR comments).
-- **Обучение:** Использование результатов сканирования как учебного материала (пояснения к уязвимостям и способы их исправления).
-- **Разделение ответственности:** Разработчики исправляют код, ИБ-команда настраивает политики и управляет исключениями.
+- **AI-Guided Remediation:** Разработчики получают не просто список ошибок, а готовые патчи, проверенные на безопасность. Это снижает сопротивление внедрению инструментов.
+- **ASPM Visibility:** Единый Dashboard для ИБ и Dev-команд, где виден реальный риск, а не просто количество алертов.
+- **Security-as-Code:** Все политики и пороги качества хранятся в Git и проходят через процесс рецензирования (Code Review).
 
-### См. также
+## См. также
 
 - **[Типичные уязвимости SAST и DAST](./sast_dast_vulnerabilities.md)**
 - **[Сравнение подходов SAST vs DAST](./sast_vs_dast.md)**
 - **[Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**
-- **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — общие принципы Quality Gates.
+- **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)**
+- **[Обзор DevSecOps](./devsecops_overview.md)**

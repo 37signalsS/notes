@@ -171,6 +171,7 @@ Kafka выступает в роли «амортизатора» между и�
 ### См. также
 
 - **[Гарантии доставки](./delivery_guarantees.md)** — подробный разбор семантик (at-most-once, at-least-once, exactly-once).
+- **[CLI-инструменты Kafka](./kafka_cli_tools.md)** — справочник по утилитам `kafkactl`, `kcat` и стандартным shell-скриптам.
 - **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — глубокое погружение в стратегии распределения данных.
 - **[Принципы очередей сообщений](./message_queues_principles.md)** — сравнение моделей Push vs Pull и общие концепции.
 - **[Развертывание через Ansible](./kafka_ansible_deployment.md)** — руководство по установке кластера, включая режим KRaft.

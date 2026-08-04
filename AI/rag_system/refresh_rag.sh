@@ -40,9 +40,9 @@ sys.exit(1)
 fi
 
 echo "[1/2] Indexing BGE-M3..."
-python3 "$SCRIPT_DIR/ingest.py" bge $FORCE_FLAG
+python3 "$SCRIPT_DIR/ingest.py" bge --repair $FORCE_FLAG
 
 echo "[2/2] Indexing E5..."
-python3 "$SCRIPT_DIR/ingest.py" e5 $FORCE_FLAG
+python3 "$SCRIPT_DIR/ingest.py" e5 --repair $FORCE_FLAG
 
 echo "--- Synchronization complete! Indexes are up to date. ---"

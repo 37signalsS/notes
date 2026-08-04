@@ -151,6 +151,3 @@ ansible-playbook playbooks/site.yml -i environments/prod/hosts.yml --ask-vault-p
 - [Структура роли (tasks, templates, handlers)](../Roles/structure.md)
 - [Установка и базовая настройка Ansible](../ansible_setup_and_config.md)
 - [Работа с Ansible Galaxy (роли и коллекции)](../Roles/galaxy.md)
-
----
-**Reliability Score: 10** (Подтверждено официальной документацией Ansible "Sample Ansible setup" и лучшими Enterprise-практиками).

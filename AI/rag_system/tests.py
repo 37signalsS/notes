@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import uuid
 import shutil
 import tempfile
 import threading
@@ -11,6 +12,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import rag_utils
+import ingest
 from unified_search import deduplicate
 
 
@@ -597,15 +599,81 @@ class TestIngestHelpers(unittest.TestCase):
 
     def test_revalidate_deleted(self):
         result = self.ingest._revalidate_deleted(["a.md", "b.md"], {"a.md": {"mtime": 1.0}})
-        self.assertEqual(result, ["b.md"])
+        self.assertEqual(result, ["a.md"])
 
     def test_revalidate_deleted_all_fresh(self):
         result = self.ingest._revalidate_deleted(["a.md"], {"a.md": {"mtime": 1.0}})
-        self.assertEqual(result, [])
+        self.assertEqual(result, ["a.md"])
 
     def test_revalidate_deleted_all_stale(self):
         result = self.ingest._revalidate_deleted(["a.md", "b.md"], {})
-        self.assertEqual(result, ["a.md", "b.md"])
+        self.assertEqual(result, [])
+
+
+class TestUpdateManifest(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_manifest = ingest.MANIFEST_FILE
+        self.orig_lock = ingest.MANIFEST_LOCK_FILE
+        ingest.MANIFEST_FILE = os.path.join(self.tmpdir, "manifest.json")
+        ingest.MANIFEST_LOCK_FILE = ingest.MANIFEST_FILE + ".lock"
+
+    def tearDown(self):
+        ingest.MANIFEST_FILE = self.orig_manifest
+        ingest.MANIFEST_LOCK_FILE = self.orig_lock
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write_manifest(self, data):
+        with open(ingest.MANIFEST_FILE, "w") as f:
+            json.dump(data, f)
+
+    def _deleted_uuids(self, fake_client):
+        out = set()
+        for selector in fake_client.deleted:
+            out.update(selector.points)
+        return out
+
+    def test_reingest_same_ids_does_not_delete_points(self):
+        self._write_manifest({"e5": {"files": {"a.md": {"mtime": 1.0, "chunk_ids": ["x1", "x2"]}}}})
+        fake = FakeQdrantClient()
+        ingest._update_manifest(
+            "e5", fake, "col",
+            changed=[("/p/a.md", "a.md")],
+            deleted=[],
+            file_chunk_info=[("a.md", ["x1", "x2"], 2.0)],
+        )
+        self.assertEqual(fake.deleted, [], "must not delete freshly re-uploaded ids")
+        manifest = ingest.load_manifest()
+        self.assertEqual(manifest["e5"]["files"]["a.md"], {"mtime": 2.0, "chunk_ids": ["x1", "x2"]})
+
+    def test_reingest_changed_content_deletes_only_old_ids(self):
+        self._write_manifest({"e5": {"files": {"a.md": {"mtime": 1.0, "chunk_ids": ["old1", "old2"]}}}})
+        fake = FakeQdrantClient()
+        ingest._update_manifest(
+            "e5", fake, "col",
+            changed=[("/p/a.md", "a.md")],
+            deleted=[],
+            file_chunk_info=[("a.md", ["new1", "new2"], 2.0)],
+        )
+        expected = {str(uuid.uuid5(uuid.NAMESPACE_URL, i)) for i in ["old1", "old2"]}
+        self.assertEqual(self._deleted_uuids(fake), expected)
+
+    def test_deleted_file_chunks_removed(self):
+        self._write_manifest({"e5": {"files": {"c.md": {"mtime": 1.0, "chunk_ids": ["c1"]}}}})
+        fake = FakeQdrantClient()
+        ingest._update_manifest("e5", fake, "col", changed=[], deleted=["c.md"], file_chunk_info=[])
+        expected = {str(uuid.uuid5(uuid.NAMESPACE_URL, "c1"))}
+        self.assertEqual(self._deleted_uuids(fake), expected)
+        manifest = ingest.load_manifest()
+        self.assertNotIn("c.md", manifest["e5"]["files"])
+
+
+class FakeQdrantClient:
+    def __init__(self):
+        self.deleted = []
+
+    def delete(self, collection_name, points_selector):
+        self.deleted.append(points_selector)
 
 
 class TestComputeCosineSimMatrix(unittest.TestCase):

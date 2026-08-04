@@ -156,7 +156,7 @@ helmfile -l tier=backend apply
 ### Сравнение с альтернативами
 
 *   **[Helmwave](./helmwave_overview.md):** Написан на Go, предлагает более глубокую шаблонизацию всего файла конфигурации и улучшенную работу с зависимостями.
-*   **Argo CD / Flux:** Инструменты GitOps, которые могут использовать Helmfile (через плагины) или работать с чартами напрямую. Helmfile чаще используется в CI/CD пайплайнах для push-модели деплоя.
+*   **Argo CD / Flux:** Инструменты GitOps, которые могут интегрироваться с Helmfile через **[Config Management Plugins (CMP)](../../../GitOps/ArgoCD/argocd_custom_tooling.md#сценарий-4-интеграция-helmfile-и-helmwave-cmp-v2)**. ArgoCD нивелирует проблему дрейфа конфигурации, постоянно сверяя состояние Git с кластером.
 
 ### Ссылки
 

@@ -58,23 +58,33 @@ def _load_with_timeout(func: Any, timeout: int) -> Any:
 
 _HF_ENV_LOCK = threading.Lock()
 
+_OFFLINE_LOAD_TIMEOUT = 120
+
 
 def _with_hf_offline_fallback(func: Any, timeout: int, error_msg: str = "") -> Any:
     with _HF_ENV_LOCK:
+        was_hf = os.environ.get("HF_HUB_OFFLINE")
+        was_tr = os.environ.get("TRANSFORMERS_OFFLINE")
+        try:
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            try:
+                return _load_with_timeout(func, _OFFLINE_LOAD_TIMEOUT)
+            except Exception:
+                pass
+        finally:
+            if was_hf is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = was_hf
+            if was_tr is None:
+                os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            else:
+                os.environ["TRANSFORMERS_OFFLINE"] = was_tr
         try:
             return _load_with_timeout(func, timeout)
-        except Exception:
-            was = os.environ.get("HF_HUB_OFFLINE")
-            try:
-                os.environ["HF_HUB_OFFLINE"] = "1"
-                return _load_with_timeout(func, timeout)
-            except Exception as exc:
-                raise RuntimeError(error_msg) from exc
-            finally:
-                if was is None:
-                    os.environ.pop("HF_HUB_OFFLINE", None)
-                else:
-                    os.environ["HF_HUB_OFFLINE"] = was
+        except Exception as exc:
+            raise RuntimeError(error_msg) from exc
 
 
 _EMBEDDING_MODEL_LOCK = threading.Lock()

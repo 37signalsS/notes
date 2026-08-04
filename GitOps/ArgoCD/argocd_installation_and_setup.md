@@ -200,6 +200,9 @@ argocd admin cluster stats
 ### См. также
 
 - [Argo CD: Обзор системы](./argocd_overview.md)
+- [Argo CD: Настройка SSO через GitLab](./argocd_sso_gitlab.md) — федеративная аутентификация и RBAC.
 - [Argo CD: Синхронизация и её политики](./synchronization.md)
 - [Argo CD: Интеграция с Vault](./argocd_vault_integration.md)
+- [Argo CD: Custom Tooling и плагины](./argocd_custom_tooling.md) — расширение функционала (QBEC, git-crypt).
 - [Официальная документация (HA)](https://argo-cd.readthedocs.io/en/stable/operator-manual/high-availability/)
+

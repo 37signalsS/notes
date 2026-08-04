@@ -2,175 +2,196 @@
 
 ## Определения
 
-**[Rolling Update (Поэтапное обновление)](../../CI-CD/Deployment_Strategies/rolling_update.md)** — стратегия постепенного обновления реплик сервиса без полной остановки обслуживания.
+**[Rolling Update (Поэтапное обновление)](../../CI-CD/Deployment_Strategies/rolling_update.md)** — стратегия постепенного обновления реплик сервиса, при которой новая версия заменяет старую без полной остановки системы. Является нативной для Docker Swarm.
 
-**[Canary Deployment (Канареечное развертывание)](../../CI-CD/Deployment_Strategies/canary_deployment.md)** — метод выпуска, при котором новая версия приложения направляется на небольшую группу пользователей для тестирования перед полным развертыванием.
+**[Canary Deployment (Канареечное развертывание)](../../CI-CD/Deployment_Strategies/canary_deployment.md)** — метод выпуска, при котором новая версия приложения направляется на небольшую группу пользователей или долю трафика для тестирования перед полным развертыванием. В Swarm реализуется через параллельные сервисы и балансировщики трафика.
 
-**[Blue-Green Deployment (Сине-зеленое развертывание)](../../CI-CD/Deployment_Strategies/blue_green_deployment.md)** — стратегия, предполагающая наличие двух идентичных сред (Blue и Green) с мгновенным переключением трафика.
+**[Blue-Green Deployment (Сине-зеленое развертывание)](../../CI-CD/Deployment_Strategies/blue_green_deployment.md)** — стратегия, предполагающая наличие двух идентичных сред (Blue и Green) с мгновенным переключением трафика. Обеспечивает минимальный риск и мгновенный откат.
 
-**[Placement Preferences (Предпочтения размещения)](./swarm_stack_deployment.md)** — механизмы распределения задач по узлам на основе меток (labels) или характеристик, таких как зона доступности или стойка.
+**[Placement Preferences (Предпочтения размещения)](./swarm_stack_deployment.md)** — механизмы гибкого (мягкого) распределения задач по узлам на основе меток (labels) или топологических характеристик (зона, стойка, дата-центр). В отличие от `constraints`, позволяют оркестратору принимать более гибкие решения при нехватке ресурсов.
 
 ## Базовые концепции
 
-### Управление процессом обновления
+### Тонкая настройка обновления (update_config)
 
-Docker Swarm позволяет декларативно описывать поведение сервисов при обновлении через секции `update_config` и `rollback_config`. Основные параметры этих секций (parallelism, delay, monitor) подробно описаны в разделе **[Базовое развертывание стеков](./swarm_stack_deployment.md)**.
+Секция `update_config` определяет логику перехода от старой версии спецификации к новой.
 
-В продвинутых сценариях критически важно сочетание `update_config` с проверками здоровья (**Healthchecks**). Если новый контейнер не проходит healthcheck в течение периода `monitor`, Swarm классифицирует обновление как неудачное и выполняет `failure_action`.
+- **`parallelism`**: Количество реплик, обновляемых одновременно. При `parallelism: 0` обновляются все реплики сразу (вызывает даунтайм).
+- **`delay`**: Задержка между обновлением групп реплик.
+- **`monitor`**: Критически важный параметр. Время после старта контейнера, в течение которого Swarm следит за его состоянием (Healthcheck). Если контейнер упал или не прошел проверку в этот период, обновление прерывается.
+- **`max_failure_ratio`**: Допустимая доля ошибок (от 0 до 1). Если количество сбойных реплик превышает этот порог, запускается `failure_action`.
+- **`failure_action`**:
+    - `rollback`: Автоматический запуск процесса отката к предыдущей стабильной версии (рекомендуется для CI/CD).
+    - `pause`: Приостановка обновления для ручного вмешательства (по умолчанию).
+    - `continue`: Игнорировать ошибки и продолжать деплой (опасно).
+- **`order`**:
+    - `stop-first`: Сначала гасим старый контейнер, потом запускаем новый. Экономит ресурсы, но создает кратковременное "окно" недоступности.
+    - `start-first`: Сначала запускаем новый контейнер, дожидаемся его готовности (Healthcheck + Monitor), и только потом гасим старый. Обеспечивает Zero Downtime.
+    - **Важно:** `start-first` требует наличия свободных ресурсов в кластере для размещения временной дополнительной реплики.
 
-### Расширенное управление размещением
+### Настройка автоматического отката (rollback_config)
 
-Помимо жестких ограничений (`constraints`), Swarm поддерживает гибкое распределение задач:
-
-1. **`spread`**: Равномерное распределение реплик по значениям конкретной метки (например, по дата-центрам или зонам).
-2. **`max_replicas_per_node`**: Ограничение максимального количества реплик одного сервиса на одном узле кластера.
+Эта секция часто игнорируется, но она жизненно важна для стабильности. Она определяет, как будет проходить процесс *возврата* к старой версии, если основной апдейт провалился.
 
 ```yaml
 deploy:
-  placement:
-    constraints:
-      - node.role == worker
-    preferences:
-      - spread: node.labels.zone
-    max_replicas_per_node: 1
+  rollback_config:
+    parallelism: 0          # 0 = откатить все реплики максимально быстро (Best Practice)
+    order: stop-first       # При откате важнее очистить ресурсы от сбойной версии
+    failure_action: pause   # Если даже откат упал — критический сбой, нужно ручное управление
+    monitor: 10s
 ```
 
 ### Режимы публикации сервисов (Endpoint Mode)
 
-- **VIP (Virtual IP)**: (По умолчанию) Swarm назначает сервису виртуальный IP, который балансирует трафик между репликами.
-- **DNSRR (DNS Round Robin)**: Swarm возвращает список IP-адресов всех реплик через DNS. Используется, когда требуется внешняя балансировка (например, через Nginx или Traefik) без промежуточного VIP.
+Swarm предлагает два способа маршрутизации трафика:
+
+1. **VIP (Virtual IP)**: (По умолчанию). Каждому сервису назначается виртуальный IP внутри кластера. Балансировка на уровне ядра (IPVS). Удобно, прозрачно, но балансировщик не знает о реальных IP-адресах контейнеров.
+2. **DNSRR (DNS Round Robin)**: Swarm возвращает список IP-адресов всех живых реплик при DNS-запросе к имени сервиса. 
+    - **Когда использовать:** При использовании внешних балансировщиков (Traefik, Nginx, HAProxy), которые сами управляют списком бэкендов и их здоровьем. Это позволяет реализовать более сложные алгоритмы балансировки (например, Least Conn).
+
+### Топологическое управление размещением (Placement Preferences)
+
+Использование `spread` позволяет Swarm равномерно распределять реплики по различным категориям узлов (например, по дата-центрам или стойкам), обеспечивая высокую отказоустойчивость.
+
+```yaml
+deploy:
+  placement:
+    preferences:
+      - spread: node.labels.zone
+    max_replicas_per_node: 1 # Гарантирует, что две реплики не попадут на один узел
+```
 
 ## Практические сценарии
 
-### Настройка стратегии Rolling Update с Healthcheck
+### Сценарий 1: Rolling Update с гарантией доступности
 
-Для надежного обновления необходимо настроить `healthcheck` в самом сервисе. Swarm будет ждать успешного прохождения проверки перед тем, как считать реплику обновленной.
+Комбинация `start-first`, длительного `monitor` и обработки сигналов завершения.
+
+```yaml
+services:
+  web:
+    image: myapp:v2.1
+    stop_grace_period: 1m     # Даем приложению время закрыть коннекты
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 45s       # Время на прогрев (JIT, кэши)
+    deploy:
+      replicas: 5
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: start-first    # Zero Downtime
+        monitor: 1m           # Долгая проверка после старта
+        failure_action: rollback
+```
+
+### Сценарий 2: Blue-Green развертывание через переключение стеков
+
+В Swarm нет встроенного Blue-Green, но его можно реализовать через манипуляцию именами стеков или лейблами Traefik.
+
+**Шаги реализации:**
+1. Развернуть текущую версию (Blue): `docker stack deploy -c stack.yml myapp-blue`.
+2. Развернуть новую версию (Green) параллельно: `docker stack deploy -c stack.yml myapp-green`.
+3. Переключить трафик на внешнем балансировщике (например, изменить `Host` правило в Traefik или CNAME в DNS).
+4. После верификации удалить старый стек: `docker stack rm myapp-blue`.
+
+### Сценарий 3: Canary-развертывание (Weighted Traffic) с Traefik
+
+Использование двух сервисов с разным количеством реплик или весами в Traefik.
 
 ```yaml
 services:
   app:
-    image: myapp:v2.0
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
-    deploy:
-      replicas: 6
-      update_config:
-        parallelism: 2
-        delay: 30s
-        failure_action: rollback
-        monitor: 20s          # Должен быть больше, чем интервал healthcheck
-        order: start-first
-```
-
-### Реализация Canary-развертывания через Traefik
-
-Использование Traefik позволяет динамически перераспределять веса трафика между основной и канареечной версиями.
-
-```yaml
-version: '3.8'
-
-services:
-  web-stable:
-    image: myapp:v1.0
+    image: myapp:stable
     deploy:
       replicas: 10
       labels:
-        - "traefik.http.routers.app.rule=Host(`app.example.com`)`"
-        - "traefik.http.services.app.loadbalancer.server.port=80"
-  
-  web-canary:
-    image: myapp:v1.1
+        - "traefik.http.routers.app.rule=Host(`api.example.com`)"
+        - "traefik.http.services.app-svc.loadbalancer.server.port=80"
+
+  app-canary:
+    image: myapp:beta
     deploy:
       replicas: 1
       labels:
-        - "traefik.http.routers.app.rule=Host(`app.example.com`)`"
-        - "traefik.http.services.app.loadbalancer.server.port=80"
+        - "traefik.http.routers.app.rule=Host(`api.example.com`)"
+        - "traefik.http.services.app-svc.loadbalancer.server.port=80"
 ```
+*Примечание: Traefik автоматически объединит бэкенды обоих сервисов под одним роутером. Соотношение трафика будет пропорционально количеству реплик (10:1).*
 
-Для тонкой настройки весов (например, 90/10) в Traefik v2+ используются дополнительные лейблы `weighted`. Подробнее — в **[swarm_ingress_traefik.md](./swarm_ingress_traefik.md)**.
+### Сценарий 4: Безопасное обновление секретов (Versioning)
 
-### Реализация Blue-Green развертывания
-
-Стратегия Blue-Green в Swarm реализуется через манипуляцию именами сервисов или лейблами балансировщика.
-
-```bash
-# 1. Запуск новой версии (Green) в отдельном стеке
-docker stack deploy -c green.yml myapp-green
-# → Создание сервисов стека myapp-green
-
-# 2. Проверка работоспособности Green-версии
-curl -H "Host: green.example.com" http://loadbalancer-ip
-# → HTTP/1.1 200 OK
-
-# 3. Переключение трафика: обновление лейблов Ingress-контроллера 
-# или изменение DNS-записи на внешний балансировщик.
-
-# 4. Удаление старой версии (Blue)
-docker stack rm myapp-blue
-# → Стек myapp-blue удален
-```
-
-### Ротация секретов и конфигураций
-
-При обновлении `configs` или `secrets` в Swarm они не обновляются "на лету" в запущенных контейнерах (так как они монтируются в `tmpfs`). Для ротации необходимо создать новую версию ресурса и обновить сервис.
+Поскольку секреты неизменяемы, используйте версионирование в именах.
 
 ```yaml
 services:
   db:
-    image: postgres:16
+    image: postgres:15
     secrets:
       - source: db_password_v2
-        target: db_password
+        target: db_password   # Внутри контейнера путь остается неизменным
 secrets:
-  db_password_v1:
-    external: true
   db_password_v2:
     external: true
 ```
+**Процесс:**
+1. `docker secret create db_password_v2 new_pass.txt`
+2. Обновить YAML и запустить `docker stack deploy`.
+3. Swarm выполнит Rolling Update, заменяя контейнеры на те, что используют новый секрет.
 
-### Устранение неисправностей (Troubleshooting)
+### Сценарий 5: Очистка кластера от "сиротских" ресурсов
 
-#### Диагностика состояния деплоя
-
+При удалении сервисов из Compose-файла они не удаляются из Swarm автоматически.
+**Решение:**
 ```bash
-# Проверка причин остановки обновления
-docker service inspect --format '{{json .UpdateStatus}}' <service_name> | jq
-# → { "State": "paused", "Message": "update paused due to failure or timeout" }
-
-# Просмотр последних ошибок задач (tasks)
-docker stack ps <stack_name> --no-trunc
-# → ID: ... Error: "task: non-zero exit (1)"
-
-# Проверка событий кластера
-docker node ps self
-# → Выводит задачи, запущенные на текущем узле
+# Флаг --prune удаляет сервисы, которые больше не описаны в конфиге
+docker stack deploy --prune -c docker-compose.yml myapp
 ```
 
-#### Частые проблемы и решения
+## Устранение неисправностей
 
-| Проблема | Причина | Решение |
+### Диагностика процесса обновления
+
+Если деплой "завис" или ведет себя странно:
+
+```bash
+# 1. Детальный статус обновления (показывает ошибки и текущую фазу)
+docker service inspect --format '{{json .UpdateStatus}}' <service_name> | jq
+
+# 2. Проверка ошибок размещения (например, "no suitable node found")
+docker service ps --no-trunc <service_name>
+
+# 3. Анализ логов только для задач новой версии
+docker service logs --since 5m -f <service_name>
+```
+
+### Типичные ошибки и их решение
+
+| Проблема | Возможная причина | Решение |
 |---|---|---|
-| Обновление зависло в `paused` | `failure_action: pause` при сбоях | Изучить логи `docker service logs` и возобновить через `docker service update --resume` |
-| Реплики постоянно перезапускаются | Некорректный `healthcheck` | Увеличить `start_period` или исправить команду проверки |
-| `no suitable node` | Несоблюдение `placement constraints` или `max_replicas_per_node` | Проверить метки узлов `docker node inspect` |
+| Деплой висит в `Pending` | Нехватка ресурсов для `start-first` | Добавить ресурсов или сменить на `stop-first`. |
+| Постоянный Rollback | `monitor` меньше времени старта приложения | Увеличить `monitor` или `start_period` в healthcheck. |
+| Потеря Client IP | Используется `Ingress` режим (L4 VIP) | Переключить сервис в `mode: host` или использовать Proxy Protocol. |
+| Секрет не обновился | Попытка изменить существующий секрет | Использовать новое имя секрета (версионирование). |
 
 ## Дополнительная информация
 
-### Сравнение с Kubernetes
+### Сравнение механизмов Swarm и Kubernetes
 
-| Параметр | Docker Stack | Kubernetes |
+| Характеристика | Docker Swarm | Kubernetes |
 |---|---|---|
-| **Управление трафиком** | Базовое (VIP), внешние Ingress | Продвинутое (Ingress, Service Mesh) |
-| **Placement** | Constraints, Spread, Max Replicas | Affinity, Taints, Tolerations, Topology Spread |
-| **Обновления** | Rolling Update (встроено) | Deployments, Operators (ArgoCD, Flux) |
+| **Нативный Rolling Update** | Да (`update_config`) | Да (`strategy: RollingUpdate`) |
+| **Авто-откат (Auto-Rollback)** | Встроенный | Требует внешних инструментов (ArgoCD/Rollouts) |
+| **Сложные стратегии** | Через манипуляцию сервисами | Нативно (Canary, Blue-Green в Rollouts) |
+| **Балансировка** | IPVS (VIP), DNS Round Robin | Services, Ingress, Service Mesh |
 
 ### Смотрите также
 
-- **[Базовое развертывание стеков](./swarm_stack_deployment.md)**
-- **[Секреты и конфигурации в Swarm](./swarm_secrets_configs.md)**
-- **[Справочник CLI для Swarm](./swarm_management_cli.md)**
-- **[Входящий трафик и Traefik](./swarm_ingress_traefik.md)**
+- **[Развертывание стеков (Stack Deployment)](./swarm_stack_deployment.md)** — основы `deploy` и `constraints`.
+- **[Жизненный цикл приложения (App Lifecycle)](./CI_CD/app_lifecycle.md)** — детально про `stop_grace_period` и диагностику.
+- **[Справочник CLI для Swarm](./swarm_management_cli.md)** — команды управления сервисами и узлами.
+- **[Traefik в Swarm](./swarm_ingress_traefik.md)** — настройка Ingress-контроллера.

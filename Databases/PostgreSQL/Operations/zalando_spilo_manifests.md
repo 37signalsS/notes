@@ -2,34 +2,40 @@
 
 ## Определения
 
-* **Spilo** — Docker-образ от Zalando, объединяющий PostgreSQL, Patroni для обеспечения высокой доступности и инструменты для резервного копирования (WAL-G).
-* **Patroni** — шаблонное решение для создания отказоустойчивых кластеров PostgreSQL. Автоматизирует управление ролями (Primary/Replica) и процесс переключения при сбоях (failover). Подробнее — **[High Availability](../Concepts/high_availability.md#patroni-отраслевой-стандарт)**.
-* **DCS (Distributed Configuration Store)** — распределенное хранилище конфигурации. В Kubernetes Patroni обычно использует K8s API (Endpoints и ConfigMaps) для хранения состояния кластера и выбора лидера.
+**Spilo** — специализированный Docker-образ от Zalando, объединяющий PostgreSQL, Patroni для обеспечения высокой доступности и набор инструментов для облачной эксплуатации (WAL-G, pg_view).
 
-## Базовые концепции
+**Patroni** — Python-приложение (шаблон), управляющее жизненным циклом инстанса PostgreSQL. Оно автоматизирует выбор лидера, настройку репликации и переключение при сбоях (failover). Подробнее — **[High Availability](../Concepts/high_availability.md)**.
+
+**WAL-G** — инструмент для эффективного резервного копирования и восстановления PostgreSQL. Поддерживает инкрементальные бэкапы и архивацию WAL-логов в объектные хранилища (S3, GCS, Azure).
+
+**DCS (Distributed Configuration Store)** — распределенное хранилище для координации кластера. В Kubernetes Spilo использует нативное K8s API (Endpoints или ConfigMaps) в качестве DCS.
+
+## Основные концепции
 
 ### Подход к развертыванию через манифесты
 
-Развертывание через прямые манифесты Kubernetes (StatefulSet, Service, RBAC) обеспечивает максимальный контроль над конфигурацией. Это необходимо, когда возможности **[Zalando Postgres Operator](./zalando_postgres_operator.md)** недостаточны (например, требуется специфический тюнинг системных параметров нод или сложные Sidecar-контейнеры).
+Использование прямых манифестов (StatefulSet, Service, ConfigMap) вместо **[Zalando Postgres Operator](./zalando_postgres_operator.md)** оправдано в случаях:
+- Необходимости кастомной логики в Sidecar-контейнерах.
+- Специфического тюнинга параметров ядра (sysctl) через `initContainers`.
+- Жесткого контроля версий и инфраструктуры как кода (IaC) без промежуточных слоев абстракции.
 
 ### Механизм выбора лидера (Leader Election)
 
-При использовании `DCS_ENABLE_KUBERNETES_API` Patroni взаимодействует с Kubernetes API:
-1. **ConfigMaps**: Используются для хранения глобальной конфигурации и истории кластера.
-2. **Endpoints**: Используются для реализации Leader Lock. Тот инстанс, который удерживает Endpoint, считается Primary.
-3. **RBAC**: Поды должны иметь права на `get`, `patch`, `update` этих ресурсов в своем пространстве имен.
+Patroni реализует алгоритм выбора лидера через Kubernetes API:
+1. **Endpoint Lock**: Инстанс, успешно выполнивший `patch` объекта Endpoints и удерживающий его, становится Primary (Master).
+2. **TTL**: Лидер обязан постоянно обновлять временную метку (Time-to-Live). Если обновление не произошло (зависание ОС или сети), лидер считается упавшим, и реплики начинают новые выборы.
+3. **Безопасность (Fencing)**: При потере связи с DCS Patroni принудительно переводит PostgreSQL в режим `read-only` или останавливает его, чтобы предотвратить Split-brain.
 
-### Управление трафиком
+### Хранение данных и WAL-архивация
 
-Для разделения трафика на чтение и запись создаются два сервиса:
-* **Master Service**: Без селектора. Patroni сам обновляет IP-адрес в связанном объекте Endpoints, указывая на текущего лидера.
-* **Replica Service**: С селектором `spilo-role: replica` (добавляется Patroni динамически) или на основе проверки `/replica` в Readiness Probe.
+Spilo ожидает монтирования данных в `/home/postgres/pgdata`. Рекомендуется использовать **XFS** или **ext4** с опцией `noatime`.
+Архивация WAL выполняется автоматически через WAL-G, если настроены соответствующие переменные окружения. Это критически важно для обеспечения RPO (Recovery Point Objective) близкого к нулю.
 
 ## Практические сценарии
 
-### Настройка прав доступа (RBAC)
+### Шаг 1: Настройка прав доступа (RBAC)
 
-Для работы Patroni необходим ServiceAccount с правами на управление ресурсами кластера.
+Patroni требует прав на манипуляцию ресурсами в своем Namespace для управления кворумом.
 
 ```yaml
 apiVersion: v1
@@ -59,18 +65,18 @@ subjects:
   name: spilo-sa
 ```
 
-### Спецификация StatefulSet
+### Шаг 2: Спецификация StatefulSet (PostgreSQL 17)
 
-Пример настройки с использованием Spilo 16 и проверками состояния.
+Пример конфигурации с лимитами ресурсов, мониторингом и WAL-архивацией.
 
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: pg-cluster
+  name: pg-prod
 spec:
   replicas: 3
-  serviceName: "pg-cluster-config"
+  serviceName: "pg-prod-nodes"
   selector:
     matchLabels:
       spilo-cluster: pg-prod
@@ -80,13 +86,12 @@ spec:
         spilo-cluster: pg-prod
     spec:
       serviceAccountName: spilo-sa
-      terminationGracePeriodSeconds: 60
       containers:
       - name: postgres
-        image: "registry.opensource.zalan.do/acid/spilo-16:3.3-p1"
+        image: "registry.opensource.zalan.do/acid/spilo-17:3.4-p1"
         ports:
         - containerPort: 5432
-        - containerPort: 8008 # Patroni API
+        - containerPort: 8008 # Patroni REST API
         env:
           - name: SCOPE
             value: "pg-prod"
@@ -98,26 +103,41 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
-        # Проверки состояния через API Patroni
+          # Конфигурация бэкапов (S3)
+          - name: WALG_S3_PREFIX
+            value: "s3://my-backups/pg-prod"
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom: { secretKeyRef: { name: s3-creds, key: ID } }
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom: { secretKeyRef: { name: s3-creds, key: SECRET } }
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi" # Requests = Limits для RAM (Best Practice)
         readinessProbe:
-          httpGet:
-            path: /readiness
-            port: 8008
+          httpGet: { path: /readiness, port: 8008 }
         livenessProbe:
-          httpGet:
-            path: /liveness
-            port: 8008
-        # Грациозное завершение для минимизации простоя при Switchover
-        lifecycle:
-          preStop:
-            exec:
-              command: ["/usr/bin/python3", "-c", "import requests; requests.post('http://localhost:8008/failover')"]
+          httpGet: { path: /liveness, port: 8008 }
+      # Sidecar для экспорта метрик Prometheus
+      - name: exporter
+        image: "prometheuscommunity/postgres-exporter:v0.15.0"
+        env:
+          - name: DATA_SOURCE_NAME
+            value: "postgresql://postgres@localhost:5432/postgres?sslmode=disable"
+        ports:
+        - containerPort: 9187
 ```
 
-### Настройка сетевых сервисов
+### Шаг 3: Сетевая топология
+
+Для корректной работы приложений создается два сервиса: статический для записи и динамический для чтения.
 
 ```yaml
 # Сервис для записи (Master)
+# Patroni автоматически обновит Endpoints с этим именем
 apiVersion: v1
 kind: Service
 metadata:
@@ -126,7 +146,6 @@ spec:
   ports:
   - port: 5432
 ---
-# Пустой Endpoint для мастера (обновляется Patroni)
 apiVersion: v1
 kind: Endpoints
 metadata:
@@ -141,32 +160,38 @@ metadata:
 spec:
   selector:
     spilo-cluster: pg-prod
+    spilo-role: replica # Метка добавляется Patroni динамически
   ports:
   - port: 5432
 ```
 
 ## Дополнительная информация
 
-### Диагностика кластера
+### Диагностика и обслуживание
 
-Проверка ролей и отставания реплик выполняется утилитой `patroni_ctl`:
+Основные команды для работы с кластером через `patronictl`:
 
 ```bash
-# Список всех узлов
-kubectl exec -it pg-cluster-0 -- patroni_ctl list
+# Просмотр статуса кластера и отставания реплик
+kubectl exec -it pg-prod-0 -c postgres -- patronictl list
 
-# Переключение мастера вручную (Switchover)
-kubectl exec -it pg-cluster-0 -- patroni_ctl switchover
+# Ручное переключение мастера (Maintenance)
+kubectl exec -it pg-prod-0 -c postgres -- patronictl switchover
+
+# Изменение параметров postgresql.conf без перезапуска (где возможно)
+kubectl exec -it pg-prod-0 -c postgres -- patronictl edit-config
 ```
 
-### Рекомендации по эксплуатации
+### SRE Чек-лист
 
-* **Anti-Affinity**: Всегда используйте `podAntiAffinity`, чтобы поды одной базы не оказались на одной ноде.
-* **Ресурсы**: Устанавливайте `requests` и `limits` для RAM одинаковыми, чтобы избежать OOM Killer на мастере.
-* **Бэкапы**: Настраивайте WAL-G через переменные окружения `WALG_S3_PREFIX` и секреты с ключами доступа.
+1. **Anti-Affinity**: Убедитесь, что настроен `podAntiAffinity` по `kubernetes.io/hostname`, чтобы избежать падения всего кластера при выходе ноды из строя.
+2. **PDB (Pod Disruption Budget)**: Настройте `minAvailable: 1` для предотвращения одновременного удаления всех реплик при drain нод.
+3. **HugePages**: Для высоконагруженных систем включите HugePages на уровне нод и пробросьте их в контейнер.
+4. **Мониторинг**: Настройте алертинг на `pg_static_replication_lag` (> 100MB) и на состояние `Leader Lock`.
 
 ### Смотрите также
 
 * **[Отказоустойчивость PostgreSQL](../Concepts/high_availability.md)** — архитектура Patroni.
 * **[Zalando Postgres Operator](./zalando_postgres_operator.md)** — автоматизированное управление.
-* **[Backup and Recovery](../Concepts/backup_and_recovery.md)** — стратегии восстановления данных.
+* **[Наблюдаемость PostgreSQL](./observability.md)** — интеграция с мониторингом.
+* **[Сетевая связность](./kubernetes_connectivity.md)** — особенности работы в K8s.

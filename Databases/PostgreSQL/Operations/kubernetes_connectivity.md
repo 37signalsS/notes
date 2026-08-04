@@ -7,6 +7,8 @@
 * **Cross-Zone Traffic** — сетевой трафик между разными зонами доступности. Обычно является платным и вносит дополнительные задержки (latency).
 * **Connection Pooler (PgBouncer/Odyssey)** — промежуточный слой между приложением и БД для управления пулом соединений и снижения нагрузки на backend.
 * **Locality-based Load Balancing** — стратегия балансировки трафика, приоритезирующая локальные ресурсы для минимизации задержек.
+* **mTLS (Mutual TLS)** — взаимная аутентификация через сертификаты. В K8s используется для шифрования трафика между приложением и БД (Pod-to-Pod) без изменения кода приложения.
+* **Global Load Balancer (GSLB)** — механизм балансировки между разными кластерами или регионами (например, через ExternalDNS + Route53/Cloudflare).
 
 ## Базовые концепции
 
@@ -19,6 +21,13 @@
 | Внутри одной ноды | < 0.1 мс | Идеально для высокоинтенсивных транзакций |
 | Между нодами (одна AZ) | 0.2 – 0.5 мс | Стандарт для production-среды |
 | Межзонный трафик (Cross-AZ) | 1.0 – 2.5 мс | Заметное замедление при большом количестве commit |
+
+### Безопасность и шифрование (Zero Trust)
+
+В современных инфраструктурах (2026+) сетевой периметр кластера считается небезопасным.
+1. **CloudNativePG Native TLS**: Оператор умеет автоматически выпускать сертификаты для клиентских подключений.
+2. **Service Mesh (Istio/Cilium)**: Прозрачное шифрование трафика. *Важно: Sidecar-прокси (Envoy) может вносить до 0.5 мс задержки.*
+3. **NetworkPolicies**: Обязательное ограничение доступа. Разрешайте входящий трафик на порт 5432 только из Namespaces с приложениями.
 
 ### Основные стратегии оптимизации
 
@@ -108,7 +117,55 @@ spec:
     app: pgbouncer
   ports:
     - port: 5432
+
+### Сценарий 5: mTLS с cert-manager (CloudNativePG)
+
+Для использования корпоративного CA вместо самоподписанных сертификатов оператора:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-secure
+spec:
+  instances: 3
+  certificates:
+    issuerRef:
+      name: my-vault-issuer # Ссылка на ClusterIssuer (cert-manager)
+      kind: ClusterIssuer
+      group: cert-manager.io
 ```
+*Результат: Все сертификаты для узлов и клиентов будут автоматически выпускаться и ротироваться через cert-manager.*
+
+### Сценарий 6: Multi-cluster / Hybrid Connectivity (ExternalDNS)
+
+Для доступа к БД из другого кластера или извне через FQDN:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-public
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: "db-prod.example.com"
+spec:
+  type: LoadBalancer
+  selector:
+    cnpg.io/cluster: pg-prod
+    role: primary
+  ports:
+    - port: 5432
+```
+*Внимание: Публикация БД через LoadBalancer требует обязательного шифрования и ограничения доступа по IP (loadBalancerSourceRanges).*
+
+## Поиск и устранение неисправностей (SRE)
+
+| Ошибка | Возможная причина | Диагностика |
+|:---|:---|:---|
+| `Connection timeout` | NetworkPolicy или Firewall | `kubectl exec -it app-pod -- nc -zv db-service 5432` |
+| `SSL error: decryption failed` | Ошибка mTLS / Sidecar | Проверить логи `istio-proxy` или статус `Certificate` в cert-manager |
+| `Unknown host` | Проблемы DNS / CoreDNS | `kubectl exec -it app-pod -- nslookup db-service.namespace.svc.cluster.local` |
+| `Slow commits` | Высокий Cross-AZ Latency | `ping` между нодами разных зон. Проверить `topology-mode: Auto` |
 
 ## Дополнительная информация
 
@@ -121,5 +178,8 @@ spec:
 ### Смотрите также
 
 * **[PostgreSQL в Kubernetes](./kubernetes_deployment.md)** — развертывание через CloudNativePG.
+* **[Наблюдаемость PostgreSQL](./observability.md)** — настройка мониторинга и трассировки.
+* **[Предотвращение истечения SSL](../../../Kubernetes/Operations/ssl_expiration_prevention.md)** — настройка cert-manager для Kubernetes.
 * **[Affinity и TopologySpreadConstraints](../../../Kubernetes/Scheduling/affinity.md)** — управление распределением подов.
 * **[Основные концепции Service Mesh](../../../Service_Mesh/service_mesh_concepts.md)** — управление East-West трафиком и mTLS.
+* **[Безопасная установка СУБД](../../installation_security.md)** — общее руководство по закалке PostgreSQL.

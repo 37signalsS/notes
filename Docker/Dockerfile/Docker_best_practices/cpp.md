@@ -2,97 +2,94 @@
 
 ## Определения
 
-- **Toolchain:** Набор инструментов для компиляции и сборки ПО (компиляторы `gcc`/`clang`, линковщики `ld`/`lld`, системы сборки `make`/`cmake`/`ninja`).
-- **Статическая линковка (Static Linking):** Включение всех необходимых библиотек непосредственно в исполняемый файл. Позволяет создавать автономные бинарники, работающие в образе `scratch`.
-- **Динамическая линковка (Dynamic Linking):** Использование разделяемых библиотек (`.so`), которые должны присутствовать в операционной системе контейнера в рантайме.
-- **LTO (Link Time Optimization):** Метод оптимизации на этапе линковки, позволяющий уменьшить размер бинарника и повысить производительность за счет анализа всего кода целиком.
-- **Hardening:** Применение флагов компиляции (например, `Stack Protector`, `PIE`, `ASLR`) для повышения устойчивости приложения к эксплойтам.
-- **Strip:** Удаление отладочной информации и таблицы символов из бинарного файла для уменьшения его размера.
+- **Toolchain:** Набор инструментов для компиляции и сборки ПО (компиляторы `gcc`/`clang`, линковщики `ld`/`lld`/`mold`, системы сборки `make`/`cmake`/`ninja`).
+- **mold:** Сверхбыстрый современный линковщик, работающий в несколько раз быстрее `lld` и на порядки быстрее классического `ld`. Критичен для сокращения времени сборки крупных проектов в Docker.
+- **Статическая линковка (Static Linking):** Включение всех необходимых библиотек непосредственно в исполняемый файл. Позволяет создавать автономные бинарники, работающие в образах `scratch`.
+- **Wolfi / Chainguard:** Современные "un-distro" образы, ориентированные на безопасность (0 CVE) и использующие `glibc`. Идеальная база для производительных C++ приложений.
+- **Hardening:** Применение флагов компиляции (например, `-fhardened`, `Stack Protector`, `Full RELRO`) для повышения устойчивости бинарника к эксплойтам.
+- **PGO (Profile-Guided Optimization):** Метод оптимизации, при котором компилятор использует данные реального выполнения программы для ускорения кода.
+- **BOLT (Binary Optimization and Layout Tool):** Инструмент от Meta для пост-линковочной оптимизации бинарников, улучшающий размещение кода в памяти.
+- **SBOM (Software Bill of Materials):** Декларативный перечень всех компонентов и зависимостей, необходимый для аудита безопасности.
+- **LTO (Link Time Optimization):** Оптимизация на этапе линковки, анализирующая весь проект целиком.
+- **Strip:** Удаление отладочных символов из бинарника для минимизации его размера.
 
 ## Базовые концепции
 
-### Особенности сборки C/C++ (Компилируемый язык)
+### Особенности сборки C/C++ в контейнерах
 
-*   **Тип:** Компилируемый. Прямая компиляция в машинный код под конкретную архитектуру.
-*   **Артефакт:** Исполняемый файл и (опционально) разделяемые библиотеки.
-*   **Multi-stage:** Обязателен. Сборочное окружение C++ (компиляторы, заголовочные файлы `-dev`) обычно в 10–50 раз тяжелее финального рантайма.
-*   **Длительность сборки:** C++ компилируется медленно. Использование `ccache` и параллельной сборки (`make -j`) критично для CI/CD.
+*   **Multi-stage:** Обязателен. Сборочное окружение (SDK) в десятки раз тяжелее рантайма. Инструменты сборки никогда не должны попадать в финальный образ.
+*   **Длительность сборки:** C++ компилируется медленно. Использование `ccache`, `mold` и параллельной сборки (`ninja`) — стандарт де-факто в 2026 году.
+*   **Воспроизводимость:** Используйте флаги удаления путей (`-fdebug-prefix-map` или аналоги в CMake) для получения идентичных бинарников независимо от пути сборки в контейнере.
 
-### Использование BuildKit для ускорения компиляции
+### Ускорение компиляции (The Gold Standard 2026)
 
-Современный движок BuildKit позволяет монтировать кэш, который сохраняется между сборками.
-- **Кэш компилятора (`ccache`):** Сохраняет результаты компиляции отдельных файлов. Позволяет сократить время повторной сборки на 90%.
-- **Кэш зависимостей (`vcpkg`/`conan`):** Предотвращает повторную загрузку и сборку библиотек.
+Для достижения минимального времени сборки рекомендуется связка: **BuildKit Cache Mounts + ccache + mold + Ninja**.
+
+1.  **ccache:** Сохраняет результаты компиляции объектных файлов. Требует монтирования `--mount=type=cache`.
+2.  **mold:** Устраняет "бутылочное горлышко" этапа линковки. В CMake 3.29+ включается через `CMAKE_LINKER_TYPE=MOLD`.
+3.  **Ninja:** Намного эффективнее классического `make` при работе с графами зависимостей в контейнерах.
 
 ### Управление зависимостями
 
-1.  **Системные пакеты (`apt`, `apk`):** Самый простой путь, но версии библиотек привязаны к дистрибутиву ОС.
-2.  **Vcpkg / Conan:** Современные пакетные менеджеры для C++. Позволяют фиксировать версии библиотек независимо от ОС. Требуют кэширования папок установки в Docker.
-3.  **Git Submodules:** Исходный код зависимостей копируется в проект. Увеличивает время сборки, но обеспечивает полный контроль.
+| Метод | Использование в Docker | Преимущества |
+| :--- | :--- | :--- |
+| **Vcpkg** | Рекомендуется | Фиксация версий через `vcpkg.json`, автоматическая генерация SBOM (SPDX). |
+| **Conan 2.x** | Рекомендуется | Нативная поддержка CycloneDX 1.6, гибкие профили сборки. |
+| **Apt / Apk** | Для простых нужд | Скорость установки, но жесткая привязка к версии дистрибутива. |
 
-### Безопасность и Hardening
+### Безопасность и Hardening (Стандарты 2026)
 
-Для production-образов рекомендуется использовать флаги безопасности (обычно задаются через `CMAKE_CXX_FLAGS`):
-- `-fstack-protector-strong`: Защита от переполнения стека.
-- `-D_FORTIFY_SOURCE=2`: Обнаружение опасных вызовов функций.
-- `-Wl,-z,relro,-z,now`: Защита таблиц линковки (Read-only Relocation).
+Современные компиляторы (GCC 15+, Clang 18+) поддерживают комплексные флаги защиты:
+- **`-fhardened`**: Мета-флаг, включающий набор проверенных практик защиты.
+- **`-D_FORTIFY_SOURCE=3`**: Улучшенное обнаружение переполнений буфера (заменяет уровень 2).
+- **`-Wl,-z,relro,-z,now`**: Полный RELRO (защита таблиц импорта).
+- **`-D_GLIBCXX_ASSERTIONS`**: Проверка границ в стандартной библиотеке (STL).
 
 ## Практические сценарии
 
-### Сценарий 1: Оптимальная сборка CMake + ccache + BuildKit
+### Сценарий 1: Эталонная сборка (CMake + ccache + mold + BuildKit)
 
-Этот пример демонстрирует максимально быструю сборку за счет кэширования.
+Максимальная скорость и чистота финального образа на базе Debian.
 
 ```dockerfile
-# syntax=docker/dockerfile:1
-# --- Этап 1: Сборка (builder) ---
+# syntax=docker/dockerfile:1.10
+# --- Stage 1: Build Environment ---
 FROM debian:bookworm-slim AS builder
 
-# Установка инструментов и ccache
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    ninja-build \
-    ccache \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build mold ccache libssl-dev git
 
-WORKDIR /app
-
-# Настройка путей для ccache
-ENV CCACHE_DIR=/root/.ccache
-ENV PATH="/usr/lib/ccache:$PATH"
+WORKDIR /build
+ENV CCACHE_DIR=/root/.cache/ccache \
+    CCACHE_BASEDIR=/build
 
 COPY . .
 
-# Монтируем кэш ccache и сборочную директорию build
-RUN --mount=type=cache,target=/root/.ccache \
-    mkdir build && cd build && \
-    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release .. && \
-    ninja && \
-    strip my_app
+# Монтируем кэш ccache и собираем с использованием mold
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    cmake -S . -B out -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+    -DCMAKE_LINKER_TYPE=MOLD && \
+    cmake --build out && \
+    strip out/my_app
 
-# --- Этап 2: Финальный образ ---
+# --- Stage 2: Hardened Runtime ---
 FROM debian:bookworm-slim
-
-# Установка только необходимых рантайм-библиотек
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /app/build/my_app .
+COPY --from=builder /build/out/my_app .
 
-# Запуск от пользователя с ограниченными правами
 RUN useradd -m -u 10001 appuser
 USER appuser
-
 ENTRYPOINT ["./my_app"]
 ```
 
-### Сценарий 2: Статическая сборка на Alpine с защитой (Hardening)
+### Сценарий 2: Статическая сборка на Alpine/Scratch с Hardening
 
-Создание максимально компактного и защищенного бинарника.
+Для создания максимально компактных и безопасных (static) бинарников.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -102,68 +99,87 @@ RUN apk add --no-cache build-base cmake ninja ccache openssl-dev openssl-libs-st
 WORKDIR /app
 COPY . .
 
-# Сборка со статической линковкой и флагами безопасности
-RUN --mount=type=cache,target=/root/.ccache \
-    mkdir build && cd build && \
-    cmake -G Ninja \
+# Сборка со всеми флагами защиты 2026 года
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    cmake -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_EXE_LINKER_FLAGS="-static" \
-    -DCMAKE_CXX_FLAGS="-fstack-protector-strong -D_FORTIFY_SOURCE=2" \
-    .. && \
-    ninja
+    -DCMAKE_EXE_LINKER_FLAGS="-static -Wl,-z,relro,-z,now" \
+    -DCMAKE_CXX_FLAGS="-fhardened -D_FORTIFY_SOURCE=3 -D_GLIBCXX_ASSERTIONS" \
+    . && \
+    ninja -C build
 
 # --- Финальный этап ---
 FROM scratch
-# Копируем бинарник, он полностью автономен
-COPY --from=builder /app/build/my_app /my_app
-
-# Если приложению нужны CA-сертификаты (HTTPS)
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
+COPY --from=builder /app/build/my_app /my_app
 ENTRYPOINT ["/my_app"]
 ```
 
-### Сценарий 3: Интеграция с Vcpkg
+### Сценарий 3: Экстремальная производительность (PGO + Wolfi)
 
-Для проектов с большим количеством внешних библиотек.
+Использование профилирования и самых безопасных базовых образов.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM debian:bookworm-slim AS builder
-RUN apt-get update && apt-get install -y git curl zip unzip tar pkg-config build-essential cmake
-# Установка vcpkg
-RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg && \
-    /opt/vcpkg/bootstrap-vcpkg.sh
+FROM cgr.dev/chainguard/wolfi-base AS sdk
+RUN apk add --no-cache build-base cmake clang-18 llvm-18 mold ninja
 
-WORKDIR /app
-COPY vcpkg.json .
-
-# Кэшируем загрузку и сборку зависимостей vcpkg
-RUN --mount=type=cache,target=/root/.cache/vcpkg \
-    /opt/vcpkg/vcpkg install
-
+WORKDIR /src
 COPY . .
-RUN cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake
-RUN cmake --build build --config Release
+
+# 1. Сборка с инструментарием PGO
+RUN cmake -B build-pgo -G Ninja -DCMAKE_CXX_FLAGS="-fprofile-generate=/tmp/pgo" && \
+    cmake --build build-pgo
+
+# 2. Обучение (запуск тестов или бенчмарков для сбора профиля)
+# Это создает файл default.profdata
+RUN ./build-pgo/tests --run-full-suite && \
+    llvm-profdata merge -output=default.profdata /tmp/pgo/*.profraw
+
+# 3. Финальная оптимизированная сборка
+RUN cmake -B build-final -G Ninja \
+    -DCMAKE_CXX_FLAGS="-fprofile-use=/src/default.profdata -O3" \
+    -DCMAKE_LINKER_TYPE=MOLD && \
+    cmake --build build-final
+
+FROM cgr.dev/chainguard/glibc-dynamic:latest
+COPY --from=builder /src/build-final/my_app /usr/bin/my_app
+USER 65532
+ENTRYPOINT ["my_app"]
 ```
 
-### Верификация бинарника
+## Верификация и отладка
+
+### Глубокий аудит бинарника
 
 ```bash
-# 1. Проверка линковки (динамическая или статическая)
+# 1. Проверка линковки (статическая vs динамическая)
 ldd ./my_app
-# → not a dynamic executable (для статической)
+# → not a dynamic executable (успех для static)
 
-# 2. Проверка флагов безопасности (checksec)
+# 2. Проверка защиты (NX, PIE, Canary, RELRO)
+# Требуется утилита checksec
 checksec --file=./my_app
-# → NX: Enabled, PIE: Enabled, Canary: Enabled
+
+# 3. Сканирование SBOM и уязвимостей
+# В 2026 году стандарт CI/CD
+trivy image --severity HIGH,CRITICAL my_app:latest
 ```
 
 ## Дополнительная информация
 
+### Подводные камни scratch-образов (Legacy Info preserved)
+
+При использовании `scratch` или `distroless-static` помните:
+- **HTTPS:** Необходим файл `/etc/ssl/certs/ca-certificates.crt`.
+- **Timezones:** Необходима директория `/usr/share/zoneinfo`.
+- **Users:** Если приложение требует юзера, создайте его в builder и скопируйте `/etc/passwd`.
+- **DNS:** Если возникают ошибки резолвинга, используйте статическую линковку с `musl` или настройте `nsswitch.conf`.
+
 ### Смотрите также
 
-- [Оптимизация сборки Docker-образов](./build_optimization.md)
-- [Безопасность в Dockerfile](./security.md)
-- [Dockerfile: Лучшие практики для Rust](./rust.md) — альтернативный подход к компилируемым языкам
-- [Dockerfile: Лучшие практики для Go](./go.md) — детали работы с `scratch` и статикой
+- **[Оптимизация сборки Docker-образов](./build_optimization.md)** — общие стратегии кэширования.
+- **[Безопасность в Dockerfile](./security.md)** — глубокий аудит и сканирование CVE.
+- **[Инструменты сборки в Linux](../../Linux/Development/build_tools.md)** — подробнее о CMake и ccache.
+- **[Dockerfile: Лучшие практики для Rust](./rust.md)** — сравнение с альтернативным системным языком.
+- **[Dockerfile: Лучшие практики для Go](./go.md)** — детали работы с `scratch` и статикой.
