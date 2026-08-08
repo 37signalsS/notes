@@ -1,42 +1,42 @@
-# ArgoCD — игнорирование различий и принудительная синхронизация
+# Argo CD — игнорирование различий и принудительная синхронизация
+
+> **Актуальность (2026):** В версии Argo CD v3.x механизмы сравнения ресурсов (diffing) стали более интеллектуальными благодаря глубокой интеграции с **Server-Side Apply (SSA)**. Основным методом игнорирования динамических изменений стал `managedFieldsManagers`, который заменяет ручное перечисление полей через JSON Pointers в 90% случаев.
 
 ## Определения
 
-**Игнорирование различий (Ignore Differences)** — механизм ArgoCD, позволяющий исключать конкретные поля ресурсов из процесса сравнения (diffing). Это предотвращает ложные срабатывания статуса `OutOfSync` для полей, которые изменяются внешними контроллерами или мутирующими вебхуками.
+**Игнорирование различий (Ignore Differences)** — механизм Argo CD, позволяющий исключать конкретные поля или целые группы полей ресурсов из процесса сравнения (diffing). Это предотвращает ложные срабатывания статуса `OutOfSync` для полей, которые изменяются внешними контроллерами, мутирующими вебхуками или автоматикой облачных провайдеров.
 
-**Принудительная синхронизация (Force Sync)** — режим, при котором ArgoCD использует `kubectl apply --force`. Это приводит к удалению и повторному созданию ресурса, если обычное обновление невозможно из-за конфликтов или неизменяемых (immutable) полей.
+**Принудительная синхронизация (Force Sync)** — режим, при котором Argo CD использует команду `kubectl apply --force`. Это приводит к удалению и повторному созданию ресурса, если обычное обновление (patch/update) невозможно из-за конфликтов или наличия неизменяемых (immutable) полей.
 
-**managedFieldsManagers** — современный метод игнорирования различий, основанный на Kubernetes Server-Side Apply. Позволяет игнорировать все поля, которыми управляет конкретный контроллер (например, HPA или cert-manager), без перечисления каждого поля вручную.
+**managedFieldsManagers** — метод игнорирования, основанный на метаданных `managedFields` в Kubernetes. Позволяет Argo CD автоматически игнорировать любые изменения, внесенные указанным контроллером (менеджером), не требуя ручного указания путей к полям.
+
+**Server-Side Diffing** — режим, при котором вычисление разницы между Git и кластером делегируется API-серверу Kubernetes. Это позволяет учитывать работу всех мутирующих вебхуков (например, инъекцию sidecar-контейнеров) до проведения сравнения.
 
 ## Базовые концепции
 
 ### Методы настройки игнорирования
 
-ArgoCD предлагает три основных способа указать поля для игнорирования:
+Argo CD предлагает три способа идентификации полей для исключения:
 
-1.  **jsonPointers**: Классический метод, использующий RFC6901 (например, `/spec/replicas`).
-2.  **jqPathExpressions**: Более гибкий метод, позволяющий использовать логику JQ (например, для фильтрации элементов в списках по имени).
-3.  **managedFieldsManagers**: Самый надежный метод для 2024-2025 гг. Он опирается на метаданные `managedFields` и автоматически игнорирует любые изменения, внесенные указанным менеджером.
+1.  **managedFieldsManagers (Рекомендуемый):** Опирается на то, *кто* изменил поле. Самый надежный метод для систем типа HPA, cert-manager или облачных контроллеров.
+2.  **jqPathExpressions:** Опирается на логику JQ. Позволяет выбирать элементы в списках по условию (например, контейнер с конкретным именем в массиве `containers`).
+3.  **jsonPointers:** Опирается на RFC6901. Классический метод указания жесткого пути к полю (например, `/spec/replicas`).
 
 ### Уровни конфигурации
 
-- **Локальный (Application level)**: Настраивается непосредственно в манифесте `Application`. Удобно для специфичных для приложения правок.
-- **Глобальный (System level)**: Настраивается в ConfigMap `argocd-cm`. Позволяет задать общие правила для всего кластера (например, игнорирование системных аннотаций облачных провайдеров).
+- **Локальный (Application level):** Правила описываются внутри манифеста `Application` в секции `spec.ignoreDifferences`. Применяются только к конкретному приложению.
+- **Глобальный (System level):** Настраивается в ConfigMap `argocd-cm`. Позволяет задать общие правила (Customizations) для всех приложений в кластере на основе Group/Kind ресурсов.
 
 ### Параметр RespectIgnoreDifferences
 
-По умолчанию `ignoreDifferences` влияет только на визуальный статус в UI. При запуске синхронизации (особенно автоматической) ArgoCD может попытаться "исправить" эти поля.
-Для того чтобы ArgoCD **не перезаписывал** игнорируемые поля во время синхронизации, необходимо установить `RespectIgnoreDifferences=true` в `syncOptions`.
-
-### Server-Side Diffing
-
-В новых версиях ArgoCD поддерживает перенос процесса сравнения на сторону API-сервера Kubernetes. Это значительно снижает количество "шума" от мутирующих вебхуков (например, при инъекции sidecar-контейнеров Istio), так как Kubernetes учитывает результат работы всех вебхуков перед сравнением.
+По умолчанию `ignoreDifferences` влияет только на визуальный статус (превращает `OutOfSync` в `Synced`). Однако при запуске синхронизации Argo CD по умолчанию попытается привести поле в соответствие с Git.
+Чтобы Argo CD **не перезаписывал** игнорируемые поля во время автоматической или ручной синхронизации, необходимо установить параметр `RespectIgnoreDifferences=true` в `syncOptions`.
 
 ## Практические сценарии
 
-### Сценарий 1: Интеграция с HPA через managedFieldsManagers
+### Сценарий 1: Совместная работа с HPA (v3.x Way)
 
-Это рекомендуемый способ решения конфликтов между ArgoCD и Horizontal Pod Autoscaler. Вместо перечисления полей `/spec/replicas`, мы доверяем контроллеру Kubernetes.
+Вместо перечисления поля `replicas`, мы доверяем контроллеру, управляющему масштабированием.
 
 ```yaml
 spec:
@@ -44,36 +44,15 @@ spec:
   - group: apps
     kind: Deployment
     managedFieldsManagers:
-    - kube-controller-manager # Игнорировать всё, чем управляет HPA
+    - kube-controller-manager # HPA управляется этим менеджером
   syncPolicy:
     syncOptions:
     - RespectIgnoreDifferences=true
 ```
 
-### Сценарий 2: Глобальное игнорирование системных полей
+### Сценарий 2: Игнорирование мутаций Service Mesh (Istio/Linkerd)
 
-Настройка в `argocd-cm` для автоматического игнорирования полей статуса и меток облачных провайдеров для всех приложений.
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-cm
-data:
-  # Глобальное игнорирование полей статуса
-  resource.compareoptions: |
-    ignoreResourceStatusField: all
-
-  # Игнорирование меток, добавляемых внешними системами
-  resource.customizations.ignoreDifferences.all: |
-    jqPathExpressions:
-    - .metadata.labels["cloud.google.com/gke-installed-by"]
-    - .metadata.annotations["control-plane.alpha.kubernetes.io/leader"]
-```
-
-### Сценарий 3: Использование jqPathExpressions для списков
-
-Если нужно проигнорировать изменения в конкретном контейнере (например, sidecar), но отслеживать остальные.
+Системы Service Mesh внедряют sidecar-контейнеры и аннотации, которые отсутствуют в Git.
 
 ```yaml
 spec:
@@ -82,29 +61,73 @@ spec:
     kind: Deployment
     jqPathExpressions:
     - .spec.template.spec.containers[] | select(.name == "istio-proxy")
+    - .spec.template.metadata.annotations["sidecar.istio.io/status"]
 ```
 
-### Сценарий 4: Принудительное обновление застрявших ресурсов
+### Сценарий 3: Глобальное игнорирование системных аннотаций
 
-Если ресурс содержит неизменяемое поле, которое изменилось в Git, синхронизация завершится ошибкой. В этом случае используется `Force Sync`.
+Настройка в `argocd-cm` для исключения "шума" от облачных провайдеров (например, GKE/AWS/Yandex Cloud).
 
-**Через CLI:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreDifferences.all: |
+    jqPathExpressions:
+      - .metadata.annotations["cloud.google.com/gke-installed-by"]
+      - .metadata.labels["managed-by-external-system"]
+```
+
+### Сценарий 4: Принудительное обновление неизменяемых полей
+
+Если в Git изменилось поле, которое Kubernetes запрещает обновлять (например, `spec.selector` в `Service` или `spec.clusterIP`), синхронизация завершится ошибкой.
+
+**Решение через CLI:**
 ```bash
-argocd app sync my-app --force
+argocd app sync <app-name> --force
 ```
 
-**В манифесте Application:**
+**Решение в коде (использовать с осторожностью):**
 ```yaml
 spec:
   syncPolicy:
-    retry:
-      limit: 2
     syncOptions:
-    - Force=true # Опасно: приводит к пересозданию ресурса
+    - Force=true # Приведет к удалению и пересозданию ресурса
 ```
+
+## Технический справочник
+
+### Типичные менеджеры полей (Managers)
+
+| Система | Имя менеджера (`managedFieldsManagers`) |
+| :--- | :--- |
+| **Horizontal Pod Autoscaler** | `kube-controller-manager` |
+| **cert-manager** | `cert-manager-certificates-issuer` |
+| **Kyverno / Gatekeeper** | `kyverno`, `gatekeeper` |
+| **Argo CD (SSA)** | `argocd-controller` |
+| **Cloud Controllers** | `cloud-controller-manager` |
+
+### Server-Side Diffing (Оптимизация)
+
+Для ресурсов с огромным количеством динамических правок (например, `CustomResourceDefinitions`) рекомендуется включить Server-Side Diffing в `argocd-cm`:
+
+```yaml
+data:
+  # Включение SSA для всех ресурсов по умолчанию
+  server.side.apply.enabled: "true"
+```
+Это позволит Argo CD видеть "финальное" состояние ресурса после работы всех вебхуков, что радикально сокращает список необходимых `ignoreDifferences`.
 
 ## Дополнительная информация
 
-- **[Синхронизация ArgoCD](../synchronization.md)** — общий обзор политик и механизмов.
-- **[Автоматическая синхронизация](./scenarios/auto_sync.md)** — детальная настройка `selfHeal` и `RespectIgnoreDifferences`.
-- [ArgoCD Documentation: Diff Customization](https://argo-cd.readthedocs.io/en/stable/user-guide/diff-customization/) — официальное руководство по настройке сравнения.
+### См. также
+- [Синхронизация Argo CD: Обзор](../synchronization.md)
+- [Автоматическая синхронизация и Self-Heal](./scenarios/auto_sync.md)
+- [Диагностика и Troubleshooting](../argocd_troubleshooting_and_monitoring.md)
+- [Интеграция Kyverno и Argo CD](../../../Kubernetes/Security/kyverno/argo-cd.md)
+
+### Ссылки
+- [Argo CD Documentation: Diff Customization](https://argo-cd.readthedocs.io/en/stable/user-guide/diff-customization/)
+- [Kubernetes: Server-Side Apply Managed Fields](https://kubernetes.io/docs/reference/using-api/server-side-apply/#field-management)

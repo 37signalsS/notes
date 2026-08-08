@@ -1,100 +1,105 @@
-# Веб-интерфейсы Kubernetes: Dashboard и Headlamp
+# Веб-интерфейсы Kubernetes: Dashboard, Headlamp и альтернативы
 
-## Определение
+## Определения
 
-**Kubernetes Dashboard** — исторически первый официальный веб-интерфейс для управления кластерами Kubernetes. Позволяет визуализировать ресурсы кластера, управлять приложениями и выполнять базовую диагностику.
+**Kubernetes Dashboard** — исторически первый официальный веб-интерфейс для управления кластерами. К 2026 году проект официально переведен в статус **Retired** (архивирован) и не рекомендуется для использования в новых инсталляциях из-за прекращения поддержки безопасности.
 
-**Headlamp** — современный, расширяемый веб-интерфейс и официальный преемник Dashboard в рамках инициативы Kubernetes SIG UI. Поддерживает мультикластерность, плагины и обладает более совершенной моделью безопасности.
+**Headlamp** — современный, расширяемый веб-интерфейс, являющийся официальным преемником Dashboard в рамках CNCF Sandbox. Оптимизирован для мультикластерности, глубокой интеграции RBAC и расширения функционала через плагины.
 
-> **Важное уведомление о статусе (2026 г.):**
-> Проект Kubernetes Dashboard официально архивирован (21.01.2026) и перенесён в репозиторий `kubernetes-retired`. Он больше не получает обновлений безопасности и исправлений ошибок. Для всех новых установок и производственных сред **настоятельно рекомендуется использовать Headlamp**.
+**Lens (Lens Desktop)** — графическая IDE для Kubernetes, работающая как десктопное приложение. Фокусируется на удобстве разработчиков и SRE, предоставляя "единое окно" для всех кластеров без необходимости установки агентов внутри кластера.
+
+**k9s** — терминальный интерфейс (TUI), стандарт де-факто для быстрой навигации и отладки через CLI.
 
 ## Основные концепции
 
-### Сравнение решений
+### Сравнение решений для управления кластером
 
-| Параметр | Kubernetes Dashboard (Legacy) | Headlamp (Рекомендуется) |
-| :--- | :--- | :--- |
-| **Статус** | Архивом (Retired) | Активен (CNCF Sandbox) |
-| **Управление** | Только один кластер | Мультикластерный интерфейс |
-| **Расширяемость** | Отсутствует | Система плагинов (JS/TS) |
-| **Аутентификация** | Токены, Kubeconfig (сложно) | Нативная поддержка OIDC, SSO |
-| **Интерфейс** | Только Web | Web + Desktop (Linux, Mac, Win) |
-| **Безопасность** | Высокий риск при неверной настройке | Строгое соблюдение RBAC |
+| Параметр | Headlamp (Стандарт) | Lens (IDE) | k9s (TUI) | Dashboard (Legacy) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Среда запуска** | In-cluster / Desktop | Desktop (Local) | Terminal (Local) | In-cluster |
+| **Тип интерфейса** | Web UI / Desktop | GUI (Desktop App) | Terminal (TUI) | Web UI |
+| **Мультикластерность** | Родная поддержка | Отличная | Через переключение контекстов | Отсутствует |
+| **Безопасность** | Строгий RBAC + OIDC | Использует локальный kubeconfig | Использует локальный kubeconfig | Высокий риск (токены/прокси) |
+| **AI-интеграция** | Плагины (Lightspeed и др.) | Встроенный Copilot | Ограниченная | Нет |
+| **Статус проекта** | Активен (Рекомендован) | Активен (Proprietary/OSS) | Активен (OSS) | **Архивирован (2026)** |
 
-### Аутентификация в Headlamp
+### Архитектура и безопасность Headlamp
 
-Headlamp использует стандартные механизмы Kubernetes, но делает процесс входа более интуитивным:
-- **ID Token (OIDC):** Интеграция с корпоративными провайдерами (Okta, Keycloak, Google).
-- **Service Account Token:** Вход через токен конкретного пользователя.
-- **Kubeconfig:** Загрузка локального файла конфигурации для быстрого доступа.
+В отличие от старого Dashboard, Headlamp не требует привилегированного ServiceAccount для своей работы. Он выступает как прокси, передающий запросы к Kubernetes API от имени аутентифицированного пользователя.
+
+- **Плагины на JS/TS:** Позволяют добавлять кастомные страницы, столбцы в таблицах или целые модули (например, визуализацию стоимости ресурсов или безопасности).
+- **Topology View:** Визуальное представление связей между Pod, Service, Ingress и NetworkPolicy, что критично для отладки сетевых проблем.
+- **Интеграция с OIDC:** Поддержка SSO (Okta, Keycloak, GitHub) позволяет исключить использование небезопасных статических токенов.
 
 ## Практические сценарии
 
-### Установка Headlamp (Рекомендуемый способ)
+### Развертывание Headlamp в кластере
 
-Для развертывания в кластере используйте Helm:
+Рекомендуемый способ установки через Helm:
 
 ```bash
 helm repo add headlamp https://headlamp-project.github.io/headlamp/
-helm install my-headlamp headlamp/headlamp --namespace headlamp --create-namespace
+helm install my-headlamp headlamp/headlamp \
+  --namespace headlamp \
+  --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=headlamp.example.com
+```
+*# → Создается Namespace, Service, Deployment и Ingress для доступа к интерфейсу.*
+
+### Настройка OIDC (Аутентификация)
+
+Для настройки входа через внешний провайдер (например, Keycloak) в `values.yaml` необходимо указать параметры OIDC:
+
+```yaml
+config:
+  oidc:
+    clientID: "headlamp-client"
+    clientSecret: "your-secret"
+    issuerURL: "https://keycloak.example.com/realms/master"
+    scopes: "openid,profile,email,groups"
 ```
 
-После установки сервис будет доступен внутри кластера. Для внешнего доступа настройте Ingress или используйте `kubectl port-forward`.
+### Использование Headlamp Desktop
 
-### Использование Kubernetes Dashboard (Только для поддержки Legacy)
+Если вы не хотите устанавливать ничего в кластер, используйте Desktop-версию:
+1. Скачайте приложение с [официального сайта](https://headlamp.dev/).
+2. Приложение автоматически подхватит ваши контексты из `~/.kube/config`.
+3. Все действия будут выполняться с вашими текущими правами RBAC.
 
-Если в вашей инфраструктуре всё ещё используется старый Dashboard, обеспечьте его безопасность через `kubectl proxy`.
+### Быстрая отладка через k9s
 
-#### Доступ через прокси (Безопасный метод)
+Для мгновенного доступа к логам и ресурсам без браузера:
+```bash
+k9s --context prod-cluster -n my-app
+```
+*# → Открывается интерактивный интерфейс. Навигация: `:pods` — список подов, `l` — логи, `s` — shell.*
 
-1. **Запуск прокси на локальной машине:**
-   ```bash
-   kubectl proxy
-   ```
+### Перенос ресурсов из Dashboard в Headlamp
 
-2. **Доступ по URL:**
-   `http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https-kubernetes-dashboard:/proxy/`
-
-#### Создание административного токена (K8s 1.24+)
-
-Для входа в старый интерфейс часто требуется токен с правами администратора:
-
-1. **Создание ServiceAccount:**
-   ```bash
-   kubectl -n kubernetes-dashboard create serviceaccount admin-user
-   ```
-
-2. **Привязка роли Cluster Admin:**
-   ```bash
-   kubectl create clusterrolebinding admin-user --clusterrole=cluster-admin --serviceaccount=kubernetes-dashboard:admin-user
-   ```
-
-3. **Генерация токена:**
-   ```bash
-   kubectl -n kubernetes-dashboard create token admin-user
-   ```
-
-### Устранение неполадок
-
-#### Headlamp: Ошибка подключения к API
-- **Причина:** CORS-политики или неверный контекст в Kubeconfig.
-- **Решение:** Проверьте доступность API-сервера с узла, где запущен Headlamp, и убедитесь, что сертификаты валидны.
-
-#### Dashboard: Ошибка 401 Unauthorized
-- **Причина:** Истёк срок действия токена ServiceAccount.
-- **Решение:** Сгенерируйте новый токен командой `kubectl create token`. Помните, что в новых версиях K8s токены имеют ограниченное время жизни по умолчанию.
+При миграции со старого Dashboard:
+1. **Удаление Dashboard:** `kubectl delete ns kubernetes-dashboard`.
+2. **Проверка RBAC:** Убедитесь, что у пользователей настроены Role/ClusterRole, так как Headlamp строго следует правам текущего пользователя, а не использует "админский" токен интерфейса.
 
 ## Дополнительная информация
+
+### Тренды 2026 года: AI и Наблюдаемость
+
+Современные интерфейсы (Lens, Headlamp) активно интегрируют AI-ассистентов, которые могут:
+- Объяснять причины `CrashLoopBackOff` на основе анализа логов и событий.
+- Предлагать исправления для YAML-манифестов.
+- Генерировать топологические карты зависимостей в реальном времени.
 
 ### Ссылки
 
 - [Официальный сайт Headlamp](https://headlamp.dev/)
-- [Документация по плагинам Headlamp](https://headlamp.dev/docs/latest/development/plugins/)
+- [Lens Desktop — Kubernetes IDE](https://k8slens.dev/)
+- [Репозиторий k9s](https://github.com/derailed/k9s)
 - [Архив проекта Kubernetes Dashboard](https://github.com/kubernetes-retired/dashboard)
 
 ### См. также
 
-- [Kubespray — примеры установки интерфейсов](../Installation/Kubespray/examples.md)
-- [Namespace — изоляция ресурсов](./Base/namespace.md)
-- [Minikube — использование встроенных аддонов](./Installation/minikube/minikube_practical_scenarios.md)
+- [Kubernetes — обзор инструментов](./kubernetes_overview.md)
+- [RBAC — управление доступом](./Security/rbac/rbac_overview.md)
+- [OIDC в Kubernetes — концепции аутентификации](./Security/authentication.md)
+- [Lens — практические сценарии](./ToolsUtilities/lens/practical_scenarios.md)

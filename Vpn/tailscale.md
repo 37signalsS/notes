@@ -6,6 +6,9 @@
     ```bash
     # Замените https://headscale.example.com на адрес вашего сервера(https://headscale.magicfun.nnstd.dev)
     sudo tailscale up --login-server https://headscale.example.com
+
+    переходишь по ссылке которую тебе дало в терминале, входишь через nnstd id (если еще не вошел), и все
+
     ```
 
     Скопируйте ключ (`mkey...`), который появится в выводе.

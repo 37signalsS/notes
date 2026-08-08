@@ -41,8 +41,8 @@ service:
     flush:           1
     daemon:          off
     log_level:       info
-    # Путь к файлу с определениями парсеров
-    parsers_file:    parsers.conf
+    # Путь к файлу с определениями парсеров (в v3.x поддерживается YAML формат)
+    parsers_file:    parsers.yaml
     # Включение горячей перезагрузки (SIGHUP или HTTP API)
     hot_reload:      on
     
@@ -56,6 +56,8 @@ service:
     storage.sync:              normal
     storage.backlog.mem_limit: 128M
 ```
+
+> **Примечание:** Несмотря на переход на YAML, Fluent Bit сохраняет обратную совместимость, поэтому директива `parsers_file: parsers.conf` (Classic формат) по-прежнему широко встречается и корректно обрабатывается движком.
 
 ### Секция `pipeline`: Сбор и обработка
 

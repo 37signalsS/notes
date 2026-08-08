@@ -1,18 +1,67 @@
 # Интеграция Kustomize в конвейеры CD
 
-Интеграция Kustomize в конвейеры непрерывного развертывания (CD) позволяет автоматизировать управление конфигурациями Kubernetes для множества сред, обеспечивая надежность и скорость доставки ПО.
+Интеграция Kustomize в конвейеры непрерывного развертывания (CD) обеспечивает автоматизированное, декларативное и воспроизводимое управление конфигурациями Kubernetes для различных окружений.
 
-## 1. Пошаговое руководство по настройке
+## 1. Определения
 
-Для эффективной интеграции выполните следующие шаги:
+**Kustomize CD Integration** — процесс автоматического рендеринга и применения манифестов Kubernetes, настроенных через Kustomize, в целевые кластеры в рамках конвейера доставки.
 
-1.  **Организация манифестов:** Разделите манифесты на базовые (`base/`) и наложенные (`overlays/`) каталоги. Базовый каталог содержит общую конфигурацию, а `overlays` — подкаталоги для каждой среды (например, `development`, `staging`, `production`).
-2.  **Контроль версий:** Храните все конфигурации Kustomize в репозитории с контролем версий (Git). Любые изменения должны проходить через процесс Code Review.
-3.  **Конфигурация конвейера CI/CD:** Настройте этапы конвейера для проверки репозитория, сборки манифестов с помощью `kustomize build` и их применения к кластеру.
+**Push-модель (CI-driven)** — стратегия, при которой внешний конвейер (Jenkins, GitLab CI, GitHub Actions) активно подключается к кластеру и выполняет `kubectl apply -k`.
 
-## 2. Пример конфигурации Jenkins Pipeline
+**Pull-модель (GitOps-driven)** — стратегия, при которой специальный агент внутри кластера (ArgoCD, Flux) отслеживает изменения в Git и самостоятельно синхронизирует состояние кластера с описанным в репозитории.
 
-Ниже приведен пример расширенного конвейера Jenkins для развертывания в нескольких средах с контролем качества и ручным подтверждением:
+**Dry-run (Валидация)** — этап проверки сгенерированных манифестов на соответствие схемам Kubernetes API и политикам безопасности без их фактического применения.
+
+## 2. Основные концепции
+
+### Модели доставки
+
+| Характеристика | Push-модель (CI-driven) | Pull-модель (GitOps) |
+| :--- | :--- | :--- |
+| **Инструменты** | Jenkins, GitHub Actions, GitLab CI | ArgoCD, Flux |
+| **Доступ** | Требуются учетные данные кластера в CI | Агент уже внутри кластера |
+| **State Drift** | Сложно отследить ручные изменения | Автоматическое исправление (Self-healing) |
+| **Безопасность** | Широкий доступ для CI-раннеров | Минимальный доступ (только к Git) |
+
+### Разделение ответственности
+В зрелых процессах рекомендуется разделять репозиторий с исходным кодом приложения и репозиторий с конфигурациями Kubernetes. CI-пайплайн обновляет тег образа в `kustomization.yaml` (через `kustomize edit set image`), а CD-инструмент применяет изменения.
+
+### Хеширование имен в CD
+Использование `configMapGenerator` и `secretGenerator` является критическим для CD. Kustomize автоматически добавляет хеш к имени ресурса, что гарантирует запуск **Rolling Update** при изменении конфигурации, исключая ситуации, когда поды используют устаревшие данные.
+
+## 3. Практические сценарии
+
+### 3.1. Сценарий 1: Push-модель через GitHub Actions
+
+Пример рабочего процесса, который валидирует и применяет манифесты.
+
+```yaml
+name: Deploy to Staging
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Validate Manifests (Dry-run)
+        run: kustomize build overlays/staging | kubectl apply --dry-run=client -f -
+
+      - name: Deploy
+        run: kustomize build overlays/staging | kubectl apply -f -
+```
+
+### 3.2. Сценарий 2: Push-модель через Jenkins Pipeline
+
+Расширенный пример с ручным подтверждением для Production.
 
 ```groovy
 pipeline {
@@ -23,78 +72,76 @@ pipeline {
                 git 'https://your-repo-url.git'
             }
         }
-        stage('Build Manifests') {
+        stage('Build & Validate') {
             steps {
-                // Генерация финальных манифестов для сред
                 sh 'kustomize build overlays/staging > staging-manifest.yaml'
                 sh 'kustomize build overlays/production > production-manifest.yaml'
+                // Валидация через kubeconform
+                sh 'kustomize build overlays/staging | kubeconform -strict'
             }
         }
         stage('Deploy to Staging') {
             steps {
-                sh 'kubectl apply -f staging-manifest.yaml'
-            }
-        }
-        stage('Run Tests') {
-            steps {
-                echo 'Running smoke tests on staging...'
-                // sh './run-smoke-tests.sh'
+                sh 'kubectl apply -k overlays/staging/'
             }
         }
         stage('Promote to Production') {
             steps {
-                // Ручное подтверждение перед деплоем в Production
                 input message: 'Promote to Production?'
-                sh 'kubectl apply -f production-manifest.yaml'
+                sh 'kubectl apply -k overlays/production/'
             }
-        }
-    }
-    post {
-        failure {
-            // Уведомление команды при сбое
-            mail to: 'dev-team@example.com',
-                 subject: "Pipeline Failure: ${currentBuild.fullDisplayName}",
-                 body: "Build failed: ${env.BUILD_URL}"
         }
     }
 }
 ```
 
-## 3. Автоматизация откатов и версионирование
+### 3.3. Сценарий 3: Pull-модель через ArgoCD
 
-Включение механизмов автоматического отката критически важно для быстрого восстановления при сбоях. С помощью Kustomize можно сохранять предыдущие конфигурации и применять их при необходимости.
+ArgoCD нативно поддерживает Kustomize. Достаточно указать путь к директории.
 
-### Структура репозитория для управления релизами
-Для обеспечения возможности отката рекомендуется хранить каждую версию манифестов в системе контроля версий. Типичная структура репозитория выглядит следующим образом:
-
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/my-org/my-infra.git'
+    targetRevision: HEAD
+    path: overlays/staging
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
 ```
-kustomize/
-├── base/                   # Базовая конфигурация
-│   ├── deployment.yaml
-│   └── kustomization.yaml
-├── overlays/               # Оверлеи для сред
-│   ├── dev/
-│   ├── staging/
-│   └── prod/
-└── releases/               # Снапшоты версий (для быстрых откатов)
-    ├── v1.0.0/
-    ├── v1.1.0/
-    └── v2.0.0/
-```
 
-### Сценарий отката
-В случае обнаружения критической ошибки в новой версии (например, v2.0.0), конвейер CD может быть настроен на повторное применение манифестов из директории предыдущего стабильного релиза (`releases/v1.1.0/`).
+### 3.4. Управление секретами
 
----
+Для CD критически важно не хранить секреты в открытом виде:
+- **SOPS + Kustomize:** использование плагина `ksops` для расшифровки секретов на лету.
+- **Sealed Secrets:** хранение зашифрованных манифестов в Git, которые расшифровываются контроллером в кластере.
+- **External Secrets Operator:** использование `secretGenerator` в Kustomize для создания заполнителей, которые наполняются данными из внешнего хранилища (Vault).
 
-## 4. Рекомендации по интеграции
+### 3.5. Стратегия откатов и версионирование
 
-*   **Dry-run и валидация:** Перед деплоем всегда выполняйте `kustomize build` и валидируйте результат с помощью утилит типа `kubeconform`.
-*   **Использование GitOps:** Для более продвинутых сценариев используйте инструменты GitOps (например, ArgoCD или Flux), которые нативно поддерживают Kustomize и автоматически синхронизируют состояние репозитория с кластером.
-*   **Безопасность:** Не храните секреты в открытом виде в `kustomization.yaml`. Используйте `secretGenerator` в сочетании с внешними менеджерами секретов (HashiCorp Vault, AWS Secrets Manager) или зашифрованными инструментами (SOPS).
+Для обеспечения надежности рекомендуется:
+1.  **Git-тегирование:** пометка коммитов в репозитории конфигураций тегами версий (например, `v1.0.1`).
+2.  **Откат в Git:** выполнение `git revert` в репозитории конфигураций. GitOps-инструмент мгновенно применит предыдущее стабильное состояние.
+3.  **Снапшоты релизов:** хранение сгенерированных манифестов в архиве артефактов CI для возможности быстрого `kubectl apply` в случае недоступности Git.
 
-## Дополнительная информация
+## 4. Дополнительная информация
 
-*   [Обзор и основные концепции](./kustomize_overview.md)
-*   [Практические сценарии использования](./kustomize_structure_and_syntax.md)
-*   [Валидация манифестов (kubeconform)](../kubeconform_overview.md)
+### См. также
+- **[Обзор и основные концепции](./kustomize_overview.md)** — базовые определения и установка.
+- **[Структура и синтаксис](./kustomize_structure_and_syntax.md)** — детальный разбор `kustomization.yaml`.
+- **[Валидация манифестов (kubeconform)](../kubeconform_overview.md)** — автоматическая проверка схем.
+
+### Внешние ресурсы
+- [Official Kustomize Documentation](https://kustomize.io/)
+- [ArgoCD: Kustomize Integration](https://argo-cd.readthedocs.io/en/stable/user-guide/kustomize/)
+- [Flux v2: Kustomization API](https://fluxcd.io/flux/components/kustomize/kustomization/)

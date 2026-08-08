@@ -4,6 +4,8 @@
 
 **Netdata** — высокопроизводительная система для мониторинга производительности систем и приложений в реальном времени. Ключевое отличие от Prometheus — детализация метрик до секунды, встроенное машинное обучение для обнаружения аномалий и готовые интерактивные дашборды.
 
+**Netdata Cloud** — SaaS-платформа для централизованного управления, визуализации и коллаборации, которая связывает разрозненные инсталляции (Parent-узлы) в единое пространство (War Rooms) без необходимости пробрасывать порты наружу.
+
 **Область применения:**
 - Отладка производительности в реальном времени (high-resolution).
 - Анализ инцидентов и обнаружение аномалий (Anomaly Advisor).
@@ -16,28 +18,37 @@
 ### Архитектура в Kubernetes (Parent-Child)
 Netdata оптимизирована для работы в Kubernetes по гибридной модели:
 - **Child (DaemonSet)**: Легковесные агенты на каждом узле кластера. Рекомендуется использовать режим `memory_mode = ram` для хранения данных только в оперативной памяти, что исключает нагрузку на диск рабочих узлов. Собирает метрики хоста, контейнеров и приложений.
-- **Parent (Deployment)**: Центральный узел для агрегации данных. Использует `dbengine` для долгосрочного хранения сжатых данных на PersistentVolume. Поддерживает многоуровневое хранение (Tiered Storage) для архивации метрик за месяцы и годы.
+- **Parent (Deployment)**: Центральный узел для агрегации данных. Использует базу данных `dbengine` для долгосрочного хранения сжатых данных на PersistentVolume. Поддерживает многоуровневое хранение (Tiered Storage) для архивации метрик за месяцы и годы на небольших дисках за счет агрегации исторических данных.
 
 ### Глубокая видимость с eBPF
 Netdata включает нативный коллектор eBPF, который позволяет отслеживать:
 - **Сеть L4**: Пропускная способность TCP/UDP, ретрансмиссии, ошибки на уровне сокетов.
 - **Процессы**: Жизненный цикл (fork/exit), использование CPU потоками, переключение контекста.
 - **Файловая система**: Задержки VFS, операции ввода-вывода.
-Это дает видимость происходящего внутри контейнеров без внедрения агентов (sidecars).
+Это дает видимость происходящего внутри контейнеров без внедрения агентов (sidecars). 
+**Требования:** Для работы eBPF-коллектора ядра Kubernetes-узлов должны поддерживать eBPF, а также требовать смонтированного `debugfs` (обычно монтируется автоматически в современных дистрибутивах).
 
 ### Машинное обучение и аномалии
 Netdata обучает модели машинного обучения (k-means) для каждой собираемой метрики непосредственно на узлах.
 - **Anomaly Advisor**: Автоматически подсвечивает метрики, поведение которых отклоняется от нормы, помогая коррелировать события во время инцидентов.
 - **Нулевая настройка**: ML-модели не требуют ручной настройки порогов и адаптируются к нагрузке кластера в течение 24–48 часов.
 
+### Безопасность и управление доступом
+Netdata **не имеет встроенной системы аутентификации** в открытом исходном коде. Доступ к дашбордам полностью открыт по умолчанию. Для защиты применяются:
+1. **Netdata Cloud:** Локальный UI отключается, доступ осуществляется через SaaS с ролевой моделью (RBAC) и SSO.
+2. **Reverse Proxy:** Использование Ingress-контроллера с Basic Auth, OAuth2-Proxy или OIDC для защиты локального Parent-узла.
+
+### Экспорт метрик (Netdata как Exporter)
+Netdata может выступать как "умный" exporter для Prometheus или VictoriaMetrics. Вместо использования классического Node Exporter, Netdata предоставляет эндпоинт `/api/v1/allmetrics?format=prometheus`, позволяя совмещать редкий скрейпинг Prometheus (например, раз в минуту) с секундным мониторингом в дашбордах самой Netdata.
+
 ### Преимущества и недостатки
-- **Преимущества**: Посекундное разрешение, автоматическое обнаружение сотен сервисов, eBPF из коробки, низкое потребление ресурсов.
-- **Недостатки**: Ограниченная кастомизация дашбордов (в сравнении с Grafana), сложность настройки алертов по сложным составным условиям.
+- **Преимущества**: Посекундное разрешение, автоматическое обнаружение сотен сервисов, eBPF из коробки, низкое потребление ресурсов (при правильной настройке limits).
+- **Недостатки**: Отсутствие встроенной аутентификации в OSS-версии, ограниченная кастомизация дашбордов (в сравнении с Grafana), сложность настройки алертов по сложным составным условиям.
 
 ## Практические сценарии
 
-### Установка через Helm
-Рекомендуется использовать официальный чарт с настройкой Parent-Child.
+### Установка через Helm (с Netdata Cloud и лимитами)
+Рекомендуется использовать официальный чарт с настройкой Parent-Child, установленными лимитами ресурсов (чтобы избежать вытеснения других подов) и интеграцией с Netdata Cloud.
 
 **Шаг 1: Подготовка репозитория**
 ```bash
@@ -48,16 +59,20 @@ helm repo update
 ```
 
 **Шаг 2: Настройка и установка**
-Создайте `values.yaml` для оптимизации хранения и включения eBPF:
+Создайте `values.yaml` для оптимизации хранения, eBPF и Cloud:
 ```yaml
 parent:
   database:
     storageClass: "managed-nfs-storage"
-    volumesize: 10Gi
+    volumesize: 20Gi
   config:
     dbengine:
-      tier0_expansion: 1
-      tier1_expansion: 10
+      page_cache_size: 512
+      dbengine_multihost_disk_space: 10240 # 10GB для Tier 0
+  claim:
+    enabled: true
+    token: "YOUR_CLAIM_TOKEN"
+    rooms: "YOUR_ROOM_ID"
 
 child:
   config:
@@ -66,6 +81,17 @@ child:
     memory_mode: ram
   ebpf:
     enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi # Важно для ограничения потребления RAM агентом
+  claim:
+    enabled: true
+    token: "YOUR_CLAIM_TOKEN"
+    rooms: "YOUR_ROOM_ID"
 
 ingress:
   enabled: false
@@ -78,13 +104,22 @@ helm install netdata netdata/netdata \
   --create-namespace \
   -f values.yaml
 # → NAME: netdata
-# → NAMESPACE: monitoring
 # → STATUS: deployed
-# → REVISION: 1
 ```
 
-### Доступ через Ingress
-Для безопасного доступа к интерфейсу родительского узла:
+### Настройка алертинга (Уведомления)
+Netdata Parent использует конфигурационные файлы для отправки уведомлений. В Kubernetes настройки пробрасываются через Helm `values.yaml` (блок `alarms`):
+```yaml
+parent:
+  alarms:
+    health_alarm_notify: |
+      SEND_TELEGRAM="YES"
+      TELEGRAM_BOT_TOKEN="123456789:ABCdefGHI"
+      TELEGRAM_CHAT_ID="-1001234567890"
+```
+
+### Доступ через Ingress с аутентификацией
+Для безопасного доступа к локальному интерфейсу родительского узла (с использованием Basic Auth через Nginx):
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -93,6 +128,9 @@ metadata:
   namespace: monitoring
   annotations:
     cert-manager.io/issuer: "kubernetes-ca-issuer"
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: netdata-basic-auth # Секрет с htpasswd
+    nginx.ingress.kubernetes.io/auth-realm: "Authentication Required"
 spec:
   ingressClassName: nginx
   tls:
@@ -113,6 +151,19 @@ spec:
 ```
 Настройка сертификатов: **[CA кластера](../ToolsUtilities/cert_manager/cluster_ca.md)**.
 
+### Диагностика (Troubleshooting)
+Полезные команды для проверки состояния Netdata:
+```bash
+# Проверка логов родительского узла (ошибки базы данных dbengine или eBPF)
+kubectl logs -n monitoring -l app=netdata,component=parent --tail=100
+
+# Статус claim в Netdata Cloud изнутри пода (проверка связи с SaaS):
+kubectl exec -it -n monitoring deploy/netdata-parent -- netdatacli claim-status
+
+# Принудительная перезагрузка health-чеков (алертов) без перезапуска пода:
+kubectl exec -it -n monitoring deploy/netdata-parent -- netdatacli reload-health
+```
+
 ## Дополнительная информация
 
 ### Интеграция с OpenTelemetry
@@ -121,4 +172,4 @@ Netdata может выступать в роли бэкенда для OpenTele
 ### Смежные темы
 - **[Monitoring and Logging Architecture](./kubernetes-monitoring-logging-architecture.md)** — архитектура мониторинга в Kubernetes.
 - **[Metrics Collection Strategies](../../Concepts/Observability_and_Monitoring/metrics_collection_strategies.md)** — стратегии сбора телеметрии.
-- **[Prometheus Installation](../../../Prometheus/installation/prometheus_server_installation.md)** — долгосрочное хранение и сложные алерты.
+- **[Prometheus Installation](../../Prometheus/installation/prometheus_server_installation.md)** — долгосрочное хранение и сложные алерты.

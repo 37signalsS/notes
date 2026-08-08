@@ -2,90 +2,84 @@
 
 ## Определения
 
-**Пользователь Rancher** — объект в Rancher Manager, представляющий личность. При аутентификации через внешние системы (LDAP, AD) Rancher создает внутренний объект пользователя с уникальным идентификатором (например, `u-bcdef`).
+**Rancher User** — объект в Management-кластере (local), представляющий личность или программного агента. Rancher хранит метаданные пользователя, но аутентификацию делегирует внешним провайдерам.
 
-**Global Role (Глобальная роль)** — набор прав, определяющий доступ к ресурсам самого Rancher Manager (создание кластеров, управление пользователями, настройка Auth Providers).
+**Global Role** — набор разрешений, действующих на уровне всей инсталляции Rancher Manager. Определяет права на создание новых кластеров, управление Auth-провайдерами и глобальными настройками. Начиная с 2026 г., поддерживает **Inherited Namespace Rules** для автоматического проброса прав в downstream-кластеры.
 
-**RoleTemplate** — кастомный ресурс (CRD) в Rancher, описывающий шаблон роли. Именно на базе этих шаблонов Rancher создает нативные `ClusterRole` и `Role` в управляемых кластерах.
+**Project (Проект)** — логическая группа нескольких Namespace внутри одного кластера. Позволяет агрегировать права доступа, квоты ресурсов и политики безопасности для группы пространств имен.
 
-**Project (Проект)** — уникальная для Rancher сущность, позволяющая объединять несколько Namespace в одну логическую единицу для применения общих квот и прав доступа.
+**RoleTemplate** — кастомный ресурс (CRD) в Rancher, служащий шаблоном для создания нативных `ClusterRole` и `Role` в управляемых кластерах.
 
-**Auth Provider (Провайдер аутентификации)** — модуль интеграции с внешней системой управления учетными записями (Active Directory, FreeIPA, GitHub, Keycloak).
+**OIDC Aggregator (v2.8+)** — компонент, агрегирующий JWKS и документы Discovery со всех подключенных кластеров для обеспечения единой точки входа (SSO) внешним инструментам.
 
 ## Базовые концепции
 
-### Механизм трансляции прав
+### Механизм трансляции и Impersonation
 
-Rancher не подменяет [Kubernetes RBAC](../Security/rbac/rbac_overview.md), а автоматизирует его настройку. Когда администратор назначает роль пользователю в интерфейсе Rancher, происходят следующие процессы:
+Rancher не является "заменой" нативному RBAC Kubernetes, он выступает как оркестратор прав. При обращении пользователя к downstream-кластеру через Rancher Proxy используется механизм **Impersonation**:
 
-1. **Создание RoleTemplate**: описание разрешений хранится в кластере `local` (где установлен Rancher).
-2. **Генерация объектов**: Rancher создает нативные `ClusterRole` в целевом (downstream) кластере.
-3. **Привязка (Binding)**: создаются `ClusterRoleBinding` или `RoleBinding`, связывающие субъекта (пользователя) с ролью.
-4. **Идентификация**: в Kubernetes RBAC пользователи Rancher фигурируют под системными именами (например, `user-u-bcdef`).
+1.  Rancher аутентифицирует пользователя (через токен или SSO).
+2.  Запрос пересылается в downstream-кластер с заголовками `Impersonate-User: user-u-xxxxx` и `Impersonate-Group: system:authenticated`.
+3.  Локальный API-сервер Kubernetes проверяет права для этого системного имени, используя объекты `ClusterRoleBinding`, которые Rancher заранее создал на основе **RoleTemplate**.
 
-### Уровни управления (Hierarchy)
+### Уровни иерархии прав
 
-1. **Global Permissions**: права на уровне всей инсталляции Rancher.
-2. **Cluster Permissions**: права на уровне конкретного кластера (управление нодами, хранилищами).
-3. **Project Permissions**: права на группу Namespace. Это основной уровень для разработчиков.
-4. **Namespace Permissions**: гранулярный доступ к конкретному пространству имен внутри проекта.
+| Уровень | Объект Rancher | Соответствие в K8s | Сфера действия |
+| :--- | :--- | :--- | :--- |
+| **Global** | `GlobalRole` | N/A (local cluster only) | Вся инсталляция Rancher |
+| **Cluster** | `ClusterRoleTemplateBinding` | `ClusterRoleBinding` | Весь конкретный кластер |
+| **Project** | `ProjectRoleTemplateBinding` | `RoleBinding` (множественные) | Все Namespace внутри проекта |
+| **Namespace** | N/A | `RoleBinding` | Конкретный Namespace |
 
-### Проекты vs Пространства имен
+### Преимущества проектов (Projects)
 
-Использование проектов (Projects) поверх стандартных Namespace дает ряд преимуществ:
-* **Наследование прав**: пользователь, добавленный в проект, автоматически получает права во всех текущих и будущих Namespace этого проекта.
-* **Агрегация квот**: лимиты CPU/RAM устанавливаются на проект целиком, распределяясь между его Namespace.
-* **Изоляция**: проекты помогают логически разделить окружения (Dev, Staging, Prod) внутри одного кластера.
+*   **Multi-tenant изоляция:** разработчики видят только ресурсы своего проекта.
+*   **Автоматизация прав:** при добавлении нового Namespace в проект, все `ProjectRoleTemplateBinding` автоматически распространяются на него.
+*   **Resource Quotas:** возможность установить лимит на суммарное потребление ресурсов всеми Namespace проекта (например, "не более 16 CPU на весь проект Marketing").
 
 ## Практические сценарии
 
-### Настройка внешнего провайдера (на примере LDAP)
+### Настройка OIDC с использованием PKCE (Рекомендовано 2026)
 
-1. Перейдите в **Users & Authentication** → **Auth Provider**.
-2. Выберите **LDAP** (или OpenLDAP/Active Directory).
-3. Заполните данные сервера и **Service Account** для поиска пользователей.
-4. Настройте **User/Group Search Config** (укажите базовые DN и фильтры).
-5. Нажмите **Enable** и выполните тестовый вход.
+Для интеграции с современными IDP (Okta, Authentik, Keycloak):
+1.  В Rancher UI: **Users & Authentication** → **Auth Provider** → **OIDC**.
+2.  Укажите **Issuer URL** (Rancher автоматически загрузит метаданные через `.well-known/openid-configuration`).
+3.  Включите **Use PKCE** для защиты потока авторизации.
+4.  Настройте **Group Search**: укажите атрибут (обычно `groups`), из которого Rancher будет извлекать членство пользователя для маппинга ролей.
 
-### Создание кастомной роли (RoleTemplate)
+### Маппинг внешних групп на роли Rancher
 
-Если стандартных ролей (Project Owner, Project Member) недостаточно:
-1. Перейдите в **Users & Authentication** → **Role Based Access Control**.
-2. Выберите нужную вкладку (Cluster Roles или Project Roles).
-3. Нажмите **Create** и определите правила (Resources, Verbs).
-4. **Важно:** флаг `Context` определяет, где будет доступна эта роль.
-5. Флаг `Locked` запрещает редактирование встроенных ролей, но позволяет клонировать их для изменений.
+Лучшая практика — не добавлять пользователей по одному, а назначать роли группам:
+1.  Создайте группу в вашем IDP (например, `k8s-platform-admins`).
+2.  В Rancher перейдите в настройки нужного кластера → **Cluster Members** → **Add**.
+3.  Выберите тип **Group** и введите точное имя группы из IDP.
+4.  Назначьте роль `Cluster Owner`. Все участники группы автоматически получат доступ.
 
-### Диагностика прав доступа (Troubleshooting)
+### Создание кастомного RoleTemplate
 
-Если пользователь не может выполнить действие, разрешенное в Rancher:
-1. Проверьте ID пользователя в Rancher (**Users & Authentication** → **Users**).
-2. В управляемом кластере найдите привязки:
-   ```bash
-   kubectl get clusterrolebindings | grep user-u-xxxxx
-   ```
-3. Проверьте содержимое связанной `ClusterRole`:
-   ```bash
-   kubectl get clusterrole <name> -o yaml
-   ```
-4. Убедитесь, что Cattle Agent в кластере успешно синхронизировал объекты из Rancher Manager.
+Если встроенных ролей недостаточно, создайте свою:
+1.  **Users & Authentication** → **Role Based Access Control** → **Cluster/Project Roles**.
+2.  Нажмите **Create**. В поле **Rules** определите `apiGroups`, `resources` и `verbs`.
+3.  Используйте флаг **Hidden**, если роль предназначена только для системного использования и не должна выбираться в UI пользователями.
 
 ## Дополнительная информация
 
-### Статус и рекомендации
+### Рекомендации и статус (2026)
 
-| Компонент | Статус | Рекомендация |
-|-----------|--------|--------------|
-| Локальные пользователи | Актуально | Только для начальной настройки (admin) |
-| Внешние группы | Стабильно | Назначать права группам, а не отдельным пользователям |
-| Квоты проектов | Актуально | Обязательно для multi-tenant сред |
+*   **Policy-as-Code:** Всегда определяйте `RoleTemplates` и `GlobalRoles` через Terraform/OpenTofu или Fleet. Избегайте ручных правок в UI в Production-средах.
+*   **Hide Local Auth:** После настройки внешнего IDP рекомендуется включить опцию `hide-local-auth`, чтобы минимизировать риск атак на локальные учетные записи.
+*   **RKE1 EOL:** Учитывайте, что расширенные функции RBAC 2026 года (OIDC Aggregator, гранулярные роли Fleet) полноценно работают только на **RKE2** и **K3s**.
 
-**Связанные разделы:**
+---
 
-* [rancher_overview](./rancher_overview.md) — общая архитектура Rancher.
-* [Kubernetes RBAC](../Security/rbac/rbac_overview.md) — теоретические основы прав доступа в K8s.
-* [Rancher Logging](./rancher_logging.md) — пример использования RBAC для системных сервисов.
+**См. также:**
 
-**Внешние ссылки:**
-* [Rancher RBAC Documentation](https://ranchermanager.docs.rancher.com/how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac)
-* [Authenticating with LDAP/AD](https://ranchermanager.docs.rancher.com/how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/configure-adapter-for-authentication/configure-openldap)
+*   [Kubernetes RBAC](../Security/rbac/rbac_overview.md) — основы прав доступа в K8s.
+*   [Rancher Overview](./rancher_overview.md) — архитектура платформы.
+*   [Rancher Logging](./rancher_logging.md) — разграничение доступа к логам.
+
+**Внешние ресурсы:**
+
+*   [Official Rancher RBAC Guide](https://ranchermanager.docs.rancher.com/how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac)
+*   [OIDC PKCE Explained](https://oauth.net/2/pkce/)
+*   [Rancher API Documentation](https://rancher.com/docs/rancher/v2.x/en/api/)

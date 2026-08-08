@@ -2,131 +2,158 @@
 
 ## Определения
 
-**Специальные директории платформ (Forge-specific directories)** — зарезервированные папки в корне репозитория (например, `.github/`, `.gitlab/`, `.gitea/`), которые используются Git-хостингами для хранения конфигураций CI/CD, шаблонов взаимодействия с пользователями, политик безопасности и управления доступом.
+**Специальные директории платформ (Forge-specific directories)** — зарезервированные системные папки в корне репозитория (например, `.github/`, `.gitlab/`, `.bitbucket/`), используемые Git-хостингами для реализации подхода **Configuration as Code**. Они содержат метаданные, конфигурации автоматизации (CI/CD), шаблоны взаимодействия и политики безопасности, которые интерпретируются платформой автоматически.
 
-**Git Forge (Кузница)** — платформа для хостинга Git-репозиториев (GitHub, GitLab, Codeberg и др.), предоставляющая дополнительные инструменты для совместной разработки.
+**Git Forge (Кузница)** — веб-платформа для хостинга Git-репозиториев, дополняющая базовый протокол Git инструментами совместной разработки (Pull Requests, CI/CD, Issue Tracking).
 
 ---
 
 ## Базовые концепции
 
-### Назначение директорий
+### Назначение и иерархия
 
-Использование специальных папок позволяет хранить метаданные проекта вместе с исходным кодом, обеспечивая принцип "Configuration as Code". Основные задачи:
+Использование специализированных директорий позволяет отделить технические конфигурации платформы от основного исходного кода, сохраняя при этом версионность настроек.
 
-- **Автоматизация (CI/CD):** Описание процессов сборки, тестирования и развертывания.
-- **Стандартизация коммуникаций:** Шаблоны для сообщений об ошибках (Issues) и запросов на слияние (PR/MR).
-- **Управление доступом:** Назначение ответственных за определенные части кода (CODEOWNERS).
-- **Юридическая и техническая информация:** Политики безопасности, руководства по участию в разработке (Contributing).
+**Основные задачи:**
+- **Автоматизация (Workflow):** Описание конвейеров сборки и развертывания.
+- **Интерфейсные формы:** Стандартизация ввода данных пользователями через шаблоны.
+- **Governance:** Управление правилами ревью кода и доступом.
+- **Documentation Fallback:** Хранение служебных MD-файлов (README, SECURITY), если они отсутствуют в корне.
 
 ### Сводная таблица по платформам
 
-| Платформа | Основная директория | CI/CD конфигурация | Особенности |
+| Платформа | Основная директория | CI/CD конфигурация | Основные возможности |
 | :--- | :--- | :--- | :--- |
-| **GitHub** | `.github/` | `.github/workflows/` | Стандарт де-факто для многих инструментов. |
-| **GitLab** | `.gitlab/` | `.gitlab-ci.yml` (корень) | Шаблоны хранятся в `.gitlab/`. |
-| **Gitea / Forgejo** | `.gitea/` / `.forgejo/` | `.gitea/workflows/` | Поддержка совместимости с `.github/`. |
-| **Bitbucket** | `.bitbucket/` | `bitbucket-pipelines.yml` | `.bitbucket/` используется для CODEOWNERS. |
-| **Azure DevOps** | — | `azure-pipelines.yml` | Обычно не использует спец. директорию в корне. |
-| **Woodpecker** | `.woodpecker/` | `.woodpecker/*.yml` | Альтернативная CI для Gitea/Forgejo. |
+| **GitHub** | `.github/` | `.github/workflows/` | Actions, Forms, Dependabot, Discussions |
+| **GitLab** | `.gitlab/` | `.gitlab-ci.yml` (корень) | Templates, K8s Agents, Review Apps |
+| **Bitbucket** | `.bitbucket/` | `bitbucket-pipelines.yml` | CODEOWNERS, PR Templates |
+| **Gitea / Forgejo** | `.gitea/` / `.forgejo/` | `.gitea/workflows/` | Совместимость с GitHub Actions |
+| **Azure DevOps** | — | `azure-pipelines.yml` | Обычно использует корень или `.azure-devops/` |
+| **Woodpecker** | `.woodpecker/` | `.woodpecker/*.yml` | Декларативная CI для легковесных платформ |
 
-### Состав директории .github (стандарт GitHub)
+### Состав директории .github (GitHub)
 
-- `workflows/` — файлы рабочих процессов GitHub Actions.
-- `ISSUE_TEMPLATE/` — директория с шаблонами Issue (поддерживает YAML и Markdown).
-- `PULL_REQUEST_TEMPLATE/` — директория или файл шаблона для PR.
-- `CODEOWNERS` — файл для автоматического назначения ревьюеров.
-- `dependabot.yml` — настройка автоматического обновления зависимостей.
-- `FUNDING.yml` — ссылки на спонсирование проекта.
-- `SECURITY.md` — инструкции по сообщению об уязвимостях.
+- `workflows/` — YAML-файлы GitHub Actions.
+- `ISSUE_TEMPLATE/` — шаблоны задач. Поддерживаются Markdown и YAML-формы (`.yml`).
+- `DISCUSSION_TEMPLATE/` — шаблоны категорий обсуждений (только YAML).
+- `PULL_REQUEST_TEMPLATE/` — директория или файл для шаблона PR.
+- `actions/` — локальные Actions репозитория.
+- `CODEOWNERS` — правила назначения ревьюеров.
+- `dependabot.yml` — конфигурация обновления зависимостей.
+- `renovate.json` — альтернатива Dependabot (может быть в корне).
+- `FUNDING.yml` — кнопки спонсирования.
 
-### Состав директории .gitlab (стандарт GitLab)
+### Состав директории .gitlab (GitLab)
 
-- `issue_templates/` — шаблоны для задач.
+- `issue_templates/` — шаблоны для задач (Issues).
 - `merge_request_templates/` — шаблоны для Merge Requests.
-- `CODEOWNERS` — поддерживается в `.gitlab/` или корне.
-- `route-map.yml` — маппинг путей для Review Apps.
+- `agents/` — конфигурация **GitLab Agent for Kubernetes** (структура: `agents/<name>/config.yaml`).
+- `CODEOWNERS` — правила владельцев кода (также может быть в корне).
+- `route-map.yml` — соответствие путей файлов URL-адресам для Review Apps.
+
+### Состав директории .bitbucket (Bitbucket)
+
+- `pull_request_template.md` — основной шаблон PR.
+- `pull_request_templates/` — поддержка множественных шаблонов (Bitbucket Data Center).
+- `CODEOWNERS` — управление ревьюерами (рекомендуемое место).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Создание шаблона Pull Request
+### Сценарий 1: Создание современной формы GitHub Issue (YAML)
 
-Для GitHub шаблон можно разместить в нескольких местах. Рекомендуется использовать `.github/PULL_REQUEST_TEMPLATE.md`.
-
-```markdown
-# Описание изменений
-<!-- Опишите, что было сделано и зачем -->
-
-## Тип изменений
-- [ ] Исправление ошибки
-- [ ] Новая функциональность
-
-## Как это протестировано?
-<!-- Опишите ваши тесты -->
-```
-
-### Сценарий 2: Настройка CODEOWNERS
-
-Позволяет автоматически запрашивать ревью у нужных команд.
-
-```text
-# .github/CODEOWNERS (или .gitlab/CODEOWNERS)
-
-# Глобальные владельцы
-*       @global-admin-team
-
-# Документация - только техписатели
-/docs/  @tech-writing-team
-
-# Конфигурации инфраструктуры
-*.tf    @devops-team
-*.yaml  @devops-team
-```
-
-### Сценарий 3: Автоматизация с Dependabot
-
-Файл `.github/dependabot.yml` позволяет поддерживать зависимости в актуальном состоянии.
+В отличие от Markdown, YAML-формы позволяют создавать структурированные поля с валидацией.
+Файл: `.github/ISSUE_TEMPLATE/bug-report.yml`
 
 ```yaml
-version: 2
-updates:
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
+name: Bug Report
+description: Сообщить об ошибке в работе приложения
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за сообщение об ошибке!
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения
+      placeholder: "v1.2.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Операционная система
+      options:
+        - Linux
+        - macOS
+        - Windows
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Шаги воспроизведения
+      description: Как мы можем увидеть проблему?
+    validations:
+      required: true
 ```
 
-### Сценарий 4: Совместимость Forgejo/Gitea с GitHub
+### Сценарий 2: Конфигурация GitLab Agent for Kubernetes
 
-Если вы мигрируете проект с GitHub на Forgejo, многие действия (Actions) будут работать без изменений благодаря поддержке директории `.github/workflows/`. Однако, если вы хотите переопределить поведение для Forgejo, используйте `.forgejo/workflows/`.
+Для работы агента необходимо создать файл конфигурации в строго определенной директории.
+Файл: `.gitlab/agents/prod-cluster/config.yaml`
 
-```bash
-# Проверка структуры на Forgejo
-ls -R .forgejo/workflows/
-# → ci.yml release.yml
+```yaml
+# Настройка Pull-based GitOps
+gitops:
+  manifest_projects:
+    - id: group/manifest-repo
+      paths:
+        - glob: '/**/*.yaml'
+
+# Разрешение CI/CD доступа из других проектов
+ci_access:
+  projects:
+    - id: group/application-repo
+```
+
+### Сценарий 3: Настройка CODEOWNERS для Bitbucket
+
+Автоматическое добавление команд в ревьюеры на основе путей.
+Файл: `.bitbucket/CODEOWNERS`
+
+```text
+# Все изменения инфраструктуры требуют одобрения DevOps-команды
+/terraform/ @devops_team
+
+# Изменения в документации могут проверять техписатели
+/docs/*.md @tech_writers
+
+# Глобальный владелец для остальных файлов
+* @platform_leads
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Правила поиска файлов (Fallback)
+### Приоритет поиска служебных файлов
 
-Платформы часто ищут документацию (README, LICENSE, CONTRIBUTING) в нескольких местах в следующем порядке:
-1. Корень репозитория (рекомендуется).
-2. Директория `docs/`.
-3. Директория `.github/` (для GitHub).
+Если файл (например, `README.md` или `CONTRIBUTING.md`) существует в нескольких местах, платформы обычно применяют следующий приоритет:
+1. **Корень репозитория (`/`)** — наивысший приоритет, рекомендуется для основных файлов.
+2. **Папка `docs/`** — для объемной документации.
+3. **Спец. папка (`.github/`, `.gitlab/`)** — для "скрытия" служебных файлов из корня.
 
-### Официальные ресурсы
+### Безопасность и политики
 
-- **GitHub Docs - Creating templates:** [docs.github.com](https://docs.github.com/en/communities/using-templates-to-encourage-high-quality-issues-and-pull-requests/syntax-for-issue-template-forms)
-- **GitLab Docs - Description templates:** [docs.gitlab.com](https://docs.gitlab.com/ee/user/project/description_templates.html)
-- **Forgejo - Actions:** [forgejo.org/docs/latest/user/actions/](https://forgejo.org/docs/latest/user/actions/)
+Файлы политик помогают поддерживать порядок в open-source и корпоративных проектах:
+- **SECURITY.md**: Описывает процесс сообщения об уязвимостях (Vulnerability Disclosure Policy).
+- **SUPPORT.md**: Куда обращаться за помощью.
+- **CONTRIBUTING.md**: Правила внесения вклада в проект.
 
 ### См. также
 
-- [Обзор специальных файлов Git](./git_special_files_overview.md) — общие сведения о `.gitignore`, `.gitattributes` и др.
+- [Обзор специальных файлов Git](./git_special_files_overview.md) — `.gitignore`, `.gitattributes`.
 - [GitHub Actions — синтаксис рабочих процессов](../Github_CI/Workflow_Syntax.md)
-- [GitLab CI/CD — основы конфигурации](../CI-CD/GitLab_CI/Core_Concepts/gitlab_ci_basics.md)
+- [GitLab CI/CD — основы конфигурации](../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md)
+- [Интеграция GitLab с Kubernetes](../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md)

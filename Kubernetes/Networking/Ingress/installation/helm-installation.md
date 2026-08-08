@@ -1,153 +1,121 @@
 # Ingress — установка через Helm
 
-> [!CAUTION]
-> **Внимание (март 2026):** Проект `kubernetes/ingress-nginx` официально перешел в статус **End of Life (EOL — завершение жизненного цикла)**. Поддержка прекращена, патчи безопасности не выпускаются. Для новых инсталляций рекомендуется использовать **Traefik**, **NGINX Gateway Fabric** или другие решения на базе **Gateway API (Application Programming Interface)**.
+> [!WARNING]
+> **Статус проектов (2026):** Проект `kubernetes/ingress-nginx` официально перешел в статус **End of Life (EOL)**. Поддержка прекращена, критические патчи безопасности не выпускаются. Для новых инсталляций настоятельно рекомендуется использовать **Traefik v3**, **Envoy Gateway** или другие современные реализации на базе **Gateway API**.
 
 ## Определения
 
-**Helm** — менеджер пакетов для Kubernetes, упрощающий установку и управление приложениями через чарты (Charts — наборы предварительно настроенных манифестов). Позволяет версионировать конфигурации и автоматизировать развертывание.
+**Helm** — стандартный менеджер пакетов для Kubernetes, использующий концепцию чартов (Charts) для описания, установки и обновления сложных приложений. Обеспечивает версионирование конфигураций и атомарность операций.
 
-**Ingress-контроллер** — специализированное приложение, реализующее правила маршрутизации, описанные в объекте `Ingress`. Он работает как обратный прокси-сервер (Reverse Proxy), направляя внешний трафик к сервисам внутри кластера. Подробнее: **[Ingress — обзор и основные концепции](../overview.md)**.
+**Ingress-контроллер** — управляющее приложение, которое реализует правила маршрутизации L7, описанные в ресурсах `Ingress` или `HTTPRoute`. Он выступает точкой входа (Edge Proxy) для внешнего трафика.
 
-## Основные концепции
+## Базовые концепции
 
-### Преимущества установки через Helm
+### Почему Helm является стандартом для Ingress
 
-| Критерий | Helm | Манифесты (YAML) |
-| :--- | :--- | :--- |
-| **Управление версиями** | Встроенное (семантическая версионность чартов) | Ручное отслеживание через Git |
-| **Обновление** | `helm upgrade` с контролем истории | `kubectl apply` с риском конфликтов |
-| **Кастомизация** | Параметры через `values.yaml` или `--set` | Прямое редактирование файлов |
-| **Откат** | `helm rollback` к конкретной ревизии | Повторное применение старых файлов |
-| **Проверка (Dry-run)** | Встроенная валидация перед установкой | Ручная проверка манифестов |
+Установка Ingress-контроллера через Helm предоставляет ряд преимуществ по сравнению с обычными манифестами:
 
-**Рекомендация:** Использование Helm является стандартом для развертывания Ingress-контроллеров в облачных (Managed K8s) и гибридных средах. Прямая установка через манифесты используется преимущественно в изолированных (Air-gapped) сетях или при глубокой кастомизации под Bare-metal. Подробнее: **[Ingress — установка через манифест (Bare-Metal)](./bare-metal-installation.md)**.
-
----
+1.  **Декларативное управление:** Все настройки хранятся в файле `values.yaml`, что позволяет использовать подходы GitOps.
+2.  **Атомарность обновлений:** Флаг `--atomic` гарантирует, что в случае сбоя при обновлении (например, если контроллер не прошел Readiness check), система автоматически вернется к предыдущему рабочему состоянию.
+3.  **Управление зависимостями:** Многие чарты (например, Traefik) автоматически устанавливают необходимые CRD и роли RBAC.
+4.  **Жизненный цикл:** Простое масштабирование и обновление версий прокси-движка одной командой.
 
 ## Практические сценарии
 
-### 1. Базовая установка (Legacy Ingress-NGINX)
+### Сценарий 1 — Установка Traefik v3 (Рекомендуемый Ingress)
 
-*Используйте этот метод только для поддержки существующих систем.*
+Traefik v3 является предпочтительным выбором в 2026 году благодаря нативной поддержке Gateway API и простоте конфигурации.
 
 **Добавление репозитория:**
 
 ```bash
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo add traefik https://traefik.github.io/charts
 helm repo update
-# → ...Successfully got an update from the "ingress-nginx" chart repository
+# → ...Successfully got an update from the "traefik" chart repository
 ```
 
-**Установка с контролем завершения:**
+**Создание конфигурации `traefik-values.yaml`:**
+
+```yaml
+# Оптимизация для промышленной эксплуатации
+deployment:
+  replicas: 3
+  podAntiAffinity:
+    enabled: true # Распределение подов по разным узлам
+
+service:
+  type: LoadBalancer
+  annotations:
+    # Пример для облака: включение Proxy Protocol
+    service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"
+
+metrics:
+  prometheus:
+    enabled: true # Сбор метрик для Prometheus
+
+providers:
+  kubernetesIngress:
+    enabled: true # Поддержка классического Ingress
+  kubernetesGateway:
+    enabled: true # Активация Gateway API
+```
+
+**Развертывание:**
+
+```bash
+helm upgrade --install traefik traefik/traefik \
+  --namespace ingress-system \
+  --create-namespace \
+  --values traefik-values.yaml \
+  --wait --atomic
+# → STATUS: deployed
+```
+
+### Сценарий 2 — Установка Envoy Gateway (Gateway API)
+
+Envoy Gateway — это официальное решение CNCF для реализации Gateway API.
+
+**Установка (актуально на 2026 год):**
+
+```bash
+helm repo add envoygateway https://envoyproxy.github.io/gateway-helm/
+helm repo update
+
+# Установка CRD (обязательный шаг перед основным чартом)
+helm install eg-crds envoygateway/gateway-helm-crds \
+  --namespace envoy-gateway-system --create-namespace
+
+# Установка контроллера
+helm install eg envoygateway/gateway-helm \
+  --namespace envoy-gateway-system
+# → NAME: eg
+# → STATUS: deployed
+```
+
+### Сценарий 3 — Поддержка устаревших систем (Ingress-NGINX)
+
+*Использовать только для миграции или поддержки legacy-проектов.*
 
 ```bash
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx \
   --create-namespace \
-  --wait \
-  --timeout 5m
-# → NAME: ingress-nginx
-# → LAST DEPLOYED: Wed Jul 22 10:00:00 2026
-# → NAMESPACE: ingress-nginx
-# → STATUS: deployed
+  --set controller.replicaCount=2 \
+  --wait
 ```
-
-### 2. Установка через values.yaml (Best Practice)
-
-Использование файла значений (Values file) предпочтительнее длинных команд с `--set`, так как файл можно хранить в системе контроля версий (Git).
-
-**Создание файла `values-production.yaml`:**
-
-```yaml
-controller:
-  # Приоритет запуска для критических компонентов
-  priorityClassName: system-cluster-critical
-  
-  metrics:
-    enabled: true # Включение экспортера для Prometheus
-  
-  admissionWebhooks:
-    enabled: true # Валидация Ingress-ресурсов при создании
-  
-  ingressClassResource:
-    name: nginx
-    enabled: true
-    default: true # Использовать этот класс по умолчанию
-  
-  service:
-    type: LoadBalancer
-    annotations:
-      # Пример для AWS: использование NLB вместо классического ELB
-      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-```
-
-**Применение конфигурации:**
-
-```bash
-helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-nginx \
-  --values values-production.yaml \
-  --wait \
-  --atomic
-```
-*Флаг `--atomic` автоматически откатит изменения в случае ошибки при установке.*
-
-### 3. Декларативная установка в K3s (HelmChart CRD)
-
-K3s использует `Custom Resource Definition (CRD)` типа `HelmChart` для управления Helm-релизами через нативные манифесты Kubernetes.
-
-**Манифест HelmChart:**
-
-```yaml
-# ingress-nginx-chart.yaml
-apiVersion: helm.cattle.io/v1
-kind: HelmChart
-metadata:
-  name: nginx-ingress
-  namespace: kube-system # Место хранения самого ресурса HelmChart
-spec:
-  chart: ingress-nginx
-  repo: https://kubernetes.github.io/ingress-nginx
-  targetNamespace: ingress-nginx # Куда будет установлен контроллер
-  version: 4.10.0
-  valuesContent: |-
-    controller:
-      metrics:
-        enabled: true
-      service:
-        type: NodePort # Стандарт для небольших K3s кластеров
-```
-
-### 4. Проверка состояния установки
-
-```bash
-# Список всех ресурсов в пространстве имен
-kubectl get all -n ingress-nginx
-
-# Проверка регистрации класса Ingress
-kubectl get ingressclass
-# → NAME    CONTROLLER             PARAMETERS   AGE
-# → nginx   k8s.io/ingress-nginx   <none>       5m
-
-# Проверка истории релизов Helm
-helm history ingress-nginx -n ingress-nginx
-```
-
----
 
 ## Дополнительная информация
 
-### Устранение неполадок (Troubleshooting)
+### Типичные ошибки при установке
 
-- **Pending LoadBalancer IP:** Если сервис остается в статусе `Pending`, проверьте наличие CCM (Cloud Controller Manager) в кластере или корректность аннотаций провайдера.
-- **Webhook Connection Refused:** Часто возникает при использовании сетевых политик (NetworkPolicies), блокирующих трафик между API-сервером и вебхуком контроллера.
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `context deadline exceeded` | Контроллер не успел пройти Health Check | Проверьте доступность портов и наличие ресурсов (CPU/RAM). Увеличьте `--timeout`. |
+| `Pending` статус LoadBalancer | Облачный провайдер не смог выделить IP | Проверьте квоты в облаке и аннотации сервиса. |
+| `CRD mismatch` | Версия CRD в кластере не совпадает с чартом | Обновите CRD вручную перед `helm upgrade`. |
 
-### Смежные темы
+### См. также
 
-- **[Ingress-контроллеры — сравнение и выбор](../controllers_comparison.md)** — актуальный список альтернатив на 2026 год.
-- **[Миграция с Ingress на Gateway API](../../gateway_api/migration.md)** — подробная инструкция по переходу с EOL-проектов.
-- **[NodePort](../../Service/service_type_nodeport.md)** — использование типа сервиса NodePort при отсутствии LoadBalancer.
-- **[Ingress — установка через манифест (Bare-Metal)](./bare-metal-installation.md)** — установка без использования Helm.
-
-**Примечание:** Для современных инсталляций (2026+) рекомендуется рассматривать установку **Traefik** или **Envoy Gateway** через их официальные Helm-чарты, которые изначально спроектированы под поддержку Gateway API.
+- **[Сравнение Ingress-контроллеров](../controllers_comparison.md)** — выбор между Envoy, Traefik и Cilium.
+- **[Миграция на Gateway API](../../gateway_api/migration.md)** — переход с классических Ingress на современный стандарт.
+- **[Ingress в Bare-Metal](./bare-metal-installation.md)** — особенности установки без облачного LoadBalancer.

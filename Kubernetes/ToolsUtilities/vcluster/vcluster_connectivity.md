@@ -2,54 +2,65 @@
 
 ## Определения
 
-**vCluster connectivity** — совокупность методов подключения к виртуальному кластеру и настройки доступа к ресурсам хост-кластера (хранилища, сетевые ресурсы, API). Включает механизмы получения kubeconfig, правила синхронизации объектов и организацию внешнего доступа к контрольному плану (Control Plane).
+**vCluster Connectivity** — совокупность методов и протоколов для обеспечения доступа к API виртуального кластера, а также организации сетевого взаимодействия между его компонентами, нагрузками и внешними ресурсами.
 
-**kubeconfig vCluster** — файл конфигурации, содержащий учетные данные для доступа к Kubernetes API виртуального кластера. Технически запросы проходят через syncer-прокси, который обеспечивает прозрачную маршрутизацию к внутреннему API-серверу.
+**vCluster VPN (Tailscale-powered)** — встроенный механизм (v0.30+) на базе протокола WireGuard, создающий защищенную P2P-сеть между Control Plane и узлами (особенно Private Nodes). Позволяет соединять компоненты, находящиеся за NAT или в разных облачных провайдерах, без использования сложных VPN-решений.
 
-**SSL Passthrough** — режим работы Ingress-контроллера, при котором TLS-трафик передается на целевой сервис (API-сервер vCluster) без дешифрации на уровне балансировщика. Это необходимо, так как API-сервер использует взаимную TLS-аутентификацию (mTLS).
+**kubeconfig vCluster** — файл конфигурации для доступа к API-серверу виртуального кластера. Запросы обычно проходят через Syncer-прокси или напрямую (в Standalone-режиме), обеспечивая прозрачную работу стандартных инструментов (kubectl, Helm).
+
+**Gateway API Integration** — нативная поддержка (v0.35+) современного стандарта Kubernetes для управления трафиком. Позволяет использовать ресурсы `Gateway`, `HTTPRoute` и `TLSRoute` для экспонирования API и сервисов vCluster.
+
+**SSL Passthrough** — режим работы Ingress/Gateway, при котором TLS-трафик передается на API-сервер vCluster без терминации. Критически важен для сохранения mTLS-аутентификации между клиентом и виртуальным API.
 
 ## Основные концепции
 
-### Способы получения kubeconfig
+### Способы получения и управления доступом (kubeconfig)
 
 | Метод | Описание | Сценарий использования |
 | :--- | :--- | :--- |
-| **vcluster connect** | Автоматическое создание временного контекста в памяти или файле. | Быстрая отладка, ручное управление кластером. |
-| **Флаг --export-kubeconfig** | Экспорт статического файла конфигурации по указанному пути. | Настройка CI/CD пайплайнов, передача доступа другим системам. |
-| **Secret в хост-кластере** | Прямое чтение данных из Kubernetes Secret, создаваемого в namespace vCluster. | Автоматизация без использования CLI-инструмента. |
-| **Флаг --update-current** | Обновление текущего контекста в системном `~/.kube/config`. | Постоянная работа с конкретным виртуальным кластером. |
+| **vcluster connect** | Автоматическая генерация контекста и проброс портов (port-forward). | Локальная разработка, отладка. |
+| **Флаг --export-kubeconfig** | Сохранение конфига в файл по заданному пути. | CI/CD, автоматизация, внешние пользователи. |
+| **Background Mode** | Запуск `vcluster connect` в фоновом режиме (через флаг `-b`). | Работа в нескольких терминалах одновременно. |
+| **Secret в хост-кластере** | Прямое чтение данных из Secret `vc-<name>` в namespace хоста. | Интеграция с GitOps (ArgoCD/Flux). |
+| **vCluster Platform API** | Получение доступа через централизованный портал управления. | Корпоративные среды, SSO-интеграция. |
 
-### Механизмы синхронизации ресурсов
+### Механизмы синхронизации ресурсов для связности
 
-vCluster использует Syncer для обмена объектами между виртуальным и хостовым окружениями. Основные направления:
+Связность обеспечивается Syncer через два основных направления синхронизации:
 
-- **fromHost (из хоста):** импорт инфраструктурных ресурсов хост-кластера (StorageClasses, IngressClasses, PriorityClasses, Nodes) для их использования внутри vCluster.
-- **toHost (в хост):** публикация ресурсов, созданных внутри vCluster (Pods, Services, Endpoints, Ingresses), в хост-кластер для их фактического исполнения и обеспечения сетевой доступности.
+1.  **fromHost (Импорт):** Проброс ресурсов хост-кластера (`StorageClasses`, `IngressClasses`, `GatewayClasses`, `Nodes`) внутрь vCluster для их использования тенантами.
+2.  **toHost (Экспорт):** Публикация объектов vCluster (`Pods`, `Services`, `Ingresses`, `HTTPRoutes`) в хост-кластер для фактического исполнения и сетевой доступности.
 
-Подробное описание политик синхронизации: [Безопасность и синхронизация ресурсов](./vcluster_security_and_sync.md).
+### Сетевая архитектура vCluster VPN
 
-### Внешний доступ к API vCluster
+При использовании **Private Nodes** или **Standalone-режима** классический port-forward может быть недоступен. vCluster VPN решает эту задачу:
+- **P2P Соединение:** Control Plane и узлы устанавливают прямые туннели.
+- **DERP-реле:** Если прямой путь заблокирован файрволом, трафик автоматически ретранслируется через защищенные реле.
+- **Автономность:** Не требует внешнего аккаунта Tailscale, работает полностью внутри инфраструктуры vCluster.
 
-Для обеспечения доступа к API-серверу vCluster за пределами хост-кластера обычно используется Ingress или Service типа LoadBalancer. При использовании Ingress обязательна поддержка **SSL passthrough**, так как аутентификация клиента происходит на уровне сертификатов, выпускаемых CA (Certificate Authority) виртуального кластера.
+### Внешний доступ через Gateway API и Ingress
+
+Для доступа к API vCluster извне (North-South трафик) используются два основных подхода:
+- **Ingress (NGINX/Traefik):** Требует аннотации `ssl-passthrough`.
+- **Gateway API (Cilium/Envoy):** Использует `TLSRoute` с режимом `Passthrough`, что является более современным и гибким стандартом.
 
 ## Практические сценарии
 
 ### Подключение через vCluster CLI
 
 ```bash
-# Интерактивное подключение (создает временный файл и запускает shell)
+# Интерактивное подключение (автоматический port-forward)
 vcluster connect my-vcluster -n my-namespace
 
-# Экспорт kubeconfig в конкретный файл для CI/CD
+# Запуск подключения в фоновом режиме (флаг --background или -b)
+vcluster connect my-vcluster -n my-namespace --background
+
+# Экспорт kubeconfig в файл для CI/CD или внешних инструментов
 vcluster connect my-vcluster -n my-namespace \
   --export-kubeconfig ./vcluster_kubeconfig.yaml
 
-# Обновление текущего контекста в ~/.kube/config (флаг -u)
-vcluster connect my-vcluster -n my-namespace -u
-
-# Проверка подключения
-export KUBECONFIG=./vcluster_kubeconfig.yaml
-kubectl get nodes
+# Обновление текущего контекста в системном ~/.kube/config (флаг --update-current)
+vcluster connect my-vcluster -n my-namespace --update-current
 
 # Выполнение разовой команды внутри vCluster без смены контекста
 vcluster connect my-vcluster -n my-namespace -- kubectl get pods -A
@@ -57,10 +68,10 @@ vcluster connect my-vcluster -n my-namespace -- kubectl get pods -A
 
 ### Извлечение kubeconfig из Kubernetes Secret
 
-Если доступ к CLI ограничен, можно получить конфиг напрямую через `kubectl` хост-кластера:
+Если CLI недоступен, конфиг можно получить напрямую из секрета хост-кластера. Данные хранятся в секрете `vc-<vcluster-name>`.
 
 ```bash
-# Данные хранятся в секрете с именем vcluster-config (или аналогичным)
+# Извлечение и декодирование конфигурации
 kubectl get secret -n <vcluster-namespace> vc-<vcluster-name> \
   -o jsonpath='{.data.config}' | base64 -d > kubeconfig.yaml
 
@@ -68,11 +79,26 @@ export KUBECONFIG=kubeconfig.yaml
 kubectl get nodes
 ```
 
+### Активация vCluster VPN (v0.30+)
+
+Используется для обеспечения прозрачной сетевой связности с удаленными узлами через WireGuard туннель.
+
+**Настройка в vcluster.yaml:**
+
+```yaml
+# vcluster.yaml
+networking:
+  vpn:
+    enabled: true
+    # Автоматическое подключение агентов (опционально)
+    autoConnect: true
+```
+
 ### Настройка синхронизации StorageClass (fromHost)
 
 Позволяет пользователям vCluster использовать существующие системы хранения хост-кластера.
 
-**Шаг 1: Настройка в vcluster.yaml (v0.20+)**
+**Шаг 1: Настройка в vcluster.yaml**
 
 ```yaml
 # vcluster.yaml
@@ -91,8 +117,7 @@ metadata:
   name: data-pvc
 spec:
   storageClassName: fast-ssd-storage  # Имя SC из хост-кластера
-  accessModes:
-    - ReadWriteOnce
+  accessModes: ["ReadWriteOnce"]
   resources:
     requests:
       storage: 10Gi
@@ -100,7 +125,7 @@ spec:
 
 ### Настройка синхронизации Ingress (toHost)
 
-Позволяет публиковать приложения vCluster через Ingress-контроллер хоста.
+Позволяет публиковать приложения vCluster через Ingress-контроллер хост-кластера.
 
 **Шаг 1: Активация синхронизации в vcluster.yaml**
 
@@ -133,13 +158,34 @@ spec:
             backend:
               service:
                 name: frontend-svc
-                port:
-                  number: 80
+                port: { number: 80 }
+```
+
+### Доступ к API через Gateway API (TLSRoute)
+
+Современный метод предоставления доступа к API-серверу виртуального кластера (v0.35+).
+
+**Настройка в vcluster.yaml:**
+
+```yaml
+# vcluster.yaml
+networking:
+  gatewayAPI:
+    enabled: true
+    apiServer:
+      enabled: true
+      host: "vcluster-api.example.com"
+      gatewayRef:
+        name: "external-gateway"
+        namespace: "infra"
+  proxy:
+    extraSANs:
+      - "vcluster-api.example.com"
 ```
 
 ### Доступ к API vCluster через Ingress хост-кластера
 
-Для подключения к API-серверу vCluster без VPN или port-forward.
+Традиционный метод экспонирования API с использованием SSL Passthrough.
 
 **Конфигурация vcluster.yaml:**
 
@@ -150,18 +196,13 @@ networking:
     enabled: true
     host: "vcluster-api.example.com"
     annotations:
-      # Пример для NGINX Ingress Controller
+      # Настройка для NGINX Ingress Controller
       nginx.ingress.kubernetes.io/ssl-passthrough: "true"
-      kubernetes.io/ingress.class: nginx
   proxy:
     extraSANs:
       - "vcluster-api.example.com"
-      - "1.2.3.4" # Внешний IP балансировщика (опционально)
+      - "1.2.3.4" # Опционально: внешний IP
 ```
-
-**Особенности:**
-- `extraSANs`: обязательный параметр, добавляет доменное имя в TLS-сертификат API-сервера.
-- `ssl-passthrough`: трафик должен доходить до пода vCluster в зашифрованном виде.
 
 ## Дополнительная информация
 
@@ -170,10 +211,14 @@ networking:
 - [vCluster — обзор и архитектура](./vcluster_overview.md)
 - [vCluster — установка и развертывание](./vcluster_installation.md)
 - [vCluster — безопасность и синхронизация ресурсов](./vcluster_security_and_sync.md)
+
+### См. также
+
+- [Gateway API — Определения и концепции](../../Networking/gateway_api/definitions.md)
 - [Kubeconfig и управление доступом](../../Operations/kubeconfig_and_connection.md)
 
 ### Внешние ссылки
 
-- [vCluster Connectivity Guide (Official)](https://www.vcluster.com/docs/architecture/connectivity)
-- [External Access to Virtual Clusters](https://www.vcluster.com/docs/features/external-access)
-- [Exposing vCluster Applications](https://www.vcluster.com/docs/features/ingress)
+- [vCluster Networking & Connectivity](https://www.vcluster.com/docs/architecture/networking)
+- [Gateway API Integration Guide](https://www.vcluster.com/docs/features/gateway-api)
+- [vCluster VPN (Tailscale) Deep Dive](https://www.vcluster.com/docs/features/vpn)

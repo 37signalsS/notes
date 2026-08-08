@@ -2,26 +2,32 @@
 
 ## Определения
 
-**Доступ к подресурсам API** — права на операции с вложенными объектами Kubernetes API (например, `pods/log`, `pods/exec`, `nodes/proxy`). Эти права не входят в базовый набор прав для основного ресурса и требуют явного перечисления в **RBAC**.
+**Admission Control (Контроль допуска)** — специализированные плагины API-сервера, которые проверяют или изменяют запрос после успешной авторизации (RBAC), но до сохранения объекта в `etcd`. Если плагин отклоняет запрос, возвращается ошибка **403 Forbidden**.
 
-**Admission Control (Контроль допуска)** — механизмы API-сервера, которые проверяют запрос ПОСЛЕ успешной авторизации (RBAC). Если запрос нарушает политики безопасности или квоты, возвращается код **403 Forbidden**, даже если у пользователя есть полные права (включая `cluster-admin`).
+**Admission Webhooks (Вебхуки допуска)** — механизмы расширения (Mutating и Validating), позволяющие API-серверу вызывать внешние сервисы (например, Kyverno или Gatekeeper) для реализации кастомных политик безопасности.
+
+**NodeRestriction** — встроенный Admission-контроллер, ограничивающий права `kubelet`. Он гарантирует, что узел может изменять только "свои" объекты (свой `Node`, `Pod`, `PV`, `Secret` и `ConfigMap`, примонтированные к его подам).
+
+**Агрегированные API (Aggregation Layer)** — механизм расширения Kubernetes API, позволяющий регистрировать дополнительные API-серверы (например, `metrics-server` для `metrics.k8s.io`). Ошибки 403 здесь часто связаны с правами на делегирование аутентификации.
 
 **Impersonation (Имитация пользователя)** — механизм отладки, позволяющий проверять права доступа от имени другого субъекта, группы или UID.
 
+> Различие 401 vs 403: [definitions.md](definitions.md)
+> Распространенные сценарии (RBAC): [common.md](common.md)
+
 ## Основные концепции
 
-### Источники ошибки 403 Forbidden
+### Фазы контроля допуска
 
-| Уровень проверки | Причина отказа | Типичный пример |
-|------------------|----------------|-----------------|
-| **RBAC** | Отсутствие прав в Role/ClusterRole | Нет прав на `list pods` |
-| **PSA (Pod Security Admission)** | Нарушение профиля безопасности | Попытка запустить привилегированный контейнер |
-| **NodeRestriction** | Попытка узла изменить чужой ресурс | Kubelet пытается обновить статус чужого узла |
-| **Resource Quotas** | Превышение лимитов ресурсов | Запрет на создание пода из-за нехватки CPU/MEM |
+Прохождение запроса через Admission Controllers разделено на две фазы. Ошибка 403 может возникнуть на любой из них.
+
+1.  **Mutating Phase:** Изменяет объект (например, внедряет sidecar-контейнеры). Если вебхук недоступен или вернул отказ — запрос блокируется.
+2.  **Object Validation:** Внутренняя проверка схемы и целостности объекта.
+3.  **Validating Phase:** Проверяет итоговое состояние объекта на соответствие политикам (PSA, Quotas, Webhooks).
 
 ### Продвинутая диагностика (Impersonation)
 
-Для выявления сложных проблем доступа используйте флаги имитации. Это позволяет проверить, как API-сервер видит права конкретного ServiceAccount или внешней группы.
+Для выявления сложных проблем доступа используйте флаги имитации. Это позволяет проверить, как API-сервер интерпретирует права конкретного ServiceAccount или внешней группы (например, из OIDC).
 
 ```bash
 # Проверка прав ServiceAccount с имитацией
@@ -35,50 +41,35 @@ kubectl auth can-i create deployments \
   --as-group=developers \
   -n project-x
 
-# Проверка от имени конкретного UID (редкие случаи)
+# Проверка от имени конкретного UID (для сложных случаев аудита)
 kubectl auth can-i get secrets --as=admin --as-uid=1000
 ```
 
-> Пошаговая диагностика: [diagnostics.md](diagnostics.md)
+> Полный алгоритм диагностики: [diagnostics.md](diagnostics.md)
 
 ## Практические сценарии
 
-### Сценарий 1: Доступ к подресурсам (exec, logs, port-forward)
+### Сценарий 1: Admission Webhooks и ValidatingAdmissionPolicy
 
-**Контокст:** Разработчику или инструменту автоматизации требуется доступ к логам или консоли пода.
-
-**Ошибка:** `User "..." cannot create resource "pods/exec" in API group "" in the namespace "..."`
-
-**Решение (YAML):**
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-troubleshooter
-  namespace: debug-ns
-rules:
-- apiGroups: [""]
-  resources: ["pods", "pods/log", "pods/exec", "pods/portforward"]
-  verbs: ["get", "list", "create"] # Для exec/portforward нужен 'create'
-```
-
-### Сценарий 2: Pod Security Admission (PSA)
-
-**Контекст:** Пользователь с правами `cluster-admin` не может запустить под в namespace.
+**Контекст:** В кластере установлены инструменты Policy-as-Code (Kyverno, OPA Gatekeeper) или используются нативные политики на базе CEL (Common Expression Language).
 
 **Ошибка:**
 ```text
-Error from server (Forbidden): pods "my-pod" is forbidden: 
-violates PodSecurity "restricted:latest": allowPrivilegeEscalation != false, 
-unrestricted capabilities, runAsNonRoot != true
+Error from server (Forbidden): admission webhook "validate.kyverno.svc" denied the request: 
+validation error: labels "app.kubernetes.io/name" is required.
 ```
 
-**Анализ:** Это не проблема RBAC. Namespace помечен меткой `pod-security.kubernetes.io/enforce=restricted`.
-**Решение:** Привести манифест пода в соответствие с профилем безопасности (см. [Security Context в Kubernetes — Раздел PSA](../../../Security/pod_security_context.md#pod-security-standards-pss-и-pod-security-admission-psa)).
+**Анализ:** Запрос прошел RBAC, но был заблокирован `ValidatingWebhookConfiguration` или нативной `ValidatingAdmissionPolicy` (доступна с Kubernetes 1.30+). Нативные политики работают быстрее, так как не требуют сетевого вызова к внешнему вебхуку.
 
-### Сценарий 3: NodeRestriction (Безопасность узлов)
+**Решение:** 
+1. Проверить конфигурации вебхуков: `kubectl get validatingwebhookconfigurations`.
+2. Проверить нативные политики: `kubectl get validatingadmissionpolicies`.
+3. Изучить логи контроллера политики или структуру VAP.
+4. Привести манифест в соответствие с требованиями политики.
 
-**Контекст:** Специфический ServiceAccount, имитирующий поведение узла, или скомпрометированный kubelet пытается изменить объект, к которому не имеет отношения.
+### Сценарий 2: NodeRestriction (Безопасность узлов)
+
+**Контекст:** Специфический процесс на узле (или скомпрометированный `kubelet`) пытается изменить объект, к которому не имеет отношения.
 
 **Ошибка:**
 ```text
@@ -86,52 +77,86 @@ Error from server (Forbidden): nodes "other-node" is forbidden:
 node "this-node" is not allowed to modify node "other-node"
 ```
 
-**Анализ:** Плагин `NodeRestriction` ограничивает права `kubelet` так, чтобы он мог изменять только "свои" объекты (Node, Pod, PV).
-**Решение:** Проверить, почему запрос идет не к своему ресурсу. Исправить логику приложения/контроллера.
+**Анализ:** Плагин `NodeRestriction` блокирует попытки узла выйти за пределы своей зоны ответственности.
+**Решение:** Проверить, почему запрос направлен на чужой ресурс. Если это легитимный контроллер, он должен использовать собственный `ServiceAccount` с правами `ClusterRole`, а не токен узла.
 
-### Сценарий 4: Доступ к Custom Resource Definitions (CRDs)
+### Сценарий 3: Агрегированные API (metrics-server)
 
-**Контекст:** Оператор или CLI-инструмент работает с кастомными ресурсами (например, `PrometheusRule` или `Certificates`).
+**Контекст:** Пользователь или система мониторинга пытается получить метрики ресурсов.
 
-**Ошибка:** `cannot list resource "certificates" in API group "cert-manager.io"`
+**Ошибка:** `User "..." cannot get resource "nodes/metrics" in API group "metrics.k8s.io"`
 
-**Решение:** Всегда указывайте правильную `apiGroup`.
+**Решение:** Для агрегированных API часто недостаточно стандартных прав. Требуется роль для доступа к метрикам.
+
 ```yaml
-rules:
-- apiGroups: ["cert-manager.io"]
-  resources: ["certificates", "issuers"]
-  verbs: ["get", "list", "watch"]
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: read-metrics
+subjects:
+- kind: User
+  name: monitoring-bot
+roleRef:
+  kind: ClusterRole
+  name: system:metrics-server
+  apiGroup: rbac.authorization.k8s.io
 ```
+
+### Сценарий 4: Ресурсные квоты (ResourceQuota)
+
+**Контекст:** Попытка создать ресурс в пространстве имен, где исчерпан лимит.
+
+**Ошибка:**
+```text
+Error from server (Forbidden): pods "my-pod" is forbidden: 
+exceeded quota: compute-resources, requested: requests.cpu=1, used: requests.cpu=19, limited: requests.cpu=20
+```
+
+**Анализ:** RBAC разрешает создание, но `ResourceQuota` блокирует запрос из-за превышения квоты.
+**Решение:** 
+1. Проверить текущее состояние квот: `kubectl describe resourcequota -n <ns>`.
+2. Удалить неиспользуемые ресурсы или запросить увеличение квоты у администратора.
+
+### Сценарий 5: Pod Security Admission (PSA)
+
+**Контекст:** Попытка запустить привилегированный под в защищенном пространстве имен.
+
+**Ошибка:**
+```text
+Error from server (Forbidden): pods "privileged-pod" is forbidden: 
+violates PodSecurity "restricted:latest": hostNetwork: true, privileged: true
+```
+
+**Анализ:** Пространство имен помечено меткой `pod-security.kubernetes.io/enforce=restricted`.
+**Решение:** Использовать профили безопасности (Baseline или Restricted) или перенести под в неймспейсе с профилем Privileged.
 
 ## Дополнительная информация
 
 ### Кластерные ресурсы vs Ресурсы неймспейса
 
-Для ресурсов, не привязанных к неймспейсу, использование `Role` невозможно — всегда требуется `ClusterRole` и `ClusterRoleBinding`.
+Для ресурсов кластерного уровня (Nodes, Namespaces, PV) использование `Role` невозможно — всегда требуется `ClusterRole` и `ClusterRoleBinding`.
 
-| Кластерные ресурсы | Ресурсы неймспейса |
-|--------------------|--------------------|
-| Nodes | Pods |
-| Namespaces | Services |
-| PersistentVolumes (PV) | ConfigMaps |
-| PriorityClasses | RoleBindings |
-| StorageClasses | Secrets |
+| Уровень | Ресурсы | Объект RBAC |
+|---------|---------|--------------|
+| **Кластер** | `nodes`, `namespaces`, `pv`, `storageclasses` | `ClusterRole` |
+| **Namespace**| `pods`, `services`, `secrets`, `configmaps` | `Role` |
 
-### Ограничение доступа по именам (ResourceNames)
+### Изоляция через ResourceNames
 
-Для максимальной безопасности (Least Privilege) ограничивайте доступ к критическим объектам по их именам.
+Для критически важных объектов (например, секретов с ключами инфраструктуры) рекомендуется использовать `resourceNames` в правилах RBAC. Это предотвращает ошибку 403 при точечном доступе, не открывая права на все объекты типа.
 
 ```yaml
 rules:
 - apiGroups: [""]
-  resources: ["configmaps"]
-  resourceNames: ["shared-config"] # Только этот ConfigMap
-  verbs: ["get", "update"]
+  resources: ["secrets"]
+  resourceNames: ["infra-master-key"]
+  verbs: ["get", "patch"]
 ```
 
 ### Связанные ресурсы
 
-- Распространенные случаи (Namespaced): [common.md](common.md)
-- Пошаговая диагностика: [diagnostics.md](diagnostics.md)
-- Объекты RBAC (Role, Binding): [rbac_objects.md](rbac_objects.md)
-- Роли и кластерные роли: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
+- [Распространенные случаи (Namespaced)](common.md)
+- [Пошаговая диагностика](diagnostics.md)
+- [Объекты RBAC (Role, Binding)](rbac_objects.md)
+- [Контроллеры допуска (Обзор)](../../Concepts/admission_controllers.md)
+- [Продвинутая авторизация (OPA/Kyverno)](../../../Security/rbac/limitations_opa.md)

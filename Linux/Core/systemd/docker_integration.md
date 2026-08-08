@@ -1,121 +1,127 @@
-# Интеграция Docker и systemd
+# Интеграция Docker и systemd: Управление юнитами
 
 ## Определения
 
-* **Интеграция Docker с systemd** — это архитектурный подход, при котором жизненный цикл Docker-контейнеров управляется системой инициализации `systemd` на хост-системе. В этом сценарии каждый контейнер или группа связанных контейнеров описывается как стандартный юнит-файл (unit file) сервиса `systemd`.
-* **sdnotify** — протокол уведомления `systemd` о готовности или состоянии приложения. Используется для синхронизации запуска зависимых служб.
-* **Drop-in файлы** — дополнительные конфигурационные файлы в директории `.service.d/`, позволяющие переопределять параметры юнита без модификации основного файла.
+* **Интеграция Docker с systemd** — архитектурный подход, при котором внешняя система инициализации (`systemd`) управляет жизненным циклом Docker-контейнеров на хосте. В этой модели контейнер рассматривается как стандартная системная служба.
+* **`sdnotify`** — протокол уведомления о готовности (READY=1), позволяющий приложению внутри контейнера сообщить `systemd` об успешном запуске для разблокировки зависимых служб.
+* **Делегирование (Delegation)** — механизм cgroup v2, позволяющий менеджеру процессов (PID 1) передать управление определенной веткой иерархии ресурсов (CGroup) дочернему процессу (Docker daemon), что необходимо для корректной работы лимитов внутри контейнера.
 
 ## Основные концепции
 
-### Преимущества управления через systemd
+### Преимущества внешнего управления
 
-* **Управление зависимостями** — контейнеры запускаются строго после готовности необходимых системных ресурсов (сеть, монтирование) или других служб (база данных на хосте).
-* **Единый интерфейс управления** — использование стандартных команд `systemctl` и `journalctl` для всех компонентов системы.
-* **Автоматическое восстановление** — гибкая настройка политик перезапуска (`Restart=on-failure`, `RestartSec`).
-* **Ограничение ресурсов** — использование нативных механизмов `cgroups` через параметры юнита (`MemoryMax`, `CPUQuota`).
-* **Централизованное логирование** — вывод контейнеров автоматически направляется в `journald`.
+1.  **Нативная оркестрация зависимостей:** Использование `After=`, `Requires=` и `Wants=` для связки контейнеров с базами данных на хосте, точками монтирования или сетевыми интерфейсами.
+2.  **Централизованная диагностика:** Команды `systemctl status` и `journalctl -u` предоставляют полную картину состояния приложения без необходимости переключения контекста на Docker CLI.
+3.  **Гибкая политика перезапуска:** Настройка `StartLimitIntervalSec` и `StartLimitBurst` предотвращает бесконечные циклы перезапуска при фатальных ошибках.
+4.  **Безопасная очистка:** Автоматическое удаление контейнеров при остановке (`--rm`) гарантирует отсутствие конфликтов имен при следующем запуске.
 
-### Ключевые параметры юнита для Docker
+### Глубокая настройка параметров юнита
 
-При интеграции Docker и systemd критически важно правильно настроить параметры завершения и уведомления:
-
-| Параметр | Описание | Рекомендация |
+| Директива | Назначение | Техническое обоснование |
 | :--- | :--- | :--- |
-| **`Type=notify`** | Ожидание сигнала готовности от приложения. | Использовать, если приложение в контейнере поддерживает `sdnotify`. |
-| **`KillMode=none`** | `systemd` не убивает процессы при остановке юнита. | Рекомендуется для Docker, так как `docker stop` сам управляет сигналами. |
-| **`Delegate=yes`** | Позволяет контейнеру управлять собственными под-cgroups. | Обязательно для вложенной контейнеризации или сложных лимитов. |
-| **`EnvironmentFile=`** | Загрузка переменных окружения из внешнего файла. | Удобно для хранения настроек и секретов. |
+| **`Delegate=yes`** | Управление cgroups | Обязательно для Docker в режиме cgroup v2. Позволяет Docker создавать под-cgroups для процессов контейнера без конфликтов с `systemd`. |
+| **`KillMode=mixed`** | Режим завершения | Отправляет SIGTERM только основному процессу (`docker run`), позволяя Docker daemon корректно остановить контейнер. В режиме `control-group` systemd может убить прокси-процессы раньше времени. |
+| **`Type=notify`** | Уведомление о готовности | Если приложение поддерживает `sdnotify`, systemd будет ждать сигнала READY перед запуском зависимых юнитов. Требует проброса сокета. |
+| **`EnvironmentFile=`** | Конфигурация | Позволяет выносить настройки (порты, теги образов) в отдельный файл (например, `/etc/default/myapp`), не меняя сам юнит. |
 
 ## Практические сценарии
 
-### 1. Создание юнит-файла для одиночного контейнера
+### 1. Эталонный юнит для контейнера (Production)
 
-Путь: `/etc/systemd/system/docker-app.service`
+Путь: `/etc/systemd/system/app-container.service`
 
 ```ini
 [Unit]
-Description=My Docker Application
+Description=My App Production Container
 Requires=docker.service
-After=docker.service
+After=docker.service network-online.target
+Wants=docker.socket
 
 [Service]
-Restart=always
-# Загрузка переменных окружения
-EnvironmentFile=-/etc/default/docker-app
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=0
+# Делегирование управления ресурсами
+Delegate=yes
+EnvironmentFile=-/etc/default/app-container
 
-# Очистка перед запуском (игнорируем ошибки, если контейнера нет)
+# Предварительная очистка и подготовка
 ExecStartPre=-/usr/bin/docker stop %n
 ExecStartPre=-/usr/bin/docker rm %n
-# Принудительное скачивание свежего образа
-ExecStartPre=/usr/bin/docker pull my-repo/my-app:latest
+ExecStartPre=/usr/bin/docker pull ${IMAGE_TAG}
 
-# Запуск контейнера
+# Запуск. Имя контейнера совпадает с именем юнита (%n)
 ExecStart=/usr/bin/docker run --rm --name %n \
-    --env-file /etc/default/docker-app \
-    -p 8080:80 \
-    my-repo/my-app:latest
+    --env-file /etc/default/app-container \
+    -p ${HOST_PORT}:80 \
+    ${IMAGE_TAG}
 
-# Корректная остановка
-ExecStop=/usr/bin/docker stop %n
+# Вежливая остановка. Время ожидания (timeout) задается флагом -t
+ExecStop=/usr/bin/docker stop -t 10 %n
 
 [Install]
 WantedBy=multi-user.target
 ```
-*Примечание: `%n` в имени — это автоматическая подстановка имени юнита.*
 
-### 2. Запуск Docker Compose через systemd
+### 2. Использование Docker Compose как системной службы
 
-Для управления стеком сервисов удобно использовать `docker-compose`.
+Идеально для многокомпонентных приложений на одном узле.
 
 ```ini
 [Unit]
-Description=Docker Compose Application Stack
+Description=Docker Compose Stack
 Requires=docker.service
 After=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/my-stack
+WorkingDirectory=/opt/myapp-stack
 
-ExecStart=/usr/bin/docker-compose up -d
-ExecStop=/usr/bin/docker-compose down
+# Запуск в фоновом режиме
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+# Остановка и очистка томов при необходимости
+ExecStop=/usr/bin/docker compose down
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### 3. Управление и диагностика
+### 3. Настройка уведомлений (sdnotify)
+
+Для использования `Type=notify` в контейнере необходимо пробросить путь к сокету уведомлений:
+1.  Установите `NotifyAccess=all` в юните.
+2.  Пробросьте `$NOTIFY_SOCKET` в контейнер как переменную окружения.
+3.  Монтируйте сокет: `-v /run/systemd/notify:/run/systemd/notify`.
+
+## Диагностика и управление
 
 ```bash
-# Перечитать конфигурацию
-sudo systemctl daemon-reload
-# → обновление кэша systemd
+# Проверка влияния Delegate на иерархию cgroups
+systemd-cgls --unit app-container.service
 
-# Активация и запуск
-sudo systemctl enable --now docker-app.service
-# → запуск контейнера и настройка автозагрузки
+# Чтение журналов с метаданными Docker
+journalctl -u app-container.service -o json | jq '._KERNEL_DEVICE'
 
-# Просмотр логов в реальном времени
-journalctl -u docker-app.service -f
-# → вывод логов контейнера из journald
+# Проверка статуса сокета Docker, от которого зависит юнит
+systemctl status docker.socket
 ```
 
 ## Дополнительная информация
 
-### Сравнение с Podman
+### Сравнение с нативной интеграцией Podman
 
-В отличие от Docker, **Podman** имеет нативную интеграцию с systemd через технологию **Quadlet**, которая позволяет описывать контейнеры в `.container` файлах, автоматически генерируя юниты.
-Подробнее см. **[Подман: Автообновление и откат контейнеров](../../../Podman/podman_auto_update.md)**.
+В отличие от Docker, **Podman** предлагает более совершенную интеграцию через генератор **Quadlet**. Он исключает необходимость ручного написания сложных `ExecStartPre`, автоматически обрабатывая зависимости и жизненный цикл.
+Подробнее: **[Podman: Автообновление и Quadlet](../../../Podman/podman_auto_update.md)**.
 
-### Анти-паттерн: Systemd внутри Docker
+### Анти-паттерны
 
-Запуск `systemd` внутри контейнера (как PID 1) крайне не рекомендуется, так как это нарушает принцип изоляции и требует привилегированного режима.
-Подробнее см. **[Systemd в Docker](../../../Docker/docker_systemd.md)**.
+*   **Использование `Restart=always` в Docker и в Systemd одновременно:** Может привести к конфликтам при попытке Docker перезапустить контейнер, пока systemd считает его упавшим. Рекомендуется отключать `restart: always` в Docker при использовании systemd.
+*   **Systemd внутри Docker:** Запуск systemd как PID 1 внутри контейнера — это отдельная задача со своими рисками. Подробнее см. **[Systemd в Docker](../../../Docker/docker_systemd.md)**.
 
 ### См. также
 
-* [Обзор юнитов systemd](./systemd_units_overview.md)
-* [Управление службами (systemctl)](./service_management.md)
-* [Журналирование через journald](../../SystemAdministration/Logging/journald.md)
+* [Обзор юнитов systemd](./systemd_units_overview.md) — базовые типы и логика.
+* [Управление службами (systemctl)](./service_management.md) — команды мониторинга.
+* [Журналирование (journald)](../../SystemAdministration/Logging/journald.md) — работа с логами.
+* [Изоляция контейнеров: Cgroups](../../../Docker/Concepts/linux_isolation.md) — механизмы ограничения ресурсов.

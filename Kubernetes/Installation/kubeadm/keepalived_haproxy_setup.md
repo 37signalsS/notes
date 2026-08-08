@@ -2,142 +2,168 @@
 
 ## Определения
 
-**Virtual IP (VIP)** — плавающий IP-адрес, который автоматически перемещается между узлами кластера для обеспечения непрерывного доступа к API-серверу.
+**Virtual IP (VIP)** — виртуальный IP-адрес, обеспечивающий единую точку входа (Control Plane Endpoint). Он автоматически перемещается на исправный узел при отказе текущего мастера.
 
-**VRRP (Virtual Router Redundancy Protocol)** — сетевой протокол, используемый Keepalived для обнаружения отказов и передачи владения VIP-адресом между участниками кластера.
+**VRRP (Virtual Router Redundancy Protocol)** — сетевой протокол, на котором базируется работа Keepalived. Позволяет группе узлов формировать один виртуальный маршрутизатор.
 
-**HA (High Availability)** — высокая доступность системы, минимизирующая время простоя за счёт устранения единых точек отказа.
+**Unicast VRRP** — режим работы Keepalived, при котором VRRP-пакеты отправляются на конкретные IP-адреса соседей, а не в Multicast-группу. Необходим в облаках и сетях, где Multicast заблокирован.
 
-**L4 Load Balancer** — балансировщик транспортного уровня, распределяющий трафик на основе IP-адресов и портов без расшифровки содержимого пакетов (в данном случае — без терминации TLS).
+**Gratuitous ARP** — механизм, с помощью которого Keepalived уведомляет сетевое оборудование о том, что VIP-адрес переместился на другой MAC-адрес.
 
 ---
 
 ## Основные концепции
 
-### Роль балансировщика в HA-кластере
+### Архитектурные требования и подготовка
 
-В отказоустойчивом кластере Kubernetes балансировщик выполняет две критические функции:
-1. **Предоставление единой точки входа**: все компоненты (kubelet, kubectl) обращаются к API-серверу через VIP.
-2. **Распределение нагрузки и Failover**: трафик распределяется между всеми доступными мастерами; при выходе из строя одного мастера он автоматически исключается из ротации.
+Для стабильной работы отказоустойчивой связки на мастер-узлах необходимо соблюдение следующих условий:
 
-### Архитектурные требования
-
-- **Размещение**: Keepalived и HAProxy должны быть настроены на всех мастер-узлах до начала инициализации кластера через `kubeadm`.
-- **Режим работы**: используется TCP Mode (L4), чтобы сохранить оригинальные сертификаты API-сервера и обеспечить прозрачную TLS-связность.
-- **Health Checks**: HAProxy должен проверять доступность порта 6443 перед отправкой трафика на узел.
-- **Привязка IP**: Необходимо разрешить сервисам привязку к IP-адресу, который еще не назначен интерфейсу (VIP).
+1.  **Синхронизация времени**: Все узлы должны быть синхронизированы через NTP (например, `chronyd`). Рассинхронизация может привести к проблемам с TLS-сертификатами API.
+2.  **Уникальность Router ID**: Поле `virtual_router_id` должно быть уникальным в пределах сегмента сети L2, чтобы избежать конфликтов с другими кластерами.
+3.  **Приоритеты (Priority)**: Разница в приоритетах между MASTER и BACKUP должна быть достаточной, чтобы веса `vrrp_script` могли корректно влиять на переключение.
+4.  **Разделение портов**: Если балансировщик работает на тех же узлах, что и API-сервер, его `frontend` должен слушать порт, отличный от 6443 (стандарт — 7443 или 8443).
 
 ---
 
 ## Практические сценарии
 
-### Шаг 1: Установка и настройка Keepalived
+### Шаг 1: Системная подготовка
 
-**Установка на всех мастер-узлах:**
+Разрешите процессам привязываться к виртуальному IP, который еще не назначен интерфейсу:
 
 ```bash
-# Ubuntu/Debian
-sudo apt-get update && sudo apt-get install -y keepalived
-
-# Rocky Linux/RHEL 9
-sudo dnf install -y keepalived
+cat <<EOF | sudo tee /etc/sysctl.d/60-k8s-ha.conf
+net.ipv4.ip_nonlocal_bind = 1
+net.ipv4.ip_forward = 1
+EOF
+sudo sysctl --system
 ```
 
-**Конфигурация MASTER-узла** (`/etc/keepalived/keepalived.conf`):
-*Использование скрипта проверки позволяет переключать VIP, если HAProxy перестал работать.*
+### Шаг 2: Установка и настройка Keepalived
+
+**Конфигурация для Unicast режима (рекомендуется для 2026 года):**
+Файл: `/etc/keepalived/keepalived.conf`
 
 ```keepalived
 global_defs {
-   router_id kube_api_master
+    router_id K8S_NODE_1
+    enable_script_security
+    script_user root
 }
 
-# Скрипт для проверки доступности HAProxy
+# Проверка работоспособности локального HAProxy
 vrrp_script check_haproxy {
-    script "killall -0 haproxy" # Проверка наличия процесса
+    script "/usr/bin/killall -0 haproxy"
     interval 2
-    weight 2
+    weight 5
+    fall 3
+    rise 2
 }
 
 vrrp_instance VI_1 {
-    state MASTER
-    interface eth0  # Замените на имя вашего интерфейса
+    state BACKUP          # Рекомендуется использовать BACKUP + priority на всех узлах
+    interface eth0        # Проверьте имя интерфейса через 'ip a'
     virtual_router_id 51
-    priority 101
+    priority 100          # На основном мастере поставьте 105
     advert_int 1
+    nopreempt             # Предотвращает возврат VIP при восстановлении старого мастера
+
     authentication {
         auth_type PASS
         auth_pass "k8s_secret_pass"
     }
-    virtual_ipaddress {
-        192.168.1.100/24  # Ваш Virtual IP (VIP)
+
+    # Настройка Unicast (укажите IP всех мастеров)
+    unicast_src_ip 192.168.1.10   # IP текущего узла
+    unicast_peer {
+        192.168.1.11              # IP других мастеров
+        192.168.1.12
     }
+
+    virtual_ipaddress {
+        192.168.1.100/24 dev eth0 label eth0:vip
+    }
+
     track_script {
         check_haproxy
     }
 }
 ```
 
-### Шаг 2: Установка и настройка HAProxy
+### Шаг 3: Установка и настройка HAProxy (v3.4 LTS)
 
-**Конфигурация HAProxy** (`/etc/haproxy/haproxy.cfg`):
-*Полная конфигурация с оптимальными тайм-аутами для API Server.*
+Файл: `/etc/haproxy/haproxy.cfg`
 
 ```haproxy
 global
     log /dev/log local0
     log /dev/log local1 notice
     daemon
+    maxconn 2000
+    # Настройка управления через сокет (для диагностики)
+    stats socket /var/run/haproxy.sock mode 660 level admin
 
 defaults
     log global
     mode tcp
     option tcplog
     option dontlognull
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
+    timeout connect 10s
+    timeout client 1m
+    timeout server 1m
+    timeout check 5s
 
-frontend kubernetes-api
-    bind 192.168.1.100:7443  # VIP и свободный порт
-    default_backend kubernetes-api-masters
+frontend k8s-api
+    bind 192.168.1.100:7443
+    default_backend k8s-api-masters
 
-backend kubernetes-api-masters
+backend k8s-api-masters
     balance roundrobin
-    option tcp-check
-    server master1 192.168.1.10:6443 check fall 3 rise 2
-    server master2 192.168.1.11:6443 check fall 3 rise 2
-    server master3 192.168.1.12:6443 check fall 3 rise 2
+    # HTTP Health Check: проверяет реальную готовность API
+    option httpchk GET /healthz
+    http-check expect status 200
+    
+    # Режим check-ssl необходим, так как API работает по HTTPS
+    server master1 192.168.1.10:6443 check check-ssl verify none
+    server master2 192.168.1.11:6443 check check-ssl verify none
+    server master3 192.168.1.12:6443 check check-ssl verify none
 ```
 
-### Шаг 3: Системные настройки и Firewall
+### Шаг 4: Настройка Firewall
 
-**Разрешение привязки VIP:**
-```bash
-echo "net.ipv4.ip_nonlocal_bind=1" | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-```
+Разрешите VRRP и трафик балансировщика:
 
-**Настройка Firewall (на примере ufw):**
-Необходимо разрешить VRRP-трафик между узлами:
 ```bash
-sudo ufw allow in on eth0 to any proto vrrp
-sudo ufw allow 7443/tcp
-sudo ufw allow 6443/tcp
+# Для iptables/nftables
+sudo iptables -A INPUT -p vrrp -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 7443 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 6443 -j ACCEPT
+
+# Для ufw
+sudo ufw allow in proto vrrp
+sudo ufw allow 7443,6443/tcp
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Проверка работоспособности
+### Диагностика и верификация
 
-После настройки выполните проверку на каждом узле:
-1. `systemctl status keepalived haproxy` — статус сервисов.
-2. `ip addr show eth0` — наличие VIP на мастере.
-3. `nc -v 192.168.1.100 7443` — проверка доступности порта балансировщика.
+| Команда | Цель |
+| :--- | :--- |
+| `ip addr show label *:vip` | Проверка активного владельца VIP |
+| `journalctl -u keepalived -f` | Мониторинг логов переключения ролей |
+| `haproxy -c -f /etc/haproxy/haproxy.cfg` | Валидация синтаксиса конфигурации |
+| `echo "show stat" | socat /var/run/haproxy.sock stdio` | Просмотр состояния бэкендов в HAProxy |
+
+**Типичные проблемы:**
+1.  **Split-brain**: VIP поднят на нескольких узлах одновременно. Причина: Firewall блокирует VRRP пакеты или неверно настроен Unicast.
+2.  **HAProxy 503**: Балансировщик работает, но API-серверы помечены как `DOWN`. Проверьте сертификаты и доступность порта 6443 с самого балансировщика.
+3.  ** flapping VIP**: Постоянное перемещение VIP. Причина: Слишком малый `advert_int` при высокой нагрузке на сеть.
 
 ### См. также
 
-- **[Архитектура HA с Keepalived и HAProxy](./ha_concepts.md)** — описание принципов работы и схем.
-- **[Инициализация кластера](./cluster_initialization.md)** — использование VIP при запуске `kubeadm init`.
-- **[Обзор HAProxy](../../../WebServers/haproxy_overview.md)** — подробная информация о настройке балансировщика.
+- **[Концепции HA API-сервера](./ha_concepts.md)** — теоретическое обоснование и выбор топологии.
+- **[Инициализация кластера](./cluster_initialization.md)** — использование параметра `--control-plane-endpoint`.
+- **[Диагностика сети в Linux](../../Linux/Diagnostics/Networking/network_troubleshooting.md)** — общие инструменты отладки стека TCP/IP.

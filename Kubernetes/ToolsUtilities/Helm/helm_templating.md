@@ -1,6 +1,6 @@
 # Шаблонизация в Helm
 
-Helm использует Go template engine (движок шаблонов Go) в сочетании с библиотекой Sprig для динамической генерации манифестов Kubernetes. Это позволяет параметризовать конфигурации, использовать логику (условия, циклы) и повторно использовать блоки кода.
+Helm использует движок **Go Templates** (стандартная библиотека `text/template`) в сочетании с библиотекой **Sprig** для динамической генерации манифестов Kubernetes. Шаблонизация позволяет превратить статические YAML-файлы в гибкие конфигурационные пакеты, которые адаптируются к различным окружениям (dev, staging, prod) без дублирования кода.
 
 ---
 
@@ -8,76 +8,83 @@ Helm использует Go template engine (движок шаблонов Go) 
 
 | Термин | Описание |
 |--------|----------|
-| **Go templates** | Движок шаблонизации на языке Go (`text/template`), используемый для рендеринга YAML-файлов |
-| **Библиотека Sprig** | Набор из более чем 100 функций (строковые, математические, работа со списками), расширяющий возможности Go templates |
-| **Встроенные объекты** | Предопределённые переменные (например, `.Values`, `.Release`), предоставляющие доступ к параметрам и метаданным |
-| **Именованные шаблоны** | Переиспользуемые фрагменты кода (partial), определяемые в `_helpers.tpl` через конструкцию `define` |
-| **Контекст (Scope)** | Текущая область видимости данных, обозначаемая точкой (`.`) |
+| **Go Templates** | Движок шаблонизации на языке Go, используемый Helm для рендеринга манифестов на основе логики и данных. |
+| **Библиотека Sprig** | Набор из 100+ функций (строковых, математических, криптографических), расширяющий возможности Go Templates. |
+| **Контекст (Scope)** | Текущая область видимости данных, обозначаемая точкой (`.`). Влияет на доступность переменных объекта. |
+| **Встроенные объекты** | Предопределённые переменные (`.Values`, `.Release`, `.Chart`, `.Capabilities`), предоставляющие доступ к метаданным. |
+| **Именованные шаблоны** | Переиспользуемые фрагменты кода (partial), определяемые в `_helpers.tpl` через конструкцию `define`. |
+| **Whitespace Control** | Механизм удаления лишних пробелов и переносов строк с помощью дефисов (`{{-` и `-}}`). |
+| **Pipeline (Пайплайн)** | Цепочка функций, где результат выполнения одной передаётся в качестве аргумента следующей через символ `|`. |
 
 ---
 
 ## Базовые концепции
 
-### Разработка шаблонов и синтаксис Go Templates
+### Движок Go Templates и синтаксис
 
-Шаблоны в каталоге `templates/` используют мощные возможности языка шаблонов Go:
+Все инструкции шаблонизатора заключаются в двойные фигурные скобки `{{ }}`. Helm обрабатывает все файлы в директории `templates/`, за исключением файлов, начинающихся с нижнего подчеркивания (например, `_helpers.tpl`).
 
-*   **Встроенные объекты**: Доступ к данным через объекты `.Chart` (метаданные чарта), `.Values` (параметры пользователя) и `.Release` (данные о текущем выпуске: имя, пространство имен).
-*   **Ссылки на значения**: Вставка параметров синтаксисом `{{ .Values.key }}`.
-*   **Функции и конвейеры (Pipelines)**: Преобразование данных с помощью функций и их цепочек, например: `{{ .Values.key | quote }}` или `{{ .Values.key | default "default-value" }}`.
-*   **Управление потоком (Flow Control)**: Использование условий `if/else` для логики включения ресурсов и циклов `range` для итерации по спискам.
-*   **Именованные шаблоны (Named Templates)**: Повторно используемые фрагменты кода, реализующие принцип **DRY** (Don't Repeat Yourself).
+*   **Вставка значений**: `{{ .Values.image.tag }}`.
+*   **Функции**: `{{ quote .Values.name }}` или в стиле пайплайна: `{{ .Values.name | quote }}`.
+*   **Условная логика**: `if/else` блоки для включения или исключения ресурсов.
+*   **Циклы**: `range` для генерации списков (env, volumes, ports).
 
-Подробности синтаксиса см. в разделе **[Синтаксис шаблонов](./templating/syntax.md)**.
+### Управление контекстом (Scope)
 
-### Встроенные объекты
+Понимание контекста — критический навык при разработке чартов.
+1.  **Точка (`.`)**: Ссылается на текущий контекст. В начале рендеринга это корень чарта.
+2.  **Смена контекста**: Конструкции `with` и `range` меняют значение точки. Внутри `range` точка ссылается на текущий элемент списка.
+3.  **Глобальный контекст (`$`)**: Символ `$` всегда ссылается на корневой объект. Это необходимо для доступа к `.Release` или `.Values` внутри циклов.
 
-Helm предоставляет доступ к нескольким глобальным объектам:
+### Управление пробелами (Whitespace Control)
 
-- **`.Values`**: данные из файла `values.yaml` или переданные через `--set`.
-- **`.Release`**: информация о текущем релизе (имя, пространство имен, статус).
-- **`.Chart`**: метаданные из файла `Chart.yaml`.
-- **`.Capabilities`**: информация о версии Kubernetes и поддерживаемых API.
-- **`.Files`**: доступ к не-шаблонным файлам внутри чарта.
+YAML крайне чувствителен к отступам. Helm предоставляет инструменты для точного контроля:
+- `{{- ` (с пробелом после дефиса) — удаляет все пробелы и переносы строк **слева** от блока.
+- ` -}}` (с пробелом перед дефисом) — удаляет пробелы и переносы строк **справа**.
+- **Функция `nindent`**: Самый надежный способ вставки многострочных YAML-блоков. В отличие от `indent`, она всегда добавляет перенос строки перед вставкой, гарантируя корректность структуры.
 
-Полный список объектов и их свойств доступен в разделе **[Встроенные объекты](./templating/objects.md)**.
+---
 
-### Функции шаблонизации
+## Встроенные объекты и функции
 
-Функции позволяют модифицировать данные в процессе рендеринга.
+### Ключевые объекты
 
-1.  **Sprig-функции**: `default`, `quote`, `upper`, `trunc`, `sha256sum`, `b64enc`.
-2.  **Helm-функции**:
-    - `required`: помечает параметр как обязательный (прерывает установку, если значение пустое).
-    - `include`: вставляет именованный шаблон с передачей контекста.
-    - `tpl`: рендерит строку как шаблон (полезно для динамических ConfigMap).
-    - `lookup`: позволяет запрашивать существующие ресурсы из кластера.
+- **`.Values`**: Параметры из `values.yaml` или переданные через `--set`.
+- **`.Release`**: Метаданные релиза (`.Release.Name`, `.Release.Namespace`, `.Release.IsUpgrade`).
+- **`.Chart`**: Данные из `Chart.yaml` (`.Chart.Name`, `.Chart.Version`).
+- **`.Capabilities`**: Возможности кластера (`.Capabilities.KubeVersion`, `.Capabilities.APIVersions.Has`).
+- **`.Files`**: Доступ к не-шаблонным файлам в чарте (например, конфиги или сертификаты).
 
-Справочник по функциям представлен в разделе **[Функции Helm](./templating/functions.md)**.
+### Важные функции Helm
+
+1.  **`include`**: Вставляет именованный шаблон. В отличие от стандартной директивы `template`, `include` возвращает строку, что позволяет передавать её в пайплайны (например, `| nindent 4`).
+2.  **`required`**: Помечает параметр как обязательный. Если значение пустое, Helm прервет установку с описанием ошибки.
+3.  **`tpl`**: Рендерит строку как шаблон. Позволяет пользователям использовать объекты Helm внутри значений в `values.yaml`.
+4.  **`lookup`**: Позволяет запрашивать существующие ресурсы из кластера (не работает в режиме `helm template` и `--dry-run`).
 
 ---
 
 ## Практические сценарии
 
-### Расширенный пример шаблона (ConfigMap + Deployment)
+### Комплексный пример: ConfigMap и Deployment
 
-Этот пример демонстрирует использование встроенных объектов, условной логики, функций пайплайнов и циклов.
+Этот пример демонстрирует объединение функций, объектов и логики.
 
 **templates/configmap.yaml:**
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}-config
-  labels:
-    app: {{ .Chart.Name }}
+  name: {{ include "mychart.fullname" . }}-config
 data:
-  favoriteDrink: {{ .Values.favorite.drink | default "coffee" | quote }}
-  greeting: {{ if .Values.greeting }}{{ .Values.greeting | quote }}{{ else }}"Hello World!"{{ end }}
-  items: |
-{{- range .Values.items }}
-    - {{ . | quote }}
-{{- end }}
+  # Динамический рендер внешнего файла
+  {{- range $path, $_ := .Files.Glob "configs/**.conf" }}
+  {{ base $path }}: |-
+    {{ $.Files.Get $path | nindent 4 }}
+  {{- end }}
+  # Использование tpl для значений из values.yaml
+  custom_config: |-
+    {{ tpl .Values.customConfig . | nindent 4 }}
 ```
 
 **templates/deployment.yaml:**
@@ -85,104 +92,65 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-deployment
-spec:
-  replicas: {{ .Values.replicas | default 2 }}
-  selector:
-    matchLabels:
-      app: {{ .Chart.Name }}
-  template:
-    metadata:
-      labels:
-        app: {{ .Chart.Name }}
-    spec:
-      containers:
-      - name: {{ .Chart.Name }}-container
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
-        ports:
-        - containerPort: {{ .Values.service.port }}
-        env:
-        - name: CONFIG_GREETING
-          valueFrom:
-            configMapKeyRef:
-              name: {{ .Release.Name }}-config
-              key: greeting
-```
-
-### Условная логика (if/else)
-
-Используется для включения или исключения ресурсов и параметров на основе значений.
-
-```yaml
-{{- if .Values.ingress.enabled }}
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
   name: {{ include "mychart.fullname" . }}
 spec:
-  rules:
-    - host: {{ .Values.ingress.host | quote }}
-{{- end }}
-```
-
-### Итерация (range)
-
-Позволяет генерировать списки параметров, например, переменные окружения.
-
-```yaml
-env:
-{{- range $name, $value := .Values.extraEnv }}
-  - name: {{ $name }}
-    value: {{ $value | quote }}
-{{- end }}
+  replicas: {{ .Values.replicaCount | default 1 }}
+  template:
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ required "Image repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
 ```
 
 ### Работа с YAML-блоками (toYaml и nindent)
 
-Функция `toYaml` преобразует структуру данных в YAML, а `nindent` добавляет правильный отступ, что критично для корректности манифестов.
-
+Паттерн для вставки сложных структур данных (например, `affinity`, `tolerations`):
 ```yaml
-{{- with .Values.nodeSelector }}
-nodeSelector:
+{{- with .Values.affinity }}
+affinity:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 ```
 
-### Использование именованных шаблонов
+### Валидация через fail
 
-Вынесение общих меток (labels) в `_helpers.tpl` для соблюдения принципа DRY (Don't Repeat Yourself).
-
-**В `_helpers.tpl`:**
-```go
-{{- define "mychart.labels" -}}
-app.kubernetes.io/name: {{ .Chart.Name }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+Прерывание процесса, если конфигурация небезопасна или некорректна:
+```yaml
+{{- if and .Values.ingress.enabled (not .Values.ingress.tls) }}
+  {{- if .Values.enforceTls }}
+    {{- fail "TLS must be enabled if ingress is enabled and enforceTls is true" }}
+  {{- end }}
 {{- end }}
 ```
-
-**В шаблоне (например, deployment.yaml):**
-```yaml
-metadata:
-  labels:
-    {{- include "mychart.labels" . | nindent 4 }}
-```
-
-Больше примеров и паттернов см. в разделах **[Именованные шаблоны и хелперы](./templating/_helpers.md)** и **[Обзор сценариев шаблонизации](./templating/scenarios/overview.md)**.
 
 ---
 
 ## Дополнительная информация
 
-### Отладка шаблонов
+### Отладка и валидация
 
-Для проверки результата рендеринга без внесения изменений в кластер используются следующие команды:
-
-- `helm template <release-name> <path-to-chart>` — выводит сгенерированные манифесты в stdout.
-- `helm install --dry-run --debug <release-name> <path-to-chart>` — имитирует установку и показывает детальную информацию об объектах и ошибках.
+1.  **`helm template`**: Рендерит чарт локально. Помогает проверить структуру YAML и подстановку значений.
+2.  **`helm install --dry-run --debug`**: Имитирует установку в кластере. Позволяет увидеть ошибки, связанные с API Kubernetes (например, неверные типы ресурсов).
+3.  **JSON Schema (`values.schema.json`)**: Позволяет задать строгую типизацию для `values.yaml`. Если пользователь передаст строку вместо числа, Helm выдаст ошибку до начала рендеринга шаблонов.
 
 ### Полезные ссылки
 
-- [Обзор Helm](./helm_overview.md) — основы работы с инструментом.
-- [Структура Helm-чарта](./helm_chart_structure.md) — описание директорий и файлов.
-- [Шаблонизация в werf](../../../CI-CD/Tools/werf_overview.md#сценарий-3-шаблонизация-манифеста-kubernetes) — особенности использования Go templates в экосистеме werf.
-- [Официальная документация Helm](https://helm.sh/docs/chart_template_guide/) (англ.).
+- [Синтаксис шаблонов](./templating/syntax.md) — детальный разбор Go Templates.
+- [Встроенные объекты](./templating/objects.md) — справочник по `.Values`, `.Release` и др.
+- [Функции Helm](./templating/functions.md) — полный список Sprig и Helm функций.
+- [Именованные шаблоны](./templating/_helpers.md) — работа с `define` и `include`.
+- [Обзор сценариев](./templating/scenarios/overview.md) — библиотека практических примеров.
+
+См. также:
+- [Обзор Helm](./helm_overview.md) — архитектура и основы.
+- [Структура Helm-чарта](./helm_chart_structure.md) — описание директорий.
+- [Helm Secrets](./Advanced/security_best_practices.md) — шифрование данных через SOPS.

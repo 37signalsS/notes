@@ -43,7 +43,8 @@ Control Plane управляет жизненным циклом всего кл
 * **Kube-apiserver:** В HA-кластере версии экземпляров API-сервера могут отличаться максимум на 1 минорную версию.
 * **Kubelet:** Начиная с K8s 1.28, Kubelet может быть на **3 минорные версии старее** API-сервера (например, API 1.31 → Kubelet 1.28). Kubelet **никогда** не может быть новее API-сервера.
 * **Kubectl:** Должен быть в пределах ±1 минорной версии от API-сервера.
-* **Kube-proxy:** Должен соответствовать версии Kubelet на узле (рекомендуется) и не может быть новее API-сервера.
+* **Kube-proxy:** Должен быть той же минорной версии, что и Kubelet, или новее. Он не может быть новее API-сервера и не может отставать от Kubelet более чем на 3 минорные версии (с 1.28+). Рекомендуется держать их версии синхронными.
+* **Kubeadm:** Версия утилиты `kubeadm` не должна превышать версию разворачиваемого Control Plane. `kubeadm` может быть на 1 минорную версию старше `kube-apiserver` в момент начала процесса обновления (например, использование `kubeadm 1.31` для обновления кластера до 1.31).
 
 ## Практические сценарии
 
@@ -111,7 +112,7 @@ ansible-playbook -i inventory/mycluster/hosts.yml upgrade-cluster.yml -e kube_ve
 
 ### 4. Сценарий: Ручное обновление (на примере kubeadm)
 
-Повторяется для каждого узла. Сначала все узлы Control Plane (один за другим), затем Worker-узлы.
+Процесс повторяется для каждого узла. Сначала обновляются все узлы Control Plane (строго один за другим, чтобы не потерять кворум etcd), затем Worker-узлы. Если используется внешняя база **etcd** (External etcd topology), её узлы обновляются самыми первыми. В топологии **Stacked etcd** компоненты etcd обновляются вместе с Control Plane при выполнении `kubeadm upgrade apply/node`.
 
 **Шаг 1: Изоляция и дренаж (Drain)**
 ```bash
@@ -119,6 +120,7 @@ kubectl drain node-1 --ignore-daemonsets --delete-emptydir-data --timeout=5m
 # → node/node-1 cordoned
 # → evicting pod ...
 ```
+*Примечание:* Поды DaemonSet не выселяются `drain`. Они продолжат работу, либо будут остановлены при перезапуске `kubelet`/`containerd`.
 
 **Шаг 2: Обновление kubeadm**
 ```bash
@@ -129,10 +131,10 @@ apt-mark hold kubeadm
 
 **Шаг 3: Применение обновления конфигурации**
 ```bash
-# На первом (primary) мастере:
+# На первом (primary) мастере (обновляет манифесты apiserver, scheduler, cm и etcd):
 sudo kubeadm upgrade apply v1.32.0
 
-# На всех остальных узлах (мастера и воркеры):
+# На всех остальных узлах (secondary мастера и воркеры):
 sudo kubeadm upgrade node
 ```
 
@@ -149,7 +151,17 @@ systemctl daemon-reload
 systemctl restart kubelet
 ```
 
-**Шаг 6: Возврат в работу (Uncordon)**
+**Шаг 6: Валидация API и компонентов**
+После рестарта `kubelet` на Control Plane убедитесь, что API отвечает и компоненты поднялись:
+```bash
+# Проверка доступности API и версии сервера
+kubectl version --short
+
+# Проверка статических подов Control Plane
+kubectl get pods -n kube-system -l tier=control-plane
+```
+
+**Шаг 7: Возврат в работу (Uncordon)**
 ```bash
 kubectl uncordon node-1
 # → node/node-1 uncordoned

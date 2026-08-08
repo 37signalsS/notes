@@ -2,18 +2,18 @@
 
 ## Определения
 
-**403 Forbidden (ресурсы в пространствах имен)** — ошибка возникает, когда субъект успешно прошел проверку личности (аутентификацию), но не имеет достаточных прав в системе **RBAC (Role-Based Access Control)** для выполнения конкретного действия над ресурсом в определенном пространстве имен (**namespace**).
+**403 Forbidden (RBAC)** — состояние, при котором API-сервер успешно идентифицировал субъекта (аутентификация пройдена), но отклонил запрос, так как в системе **RBAC (Role-Based Access Control)** отсутствуют правила, разрешающие данному субъекту выполнение конкретного действия (`verb`) над указанным ресурсом (`resource`).
 
-**403 Forbidden (Admission Control)** — отказ API-сервера на этапе контроля допуска. Даже если RBAC разрешает действие, политики безопасности (например, PSA) могут заблокировать запрос.
+**403 Forbidden (Admission Control)** — отказ, возникающий на этапе контроля допуска. Даже если RBAC разрешает действие, запрос может быть заблокирован политиками безопасности (например, **Pod Security Admission**), квотами (**ResourceQuotas**) или внешними вебхуками.
 
-> Различие 401 vs 403: [definitions.md](definitions.md)
-> Общие лучшие практики RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
+> Подробное сравнение 401 vs 403: [definitions.md](definitions.md)
+> Теория и архитектура RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
 
 ## Основные концепции
 
-### Шаблон сообщения об ошибке
+### Структура сообщения об ошибке
 
-Стандартный ответ API-сервера содержит все детали, необходимые для идентификации проблемы:
+Сообщение об ошибке от API-сервера является самодокументированным и содержит пять критических параметров для отладки:
 
 ```text
 Error from server (Forbidden): <resource> is forbidden:
@@ -21,42 +21,41 @@ User "<subject>" cannot <verb> resource "<resource>"
 in API group "<group>" in the namespace "<namespace>"
 ```
 
-### Алгоритм быстрого решения
+1.  **Subject:** Кто пытается выполнить действие (User, Group или ServiceAccount).
+2.  **Verb:** Какое действие выполняется (`get`, `list`, `create`, `update`, `patch`, `delete`, `watch`).
+3.  **Resource:** Тип объекта (`pods`, `secrets`, `deployments`, `pods/log`).
+4.  **API Group:** Группа, к которой принадлежит ресурс (например, `apps`, `networking.k8s.io` или `""` для core).
+5.  **Namespace:** Пространство имен, в котором запрашивается доступ (актуально для RoleBinding).
 
-1. **Извлечь данные** из сообщения: кто (`subject`), что делает (`verb`), над чем (`resource`), в какой группе (`apiGroup`) и где (`namespace`).
-2. **Проверить Role:** существует ли роль с подходящими `resources` и `verbs`.
-3. **Проверить RoleBinding:** привязан ли нужный `subject` к этой роли в целевом namespace.
-4. **Устранить разрыв:** создать или дополнить Role/RoleBinding.
+### Инструментарий для быстрой проверки
 
-### Инструменты диагностики
-
-Основной инструмент для проверки прав — `kubectl auth can-i`. Рекомендуется использовать механизм **impersonation** (выполнение от имени другого пользователя) для точной имитации условий ошибки.
+Основным инструментом является `kubectl auth can-i`. Использование флага `--as` (impersonation) позволяет проверить права от имени другого пользователя или ServiceAccount без переключения контекста `kubeconfig`.
 
 ```bash
 # Проверка прав конкретного ServiceAccount
-kubectl auth can-i <verb> <resource> --as=system:serviceaccount:<namespace>:<sa-name> -n <namespace>
+kubectl auth can-i <verb> <resource> \
+  --as=system:serviceaccount:<namespace>:<sa-name> \
+  -n <namespace>
 
-# Пример: может ли SA 'my-sa' получать список секретов в 'my-ns'
-kubectl auth can-i list secrets --as=system:serviceaccount:my-ns:my-sa -n my-ns
-# → no
+# Пример: может ли приложение читать логи своих подов
+kubectl auth can-i get pods/log \
+  --as=system:serviceaccount:prod-ns:app-sa \
+  -n prod-ns
+# → yes / no
 ```
 
-> Пошаговая диагностика: [diagnostics.md](diagnostics.md)
+> Полный алгоритм и пошаговая диагностика: [diagnostics.md](diagnostics.md)
 
 ## Практические сценарии
 
 ### Сценарий 1: Чтение подов (отсутствует RoleBinding)
 
-**Контекст:** Приложение пытается получить список подов в своем пространстве имен для обнаружения соседей.
+**Контекст:** Приложение (например, Prometheus или Service Discovery) пытается получить список подов в своем пространстве имен.
 
-**Сообщение:**
-```text
-Error from server (Forbidden): pods is forbidden:
-User "system:serviceaccount:my-ns:my-sa" cannot list resource "pods"
-in API group "" in the namespace "my-ns"
-```
+**Ошибка:** `User "system:serviceaccount:my-ns:my-sa" cannot list resource "pods" in API group ""`
 
-**Решение (YAML):**
+**Решение:** Необходимо создать пару `Role` и `RoleBinding`.
+
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -64,7 +63,7 @@ metadata:
   name: pod-reader
   namespace: my-ns
 rules:
-- apiGroups: [""] # "" указывает на core API group
+- apiGroups: [""] # Core API group
   resources: ["pods"]
   verbs: ["get", "list", "watch"]
 ---
@@ -83,71 +82,128 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### Сценарий 2: Доступ к секретам (Secrets)
+### Сценарий 2: Доступ к секретам (Least Privilege)
 
-**Контекст:** Приложению требуется прочитать `Secrets` для получения учетных данных базы данных.
+**Контекст:** Приложению требуется доступ к конкретному секрету с конфигурацией.
 
-**Внимание:** Предоставляйте доступ к секретам только по необходимости. Используйте `resourceNames` для ограничения доступа конкретными объектами.
+**Проблема:** Предоставление доступа ко всем секретам в namespace (`resources: ["secrets"]`) нарушает принцип наименьших привилегий.
 
-**Решение (ограниченный доступ):**
+**Решение:** Использование `resourceNames` для ограничения доступа.
+
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: db-secret-reader
-  namespace: my-ns
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
-  resourceNames: ["db-credentials"] # Доступ только к этому секрету
+  resourceNames: ["db-credentials", "api-keys"] # Доступ только к этим объектам
   verbs: ["get"]
 ```
 
-### Сценарий 3: Создание/удаление Deployment (группа apps)
+### Сценарий 3: Управление ресурсами группы apps (Deployments)
 
-**Контекст:** CI/CD конвейер или оператор пытается управлять ресурсами `Deployment`.
+**Контекст:** CI/CD конвейер или оператор пытается обновить `Deployment`.
 
-**Ошибка:** `deployments is forbidden: User "..." cannot create resource "deployments" in API group "apps"`
+**Ошибка:** `cannot patch resource "deployments" in API group "apps"`
 
-**Особенность:** `deployments` принадлежат API-группе `apps`. Использование пустой строки `""` в `apiGroups` является частой ошибкой.
+**Особенность:** Ресурсы `deployments`, `statefulsets`, `daemonsets` и `replicasets` находятся в группе `apps`. Указание пустой группы `""` приведет к ошибке 403.
+
+**Решение:**
+```yaml
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+```
+
+### Сценарий 4: Доступ к подресурсам (logs, exec, status)
+
+**Контекст:** Администратору или инструменту автоматизации требуется доступ к логам или возможность выполнения команд внутри контейнера.
+
+**Ошибка:** `cannot create resource "pods/exec" in API group ""`
+
+**Особенность:** Права на `pods` не дают автоматического доступа к `pods/log` или `pods/exec`. Подресурсы указываются через слэш.
+
+**Решение:**
+```yaml
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec"]
+  verbs: ["get", "list", "create"] # exec требует 'create'
+```
+
+### Сценарий 5: Работа с Custom Resource Definitions (CRDs)
+
+**Контекст:** Использование внешних контроллеров (Cert-Manager, Istio, Prometheus Operator).
+
+**Ошибка:** `cannot list resource "certificates" in API group "cert-manager.io"`
+
+**Решение:** Всегда проверяйте `apiGroup` кастомного ресурса через `kubectl get crd <name> -o yaml`.
+
+```yaml
+rules:
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates", "issuers"]
+  verbs: ["*"]
+```
+
+### Сценарий 6: Доступ к кластерным ресурсам через Role (Ошибочно)
+
+**Контекст:** Попытка разрешить чтение списка `Namespaces` или `Nodes` с помощью объекта `Role`.
+
+**Проблема:** `Role` и `RoleBinding` действуют только внутри одного пространства имен. Кластерные ресурсы (Nodes, Namespaces, PV, ClusterRoles) требуют использования `ClusterRole` и `ClusterRoleBinding`.
 
 **Решение:**
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: deployment-manager
-  namespace: my-ns
+  name: node-reader
 rules:
-- apiGroups: ["apps"]
-  resources: ["deployments", "statefulsets"]
-  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: read-nodes-global
+subjects:
+- kind: User
+  name: monitor-user
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: node-reader
+  apiGroup: rbac.authorization.k8s.io
 ```
 
 ## Дополнительная информация
 
-### Таблица API-групп для часто используемых ресурсов
+### Справочник API-групп и ресурсов
 
-| Ресурс | API Group | Тип роли |
-|--------|-----------|----------|
+| Ресурс | API Group | Тип привязки (обычно) |
+|--------|-----------|-----------------------|
 | pods, services, configmaps, secrets, events | `""` (core) | Role |
 | deployments, daemonsets, statefulsets | `apps` | Role |
 | ingress, networkpolicies | `networking.k8s.io` | Role |
 | jobs, cronjobs | `batch` | Role |
 | horizontalpodautoscalers | `autoscaling` | Role |
-| persistentvolumeclaims | `""` | Role |
+| nodes, namespaces, persistentvolumes | `""` (core) | ClusterRole |
+| storageclasses | `storage.k8s.io` | ClusterRole |
+| certificates, issuers | `cert-manager.io` | Role / ClusterRole |
 
-### Частые причины ошибок (чек-лист)
+### Чек-лист для устранения 403 Forbidden
 
-1.  **Множественное число:** Ресурсы в правилах ВСЕГДА во множественном числе (`pods`, `services`, `secrets`).
-2.  **Верная API Group:** Проверьте группу ресурса (например, `ingress` в `networking.k8s.io`).
-3.  **Соответствие Namespace:** Проверьте, что `Role` и `RoleBinding` созданы в том же пространстве имен, где находится ресурс и субъект.
-4.  **Подресурсы:** Для доступа к логам (`pods/log`) или статусу требуется явное указание подресурса.
-5.  **Pod Security Admission (PSA):** Если RBAC корректен, но создание подов запрещено — проверьте метки пространства имен на соответствие политикам безопасности (`privileged`, `baseline`, `restricted`).
+1.  **Множественное число:** Ресурсы в правилах ВСЕГДА во множественном числе (`pods`, а не `pod`).
+2.  **API Group:** Проверьте группу через `kubectl api-resources`. Для ядра — `""`.
+3.  **Namespace Match:** Убедитесь, что `ServiceAccount`, `Role` и `RoleBinding` находятся в одном пространстве имен (если не используется ClusterRole).
+4.  **Verbs для подресурсов:** Помните, что `exec` и `portforward` требуют глагола `create`.
+5.  **Impersonation:** Всегда проверяйте гипотезу через `kubectl auth can-i --as=...`.
+6.  **Admission Control:** Если RBAC настроен верно, но ошибка сохраняется — проверьте события неймспейса (`kubectl get events`) на предмет блокировок PSA или квот.
 
 ### Связанные ресурсы
 
-- Роли и кластерные роли: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
-- Пошаговая диагностика: [diagnostics.md](diagnostics.md)
-- Расширенные сценарии (Cluster-wide): [advanced.md](advanced.md)
-- Определения ошибок 401/403: [definitions.md](definitions.md)
+- [Алгоритмы диагностики 401/403](diagnostics.md)
+- [Определения и модель безопасности API](definitions.md)
+- [Расширенные сценарии (Admission, NodeRestriction)](advanced.md)
+- [Объекты RBAC: детальный разбор](rbac_objects.md)
+- [Официальная документация по RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

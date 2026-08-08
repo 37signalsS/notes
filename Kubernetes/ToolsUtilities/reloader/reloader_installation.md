@@ -20,15 +20,18 @@
 
 ### Требования к RBAC
 
-Reloader требует Role-Based Access Control (RBAC) для мониторинга ресурсов и внесения изменений. Контроллеру необходимы следующие права доступа:
+Reloader требует Role-Based Access Control (RBAC) для мониторинга ресурсов и внесения изменений.
 
 - **Ресурсы конфигурации:** `secrets`, `configmaps` — методы `list`, `get`, `watch`.
 - **Рабочие нагрузки:** `deployments`, `daemonsets`, `statefulsets`, `deployments.extensions` — методы `list`, `get`, `watch`, `update`, `patch`.
-- **Дополнительно:** `cronjobs`, `rollouts.argoproj.io` (если используется Argo Rollouts) — методы `list`, `get`, `watch`.
+- **Интеграции:**
+  - **Argo Rollouts:** `rollouts.argoproj.io` — `list`, `get`, `watch`, `update`, `patch`.
+  - **Secrets Store CSI:** `secretproviderclasspodstatuses.secrets-store.csi.x-k8s.io` — `list`, `get`, `watch` (требуется при включении `--enable-csi-integration`).
+- **Дополнительно:** `cronjobs` — методы `list`, `get`, `watch`.
 
 ### Ресурсы и масштабирование
 
-Контроллер потребляет ресурсы пропорционально количеству отслеживаемых объектов в кластере.
+Контроллер потребляет ресурсы пропорционально количеству отслеживаемых объектов и частоте обновлений в кластере.
 
 | Параметр | Рекомендация (S/M кластер) | Описание |
 | :--- | :--- | :--- |
@@ -43,7 +46,7 @@ Reloader требует Role-Based Access Control (RBAC) для монитори
 
 ### Сценарий 1: Установка через Helm (Рекомендуется для Production)
 
-Этот метод позволяет легко управлять жизненным циклом и обновлять контроллер.
+Метод обеспечивает гибкое управление конфигурацией и нативную интеграцию с GitOps.
 
 **1. Добавление репозитория:**
 
@@ -58,15 +61,17 @@ helm repo update
 ```yaml
 # values.yaml
 reloader:
-  replicas: 2 # Запуск в режиме High Availability (HA)
+  replicas: 2 # Режим High Availability (HA)
   watchGlobally: true
   
-  # Ограничение области видимости для больших кластеров
-  # namespaceSelector: "reloader-enabled=true" 
+  # Безопасность: Включение User Namespaces (v1.4+)
+  # Требует Kubernetes 1.25+ и поддержки в CRI (containerd/CRIO)
+  podContext:
+    hostUsers: false
 
   deployment:
     image:
-      tag: v1.4.19
+      tag: v1.4.19 # Go 1.26.2, UBI 9 base image
     resources:
       requests:
         cpu: 100m
@@ -78,8 +83,9 @@ reloader:
   args:
     - --namespaces-to-ignore=kube-system,kube-public,kube-node-lease
     - --log-level=info
-    - --enable-csi-integration=true # Поддержка Secrets Store CSI Driver
-    - --reload-strategy=annotations # Рекомендуется для GitOps
+    - --enable-csi-integration=true
+    - --reload-strategy=annotations
+    - --ignore-annotation=false # Установите true для глобального форсирования релоадов
 ```
 
 **3. Выполнение установки:**
@@ -96,30 +102,23 @@ helm install reloader stakater/reloader \
 
 ### Сценарий 2: Установка через полные манифесты (Air-gapped / Manual)
 
-Данный сценарий полезен для глубокого понимания структуры ресурсов или работы в изолированных сетях.
+Подходит для систем с ограниченным доступом или когда требуется детальный аудит манифестов.
 
-**Полный манифест `reloader-setup.yaml`:**
+**Манифест `reloader-setup.yaml`:**
 
 ```yaml
 ---
-# Создание пространства имён
 apiVersion: v1
 kind: Namespace
 metadata:
   name: reloader-system
-
 ---
-# Сервисный аккаунт
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: reloader
   namespace: reloader-system
-  labels:
-    app: reloader
-
 ---
-# Роль для доступа к ресурсам (ClusterRole)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -131,15 +130,13 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets", "statefulsets"]
     verbs: ["list", "get", "watch", "update", "patch"]
-  - apiGroups: ["batch"]
-    resources: ["cronjobs"]
+  - apiGroups: ["secrets-store.csi.x-k8s.io"]
+    resources: ["secretproviderclasspodstatuses"]
     verbs: ["list", "get", "watch"]
   - apiGroups: ["argoproj.io"]
     resources: ["rollouts"]
     verbs: ["list", "get", "watch", "update", "patch"]
-
 ---
-# Привязка роли
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -152,16 +149,12 @@ subjects:
   - kind: ServiceAccount
     name: reloader
     namespace: reloader-system
-
 ---
-# Контроллер (Deployment)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: reloader
   namespace: reloader-system
-  labels:
-    app: reloader
 spec:
   replicas: 1
   selector:
@@ -177,18 +170,19 @@ spec:
         runAsNonRoot: true
         runAsUser: 65534
         fsGroup: 65534
+        # seccompProfile:
+        #   type: RuntimeDefault
       containers:
         - name: reloader
           image: ghcr.io/stakater/reloader:v1.4.19
-          imagePullPolicy: IfNotPresent
           args:
             - --namespaces-to-ignore=kube-system,kube-public
             - --log-level=info
-            - --reload-strategy=env-vars # По умолчанию
+            - --reload-strategy=annotations
+            - --enable-csi-integration=true
           ports:
             - containerPort: 9090
               name: http
-              protocol: TCP
           resources:
             requests:
               cpu: 100m
@@ -196,38 +190,19 @@ spec:
             limits:
               cpu: 300m
               memory: 512Mi
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 9090
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: 9090
-            initialDelaySeconds: 5
-            periodSeconds: 5
-```
-
-**Применение:**
-
-```bash
-kubectl apply -f reloader-setup.yaml
-# → result: serviceaccount/reloader created, clusterrole.rbac.authorization.k8s.io/reloader-role created...
 ```
 
 ---
 
 ### Сценарий 3: Настройка для GitOps (ArgoCD / Flux)
 
-При использовании GitOps-инструментов крайне важно предотвратить циклы обновлений (OutOfSync).
+Для стабильной работы в GitOps необходимо исключить "петли синхронизации" (sync loops).
 
-1.  **Выбор стратегии:** Используйте `--reload-strategy=annotations`. В этом режиме Reloader добавляет аннотацию `reloader.stakater.com/last-reloaded-from` в шаблон пода.
-2.  **Игнорирование различий (ArgoCD):** Настройте ArgoCD Application так, чтобы он игнорировал эту аннотацию.
+1.  **Стратегия `annotations`:** Позволяет ArgoCD видеть только изменение аннотации, а не переменных окружения, что чище.
+2.  **Ignore Differences:** Исключите аннотацию из сверки состояния.
 
 ```yaml
-# Фрагмент ArgoCD Application
+# ArgoCD Application snippet
 spec:
   ignoreDifferences:
     - group: apps
@@ -240,28 +215,27 @@ spec:
 
 ## Проверка установки
 
-**1. Проверка статуса подов:**
+**1. Статус контроллера:**
 
 ```bash
 kubectl get pods -n reloader-system -l app=reloader
-# → result: reloader-6c84df96b5-abcde  1/1  Running  0  5m
+# → result: reloader-xxxxxxxxxx-xxxxx  1/1  Running  0  10m
 ```
 
-**2. Проверка RBAC прав (self-test):**
-
-Убедитесь, что контроллер действительно может обновлять Deployment:
+**2. Валидация прав (Self-test):**
 
 ```bash
+# Проверка возможности патчить Deployment
 kubectl auth can-i patch deployments --as=system:serviceaccount:reloader-system:reloader
 # → result: yes
 ```
 
-**3. Просмотр логов запуска:**
+**3. Логи инициализации:**
 
 ```bash
 kubectl logs -f deployment/reloader -n reloader-system
-# → result: time="..." level=info msg="Reloader started"
-# → result: time="..." level=info msg="Watching for changes in all namespaces"
+# → result: level=info msg="Reloader started"
+# → result: level=info msg="Watching for changes in all namespaces"
 ```
 
 ---
@@ -270,23 +244,24 @@ kubectl logs -f deployment/reloader -n reloader-system
 
 ### Совместимость версий
 
-| Версия Reloader | Kubernetes | Helm |
-| :--- | :--- | :--- |
-| **v1.4+** | 1.26 - 1.30+ | 3.10+ |
-| **v1.0 - v1.3** | 1.21 - 1.25 | 3.0+ |
+| Версия Reloader | Kubernetes | Helm | Go |
+| :--- | :--- | :--- | :--- |
+| **v1.4.19** | 1.26 - 1.30+ | 3.12+ | 1.26.2 |
+| **v1.3.x** | 1.24 - 1.28 | 3.10+ | 1.21.x |
 
-### Параметры безопасности (SecurityContext)
+### Параметры безопасности
 
-Манифест установки по умолчанию включает следующие меры защиты:
+Reloader спроектирован с учётом принципов **Zero Trust** и **Supply Chain Security**:
 
-- **`runAsNonRoot: true`**: Контроллер никогда не запускается от имени пользователя root.
-- **`allowPrivilegeEscalation: false`**: Запрет на повышение привилегий внутри контейнера.
-- **`readOnlyRootFilesystem: true`**: (Рекомендуется) Файловая система контейнера доступна только для чтения.
-- **`capabilities.drop: ["ALL"]`**: Удаление всех системных Linux-возможностей.
+- **Signed Images:** Образы подписаны через Cosign (Enterprise).
+- **Non-root:** Запуск от UID 65534.
+- **Minimal RBAC:** Возможность ограничения контроллера конкретными неймспейсами через `--namespaces-to-select`.
+- **User Namespaces:** Изоляция пользователей на уровне ядра Linux для предотвращения container breakout.
 
 ### Ресурсы
 
-- [Официальный репозиторий GitHub](https://github.com/stakater/Reloader)
-- [ArtifactHub: Helm Chart](https://artifacthub.io/packages/helm/stakater/reloader)
-- [Мониторинг и отладка](./reloader_monitoring_and_best_practices.md)
+- [Stakater GitHub: Reloader](https://github.com/stakater/Reloader)
+- [ArtifactHub: Chart Reloader](https://artifacthub.io/packages/helm/stakater/reloader)
+- [Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)
 - [Практические сценарии использования](./reloader_usage_scenarios.md)
+

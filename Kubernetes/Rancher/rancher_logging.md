@@ -4,11 +4,13 @@
 
 **Rancher Logging** — интегрированное решение для централизованного сбора, фильтрации и маршрутизации логов в кластерах под управлением Rancher. Базируется на **Logging Operator** (проект Banzai Cloud/SUSE).
 
-**Logging Operator** — Kubernetes-оператор, управляющий жизненным циклом компонентов логирования (Fluent Bit и Fluentd) через декларативные пользовательские ресурсы (Custom Resources).
+**Logging Operator** — Kubernetes-оператор, управляющий жизненным циклом компонентов логирования (Fluent Bit, Fluentd и Vector) через декларативные пользовательские ресурсы (Custom Resources).
 
-**Fluent Bit** — легковесный агент, работающий как DaemonSet на каждом узле. Его задача — сбор сырых логов контейнеров, их обогащение метаданными Kubernetes и передача в агрегатор.
+**Fluent Bit** — высокопроизводительный Edge-агент (написан на C), работающий как DaemonSet на каждом узле. В актуальных версиях (v3.x+) является OTel-native компонентом, собирает логи контейнеров, обогащает их метаданными Kubernetes и передает в агрегатор.
 
-**Fluentd** — центральный агрегатор и маршрутизатор логов. Выполняет сложную фильтрацию, трансформацию данных и отправку во внешние системы хранения (Output).
+**Fluentd / Vector** — центральные агрегаторы и маршрутизаторы логов.
+*   **Fluentd**: Классический агрегатор с богатой экосистемой Ruby-плагинов. Рекомендуется для сложных трансформаций и Legacy-интеграций.
+*   **Vector**: Современный агрегатор (написан на Rust), ориентированный на производительность и нативную поддержку OpenTelemetry. Рекомендуется для высоконагруженных сред.
 
 ## Базовые концепции
 
@@ -16,25 +18,25 @@
 
 Rancher Logging реализует разделение ответственности между компонентами для обеспечения производительности и гибкости.
 
-1.  **Сбор (Collection)**: Fluent Bit читает файлы логов из `/var/log/containers/` и пересылает их во Fluentd.
-2.  **Агрегация (Aggregation)**: Fluentd принимает потоки от всех агентов, объединяет их и применяет правила маршрутизации.
-3.  **Маршрутизация (Routing)**: На основе правил `Flow` логи направляются в соответствующие `Output`.
+1.  **Сбор (Collection)**: Fluent Bit читает файлы логов из `/var/log/containers/` и пересылает их в агрегатор по протоколу Forward (для Fluentd) или OTLP (для Vector/OpenTelemetry).
+2.  **Агрегация (Aggregation)**: Агрегатор принимает потоки от всех агентов, объединяет их, выполняет дедупликацию и применяет правила маршрутизации.
+3.  **Маршрутизация (Routing)**: На основе правил `Flow` логи направляются в соответствующие `Output` (хранилища или брокеры).
 
 ### Иерархия ресурсов управления
 
-Настройка системы выполняется через четыре основных типа ресурсов:
+Настройка системы выполняется через пять основных типов ресурсов:
 
-*   **Logging**: Глобальный ресурс, определяющий параметры Fluent Bit и Fluentd (версии образов, лимиты ресурсов, Tolerations, настройки буферизации). Обычно создается один на кластер.
-*   **Output / ClusterOutput**: Определяют целевую систему хранения (Elasticsearch, OpenSearch, Kafka, S3, Splunk).
+*   **Logging**: Глобальный ресурс, определяющий архитектуру (выбор между Fluentd и Vector), параметры агентов и общие настройки (версии образов, лимиты ресурсов, Tolerations).
+*   **Output / ClusterOutput**: Определяют целевую систему хранения (Elasticsearch, OpenSearch 3.x, Kafka, S3, Loki, OTLP).
     *   `Output`: Доступен только внутри своего Namespace.
-    *   `ClusterOutput`: Глобальный ресурс, доступный для всех потоков в кластере.
-*   **Flow / ClusterFlow**: Определяют фильтры и связывают источники логов с конкретными Output.
+    *   `ClusterOutput`: Глобальный ресурс, доступный для всего кластера.
+*   **Flow / ClusterFlow**: Определяют фильтры (парсинг JSON, добавление меток, исключение строк) и связывают источники логов с `Output`.
     *   `Flow`: Собирает логи только из своего Namespace.
     *   `ClusterFlow`: Может собирать логи со всего кластера или определенных Namespace.
 
 ### Разграничение прав доступа (RBAC)
 
-Интеграция с RBAC (Role-Based Access Control) Rancher позволяет делегировать управление логированием владельцам приложений:
+Интеграция с ролевой моделью Rancher позволяет делегировать управление логированием владельцам приложений:
 
 | Роль в Rancher | ClusterFlow / ClusterOutput | Flow / Output |
 | :--- | :--- | :--- |
@@ -44,110 +46,104 @@ Rancher Logging реализует разделение ответственно
 
 ## Практические сценарии
 
-### Настройка ресурсов для Fluentd
+### Настройка Vector как основного агрегатора (Рекомендация 2026)
 
-При больших объемах логов стандартные лимиты Fluentd могут привести к перезагрузкам по OOM (Out Of Memory). Настройка выполняется через Helm-параметры или редактирование ресурса `Logging`:
+Для снижения потребления ресурсов и поддержки OTel рекомендуется использовать Vector в качестве агрегатора в ресурсе `Logging`:
 
 ```yaml
 spec:
-  fluentd:
+  controlNamespace: cattle-logging-system
+  fluentbit:
+    resources:
+      limits:
+        memory: "256Mi"
+  vector:
     resources:
       limits:
         cpu: "1000m"
-        memory: "2Gi"
-      requests:
-        cpu: "500m"
         memory: "1Gi"
-    bufferStorageVolume:
-      pvc:
-        spec:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 20Gi
-          storageClassName: local-path
 ```
 
-### Совместимость с OpenSearch 2.x
+### Отправка логов в OpenTelemetry (OTLP)
 
-Для корректной работы с новыми версиями OpenSearch в `ClusterOutput` необходимо отключить использование типов документов, которые были удалены:
+В современной архитектуре наблюдаемости логи часто направляются в OTel Collector для дальнейшей обработки:
 
 ```yaml
 apiVersion: logging.banzaicloud.io/v1beta1
 kind: ClusterOutput
 metadata:
-  name: opensearch-prod
+  name: otel-collector
   namespace: cattle-logging-system
+spec:
+  otlp:
+    endpoint: "otel-collector.monitoring.svc:4317"
+    protocol: grpc
+    tls:
+      enabled: true
+      insecure: false
+```
+
+### Совместимость с OpenSearch 3.x
+
+Для OpenSearch актуальных версий необходимо учитывать изменения в API и форматах данных:
+
+```yaml
 spec:
   opensearch:
     host: opensearch.example.com
     port: 9200
     scheme: https
-    suppress_type_name: true  # Обязательно для OpenSearch 2.x+
-    user:
-      username:
-        valueFrom:
-          secretKeyRef:
-            name: opensearch-auth
-            key: username
-    password:
-      valueFrom:
-        secretKeyRef:
-          name: opensearch-auth
-          key: password
+    suppress_type_name: true  # Обязательно для совместимости с OS 2.x/3.x
+    index_name: "k8s-logs-%Y.%m.%d"
+    allow_self_signed_cert: false
 ```
 
-### Сбор логов только из определенных Namespace
+### Тюнинг буферизации для высоконагруженных сред
 
-Чтобы избежать перегрузки агрегатора ненужными данными, используйте `ClusterFlow` с селекторами:
+Чтобы избежать потери логов при недоступности хранилища, необходимо настроить PVC-буфер для Fluentd/Vector:
 
 ```yaml
-apiVersion: logging.banzaicloud.io/v1beta1
-kind: ClusterFlow
-metadata:
-  name: critical-apps-flow
-  namespace: cattle-logging-system
 spec:
-  match:
-    - select:
-        namespaces:
-          - prod-app-1
-          - prod-app-2
-  filters:
-    - tag_normalizer: {}
-  globalOutputRefs:
-    - opensearch-prod
+  fluentd:
+    bufferStorageVolume:
+      pvc:
+        spec:
+          accessModes: [ "ReadWriteOnce" ]
+          resources:
+            requests:
+              storage: 50Gi
+          storageClassName: premium-rwo
 ```
 
-### Диагностика и отладка
+## Диагностика и отладка
 
-Если логи не доходят до хранилища, используйте следующую последовательность действий:
+Если логи не доходят до хранилища, используйте следующую последовательность:
 
-1.  **Проверка статуса агентов**: Убедитесь, что поды `fluent-bit` запущены на всех узлах.
-2.  **Проверка соединения**: Проверьте логи Fluent Bit на наличие ошибок подключения к Fluentd.
-3.  **Логи агрегатора**: Просмотрите детальный вывод Fluentd:
+1.  **Проверка статуса агентов**: Убедитесь, что поды `fluent-bit` запущены и не находятся в состоянии `CrashLoopBackOff` из-за нехватки памяти (проверьте `OOMKilled`).
+2.  **Валидация конфигурации**: Logging Operator генерирует итоговый конфиг. Проверьте Secret `rancher-logging-fluentd-config` (или аналогичный для Vector) на наличие синтаксических ошибок.
+3.  **Логи агрегатора**: Просмотрите детальный вывод агрегатора для поиска ошибок авторизации в Output:
     ```bash
-    kubectl logs -n cattle-logging-system -l app.kubernetes.io/name=fluentd
+    kubectl logs -n cattle-logging-system -l app.kubernetes.io/name=fluentd # или vector
     ```
-4.  **Состояние буфера**: Если Output недоступен, Fluentd начнет копить логи в буфер. Если PVC переполнится, логи начнут теряться. Проверьте объем `/buffers` внутри пода Fluentd.
+4.  **Метрики**: Используйте Grafana-дашборд "Logging Operator Overview" для отслеживания `failed_outputs` и `buffer_usage`.
 
 ## Дополнительная информация
 
-### Статус компонентов
+### Статус компонентов (2026)
 
 | Компонент | Состояние | Рекомендация |
-|-----------|-----------|--------------|
-| Logging Operator | Актуально | Основной стандарт для Rancher 2.5+ |
-| Banzai Cloud CRDs | Стабильно | Используйте актуальные версии v1beta1+ |
+| :--- | :--- | :--- |
+| **Logging Operator** | Актуально | Основной стандарт для всех типов кластеров (RKE2, K3s, Import). |
+| **Vector Support** | Stable | Рекомендуется для новых инсталляций вместо Fluentd. |
+| **OTel Integration** | GA | Используйте OTLP для унификации с метриками и трассировками. |
 
 **Связанные разделы:**
 
-* [Архитектура логирования Kubernetes](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — общие принципы и подходы.
+* [Архитектура наблюдаемости в Kubernetes](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — общие принципы.
 * [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.
-* [Конфигурация Fluent Bit](../MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md) — подробности работы агента сбора.
+* [Конфигурация Fluent Bit](../MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md) — детальный тюнинг агента.
 
 **Внешние ресурсы:**
 
-* [Logging Operator Documentation](https://kube-logging.github.io/docs/)
+* [Kube-Logging (Logging Operator) Documentation](https://kube-logging.github.io/docs/)
 * [Rancher Logging Guide](https://ranchermanager.docs.rancher.com/how-to-guides/new-user-guides/logging)

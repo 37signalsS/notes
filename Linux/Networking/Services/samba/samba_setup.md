@@ -2,151 +2,169 @@
 
 ## Определения
 
-**smb.conf** — главный конфигурационный файл Samba (`/etc/samba/smb.conf`). Состоит из секции `[global]` и отдельных секций шар (`[share_name]`).
+**smb.conf** — центральный конфигурационный файл Samba (`/etc/samba/smb.conf`). Управляет глобальными настройками демона и параметрами отдельных сетевых ресурсов (шар).
 
-**Шара (share)** — общий ресурс Samba, доступный клиентам по сети. Определяется секцией в `smb.conf` с параметрами доступа, пути и прав.
+**Шара (share)** — логический ресурс (директория или принтер), экспортируемый сервером для сетевого доступа. Каждая шара настраивается индивидуально в контексте прав доступа и производительности.
 
-**Asynchronous I/O (AIO)** — механизм ввода-вывода, позволяющий Samba обрабатывать запросы без блокировки основного процесса, что критично для производительности на современных SSD.
+**Asynchronous I/O (AIO)** — механизм асинхронной обработки запросов ввода-вывода. Позволяет Samba не блокировать основной поток выполнения при ожидании ответа от дисковой подсистемы, что критично для высоконагруженных систем на базе NVMe.
+
+**SMB Multichannel** — технология, позволяющая использовать несколько сетевых соединений в рамках одной SMB-сессии для агрегации пропускной способности и обеспечения отказоустойчивости.
 
 ## Базовые концепции
 
-### Структура smb.conf
+### Структура конфигурации
 
 | Секция | Назначение |
 | :--- | :--- |
-| `[global]` | Глобальные параметры сервера, значения по умолчанию. |
-| `[homes]` | Автоматические шары домашних директорий пользователей. |
-| `[имя]` | Именованная шара с произвольными параметрами. |
+| `[global]` | Основные настройки: роль сервера, безопасность, сетевые параметры, логирование. |
+| `[homes]` | Динамическое создание персональных шар на основе домашних директорий пользователей Linux. |
+| `[printers]` | Настройка общего доступа к очередям печати (CUPS). |
+| `[имя_шары]` | Пользовательская конфигурация конкретного ресурса. |
 
-### Ключевые параметры (Стандарты 2026)
+### Ключевые параметры 2026
 
-| Параметр | Описание | Значение 2026 |
+| Параметр | Описание | Рекомендация |
 | :--- | :--- | :--- |
-| `server min protocol` | Минимальная версия SMB | `SMB3_11` |
-| `security` | Режим аутентификации | `user` |
-| `map to guest` | Маппинг неудачных логинов | `Never` |
-| **`aio read size`** | Порог для асинхронного чтения | `1` (всегда асинхронно) |
-| **`aio write size`** | Порог для асинхронной записи | `1` (всегда асинхронно) |
-| **`use sendfile`** | Использование системного вызова sendfile | `yes` |
+| `server min protocol` | Минимальная версия протокола. | `SMB3_11` (защита от атак) |
+| `server smb encrypt` | Обязательное шифрование трафика. | `required` |
+| `aio read size` | Порог асинхронного чтения. | `1` (всегда асинхронно для SSD) |
+| `aio write size` | Порог асинхронной записи. | `1` (всегда асинхронно для SSD) |
+| `server multi channel` | Включение Multichannel. | `yes` |
+| `map to guest` | Обработка неизвестных пользователей. | `Never` (безопасность) |
 
-> **Важно:** Параметр `encrypt passwords` удалён в Samba 4.24. Шифрование паролей теперь является обязательным и неотключаемым.
+## Установка и базовая настройка
 
-### Установка пакетов
+### Инсталляция компонентов
 
 ```bash
-# Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y samba samba-common-bin
+# Debian / Ubuntu / Mint
+sudo apt update && sudo apt install -y samba samba-common-bin smbclient
 
-# RHEL/CentOS/Fedora
+# RHEL / Rocky / AlmaLinux / Fedora
 sudo dnf install -y samba samba-common samba-client
 ```
 
-Проверка конфигурации:
+### Верификация конфигурации
+
+Перед каждым перезапуском сервиса необходимо проверять синтаксис файла:
 
 ```bash
-# Проверка синтаксиса и вывод итоговых параметров
 testparm -s
+# → Load smb config files from /etc/samba/smb.conf
+# → Loaded services file OK.
 ```
 
 ## Практические сценарии
 
-### Производительное хранилище с доступом по паролю
+### 1. Высокопроизводительное хранилище (High-Perf)
 
-Пример настройки современной шары для работы с большими файлами и SSD.
-
-```bash
-# Создание пользователя и установка пароля
-sudo useradd -M -s /usr/sbin/nologin smbworker
-sudo smbpasswd -a smbworker
-
-# Подготовка директории
-sudo mkdir -p /srv/samba/fast_storage
-sudo chown smbworker:smbworker /srv/samba/fast_storage
-sudo chmod 0700 /srv/samba/fast_storage
-```
-
-Конфигурация в `smb.conf`:
+Настройка для максимальной пропускной способности в 10GbE+ сетях с использованием SSD.
 
 ```ini
 [global]
    workgroup = WORKGROUP
-   server string = High-Perf Samba
    security = user
-   
-   # Безопасность
    server min protocol = SMB3_11
    server smb encrypt = required
    
-   # Производительность (Тюнинг 2026)
+   # Тюнинг производительности 2026
    aio read size = 1
    aio write size = 1
+   server multi channel = yes
    use sendfile = yes
    min receivefile size = 16384
-   socket options = TCP_NODELAY
+   
+   # Оптимизация сетевого стека
+   socket options = TCP_NODELAY IPTOS_LOWDELAY SO_RCVBUF=131072 SO_SNDBUF=131072
 
-[FastStorage]
-   comment = SSD Optimized Share
-   path = /srv/samba/fast_storage
-   valid users = smbworker
+[FastData]
+   path = /data/production
+   comment = NVMe Optimized Storage
+   valid users = @sysadmins
    writable = yes
    browsable = yes
+   # Использование расширенных атрибутов для метаданных
    vfs objects = streams_xattr
 ```
 
-### Публичная шара (Только чтение, Гостевой доступ)
+### 2. Изолированная шара с гостевым доступом
 
-Используется для дистрибутивов ПО или публичных архивов.
+Применяется для публичных архивов внутри доверенного периметра.
 
 ```ini
 [global]
    map to guest = bad user
 
 [PublicArchive]
-   path = /srv/samba/archive
+   path = /srv/samba/public
    guest ok = yes
    read only = yes
    browsable = yes
-   comment = Read-only Public Archive
+   public = yes
 ```
 
-### Оптимизация для macOS (Time Machine)
+### 3. Резервное копирование Time Machine (Apple)
 
-Samba позволяет выступать в роли сервера для бэкапов Apple.
+Использование Samba в качестве цели для бэкапов macOS.
 
 ```ini
 [TimeMachine]
-   path = /srv/samba/timemachine
+   path = /backups/timemachine
    valid users = macuser
    writable = yes
    vfs objects = fruit streams_xattr
+   # Атрибуты совместимости с Apple AAPL
    fruit:time machine = yes
    fruit:aapl = yes
+   fruit:metadata = stream
+   fruit:model = MacSamba
 ```
 
-### Управление службами
+## Управление доступом (Linux vs SMB)
 
-В современных дистрибутивах используется демон `smbd`. Демон `nmbd` (NetBIOS) рекомендуется отключать, если не требуется поддержка старых клиентов Windows XP/7.
+Для корректной работы необходимо соблюдение двух уровней разрешений:
+
+1.  **Права ФС (Linux):** У пользователя/группы должны быть права на уровне ядра (`chmod`, `chown`).
+2.  **Права Samba:** Ограничения в `smb.conf` (`valid users`, `read only`).
+
+**Пример создания пользователя:**
+```bash
+# Создание системного пользователя без оболочки
+sudo useradd -M -s /usr/sbin/nologin smbuser
+# Добавление пользователя в базу Samba
+sudo smbpasswd -a smbuser
+```
+
+## Управление службами
+
+Samba состоит из двух основных демонов, но в современных сетях (SMBv2/v3) `smbd` является самодостаточным.
 
 ```bash
-# Запуск и автозагрузка
+# Основной демон (SMB/CIFS)
 sudo systemctl enable --now smbd
 
-# Если требуется NetBIOS (не рекомендуется в 2026)
-# sudo systemctl enable --now nmbd
+# Демон имен (NetBIOS) - отключать, если не нужны старые Windows XP/7
+sudo systemctl disable --now nmbd
 
-# Проверка статуса
-systemctl status smbd
+# Проверка активных подключений
+smbstatus
 ```
 
 ## Дополнительная информация
 
-- [Обзор Samba](./index.md) — архитектура, версии и общие сведения
-- [Безопасность и VFS](./samba_security.md) — защита сервера и модули расширения
-- [Интеграция с AD](./samba_ad.md) — работа в домене Active Directory
-- [Устранение неполадок](./samba_troubleshooting.md) — логирование и диагностика ошибок
+### Диагностика подключения
 
-## Смотрите также
+Проверка доступности шар с локальной или удаленной машины:
+```bash
+smbclient -L //127.0.0.1 -U smbuser
+# → Sharename       Type      Comment
+# → ---------       ----      -------
+# → FastData        Disk      NVMe Optimized Storage
+```
 
-- [Монтирование через fstab](../../../FileSystems/mounting/fstab.md)
-- [Systemd mount сценарии](../../../FileSystems/mounting/scenarios/systemd_mount.md)
-- [Настройка ZFS для Samba](../../../FileSystems/filesystem_types_comparison.md)
+### См. также
+- [Обзор Samba](./index.md) — архитектура и стандарты 2026.
+- [Безопасность и VFS](./samba_security.md) — продвинутые модули и аудит.
+- [Интеграция с AD](./samba_ad.md) — членство в домене Active Directory.
+- [Оптимизация ФС](../../../FileSystems/performance_tuning.md) — настройка ядра и дисков.
+- [Монтирование SMB в Linux](../../../FileSystems/mounting/index.md) — работа со стороны клиента.

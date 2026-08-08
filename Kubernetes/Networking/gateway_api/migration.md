@@ -1,75 +1,72 @@
 # Миграция с Ingress на Gateway API
 
-**Надёжность:** 10 (SSoT + Официальные данные Kubernetes SIG Network 2026)
-
 ## Определения
 
-**ingress2gateway** — основной инструмент командной строки (CLI) для автоматизированного преобразования ресурсов Ingress (включая аннотации NGINX) в стандартные объекты Gateway API (Gateway и HTTPRoute).
+**ingress2gateway** — специализированный инструмент командной строки (CLI), предназначенный для автоматизированного преобразования ресурсов `Ingress` (включая специфичные аннотации различных контроллеров) в стандартные объекты Kubernetes Gateway API (`Gateway`, `HTTPRoute`, `TLSRoute`).
 
-**End of Life (EOL) Ingress NGINX** — статус проекта `kubernetes/ingress-nginx`, наступивший 24 марта 2026 года. С этой даты выпуск обновлений безопасности и исправлений CVE прекращён; использование в продуктовых средах настоятельно не рекомендуется.
+**End of Life (EOL) Ingress NGINX** — официальный статус проекта `kubernetes/ingress-nginx`, наступивший в марте 2026 года. С этого момента проект переведён в режим только чтения; критические уязвимости (CVE) не исправляются, и использование контроллера в производственных средах представляет значительный риск для безопасности инфраструктуры.
 
-**ListenerSet** — ресурс Gateway API (v1.5+), позволяющий делегировать управление TLS-сертификатами и хостами командам приложений в режиме самообслуживания.
+**ReferenceGrant** — критически важный ресурс Gateway API, который позволяет владельцам ресурсов (например, секретов с TLS-сертификатами) разрешать их использование объектами из других пространств имён. Это заменяет небезопасные механизмы копирования секретов, использовавшиеся в эпоху Ingress.
 
 ## Базовые концепции
 
-### Причины миграции в 2026 году
+### Почему миграция обязательна в 2026 году
 
-- **Безопасность:** Отсутствие паттернов для `ingress-nginx` делает кластеры уязвимыми.
-- **Стандартизация:** Gateway API стал общепринятым стандартом L7-маршрутизации, поддерживаемым всеми облачными провайдерами и современными контроллерами (Envoy Gateway, Traefik, Cilium).
-- **Продвинутая маршрутизация:** Нативная поддержка gRPC, WebSocket и L4 (TCP/UDP) без сложных аннотаций.
-- **Устранение дублирования секретов:** Механизм `ReferenceGrant` позволяет шлюзу безопасно использовать TLS-секреты из пространства имен приложения, исключая необходимость в инструментах вроде `reflector`.
+1.  **Безопасность:** После EOL Ingress NGINX использование Gateway API является единственным способом обеспечить поддержку современных протоколов безопасности и своевременное исправление уязвимостей сетевого стека.
+2.  **Ролевая модель:** Gateway API разделяет ответственность между администраторами инфраструктуры (ресурс `Gateway`) и разработчиками приложений (`HTTPRoute`), что невозможно в рамках монолитного ресурса `Ingress`.
+3.  **Нативность:** Функции, которые раньше требовали десятков аннотаций (Rewrites, Redirects, Mirroring), теперь являются частью официальной спецификации.
+4.  **Унификация:** Единый API для входящего трафика (North-South) и взаимодействия внутри кластера (East-West через спецификацию GAMMA).
 
-### Доступные реализации Gateway API
+### Выбор целевой реализации
 
-| Реализация | Преимущества | Особенности |
+При миграции необходимо выбрать контроллер, соответствующий вашим задачам:
+
+| Реализация | Основная специализация | Рекомендуемый сценарий |
 | :--- | :--- | :--- |
-| **Envoy Gateway** | Стандарт CNCF, высокая производительность | Оптимален для большинства сред |
-| **KGateway** | AI-функционал (MCP, Rate Limiting по токенам) | Наследник Gloo Gateway, идеален для LLM-нагрузок |
-| **Cilium** | eBPF-маршрутизация, интеграция с CNI | Максимальная производительность на уровне ядра |
-| **Traefik (v3.1+)** | Нативная поддержка Gateway API v1.1+ | Удобный UI и привычный стек для пользователей Traefik |
-| **NGINX Gateway Fabric** | Официальная замена Ingress-NGINX от F5 | Сохраняет логику NGINX, но на базе нового стандарта |
+| **Envoy Gateway** | Производительность и стандарт CNCF | Универсальная замена для большинства задач |
+| **KGateway** | AI-инфраструктура и LLM | Проекты с ИИ-агентами, поддержка MCP |
+| **Cilium** | eBPF и сетевая безопасность | Максимальная скорость и глубокая фильтрация |
+| **Traefik (v3.3+)** | Простота и автоматизация | Динамические среды, быстрая настройка |
+| **NGINX Gateway Fabric** | Наследие NGINX | Прямая миграция для тех, кто использует сложные nginx-конфиги |
 
-### Таблица соответствия ресурсов
+### Таблица соответствия ресурсов и политик
 
-| Ingress NGINX (Legacy) | Gateway API (Standard) |
-| :--- | :--- |
-| `Ingress` + `IngressClass` | `GatewayClass` + `Gateway` |
-| `spec.rules` | `HTTPRoute` |
-| Аннотации Rewrites | `URLRewrite` (фильтр в HTTPRoute) |
-| Аннотации Redirects | `RequestRedirect` (фильтр в HTTPRoute) |
-| CORS / Rate Limit | `ExtensionRef` (ссылка на Middleware/Policy) |
-| TLS Termination | `Gateway.listeners.tls.mode: Terminate` |
+| Функция в Ingress NGINX | Эквивалент в Gateway API | Метод реализации |
+| :--- | :--- | :--- |
+| `Ingress` | `HTTPRoute` | Основной ресурс маршрутизации |
+| `IngressClass` | `GatewayClass` | Определение типа контроллера |
+| `annotations: .../rewrite-target` | `urlRewrite` | Фильтр в `HTTPRoute.rules` |
+| `annotations: .../auth-url` | `ExtensionRef` | Ссылка на `AuthenticationPolicy` |
+| `annotations: .../enable-cors` | `ExtensionRef` | Ссылка на `CORSPolicy` |
+| `tls: hosts/secretName` | `Gateway.listeners.tls` | Терминация на уровне шлюза |
 
 ## Практические сценарии
 
-### Шаг 1: Автоматизированная конвертация (ingress2gateway v1.2.0)
+### Шаг 1: Подготовка и автоматизированная конвертация
 
-Инструмент `ingress2gateway` поддерживает более 30 популярных аннотаций NGINX.
+Инструмент `ingress2gateway` позволяет минимизировать ручной труд, преобразуя до 85% типовых конфигураций.
 
-**Установка:**
 ```bash
+# Установка актуальной версии
 go install github.com/kubernetes-sigs/ingress2gateway@v1.2.0
+
+# Генерация манифестов Gateway API на основе существующих Ingress
+ingress2gateway convert --namespace=prod --output=yaml > gateway-api-manifests.yaml
+
+# Анализ неподдерживаемых аннотаций (требующих ручной миграции)
+ingress2gateway convert --summarize
 ```
 
-**Применение:**
-```bash
-# Конвертация с выводом в файл для проверки
-ingress2gateway convert --namespace=prod-app --output=yaml > migration-plan.yaml
+### Шаг 2: Настройка безопасности и ReferenceGrant
 
-# Просмотр неподдерживаемых аннотаций
-ingress2gateway convert --namespace=prod-app --summarize
-```
-
-### Шаг 2: Реализация ReferenceGrant для TLS
-
-Вместо копирования секретов из namespace приложения в namespace шлюза, используйте `ReferenceGrant`:
+Самым частым «белым пятном» при миграции является доступ к секретам. Если ваш `Gateway` находится в namespace `gateway-system`, а сертификат — в `app-prod`, необходимо создать разрешение:
 
 ```yaml
-apiVersion: gateway.networking.k8s.io/v1beta1
+apiVersion: gateway.networking.k8s.io/v1
 kind: ReferenceGrant
 metadata:
-  name: allow-gateway-tls
-  namespace: app-namespace
+  name: allow-cert-access
+  namespace: app-prod
 spec:
   from:
   - group: gateway.networking.k8s.io
@@ -78,49 +75,40 @@ spec:
   to:
   - group: ""
     kind: Secret
-    name: app-cert-tls
+    name: site-tls-cert
 ```
 
-### Шаг 3: Настройка cert-manager (v1.20+)
+### Шаг 3: Миграция сложных политик (CORS и Auth)
 
-В 2026 году cert-manager требует явного включения поддержки Gateway API.
+Поскольку CORS и аутентификация не стандартизированы в ядре Gateway API, они реализуются через политики провайдера.
 
-**Включение в Helm:**
+**Пример политики CORS (для Envoy Gateway):**
 ```yaml
-config:
-  enableGatewayAPI: true
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: app-cors
+spec:
+  cors:
+    allowOrigins:
+    - "https://trusted.example.com"
+    allowMethods: ["GET", "POST"]
 ```
-
-**Обновление ClusterIssuer для HTTP-01:**
-```yaml
-solvers:
-- http01:
-    gatewayHTTPRoute:
-      parentRefs:
-      - name: main-gateway
-        namespace: gateway-system
-```
-
-### Шаг 4: Поэтапный перенос трафика (Canary)
-
-1. **Создание параллельного шлюза:** Разверните `Gateway`, который получит новый внешний IP.
-2. **Верификация:** Проверьте доступность через новый IP с помощью `curl -H "Host: app.com"`.
-3. **DNS-переключение:** Используйте веса в DNS (например, AWS Route53) для постепенного перенаправления:
-   - 10% на Gateway API IP.
-   - 90% на старый Ingress IP.
-4. **Завершение:** После достижения 100% удалите старые Ingress-ресурсы и контроллер NGINX.
+Затем эта политика привязывается к `HTTPRoute` через `targetRef`.
 
 ## Дополнительная информация
 
-### Нюансы эксплуатации
+### Типовые ошибки при миграции
 
-- **Статусы (Status Conditions):** Основной инструмент диагностики. Если `HTTPRoute` не работает, проверьте `status.parents[].conditions`. Типичная ошибка — отсутствие `ReferenceGrant` для бэкенда в другом namespace.
-- **Дублирование хостов:** В отличие от Ingress, Gateway API строго контролирует уникальность хостов. Конфликтующие маршруты будут отклонены со статусом `Conflicted`.
+- **Несоответствие портов:** В Gateway API порт в `parentRef` должен точно соответствовать имени или порту `listener` в ресурсе `Gateway`.
+- **Игнорирование статусов:** Gateway API предоставляет богатую диагностику. Всегда проверяйте `kubectl describe httproute <name>` — секция `status` укажет, принят ли маршрут контроллером.
+- **Dangling Routes:** Маршруты без `parentRef` или с неверной ссылкой не будут обрабатываться, что приведет к 404.
 
-**См. также:**
+### См. также
 
-- [Концепции Gateway API](./definitions.md) — базовые определения
-- [Тестирование миграции](./migration_testing.md) — детализация Шага 4
-- [Envoy Gateway](./envoy_gateway.md) — рекомендуемая реализация для миграции
+- [Концепции Gateway API](./definitions.md) — базовые определения и ролевая модель.
+- [Тестирование и перенос трафика](./migration_testing.md) — детальный разбор стратегий Canary и Blue-Green.
+- [Миграция TLS и сложной маршрутизации](./migration_tls_and_routing.md) — глубокое погружение в Rewrites и сертификаты.
+- [Envoy Gateway](./envoy_gateway.md) — эталонная реализация для миграции.
 
 **Родительская тема:** [Gateway API](./definitions.md)

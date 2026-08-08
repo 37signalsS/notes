@@ -1,145 +1,173 @@
-# Практические сценарии systemd
+# Практические сценарии и паттерны systemd
 
 ## Определения
 
-* **Практические сценарии systemd** — это типовые конфигурации для решения задач администрирования: от автоматизации монтирования до создания изолированных цепочек сервисов.
-* **Связка юнитов (Unit coupling)** — использование нескольких типов юнитов (например, `.socket` + `.service` или `.path` + `.service`) для реализации сложной логики активации.
-* **Песочница (Sandboxing)** — применение директив изоляции внутри сценариев для ограничения доступа сервисов к системным ресурсам.
+* **Паттерны активации** — типовые архитектурные решения по управлению жизненным циклом служб в зависимости от внешних событий (сеть, файловая система, оборудование).
+* **Sandboxing (Песочница)** — применение декларативных директив изоляции в секции `[Service]` для минимизации привилегий и ограничения поверхности атаки.
+* **Transient Unit (Временный юнит)** — динамически создаваемый объект (через API или `systemd-run`), существующий только до завершения задачи или перезагрузки.
+* **Credentials (Секреты)** — механизм безопасной передачи конфиденциальных данных (паролей, ключей) в юнит без их жесткого прописывания в файлах конфигурации.
 
 ## Основные концепции
 
-### Правила именования юнитов монтирования
+### Иерархия управления ресурсами
 
-Для юнитов типов `.mount` и `.automount` имя файла **обязано** точно соответствовать пути к точке монтирования. Слэши (`/`) заменяются на дефисы (`-`), ведущий слэш игнорируется.
+В практических сценариях важно учитывать, как юниты группируются для управления ресурсами:
+1.  **Service**: Индивидуальный процесс.
+2.  **Slice**: Логическая группа сервисов (например, `background.slice` для задач с низким приоритетом CPU).
+3.  **Target**: Точка синхронизации состояния системы.
 
-| Путь | Имя юнит-файла |
-| :--- | :--- |
-| `/backup` | `backup.mount` |
-| `/mnt/data/share` | `mnt-data-share.mount` |
+### Приоритет декларативности
 
-### Типовые паттерны активации
+Всегда отдавайте предпочтение нативным директивам systemd перед сложными shell-скриптами в `ExecStartPre`. Например, проверку наличия файла лучше делать через `ConditionPathExists=`, а не через `test -f`.
 
-1. **Lazy Start (Ленивый запуск)** — сервис спит, пока не придет сетевой запрос (Socket) или не появится файл (Path).
-2. **Event-driven (Событийный запуск)** — активация по таймеру или при наступлении системного события (например, подключение USB).
-3. **Target Grouping (Группировка)** — объединение микросервисов под единый `.target` для массового управления.
+---
 
 ## Практические сценарии
 
-### 1. Управление дисками (Mount и Automount)
+### 1. Событийная активация (Event-Driven)
 
-Используется для управления ФС декларативно, заменяя `/etc/fstab`.
+#### Паттерн: Socket Activation (Ленивый запуск)
+Служба запускается только при поступлении первого сетевого пакета.
 
-**Юнит монтирования** (`mnt-storage.mount`):
-```ini
-[Unit]
-Description=Mount External Storage
-After=network.target
-
-[Mount]
-What=/dev/sdb1
-Where=/mnt/storage
-Type=ext4
-Options=defaults,noatime
-```
-
-**Юнит автомонтирования** (`mnt-storage.automount`):
-Активирует диск только при первом обращении к `/mnt/storage`.
-```ini
-[Automount]
-Where=/mnt/storage
-TimeoutIdleSec=300
-```
-
-### 2. Мониторинг файлов (Path)
-
-Автоматический запуск скрипта обработки при появлении новых файлов в директории.
-
-**Юнит пути** (`image-processor.path`):
-```ini
-[Path]
-PathChanged=/var/spool/uploads/
-Unit=image-processor.service
-```
-
-**Сервис** (`image-processor.service`):
-```ini
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/process-images.sh
-```
-
-### 3. Активация по сети (Socket)
-
-Экономия ресурсов: приложение запускается только при первом обращении к порту.
-
-**Юнит сокета** (`myapp.socket`):
+**Файл `api.socket`**:
 ```ini
 [Socket]
 ListenStream=8080
+# Ограничение количества одновременных соединений
+MaxConnections=64
+
+[Install]
+WantedBy=sockets.target
 ```
 
-**Сервис** (`myapp.service`):
+**Файл `api.service`**:
 ```ini
 [Service]
-ExecStart=/usr/bin/myapp
-# Остановка при отсутствии активности
+ExecStart=/usr/local/bin/api-server
+# Служба остановится, если к ней нет обращений
 StopWhenUnneeded=yes
 ```
 
-### 4. Создание пользовательского стека (Target)
+#### Паттерн: Path Activation (Мониторинг директории)
+Автоматическая обработка файлов при их появлении.
 
-Позволяет управлять группой сервисов как единым целым.
+**Файл `processor.path`**:
+```ini
+[Path]
+# Активация только если директория не пуста
+PathExistsGlob=/var/spool/incoming/*.csv
+Unit=processor.service
+```
 
-**Юнит таргета** (`my-project.target`):
+### 2. Изоляция и безопасность (Sandboxing)
+
+«Золотой стандарт» hardening-настроек для публичного веб-сервиса. Эти параметры создают изолированные пространства имен и ограничивают доступ к ядру.
+
+```ini
+[Service]
+ExecStart=/usr/bin/webapp
+# Ограничение прав
+User=webapp
+Group=webapp
+NoNewPrivileges=yes
+
+# Изоляция ФС
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/etc/webapp/config.json
+ReadWritePaths=/var/log/webapp/
+
+# Изоляция ядра и оборудования
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=yes
+```
+
+### 3. Управление секретами (Credentials)
+
+Безопасная передача токенов (v250+).
+
+**Создание секрета**:
+```bash
+# Сохранение зашифрованного секрета в системе
+systemd-creds encrypt --name=db-password - /etc/creds/db.key < password.txt
+```
+
+**Использование в юните**:
+```ini
+[Service]
+LoadCredential=db-pass:/etc/creds/db.key
+ExecStart=/usr/bin/app --db-pass-file=${CREDENTIALS_DIRECTORY}/db-pass
+```
+
+### 4. Обработка зависимостей и условий
+
+#### Паттерн: Ожидание полной готовности сети
+Используйте `network-online.target`, а не просто `network.target`.
+
 ```ini
 [Unit]
-Description=My Project Stack
-AllowIsolate=yes
+Description=Cloud Sync Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Проверка условия перед запуском
+ConditionPathExists=/etc/cloud-sync/token.json
+ConditionEnvironment=STAGING=production
+ExecStart=/usr/bin/sync-tool
 ```
 
-**Привязка сервиса** (в файле `app.service`):
-```ini
-[Unit]
-PartOf=my-project.target
+### 5. Управление дисками (Mount)
 
-[Install]
-WantedBy=my-project.target
-```
+Для детальной настройки монтирования используйте специализированный гайд. В общем виде:
+*   **`.mount`**: Заменяет `fstab` для сложных цепочек (например, монтирование тольк после запуска VPN).
+*   **`.automount`**: Позволяет системе загружаться быстрее, монтируя диски только при обращении к ним.
+
+Подробнее: [Юниты монтирования systemd](../../FileSystems/mounting/scenarios/systemd_mount.md)
+
+### 6. Временные задачи (Ad-hoc)
+
+#### systemd-run (v250+)
+Запуск разового скрипта с жесткими лимитами ресурсов без создания файлов.
 
 ```bash
-# Массовый запуск всего стека
-sudo systemctl start my-project.target
-```
-
-### 5. Безопасный запуск временных задач (systemd-run)
-
-Запуск тяжелого бэкапа с ограничением ресурсов без создания файлов.
-
-```bash
-systemd-run --unit=backup-task \
-            --property=MemoryMax=1G \
-            --property=CPUQuota=20% \
+systemd-run --unit=one-time-job \
+            --property=MemoryMax=512M \
+            --property=CPUQuota=30% \
             --property=PrivateTmp=yes \
-            /usr/local/bin/heavy-backup.sh
-# → Running as unit: backup-task.service
+            /usr/local/bin/batch-process.sh
 ```
+
+#### run0 (v256+)
+Безопасное выполнение команды от имени другого пользователя через API systemd (замена `sudo`).
+
+```bash
+run0 --user=www-data ls /var/www/html
+```
+
+---
 
 ## Дополнительная информация
 
 ### Диагностика сценариев
 
 ```bash
-# Проверка дерева зависимостей для таргета
-systemctl list-dependencies my-project.target
-# → my-project.target
-# → ├─app.service
-# → └─db.service
+# Показать дерево зависимостей для визуализации связей
+systemctl list-dependencies --all my-app.service
 
-# Поиск ошибок в связках (например, .path без .service)
-systemd-analyze verify /etc/systemd/system/*.path
+# Анализ безопасности юнита (рейтинг Exposure)
+systemd-analyze security my-app.service
+
+# Проверка корректности синтаксиса
+systemd-analyze verify /etc/systemd/system/my-app.service
 ```
 
 ### См. также
-* [Обзор юнитов systemd](./systemd_units_overview.md) — типы и назначение.
-* [Управление зависимостями](./systemd_dependencies.md) — логика связей.
-* [Таймеры systemd](./timers.md) — сценарии запуска по времени.
+* [Обзор юнитов systemd](./systemd_units_overview.md) — классификация и состояния.
+* [Управление сессиями (logind)](./logind_session_management.md) — ингибиторы и лимиты.
+* [Таймеры systemd](./timers.md) — планирование задач.
+* [Пользовательские службы](./user_services.md) — сценарии в контексте `--user`.

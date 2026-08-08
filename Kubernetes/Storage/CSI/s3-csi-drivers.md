@@ -1,109 +1,54 @@
 # S3 CSI-драйверы в Kubernetes
 
-S3 (Simple Storage Service) является объектным хранилищем, которое подходит для надежного и масштабируемого хранения данных большого объема. В Kubernetes S3 часто используется для приложений, требующих распределенного доступа к данным, хранения артефактов или резервных копий.
+S3 (Simple Storage Service) — это объектное хранилище, которое при использовании специальных драйверов можно монтировать в Kubernetes как файловую систему. Это решение идеально подходит для Read-Heavy нагрузок (статический контент, медиа-архивы, датасеты для ML), но имеет ограничения по сравнению с традиционными блочными хранилищами.
 
-## Обзор CSI
+## Определения
 
-**CSI (Container Storage Interface)** — это стандартный интерфейс, позволяющий Kubernetes взаимодействовать с различными системами хранения данных. Он унифицирует доступ и упрощает интеграцию внешних хранилищ в кластер.
+**S3 CSI Driver** — программный интерфейс, позволяющий Kubernetes-кластеру взаимодействовать с объектными хранилищами по протоколу S3, представляя бакеты как стандартные тома (`PersistentVolumes`).
 
-### Основные компоненты CSI
-
-Драйверы CSI состоят из компонентов, разрабатываемых сообществом Kubernetes и поставщиками хранилищ:
-
-**Компоненты Kubernetes (Sidecars):**
-*   **Driver registrar:** регистрирует CSI-драйверы в kubelet.
-*   **External provisioner:** обрабатывает запросы на создание и удаление томов.
-*   **External attacher:** управляет монтированием и размонтированием томов.
-
-**Компоненты поставщика:**
-*   **CSI Identity:** возвращает информацию о плагине.
-*   **CSI Controller:** управляет жизненным циклом томов (create/delete).
-*   **CSI Node:** управляет монтированием томов на конкретных узлах кластера.
+**Маунтер (Mounter)** — утилита (обычно на базе FUSE), которая выполняет фактическое преобразование вызовов файловой системы (POSIX) в API-запросы S3 (GET, PUT, LIST).
+*   **GeeseFS** — высокопроизводительный маунтер (форк Goofys), оптимизированный для работы в облачных средах с минимизацией количества мета-операций.
+*   **Mountpoint for Amazon S3** — официальный маунтер от AWS, ориентированный на максимальную пропускную способность (throughput) при чтении.
+*   **JuiceFS** — распределенная файловая система, использующая S3 для хранения данных и внешнюю БД (Redis, SQL) для метаданных, обеспечивающая полную POSIX-совместимость.
 
 ---
 
-## Подготовка инфраструктуры (IaC)
+## Базовые концепции
 
-Для развертывания тестового стенда (кластер Managed Kubernetes и S3-хранилище) используется Terraform.
+### Архитектура и компоненты
+Типичный S3 CSI-драйвер состоит из стандартных Sidecar-контейнеров и специфичных компонентов поставщика:
 
-### Пример конфигурации провайдеров
+1.  **Controller Plugin (Deployment):** Отвечает за создание/удаление бакетов (Dynamic Provisioning) и управление `VolumeAttachments`.
+2.  **Node Plugin (DaemonSet):** Работает на каждом узле, выполняет монтирование бакета через FUSE в файловую систему хоста, а затем в контейнер пода.
 
-```hcl
-provider "helm" {
-  kubernetes {
-    host                   = module.mks.kube_config.server
-    client_certificate     = base64decode(module.mks.kube_config.client_cert)
-    client_key             = base64decode(module.mks.kube_config.client_key)
-    cluster_ca_certificate = base64decode(module.mks.kube_config.cluster_ca_cert)
-  }
-}
-```
-
-### Основные ресурсы (Selectel)
-
-Для работы с S3 в Managed Kubernetes необходимо создать:
-1.  Проект и сервисного пользователя.
-2.  S3-ключи доступа (Access Key / Secret Key).
-3.  Кластер Kubernetes (MKS).
+### Типы монтирования
+*   **Статическое (Static):** Бакет уже существует, драйверу передаются только учетные данные и имя бакета.
+*   **Динамическое (Dynamic):** Драйвер сам создает бакет в S3 при создании `PersistentVolumeClaim`. Поддерживается не всеми драйверами (например, AWS Mountpoint не поддерживает динамику на август 2026).
 
 ---
 
-## Драйвер ctrox/csi-s3
+## Обзор актуальных решений (2026)
 
-Позволяет монтировать S3-контейнеры как файловые системы внутри подов.
-
-*   **GitHub:** [ctrox/csi-s3](https://github.com/ctrox/csi-s3)
-*   **Поддерживаемые маунтеры:** rclone, s3fs, goofys, s3backer.
-
-### Установка (Helm/Terraform)
-
-```hcl
-resource "helm_release" "ctrox-csi-s3" {
-  name             = "ctrox-csi-s3"
-  repository       = "https://github.com/CloudVE/helm-charts/raw/master"
-  chart            = "ctrox-csi-s3"
-  namespace        = "ctrox-csi-s3"
-  create_namespace = true
-
-  values = [
-    <<-EOT
-      secret:
-        create: true
-        accessKey: ${module.s3-creds.s3_credentials_access_key}
-        secretKey: ${module.s3-creds.s3_credentials_secret_key}
-        endpoint: "https://s3.storage.selcloud.ru"
-      storageClass:
-        mounter: goofys
-    EOT
-  ]
-}
-```
-
-> **Важно:** После установки может потребоваться обновление ClusterRole `external-attacher-runner` для добавления прав на `volumeattachments/status`.
-
----
-
-## Драйвер yandex-cloud/k8s-csi-s3
-
-Является форком `ctrox/csi-s3` с добавлением оптимизированного маунтера **GeeseFS**.
+### 1. Yandex Cloud CSI (k8s-csi-s3)
+Универсальное решение для S3-совместимых хранилищ (Yandex Object Storage, MinIO, Ceph RGW).
 
 *   **GitHub:** [yandex-cloud/k8s-csi-s3](https://github.com/yandex-cloud/k8s-csi-s3)
-*   **Ключевая особенность:** GeeseFS (основан на Goofys) минимизирует количество операций API, поддерживает частичное изменение и дозапись объектов.
+*   **Маунтер:** GeeseFS.
+*   **Преимущества:** Поддержка динамического провизионирования, высокая стабильность, частичная поддержка записи (overwrite).
 
-### Установка
-
+#### Установка через Terraform (Helm)
 ```hcl
 resource "helm_release" "yandex-csi-s3" {
   name             = "yandex-csi-s3"
-  chart            = "./yandex-csi-s3/deploy/helm/csi-s3"
-  namespace        = "yandex-csi-s3"
-  create_namespace = true
+  repository       = "https://yandex-cloud.github.io/k8s-csi-s3/charts"
+  chart            = "csi-s3"
+  namespace        = "kube-system"
 
   values = [
     <<-EOT
       secret:
-        accessKey: "${module.s3-creds.s3_credentials_access_key}"
-        secretKey: "${module.s3-creds.s3_credentials_secret_key}"
+        accessKey: "${var.s3_access_key}"
+        secretKey: "${var.s3_secret_key}"
         endpoint: "https://s3.storage.selcloud.ru"
         region: "ru-1"
     EOT
@@ -111,33 +56,92 @@ resource "helm_release" "yandex-csi-s3" {
 }
 ```
 
+### 2. AWS Mountpoint S3 CSI Driver (v2.x)
+Стандарт для инфраструктуры в AWS.
+
+*   **GitHub:** [aws-mountpoint-s3-csi-driver](https://github.com/awslabs/aws-mountpoint-s3-csi-driver)
+*   **Особенность:** Поддержка **Mountpoint Pod Sharing** (общий инстанс маунтера на ноде для экономии ресурсов).
+
+### 3. JuiceFS CSI Driver
+Рекомендуется для высокопроизводительных вычислений (HPC) и AI/ML задач.
+
+*   **GitHub:** [juicedata/juicefs-csi-driver](https://github.com/juicedata/juicefs-csi-driver)
+*   **Преимущества:** Полная POSIX-совместимость, атомарные операции, кэширование на локальных дисках нод.
+
+#### Пример установки JuiceFS
+```bash
+helm upgrade --install juicefs-csi-driver juicefs-csi-driver/juicefs-csi-driver \
+  --namespace kube-system \
+  --set storageClasses[0].name=juicefs-s3 \
+  --set storageClasses[0].backend.type=s3 \
+  --set storageClasses[0].backend.name=my-bucket \
+  --set storageClasses[0].backend.metaurl=redis://redis.storage.svc.cluster.local:6379/1
+```
+
+### 4. ctrox/csi-s3 (DEPRECATED)
+> [!WARNING]
+> Проект **архивирован** и не поддерживается с 2025 года. Использование в продуктовых средах запрещено. Рекомендуется миграция на `yandex-cloud/k8s-csi-s3`.
+
 ---
 
-## Сравнение производительности (fio)
+## Практические сценарии
 
-Результаты тестирования с использованием блока 4k (IOPS и задержка могут варьироваться от условий сети).
+### Динамическое выделение ресурсов (Yandex/MinIO)
 
-| Решение (Маунтер) | Операция | Пропускная способность (BW) | Средняя задержка (avg clat) | Пиковая задержка (max clat) |
-| :--- | :--- | :--- | :--- | :--- |
-| **ctrox/csi-s3 (Goofys)** | Чтение | 355 MiB/s | 10.24 мкс | 300.55 мс |
-| **ctrox/csi-s3 (Goofys)** | Запись | 44.1 MiB/s | 87.78 мкс | 121.54 мс |
-| **yandex-csi-s3 (GeeseFS)** | Чтение | 446 MiB/s | 8.04 мкс | 16.91 мс |
-| **yandex-csi-s3 (GeeseFS)** | Запись | 24.7 MiB/s | 157.36 мкс | 8.98 мс |
+Пример `StorageClass` для драйвера Yandex Cloud:
 
-### Анализ результатов
-1.  **GeeseFS** значительно быстрее в операциях чтения и показывает более стабильную (низкую) пиковую задержку.
-2.  **Goofys** в данном тесте показал лучшую пропускную способность на запись, но с более высокой вариативностью задержек.
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: s3-geesefs
+provisioner: s3.csi.yandex.cloud
+parameters:
+  mounter: geesefs
+  options: "--max-flush-interval 5 --dir-mode 0777 --file-mode 0666"
+  bucket: "" # Если пусто, бакет будет создан автоматически
+```
+
+### Использование S3 в Поде (PVC)
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: s3-pvc
+spec:
+  accessModes:
+    - ReadWriteMany # S3 по своей природе RWX
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: s3-geesefs
+```
 
 ---
 
-## Практические рекомендации
+## Сравнение производительности и лимитов
 
-1.  **Выбор маунтера:**
-    *   `GeeseFS` — рекомендуется для высокопроизводительного чтения и работы с большими файлами.
-    *   `Goofys` — хороший баланс, если GeeseFS не доступен или не совместим.
-    *   `s3fs` — если требуется полная совместимость с POSIX (но с потерей производительности).
-2.  **Тип данных:** S3 CSI лучше всего подходит для Read-Heavy нагрузок (статичный контент, медиа) или долгосрочного хранения. Для баз данных с интенсивной записью следует использовать блочные хранилища.
-3.  **Безопасность:** Ключи доступа в Kubernetes Secrets должны быть защищены (RBAC, шифрование etcd или использование External Secrets/Vault).
+| Характеристика | AWS Mountpoint | Yandex (GeeseFS) | JuiceFS |
+| :--- | :--- | :--- | :--- |
+| **POSIX-совместимость** | Низкая | Средняя | **Полная** |
+| **Dynamic Provisioning** | Нет | **Да** | **Да** |
+| **Производительность (Small Files)** | Низкая | Средняя | **Высокая** |
+| **Сценарии** | Big Data, Датасеты | CMS, Архивы | AI/ML, Shared Home |
+
+---
+
+## Диагностика и устранение проблем
+
+1.  **Ошибка монтирования (Mount failed):**
+    *   Проверьте наличие установленного `fuse` на рабочих узлах кластера.
+    *   Убедитесь, что `endpoint` S3 доступен с узлов (проверка через `curl -I`).
+2.  **Проблемы с правами (403 Forbidden):**
+    *   Проверьте `Secret` с ключами доступа.
+    *   Для AWS: проверьте IAM Role for Service Accounts (IRSA).
+3.  **Низкая скорость:**
+    *   Увеличьте количество параллельных потоков в параметрах маунтера (`--max-parallel-parts`).
+    *   Настройте локальное кэширование метаданных.
 
 ---
 
@@ -145,3 +149,4 @@ resource "helm_release" "yandex-csi-s3" {
 * [Обзор CSI](./csi_overview.md)
 * [Сравнение CSI-драйверов](./csi_drivers_comparison.md)
 * [Объектное хранилище (S3) — концепции](../../../Concepts/Storage/data_storage_overview.md)
+* [Persistent Volumes и PVC в Kubernetes](../pv_and_pvc.md)

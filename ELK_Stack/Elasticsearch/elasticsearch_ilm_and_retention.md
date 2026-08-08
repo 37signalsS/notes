@@ -2,133 +2,136 @@
 
 ## Определения
 
-* **ILM (Index Lifecycle Management)** — подсистема Elasticsearch для автоматизации управления индексами. Она позволяет минимизировать ручное вмешательство в процесс ротации, оптимизации и удаления данных.
-* **Политика ILM (ILM Policy)** — конечный автомат (state machine), описывающий переходы индекса между фазами и действия, выполняемые в каждой фазе.
-* **Ротация (Rollover)** — точка перехода, когда текущий индекс закрывается для записи и создается новый. В современных версиях это базовая операция для **Data Streams**.
-* **Data Tier (Уровень данных)** — логическая группировка узлов кластера по их роли в хранении данных (`hot`, `warm`, `cold`, `frozen`). Настройка уровня данных в ILM автоматически управляет перемещением шардов (Shard Allocation) между узлами.
+* **ILM (Index Lifecycle Management)** — подсистема Elasticsearch для полной автоматизации управления индексами через набор фаз и действий.
+* **DLM (Data Stream Lifecycle)** — упрощенный механизм управления жизненным циклом, ориентированный специально на потоки данных (Data Streams). Позволяет настраивать хранение (`retention`) и перенос в `frozen` без создания сложных политик ILM.
+* **Ротация (Rollover)** — процесс закрытия текущего индекса для записи и создания нового при достижении определенных условий (размер, возраст, количество документов).
+* **Data Tier (Уровень данных)** — логическая роль узла в хранении данных (`hot`, `warm`, `cold`, `frozen`), определяющая тип оборудования и стоимость хранения.
+* **Downsampling** — технология уменьшения объема данных временных рядов (TSDS) путем агрегации старых метрик в более крупные временные интервалы (бакеты), сохраняя статистическую значимость (`min`, `max`, `sum`, `count`).
+* **Searchable Snapshot (Поисковый снимок)** — технология, позволяющая выполнять поисковые запросы напрямую по данным, хранящимся в объектном хранилище (S3/GCS), без необходимости их полного восстановления на локальный диск.
 
-## Базовые концепции
+## Основные концепции
 
 ### Фазы жизненного цикла
 
-Elasticsearch 8.x выделяет пять фаз. Переход между фазами контролируется параметром `min_age` (время с момента ротации индекса, а не его создания).
+В современной архитектуре (8.x+) жизненный цикл делится на пять фаз. Переход между фазами определяется параметром `min_age` (время с момента ротации).
 
 | Фаза | Характеристики | Ключевые действия |
 | :--- | :--- | :--- |
-| **Hot** | Активная запись, интенсивный поиск. | **Rollover**: обязателен для Data Streams. **Downsample**: (для метрик) агрегация данных в большие интервалы. |
-| **Warm** | Запись закрыта, поиск регулярный. | **Shrink**: уменьшение количества первичных шард. **Force Merge**: объединение сегментов Lucene. **Migrate**: перемещение на `data_warm` узлы. |
-| **Cold** | Поиск редкий, данные статичны. | **Searchable Snapshot**: перевод индекса в формат снимка для экономии локального диска. **Migrate**: перемещение на `data_cold` узлы. |
-| **Frozen** | Поиск через Searchable Snapshots. | **Mount**: работа напрямую с объектным хранилищем (S3, GCS) с локальным кэшированием. Требует `data_frozen`. |
-| **Delete** | Данные не нужны. | **Delete**: окончательное удаление индекса. |
+| **Hot** | Активная запись и поиск. | **Rollover**: создание нового индекса. **Downsample**: агрегация метрик (8.15+). |
+| **Warm** | Запись закрыта, поиск частый. | **Shrink**: уменьшение числа шард. **Force Merge**: оптимизация сегментов. **Migrate**: перенос на `warm` узлы. |
+| **Cold** | Поиск редкий, данные статичны. | **Searchable Snapshot**: (Fully Mounted) — снимок становится основной копией данных. |
+| **Frozen** | Архивный поиск. | **Searchable Snapshot**: (Partially Mounted) — данные в облаке, на диске только кэш. |
+| **Delete** | Данные не нужны. | **Delete**: окончательное удаление. |
 
-### Связь с уровнями данных (Data Tiers)
+### Рекомендации по размеру шард
 
-В Elasticsearch 8.x политики ILM используют встроенную систему миграции данных. Вам больше не нужно вручную настраивать `index.routing.allocation.require.data`; вместо этого ILM использует действие `migrate`, которое автоматически перемещает данные на узлы с соответствующими ролями (`data_hot`, `data_warm`, `data_cold`).
+Для стабильности кластера и производительности ILM следует придерживаться правила: **целевой размер основного шарда — 50 ГБ**.
+*   Используйте `max_primary_shard_size: "50gb"` в качестве основного триггера ротации.
+*   Избегайте "раздувания шардов" (shard bloat) — ситуации с тысячами мелких индексов по несколько мегабайт, что перегружает Master-узел.
 
-* **Hot nodes**: Максимальная производительность (SSD/NVMe).
-* **Warm nodes**: Баланс между ценой и производительностью.
-* **Cold nodes**: Оптимизация под плотность хранения (HDD).
-* **Frozen nodes**: Кэширующие узлы для поиска по снимкам в облаке.
+### Data Stream Lifecycle (DLM) vs ILM
+
+Начиная с версий 8.12+, для стандартных логов рекомендуется использовать **DLM** из-за простоты:
+*   **ILM**: Максимальная гибкость (shrink, force merge, сложные условия). Требует политики и шаблона.
+*   **DLM**: Настраивается одной командой API. Автоматически управляет ротацией и удалением. Идеально для большинства observability-задач.
 
 ## Практические сценарии
 
-### Настройка комплексной политики ILM
+### 1. Настройка политики ILM для логов (Hot-Warm-Delete)
 
-Пример политики для логов: ротация каждые 50 ГБ или 7 дней, переход в Warm сразу после ротации, удаление через 90 дней.
+Сценарий: ротация при 50 ГБ, оптимизация в Warm (1 шард, 1 сегмент), удаление через 30 дней.
 
 ```bash
-# Переменная $ELASTIC_PASSWORD должна содержать пароль пользователя elastic
-curl -u elastic:$ELASTIC_PASSWORD -k -X PUT "https://localhost:9200/_ilm/policy/prod-logs-policy" \
--H 'Content-Type: application/json' -d'
+curl -u elastic:$PASS -k -X PUT "https://localhost:9200/_ilm/policy/logs-policy" -H 'Content-Type: application/json' -d'
 {
   "policy": {
     "phases": {
       "hot": {
         "actions": {
-          "rollover": {
-            "max_size": "50gb",
-            "max_age": "7d"
-          }
+          "rollover": { "max_primary_shard_size": "50gb", "max_age": "30d" }
         }
       },
       "warm": {
         "min_age": "0ms",
         "actions": {
           "shrink": { "number_of_shards": 1 },
-          "forcemerge": { "max_num_segments": 1 },
-          "migrate": { "enabled": true }
+          "forcemerge": { "max_num_segments": 1 }
         }
       },
       "delete": {
-        "min_age": "90d",
-        "actions": {
-          "delete": {}
-        }
+        "min_age": "30d",
+        "actions": { "delete": {} }
       }
     }
   }
-}' # → {"acknowledged": true}
+}'
 ```
 
-### Привязка политики через Data Streams
+### 2. Настройка Downsampling для метрик
 
-Современный способ назначения политики — использование компонентных шаблонов:
+Позволяет хранить детальные метрики 7 дней, а затем сжимать их, экономя до 90% места.
+
+```json
+"phases": {
+  "warm": {
+    "min_age": "7d",
+    "actions": {
+      "downsample": {
+        "fixed_interval": "1h"
+      }
+    }
+  }
+}
+```
+*Данные после Downsampling полностью query-compatible с оригинальными индексами.*
+
+### 3. Привязка политики к Data Stream
+
+Используйте компонентные шаблоны для модульности:
 
 ```bash
-# 1. Создаем компонентный шаблон с настройками ILM
-curl -u elastic:$ELASTIC_PASSWORD -k -X PUT "https://localhost:9200/_component_template/logs-settings" \
--H 'Content-Type: application/json' -d'
+# Создание настроек
+curl -u elastic:$PASS -k -X PUT "https://localhost:9200/_component_template/logs-lifecycle" -H 'Content-Type: application/json' -d'
 {
   "template": {
-    "settings": {
-      "index.lifecycle.name": "prod-logs-policy"
-    }
+    "settings": { "index.lifecycle.name": "logs-policy" }
   }
 }'
 
-# 2. Создаем индексный шаблон для потока данных
-curl -u elastic:$ELASTIC_PASSWORD -k -X PUT "https://localhost:9200/_index_template/logs-template" \
--H 'Content-Type: application/json' -d'
+# Создание итогового шаблона
+curl -u elastic:$PASS -k -X PUT "https://localhost:9200/_index_template/app-logs" -H 'Content-Type: application/json' -d'
 {
-  "index_patterns": ["logs-*"],
+  "index_patterns": ["logs-app-*"],
   "data_stream": {},
-  "composed_of": ["logs-settings"],
+  "composed_of": ["logs-lifecycle", "logs-mappings"],
   "priority": 500
 }'
 ```
 
-### Диагностика и отладка
+### 4. Диагностика и решение проблем
 
-Если индекс "застрял" в одной из фаз, используйте API `explain` для выяснения причины:
-
-```bash
-curl -u elastic:$ELASTIC_PASSWORD -k -X GET "https://localhost:9200/logs-my_app-default/_ilm/explain?filter_path=indices.*.policy,indices.*.step_info"
-```
-
-**Типичные проблемы:**
-* **`step_info` содержит ошибку о нехватке места**: ILM не может выполнить `shrink` или `migrate`, если на целевых узлах недостаточно места (см. `watermark` в [Обзоре Elasticsearch](./elasticsearch_overview.md#ключевые-настройки-elasticsearchyml)).
-* **Индекс не переходит в следующую фазу**: Проверьте `min_age`. Помните, что отсчет идет от момента **ротации** индекса.
-* **Ошибка "index.lifecycle.rollover_alias does not point to index"**: Возникает при использовании обычных индексов (не Data Streams) без правильно настроенного алиаса. С Data Streams этой проблемы не существует.
-
-### Проверка общего статуса
+Если индексы не удаляются или не перемещаются:
 
 ```bash
-# Проверка, запущен ли процесс ILM в кластере
-curl -u elastic:$ELASTIC_PASSWORD -k -X GET "https://localhost:9200/_ilm/status" # → {"operation_mode": "RUNNING"}
+# Выяснить причину остановки ILM для конкретного индекса
+curl -u elastic:$PASS -k -X GET "https://localhost:9200/my-index/_ilm/explain"
 ```
+
+**Типичные ошибки:**
+*   **"index.lifecycle.rollover_alias does not point to index"**: Вы используете старый подход с алиасами. Рекомендуется перейти на **Data Streams**.
+*   **Insufficient disk space**: ILM не выполнит `shrink` или `migrate`, если на узлах превышен порог `high watermark` (обычно 90%).
+*   **ILM Status is STOPPED**: Проверьте статус через `GET /_ilm/status`. Запустите при необходимости: `POST /_ilm/start`.
 
 ## Дополнительная информация
 
-### Особенности Rollover
+### Searchable Snapshots и уровни хранения
 
-* Если используется **Data Stream**, ротация происходит автоматически без необходимости настройки `rollover_alias`.
-* Ротация — это единственный способ изменить количество первичных шард (`number_of_shards`) для потока данных "на лету" (через обновление шаблона перед ротацией).
-
-### Удаление данных (Retention)
-
-Удаление в ILM происходит только по достижении `min_age` относительно момента **ротации**, а не момента создания документа. Это важно учитывать при планировании дискового пространства.
+*   **Cold Tier**: Данные хранятся в S3, но индекс "смонтирован" полностью. Реплики не нужны, так как S3 гарантирует сохранность. Экономия 50% ресурсов.
+*   **Frozen Tier**: Локально хранится только кэш самых частых запросов. Подходит для хранения данных годами.
+*   *Лицензия*: Searchable Snapshots требуют уровня Platinum или Enterprise. Downsampling доступен в Basic (Free).
 
 ### Смотрите также
 
-* **[Data Streams и шаблоны индексов](./elasticsearch_mapping_and_indexing.md#современный-подход-data-streams-ilm-и-шаблоны)** — подробнее о том, как работают потоки данных.
-* **[Маппинг данных](./elasticsearch_mapping_and_indexing.md)** — описание структуры документов.
+*   **[Elasticsearch: Обзор](./elasticsearch_overview.md)** — архитектура кластера и уровни данных (Data Tiers).
+*   **[Elasticsearch: Индексирование и маппинг](./elasticsearch_mapping_and_indexing.md)** — детально о структуре Data Streams.
+*   **[Официальная документация: ILM Actions](https://www.elastic.co/guide/en/elasticsearch/reference/current/ilm-actions.html)**.

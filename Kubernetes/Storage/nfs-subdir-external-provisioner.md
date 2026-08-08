@@ -6,7 +6,7 @@
 
 **NFS Subdir External Provisioner** — это динамический провизионер (provisioner) для Kubernetes, который использует существующий NFS-сервер для автоматического создания объектов `PersistentVolume` (PV) через поддиректории.
 
-При поступлении запроса на создание `PersistentVolumeClaim` (PVC), провизионер автоматически создает новую поддиректорию на общем NFS-ресурсе по шаблону `<namespace>-<pvc-name>-<pv-name>` и предоставляет её как сетевой том.
+При поступлении запроса на создание `PersistentVolumeClaim` (PVC), провизионер автоматически создает новую поддиректорию на общем NFS-ресурсе по шаблону `<namespace>-<pvc-name>-<pv-name>` (настраивается) и предоставляет её как сетевой том.
 
 **Назначение:**
 - Простое решение для dev/test сред и локальных лабораторий.
@@ -27,7 +27,19 @@
 4. **Создание PV:** Provisioner создаёт объект `PersistentVolume` типа `NFS`, указывающий на **конкретную поддиректорию** на сервере.
 5. **Привязка:** Kubernetes связывает созданный PV с исходным PVC (статус `Bound`).
 
-> **Важно:** Provisioner выступает в роли посредника, который автоматизирует рутинную работу по созданию папок и манифестов PV.
+### Конфигурация NFS-сервера
+
+Для корректной работы провизионера на стороне сервера NFS (например, на ОС Linux) экспорт должен быть настроен с определенными параметрами.
+
+**Пример `/etc/exports`:**
+```text
+/var/nfs/kubedata  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)
+```
+
+| Параметр | Описание | Почему это важно |
+| :--- | :--- | :--- |
+| `rw` | Чтение и запись | Поды должны иметь возможность писать данные. |
+| `no_root_squash` | Отключает подмену root | Провизионер создает папки от лица root. Без этого параметра возникнет ошибка `Permission Denied`. |
 
 ### Переменные окружения (Environment Variables)
 
@@ -83,11 +95,29 @@
 
 ### Установка и настройка
 
+#### Способ 1: Установка через Helm (Рекомендуется)
+
+Использование Helm позволяет автоматически настроить все необходимые RBAC-роли и параметры.
+
+```bash
+# Добавление репозитория
+helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+
+# Установка
+helm install nfs-subdir-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \
+    --set nfs.server=192.168.1.10 \
+    --set nfs.path=/var/nfs/kubedata \
+    --set storageClass.name=managed-nfs-storage \
+    --set storageClass.provisionerName=cluster.local/nfs-client-provisioner
+```
+
+#### Способ 2: Ручная установка (Манифесты)
+
 > **Рекомендация:** Для обеспечения изоляции и безопасности рекомендуется разворачивать провижинер в отдельном `namespace` (например, `nfs-provisioner` или `storage`), а не в `default`.
 
-#### Шаг 1: RBAC
+##### Шаг 1: RBAC
 
-Provisioner'у нужны права на управление PV (создание, удаление, просмотр) и событиями:
+Provisioner'у нужны права на управление PV и лидерство (leader election) для работы в нескольких репликах (хотя обычно используется одна):
 
 ```yaml
 # nfs-provisioner-rbac.yaml
@@ -114,10 +144,6 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "update", "patch"]
-  # Дополнительно для работы с эндпоинтами (см. предупреждение в Базовых концепциях)
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -131,9 +157,34 @@ roleRef:
   kind: ClusterRole
   name: nfs-client-provisioner-runner
   apiGroup: rbac.authorization.k8s.io
+---
+# Дополнительно для K8s 1.20+ (Leader Election)
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: nfs-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: nfs-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: nfs-provisioner
+roleRef:
+  kind: Role
+  name: leader-locking-nfs-client-provisioner
+  apiGroup: rbac.authorization.k8s.io
 ```
 
-#### Шаг 2: Deployment (Развертывание)
+##### Шаг 2: Deployment (Развертывание)
 
 ```yaml
 # nfs-provisioner-deployment.yaml
@@ -145,7 +196,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate  # Важно: только один под может управлять созданием директорий
+    type: Recreate
   selector:
     matchLabels:
       app: nfs-client-provisioner
@@ -157,7 +208,7 @@ spec:
       serviceAccountName: nfs-client-provisioner
       containers:
         - name: nfs-client-provisioner
-          image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.18
+          image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
           resources:
             requests:
               cpu: 100m
@@ -175,7 +226,6 @@ spec:
               value: 192.168.1.10
             - name: NFS_PATH
               value: /var/nfs/kubedata
-      # Настройка запуска на определенных узлах (опционально)
       nodeSelector:
         kubernetes.io/os: linux
       volumes:
@@ -198,8 +248,15 @@ metadata:
 provisioner: cluster.local/nfs-client-provisioner
 parameters:
   archiveOnDelete: "false"  # "true" = переименовать в archived-..., "false" = физически удалить поддиректорию
+  pathPattern: "${.PVC.namespace}/${.PVC.name}" # Группировка по неймспейсам
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
+mountOptions:
+  - nfsvers=4.1
+  - hard
+  - rsize=1048576
+  - wsize=1048576
+  - noatime
 ```
 
 ### Использование
@@ -271,6 +328,12 @@ spec:
 
 ## Дополнительная информация
 
+### Безопасность
+
+- **Доступ к корню:** Провизионер монтирует весь корень NFS-шары (`NFS_PATH`). Взлом пода провизионера дает злоумышленнику доступ ко всем данным всех пользователей этого хранилища.
+- **Риски no_root_squash:** Использование этого параметра на сервере необходимо для работы провизионера, но оно позволяет любому клиенту с правами root на своей машине манипулировать файлами на сервере. Рекомендуется ограничить доступ к NFS-серверу на уровне Firewall только IP-адресами узлов кластера.
+- **Изоляция:** Рекомендуется использовать `pathPattern`, чтобы данные разных приложений были визуально и логически разделены в иерархии папок на сервере.
+
 ### Устаревший Helm-чарт `stable/nfs-server-provisioner`
 
 См. отдельный файл: [NFS Server Provisioner (устаревший Helm-чарт)](./nfs-server-provisioner-helm.md).
@@ -279,6 +342,7 @@ spec:
 
 ### См. также
 
-- Базовые концепции хранения: [PersistentVolume и PVC](./pv_and_pvc.md)
-- Альтернатива для RWO: [Local Path Provisioner](./local-path-provisioner.md)
-- Альтернатива для RWX с репликацией: [Ceph CephFS](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md)
+- [NFS: Сетевая файловая система (настройка сервера)](../../Linux/Networking/Services/nfs/index.md)
+- [PersistentVolume и PVC в Kubernetes](./pv_and_pvc.md)
+- [Local Path Provisioner (для RWO)](./local-path-provisioner.md)
+- [Ceph CephFS (распределенное RWX)](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md)

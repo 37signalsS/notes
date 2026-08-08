@@ -1,8 +1,5 @@
 # Vector: Практические сценарии
 
-> **Reliability Score: 10/10** (SSoT + Web Verification 2026)
-> **Freshness Trigger:** Vector v0.57.0 (Июль 2026), VRL enhancements, ClickHouse Arrow support.
-
 ## Определения
 
 **Конфигурация Vector** — файл (TOML, YAML или JSON), описывающий направленный ациклический граф (DAG) обработки данных.
@@ -40,6 +37,13 @@
   mode = "data_stream"
   index = "logs-app-default"
 ```
+
+**Буферизация и backpressure.** Каждый Sink может иметь собственный буфер между transform-ом и отправкой:
+
+*   **`buffer.type = "memory"`** (по умолчанию) — быстрый, но данные теряются при аварийном перезапуске.
+*   **`buffer.type = "disk"`** (`max_size`, `when_full = "block"` / `drop_newest`) — персистентный сброс на диск, гарантия **at-least-once** delivery. Рекомендуется для критичных пайплайнов (Kafka → OpenSearch).
+
+**Взаимодействие с backpressure:** если Sink не справляется, Vector через adaptive request concurrency автоматически замедляет Sources (например, чтение из Kafka), не теряя данные.
 
 ---
 
@@ -89,18 +93,21 @@ customConfig:
       inputs: ["process_logs"]
       endpoint: "https://opensearch:9200"
       compression: "gzip"
-      index: "logs-{{ .kubernetes.namespace }}-{{`{{ EventTime }}`|strftime(format:`%Y.%m.%d`)}}"
+      # Шаблон индекса: поле события + strftime-спецификатор (Vector template syntax)
+      index: "logs-{{ kubernetes.namespace }}-%Y.%m.%d"
 ```
 
 ### 2. Адаптивное сэмплирование (Load-based throttling)
 
 **Сценарий:** Автоматическое снижение объема хранимых логов при резком росте нагрузки (например, во время DDoS или аварии), чтобы не "положить" хранилище.
 
+Для статистического (probability-based) сэмплирования в Vector также есть встроенный transform **`sample`** с параметром `rate` — он эффективнее ручного VRL-кода при простых постоянных коэффициентах. Пример ниже демонстрирует гибкий вариант на VRL, когда частота может вычисляться динамически (нагрузка, внешние метрики, A/B-тесты).
+
 ```vrl
 # Transform type: remap
 # Логика: 
 # 1. ERROR и WARN пропускаем всегда (100%).
-# 2. INFO сэмплируем: если нагрузка в норме — 50%, если критическая — 5%.
+# 2. INFO сэмплируем динамически: коэффициент задаётся переменной sampling_rate.
 
 if .level == "ERROR" || .level == "WARN" {
     . = . # Оставляем без изменений
@@ -138,6 +145,28 @@ if .level == "ERROR" || .level == "WARN" {
   '''
 ```
 
+**Сигнатура и дополнительные возможности:**
+
+Функция возвращает **ровно одну** запись: при отсутствии совпадений или нескольких совпадений возвращается ошибка. Если возможны множественные совпадения — используйте `find_enrichment_table_records` (возвращает массив).
+
+```vrl
+# Полная сигнатура: table, condition, select (подмножество полей), wildcard (подстановка)
+user_info = get_enrichment_table_record!(
+    "user_db",
+    { "user_id": .user_id },
+    select: ["name", "email", "plan"]
+)
+
+# wildcard-поиск: сопоставление по префиксу/маске
+matches = find_enrichment_table_records!(
+    "user_db",
+    { "plan": "pro" },
+    wildcard: "%"
+)
+```
+
+Типы enrichment-таблиц: `file` (JSON/CSV), `geoip`/`mmdb` (MaxMind GeoIP — поиск по IP-адресу, одиночное условие `{"ip": .ip}`), а также динамическая перезагрузка через `reload_behavior` (v0.55+).
+
 ### 4. Высокопроизводительная доставка: ClickHouse + Arrow
 
 **Сценарий:** Запись миллиардов событий в секунду в ClickHouse с использованием бинарного формата Apache Arrow для минимизации нагрузки на CPU и сеть.
@@ -154,11 +183,16 @@ if .level == "ERROR" || .level == "WARN" {
   endpoint = "http://clickhouse:8123"
   database = "logs"
   table = "raw_events"
-  # Использование бинарного формата Arrow (v0.55+)
-  format = "arrow_stream" 
-  batch.max_bytes = 10485760 # 10MB батчи
+  format = "arrow_stream"    # Apache Arrow IPC streaming format (v0.55+)
+  batch_encoding = { codec = "arrow_stream" }
+  batch = { max_bytes = 10485760 }  # 10MB батчи
   skip_unknown_fields = true
 ```
+
+**Особенности `arrow_stream` (v0.55+):**
+*   Формат запрашивает схему таблицы у ClickHouse при старте и маппит типы колонок в типы Arrow — лучшая производительность и типизированность по сравнению с JSON.
+*   Схема вытягивается **один раз при старте**: имя `table` и `database` должны быть **статическими** (без шаблонов) — динамическая маршрутизация по таблицам с этим форматом не поддерживается.
+*   Неподдерживаемые типы колонок: `IPv4`, `IPv6` (для них используйте JSON-формат).
 
 ### 5. Сбор метрик и конвертация в логи
 
@@ -181,13 +215,93 @@ if .level == "ERROR" || .level == "WARN" {
   labels = { source = "vector_metrics", app = "my_app" }
 ```
 
+### 6. Маршрутизация по уровням логирования (route)
+
+**Сценарий:** Разбиение единого потока логов на несколько Sink-ов по приоритету: ошибки — в отдельный индекс Elasticsearch/OpenSearch, остальное — в Loki. Для безусловного отбора в один или несколько выходов используется transform **`route`**.
+
+```yaml
+transforms:
+  split_logs:
+    type: route
+    inputs: ["app_logs"]
+    route:
+      errors: '.level == "error" || .level == "crit"'
+      info: '.level == "info"'
+
+sinks:
+  es_errors:
+    type: elasticsearch
+    inputs: ["split_logs.errors"]
+    endpoint: "https://es:9200"
+    index: "app-errors-%Y.%m.%d"
+
+  loki_info:
+    type: loki
+    inputs: ["split_logs.info"]
+    endpoint: "http://loki:3100"
+```
+
+Для простого отсева по одному условию существует transform **`filter`** (оставляет только прошедшие условие события), для ветвления по нескольким условиям — **`route`** (каждый именованный выход получает только прошедшие его условие события).
+
+### 7. Наблюдаемость самого Vector (self-observability)
+
+**Сценарий:** Отслеживание работы самого Vector: его логи, метрики компонентов, ошибки конфигурации — используются для SLO/алертов и capacity planning.
+
+```toml
+[sources.vector_logs]
+  type = "internal_logs"
+
+[sources.vector_metrics]
+  type = "internal_metrics"
+
+[sinks.vector_metrics_out]
+  type = "prometheus_remote_write"
+  inputs = ["vector_metrics"]
+  endpoint = "http://prometheus:9090/api/v1/write"
+  decimals = 5
+```
+
+**Ключевые метрики для мониторинга:**
+*   `component_errors_total` — ошибки обработки компонента (включая `confinement_failed` при отклоненных шаблонах, v0.57+).
+*   `component_received_events_total` / `component_sent_events_total` — баланс входных/выходных событий.
+*   `component_latency_seconds` — время обработки события компонентом.
+*   `buffer_size_bytes` — заполненность дисковых/оперативных буферов.
+
+### 8. Unit-тестирование конфигурации (vector test)
+
+**Сценарий:** Автоматизированная проверка VRL-трансформаций и фильтров перед деплоем. Тесты описываются прямо в конфигурационном файле в секции `[[tests]]`.
+
+```toml
+[[tests]]
+  name = "parse_json_enrich"
+  [tests.input]
+    insert_at = "enrich_user"
+    type = "raw"
+    value = '{"user_id": "42", "message": "hello"}'
+  [[tests.outputs]]
+    extract_from = "enrich_user"
+    [[tests.outputs.conditions]]
+      type = "vrl"
+      source = '''
+        .user_details.name == "Alice"
+        && is_null(.unused_field)
+      '''
+```
+
+Также поддерживается проверка **количества** исходящих событий через `expected_event_count` в `[[tests.outputs]]` (например, после сэмплирования) и проверка полного выхода пайплайна. Запуск: `vector test /etc/vector/vector.yaml` — конфигурация возвращает ненулевой код при падении любого теста (используется в CI).
+
 ---
 
 ## Дополнительная информация
 
 **Ключевые команды отладки:**
-*   `vector vrl` — запуск интерактивной песочницы для проверки выражений.
-*   `vector tap <component_id>` — просмотр событий "на лету" (аналог `tail -f` для этапа пайплайна).
+*   `vector validate [--no-environment] [--deny-warnings]` — проверка конфигурации на корректность без запуска (заменяет прежнюю `vector check`). `--no-environment` пропускает проверки окружения.
+*   `vector graph` — вывод топологии в формате DOT (GraphViz) для визуализации DAG.
+*   `vector vrl` — запуск интерактивной песочницы REPL для проверки выражений (с v0.56 включает полный набор функций).
+*   `vector tap <component_id>` — просмотр событий "на лету" на этапе пайплайна (аналог `tail -f`).
+*   `vector top` — визуализация топологии и нагрузки в реальном времени (через gRPC API).
+
+**Интерполяция переменных окружения (v0.57+):** `${VAR}` в конфигурации отключена по умолчанию — включение только через `--dangerously-allow-env-var-interpolation` (см. [Vector Overview](./vector_overview.md), раздел «Безопасность»).
 
 **Связанные заметки:**
 *   [Vector Overview](./vector_overview.md) — общие сведения и архитектура.

@@ -7,12 +7,10 @@
 ## Определения
 
 - **Apache Kafka:** Распределенная потоковая платформа с сохранением состояния (Stateful). Для корректной работы кластера брокерам требуются уникальные неизменяемые идентификаторы и постоянные хранилища данных.
-- **StatefulSet (StS):** Контроллер Kubernetes, предназначенный для управления приложениями с состоянием. Обеспечивает строгий порядок запуска/остановки подов, стабильные DNS-имена (например, `kafka-0.kafka-headless`) и гарантированную связь конкретного пода с конкретным PVC (PersistentVolumeClaim).
-- **Deployment:** Контроллер для приложений без состояния (Stateless). В отличие от StS, поды в Deployment взаимозаменяемы, имеют случайные имена (хеш-суффиксы) и не гарантируют сохранение связи с конкретным диском при перезапуске на другом узле.
-- **Headless Service:** Сервис Kubernetes с `clusterIP: None`. Позволяет обращаться напрямую к IP-адресам подов через DNS-записи вида `<pod-name>.<service-name>.<namespace>.svc.cluster.local`. Это критически важно для механизма обнаружения (discovery) брокеров Kafka.
-- **PVC (PersistentVolumeClaim):** Абстракция Kubernetes для запроса дискового пространства. В StatefulSet PVC создаются автоматически для каждого пода через `volumeClaimTemplates`.
-- **Advertised Listeners:** Конфигурационный параметр Kafka, определяющий адрес, который брокер передает клиентам (продюсерам и консьюмерам) для подключения.
-- **KRaft (Kafka Raft):** Современный протокол консенсуса (начиная с Kafka 3.3), заменяющий ZooKeeper и позволяющий управлять метаданными внутри самого кластера Kafka.
+- **StatefulSet (StS):** Контроллер Kubernetes, предназначенный для управления приложениями с состоянием. Обеспечивает строгий порядок запуска/остановки подов, стабильные DNS-имена и гарантированную связь конкретного пода с конкретным PVC.
+- **Headless Service:** Сервис Kubernetes с `clusterIP: None`. Позволяет обращаться напрямую к IP-адресам подов через DNS-записи вида `<pod-name>.<service-name>`. Это необходимо для механизма обнаружения (discovery) брокеров Kafka.
+- **meta.properties:** Служебный файл Kafka в директории данных, содержащий `cluster.id` и `broker.id` (или `node.id` в KRaft). Несоответствие этих данных в файле и в конфигурации брокера блокирует его запуск.
+- **Zombie Instance:** Старый экземпляр брокера, который может продолжать работу и пытаться писать в тома данных, если не обеспечена строгая изоляция при миграции.
 
 ---
 
@@ -20,16 +18,16 @@
 
 ### Проблемы использования Deployment для Kafka
 
-Использование `Deployment` для управления Kafka является антипаттерном в Kubernetes по следующим причинам:
-1. **Нестабильные идентификаторы:** При перезапуске под получает новое имя и IP. Это ломает внутренние протоколы Kafka, которые полагаются на стабильный список брокеров.
-2. **Сложность с PVC:** В `Deployment` крайне сложно сопоставить конкретный под с конкретным томом данных. Если в кластере 3 брокера, Deployment может запустить два пода на одном узле, пытаясь подключить один и тот же диск, что приведет к ошибкам `Multi-Attach`.
-3. **Advertised Listeners:** В `Deployment` невозможно настроить уникальный внешний адрес для каждого брокера без использования сложных Sidecar-контейнеров или внешних скриптов.
+Использование `Deployment` для управления Kafka является антипаттерном в Kubernetes:
+1. **Нестабильные идентификаторы:** При перезапуске под получает новое имя и IP, что ломает внутренние протоколы Kafka, полагающиеся на стабильный список брокеров.
+2. **Риски Multi-Attach:** В `Deployment` невозможно гарантировать, что два пода не попытаются подключить один и тот же диск при переезде на другой узел.
+3. **Advertised Listeners:** Сложность настройки уникальных внешних адресов для каждого брокера.
 
 ### Преимущества StatefulSet
 
-1. **Предсказуемый DNS:** Каждый под имеет индекс (0, 1, 2). Это позволяет настроить `ADVERTISED_LISTENERS` вида `kafka-0.kafka-headless.svc.cluster.local:9092`.
-2. **Липкие диски (Sticky Storage):** Под `kafka-0` всегда будет подключать PVC `data-kafka-0`, даже если он переедет на другую физическую ноду.
-3. **Упорядоченность:** StatefulSet обновляет поды по одному, дожидаясь их готовности (`Readiness`), что минимизирует риск падения всего кластера Kafka.
+1. **Предсказуемый DNS:** Каждый под имеет индекс (0, 1, 2), что позволяет настроить `ADVERTISED_LISTENERS` через стабильные имена.
+2. **Sticky Storage:** Под `kafka-0` всегда подключает PVC `data-kafka-0`, сохраняя привязку данных к идентичности брокера.
+3. **Безопасное обновление:** Упорядоченный перезапуск подов минимизирует риски потери кворума.
 
 ---
 
@@ -37,35 +35,28 @@
 
 ### План миграции (In-place Migration)
 
-**ВНИМАНИЕ:** Данный процесс сопряжен с риском. Перед началом **обязательно сделайте бэкап** данных (например, через снапшоты облачного провайдера или **[Velero](../Kubernetes/ToolsUtilities/velero-overview.md)**). Процедура требует остановки записи в Kafka.
+**ВНИМАНИЕ:** Перед началом **обязательно сделайте снапшоты дисков**. Процедура требует полной остановки записи в кластер.
 
-#### Шаг 1: Подготовка инфраструктуры
+#### Шаг 1: Остановка и анализ
 
-1. **Остановка продюсеров:** Прекратите любую запись в топики Kafka.
-2. **Анализ текущих PVC:** Получите список дисков, которые сейчас использует ваш `Deployment`.
+1. **Остановка трафика:** Прекратите любую запись в топики.
+2. **Масштабирование в ноль:**
    ```bash
-   kubectl get pvc -l app=kafka-old
+   kubectl scale deployment kafka-old --replicas=0
    ```
-   *Допустим, найдены PVC: `kafka-pvc-0`, `kafka-pvc-1`, `kafka-pvc-2`.*
+3. **Сбор идентификаторов:** Зафиксируйте, какой PVC соответствовал какому `broker.id` в старой конфигурации.
 
-3. **Создание Headless Service:**
-   ```yaml
-   apiVersion: v1
-   kind: Service
-   metadata:
-     name: kafka-headless
-   spec:
-     clusterIP: None
-     selector:
-       app: kafka-new
-     ports:
-     - port: 9092
-       name: broker
-   ```
+#### Шаг 2: Подготовка метаданных (meta.properties)
 
-#### Шаг 2: Создание манифеста StatefulSet
+Это критический этап. Если вы меняете способ назначения ID (например, переходите на автоматическое из индекса пода), вам нужно обновить файлы на дисках.
 
-Подготовьте файл `kafka-sts.yaml`. Важно сопоставить `broker.id` с индексом пода.
+1. Запустите временный под для редактирования данных.
+2. Проверьте содержимое `/data/meta.properties`.
+3. Убедитесь, что `broker.id` (или `node.id` в KRaft) совпадает с тем, который будет назначен поду в новом StatefulSet.
+
+#### Шаг 3: Создание StatefulSet
+
+Подготовьте манифест, где переменные окружения извлекаются из имени пода.
 
 ```yaml
 apiVersion: apps/v1
@@ -75,13 +66,7 @@ metadata:
 spec:
   serviceName: "kafka-headless"
   replicas: 3
-  selector:
-    matchLabels:
-      app: kafka-new
   template:
-    metadata:
-      labels:
-        app: kafka-new
     spec:
       containers:
       - name: kafka
@@ -90,9 +75,9 @@ spec:
         - name: KAFKA_CFG_NODE_ID
           valueFrom:
             fieldRef:
-              fieldPath: metadata.name # Логика извлечения индекса из имени
+              fieldPath: metadata.name # Извлекаем индекс из имени
         - name: KAFKA_CFG_ADVERTISED_LISTENERS
-          value: "PLAINTEXT://$(MY_POD_NAME).kafka-headless.svc.cluster.local:9092"
+          value: "PLAINTEXT://$(MY_POD_NAME).kafka-headless:9092"
         volumeMounts:
         - name: data
           mountPath: /bitnami/kafka
@@ -107,64 +92,35 @@ spec:
           storage: 50Gi
 ```
 
-#### Шаг 3: Перенос данных
+#### Шаг 4: Перенос данных (rsync)
 
-1. **Остановка старого Deployment:**
-   ```bash
-   kubectl scale deployment kafka-old --replicas=0
-   ```
-2. **Инициализация новых PVC:** Примените манифест StS и сразу уменьшите количество реплик до 0. Это создаст пустые тома.
-   ```bash
-   kubectl apply -f kafka-sts.yaml
-   kubectl scale statefulset kafka --replicas=0
-   ```
-3. **Копирование данных (rsync):** Запустите временный под для переноса данных между томами. Повторите для каждого индекса.
+Если вы не можете переиспользовать PVC напрямую (например, из-за разных имен в `volumeClaimTemplates`), используйте `rsync`.
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: data-migrator-0
-spec:
-  containers:
-  - name: rsync
-    image: alpine:latest
-    command: ["/bin/sh", "-c", "apk add rsync && rsync -avP /src/ /dst/ && sleep 3600"]
-    volumeMounts:
-    - name: source
-      mountPath: /src
-    - name: destination
-      mountPath: /dst
-  volumes:
-  - name: source
-    persistentVolumeClaim:
-      claimName: kafka-pvc-0 # PVC от Deployment
-  - name: destination
-    persistentVolumeClaim:
-      claimName: data-kafka-0 # PVC от StatefulSet
+```bash
+# Пример команды внутри миграционного пода
+rsync -avP /old-pvc-data/ /new-sts-pvc-data/
 ```
 
-#### Шаг 4: Запуск и валидация
+#### Шаг 5: Валидация в режиме KRaft
 
-1. **Запуск StatefulSet:**
-   ```bash
-   kubectl scale statefulset kafka --replicas=3
-   ```
-2. **Проверка логов:** Убедитесь, что брокеры видят свои старые сегменты логов (файл `meta.properties` в корне данных должен быть корректным).
-3. **Smoke-тест:** Убедитесь, что консьюмеры могут прочитать данные, записанные до миграции.
+В режиме KRaft после миграции проверьте состояние метаданных:
+```bash
+/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status
+```
+Все узлы должны видеть друг друга и войти в кворум.
 
 ---
 
 ## Дополнительная информация
 
-### Нюансы и риски
+### Нюансы эксплуатации
 
-- **Broker IDs:** Если в `Deployment` использовались случайные `broker.id`, после миграции необходимо либо обновить их в `meta.properties`, либо настроить маппинг в StS. Несоответствие ID приведет к тому, что брокер будет считаться новым, и начнется полная репликация данных (что долго и нагружает сеть).
-- **ZooKeeper Chroot:** Если вы использовали ZooKeeper в `Deployment`, убедитесь, что путь подключения в StS совпадает до символа.
-- **Очистка:** Удаляйте старые PVC и Deployment только после полной уверенности в сохранности данных в новом StatefulSet.
+- **Strimzi:** Для промышленной эксплуатации в Kubernetes настоятельно рекомендуется использовать **[Strimzi Kafka Operator](./strimzi_kafka_operator.md)** вместо ручного управления манифестами.
+- **Disk Cleanup:** Удаляйте старые PVC от `Deployment` только после подтверждения стабильной работы кластера (проверка `UnderReplicatedPartitions`).
+- **Network Policies:** Убедитесь, что новый StatefulSet имеет те же сетевые доступы, что и старый Deployment.
 
 ### См. также
 
-- **[Обзор Apache Kafka](./kafka_overview.md)** — общие принципы работы платформы.
-- **[StatefulSet в Kubernetes](../Kubernetes/Base/StatefulSet/statefulset_overview.md)** — подробное руководство по работе StS.
-- **[Гарантии доставки](./delivery_guarantees.md)** — семантика и надежность данных в Kafka.
+- **[Обзор Apache Kafka](./kafka_overview.md)** — основы архитектуры и режима KRaft.
+- **[Strimzi Kafka Operator](./strimzi_kafka_operator.md)** — современный стандарт управления Kafka в K8s.
+- **[Гарантии доставки](./delivery_guarantees.md)** — семантика и надежность данных.

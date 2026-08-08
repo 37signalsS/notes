@@ -28,12 +28,13 @@
 
 ### Необходимые компоненты и требования
 
-| Компонент | Назначение / Версия |
+| Компонент | Назначение / Требование |
 |---|---|
-| Хост с интернетом | ОС Linux, установленные Docker/Podman, Helm v3.8+ |
-| Kubernetes cluster | Версия **v1.25** или выше (для работы CSI и Longhorn v1.12.0+) |
-| Registry (Harbor) | Должен поддерживать OCI для хранения чартов |
-| iSCSI / NFS | На узлах K8s должны быть установлены `open-iscsi` и `nfs-common` |
+| **Хост с интернетом** | ОС Linux, установленные Docker/Podman или Skopeo, Helm v3.8+ |
+| **Kubernetes cluster** | Версия **v1.25** или выше (для работы CSI и Longhorn v1.12.0+) |
+| **Registry (Harbor)** | Должен поддерживать OCI для хранения чартов и иметь настроенный TLS. |
+| **iSCSI / NFS** | На узлах K8s должны быть установлены `open-iscsi` и `nfs-common`. |
+| **Доверие (TLS)** | Узлы кластера должны доверять корневому сертификату (CA) Harbor. |
 
 ## Практические сценарии
 
@@ -44,13 +45,11 @@
 ```bash
 helm repo add longhorn https://charts.longhorn.io
 helm repo update
-# Актуальная версия на июль 2026: v1.12.0
+# Актуальная версия на август 2026: v1.12.0
 helm pull longhorn/longhorn --version v1.12.0 --untar
 ```
 
-**2. Получение списка образов:**
-
-Существует два способа. Первый — использовать официальный манифест. Второй — извлечь список напрямую из скачанного чарта (полезно для кастомных сборок или если нет доступа к GitHub).
+**2. Получение списка образов и скриптов проверки:**
 
 *Способ А (Официальный список):*
 ```bash
@@ -68,62 +67,74 @@ awk '
 cd ..
 ```
 
-**3. Скачивание и сохранение образов:**
-
+*Скрипт проверки окружения (Environment Check):*
 ```bash
-# Pull всех образов
-while read -r img; do
-  docker pull "${img}"
-done < lh-images.txt
+curl -sSfL "https://raw.githubusercontent.com/longhorn/longhorn/${VERSION}/scripts/environment_check.sh" -o environment_check.sh
+chmod +x environment_check.sh
+```
 
-# Сохранение в tar-архивы для переноса
+**3. Зеркалирование и упаковка образов:**
+
+*Вариант А: Через Skopeo (эффективный)*
+Позволяет сохранить образы сразу в формате OCI-директории без Docker-демона.
+```bash
+mkdir -p lh-images-oci
+while read -r img; do
+  skopeo copy "docker://${img}" "dir:lh-images-oci/$(echo $img | tr '/:' '_')"
+done < lh-images.txt
+```
+
+*Вариант Б: Через Docker (традиционный)*
+```bash
+# Pull и Save
+while read -r img; do docker pull "${img}"; done < lh-images.txt
 mkdir -p lh-tars
 while read -r img; do
-  # Замена спецсимволов / и : на подчеркивание для имени файла
   safe=$(echo "$img" | tr '/:' '_')
   docker save -o "lh-tars/${safe}.tar" "${img}"
 done < lh-images.txt
 ```
 
 **4. Подготовка чарта к переносу:**
-
 ```bash
 tar -cvzf longhorn-helm-v1.12.0.tar.gz longhorn/
 ```
 
 ### Шаг 2. Загрузка в приватный репозиторий (в закрытом контуре)
 
-**1. Импорт образов из архивов:**
+**1. Настройка доверия к Harbor (TLS):**
+
+Если Harbor использует самоподписанный сертификат, его необходимо добавить на все узлы кластера (Control Plane и Worker Nodes), чтобы Kubelet и рантайм могли скачивать образы.
 
 ```bash
-for f in lh-tars/*.tar; do
-  docker load -i "$f"
-done
+# Пример для Ubuntu/Debian
+sudo cp harbor-ca.crt /usr/local/share/ca-certificates/harbor.crt
+sudo update-ca-certificates
+sudo systemctl restart containerd # Или docker
 ```
 
-**2. Пуш образов в Harbor:**
+**2. Импорт и Пуш образов:**
 
-Предположим, адрес Harbor `harbor.domain.local`. Рекомендуется использовать проект `longhornio`, чтобы структура путей совпадала с оригиналом.
+Предположим, адрес Harbor `harbor.domain.local` и проект `longhornio`.
 
 ```bash
 REGISTRY="harbor.domain.local"
 PROJECT="longhornio" 
 
-docker login "$REGISTRY"
-
+# При использовании Skopeo (из директории)
 while read -r img; do
-  # Пример: longhornio/longhorn-manager:v1.12.0 -> harbor.domain.local/longhornio/longhorn-manager:v1.12.0
-  # Если оригинальный образ уже содержит префикс (например, для CSI sidecars), 
-  # логика тегирования может потребовать корректировки под структуру ваших проектов в Harbor.
-  
-  new_img="${REGISTRY}/${img}"
-  docker tag "${img}" "${new_img}"
-  docker push "${new_img}"
+  skopeo copy "dir:lh-images-oci/$(echo $img | tr '/:' '_')" "docker://${REGISTRY}/${PROJECT}/${img##*/}"
 done < lh-images.txt
+
+# При использовании Docker (из tar-архивов)
+# for f in lh-tars/*.tar; do docker load -i "$f"; done
+# while read -r img; do
+#   docker tag "${img}" "${REGISTRY}/${PROJECT}/${img##*/}"
+#   docker push "${REGISTRY}/${PROJECT}/${img##*/}"
+# done < lh-images.txt
 ```
 
 **3. Пуш чарта в OCI-репозиторий:**
-
 ```bash
 helm login "$REGISTRY"
 helm push longhorn-helm-v1.12.0.tar.gz oci://${REGISTRY}/helm
@@ -131,19 +142,21 @@ helm push longhorn-helm-v1.12.0.tar.gz oci://${REGISTRY}/helm
 
 ### Шаг 3. Детальная конфигурация values.yaml
 
-В версии v1.12.0 есть два подхода к конфигурации реестра.
+В версии v1.12.0 рекомендуется использовать `global.imageRegistry` для упрощения.
 
 #### Вариант 1: Упрощенный (Global Registry)
-Подходит, если все образы лежат в одном проекте Harbor с сохранением оригинальных имен.
+Подходит, если все образы лежат в одном проекте Harbor.
 
 ```yaml
 global:
-  imageRegistry: harbor.domain.local
+  imageRegistry: harbor.domain.local/longhornio
   imagePullSecrets:
     - name: longhorn-registry-secret
 
 defaultSettings:
   defaultReplicaCount: 3
+  # Проверка iSCSI на узлах при старте
+  check-pre-requisite: true
   # V2 Data Engine (SPDK) — статус GA в v1.12.0
   v2-data-engine: false 
   storageOverProvisioningPercentage: 200
@@ -154,7 +167,7 @@ longhornUI:
 ```
 
 #### Вариант 2: Детальный (Manual Overrides)
-Необходим, если образы переименованы или распределены по разным проектам (например, `platform/lh-manager` вместо `longhornio/longhorn-manager`).
+Необходим, если образы переименованы или распределены по разным проектам.
 
 ```yaml
 image:
@@ -200,7 +213,13 @@ image:
 
 ### Шаг 4. Установка и проверка
 
-**Создание секрета:**
+**1. Проверка окружения:**
+Перед установкой запустите скрипт проверки на узлах (через Ansible или вручную):
+```bash
+./environment_check.sh
+```
+
+**2. Создание секрета и установка:**
 ```bash
 kubectl create namespace longhorn-system
 kubectl create secret docker-registry longhorn-registry-secret \
@@ -208,41 +227,49 @@ kubectl create secret docker-registry longhorn-registry-secret \
   --docker-username="robot-longhorn" \
   --docker-password="password" \
   -n longhorn-system
-```
 
-**Запуск установки:**
-```bash
 helm install longhorn oci://harbor.domain.local/helm/longhorn \
   --version v1.12.0 \
   -n longhorn-system \
   -f values.yaml
 ```
 
-**Проверка статуса:**
+**3. Проверка статуса:**
 ```bash
-# Проверка запуска компонентов
-kubectl get pods -n longhorn-system -w
-
-# Проверка используемых образов
-kubectl get pods -n longhorn-system -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort -u
+kubectl get pods -n longhorn-system -o wide
+# Все поды должны быть в Running. Проверьте, что образы тянутся из Harbor.
 ```
+
+### Шаг 5. Обновление в закрытом контуре
+
+Процесс обновления (например, на v1.13.0) выполняется по той же схеме:
+
+1. **Миграция артефактов:** Скачайте новый чарт и список образов. Перенесите их в Harbor.
+2. **Upgrade чарта:**
+   ```bash
+   helm upgrade longhorn oci://harbor.domain.local/helm/longhorn \
+     --version v1.13.0 \
+     -n longhorn-system \
+     -f values.yaml
+   ```
+3. **Upgrade Engine:** После обновления `longhorn-manager` поды управления обновятся автоматически, но **движки существующих томов** требуют ручного подтверждения. В UI Longhorn (раздел `Volume`) нажмите кнопку `Upgrade Engine` для каждого тома. Это обеспечит переход на новую версию бинарного файла engine без потери данных.
 
 ## Дополнительная информация
 
 ### Особенности V2 Data Engine (SPDK)
-В версии **v1.12.0** новый движок на базе SPDK официально объявлен стабильным (GA). Его использование в закрытом контуре имеет свои нюансы:
-1. **Образы:** Движок V2 использует специфические образы `instance-manager`. Убедитесь, что они присутствуют в `lh-images.txt`.
-2. **Системные требования:** На узлах должны быть выделены HugePages (минимум 2Gi на узел) и свободные CPU ядра для `longhorn-spdk-io-proxy`.
-3. **Ядро Linux:** Рекомендуется версия ядра 5.15+ для полноценной поддержки NVMe-over-Fabrics.
+В версии **v1.12.0** новый движок на базе SPDK официально объявлен стабильным (GA). Его использование в закрытом контуре требует:
+1. **Образы:** Движок V2 использует специфические образы `instance-manager` (с SPDK). Убедитесь, что они присутствуют в `lh-images.txt`.
+2. **Системные требования:** На узлах должны быть выделены HugePages (минимум 2Gi на узел) и свободные CPU ядра. Так как доступа к интернету нет, эти настройки должны быть вшиты в базовый образ ОС или применены через IaC (Ansible/Salt).
 
 ### Устранение неполадок (Troubleshooting)
 
 | Проблема | Причина | Решение |
 |---|---|---|
-| `ImagePullBackOff` | Образ отсутствует в Harbor или неверно указан путь | Проверить логи `describe pod`. Убедиться, что `image.registry` или `global.imageRegistry` применились корректно. |
-| `iscsid not found` | На рабочих узлах не запущен сервис iSCSI | Выполнить `apt install open-iscsi && systemctl enable --now iscsid` на всех нодах. |
-| Ошибка монтирования RWX | Отсутствует NFS клиент | Установить `nfs-common` (Debian/Ubuntu) или `nfs-utils` (RHEL/CentOS). |
-| CSI-аттачер висит в `Pending` | Конфликт версий K8s | Longhorn v1.12+ использует API, появившиеся в K8s v1.25. Проверьте версию кластера: `kubectl version`. |
+| `x509: certificate signed by unknown authority` | Кластер не доверяет CA Harbor | См. Шаг 2.1. Добавьте сертификат в доверенные на всех узлах. |
+| `ImagePullBackOff` | Образ отсутствует в Harbor или неверно указан путь | Проверить логи `describe pod`. Убедиться, что `global.imageRegistry` применился корректно. |
+| `iscsid not found` | На рабочих узлах не запущен сервис iSCSI | Пакет `open-iscsi` должен быть в локальном репозитории ОС. Выполнить `apt install open-iscsi && systemctl enable --now iscsid`. |
+| Ошибка монтирования RWX | Отсутствует NFS клиент | Установить `nfs-common` (Debian/Ubuntu) или `nfs-utils` (RHEL/CentOS) из локального зеркала. |
+| CSI-аттачер висит в `Pending` | Конфликт версий K8s | Longhorn v1.12+ требует K8s v1.25+. Проверьте версию: `kubectl version`. |
 
 ### Связанные темы
 

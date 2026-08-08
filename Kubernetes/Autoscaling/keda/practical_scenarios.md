@@ -1,14 +1,8 @@
 # KEDA: Практические сценарии
 
-## Определения
+## Определения и базовые концепции
 
-Для ознакомления с терминологией и описанием компонентов KEDA (Kubernetes Event-driven Autoscaling) обратитесь к основному источнику истины:
-
-* **[KEDA: Основные концепции](./keda_concepts.md)**
-
-## Базовые концепции
-
-В данном файле представлены прикладные примеры настройки автоматического масштабирования. Все примеры используют API `keda.sh/v1alpha1`. Для понимания архитектуры (Operator, Metrics Server) см.:
+Данный материал содержит прикладные примеры конфигурации. Теоретическая база, описания компонентов (Operator, Metrics Server) и глоссарий представлены в основном файле:
 
 * **[KEDA: Основные концепции](./keda_concepts.md)**
 
@@ -16,10 +10,11 @@
 
 ### Предварительные требования
 
-* Кластер Kubernetes 1.25+
-* Helm 3.10+
+* Кластер Kubernetes 1.27+
+* Helm 3.12+
 * Установленный Prometheus (для соответствующих сценариев)
-* Доступ к внешним источникам событий (RabbitMQ, Kafka и др.)
+* Настроенный доступ к внешним источникам событий (RabbitMQ, Kafka, AWS SQS)
+* Для облачных сценариев: настроенный **Workload Identity** (замена устаревшему Pod Identity)
 
 ### Установка KEDA
 
@@ -35,16 +30,25 @@ helm install keda kedacore/keda \
   --namespace keda \
   --create-namespace \
   --version 2.20.0 \
-  --set prometheus.operator.enabled=true # Включение сервис-мониторов для Prometheus
+  --set prometheus.operator.enabled=true
 
-# Проверка готовности
+# (Опционально) Установка KEDA HTTP Add-on для масштабирования HTTP-трафика
+helm install http-add-on kedacore/keda-http-add-on \
+  --namespace keda
+```
+
+### Проверка готовности
+
+После установки проверьте состояние подов:
+
+```bash
 kubectl get pods -n keda
 # → keda-operator-..., keda-metrics-apiserver-..., keda-admission-webhooks-...
 ```
 
 ### Сценарий 1: Масштабирование Deployment (RabbitMQ)
 
-Классический сценарий для воркеров, обрабатывающих сообщения из очереди. При пустой очереди количество подов уменьшается до 0.
+Классический сценарий для воркеров, обрабатывающих сообщения из очереди. При пустой очереди количество подов уменьшается до 0. Использование `activationThreshold` предотвращает запуск подов при единичных сообщениях.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -64,12 +68,13 @@ spec:
       metadata:
         queueName: task-queue
         host: amqp://guest:guest@rabbitmq.default.svc.cluster.local:5672
-        queueLength: "5" # 1 под на каждые 5 сообщений
+        queueLength: "5"            # 1 под на каждые 5 сообщений
+        activationThreshold: "3"    # Не масштабировать из 0, пока в очереди < 3 сообщений
 ```
 
 ### Сценарий 2: Масштабирование задач (ScaledJob)
 
-Используется для тяжелых задач, где один запуск Job соответствует одному событию. KEDA создаёт новую Job для каждого сообщения.
+Используется для тяжелых задач, где один запуск Job соответствует одному событию. Параметр `idleReplicaCount: 0` гарантирует отсутствие ресурсов в простое.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -87,16 +92,15 @@ spec:
             image: my-registry/video-tool:latest
         restartPolicy: OnFailure
   pollingInterval: 30
-  maxReplicaCount: 100 # Максимальное количество одновременно запущенных Job
-  scalingStrategy:
-    strategy: "default"
+  maxReplicaCount: 100
+  idleReplicaCount: 0 # Явно указываем отсутствие Job при отсутствии событий
   triggers:
     - type: aws-sqs
       metadata:
         queueURL: https://sqs.us-east-1.amazonaws.com/12345678/video-tasks
-        queueLength: "1" # Одна Job на одно сообщение в SQS
+        queueLength: "1"
       authenticationRef:
-        name: aws-trigger-auth
+        name: aws-workload-identity-auth # Рекомендуется использовать IAM Roles for Service Accounts
 ```
 
 ### Сценарий 3: Глобальная аутентификация (ClusterTriggerAuthentication)
@@ -180,6 +184,49 @@ spec:
         desiredReplicas: "10" # В рабочее время всегда минимум 10
 ```
 
+### Сценарий 6: Масштабирование HTTP до нуля (KEDA HTTP Add-on)
+
+Требует установленного `keda-http-add-on`. Позволяет масштабировать приложение на основе количества ожидающих HTTP-запросов.
+
+```yaml
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: web-app-scaler
+spec:
+  host: my-service.example.com
+  scaleTargetRef:
+    name: web-app-deployment
+    kind: Deployment
+    apiVersion: apps/v1
+  replicas:
+    min: 0
+    max: 20
+  targetPendingRequests: 100 # Целевое кол-во запросов в очереди на один под
+  scaledownPeriod: 300
+```
+
+### Сценарий 7: Масштабирование на основе ресурсов K8s (ConfigMap)
+
+Используется, когда внешняя система записывает текущий уровень нагрузки в ConfigMap кластера.
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: configmap-scaler
+spec:
+  triggers:
+    - type: kubernetes-resource
+      metadata:
+        resourceKind: "ConfigMap"
+        resourceName: "external-load-metrics"
+        key: "current_rps"
+        format: "number"
+        targetValue: "100"
+        activationTargetValue: "10" # Масштабировать из 0 только если RPS > 10
+```
+
 ## Дополнительная информация
 
 ### Диагностика и отладка
@@ -200,24 +247,28 @@ kubectl get hpa
 
 ### Наблюдаемость через OpenTelemetry
 
-Для включения выгрузки метрик в формате OTLP при установке через Helm:
+Для включения выгрузки метрик и трейсов в формате OTLP при установке через Helm:
 
 ```bash
 helm upgrade keda kedacore/keda \
   --set otel.enabled=true \
-  --set otel.collectorUri="otel-collector.monitoring.svc:4317"
+  --set otel.collectorUri="otel-collector.monitoring.svc:4317" \
+  --set otel.protocol="grpc"
 ```
-После включения станут доступны специфичные трейсы, позволяющие отследить время от появления события в очереди до запуска пода (`scaling_latency`).
+После включения становятся доступны метрики задержки масштабирования (`scaling_latency`), что позволяет отследить время от появления события в очереди до запуска пода.
 
 ### Рекомендации по эксплуатации
 
 1.  **Безопасный Scale Down:** Для критичных Stateful нагрузок используйте `cooldownPeriod` не менее 600 секунд (10 минут), чтобы избежать частого перезапуска подов при колебаниях трафика.
-2.  **Валидация триггеров:** Перед применением в Prod проверяйте запросы PromQL в интерфейсе Prometheus. KEDA не проверяет корректность самой логики запроса, только доступность сервера.
-3.  **Лимиты для ScaledJob:** Всегда устанавливайте `maxReplicaCount` для `ScaledJob`, чтобы избежать исчерпания ресурсов кластера (например, при внезапном наплыве миллионов сообщений в очередь).
-4.  **Аутентификация:** Предпочитайте использование IAM-ролей (через `podIdentity` или `workloadIdentity`) вместо явных секретов в `TriggerAuthentication` для облачных скейлеров (AWS, GCP, Azure).
+2.  **Pod Disruption Budget (PDB):** Всегда настраивайте PDB для масштабируемых нагрузок. При резком падении нагрузки KEDA может попытаться удалить слишком много подов одновременно, что может нарушить доступность.
+3.  **Борьба с Cold Start:** Если приложение запускается долго (>30 сек), избегайте `minReplicaCount: 0`. Используйте `minReplicaCount: 1`, если бизнес-логика требует мгновенной реакции.
+4.  **Валидация триггеров:** Перед применением в Prod проверяйте запросы PromQL в интерфейсе Prometheus. KEDA не проверяет корректность самой логики запроса.
+5.  **Лимиты для ScaledJob:** Всегда устанавливайте `maxReplicaCount` для `ScaledJob`, чтобы избежать исчерпания ресурсов кластера (например, при внезапном наплыве миллионов сообщений в очередь).
+6.  **Аутентификация:** Предпочитайте использование **Workload Identity** (IAM-роли) вместо явных секретов в `TriggerAuthentication` для облачных скейлеров (AWS, GCP, Azure).
 
 ## См. также
 
 * **[KEDA: Основные концепции](./keda_concepts.md)** — архитектура и определения
 * **[Паттерн Workers + Queue](../workers_queue_pattern.md)** — проектирование систем обработки очередей
-* **[HPA: Практические сценарии](../HPA/hpa_scenarios.md)** — стандартное масштабирование
+* **[Horizontal Pod Autoscaler (HPA): Практические сценарии](../HPA/hpa_scenarios.md)** — стандартное масштабирование
+* **[Karpenter: Обзор и концепции](../Karpenter/overview.md)** — динамическое масштабирование узлов под нагрузку KEDA

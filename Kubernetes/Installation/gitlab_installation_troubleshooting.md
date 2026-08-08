@@ -7,102 +7,134 @@
 ## Определения
 
 | Термин | Описание |
-|--------|----------|
-| **PVC Pending** | Состояние запроса на хранилище (PersistentVolumeClaim), при котором Kubernetes не может найти или создать подходящий физический том (PV). |
-| **StorageClass** | Объект Kubernetes, описывающий "классы" хранилищ и позволяющий динамически создавать тома. |
-| **Default StorageClass** | Класс хранилища, используемый автоматически, если в запросе PVC явно не указано имя `storageClassName`. |
-| **OOM (Out Of Memory)** | Ошибка, возникающая при нехватке оперативной памяти для запуска или работы контейнера. |
+| :--- | :--- |
+| **CrashLoopBackOff** | Статус пода, при котором контейнер запускается и сразу завершается с ошибкой, после чего Kubernetes пытается его перезапустить. |
+| **PVC Pending** | Состояние запроса на хранилище, при котором том не может быть выделен из-за отсутствия StorageClass или свободных ресурсов. |
+| **Shared Secrets** | Набор ключей и паролей (rails-secret, gitaly-token и др.), которые должны быть идентичны во всех компонентах GitLab для корректного взаимодействия. |
+| **Initial Root Password** | Временный пароль администратора, генерируемый при первой установке и хранящийся в секрете Kubernetes. |
+| **Database Migrations** | Процесс обновления схемы базы данных, выполняемый отдельным Job (`gitlab-migrations`) перед запуском основных сервисов. |
 
 ---
 
 ## Основные концепции
 
-### Проблемы развертывания GitLab
+### Типология ошибок GitLab
 
-GitLab является ресурсоемким приложением (Stateful), состоящим из множества связанных компонентов. Основные сложности при установке связаны с:
+Сбои при установке GitLab в Kubernetes обычно делятся на три уровня:
+1.  **Инфраструктурный уровень:** Ошибки планирования (Resources), хранилищ (PVC) и сети (LoadBalancer).
+2.  **Уровень зависимостей:** Проблемы с запуском встроенных или внешних PostgreSQL, Redis, MinIO и Gitaly.
+3.  **Прикладной уровень:** Ошибки миграций базы данных, невалидные конфигурации в `values.yaml`, конфликты секретов.
 
-1. **Динамическим выделением томов**: Большинство компонентов (PostgreSQL, Gitaly, Redis) требуют постоянного хранилища.
-2. **Высокими требованиями к ресурсам**: По умолчанию чарт запрашивает значительные лимиты CPU и RAM, что может привести к невозможности размещения подов на узлах.
-3. **Очисткой состояния**: При неудачной установке и повторном запуске старые секреты или PVC могут вызвать конфликты.
+### Цепочка зависимостей при запуске
+
+Для успешного старта веб-интерфейса компоненты должны запускаться в строго определенном порядке:
+`Storage/PV → PostgreSQL/Redis → gitlab-migrations (Job) → Gitaly → Webservice (Puma) / Sidekiq`.
+Если `gitlab-migrations` не завершится успешно, основные поды приложения не перейдут в состояние `Ready`.
 
 ---
 
 ## Практические сценарии
 
+### Ошибки миграции базы данных (Job Failed)
+
+**Симптом:** Поды `webservice` и `sidekiq` находятся в `Running`, но `Ready 0/1`. При этом под `gitlab-migrations` имеет статус `Error`.
+
+**Диагностика:**
+```bash
+# Поиск упавшего Job миграций
+kubectl get pods -l app=migrations -n gitlab
+
+# Просмотр логов миграций для выявления причины (например, тайм-аут или ошибка SQL)
+kubectl logs -l app=migrations -n gitlab --tail=100
+```
+
+**Решение:** Если база данных была изменена вручную или установка была прервана, может потребоваться ручной перезапуск Job или очистка БД.
+
+### Конфликты секретов (Shared Secrets Mismatch)
+
+**Симптом:** Ошибки "401 Unauthorized" между компонентами или "Invalid Token" в логах Sidekiq/Puma.
+
+**Причина:** При переустановке GitLab без полной очистки или при ручном создании секретов возникло расхождение ключей.
+
+**Решение:** Принудительно обновите секреты или убедитесь, что они генерируются чартом согласованно.
+```bash
+# Просмотр существующих секретов
+kubectl get secrets -n gitlab -l release=gitlab
+
+# Рекомендуется использовать один секрет для всех rails-компонентов
+# через параметр global.appConfig.defaults.secret
+```
+
 ### Проблемы с хранилищем (PVC Pending)
 
-**Симптом:** Поды GitLab остаются в статусе `Pending`, а связанные с ними PVC — в статусе `Pending`.
+**Симптом:** Поды в статусе `Pending`, PVC в статусе `Pending`.
 
-**Причина 1: Отсутствие StorageClass по умолчанию**
-Если в кластере нет Default StorageClass, чарт GitLab не сможет автоматически выделить место.
-
+**Диагностика:**
 ```bash
-# Проверка наличия класса по умолчанию (ищите метку (default))
-kubectl get storageclass
-
-# Назначение существующего класса (например, 'nfs') классом по умолчанию
-kubectl patch storageclass nfs \
-  -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
+# Проверка причин ожидания PVC
+kubectl describe pvc <pvc_name> -n gitlab
 ```
 
-**Причина 2: Конфликты при переустановке**
-Helm не удаляет PVC автоматически при выполнении `helm uninstall`.
+**Типичные причины:**
+1.  **Отсутствие Default StorageClass:** См. `kubectl get sc`.
+2.  **Insufficient Space:** Физическое отсутствие места на СХД или узлах.
+3.  **Multi-AZ Conflict:** PVC создан в одной зоне доступности, а узел планировщика — в другой.
 
+### Нехватка ресурсов (OOMKilled / Insufficient CPU)
+
+**Симптом:** Поды постоянно перезапускаются (`CrashLoopBackOff`) или не планируются.
+
+**Диагностика:**
 ```bash
-# Полная очистка перед повторной установкой
-helm uninstall gitlab -n gitlab
-kubectl delete pvc --all -n gitlab
+# Проверка OOM событий
+kubectl get pods -n gitlab | grep -i oom
+
+# Проверка лимитов и запросов
+kubectl describe pod <pod_name> -n gitlab | grep -A 3 Limits
 ```
 
-### Настройка размеров томов для тестов
-
-По умолчанию GitLab запрашивает около 80 ГБ дискового пространства. Для тестовых сред это можно уменьшить через `values.yaml`.
-
-**Минимальный файл конфигурации для экономии места:**
+**Решение:** Для тестовых сред отключите ресурсоемкие компоненты или уменьшите их лимиты и размеры томов (с осторожностью):
 
 ```yaml
-# test-values.yaml
+# Оптимизация для dev-окружений
+prometheus:
+  install: false
+gitlab-runner:
+  install: false
 postgresql:
   primary:
     persistence:
-      size: 2Gi
-minio:
-  persistence:
-    size: 5Gi
-redis:
-  master:
-    persistence:
-      size: 1Gi
-global:
-  gitaly:
-    persistence:
-      size: 5Gi
-prometheus:
-  install: false # Отключение для экономии ресурсов
+      size: 5Gi # Уменьшение с дефолтных 80ГБ
 ```
 
-### Нехватка ресурсов (CPU/RAM)
+### Ошибки Cert-Manager (SSL Issue)
 
-**Симптом:** Поды не запускаются, в `describe pod` видна ошибка `Insufficient cpu` или `Insufficient memory`.
+**Симптом:** Браузер выдает ошибку сертификата, а секрет `gitlab-tls` не создается или пуст.
 
 **Диагностика:**
-
 ```bash
-# Проверка нагрузки на узлы
-kubectl top nodes
-
-# Просмотр событий пода для подтверждения нехватки ресурсов
-kubectl describe pod <pod_name> -n gitlab | grep -A 5 Events
+# Проверка ресурсов cert-manager
+kubectl get certificate -n gitlab
+kubectl describe challenge -n gitlab
 ```
 
-**Решение:** Добавьте ресурсы в кластер или уменьшите `requests` в `values.yaml` (не рекомендуется для production).
+**Решение:** Убедитесь, что Ingress-контроллер имеет внешний IP и порт 80 открыт для прохождения проверки Let's Encrypt (HTTP-01 challenge).
 
 ---
 
 ## Дополнительная информация
+
+### Полезные команды для отладки
+
+| Команда | Описание |
+| :--- | :--- |
+| `helm status gitlab -n gitlab` | Общий статус релиза и выведенные заметки. |
+| `kubectl get events -n gitlab --sort-by='.lastTimestamp'` | Хронология событий в пространстве имен. |
+| `kubectl logs -f -l app=webservice -n gitlab -c webservice` | Логи Puma в реальном времени. |
 
 ### См. также
 
 - [Установка GitLab через Helm](./gitlab_kubernetes_helm_installation.md)
 - [Методы доступа к GitLab](./gitlab_kubernetes_access.md)
 - [Диагностика статуса Pending в Kubernetes](../Troubleshooting/Common_Errors/pod_pending/diagnostics.md)
+- [Официальный Troubleshooting Guide GitLab](https://docs.gitlab.com/charts/troubleshooting/)

@@ -15,43 +15,49 @@ LoadBalancer является расширением типов [NodePort](./ser
 
 При создании ресурса выполняются следующие этапы:
 
-1. **Cloud Controller Manager (CCM):** Контроллер обнаруживает новый сервис и отправляет запрос к API облачного провайдера.
-2. **Provisioning:** Провайдер создает сетевой балансировщик (L4 по умолчанию).
+1. **Cloud Controller Manager (CCM):** Контроллер (или in-cluster оператор типа MetalLB) обнаруживает новый сервис и отправляет запрос к API провайдера. Начиная с K8s 1.31, код "in-tree" облачных провайдеров полностью удален из ядра K8s — вся интеграция работает только через внешние CCM.
+2. **Provisioning:** Провайдер создает сетевой балансировщик (L4 по умолчанию, работает с TCP/UDP). Поддержка нескольких протоколов (Mixed Protocols) на одном LoadBalancer зависит от возможностей конкретного провайдера и настройки `ipFamilyPolicy`.
 3. **Status Reporting:** После выделения IP-адреса или DNS-имени CCM обновляет поле `status.loadBalancer.ingress` в объекте Service.
 4. **Finalizers:** Kubernetes добавляет финалайзер `service.kubernetes.io/load-balancer-cleanup`, который гарантирует, что облачный балансировщик будет удален только после успешного удаления объекта Service в кластере.
 
 ### Ключевые параметры спецификации
 
 - **loadBalancerClass:** Позволяет указать конкретный контроллер балансировки (например, для использования нескольких разных провайдеров или MetalLB одновременно).
-- **allocateLoadBalancerNodePorts:** Если установлено в `false`, Kubernetes не будет резервировать `NodePort` на узлах. Это актуально для провайдеров, поддерживающих прямую маршрутизацию трафика в поды (например, через VPC CNI).
-- **loadBalancerIP:** (Deprecated) Ранее использовалось для задания статического IP. Сейчас рекомендуется использовать аннотации провайдера.
+- **allocateLoadBalancerNodePorts:** Если установлено в `false`, Kubernetes не будет резервировать стандартные порты `NodePort` на узлах. Это актуально для провайдеров (или CNI, например, Cilium), поддерживающих прямую маршрутизацию трафика в поды (Direct Pod Routing).
+- **healthCheckNodePort:** При `externalTrafficPolicy: Local` облачному LB требуется механизм проверки доступности подов на узле. Kubernetes автоматически выделяет для этого специальный порт, который LB опрашивает (HTTP). В K8s 1.30+ выделение этого порта можно отключить (зависит от поддержки в CCM), если провайдер имеет собственные механизмы health-check.
+- **loadBalancerIP:** *(Deprecated в 1.30+)* Ранее использовалось для задания статического IP. Сейчас **строго рекомендуется** использовать аннотации облачного провайдера или конфигурации пулов (в MetalLB/Cilium).
+
+### Ограничение доступа: loadBalancerSourceRanges и ipMode
+
+Поле `spec.loadBalancerSourceRanges` позволяет ограничить доступ к сервису, принимая трафик только с указанных CIDR (работает через правила пакетного фильтра узла).
+**Важное нововведение (K8s 1.30+):** Добавлено поле `status.loadBalancer.ingress.ipMode` для корректной маршрутизации "hairpin" трафика (когда под обращается к внешнему IP собственного сервиса) при использовании **Proxy Protocol** и строгих ограничений `loadBalancerSourceRanges`.
 
 ### Конфигурация через аннотации
 
 Большинство настроек (тип балансировщика, SSL-сертификаты, внутренняя/внешняя область видимости) передаются через `metadata.annotations`.
 
-| Облако | Пример аннотации | Назначение |
+| Среда / Облако | Пример аннотации | Назначение |
 | :--- | :--- | :--- |
-| **AWS** | `service.beta.kubernetes.io/aws-load-balancer-type: nlb` | Использование Network Load Balancer |
-| **GCP** | `networking.gke.io/load-balancer-type: "Internal"` | Создание внутреннего (частного) LB |
-| **Azure** | `service.beta.kubernetes.io/azure-load-balancer-internal: "true"` | Внутренний балансировщик в VNet |
+| **AWS** | `service.beta.kubernetes.io/aws-load-balancer-type: nlb` | Использование Network Load Balancer (вместо устаревшего Classic). |
+| **GCP** | `networking.gke.io/load-balancer-type: "Internal"` | Создание внутреннего (частного) LB в рамках VPC. |
+| **MetalLB** | `metallb.universe.tf/loadBalancerIPs: 192.168.10.50` | Назначение конкретного статического IP-адреса из локального пула. |
 
-## Управление трафиком
+### Управление трафиком (Traffic Policies)
 
-### externalTrafficPolicy
+#### externalTrafficPolicy
 
-Определяет, как балансировщик распределяет трафик между узлами:
+Определяет, как балансировщик распределяет входящий трафик после его попадания на узел:
 
-- **Cluster** (по умолчанию): Трафик может быть перенаправлен на любой узел. Происходит SNAT (подмена IP клиента на IP узла).
-- **Local**: Трафик направляется только на узлы, где запущены целевые поды. Сохраняется исходный IP клиента (Source IP). Требует корректной настройки Health Checks на стороне облачного LB.
+- **Cluster** *(по умолчанию)*: Трафик равномерно распределяется между всеми узлами. Если на узле нет нужного пода, запрос перенаправляется на другой узел. **Происходит SNAT** (подмена исходного IP клиента на IP узла).
+- **Local**: Трафик направляется только на те узлы, где запущены целевые поды. Пересылка (hop) между узлами отсутствует. **Сохраняется исходный IP клиента (Source IP)**. Требует корректной настройки Health Checks (через `healthCheckNodePort`) на стороне LB для исключения маршрутизации на "пустые" узлы.
 
-### internalTrafficPolicy
+#### internalTrafficPolicy
 
-Управляет маршрутизацией запросов, инициированных внутри кластера при обращении к внешнему адресу/имени балансировщика.
+Управляет маршрутизацией запросов, инициированных внутри кластера (East-West трафик) при обращении к внешнему адресу/имени балансировщика. В сочетании с `externalTrafficPolicy: Local` позволяет тонко тюнинговать производительность сети.
 
 ## Практические сценарии
 
-### Стандартный публичный балансировщик
+### Стандартный публичный балансировщик (с ограничением доступа)
 
 ```yaml
 apiVersion: v1
@@ -60,6 +66,8 @@ metadata:
   name: web-production-lb
 spec:
   type: LoadBalancer
+  loadBalancerSourceRanges:
+    - 198.51.100.0/24 # Доступ только с этой подсети
   selector:
     app: frontend
   ports:
@@ -68,9 +76,9 @@ spec:
       targetPort: 8080 # Порт в контейнере
 ```
 
-### Внутренний балансировщик (Private LB)
+### Внутренний балансировщик (Private LB в облаке)
 
-Пример для AWS, создающий балансировщик, доступный только внутри VPC.
+Пример для AWS, создающий Network Load Balancer, доступный только внутри VPC. Сохраняет IP клиента.
 
 ```yaml
 apiVersion: v1
@@ -79,8 +87,10 @@ metadata:
   name: internal-api
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 spec:
   type: LoadBalancer
+  externalTrafficPolicy: Local
   selector:
     app: api
   ports:
@@ -88,20 +98,25 @@ spec:
       targetPort: 8443
 ```
 
-### Использование конкретного LoadBalancer Class
+### Развертывание в Bare-Metal (MetalLB / Cilium)
+
+В локальных или bare-metal средах LoadBalancer реализуется через in-cluster компоненты (например, MetalLB или Cilium L2/BGP).
 
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: metallb-service
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: 192.168.10.50 # Запрашиваемый статический IP
 spec:
   type: LoadBalancer
-  loadBalancerClass: metallb.io/v1alpha1 # Явное указание контроллера
+  loadBalancerClass: metallb.io/v1alpha1 # Явное указание контроллера, если их несколько
   selector:
     app: my-app
   ports:
     - port: 80
+      targetPort: 8080
 ```
 
 ## Дополнительная информация

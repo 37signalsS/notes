@@ -2,9 +2,11 @@
 
 ## Определения
 
-**401 Unauthorized** — код состояния HTTP, означающий, что API-сервер Kubernetes не смог подтвердить личность (аутентифицировать) субъекта. Это первый этап обработки запроса: если личность не установлена, проверка прав (**RBAC**) не производится.
+**401 Unauthorized** — код состояния HTTP, означающий, что API-сервер Kubernetes не смог подтвердить личность (аутентифицировать) субъекта. Это первичный барьер безопасности: если личность не установлена, проверка прав (**RBAC**) не производится, и запрос отклоняется немедленно.
 
 **Аутентификатор (Authenticator)** — модуль API-сервера, ответственный за проверку конкретного типа учетных данных (токены, сертификаты, пароли).
+
+**TokenReview API** — механизм, позволяющий проверить валидность токена и получить информацию о субъекте (имя, группы) напрямую от API-сервера.
 
 > Различие 401 vs 403: [definitions.md](definitions.md)
 > Полное описание механизмов: [../../../Security/authentication.md](../../../Security/authentication.md)
@@ -13,113 +15,120 @@
 
 ### Цепочка проверки запроса
 
-Kubernetes использует список аутентификаторов. Запрос проверяется каждым из них до первого успешного совпадения.
+Kubernetes использует список аутентификаторов, которые проверяются последовательно до первого успешного совпадения.
 
-```text
-Запрос к API (Token / Cert)
-    ↓
-[ Authenticator List ]
-    ├── X509 (Клиентские сертификаты)
-    ├── ServiceAccount (JWT токены)
-    ├── OIDC (Внешние провайдеры: Google, Keycloak, Dex)
-    └── Webhook (Кастомная проверка)
-    ↓
-Успех: Субъект опознан → Переход к авторизации (RBAC)
-Отказ: 401 Unauthorized
-```
+1.  **X509:** Клиентские сертификаты (админы, компоненты кластера).
+2.  **ServiceAccount:** JWT токены (поды, автоматизация).
+3.  **OIDC:** Внешние провайдеры (Okta, Keycloak, Google).
+4.  **Webhook:** Кастомная проверка через внешний сервис.
+5.  **Anonymous:** Если включено (`--anonymous-auth=true`), запросу назначается `system:anonymous`.
+
+### Новое в Kubernetes 1.30 и 1.31
+
+-   **Legacy ServiceAccount Token Cleaner (v1.31 GA):** Контроллер автоматически удаляет неиспользуемые токены ServiceAccount, хранящиеся в Secrets (по умолчанию, если не использовались > 1 года).
+-   **Structured Authentication Configuration (v1.30+):** Позволяет настраивать несколько OIDC-провайдеров через файл конфигурации и использовать CEL (Common Expression Language) для валидации заявок в токене.
+-   **Node-binding (v1.31 Beta):** Токены могут быть жестко привязаны к конкретному узлу. Использование такого токена на другом узле приведет к 401.
 
 ### Частые причины отказа (401)
 
 | Причина | Детали | Инструмент проверки |
-|---------|--------|---------------------|
-| **Истекший токен** | JWT токен ServiceAccount имеет ограниченный срок жизни (1.22+) | `kubectl create token` |
-| **Истекший сертификат**| Срок действия клиентского сертификата в kubeconfig истек | `openssl x509` |
-| **Неверный контекст** | Попытка использовать учетные данные одного кластера для другого | `kubectl config current-context` |
-| **Проблемы OIDC** | Ошибка синхронизации времени или некорректная Audience | Логи API-сервера |
+| :--- | :--- | :--- |
+| **Истекший токен** | JWT токен имеет ограниченный TTL (по умолчанию 1 час) | `kubectl create token` |
+| **Token Cleaner** | Токен был удален из etcd как устаревший (v1.31+) | `kubectl get secret` |
+| **Node Mismatch** | Токен привязан к другому узлу (Node-binding) | Логи API-сервера |
+| **Clock Skew** | Разница во времени между клиентом и сервером > 300 сек | `ntpstat` / `timedatectl` |
+| **Audience Mismatch** | Поле `aud` в токене не совпадает с настройками API | `jwt.io` / `step crypto jwt` |
 
 ## Практические сценарии
 
-### Сценарий 1: Проблемы с токенами ServiceAccount (K8s 1.24+)
+### Сценарий 1: Диагностика через TokenReview API
 
-В современных версиях Kubernetes токены не хранятся в Secrets бесконечно, а генерируются как проецируемые ресурсы с ограниченным сроком жизни.
+Если вы получили 401, проверьте, как API-сервер видит ваш токен. Это исключит проблемы на стороне клиента.
 
-**Симптомы:** Приложение в поде внезапно начинает получать 401 при обращении к API.
-
-**Диагностика и решение:**
 ```bash
-# Проверка, монтируется ли токен в под
-kubectl get pod <pod-name> -o yaml | grep -A 10 "serviceAccountToken"
+# Создание запроса на проверку токена
+cat <<EOF | kubectl create -f -
+apiVersion: authentication.k8s.io/v1
+kind: TokenReview
+spec:
+  token: <ВАШ_ТОКЕН>
+EOF
 
-# Ручная генерация нового токена для отладки
-kubectl create token <sa-name> -n <namespace> --duration=1h
-
-# Проверка JWT токена (без установки доп. софта)
-TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-echo $TOKEN | cut -d. -f2 | base64 -d | jq .
+# Ожидаемый ответ при успехе:
+# status:
+#   authenticated: true
+#   user:
+#     username: system:serviceaccount:default:my-sa
 ```
 
-### Сценарий 2: Истечение срока действия X509 сертификата
+### Сценарий 2: Проблемы с токенами в подах (K8s 1.24+)
 
-**Симптомы:** Ошибка `x509: certificate has expired or is not yet valid`.
+В современных кластерах токены монтируются как проецируемые тома (Projected Volumes) и автоматически ротируются `kubelet`.
 
-**Решение для администратора кластера:**
+**Симптомы:** Приложение получает 401.
+**Причины:**
+1.  `kubelet` не может обновить токен (проблемы с API-сервером или диском).
+2.  Токен привязан к конкретному поду (Object-binding), и вы пытаетесь использовать его вне этого пода.
+
+**Решение:**
 ```bash
-# Проверка срока действия сертификатов управляющего слоя
+# Проверка монтирования токена
+kubectl get pod <pod-name> -o jsonpath='{.spec.volumes[?(@.projected)].projected.sources}'
+
+# Ручная генерация для теста (с заданным TTL и Audience)
+kubectl create token <sa-name> --duration=1h --audience=my-api
+```
+
+### Сценарий 3: Ошибки Structured Authentication и CEL (v1.30+)
+
+Если используется `--authentication-config`, ошибки могут быть вызваны CEL-фильтрами.
+
+**Пример конфигурации с ошибкой:**
+```yaml
+# Если email не совпадает с доменом, API-сервер вернет 401
+claimMappings:
+  username: { expression: "claims.email.split('@')[0]" }
+  validationRules:
+    - expression: "claims.email.endsWith('@company.com')"
+      message: "Only company emails allowed"
+```
+
+**Диагностика:** Ищите в логах API-сервера записи с уровнем `-v=4` или выше:
+`"Authentication failed" err="validation failed: Only company emails allowed"`
+
+### Сценарий 4: Истечение X509 сертификатов
+
+**Симптомы:** Ошибка `x509: certificate has expired`.
+
+**Решение для администратора:**
+```bash
+# Проверка всех сертификатов (kubeadm)
 kubeadm certs check-expiration
 
-# Обновление всех сертификатов (для kubeadm)
+# Обновление и перезагрузка компонентов
 kubeadm certs renew all
-
-# Обновление локального kubeconfig
-cp /etc/kubernetes/admin.conf ~/.kube/config
-```
-
-### Сценарий 3: Ошибки внешней аутентификации (OIDC)
-
-**Симптомы:** Пользователь успешно прошел SSO, но `kubectl` возвращает 401.
-
-**Возможные причины:**
-1.  **Skew Time:** Разница во времени между API-сервером и OIDC-провайдером более 300 секунд.
-2.  **Audience Mismatch:** API-сервер запущен с `--oidc-client-id`, который не совпадает с полем `aud` в токене.
-
-**Диагностика:**
-Единственный надежный способ — просмотр логов API-сервера с повышенным уровнем детализации.
-```bash
-# Просмотр логов в реальном времени (на мастере)
-kubectl logs -n kube-system -l component=kube-apiserver -f | grep "authentication"
+systemctl restart kubelet
 ```
 
 ## Дополнительная информация
 
-### Метод "Impersonation" для отладки
+### Имитация (Impersonation) для отладки
 
-Если вы не уверены, проходит ли пользователь аутентификацию, попробуйте имитировать его через администратора. Если имитация работает, а прямой запрос — нет, проблема в **аутентификации**.
-
-```bash
-# Проверка прав через имитацию
-kubectl auth can-i list pods --as=my-user@example.com
-```
-
-### Сценарий быстрой проверки токена
+Имитация помогает понять, является ли проблема ошибкой **аутентификации** (личность не установлена) или **авторизации** (нет прав). Если имитация через админа работает, а прямой запрос — нет, значит проблема в учетных данных.
 
 ```bash
-#!/bin/bash
-# Проверка валидности токена через API
-
-TOKEN=$1
-APISERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
-
-curl -k -s -H "Authorization: Bearer $TOKEN" "$APISERVER/api" | grep "v1"
-if [ $? -eq 0 ]; then
-    echo "Аутентификация успешна"
-else
-    echo "Ошибка 401: Токен невалиден"
-fi
+# Проверка от имени пользователя и группы
+kubectl get pods --as=user@example.com --as-group=developers
 ```
+
+### Анонимные запросы: 401 vs 403
+
+-   Если `--anonymous-auth=false` → любой запрос без учетных данных получает **401 Unauthorized**.
+-   Если `--anonymous-auth=true` (по умолчанию) → запрос получает личность `system:anonymous`. Если у этой группы нет прав (а их обычно нет), вернется **403 Forbidden**.
 
 ### Связанные ресурсы
 
-- [Пошаговая диагностика (401 и 403)](diagnostics.md)
+- [Алгоритм пошаговой диагностики (401 и 403)](diagnostics.md)
 - [Определения 401 vs 403](definitions.md)
-- [Объекты RBAC и авторизация](rbac_objects.md)
-- [Управление kubeconfig](../../../Operations/kubeconfig_and_connection.md)
+- [Kubeconfig и управление подключениями](../../../Operations/kubeconfig_and_connection.md)
+- [Официальная документация: Authenticating](https://kubernetes.io/docs/reference/access-authn/authentication/)

@@ -20,7 +20,7 @@
 chmod +x .git/hooks/pre-commit
 ```
 
-Скрипты могут быть написаны на любом языке, поддерживаемом системой: Bash, Python, Ruby, Node.js и другие. В первой строке (shebang) должен быть указан путь к интерпретатору.
+Скрипты могут быть написаны на любом языке: Bash, Python, Ruby, Node.js и другие. В первой строке (shebang) должен быть указан путь к интерпретатору.
 
 ### Жизненный цикл хуков
 
@@ -36,89 +36,32 @@ chmod +x .git/hooks/pre-commit
 | `pre-receive` | Серверный | При получении push на сервере | Отклоняет push |
 | `update` | Серверный | Для каждой обновляемой ветки | Отклоняет обновление ветки |
 | `post-receive` | Серверный | После успешного push | Не влияет на push |
-| `reference-transaction` | Клиент/Сервер | При любом обновлении ссылок | Может отменить транзакцию |
 
 ### Типы клиентских хуков
 
-* **`pre-commit`** — линтинг, форматирование (`eslint`, `prettier`, `black`, `ruff`), проверка синтаксиса, поиск отладочных выражений (`console.log`, `print`).
+* **`pre-commit`** — линтинг, форматирование (`eslint`, `prettier`, `ruff`), проверка синтаксиса, поиск отладочных выражений (`console.log`).
 * **`commit-msg`** — проверка сообщения коммита на соответствие стандартам (Conventional Commits).
 * **`pre-push`** — запуск тяжелых тестов или сканирования на секреты (`gitleaks`) перед публикацией.
-* **`post-checkout` / `post-merge`** — автоматизация обновления зависимостей (`npm install`, `terraform init`) при смене ветки или получении изменений.
+* **`post-checkout` / `post-merge`** — автоматизация обновления зависимостей (`npm install`, `terraform init`).
 
 ### Типы серверных хуков
 
-* **`pre-receive`** — глобальная проверка прав, защита веток, проверка подписей коммитов, запрет на push больших файлов.
-* **`post-receive`** — запуск CI/CD пайплайнов через вебхуки, уведомления в мессенджеры, обновление документации.
+* **`pre-receive`** — глобальная проверка прав, защита веток, проверка подписей, запрет на push больших файлов.
+* **`post-receive`** — запуск CI/CD пайплайнов через вебхуки, уведомления, обновление документации.
 
-### Фреймворки для управления хуками
+### Инструменты управления хуками
 
-* **[pre-commit](https://pre-commit.com/):** Мультиязычный фреймворк. Конфигурируется через `.pre-commit-config.yaml`. Позволяет использовать готовые хуки без их ручного написания.
-* **[Husky](https://typicode.github.io/husky/):** Основной инструмент для JavaScript-экосистемы. Начиная с v9.0, процесс инициализации упрощен до одной команды `npx husky init`.
-* **[Lefthook](https://github.com/evilmartians/lefthook):** Быстрый и мощный инструмент на Go, поддерживающий параллельное выполнение хуков.
+* **[pre-commit](https://pre-commit.com/):** Мультиязычный фреймворк. Конфигурируется через `.pre-commit-config.yaml`.
+* **[Husky](https://typicode.github.io/husky/):** Стандарт для JS/TS проектов.
+* **[Lefthook](https://github.com/evilmartians/lefthook):** Быстрый инструмент на Go с параллельным выполнением.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Автоматизация с Ruff (замена Black и Flake8)
+### Сценарий 1: Конфигурация pre-commit фреймворка
 
-**Ruff** — крайне быстрый линтер и форматировщик для Python, написанный на Rust.
-
-```yaml
-# .pre-commit-config.yaml
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.0
-    hooks:
-      - id: ruff
-        args: [ --fix ]
-      - id: ruff-format
-```
-
-### Сценарий 2: Автоматическое обновление зависимостей
-
-Хук `post-merge` позволяет автоматически запускать установку пакетов после `git pull`.
-
-```bash
-#!/bin/bash
-# .git/hooks/post-merge
-
-changed_files=$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD)
-
-check_run() {
-    echo "$changed_files" | grep --quiet "$1" && eval "$2"
-}
-
-echo "Checking for dependency updates..."
-check_run "package-lock.json" "npm install"
-check_run "requirements.txt" "pip install -r requirements.txt"
-```
-
-### Сценарий 3: Проверка сообщения коммита (Commitlint)
-
-Использование Husky и Commitlint для соблюдения Conventional Commits.
-
-```bash
-# Установка
-npm install --save-dev @commitlint/config-conventional @commitlint/cli
-npx husky init
-# Добавление хука
-echo "npx --no -- commitlint --edit \$1" > .husky/commit-msg
-```
-
-### Сценарий 4: Распространение хуков в команде
-
-1. **`core.hooksPath`**: Переопределение пути к хукам на директорию, отслеживаемую Git (например, `.githooks`).
-   ```bash
-   git config core.hooksPath .githooks
-   ```
-2. **`git init --template`**: Использование шаблонов для автоматической установки хуков при создании (`git init`) или клонировании (`git clone`) репозитория.
-   ```bash
-   git config --global init.templateDir ~/.git-template
-   # Положить хуки в ~/.git-template/hooks
-   ```
-
-### Сценарий 5: Современный конфиг pre-commit (v5.0.0+)
+Использование современных линтеров и проверок безопасности.
 
 ```yaml
 # .pre-commit-config.yaml
@@ -131,39 +74,113 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
 
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.0
     hooks:
-      - id: black
+      - id: ruff
+        args: [ --fix ]
+      - id: ruff-format
 
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.1.0
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.2
     hooks:
-      - id: flake8
+      - id: gitleaks
+```
+
+**Основные команды:**
+* `pre-commit install` — установка хуков в `.git/hooks`.
+* `pre-commit run --all-files` — ручной запуск всех проверок на всех файлах.
+* `pre-commit autoupdate` — обновление версий хуков в конфиге.
+
+### Сценарий 2: Валидация сообщений с Gitlint
+
+Контроль формата коммитов (Conventional Commits) без использования Node.js.
+
+1. Установите `pre-commit` и настройте хук в `.pre-commit-config.yaml`:
+```yaml
+repos:
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+```
+
+2. Настройте правила валидации в файле `.gitlint`. Примеры конфигурации и описание правил доступны в разделе **[Валидация через pre-commit (Gitlint)](./git_commit_template.md#сценарий-2-валидация-через-pre-commit-gitlint)**.
+
+### Сценарий 3: Автоматизация Node.js с Husky (v9+)
+
+Современный способ инициализации хуков в JS-проектах для проверки Conventional Commits.
+
+```bash
+# Инициализация Husky
+npx husky init
+
+# Добавление хука проверки сообщения
+echo "npx --no -- commitlint --edit \$1" > .husky/commit-msg
+```
+
+Подробная настройка правил `commitlint` и интеграция с Husky описаны в документе: **[Интеграция Commitlint и Husky](./git_commit_template.md#сценарий-3-интеграция-commitlint-и-husky-v9)**.
+
+### Сценарий 4: Серверные хуки в GitLab (Custom Hooks)
+
+Реализация жестких проверок на стороне сервера, которые невозможно обойти локально.
+
+1. Создайте директорию `custom_hooks` в корне репозитория на сервере (или `hashed/path.git/custom_hooks`).
+2. Создайте файл `pre-receive` (без расширения):
+```bash
+#!/bin/bash
+# Запрет push в ветку main напрямую
+while read oldrev newrev refname
+do
+  if [[ $refname == "refs/heads/main" ]]; then
+    echo "Direct push to main is prohibited!"
+    exit 1
+  fi
+done
+```
+3. Сделайте файл исполняемым: `chmod +x pre-receive`.
+
+### Сценарий 5: Распространение хуков через core.hooksPath
+
+Если вы хотите хранить хуки в репозитории (например, в папке `.githooks`) и версионировать их.
+
+```bash
+# Переопределение пути к хукам для текущего репозитория
+git config core.hooksPath .githooks
+
+# Команда для всей команды (добавить в README или скрипт инициализации)
+git config --local core.hooksPath .githooks
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Безопасность и обход проверок
+### Устранение неполадок и обход проверок
 
-* **Локальный обход**: Любой клиентский хук можно обойти флагом `--no-verify`.
-* **Доверие**: Никогда не полагайтесь на клиентские хуки как на единственный механизм безопасности. Они предназначены для удобства разработчика.
-* **Серверная валидация**: Окончательная проверка должна всегда происходить на сервере (через `pre-receive` или CI/CD) — этот этап невозможно обойти локально.
+* **Пропуск хуков:** Если нужно срочно закоммитить код без проверок, используйте флаг `--no-verify` (или `-n`).
+  ```bash
+  git commit -m "fix: quick fix" --no-verify
+  ```
+* **Пропуск конкретного хука pre-commit:**
+  ```bash
+  SKIP=ruff git commit -m "message"
+  ```
+* **Проблема с путями в Windows:** При использовании Bash-скриптов в хуках на Windows убедитесь, что пути к интерпретаторам корректны (используйте `/bin/bash`).
 
-### Ограничения
+### Безопасность
 
-* Хуки не копируются при клонировании репозитория (по соображениям безопасности).
-* Скрипты должны быть переносимыми (не использовать пути, специфичные для конкретной ОС, если команда работает на разных платформах).
+* **Клиентские хуки не являются гарантией:** Их легко обойти или не установить.
+* **Серверная валидация:** Для критических проверок (права, секреты, тесты) всегда используйте серверные хуки или CI/CD пайплайны.
+* **Доверие:** Запуск `pre-commit install` выполняет код из сторонних репозиториев. Проверяйте `rev` (хеши или теги) в конфигурации.
 
 ### Официальные ресурсы
 
-* **Git Book - Hooks:** [git-scm.com/book/ru/v2/Настройка-Git-Git-Hooks](https://git-scm.com/book/ru/v2/Customizing-Git-Git-Hooks)
-* **Pre-commit Framework:** [pre-commit.com](https://pre-commit.com/)
+* **Git Book — Настройка Git:** [git-scm.com/book/ru/v2/Настройка-Git-Git-Hooks](https://git-scm.com/book/ru/v2/Customizing-Git-Git-Hooks)
+* **Каталог хуков pre-commit:** [pre-commit.com/hooks.html](https://pre-commit.com/hooks.html)
 
 ### См. также
 
 * [Шаблон коммитов и валидация](./git_commit_template.md)
 * [Очистка истории и защита от секретов](./git_history_manipulation.md)
-* [Специальные файлы Git](./git_special_files_overview.md)
+* [Прочие соглашения и конвенции Git](./git_other_conventions.md)

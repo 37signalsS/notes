@@ -1,177 +1,143 @@
 # Отказоустойчивость OpenSearch с помощью Keepalived (Floating VIP)
 
-## Описание сценария
+> Эта заметка рассматривает реализацию высокой доступности (HA) для API OpenSearch с использованием плавающего IP-адреса (VIP). Клиенты взаимодействуют с кластером через единую точку входа, которая автоматически переключается между узлами при сбоях.
 
-Для обеспечения высокой доступности (HA) кластера OpenSearch используется плавающий виртуальный IP-адрес (VIP). Клиенты подключаются к VIP:9200, который автоматически перемещается на исправный узел кластера при сбое текущего мастера.
+## Определения
 
-**Инфраструктура:**
-- Кластер из 3 узлов (версия Ubuntu 24.04).
+* **Keepalived**: системный демон для Linux, обеспечивающий высокую доступность (HA) через управление виртуальным IP-адресом (VIP) на базе протокола VRRP.
+* **Virtual IP (VIP)**: плавающий IP-адрес, который логически принадлежит всему кластеру, но физически назначен только одному активному узлу (MASTER) в конкретный момент времени.
+* **VRRP (Virtual Router Redundancy Protocol)**: сетевой протокол, используемый для обнаружения отказов MASTER-узла и автоматического выбора нового владельца VIP.
+* **Unicast VRRP**: режим работы, при котором пакеты VRRP отправляются на конкретные IP-адреса участников кластера (в отличие от Multicast), что является стандартом для облачных сред (AWS, GCP, Azure), где мультикаст часто заблокирован.
+* **Non-local Bind**: параметр ядра Linux, позволяющий процессам привязываться к IP-адресам, которые физически не назначены ни одному интерфейсу на текущем хосте (необходимо для запуска OpenSearch на BACKUP-узлах).
+* **Split-brain**: состояние, при котором несколько узлов одновременно считают себя MASTER и назначают себе VIP из-за проблем с сетевой связностью (heartbeats не проходят).
+* **Preemption (Вытеснение)**: поведение, при котором восстановленный узел с более высоким приоритетом принудительно забирает роль MASTER у текущего владельца.
+
+## Основные концепции
+
+### Архитектура отказоустойчивости
+
+Для обеспечения HA используется кластер из 3 узлов (например, на Ubuntu 24.04).
 - OpenSearch слушает на порту 9200.
 - Виртуальный IP (VIP): `10.0.1.10/24`.
 
-| Имя узла | Физический IP | Роль Keepalived (исходная) | Приоритет |
+**Целевая конфигурация узлов:**
+
+| Имя узла | Физический IP | Роль Keepalived | Приоритет |
 | :--- | :--- | :--- | :--- |
-| **os-node-1** | 10.0.1.1 | MASTER | 103 |
+| **os-node-1** | 10.0.1.1 | MASTER (BACKUP*) | 103 |
 | **os-node-2** | 10.0.1.2 | BACKUP | 102 |
 | **os-node-3** | 10.0.1.3 | BACKUP | 101 |
 
-## Подготовка OpenSearch
+*\*Примечание: Для использования стратегии `nopreempt` все узлы в конфиге указываются как BACKUP, а MASTER выбирается на основе приоритета при первом запуске.*
 
-На всех узлах необходимо настроить OpenSearch так, чтобы он слушал на всех интерфейсах (0.0.0.0), иначе он не сможет принимать трафик через виртуальный IP.
+### Нелокальная привязка IP (Non-local Bind)
 
-1. Отредактируйте конфигурацию:
-   ```bash
-   sudo nano /etc/opensearch/opensearch.yml
-   ```
-2. Установите параметр:
-   ```yaml
-   network.host: "0.0.0.0"
-   ```
-3. Перезапустите сервис:
-   ```bash
-   sudo systemctl restart opensearch
-   ```
+В конфигурации HA критически важно включить `net.ipv4.ip_nonlocal_bind=1`. Без этого параметра OpenSearch на BACKUP-узлах может не запуститься или выдать ошибку при попытке бинда к VIP, который им еще не принадлежит. Это обеспечивает мгновенную готовность бэкенда при миграции IP.
 
-## Настройка Keepalived
+### Защита от Split-brain и мигания (Flapping)
 
-### 1. Установка
+1.  **Unicast Mode**: Использование Unicast вместо Multicast исключает влияние VRRP-трафика соседних кластеров и обходит ограничения облачных провайдеров.
+2.  **Health Check Script**: Использование "глубокой" проверки (Cluster Health API) вместо простой проверки порта 9200 гарантирует, что VIP переедет, если OpenSearch запущен, но кластер находится в состоянии `RED`.
+3.  **Nopreempt Strategy**: Предотвращает "мигание" VIP, когда восстановившийся мастер-узел забирает роль обратно, вызывая второй разрыв соединений. Для OpenSearch стабильность сессий важнее, чем работа именно на "первом" узле.
 
-Выполните на всех трех узлах:
+## Практические сценарии
+
+### 1. Подготовка системы и OpenSearch
+
+На всех узлах кластера выполните настройку ядра и сети.
+
 ```bash
-sudo apt update && sudo apt install keepalived netcat-openbsd -y
+# Разрешение привязки к нелокальным IP
+echo "net.ipv4.ip_nonlocal_bind = 1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+# Настройка OpenSearch на прослушивание всех интерфейсов
+# /etc/opensearch/opensearch.yml
+network.host: "0.0.0.0"
+
+# Перезапуск сервиса
+sudo systemctl restart opensearch
 ```
 
-### 2. Конфигурация узлов
+### 2. Установка и настройка Keepalived
 
-Создайте файл конфигурации `/etc/keepalived/keepalived.conf` на каждом узле.
+Установите необходимые пакеты на всех узлах:
+```bash
+sudo apt update && sudo apt install keepalived curl -y
+```
 
-#### Узел 1 (MASTER)
+Создайте скрипт проверки `/etc/keepalived/check_opensearch.sh`:
+```bash
+#!/bin/bash
+# Проверка здоровья API. Возвращаем 0 для green/yellow, 1 для red/down.
+STATUS=$(curl -s -k -m 2 "https://localhost:9200/_cluster/health" | grep -oP '(?<="status":")[^"]*')
+if [ "$STATUS" = "green" ] || [ "$STATUS" = "yellow" ]; then exit 0; else exit 1; fi
+```
+`chmod +x /etc/keepalived/check_opensearch.sh`
+
+#### Пример конфигурации (Узел 1)
+Создайте `/etc/keepalived/keepalived.conf` (для остальных узлов измените `priority` и `unicast_src_ip`).
+
 ```keepalived
 vrrp_script chk_opensearch {
-    script "nc -zv localhost 9200"
-    interval 3
-    timeout 4
-    weight 2
+    script "/etc/keepalived/check_opensearch.sh"
+    interval 2
+    fall 3
     rise 2
-    fall 2
+    timeout 5
+    weight -20
 }
 
-vrrp_instance VI_1 {
-    state MASTER
-    interface ens160          # Замените на имя вашего интерфейса
-    priority 103
-    virtual_router_id 53
+vrrp_instance VI_OS {
+    state BACKUP
+    nopreempt
+    interface ens160          # Имя вашего интерфейса
+    virtual_router_id 53      # Должен быть уникальным в сети
+    priority 103              # 103, 102, 101 соответственно
     advert_int 1
+    
     unicast_src_ip 10.0.1.1   # IP этого узла
     unicast_peer {
         10.0.1.2
         10.0.1.3
     }
+
     virtual_ipaddress {
-        10.0.1.10/24
+        10.0.1.10/24 dev ens160 label ens160:vip
     }
+
     track_script {
         chk_opensearch
     }
 }
 ```
 
-#### Узел 2 (BACKUP)
-```keepalived
-vrrp_script chk_opensearch {
-    script "nc -zv localhost 9200"
-    interval 3
-    timeout 4
-    weight 2
-    rise 2
-    fall 2
-}
-
-vrrp_instance VI_1 {
-    state BACKUP
-    interface ens160
-    priority 102
-    virtual_router_id 53
-    advert_int 1
-    unicast_src_ip 10.0.1.2   # IP этого узла
-    unicast_peer {
-        10.0.1.1
-        10.0.1.3
-    }
-    virtual_ipaddress {
-        10.0.1.10/24
-    }
-    track_script {
-        chk_opensearch
-    }
-}
-```
-
-#### Узел 3 (BACKUP)
-```keepalived
-vrrp_script chk_opensearch {
-    script "nc -zv localhost 9200"
-    interval 3
-    timeout 4
-    weight 2
-    rise 2
-    fall 2
-}
-
-vrrp_instance VI_1 {
-    state BACKUP
-    interface ens160
-    priority 101
-    virtual_router_id 53
-    advert_int 1
-    unicast_src_ip 10.0.1.3   # IP этого узла
-    unicast_peer {
-        10.0.1.1
-        10.0.1.2
-    }
-    virtual_ipaddress {
-        10.0.1.10/24
-    }
-    track_script {
-        chk_opensearch
-    }
-}
-```
-
-### 3. Разбор параметров
+### 3. Разбор параметров конфигурации
 
 | Параметр | Описание |
 | :--- | :--- |
-| **vrrp_script** | Блок проверки состояния сервиса. |
-| **script "nc -zv ..."** | Проверка доступности порта 9200 через утилиту `nc`. |
-| **interval 3** | Частота запуска проверки (секунды). |
-| **fall 2 / rise 2** | Количество провалов/успехов подряд для смены статуса. |
-| **virtual_router_id** | Уникальный ID группы (должен совпадать на всех узлах). |
-| **priority** | Приоритет узла (узел с максимальным значением становится MASTER). |
-| **unicast_peer** | Список IP-адресов других участников кластера (режим Unicast). |
-| **virtual_ipaddress** | Виртуальный IP-адрес, который будет "плавать" между узлами. |
-| **track_script** | Привязка проверки состояния к инстансу VRRP. |
+| **vrrp_script** | Блок логики проверки здоровья сервиса. |
+| **script** | Путь к исполняемому файлу проверки (рекомендуется API check). |
+| **weight -20** | Динамическое снижение приоритета при сбое скрипта. |
+| **nopreempt** | Отключает автоматический возврат VIP на узел с высшим приоритетом. |
+| **unicast_peer** | Список IP-адресов других узлов (cloud-ready режим). |
+| **virtual_router_id** | Уникальный ID группы (защита от конфликтов с другими кластерами). |
+| **label ens160:vip** | Создание алиаса интерфейса для удобства диагностики в `ip a`. |
 
-### 4. Запуск и проверка
+### 4. Тестирование отказоустойчивости
 
-Запустите службу на всех узлах:
-```bash
-sudo systemctl enable --now keepalived
-```
+После запуска (`sudo systemctl enable --now keepalived`) проведите следующие тесты:
 
-Проверьте наличие VIP на мастере:
-```bash
-ip addr show ens160
-```
-В выводе должен появиться вторичный адрес `10.0.1.10`.
+1.  **Остановка OpenSearch**: `sudo systemctl stop opensearch` на MASTER.
+    *   **Ожидаемый результат**: Через `interval * fall` (6 сек) VIP пропадает с текущего узла и появляется на узле с приоритетом 102.
+2.  **Имитация Split-brain**: Блокировка VRRP (UDP порт 112) на одном из узлов.
+    *   **Ожидаемый результат**: Узел, не получающий анонсы, объявит себя MASTER. Защита — строгие правила FW и мониторинг логов `Keepalived: VRRP_Instance(VI_OS) forcing new master keepalived`.
+3.  **Восстановление (Recovery)**: Запустите OpenSearch на исходном мастере.
+    *   **Ожидаемый результат**: Благодаря `nopreempt`, VIP останется на текущем узле. MASTER перейдет в состояние `BACKUP` и будет ждать сбоя текущего лидера.
 
-## Тестирование отказоустойчивости
-
-1. **Остановка OpenSearch:** Остановите сервис на MASTER-узле (`sudo systemctl stop opensearch`). Через 6-10 секунд VIP должен переместиться на узел с приоритетом 102.
-2. **Отключение сети:** При потере связи с MASTER, BACKUP-узлы инициируют выборы и перехватят VIP.
-3. **Восстановление:** По умолчанию Keepalived работает в режиме `preempt` (вытеснение). Если восстановится узел с более высоким приоритетом, он заберет роль MASTER обратно.
-
-## См. также
+## Дополнительная информация
 
 - **[Keepalived: Обзор и настройка HA](../../Networking/ServicesAndTools/keepalived_overview.md)** — общие принципы и теория.
 - **[Администрирование OpenSearch](./opensearch_administration.md)** — управление индексами и кластером.
+- **[Развертывание с помощью Ansible](./opensearch_ansible_deployment.md)** — автоматизация данной конфигурации.
+- **[Диагностика VIP](../../Networking/Concepts/floating_ip_diagnostics.md)** — как отлаживать проблемы с плавающими адресами.

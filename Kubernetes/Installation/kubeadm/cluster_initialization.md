@@ -2,50 +2,46 @@
 
 ## Определения
 
-**kubeadm init** — команда для инициализации первого узла Control Plane и создания управляющих компонентов кластера.
+**kubeadm init** — команда для инициализации первого узла Control Plane. Она выполняет проверку системы, генерирует удостоверяющий центр (CA), выпускает сертификаты и запускает компоненты Kubernetes в виде статических подов.
 
-**kubeadm join** — команда для присоединения новых узлов (как мастеров, так и воркеров) к существующему кластеру.
+**kubeadm join** — команда для расширения кластера. Используется для присоединения новых узлов (мастеров с флагом `--control-plane` или воркеров).
 
-**Control Plane Endpoint** — стабильная точка входа (Virtual IP (VIP), DNS-имя или адрес балансировщика) для доступа к API-серверу.
+**Control Plane Endpoint** — стабильная точка входа (VIP, DNS или адрес балансировщика) для доступа к API-серверу.
 
-**pod-network-cidr** — диапазон IP-адресов, выделяемый для сети подов. Должен быть уникальным в рамках инфраструктуры.
+**Bootstrap Token** — временный секрет для аутентификации новых узлов. По умолчанию действует 24 часа.
 
-**service-cidr** — диапазон IP-адресов для внутренних сервисов Kubernetes (ClusterIP).
+**Discovery-token-ca-cert-hash** — хэш публичного ключа CA для проверки подлинности кластера при присоединении узла.
 
-**CRI (Container Runtime Interface)** — интерфейс взаимодействия Kubernetes со средой выполнения контейнеров (например, containerd).
+**Certificate Key** — ключ для шифрования сертификатов при их загрузке в кластер (необходим для автоматического присоединения других мастеров).
 
-**CNI (Container Network Interface)** — интерфейс сетевых плагинов, обеспечивающих связность между подами.
+**pod-network-cidr** — диапазон IP-адресов для сети подов.
+
+**service-cidr** — диапазон IP-адресов для ClusterIP сервисов.
 
 ---
 
 ## Основные концепции
 
-### Процесс и этапы инициализации
+### Процесс и фазы инициализации
 
-Инициализация кластера — это последовательный процесс, который начинается на первом мастере и расширяется на другие узлы. Для кластеров, развертываемых вручную, процесс включает следующие ключевые шаги:
+Инициализация кластера через `kubeadm` — это набор атомарных фаз, которые можно запускать по отдельности для отладки (`kubeadm init phase <name>`):
 
-1. **Подготовка компонентов:** Установка необходимых бинарных файлов (`kubelet`, `kubeadm`, `kubectl`) или установка через менеджеры пакетов ОС (`apt`, `yum`).
-2. **Инициализация Control Plane:** Выполнение `kubeadm init` на первом узле. Этот инструмент автоматизирует создание сертификатов, манифестов и запуск базовых компонентов.
-3. **Настройка доступа:** Конфигурация `kubeconfig` (обычно копирование `/etc/kubernetes/admin.conf` в `~/.kube/config`) для управления кластером.
-4. **Сетевая связность (CNI):** Развертывание сетевого плагина (например, **Flannel** или **Calico**) для обеспечения взаимодействия между подами и узлами.
-5. **Присоединение узлов (Join):** Добавление рабочих узлов (Worker Nodes) в кластер.
-6. **Верификация:** Проверка состояния узлов и ресурсов с помощью `kubectl`.
-
-**Внутренние этапы `kubeadm init`:**
-
-- **Pre-flight checks** — проверка соответствия системы требованиям (CPU, RAM, swap, порты).
-- **Certs generation** — создание TLS-сертификатов для API-сервера, etcd и других компонентов.
-- **Kubeconfig generation** — создание конфигурационных файлов для компонентов и администратора.
-- **Control plane preparation** — генерация манифестов статических подов (`/etc/kubernetes/manifests`).
-- **etcd initialization** — запуск локального хранилища конфигурации.
-- **Wait control plane** — ожидание запуска и готовности всех компонентов.
-- **Post-init** — создание RBAC-ролей и деплой аддонов (CoreDNS, kube-proxy).
+1.  **Pre-flight checks**: Проверка CPU (мин. 2), RAM (мин. 2ГБ), отключения swap и доступности портов (6443, 2379-2380, 10250).
+2.  **Certs generation**: Создание TLS-сертификатов в `/etc/kubernetes/pki` (ca, apiserver, etcd, front-proxy).
+3.  **Kubeconfig generation**: Создание конфигов для `admin.conf`, `kubelet.conf`, `controller-manager.conf` и `scheduler.conf`.
+4.  **Control plane preparation**: Генерация манифестов статических подов в `/etc/kubernetes/manifests`.
+5.  **etcd initialization**: Запуск локального etcd (если не настроен внешний).
+6.  **Wait control plane**: Ожидание появления API-сервера.
+7.  **Upload-config/certs**: Загрузка конфигурации в ConfigMap `kubeadm-config` и (опционально) сертификатов в секреты.
+8.  **Mark-control-plane**: Установка меток и Taints (по умолчанию мастер не запускает пользовательские поды).
+9.  **Bootstrap-token**: Генерация токенов для фазы `join`.
+10. **Addon**: Деплой CoreDNS и kube-proxy.
 
 ### Ключевые параметры (флаги) инициализации
 
 | Флаг | Назначение | Пример |
 | :--- | :--- | :--- |
-| `--control-plane-endpoint` | Адрес балансировщика/VIP для HA-кластера | `k8s-api.example.com:6443` |
+| `--control-plane-endpoint` | Адрес балансировщика/VIP для HA-кластера | `k8s-api.example.com:7443` |
 | `--upload-certs` | Автоматическая загрузка сертификатов для других мастеров | — |
 | `--pod-network-cidr` | Сеть для подов (зависит от CNI) | `10.244.0.0/16` |
 | `--service-cidr` | Сеть для сервисов | `10.96.0.0/12` |
@@ -53,22 +49,36 @@
 | `--cri-socket` | Путь к сокету Runtime | `unix:///run/containerd/containerd.sock` |
 | `--kubernetes-version` | Выбор конкретной версии Kubernetes | `v1.36.0` |
 
-### Планирование сетевых диапазонов (CIDR)
+### Конфигурация через YAML (Рекомендуется)
 
-Диапазоны не должны пересекаться с физической сетью узлов.
+Использование YAML позволяет сохранить настройки в системе контроля версий и настраивать параметры, недоступные через флаги (например, дополнительные SAN для сертификатов).
 
-| Параметр | Рекомендуемые значения | Примечание |
-| :--- | :--- | :--- |
-| **Pod CIDR** | `10.244.0.0/16`, `172.16.0.0/16` | Должен совпадать с настройками CNI (Calico/Flannel) |
-| **Service CIDR** | `10.96.0.0/12`, `10.10.0.0/16` | По умолчанию `10.96.0.0/12` |
-
-> **Важно:** Изменение этих диапазонов после создания кластера требует полной переустановки или крайне сложной ручной перенастройки.
+**Пример `init-config.yaml`:**
+```yaml
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "192.168.1.10"
+nodeRegistration:
+  criSocket: "unix:///run/containerd/containerd.sock"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: "v1.36.0"
+controlPlaneEndpoint: "192.168.1.100:7443"
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+apiServer:
+  certSANs:
+    - "k8s-vip.local"
+```
 
 ---
 
 ## Практические сценарии
 
-### Инициализация первого мастера (HA-подготовка)
+### 1. Инициализация первого мастера (HA-подготовка)
 
 ```bash
 sudo kubeadm init \
@@ -78,12 +88,14 @@ sudo kubeadm init \
   --cri-socket=unix:///run/containerd/containerd.sock
 ```
 
-**После выполнения:**
+### 2. Управление токенами и ключами
 
-1. Сохраните вывод команды `join` (токен и хэш).
-2. Сохраните `certificate-key` для добавления других мастеров.
+Если вывод `kubeadm init` был потерян или токены истекли:
+- **Создать команду join**: `kubeadm token create --print-join-command`
+- **Перезагрузить сертификаты для новых мастеров**: `kubeadm init phase upload-certs --upload-certs`
+- **Список токенов**: `kubeadm token list`
 
-### Настройка доступа kubectl
+### 3. Настройка доступа kubectl
 
 ```bash
 mkdir -p $HOME/.kube
@@ -94,10 +106,9 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 kubectl get nodes
 ```
 
-### Присоединение дополнительных узлов
+### 4. Присоединение дополнительных узлов
 
 **Control Plane (другие мастера):**
-
 ```bash
 sudo kubeadm join 192.168.1.100:7443 --token <token> \
   --discovery-token-ca-cert-hash sha256:<hash> \
@@ -105,24 +116,16 @@ sudo kubeadm join 192.168.1.100:7443 --token <token> \
 ```
 
 **Worker Nodes (рабочие узлы):**
-
 ```bash
 sudo kubeadm join 192.168.1.100:7443 --token <token> \
   --discovery-token-ca-cert-hash sha256:<hash>
 ```
 
-### Установка сетевого плагина (CNI Calico)
-
-Без CNI узлы будут в статусе `NotReady`.
+### 5. Установка сетевого плагина (CNI Calico)
 
 ```bash
-# Скачивание манифеста
 curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/calico.yaml -o calico.yaml
-
-# Проверка/замена CIDR (должен совпадать с --pod-network-cidr)
 sed -i 's|192.168.0.0/16|10.244.0.0/16|g' calico.yaml
-
-# Применение
 kubectl apply -f calico.yaml
 ```
 
@@ -132,44 +135,33 @@ kubectl apply -f calico.yaml
 
 ### Диагностика и отладка
 
-Для анализа причин неудачной инициализации используйте следующие команды:
-
-```bash
-# Просмотр логов kubelet
-sudo journalctl -u kubelet -f
-
-# Проверка состояния контейнеров Control Plane
-sudo crictl ps -a
-
-# Просмотр логов конкретного компонента (например, API Server)
-sudo crictl logs $(sudo crictl ps --name kube-apiserver -q)
-```
-
-**Типичные ошибки:**
-
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `preflight` error | Swap включен | `sudo swapoff -a` и удаление из `/etc/fstab` |
-| `etcd cluster unhealthy` | Проблемы с сетью или диском | Проверить задержки (latency) и права на `/var/lib/etcd` |
-| `token expired` | Прошло более 24 часов | Создать новый: `kubeadm token create --print-join-command` |
-| `certificate-key` lost | Ключ не сохранен | Пересоздать: `kubeadm init phase upload-certs --upload-certs` |
-| `CRI runtime` not found | Неверный путь к сокету | Указать явно через `--cri-socket` |
+| `preflight` error | Swap включен | `sudo swapoff -a` |
+| `etcd cluster unhealthy` | Проблемы с диском/сетью | Проверить `/var/lib/etcd` и задержки |
+| `token expired` | Прошло >24 часов | Создать новый: `kubeadm token create` |
+| `CRI runtime` not found | Неверный сокет | Указать `--cri-socket` |
 
-### Очистка и сброс узла
-
-Если инициализация завершилась с ошибкой и нужно начать заново:
-
+**Команды диагностики:**
 ```bash
-# Полный сброс конфигурации
-sudo kubeadm reset --force
+sudo journalctl -u kubelet -f            # Логи агента
+sudo crictl ps -a                       # Список контейнеров через CRI
+sudo crictl logs $(sudo crictl ps --name kube-apiserver -q) # Логи API
+```
 
-# Ручная очистка остатков
+### Очистка и сброс узла (Cleanup)
+
+Если нужно начать установку заново:
+```bash
+sudo kubeadm reset --force
+# Ручная очистка
 sudo rm -rf /etc/kubernetes/ /var/lib/etcd/ /var/lib/kubelet/ /var/lib/cni/ /etc/cni/net.d/
 sudo iptables -F && sudo iptables -t nat -F && sudo iptables -t mangle -F && sudo iptables -X
+sudo ip link delete cni0
+sudo ip link delete flannel.1
 ```
 
 ### См. также
-
-- **[Полное руководство по установке](./kubeadm_installation_guide.md)** — подготовка системы и установка пакетов.
-- **[Настройка High Availability](./ha_concepts.md)** — балансировка и Virtual IP (VIP).
-- **[Управление сертификатами](../../Operations/certificate_management.md)** — ротация и продление.
+- **[Настройка HA API-сервера](./ha_concepts.md)**
+- **[Управление сертификатами](../../Operations/certificate_management.md)**
+- **[Обновление кластеров](../../Operations/upgrading_clusters.md)**

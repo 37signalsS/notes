@@ -29,9 +29,9 @@ Fluent Bit поддерживает гибридную систему хране
     *   **Персистентность**: Данные сохраняются между перезапусками агента.
     *   **Управление очередью**: Работает по принципу FIFO (First In, First Out).
 
-### Глобальные настройки слоя хранения (`[SERVICE]`)
+### Глобальные настройки слоя хранения (`service:`)
 
-В версиях 3.x доступны расширенные параметры для тонкой настройки:
+В версиях 3.x доступны расширенные параметры для тонкой настройки (в формате YAML):
 
 | Параметр | Описание | Значение по умолчанию |
 |:---|:---|:---|
@@ -45,7 +45,7 @@ Fluent Bit поддерживает гибридную систему хране
 
 Для предотвращения падения агента по OOM (Out of Memory) используются три уровня защиты:
 
-1.  **Лимит плагина ввода (`Mem_Buf_Limit`)**: Ограничивает объем данных, который плагин может держать в памяти. При достижении лимита плагин переходит в состояние `pause`.
+1.  **Лимит плагина ввода (`mem_buf_limit`)**: Ограничивает объем данных, который плагин может держать в памяти. При достижении лимита плагин переходит в состояние `pause`.
 2.  **Лимит активных чанков (`storage.max_chunks_up`)**: Если активных чанков в RAM больше лимита, новые чанки записываются **только на диск** (состояние `down`), минуя память.
 3.  **Принудительная пауза (`storage.pause_on_chunks_overlimit`)**: Если включено, входной плагин полностью останавливает прием данных, пока количество активных чанков не снизится.
 
@@ -60,82 +60,84 @@ Fluent Bit поддерживает гибридную систему хране
 
 ### Сценарий 1: Конфигурация для высоконагруженных Production-сред
 
-Настройка с максимальной надежностью и защитой от переполнения памяти.
+Настройка с максимальной надежностью и защитой от переполнения памяти (рекомендуемый формат YAML для Fluent Bit 3.x+).
 
-```ini
-[SERVICE]
-    Flush                     1
-    HTTP_Server               On
-    HTTP_Port                 2020
-    storage.path              /var/lib/fluent-bit/storage/
-    storage.sync              normal
-    storage.metrics           On
-    storage.max_chunks_up     256
-    storage.backlog.mem_limit 15M
+```yaml
+service:
+  flush: 1
+  http_server: on
+  http_port: 2020
+  storage.path: /var/lib/fluent-bit/storage/
+  storage.sync: normal
+  storage.metrics: on
+  storage.max_chunks_up: 256
+  storage.backlog.mem_limit: 15M
 
-[INPUT]
-    Name            tail
-    Tag             kube.*
-    Path            /var/log/containers/*.log
-    Parser          cri
-    # Использовать диск как основной буфер
-    storage.type    filesystem
-    # Ограничение памяти на входе
-    Mem_Buf_Limit   20MB
+pipeline:
+  inputs:
+    - name: tail
+      tag: kube.*
+      path: /var/log/containers/*.log
+      parser: cri
+      # Использовать диск как основной буфер
+      storage.type: filesystem
+      # Ограничение памяти на входе
+      mem_buf_limit: 20MB
 
-[OUTPUT]
-    Name            es
-    Match           kube.*
-    Host            elasticsearch.logging.svc
-    # Бесконечные попытки при сбоях
-    Retry_Limit     False
+  outputs:
+    - name: es
+      match: kube.*
+      host: elasticsearch.logging.svc
+      # Бесконечные попытки при сбоях
+      retry_limit: false
 ```
 
 ### Сценарий 2: Маршрутизация на основе пространств имен (Namespaces)
 
 Разделение потоков данных для разных команд.
 
-```ini
-# Фильтр добавляет метаданные Kubernetes
-[FILTER]
-    Name                kubernetes
-    Match               kube.*
-    Merge_Log           On
+```yaml
+pipeline:
+  filters:
+    # Фильтр добавляет метаданные Kubernetes
+    - name: kubernetes
+      match: kube.*
+      merge_log: on
 
-# Логи безопасности (namespace: security) отправляются в защищенный индекс
-[OUTPUT]
-    Name            es
-    Match_Regex     ^kube\.var\.log\.containers\..*_security_.*$
-    Host            es-security.internal
-    Index           security-logs
-    Logstash_Format On
+  outputs:
+    # Логи безопасности (namespace: security) отправляются в защищенный индекс
+    - name: es
+      match_regex: ^kube\.var\.log\.containers\..*_security_.*$
+      host: es-security.internal
+      index: security-logs
+      logstash_format: on
 
-# Все остальные логи в общий Elasticsearch
-[OUTPUT]
-    Name            es
-    Match           kube.*
-    Host            es-general.internal
-    Index           general-logs
-    Logstash_Format On
+    # Все остальные логи в общий Elasticsearch
+    - name: es
+      match: kube.*
+      host: es-general.internal
+      index: general-logs
+      logstash_format: on
 ```
 
 ### Сценарий 3: Динамическая маршрутизация через Rewrite_Tag
 
 Используется для изменения тега записи на основе ее содержимого (например, уровня логирования).
 
-```ini
-[FILTER]
-    Name                  rewrite_tag
-    Match                 kube.*
-    # Если в поле 'level' значение 'ERROR', меняем тег на 'alert.error'
-    Rule                  $level ^(ERROR)$  alert.error  false
-    # Если 'WARN', меняем тег на 'alert.warn'
-    Rule                  $level ^(WARN)$   alert.warn   false
+```yaml
+pipeline:
+  filters:
+    - name: rewrite_tag
+      match: kube.*
+      # Если в поле 'level' значение 'ERROR', меняем тег на 'alert.error'
+      rule: $level ^(ERROR)$ alert.error false
+      # Если 'WARN', меняем тег на 'alert.warn'
+      rule: $level ^(WARN)$ alert.warn false
 
-[OUTPUT]
-    Name                  slack
-    Match                 alert.error
-    Webhook               https://hooks.slack.com/services/...
+  outputs:
+    - name: slack
+      match: alert.error
+      webhook: https://hooks.slack.com/services/...
 ```
 
 ## Дополнительная информация

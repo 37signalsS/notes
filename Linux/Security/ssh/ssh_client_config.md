@@ -12,6 +12,8 @@
 
 **SSH Multiplexing** — повторное использование одного TCP-соединения для нескольких SSH-сессий (включая `scp`, `sftp`, `git`). Позволяет мгновенно открывать новые сессии, пропуская этапы TCP-handshake и SSH-аутентификации.
 
+**IdentityAgent** — директива, указывающая путь к Unix-сокету SSH-агента. Позволяет использовать внешние менеджеры ключей (1Password, GPG-agent, Apple Keychain) вместо стандартного `ssh-agent`.
+
 **CanonicalizeHostname** — автоматическое преобразование коротких имен хостов в полные доменные имена (FQDN) на основе заданных суффиксов.
 
 Инструменты передачи файлов (`scp`, `sftp`, `rsync`): [Инструменты командной строки SSH](./ssh_cli_tools.md).
@@ -27,6 +29,15 @@
 ```ssh
 # Подключение всех файлов из директории
 Include ~/.ssh/config.d/*
+```
+
+**Проверка эффективной конфигурации (`ssh -G`):**
+Поскольку настройки применяются по принципу первого совпадения, итоговый конфиг может быть неочевидным. Утилита `ssh -G` показывает все параметры, которые будут применены к конкретному хосту.
+```bash
+ssh -G my-work-server
+# → user admin
+# → hostname 1.2.3.4
+# → port 2222
 ```
 
 ### Основные директивы
@@ -71,10 +82,11 @@ Host *
   ForwardAgent no
   HashKnownHosts yes
   VisualHostKey yes
-  # Защита от квантовых компьютеров (требует OpenSSH 9.0+)
-  KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256
-  # Только надежные шифры
+  # Защита от квантовых компьютеров (OpenSSH 10.0+)
+  KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512@openssh.com
+  # Только надежные шифры и MAC
   Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+  MACs hmac-sha2-512-etm@openssh.com
 
   # Стабильность соединения (Keep-alive)
   ServerAliveInterval 60
@@ -92,8 +104,6 @@ Host work
   IdentityFile ~/.ssh/id_ed25519_work
 ```
 
-Подключение: `ssh work` # → запуск сессии.
-
 ### Настройка подключения через Jump Host (`ProxyJump`)
 
 `ProxyJump` (флаг `-J`) — стандарт с OpenSSH 7.3. Для нескольких прыжков хосты перечисляются через запятую.
@@ -109,7 +119,32 @@ Host internal-server
   ProxyJump bastion
 ```
 
-Подключение: `ssh internal-server` # → клиент соединяется с bastion, затем прозрачно с internal-server.
+### Использование внешних агентов (IdentityAgent)
+
+Для интеграции с менеджерами паролей или смарт-картами:
+
+```ssh
+# Пример для 1Password (macOS)
+Host *
+  IdentityAgent "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+
+# Пример для GPG-agent (поддержка смарт-карт YubiKey/OpenPGP)
+Host *
+  IdentityAgent "~/.gnupg/S.gpg-agent.ssh"
+```
+
+### Динамическое туннелирование (SOCKS Proxy)
+
+Превращает удаленный SSH-сервер в прокси-сервер для локальных приложений.
+
+```ssh
+Host proxy-tunnel
+  HostName remote-server.com
+  DynamicForward 1080
+  # Опционально: отключить запуск оболочки, только туннель
+  SessionType none
+```
+*   **Использование:** Настроить в браузере SOCKS5-прокси на `127.0.0.1:1080`.
 
 ### Модульная конфигурация (директория .d)
 
@@ -227,6 +262,18 @@ Host internal-server
   ProxyCommand ssh bastion -W %h:%p
 ```
 
+### Использование аппаратных ключей (FIDO2)
+
+Для аппаратных токенов (YubiKey) с типом ключа `ed25519-sk`:
+
+```ssh
+Host secure-vault
+  HostName vault.internal.com
+  IdentityFile ~/.ssh/id_ed25519_sk
+  # Принудительное требование подтверждения (касания)
+  VerifyHostKeyDNS yes
+```
+
 ### Полезные директивы (расширенный список)
 
 | Директива | Назначение |
@@ -238,6 +285,8 @@ Host internal-server
 | `UserKnownHostsFile` | Путь к файлу известных хостов (можно `/dev/null` для CI/CD) |
 | `IdentityAgent` | Указывает путь к сокету `ssh-agent` (например, для 1Password или GPG) |
 | `TCPKeepAlive yes` | Проверка соединения на уровне TCP стека ОС |
+| `LogLevel VERBOSE` | Повышенная детализация логов для диагностики (показывает отпечатки ключей) |
+| `CheckHostIP no` | Отключает проверку IP в known_hosts (полезно при смене IP у того же домена) |
 
 ### Keep-alive: клиент vs сервер
 

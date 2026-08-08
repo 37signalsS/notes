@@ -22,6 +22,9 @@ StorageClass абстрагирует детали реализации СХД. 
 - Управление жизненным циклом (политика возврата).
 - Учет топологии кластера (зоны доступности).
 - Определение параметров монтирования (mount options).
+- **Динамическое изменение атрибутов:** Изменение IOPS/пропускной способности на лету через `VolumeAttributesClass` (начиная с K8s 1.34 GA).
+
+**Важное свойство:** Большинство полей объекта `StorageClass` являются **неизменяемыми (immutable)** после создания. Для изменения параметров (например, типа диска) необходимо создать новый SC и обновить PVC (или использовать `VolumeAttributesClass`, если поддерживается).
 
 ---
 
@@ -47,22 +50,29 @@ parameters:                            # Специфичные параметр
   iops: "3000"
   throughput: "125"
   encrypted: "true"
+allowedTopologies:                     # Ограничение создания томов по зонам
+- matchLabelExpressions:
+  - key: topology.ebs.csi.aws.com/zone
+    values:
+    - us-east-1a
+    - us-east-1b
 ```
 
 ### `provisioner` (провижинер)
 
 Поле определяет, какой плагин будет отвечать за создание тома. 
-> **Важно:** С версий 1.24+ старые встроенные драйверы (`in-tree`, начинающиеся с `kubernetes.io/`) считаются устаревшими. Всегда используйте **CSI-драйверы**.
+> **Важно:** Все встроенные (`in-tree`) плагины (например, `kubernetes.io/aws-ebs`) полностью удалены в версиях 1.31+. Всегда используйте современные **CSI-драйверы**.
 
-| Провижинер | Технология |
-|---|---|
-| `ebs.csi.aws.com` | AWS EBS |
-| `pd.csi.storage.gke.io` | Google Cloud Persistent Disk |
-| `rbd.csi.ceph.com` | Ceph RBD (Блочное устройство) |
-| `cephfs.csi.ceph.com` | CephFS (Файловая система) |
-| `driver.longhorn.io` | [Longhorn](./longhorn.md) |
-| `nfs.csi.k8s.io` | Универсальный NFS через CSI |
-| `rancher.io/local-path` | [Local Path Provisioner](./local-path-provisioner.md) |
+| Провижинер | Технология | Режимы доступа |
+|---|---|---|
+| `ebs.csi.aws.com` | AWS EBS | RWO |
+| `pd.csi.storage.gke.io` | Google Cloud PD | RWO, RWX (для Filestore) |
+| `disk.csi.azure.com` | Azure Disk | RWO |
+| `file.csi.azure.com` | Azure File | RWX |
+| `rbd.csi.ceph.com` | Ceph RBD (Блок) | RWO, RWX (с ограничениями) |
+| `cephfs.csi.ceph.com` | CephFS (Файлы) | RWX |
+| `driver.longhorn.io` | [Longhorn](./longhorn.md) | RWO, RWX (через NFS) |
+| `nfs.csi.k8s.io` | Универсальный NFS | RWX |
 
 ### `volumeBindingMode` (режим привязки)
 
@@ -71,19 +81,23 @@ parameters:                            # Специфичные параметр
 1. **`Immediate`** (по умолчанию): Том создается сразу после создания PVC.
    - **Риск:** В многозонных (multi-AZ) кластерах диск может быть создан в Зоне А, а планировщик позже решит запустить Под в Зоне Б. Под не сможет примонтировать диск и зависнет в `Pending`.
 2. **`WaitForFirstConsumer`** (рекомендуется): Том создается только тогда, когда Под, использующий этот PVC, назначен на конкретный узел.
-   - **Преимущество:** Гарантирует создание тома в той же зоне/на том же узле, где фактически запущен Под. Обязательно для облачных дисков и локальных томов.
+   - **Преимущество:** Гарантирует создание тома в той же зоне/на том же узле, где фактически запущен Под. Обязательно для облачных дисков, локальных томов и топологически-зависимых систем.
 
 ### `reclaimPolicy` (политика возврата)
 
 Определяет судьбу физического диска после удаления PVC:
-- **`Delete`**: Удаляет физический диск и PV автоматически.
-- **`Retain`**: Сохраняет физический диск. PV переходит в статус `Released`. Требуется ручная очистка администратором. Рекомендуется для критических баз данных.
+- **`Delete`** (по умолчанию): Удаляет физический диск и объект PV автоматически. Удобно для временных данных.
+- **`Retain`**: Сохраняет физический диск. PV переходит в статус `Released`. Требуется ручная очистка администратором. Рекомендуется для критических баз данных во избежание случайной потери данных.
 
-### `mountOptions` (параметры монтирования)
+### `allowVolumeExpansion`
 
-Список опций, которые будут переданы команде `mount` на узле. 
-- Для NFS: `nfsvers=4.1`, `hard`, `timeo=600`.
-- Для ускорения монтирования в современных K8s (1.30+) с SELinux: `context="system_u:object_r:container_file_t:s0"`.
+Разрешает онлайн (без остановки пода) или офлайн расширение тома.
+- Требует поддержки со стороны CSI-драйвера и файловой системы (XFS, Ext4 поддерживают расширение).
+- После изменения размера в PVC, Kubernetes инициирует `FileSystemResize` на узле, где примонтирован том.
+
+### `allowedTopologies` (топология)
+
+Позволяет жестко ограничить зоны или узлы, в которых провижинер может создавать тома. Это полезно, если вы хотите, чтобы определенный класс хранения работал только в конкретных дата-центрах или стойках.
 
 ---
 
@@ -98,24 +112,53 @@ parameters:                            # Специфичные параметр
 kubectl annotate storageclass <name> storageclass.kubernetes.io/is-default-class=true
 ```
 
-**Как убрать статус по умолчанию:**
-```bash
-kubectl annotate storageclass <name> storageclass.kubernetes.io/is-default-class=false --overwrite
-```
+**Внимание:** Если в кластере более одного SC помечено как `default`, динамическое выделение может завершиться ошибкой, так как контроллер не сможет выбрать класс.
 
 ### Динамическое изменение атрибутов (VolumeAttributesClass)
 
-В новых версиях Kubernetes (1.30+ Beta) появился объект `VolumeAttributesClass`, который позволяет изменять параметры тома (например, IOPS) без его пересоздания.
+Начиная с Kubernetes 1.34 (Stable), объект `VolumeAttributesClass` позволяет изменять параметры производительности тома (например, IOPS или Tier) без его пересоздания и без изменения размера.
 
 ```yaml
-apiVersion: storage.k8s.io/v1alpha1
+apiVersion: storage.k8s.io/v1
 kind: VolumeAttributesClass
 metadata:
-  name: high-iops
+  name: performance-tier-gold
 driverName: ebs.csi.aws.com
 parameters:
-  iops: "10000"
+  type: io2
+  iops: "15000"
 ```
+
+Применение к PVC:
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-pvc
+spec:
+  storageClassName: fast-ssd
+  volumeAttributesClassName: performance-tier-gold # Применение нового профиля
+  resources:
+    requests:
+      storage: 100Gi
+```
+
+### Настройка для мультизональных кластеров
+
+Для обеспечения отказоустойчивости и правильного маппинга зон всегда используйте сочетание:
+1. `volumeBindingMode: WaitForFirstConsumer`
+2. Настройка `nodeAffinity` в PV (автоматически делается CSI-драйвером).
+
+---
+
+## Поиск и устранение неисправностей
+
+| Ошибка | Причина | Решение |
+|---|---|---|
+| `FailedBinding`: no PersistentVolumeCheck found... | Нет PV, подходящего под запрос PVC, и не работает динамическое выделение. | Проверьте наличие SC, правильность имени `storageClassName` и статус провижинера. |
+| `ProvisioningFailed`: Failed to provision volume... | Ошибка на стороне СХД или облачного провайдера (лимиты, права). | Проверьте логи CSI-драйвера и квоты в облаке. |
+| Под в `Pending`, PVC в `Bound` (AZ mismatch) | Диск создан в зоне А, а под назначен в зону Б. | Используйте `volumeBindingMode: WaitForFirstConsumer`. |
+| `VolumeExpansion` завис в `Waiting for resize` | Файловая система не поддерживает онлайн-расширение или ошибка в CSI. | Перезапустите под для инициирования офлайн-расширения или проверьте версию CSI. |
 
 ---
 

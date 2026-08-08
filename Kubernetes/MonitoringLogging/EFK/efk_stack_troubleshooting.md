@@ -1,15 +1,12 @@
 # Устранение неполадок стека EFK в Kubernetes
 
-<!--
-Reliability: 10 (SSoT + Web: Практики диагностики ES 8.x и K8s 1.30+)
-Freshness: 10 (Июль 2026)
--->
-
 > **Примечание:** Данный файл является специализированным руководством по диагностике в среде Kubernetes. Общие концепции и базовое решение проблем поиска описаны в документе [Elasticsearch: Обзор](../../../ELK_Stack/Elasticsearch/elasticsearch_overview.md).
 
 ## Определения
 
 **[CrashLoopBackOff](../../Troubleshooting/Common_Errors/pod_crash_loop_back_off/definitions_and_concepts.md)** — статус циклической перезагрузки контейнера. Частая причина для Fluent Bit — ошибки конфигурации или недоступность Elasticsearch.
+
+**OOMKilled (Out Of Memory)** — прерывание процесса (например, Fluent Bit или Elasticsearch) ядром Linux (OOM Killer) из-за превышения установленных лимитов памяти (`limits.memory`).
 
 **`mapper_parsing_exception`** — ошибка в Elasticsearch, возникающая при несоответствии типа данных поля (например, число вместо строки) в новом документе ранее определенному маппингу индекса или Data Stream.
 
@@ -55,33 +52,35 @@ Freshness: 10 (Июль 2026)
 
 **Симптом: Fluent Bit выдает ошибки "SSL handshake failed" или "401 Unauthorized".**
 
-*   **SSL Certificate Unknown**: Если используется self-signed сертификат (по умолчанию в ECK/Helm), Fluent Bit должен либо доверять CA, либо иметь настройку `TLS.Verify Off` (не рекомендуется для prod).
-    *   *Решение*: Смонтируйте секрет `elasticsearch-master-certs` в под Fluent Bit и укажите `TLS.CA_File`.
+*   **SSL Certificate Unknown**: Если используется self-signed сертификат (по умолчанию в ECK и Helm 8.x), Fluent Bit должен либо доверять CA, либо иметь настройку `TLS.Verify Off` (не рекомендуется для prod).
+    *   *Решение (ECK)*: Смонтируйте секрет `<cluster-name>-es-http-certs-public`, созданный оператором, в под Fluent Bit и укажите `TLS.CA_File`.
+    *   *Решение (Helm)*: Извлеките CA из секрета `elasticsearch-master-certs` и передайте его во Fluent Bit.
 *   **Authentication Error**: Пароль пользователя `elastic` был изменен или неверно передан в секрет.
-    *   *Решение*: Проверьте значение в секрете `kubectl get secret elasticsearch-master-credentials -o jsonpath='{.data.password}' | base64 -d`.
+    *   *Решение (ECK)*: Пароль автоматически генерируется в секрете `<cluster-name>-es-elastic-user`. Извлеките его: `kubectl get secret <cluster-name>-es-elastic-user -o jsonpath='{.data.elastic}' | base64 -d`.
+    *   *Решение (Helm)*: Проверьте значение в секрете `elasticsearch-master-credentials`: `kubectl get secret elasticsearch-master-credentials -o jsonpath='{.data.password}' | base64 -d`.
 
 ### Сценарий 2: Проблемы сбора логов (Fluent Bit)
 
 **Симптом: логи не появляются в Kibana, ошибок в Elasticsearch нет.**
 
 *   **Неверные пути (Input)**: Агент ищет логи там, где их нет (например, `/var/lib/docker/containers` в кластерах с `containerd`).
-    *   *Решение*: Проверьте `Path` в `[INPUT]`. Для современных кластеров это обычно `/var/log/containers/*.log`.
-*   **Backpressure (Mem_Buf_Limit)**: Fluent Bit потребляет слишком много памяти и убивается OOM Killer.
-    *   *Решение*: Установите `Mem_Buf_Limit 50MB` в секции `[INPUT]`. Если буфер полон, агент приостановит чтение до освобождения места.
+    *   *Решение*: Проверьте `Path` в `[INPUT]`. Для современных кластеров K8s (где CRI — containerd или CRI-O) это обычно `/var/log/containers/*.log`.
+*   **Backpressure (Mem_Buf_Limit) и OOMKilled**: Fluent Bit не успевает отправлять логи (из-за медленной сети или перегруженного ES), потребляет слишком много памяти и убивается OOM Killer-ом (статус пода `OOMKilled`).
+    *   *Решение*: Установите жесткий лимит `Mem_Buf_Limit 50MB` в секции `[INPUT]`. Если буфер полон, агент приостановит чтение до освобождения места. Также рассмотрите включение дисковой буферизации (filesystem buffering).
 
 ### Сценарий 3: Деградация кластера Elasticsearch (Red/Yellow)
 
 **Симптом: медленный поиск, ошибки записи, статус Red.**
 
 *   **Low Disk Watermark**: Диск заполнен на 85-90%. ES переводит индексы в `read-only`.
-    *   *Решение*: Расширьте PVC или удалите старые индексы. Сбросьте блокировку:
+    *   *Решение*: Расширьте PVC или удалите старые индексы. Сбросьте блокировку через API кластера (выполняется изнутри кластера или через проброс портов):
         ```bash
-        curl -XPUT -u elastic:$PASS "https://es:9200/_all/_settings" -H 'Content-Type: application/json' -d'{"index.blocks.read_only_allow_delete": null}'
+        kubectl exec -it elasticsearch-master-0 -n logging -- curl -k -XPUT -u elastic:$PASS "https://localhost:9200/_all/_settings" -H 'Content-Type: application/json' -d'{"index.blocks.read_only_allow_delete": null}'
         ```
 *   **Unassigned Shards**: Шарды не могут быть размещены (например, из-за нехватки узлов для реплик).
-    *   *Решение*: Проверьте причину через API:
+    *   *Решение*: Проверьте причину неразмещения через Allocation Explain API:
         ```bash
-        curl -u elastic:$PASS "https://es:9200/_cluster/allocation/explain?pretty"
+        kubectl exec -it elasticsearch-master-0 -n logging -- curl -k -u elastic:$PASS "https://localhost:9200/_cluster/allocation/explain?pretty"
         ```
 
 ### Сценарий 4: Конфликты маппинга (Mapping Conflicts)
@@ -97,6 +96,5 @@ Freshness: 10 (Июль 2026)
 ## Дополнительная информация
 
 *   [Настройка стека EFK](./efk_stack_setup_guide.md) — развертывание и базовые параметры.
-*   [Практическое руководство по Kibana](./kibana_guide.md) — поиск логов и создание дашбордов.
-*   [Управление индексами (ILM)](../../../ELK_Stack/Elasticsearch/elasticsearch_ilm_and_retention.md) — настройка автоматической очистки данных.
-*   [Elasticsearch: Обзор](../../../ELK_Stack/Elasticsearch/elasticsearch_overview.md) — статусы кластера и общая архитектура.
+*   [Практическое руководство по Kibana](./kibana_guide.md) — поиск логов и решение проблем с неразобранными JSON.
+*   [Управление индексами (ILM)](../../../ELK_Stack/Elasticsearch/elasticsearch_ilm_and_retention.md) — настройка автоматической очистки старых данных для предотвращения ошибки заполнения диска.

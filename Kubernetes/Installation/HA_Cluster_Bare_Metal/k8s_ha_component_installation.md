@@ -2,184 +2,186 @@
 
 ## Определения
 
-**containerd** — CRI-совместимая среда выполнения контейнеров для Kubernetes. Демон, управляющий жизненным циклом контейнеров. Подробнее: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md).
+**containerd** — индустриальный стандарт среды выполнения контейнеров (Container Runtime), реализующий спецификацию CRI. В современных кластерах (K8s 1.24+) является основным движком, обеспечивающим высокую производительность за счет отсутствия лишних прослоек (Docker-shim).
 
-**CRI (Container Runtime Interface)** — API Kubernetes для взаимодействия `kubelet` со средой выполнения контейнеров.
+**CRI (Container Network Interface)** — интерфейс, позволяющий `kubelet` взаимодействовать с различными средами выполнения контейнеров.
 
-**kubeadm** — инструмент для инициализации и управления кластером Kubernetes.
+**kubeadm** — утилита для автоматизации жизненного цикла кластера (инициализация, обновление, управление токенами и сертификатами).
 
-**pause image** — базовый образ-инфраструктура, используемый Kubernetes для создания network namespace пода.
+**kubelet** — основной агент узла, отвечающий за выполнение контейнеров и проверку их состояния (Health Checks).
+
+**kubectl** — инструмент командной строки для взаимодействия с API-сервером Kubernetes.
+
+**pause image (Sandbox Image)** — служебный контейнер, который «держит» сетевое пространство имен (Network Namespace) и IPC для пода. Все остальные контейнеры пода подключаются к его ресурсам.
 
 ---
 
 ## Основные концепции
 
-### Роль containerd в Kubernetes
+### Роль Container Runtime в архитектуре узла
 
-`containerd` заменяет Docker в качестве среды выполнения для Kubernetes (начиная с версии 1.24, когда был удалён `dockershim`).
+`containerd` — это «рабочая лошадка» кластера. Он отвечает за:
+- Скачивание и хранение образов.
+- Создание и запуск контейнеров через `runc`.
+- Управление снимками файловой системы (Snapshots).
+- Организацию сетевых интерфейсов через CNI.
 
-**Преимущества containerd**:
+### Иерархия компонентов и их связи
 
-- Легковесный — только необходимый функционал для CRI
-- Проект CNCF — независим от Docker
-- Стабильный API — меньше breaking changes
-- Нативная поддержка CRI — не требуется shim
-
-### Компоненты Kubernetes
-
-| Компонент | Назначение | Устанавливается на |
-| :--- | :--- | :--- |
-| **kubeadm** | Инициализация и управление кластером | Все узлы |
-| **kubelet** | Агент узла, управление подами | Все узлы |
-| **kubectl** | CLI для управления кластером | Все узлы (опционально на worker) |
+1.  **kubelet** получает инструкции от API-сервера.
+2.  **kubelet** вызывает **containerd** через gRPC сокет (`/run/containerd/containerd.sock`).
+3.  **containerd** запускает контейнеры.
+4.  **kubeadm** настраивает конфигурацию для первых двух компонентов.
 
 ---
 
 ## Практические сценарии
 
-### Шаг 1: Установка containerd на все узлы
+### Шаг 1: Установка и базовая настройка containerd
+
+Рекомендуется использовать официальный репозиторий Docker для получения актуальных версий `containerd` с поддержкой последних функций безопасности.
 
 ```bash
-# Обновление списка пакетов
+# Установка необходимых пакетов
 sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
 
-# Установка containerd
-sudo apt-get install -y containerd
+# Добавление GPG-ключа и репозитория
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-# Проверка версии
-containerd --version
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install -y containerd.io
 ```
 
-### Шаг 2: Конфигурация containerd для Kubernetes
+### Шаг 2: Глубокая конфигурация containerd (SSoT)
 
-#### Создание конфигурации
+Критически важно использовать `SystemdCgroup = true`, так как в современных дистрибутивах Linux (Ubuntu 22.04+) `systemd` является менеджером ресурсов по умолчанию. Использование разных драйверов для `kubelet` и `containerd` приведет к нестабильности системы.
 
+#### Генерация и оптимизация конфига
 ```bash
-# Создать директорию конфигурации
 sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml > /dev/null
 
-# Создать бэкап существующей конфигурации
-if [ -f /etc/containerd/config.toml ]; then
-    sudo cp /etc/containerd/config.toml /etc/containerd/config.toml.backup.$(date +%Y%m%d_%H%M)
-fi
+# 1. Включение SystemdCgroup
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
 
-# Сгенерировать конфигурацию по умолчанию
-sudo containerd config default | sudo tee /etc/containerd/config.toml
-```
+# 2. Настройка актуальной версии pause-образа (v1.35 требует 3.10)
+# registry.k8s.io/pause:3.10 — текущий стандарт
+sudo sed -i 's|sandbox_image = ".*"|sandbox_image = "registry.k8s.io/pause:3.10"|' /etc/containerd/config.toml
 
-#### Настройка для Kubernetes
+# 3. Настройка лимитов открытых файлов для рантайма
+sudo mkdir -p /etc/systemd/system/containerd.service.d
+cat <<EOF | sudo tee /etc/systemd/system/containerd.service.d/limits.conf
+[Service]
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+EOF
 
-```bash
-# Включить SystemdCgroup для корректной интеграции с kubelet
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-# Установить официальный pause-образ от Kubernetes
-# ВЕРСИЯ: Проверить актуальную версию pause образа
-sudo sed -i 's|sandbox_image = ".*"|sandbox_image = "registry.k8s.io/pause:3.9"|' /etc/containerd/config.toml
-
-# Проверка применённых настроек
-echo "=== Проверка настроек containerd ==="
-sudo grep -E "SystemdCgroup|sandbox_image" /etc/containerd/config.toml
-```
-
-**Почему SystemdCgroup = true**:
-
-- Kubernetes использует systemd для управления ресурсами
-- Без этой настройки `kubelet` не сможет корректно управлять подами
-- Требуется для cgroups v2
-
-### Шаг 3: Перезапуск и проверка containerd
-
-```bash
-# Перезапуск сервиса
+sudo systemctl daemon-reload
 sudo systemctl restart containerd
 sudo systemctl enable containerd
-
-# Проверка статуса
-sudo systemctl status containerd | grep "Active"
-
-# Проверка CRI-сокета
-ls -la /run/containerd/containerd.sock
-test -S /run/containerd/containerd.sock && echo "✅ CRI socket: OK" || echo "❌ CRI socket: MISSING"
-
-# Проверка API containerd
-ctr version >/dev/null 2>&1 && echo "✅ Containerd API: OK" || echo "❌ Containerd API: FAILED"
-
-# Проверка настроек SystemdCgroup
-containerd config dump | grep -A1 "SystemdCgroup"
-
-# Предварительная загрузка pause-образа (опционально)
-# Kubelet загрузит его автоматически при необходимости
-ctr --namespace k8s.io images pull registry.k8s.io/pause:3.9
 ```
 
-### Шаг 4: Установка kubeadm, kubelet, kubectl
+### Шаг 3: Настройка crictl для диагностики
 
-#### Добавление репозитория Kubernetes
+`crictl` — это CLI для CRI-совместимых рантаймов. Его настройка обязательна для быстрой отладки.
 
 ```bash
-# Установка зависимостей
-sudo apt-get update
-sudo apt-get install -y apt-transport-https ca-certificates curl gpg
+cat <<EOF | sudo tee /etc/crictl.yaml
+runtime-endpoint: unix:///run/containerd/containerd.sock
+image-endpoint: unix:///run/containerd/containerd.sock
+timeout: 10
+debug: false
+EOF
 
-# Добавление GPG-ключа Kubernetes
-# ВЕРСИЯ: Укажите актуальную стабильную версию (проверить на https://kubernetes.io/releases/)
+# Проверка:
+sudo crictl ps
+# → Должен вернуть пустой список (или список подов, если кластер уже запущен)
+```
+
+### Шаг 4: Установка kubeadm, kubelet, kubectl (v1.35)
+
+Версии этих компонентов должны совпадать между собой. Мы используем новый формат репозиториев (pkgs.k8s.io).
+
+```bash
+# Подготовка ключей
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-# Добавление репозитория
+# Добавление репозитория (v1.35)
 echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
-# Обновление списка пакетов
 sudo apt-get update
-```
+sudo apt-get install -y kubelet kubeadm kubectl
 
-#### Установка компонентов
-
-```bash
-# Установка конкретной версии (замените 1.35.* на актуальную)
-sudo apt-get install -y kubelet=1.35.* kubeadm=1.35.* kubectl=1.35.*
-
-# Фиксация версий (предотвращение случайного обновления)
+# Фиксация версий (Blocking Rule)
+# Это предотвращает случайное обновление компонентов при apt upgrade
 sudo apt-mark hold kubelet kubeadm kubectl
 
-# Включение kubelet в автозагрузку
-# Kubelet запустится после инициализации кластера через kubeadm
-sudo systemctl enable kubelet
-
-# Проверка версий
-kubeadm version
-kubelet --version
-kubectl version --client
+# Включение автозагрузки kubelet
+sudo systemctl enable --now kubelet
 ```
 
-### Шаг 5: Итоговая проверка
+### Шаг 5: Проверка готовности узла к инициализации
 
 ```bash
-echo "=== Проверка готовности компонентов ==="
+echo "--- ПРОВЕРКА КОМПОНЕНТОВ ---"
 
-# containerd
-systemctl is-active containerd && echo "✅ containerd: активен" || echo "❌ containerd: не активен"
+# 1. Runtime
+if systemctl is-active --quiet containerd; then
+    echo "[OK] containerd активен"
+else
+    echo "[FAIL] containerd остановлен!"
+fi
 
-# CRI socket
-test -S /run/containerd/containerd.sock && echo "✅ CRI socket: доступен" || echo "❌ CRI socket: отсутствует"
+# 2. CRI Socket
+if [ -S /run/containerd/containerd.sock ]; then
+    echo "[OK] Сокет containerd доступен"
+else
+    echo "[FAIL] Сокет containerd отсутствует!"
+fi
 
-# Версии Kubernetes
-echo "kubeadm: $(kubeadm version -o short)"
-echo "kubelet: $(kubelet --version)"
-echo "kubectl: $(kubectl version --client -o short)"
+# 3. Kubelet
+if systemctl is-enabled --quiet kubelet; then
+    echo "[OK] kubelet включен в автозагрузку"
+else
+    echo "[FAIL] kubelet не настроен на автозагрузку!"
+fi
 
-# Статус фиксации версий
-apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии зафиксированы" || echo "⚠️ Версии не зафиксированы"
+# 4. Версии
+kubeadm version -o short
+kubelet --version
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Что НЕ делается на этом этапе
+### Тюнинг для высоконагруженных сред
 
-**kubeadm init** — не выполняется до готовности всех узлов. **Перезагрузка** — выполняется после установки на все узлы. **Настройка Control Plane** — следующий этап ([инициализация](./control_plane_initialization.md)).
+- **Registry Mirrors**: Если у вас есть локальный реестр (например, Harbor), настройте его в `/etc/containerd/config.toml` в секции `[plugins."io.containerd.grpc.v1.cri".registry.mirrors]`.
+- **Garbage Collection**: Настройте пороги удаления образов (`image_gc_high_threshold`, `image_gc_low_threshold`) в конфигурации `kubelet` (`/var/lib/kubelet/config.yaml`), если диски имеют малый объем.
+
+### Типовые ошибки
+
+*   **Version Mismatch**: Установка `kubelet` v1.35 с `kubeadm` v1.34. Всегда используйте пакеты одной минорной версии.
+*   **GPG Key Errors**: Использование старого ключа с `apt-key add` (устарело). Всегда используйте `/etc/apt/keyrings/`.
 
 ### Интеграция с документацией
 
-Установка компонентов — **шаг 2–3** после [подготовки узлов](./k8s_ha_node_preparation.md) и перед [инициализацией Control Plane](./control_plane_initialization.md). Подробнее о containerd — в [alternative runtimes](../../../Docker/alternative_runtimes_and_tools.md), о kubeadm — в [HA с kubeadm](../kubeadm/index.md), о CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).
+Установка компонентов — **шаг 3** в цикле развертывания.
+1. [Требования к среде](./k8s_ha_environment_requirements.md)
+2. [Подготовка ОС](./k8s_ha_node_preparation.md)
+3. **Установка компонентов** (текущий файл)
+4. [Инициализация Control Plane](../kubeadm/cluster_initialization.md)
+5. [Установка CNI](./cni_installation.md)
+6. [Присоединение узлов](./node_joining.md)
+
+Подробнее о `containerd` см. в **[Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md)**.

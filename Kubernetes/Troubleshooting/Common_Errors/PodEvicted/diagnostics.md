@@ -2,135 +2,135 @@
 
 ## Определения
 
-**Диагностика выселения (Eviction Diagnostics)** — процесс выявления факторов, приведших к принудительному завершению пода, через анализ состояний узла, системных событий и метрик потребления ресурсов.
+**Диагностика выселения (Eviction Diagnostics)** — системный процесс выявления триггеров и условий, приведших к принудительному завершению пода компонентом `kubelet` или через Eviction API.
 
 **Основные артефакты для анализа:**
-- **`status.reason: Evicted`** — основной признак в манифесте пода.
-- **`status.message`** — текстовое пояснение (например, какой ресурс был в дефиците).
-- **Node Conditions** — флаги узла (`MemoryPressure`, `DiskPressure`), указывающие на глобальный дефицит ресурсов.
+*   **`status.reason: Evicted`**: Индикатор того, что под был выселен, а не просто упал или был удален.
+*   **`status.message`**: Контекстное пояснение (например, `The node was low on resource: memory`).
+*   **`status.conditions` (`DisruptionTarget`)**: Детальная причина выселения в современных версиях Kubernetes (1.31+).
+*   **Node Pressure Conditions**: Флаги состояния узла (`MemoryPressure`, `DiskPressure`, `PIDPressure`).
 
 Общие понятия и типы выселения описаны в файле **[Pod Evicted: Определения](./definitions.md)**.
 
 ## Основные концепции
 
-### Источники диагностических данных
+### Диагностическая матрица
 
-| Источник | Назначение | Основной инструмент |
+Для эффективного траблшутинга необходимо сопоставлять данные из разных источников.
+
+| Уровень | Инструмент | Искомая информация |
 |:---|:---|:---|
-| **Манифест пода** | Первичная причина и сообщение от kubelet | `kubectl describe pod` |
-| **События (Events)** | Хронология срабатывания порогов | `kubectl get events` |
-| **Состояние узла** | Определение типа давления (Pressure) | `kubectl describe node` |
-| **Рантайм (CRI)** | Состояние контейнеров на уровне ОС | `crictl stats`, `crictl ps` |
-| **Системные логи** | Ошибки ядра и рантайма (OOM, Disk errors) | `journalctl`, `dmesg` |
+| **API/Pod** | `kubectl describe pod` | Сообщения в `status.message`, события (Events). |
+| **Node Status** | `kubectl describe node` | Состояния Pressure, Capacity vs Allocatable. |
+| **Node Logs** | `journalctl -u kubelet` | Логи `eviction manager`, расчеты Working Set. |
+| **Metrics** | `Prometheus/Grafana` | Тренды потребления ресурсов перед инцидентом. |
+| **OS/Runtime** | `dmesg`, `crictl stats` | OOM Killer ядра, статус контейнеров в рантайме. |
 
-### Алгоритм поиска неисправности
+### Алгоритм траблшутинга
 
-При возникновении постоянного выселения подов (Pod Eviction) важно следовать методическому подходу, так как простой перезапуск пода или проверка логов приложения часто не решают корень проблемы (нехватку ресурсов).
-
-1.  **Идентификация:** Найти поды со статусом `Evicted`.
-2.  **Анализ сообщения:** Извлечь тип ресурса из `status.message`.
-3.  **Локализация (Нагрузка на узел):** Проверить использование ресурсов узла с помощью `kubectl describe node <node-name>` или через Prometheus/Grafana, чтобы подтвердить перенапряжение ресурсов (CPU/Memory Pressure).
-4.  **Проверка лимитов Pod:** Изучить `requests` и `limits` выселенного пода. Если под запрашивает слишком много ресурсов или узел переподписан (overcommitted), может потребоваться корректировка лимитов или перенос пода на менее загруженный узел.
-5.  **Системные квоты и условия:** Проверить лимиты `ResourceQuota` в namespace и общие условия узла (DiskPressure, MemoryPressure).
-6.  **Масштабирование:** Если проблема носит системный характер, рассмотреть использование **Cluster Autoscaler** или **Karpenter** для автоматического добавления узлов при нехватке ресурсов.
+1.  **Сбор первичных данных:** Идентификация всех выселенных подов и узлов, на которых они находились.
+2.  **Классификация по `status.message`:** Разделение на выселения по памяти, диску, PID или через API (drain).
+3.  **Анализ состояния узла (Pressure):** Если флаги Pressure установлены (`True`), значит узел стабильно перегружен. Если `False` — имел место кратковременный всплеск.
+4.  **Проверка QoS и лимитов:** Определение класса QoS выселенного пода. В первую очередь выселяются `BestEffort` и `Burstable`, превысившие свои `requests`.
+5.  **Корреляция с системными событиями:** Проверка `dmesg` на предмет OOM Killer (если выселение по памяти) или переполнения разделов ФС.
+6.  **Верификация через метрики:** Анализ графиков потребления ресурсов за 15-30 минут до выселения.
 
 ## Практические сценарии
 
 ### 1. Первичный анализ через kubectl
 
-Первым делом необходимо получить список всех выселенных подов и причину их завершения.
-
 ```bash
-# Поиск всех выселенных подов в кластере
-kubectl get pods -A --field-selector status.reason=Evicted
-# → NAMESPACE  NAME      READY  STATUS   RESTARTS  AGE
-# → default    nginx-app  0/1    Evicted  0         1h
+# Получение списка выселенных подов с именами узлов и сообщениями
+kubectl get pods -A --field-selector status.reason=Evicted -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODE:.spec.nodeName,MESSAGE:.status.message"
 
-# Получение подробного сообщения о причине
-kubectl get pod <pod-name> -o jsonpath='{.status.message}'
-# → The node was low on resource: memory. Container nginx was using 1024Ki...
+# Проверка условия DisruptionTarget (для K8s 1.31+)
+kubectl get pod <pod-name> -o jsonpath='{.status.conditions[?(@.type=="DisruptionTarget")]}'
 ```
 
-**Интерпретация сообщений:**
-- `low on resource: memory` → См. **[Выселение по памяти](./memory_eviction.md)**.
-- `low on resource: ephemeral-storage` → См. **[Выселение по диску](./disk_eviction.md)**.
-- `evicted by user request` (или аналогичное при drain) → См. **[Бюджет прерывания подов (PDB)](../../../Autoscaling/pod_disruption_budget.md)**.
+### 2. Анализ логов Kubelet на узле
 
-### 2. Анализ состояния инфраструктуры узла
-
-Если под выселен по ресурсам, узел должен находиться в состоянии **Pressure**.
+Логи `kubelet` содержат детальную информацию о том, как `Eviction Manager` принимал решение.
 
 ```bash
-# Проверка состояний узла
-kubectl describe node <node-name> | grep -A 5 "Conditions:"
-# → MemoryPressure   False   ...
-# → DiskPressure     True    KubeletHasDiskPressure
-# → PIDPressure      False   ...
+# Поиск записей о начале выселения
+journalctl -u kubelet -g "eviction manager: attempting to reclaim"
+
+# Пример лога:
+# eviction manager: attempting to reclaim memory
+# eviction manager: unit of reclaim is nodes
+# eviction manager: pod <pod_name> is evicted
 ```
 
-Если все флаги `False`, но выселение произошло, возможно, имел место кратковременный всплеск потребления, который уже купирован выселением пода. Проверьте **Events**.
+### 3. Диагностика через Prometheus (PromQL)
 
-### 3. Хронология событий (Events)
+Метрики позволяют увидеть картину в динамике, когда события уже стерты.
 
-События позволяют увидеть, как kubelet принимал решение.
+*   **Поиск узлов с MemoryPressure:**
+    ```promql
+    kube_node_status_condition{condition="MemoryPressure", status="true"} == 1
+    ```
+*   **Топ подов, потребляющих больше запросов (Candidate for Eviction):**
+    ```promql
+    sum(container_memory_working_set_bytes) by (pod) - sum(kube_pod_container_resource_requests{resource="memory"}) by (pod) > 0
+    ```
+*   **Всплеск Disk Usage на nodefs:**
+    ```promql
+    node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.1
+    ```
+
+### 4. Анализ причин через события (Events)
+
+События — это основной способ понять хронологию. Помните, что по умолчанию они хранятся всего 1 час.
 
 ```bash
-# Получение событий выселения, отсортированных по времени
+# Фильтрация событий выселения по всему кластеру
 kubectl get events -A --field-selector reason=Evicted --sort-by='.lastTimestamp'
-# → 5m   Warning   Evicted   pod/db-app   The node was low on resource: memory.
 ```
 
-### 4. Низкоуровневая диагностика на узле
+**Паттерны в событиях:**
+*   `The node was low on resource: memory`: Выселение по памяти.
+*   `The node was low on resource: ephemeral-storage`: Переполнение `emptyDir` или логов.
+*   `Evicted by Eviction API`: Результат `kubectl drain`.
 
-Если у вас есть SSH-доступ к узлу, используйте `crictl` для проверки реальной нагрузки, которую видит рантайм.
+### 5. Использование эфемерных контейнеров для отладки
 
-```bash
-# Статистика контейнеров по памяти и CPU
-crictl stats
-# → CONTAINER  CPU %  MEM     DISK  INODES
-# → db-container  0.50   1.2Gi   100Mi 10
-
-# Проверка логов ядра на предмет OOM Killer (может работать параллельно с Eviction)
-dmesg -T | grep -i "out of memory"
-```
-
-### 5. Анализ распределения выселений по кластеру
-
-Используйте `jq` для понимания масштаба проблемы на разных узлах.
+Если узел в критическом состоянии, вы можете запустить отладочный контейнер с доступом к хостовой ФС.
 
 ```bash
-# Группировка выселенных подов по узлам
-kubectl get pods -A --field-selector status.reason=Evicted -o json | \
-  jq -r '.items[] | .spec.nodeName' | sort | uniq -c | sort -nr
-# → 15 node-worker-1  (критическая нагрузка на узле)
-# → 2  node-worker-2
+kubectl debug node/<node-name> -it --image=busybox
+# Внутри контейнера:
+# chroot /host
+# df -h  # Проверка дисков узла
+# free -m # Проверка памяти узла
 ```
 
 ## Устранение последствий
 
-### Очистка выселенных подов
+### Массовая очистка выселенных подов
 
-Выселенные поды остаются в API-сервере до ручного удаления. Это может мешать мониторингу и работе CI/CD.
+Выселенные поды остаются в API в статусе `Failed`. Их нужно периодически удалять, чтобы не нагружать `kube-apiserver` и не замусоривать выдачу `kubectl`.
 
 ```bash
-# Удаление всех выселенных подов во всем кластере
+# Удаление всех выселенных подов во всех пространствах имен
 kubectl delete pods --field-selector status.reason=Evicted -A
-# → pod "nginx-app" deleted
 ```
+
+**Автоматизация:** Kubernetes имеет встроенный параметр `terminated-pod-gc-threshold` (в `kube-controller-manager`), который определяет, сколько завершенных подов хранить до начала автоматической очистки.
 
 ## Дополнительная информация
 
-### Сводная таблица действий
+### Диагностическая матрица ресурсов
 
-| Ситуация | Основной шаг диагностики | Файл-руководство |
+| Ресурс | Что проверить на узле | Файл-руководство |
 |:---|:---|:---|
-| **MemoryPressure** | `kubectl top node` + `dmesg` | **[Выселение по памяти](./memory_eviction.md)** |
-| **DiskPressure** | `df -h` + `du -sh` на узле | **[Выселение по диску](./disk_eviction.md)** |
-| **API Eviction** | Проверка PDB и `kubectl drain` | **[PDB и Taint Eviction](./pdb_and_taint_eviction.md)** |
-| **PIDPressure** | `sysctl kernel.pid_max` | **[Node Resource Pressure](../NodeUnavailability/resource_pressure.md)** |
+| **Memory** | `WorkingSet`, `oom_score_adj` | **[Выселение по памяти](./memory_eviction.md)** |
+| **Disk** | `/var/lib/kubelet`, `/var/lib/docker` | **[Выселение по диску](./disk_eviction.md)** |
+| **PID** | `pids.current` в cgroups | **[Давление ресурсов](../NodeUnavailability/resource_pressure.md)** |
+| **API** | `PodDisruptionBudget` | **[PDB и Taint Eviction](./pdb_and_taint_eviction.md)** |
 
 ### Смотрите также
 
 - **[Pod Evicted: Определения](./definitions.md)** — база по типам выселений.
 - **[Профилактика выселения](./prevention.md)** — как не допустить повторения.
 - **[QoS и выселение](./qos_and_eviction.md)** — влияние лимитов на выбор жертвы.
+- **[Диагностика недоступности узла](../NodeUnavailability/diagnostics.md)** — если узел упал совсем.

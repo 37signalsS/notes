@@ -2,26 +2,30 @@
 
 ## Определения
 
-**Kubesec** — это инструмент с открытым исходным кодом для статического анализа безопасности манифестов Kubernetes (YAML). Он оценивает риски конфигурации и выставляет оценку (score) на основе соответствия лучшим практикам безопасности ControlPlane и CIS Benchmark.
+**Kubesec** — это инструмент с открытым исходным кодом для статического анализа безопасности (SAST) манифестов Kubernetes (YAML). Он оценивает риски конфигурации и выставляет числовую оценку (score) на основе соответствия лучшим практикам безопасности ControlPlane и CIS Benchmark.
 
-* **Статический анализ (SAST):** Проверка манифестов на этапе разработки или в CI/CD до момента их деплоя в кластер.
-* **Shift-Left Security:** Стратегия переноса проверок безопасности на максимально ранние этапы жизненного цикла разработки (SDLC).
-* **Score (Оценка):** Агрегированное числовое значение, где отрицательный результат сигнализирует о наличии критических уязвимостей.
+* **Shift-Left Security:** Стратегия переноса проверок безопасности на максимально ранние этапы разработки (IDE, CI/CD), позволяющая выявлять ошибки конфигурации до момента их развертывания.
+* **Score (Оценка):** Агрегированный показатель безопасности. Отрицательный итоговый балл сигнализирует о наличии критических уязвимостей, блокирующих использование манифеста в production.
+* **Remediation (Исправление):** Процесс изменения конфигурации для устранения выявленных рисков и повышения итоговой оценки.
 
-**Важно:** Kubesec фокусируется на логике безопасности внутри манифестов. Для валидации синтаксиса и соответствия схемам API он интегрируется с [Kubeconform](https://github.com/yannh/kubeconform). Для проверки конфигурации работающего кластера используйте [kube-bench](./kube-bench.md).
+**Важно:** Kubesec фокусируется на логике безопасности (Security Context, Capabilities). Для проверки синтаксиса и соответствия схемам API он интегрируется с [Kubeconform](../ToolsUtilities/kubeconform_overview.md).
+
+---
 
 ## Основные концепции
 
-* **Анализ ресурсов:** Поддержка проверки Pod, Deployment, Service, DaemonSet, StatefulSet, CronJob, а также `initContainers` и `volumeClaimTemplates`.
-* **Vigilant Mode (Бдительный режим):** Набор ужесточенных правил, требующий явного определения ограничений (например, обязательный `readOnlyRootFilesystem`).
-* **Интеграция со схемами:** В современных версиях (v2+) Kubesec использует библиотеки валидации схем для проверки корректности структуры манифеста перед анализом безопасности.
-* **Kubesec-as-a-Service:** Публичный API (`v2.kubesec.io/scan`) для быстрых проверок без установки локального окружения.
-* **Встроенный HTTP-сервер:** Возможность запуска в режиме `serve` для создания внутреннего сервиса безопасности внутри корпоративной сети.
+* **Область анализа:** Проверка Pod, Deployment, Service, DaemonSet, StatefulSet, CronJob, а также `initContainers` и `volumeClaimTemplates`.
+* **Vigilant Mode (Бдительный режим):** Режим строгой проверки, требующий явного определения всех параметров безопасности (например, обязательный `readOnlyRootFilesystem`).
+* **Поддержка CRD и схем:** Kubesec v2+ может проверять структуру Custom Resources. Для этого используются переменные окружения `K8S_SCHEMA_VER` и `SCHEMA_LOCATION`.
+* **Режимы работы:**
+    1.  **CLI:** Локальное сканирование файлов или потока `stdin`.
+    2.  **HTTP Server:** Запуск в режиме `serve` для создания внутреннего микросервиса безопасности.
+    3.  **Admission Controller:** Блокировка деплоя небезопасных ресурсов на уровне API-сервера Kubernetes.
+* **Kubesec-as-a-Service:** Использование публичного API (`v2.kubesec.io/scan`) для быстрой проверки без установки инструмента.
 
-## Система оценки и правила
+### Система оценки и правила
 
-Kubesec начисляет или вычитает баллы на основе обнаруженных настроек. Подробное техническое описание этих параметров приведено в **[Security Context в Kubernetes](./pod_security_context.md)**.
- Если итоговый балл **ниже 0**, манифест считается небезопасным для использования в production.
+Kubesec начисляет баллы за "хорошие" практики и вычитает за "опасные". Детальные настройки описаны в **[Security Context в Kubernetes](./pod_security_context.md)**.
 
 | Правило | Описание | Баллы |
 | :--- | :--- | :--- |
@@ -29,94 +33,94 @@ Kubesec начисляет или вычитает баллы на основе 
 | **HostNetwork/IPC/PID** | Использование пространств имен хоста (риск выхода на хост). | **-10** |
 | **ReadOnlyRootFilesystem** | Файловая система контейнера доступна только для чтения. | **+30** |
 | **RunAsNonRoot** | Запрет запуска процесса от пользователя root. | **+10** |
-| **Capabilities** | Проверка на наличие опасных Linux capabilities (например, `CAP_SYS_ADMIN`). | **-10** |
+| **Capabilities** | Наличие опасных Linux capabilities (например, `CAP_SYS_ADMIN`). | **-10** |
 | **AllowPrivilegeEscalation** | Разрешение процессу повышать свои привилегии. | **-10** |
+
+---
 
 ## Практические сценарии
 
 ### Установка Kubesec
 
-* **Использование через Docker:**
-
-    ```bash
-    docker run -i kubesec/kubesec:v2 scan /dev/stdin < pod.yaml
-    ```
-
-* **Установка бинарного файла (Linux/macOS):**
-
+*   **Docker:** `docker run -i kubesec/kubesec:v2 scan /dev/stdin < pod.yaml`
+*   **Kubectl Plugin:** `kubectl krew install kubesec`
+*   **Binary (Linux/macOS):**
     ```bash
     curl -sSL https://github.com/controlplaneio/kubesec/releases/download/v2.11.0/kubesec_linux_amd64.tar.gz | tar -xz
-    chmod +x ./kubesec
     mv ./kubesec /usr/local/bin/
     ```
 
-* **Установка как плагин kubectl:**
+### Примеры исправления (Remediation)
 
-    ```bash
-    kubectl krew install kubesec
-    ```
+#### 1. Устранение критического риска (Privileged)
+*   **Проблема:** Использование `privileged: true` (Score: -30).
+*   **Исправление:** Отключить привилегированный режим и добавить только необходимые capability.
 
-### Примеры использования
+```yaml
+# Исправленный SecurityContext
+securityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+    add: ["NET_BIND_SERVICE"]
+```
 
-* **Сканирование локального манифеста с выводом в JSON:**
+#### 2. Повышение оценки (Root & FS)
+*   **Исправление:** Явное указание не-root пользователя и read-only файловой системы.
 
-    ```bash
-    kubesec scan deployment.yaml
-    # → [
-    #    {
-    #      "object": "Deployment/secure-app.default",
-    #      "valid": true,
-    #      "score": 5,
-    #      "message": "Passed with a score of 5",
-    #      "scoring": { ... }
-    #    }
-    #  ]
-    ```
+```yaml
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+  containers:
+  - name: app
+    securityContext:
+      readOnlyRootFilesystem: true
+```
 
-* **Сканирование Helm-чарта (рендеринг "на лету"):**
+### Настройка Admission Controller
+Kubesec может работать как `ValidatingWebhookConfiguration`. При попытке `kubectl apply` API-сервер отправляет запрос в Kubesec, который блокирует операцию, если `score < 0`.
 
-    ```bash
-    helm template my-release ./charts/my-app | kubesec scan /dev/stdin
-    ```
+```bash
+# Запуск Kubesec как сервиса внутри кластера
+kubectl run kubesec --image=kubesec/kubesec:v2 --port=8080 -- http 8080
+```
 
-* **Использование публичного API (без установки):**
-
-    ```bash
-    curl -sS --request POST --data-binary @pod.yaml https://v2.kubesec.io/scan
-    ```
-
-### Интеграция в CI/CD
-
-#### GitHub Actions (рекомендуемый подход)
-
+### Интеграция в GitHub Actions
 Блокировка пайплайна при обнаружении критических проблем:
 
 ```yaml
-jobs:
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Kubesec
-        run: |
-          # Сканируем и проверяем, что score >= 0
-          docker run -i kubesec/kubesec:v2 scan /dev/stdin < k8s/manifest.yaml > result.json
-          SCORE=$(cat result.json | jq '.[0].score')
-          if [ "$SCORE" -lt 0 ]; then
-            echo "Critical security risks found!"
-            exit 1
-          fi
+- name: Run Kubesec
+  run: |
+    kubesec scan k8s/deployment.yaml > result.json
+    SCORE=$(jq '.[0].score' result.json)
+    if [ "$SCORE" -lt 0 ]; then
+      echo "Security Score is too low: $SCORE"
+      exit 1
+    fi
 ```
+
+---
 
 ## Дополнительная информация
 
-### Сравнение с другими инструментами
+### Сравнение с инструментами (2025)
 
-* [Kyverno](./kyverno/policies/practical_scenarios.md) — динамическое применение политик (Admission Control) внутри кластера.
-* [kube-bench](./kube-bench.md) — проверка конфигурации узлов и контрол-плейна на соответствие CIS.
-* [Falco](../../Security/Tools/falco.md) — обнаружение аномалий и угроз в режиме реального времени (Runtime Security).
+| Инструмент | Фокус | Сильные стороны | Когда выбирать |
+| :--- | :--- | :--- | :--- |
+| **Kubesec** | K8s YAML | Экстремальная скорость, простой скоринг. | Быстрый чек в IDE/Pre-commit. |
+| **Trivy** | Универсальный | Сканирует образы, IaC, SBOM. Лидер рынка. | Основной стандарт для CI/CD. |
+| **Checkov** | IaC Graph | Поиск связей между ресурсами (Terraform/K8s). | Сложные инфраструктуры. |
+| **Terrascan** | OPA/Rego | *Архивирован (Nov 2025).* | **Мигрировать на Trivy.** |
+
+### Связанные темы
+* [Security Context в Kubernetes](./pod_security_context.md) — детальный разбор всех параметров безопасности.
+* [kube-bench](./kube-bench.md) — проверка конфигурации хостов и Control Plane на соответствие CIS.
+* [Falco: Runtime Security](../../Security/Tools/falco.md) — мониторинг активности в реальном времени.
+* [Kubeconform](../ToolsUtilities/kubeconform_overview.md) — валидация схем и CRD.
 
 **Ссылки:**
-
 * [Официальный репозиторий проекта](https://github.com/controlplaneio/kubesec)
-* [Полный список правил и документация](https://kubesec.io)
+* [Документация и список правил](https://kubesec.io)

@@ -4,35 +4,39 @@
 
 Для понимания архитектуры развёртывания 389 Directory Server (389DS) в кластере Kubernetes используются следующие понятия:
 
-*   **[StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md)** — основной контроллер для управления инстансами 389DS, обеспечивающий стабильные идентификаторы и персистентное хранилище.
-*   **[Headless Service](../../../Kubernetes/Networking/Service/service_type_headless.md)** — сервис без ClusterIP, необходимый для прямой DNS-адресации подов (например, для настройки репликации между узлами).
-*   **DIT (Directory Information Tree)** — иерархическая структура данных внутри LDAP, которая в K8s часто инициализируется автоматически при первом запуске пода.
-*   **Suffix (Суффикс)** — корневой DN каталога (например, `dc=example,dc=com`), определяющий область данных.
-*   **Backend (Бэкенд)** — дисковое хранилище конкретного суффикса (в 389DS 3.x используется высокопроизводительный движок LMDB).
+*   **[StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md)** — основной контроллер для управления инстансами 389DS, обеспечивающий стабильные сетевые идентификаторы (hostname) и персистентное хранилище.
+*   **[Headless Service](../../../Kubernetes/Networking/Service/service_type_headless.md)** — сервис без ClusterIP, необходимый для прямой DNS-адресации подов (например, `389ds-0.389ds-headless`), что критично для работы Multi-Master репликации.
+*   **[StartupProbe](../../../Kubernetes/Base/probes.md)** — механизм проверки начального запуска, предотвращающий перезапуск контейнера во время длительной инициализации базы данных или индексации.
+*   **SecurityContext** — настройки безопасности пода/контейнера, обеспечивающие запуск процесса от не привилегированного пользователя (UID 389).
+*   **DIT (Directory Information Tree)** — иерархическая структура данных LDAP, которая в Kubernetes-контейнере инициализируется при первом запуске, если том `/data` пуст.
 
 ## Базовые концепции
 
 ### Архитектура развёртывания
 
-Развёртывание 389DS в Kubernetes строится на принципах высокой доступности (HA) и персистентности:
+Развёртывание 389DS в Kubernetes (актуально для версии 3.x в 2026 году) строится на следующих принципах:
 
-1.  **Хранение данных:** Каждый под StatefulSet получает собственный `PersistentVolume` (PV) через `volumeClaimTemplates`. Рекомендуется использовать `reclaimPolicy: Retain` на уровне StorageClass для предотвращения потери данных при удалении ресурсов.
-2.  **Сетевая идентификация:** Использование **Headless Service** позволяет подам обращаться друг к другу по именам вида `389ds-0.389ds-headless.ldap.svc.cluster.local`, что критично для стабильной Multi-Master репликации.
-3.  **Конфигурация:** Настройки передаются через переменные окружения и монтируемые `ConfigMap` (для скриптов инициализации и кастомных `.inf` файлов).
+1.  **Персистентность:** Все данные (конфигурация, БД, логи) хранятся в директории `/data`. Использование `PersistentVolumeClaim` (PVC) в составе `StatefulSet` гарантирует сохранение данных при перезапуске подов.
+2.  **Сетевая идентификация:** Каждый под получает стабильное FQDN вида `pod-name.service-name.namespace.svc.cluster.local`, которое используется для настройки соглашений о репликации (Replication Agreements).
+3.  **Безопасность Non-root:** Контейнер должен запускаться от пользователя `dirsrv` (UID 389). Это требует настройки `fsGroup` в `podSecurityContext` для корректного доступа к томам.
 
 ### Требования к ресурсам
 
+В 2026 году для стабильной работы 389DS в Production рекомендуются следующие параметры:
+
 | Ресурс | Рекомендация | Обоснование |
 | :--- | :--- | :--- |
-| **Память (RAM)** | от 2Gi до 4Gi | LMDB активно использует memory-mapping для кэширования БД. |
-| **Процессор (CPU)** | от 1 до 2 ядер | Зависит от интенсивности операций записи и количества плагинов. |
-| **Диск** | SSD (RWO) | 389DS чувствителен к задержкам дисковой подсистемы. |
+| **Память (RAM)** | от 4Gi до 8Gi | LMDB требует значительного объема для кэширования (Memory Mapped Files). |
+| **Процессор (CPU)** | от 2 до 4 ядер | Высокая параллельность при обработке запросов и работе плагинов. |
+| **Диск** | SSD/NVMe (RWO) | Критично для производительности транзакционного лога LMDB. |
+
+**Важно:** Используйте переменную окружения `DS_MEMORY_PERCENTAGE` (например, `50`), чтобы сервер корректно рассчитывал кэш на основе установленных в Kubernetes `limits.memory`.
 
 ## Практические сценарии
 
-### Развёртывание StatefulSet
+### Развёртывание StatefulSet (Стандарт 2026)
 
-Ниже представлен актуальный манифест для развёртывания 389DS версии 3.x с использованием официального образа.
+Ниже представлен актуальный манифест с использованием современного образа `dirsrv` и настроенными проверками здоровья.
 
 ```yaml
 apiVersion: apps/v1
@@ -51,6 +55,8 @@ spec:
       labels:
         app: 389ds
     spec:
+      securityContext:
+        fsGroup: 389
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -60,7 +66,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: 389ds
-          image: quay.io/389ds/ds-container:latest
+          image: quay.io/389ds/dirsrv:latest
           env:
             - name: DS_DM_PASSWORD
               valueFrom:
@@ -69,23 +75,40 @@ spec:
                   key: dm-password
             - name: DS_SUFFIX_NAME
               value: "dc=example,dc=com"
+            - name: DS_MEMORY_PERCENTAGE
+              value: "50"
           ports:
             - containerPort: 3389
               name: ldap
             - containerPort: 3636
               name: ldaps
+            - containerPort: 9100
+              name: metrics
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
           volumeMounts:
             - name: data
               mountPath: /data
+          startupProbe:
+            exec:
+              command: ["/usr/sbin/dsctl", "localhost", "status"]
+            initialDelaySeconds: 15
+            failureThreshold: 30
+            periodSeconds: 10
           livenessProbe:
             tcpSocket:
               port: ldap
             initialDelaySeconds: 60
-            periodSeconds: 10
+            periodSeconds: 20
           readinessProbe:
             exec:
-              command: ["/usr/bin/dsctl", "instance", "status", "localhost"]
-            initialDelaySeconds: 30
+              command: ["/usr/sbin/dsctl", "localhost", "status"]
+            initialDelaySeconds: 10
             periodSeconds: 10
   volumeClaimTemplates:
     - metadata:
@@ -94,71 +117,115 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 10Gi
+            storage: 20Gi
 ```
 
-### Сетевой доступ
+### Настройка безопасности и TLS
 
-Для внутреннего взаимодействия и внешнего доступа используются два типа сервисов:
+В 2026 году для управления сертификатами рекомендуется использовать `cert-manager`. Сертификаты монтируются как секреты, а 389DS настраивается на их использование через `.inf` файл или `dsconf`.
+
+**Рекомендуемый подход:**
+1.  Выпуск сертификата через `cert-manager` для каждого пода (используя DNS-имя Headless-сервиса).
+2.  Монтирование секрета в `/data/tls`.
+3.  Настройка LDAPS:
+```bash
+# Внутри контейнера
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 security tls set \
+    --certificate-file /data/tls/tls.crt \
+    --key-file /data/tls/tls.key \
+    --ca-certificate-file /data/tls/ca.crt
+```
+
+### Резервное копирование (Backup)
+
+Для бэкапа LDAP в Kubernetes используется `CronJob`, который выполняет экспорт данных в LDIF-формат.
 
 ```yaml
-# Headless Service для репликации
-apiVersion: v1
-kind: Service
+apiVersion: batch/v1
+kind: CronJob
 metadata:
-  name: 389ds-headless
-  namespace: ldap
+  name: 389ds-backup
 spec:
-  clusterIP: None
-  selector:
-    app: 389ds
-  ports:
-    - port: 3389
-      name: ldap
-
----
-# LoadBalancer для клиентов (например, через MetalLB)
-apiVersion: v1
-kind: Service
-metadata:
-  name: 389ds-external
-  namespace: ldap
-spec:
-  type: LoadBalancer
-  selector:
-    app: 389ds
-  ports:
-    - port: 389
-      targetPort: 3389
-      name: ldap
+  schedule: "0 2 * * *" # Ежедневно в 02:00
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: quay.io/389ds/dirsrv:latest
+            command:
+            - /usr/sbin/dsconf
+            - -D
+            - "cn=Directory Manager"
+            - ldap://389ds-0.389ds-headless.ldap.svc:3389
+            - backend
+            - export
+            - userRoot
+            - --output-file
+            - /data/backups/backup-$(date +%F).ldif
+            env:
+            - name: LDAP_PW
+              valueFrom:
+                secretKeyRef:
+                  name: 389ds-secrets
+                  key: dm-password
+            volumeMounts:
+            - name: data
+              mountPath: /data
+          restartPolicy: OnFailure
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: data-389ds-0
 ```
-
-### Инициализация и автоматизация
-
-В современных версиях контейнера рекомендуется использовать автоматическую инициализацию через переменные окружения `DS_*` или подкладывание `.inf` файлов в `/data/config`.
-
-**Основные задачи автоматизации:**
-1.  **Создание инстанса:** Происходит автоматически при первом запуске, если `/data` пуст.
-2.  **Настройка репликации:** Выполняется через `dsconf` после запуска всех подов.
-3.  **Плагины:** Включение `MemberOf` и `Retro Changelog` является стандартом для интеграций.
 
 ## Дополнительная информация
 
-### Мониторинг и диагностика
+### Мониторинг
 
-Основные команды для проверки состояния 389DS внутри пода:
+389DS 3.x включает встроенный экспортер метрик в формате Prometheus (обычно на порту 9100 или через LDAP-интерфейс).
 
-*   **Статус инстанса:** `dsctl instance list`
-*   **Статус репликации:** `dsconf -ls ldap://localhost:3389 replication status --suffix "dc=example,dc=com"`
-*   **Логи доступа:** `kubectl logs -f 389ds-0 -c 389ds` (основные логи зеркалируются в stdout контейнера).
+*   **ServiceMonitor:** Используйте для интеграции с Prometheus Operator.
+*   **Ключевые метрики:**
+    *   `ds_connection_current_total` — текущие соединения.
+    *   `ds_operation_search_total` — количество поисковых операций.
+    *   `ds_backend_entry_cache_hit_ratio` — эффективность кэша (должна быть >90%).
+
+### Сетевая политика (NetworkPolicy)
+
+Для защиты LDAP-сервера ограничьте доступ только доверенными клиентами.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: 389ds-allow-ldap
+  namespace: ldap
+spec:
+  podSelector:
+    matchLabels:
+      app: 389ds
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              allow-ldap: "true"
+      ports:
+        - protocol: TCP
+          port: 3389
+        - protocol: TCP
+          port: 3636
+```
 
 ### Устранение неполадок (Troubleshooting)
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
-| **Pod в CrashLoopBackOff** | Ошибка прав на `/data` или неверный пароль DM | Проверить `chown 389:389` на томе (если используется не стандартный образ) и Secret. |
-| **Репликация не сходится** | Проблемы DNS или несовпадение сертификатов TLS | Проверить резолвинг имен через `nslookup 389ds-0.389ds-headless`. |
-| **Низкая производительность** | Недостаточно RAM для кэша LMDB | Увеличить memory limits и проверить параметры `nsslapd-cachememsize`. |
+| **StartupProbe failure** | Долгая проверка БД после падения | Увеличить `failureThreshold` или `periodSeconds` в `startupProbe`. |
+| **Permission denied на /data** | Неверный `fsGroup` | Убедитесь, что в `securityContext` указан `fsGroup: 389`. |
+| **Replication lags** | Проблемы с DNS Headless-сервиса | Проверить резолвинг: `nslookup 389ds-1.389ds-headless`. |
+| **OOMKill** | Некорректный `DS_MEMORY_PERCENTAGE` | Снизить значение переменной или увеличить `limits.memory`. |
 
 ---
 

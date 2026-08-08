@@ -1,117 +1,110 @@
 # KGateway — реализация Gateway API
 
-**Надёжность:** 10 (SSoT + Официальная документация v2.3/v3.0)
-
 ## Определения
 
-**KGateway** — контроллер Gateway API с открытым исходным кодом, являющийся преемником Gloo Gateway (разработка Solo.io). Проект находится в статусе CNCF Sandbox и позиционируется как современное решение для облачных вычислений и AI-нагрузок.
+**KGateway** — облачно-ориентированный контроллер Gateway API с открытым исходным кодом, являющийся эволюционным продолжением Gloo Gateway (разработка Solo.io). Проект ориентирован на высоконагруженные среды, мультикластерные конфигурации и специализированные AI-нагрузки.
 
-**AI Gateway** — функциональность KGateway, позволяющая использовать шлюз как единую точку доступа к различным LLM-провайдерам (OpenAI, Anthropic и др.) с встроенными механизмами безопасности и управления трафиком.
+**AI Gateway** — встроенный функциональный модуль KGateway, превращающий шлюз в интеллектуальный посредник между приложениями и LLM-провайдерами. Он обеспечивает унифицированный интерфейс (OpenAI-compatible), оркестрацию инструментов и управление затратами на токены.
 
 ## Базовые концепции
 
-### Архитектура (v2.3+)
+### Архитектура и Data Plane
 
-KGateway разделяет уровни управления и обработки данных, предлагая гибкость в выборе Data Plane:
+KGateway v2.3+ предлагает гибридную модель обработки трафика, позволяя выбирать оптимальный Data Plane для конкретных задач:
 
-- **Control Plane:** центральный компонент, который отслеживает ресурсы Gateway API и генерирует конфигурацию для прокси-серверов.
-- **Data Plane (Envoy / AgentGateway):** 
-    - **Envoy Proxy:** стандартный высокопроизводительный прокси для традиционного L7-трафика.
-    - **AgentGateway (Rust):** специализированный Data Plane на базе Rust для высокомасштабируемых коммуникаций между агентами (A2A) и инструментами.
+1.  **Envoy Proxy (C++):** основной промышленный стандарт для традиционного North-South трафика. Используется для сложных L7-правил, WAF, классического Rate Limiting и TLS-терминации.
+2.  **AgentGateway (Rust):** высокопроизводительный Data Plane следующего поколения. Благодаря безопасности памяти и минимальному оверхеду Rust, он идеально подходит для:
+    *   **A2A (Agent-to-Agent):** сверхбыстрого взаимодействия между автономными ИИ-агентами.
+    *   **Edge-развертываний:** работы в условиях ограниченных ресурсов.
+    *   **Протокола MCP:** эффективной обработки множества параллельных соединений с серверами инструментов.
 
-### Возможности AI и Agentic AI
+### Интеграция с AI и Agentic AI
 
-KGateway (2026) включает нативную поддержку современных паттернов:
+KGateway (2026) является ключевым звеном в инфраструктуре агентного ИИ:
 
-- **Model Context Protocol (MCP):** поддержка протокола для федерации и мультиплексирования серверов инструментов, что позволяет AI-агентам обращаться к множеству ресурсов через единый endpoint.
-- **AI Rate Limiting:** ограничение трафика не только по количеству запросов (RPS), но и по количеству токенов (Tokens Per Minute), что критично для контроля затрат на LLM.
-- **Prompt Guards:** автоматическая фильтрация и маскирование чувствительных данных (PII, номера карт) в запросах к языковым моделям.
-- **Unified AI Interface:** абстракция над провайдерами LLM, позволяющая менять модель (например, с GPT-4 на Claude 3) без изменения кода приложения.
+-   **Федерация MCP (Model Context Protocol):** шлюз выступает как агрегатор, позволяя ИИ-агентам видеть сотни разрозненных MCP-серверов как единый каталог инструментов. Это решает проблему безопасности, так как аутентификация к инструментам централизована на уровне шлюза.
+-   **Семантическое кэширование:** KGateway может кэшировать ответы LLM на основе семантической схожести запросов (векторный поиск), что радикально снижает затраты и задержки для повторяющихся вопросов.
+-   **AIRateLimit (Token-based):** расширенный механизм лимитирования, учитывающий `Prompt Tokens` и `Completion Tokens`. Позволяет задавать квоты на уровне пользователей, команд или API-ключей.
+-   **Prompt Guards и DLP:** на лету проверяет входящие промпты на наличие атак (Prompt Injection) и исходящие ответы на предмет утечки конфиденциальных данных (PII, секреты кода).
 
 ## Практические сценарии
 
-### Установка через Helm (v2.3+)
+### Установка и подготовка окружения
 
-Для установки рекомендуется использовать OCI-репозиторий и раздельное развертывание CRD и контроллера.
+Для развертывания используется OCI-репозиторий. Важно разделять установку CRD и самого контроллера для стабильности в CI/CD пайплайнах.
 
 ```bash
-# 1. Установка определений ресурсов (CRD)
+# Установка CRD (включая специфичные ресурсы kgateway.dev)
 helm upgrade -i kgateway-crds oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds \
   --version v2.3.4 \
   --namespace kgateway-system \
   --create-namespace
 
-# 2. Установка Control Plane
+# Установка Control Plane с поддержкой AI
 helm upgrade -i kgateway oci://cr.kgateway.dev/kgateway-dev/charts/kgateway \
   --version v2.3.4 \
-  --namespace kgateway-system \
-  --create-namespace
+  --set aiGateway.enabled=true \
+  --namespace kgateway-system
 ```
 
-### Проверка работоспособности
+### Настройка универсального LLM-эндпоинта
 
-```bash
-kubectl get pods -n kgateway-system
-kubectl get gatewayclass
-# → должен появиться класс с именем kgateway
-```
-
-### Базовый пример Gateway
-
-Создание стандартного шлюза для обработки HTTP-трафика:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: main-gateway
-  namespace: kgateway-system
-spec:
-  gatewayClassName: kgateway
-  listeners:
-  - name: http
-    protocol: HTTP
-    port: 80
-    allowedRoutes:
-      namespaces:
-        from: All
-```
-
-### Настройка AI Rate Limiting (Пример)
-
-Пример использования специфичного фильтра для ограничения токенов:
+Пример настройки `HTTPRoute`, который перенаправляет запросы к различным моделям в зависимости от заголовков или путей.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: ai-route
+  name: llm-unified-api
+  namespace: ai-apps
 spec:
   parentRefs:
   - name: main-gateway
+    namespace: kgateway-system
   rules:
   - matches:
-    - path: { type: PathPrefix, value: /v1/chat/completions }
+    - path: { type: PathPrefix, value: /v1/chat }
     filters:
     - type: ExtensionRef
       extensionRef:
-        group: kgateway.dev
-        kind: AIRateLimit
-        name: token-limit-policy
+        group: ai.kgateway.dev
+        kind: LLMRouteFilter
+        name: provider-selector
+    backendRefs:
+    - name: openai-backend
+      port: 443
+```
+
+### Безопасность: Маскирование данных (Prompt Guard)
+
+```yaml
+apiVersion: ai.kgateway.dev/v1alpha1
+kind: PromptGuard
+metadata:
+  name: protect-secrets
+spec:
+  masking:
+    enabled: true
+    patterns:
+    - name: "credit-cards"
+      regex: "\\b(?:\\d[ -]*?){13,16}\\b"
+    - name: "api-keys"
+      regex: "sk-[a-zA-Z0-9]{32,}"
 ```
 
 ## Дополнительная информация
 
-### Нюансы эксплуатации
+### Мониторинг и отладка
 
-- **Observability:** детальные метрики Envoy могут создавать высокую нагрузку на Prometheus. В KGateway v2.3+ реализованы фильтры метрик для снижения потребления ресурсов.
-- **Status Conditions:** KGateway полностью поддерживает стандартную систему статусов Gateway API. При ошибках конфигурации поле `message` в статусе ресурса содержит детальное описание причины (например, ошибки в LLM-коннекторах).
-- **Миграция:** KGateway является рекомендуемым путем миграции для пользователей Gloo Gateway и классического Nginx Ingress, которым требуются продвинутые функции управления трафиком.
+-   **AI Observability:** KGateway экспортирует специфичные метрики в формате OpenTelemetry: `llm_tokens_total`, `llm_request_latency_milliseconds`, `cache_hit_ratio`.
+-   **Трассировка MCP:** визуализация вызовов инструментов агентами через Jaeger позволяет выявить узкие места в логике «агент-инструмент».
+-   **Диагностика соединений:** при ошибках взаимодействия с внешними API (например, 429 от OpenAI) KGateway обновляет статус в `HTTPRoute`, указывая `Reason: BackendRateLimited`.
 
-**См. также:**
+### См. также
 
-- [Концепции Gateway API](./definitions.md) — базовые определения и преимущества стандарта
-- [Envoy Gateway](./envoy_gateway.md) — альтернативная реализация на базе Envoy
-- [Traefik](./traefik.md) — реализация с поддержкой классического Ingress и нативной поддержкой v3.x
+-   [Концепции Gateway API](./definitions.md) — базовые определения и преимущества стандарта.
+-   [Envoy Gateway](./envoy_gateway.md) — альтернативная реализация на базе Envoy.
+-   [L4-маршрутизация — TCPRoute и UDPRoute](./layer4_routing.md) — детали работы на транспортном уровне.
+-   [Обзор API Gateway](../../Concepts/api_gateway_overview.md) — сравнение KGateway с Kong и Tyk.
 
 **Родительская тема:** [Gateway API](./definitions.md)

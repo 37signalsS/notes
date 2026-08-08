@@ -1,89 +1,110 @@
 # OpenSearch: Развертывание в Kubernetes с помощью Helm
 
-> Эта заметка является частью обзора [OpenSearch](./opensearch_overview.md) и детально рассматривает процесс развертывания кластера в Kubernetes с использованием официального Helm-чарта.
+> Эта заметка является частью обзора [OpenSearch](./opensearch_overview.md) и детально рассматривает процесс развертывания кластера в Kubernetes с использованием официального Helm-чарта, включая настройку отказоустойчивости, безопасности и мониторинга.
 
 ## Определения
 
 * **Helm-чарт OpenSearch**: официальный пакет для автоматизации развертывания и управления жизненным циклом OpenSearch в Kubernetes.
 * **Cluster Manager (ранее Master)**: роль узла, ответственного за координацию кластера. В Helm-чарте настраивается через параметр `roles: [cluster_manager]`.
-* **initContainers**: вспомогательные контейнеры, выполняемые до запуска основного процесса OpenSearch. Используются для настройки параметров ядра ОС (`sysctl`) и прав доступа к файловой системе.
-* **PodDisruptionBudget (PDB)**: ресурс Kubernetes, ограничивающий количество одновременно недоступных подов при плановом обслуживании узлов, обеспечивая кворум и доступность данных.
-* **values.yaml**: конфигурационный файл, определяющий параметры ресурсов, ролей узлов, безопасности и сетевого взаимодействия для Helm-релиза.
+* **initContainers**: вспомогательные контейнеры, выполняемые до запуска основного процесса. Используются для настройки `vm.max_map_count` и прав доступа.
+* **PodDisruptionBudget (PDB)**: ресурс Kubernetes, гарантирующий наличие минимального количества доступных подов при плановом обслуживании узлов.
+* **ServiceMonitor**: ресурс Prometheus Operator для автоматического обнаружения эндпоинтов метрик OpenSearch.
+* **Remote-Backed Storage (RBS)**: конфигурация OpenSearch 2.15+, позволяющая использовать объектные хранилища (S3/GCS) как основной уровень хранения через Helm-конфигурацию.
 
 ## Основные концепции
 
-### Архитектура развертывания
+### Архитектура развертывания (Node Groups)
 
-Официальный чарт поддерживает модульную структуру. Для промышленных сред рекомендуется разделять узлы на специализированные группы (Node Groups), каждая из которых устанавливается как отдельный Helm-релиз:
+Для промышленных сред рекомендуется разделять узлы на специализированные группы (Node Groups), каждая из которых устанавливается как отдельный Helm-релиз:
 
-1.  **Группа Cluster Manager**: минимум 3 узла с ролью `cluster_manager`. Не хранят данные и не обрабатывают входящий трафик. Обеспечивают стабильность метаданных.
-2.  **Группа Data**: узлы с ролью `data` для хранения шардов. Могут быть разделены на "Hot", "Warm" и "Cold" группы при использовании различных типов хранилищ.
-3.  **Группа Ingest**: узлы с ролью `ingest` для предварительной обработки данных. Позволяют разгрузить Data-узлы от тяжелых операций преобразования.
-4.  **Dashboards**: отдельный чарт для визуализации, подключаемый к сервису OpenSearch.
+1.  **Cluster Manager**: минимум 3 узла. Обеспечивают стабильность метаданных. Не должны хранить данные.
+2.  **Data (Hot/Warm/Cold)**:
+    *   **Hot**: быстрые NVMe SSD для активной записи и поиска.
+    *   **Warm/Cold**: HDD или более дешевые хранилища для архивных данных. Настраиваются через `persistence.storageClass`.
+3.  **Ingest**: выделенные узлы для тяжелых пайплайнов обработки данных.
+4.  **Dashboards**: отдельный чарт для визуализации.
 
-### Сетевое взаимодействие
+### Сетевое взаимодействие и Ingress
 
-* **Internal Service**: используется для взаимодействия между узлами OpenSearch (порт 9300).
-* **REST API Service**: внешний (или внутренний для приложений) интерфейс (порт 9200) для индексации и поиска.
-* **Master Service**: выделенный Headless Service для обнаружения узлов `cluster_manager`. Имя этого сервиса должно быть одинаковым во всех группах узлов внутри одного кластера.
+* **Headless Service**: используется для `discovery` (порт 9300).
+* **Ingress**: рекомендуется для доступа к API (порт 9200) и Dashboards (порт 5601).
+    * **Best Practice**: установка аннотации `nginx.ingress.kubernetes.io/proxy-body-size: "50m"` для поддержки больших Bulk-запросов.
+    * **Timeouts**: увеличение `proxy-read-timeout` до 300с для тяжелых поисковых запросов.
 
-### Ключевые параметры конфигурации
+### Мониторинг и обсервабилити
 
-| Категория | Параметр | Описание |
-| :--- | :--- | :--- |
-| **Кластеризация** | `clusterName` | Имя кластера. Должно быть идентичным во всех группах узлов. |
-| | `nodeGroup` | Имя группы узлов (например, `cluster-manager`, `data-hot`). |
-| | `roles` | Список ролей узла (`cluster_manager`, `data`, `ingest`, `search`). |
-| | `masterService` | Имя Headless Service для обнаружения кластера. |
-| **Системные** | `sysctlInit.enabled` | Использование initContainer для настройки `vm.max_map_count=262144`. |
-| | `persistence.enabled` | Включение постоянного хранилища (Persistent Volume Claims). |
-| | `resources.requests/limits` | Рекомендуется устанавливать одинаковые значения для CPU и RAM (Guaranteed QoS). |
-| **Безопасность** | `OPENSEARCH_INITIAL_ADMIN_PASSWORD` | Переменная окружения для установки пароля администратора при первом запуске. |
-| | `secretMounts` | Список секретов Kubernetes для монтирования TLS-сертификатов. |
-| | `security.nodes_dn` | Список Distinguished Names (DN) разрешенных узлов кластера. |
-| **Отказоустойчивость**| `maxUnavailable` | Параметр PodDisruptionBudget. Рекомендуется `1` для сохранения кворума. |
-| | `antiAffinity: "hard"` | Запрет на размещение нескольких подов группы на одном физическом узле. |
+Интеграция с Prometheus через Helm требует установки плагина `opensearch-prometheus-exporter`.
+* **ServiceMonitor**: включается параметром `serviceMonitor.enabled: true`.
+* **Безопасность**: рекомендуется создать отдельного пользователя в OpenSearch с ролью `cluster:monitor/prometheus/metrics` для сбора метрик.
 
 ## Практические сценарии
 
+### Настройка Remote-Backed Storage (RBS) в values.yaml
+
+Для OpenSearch 2.15+ в Kubernetes:
+
+```yaml
+config:
+  opensearch.yml:
+    cluster.remote_store.enabled: true
+    cluster.indices.replication.strategy: SEGMENT
+    cluster.remote_store.repository: my-s3-repo
+    # Экспериментально в 2.15: вынос состояния кластера в S3
+    cluster.remote_store.state.enabled: true
+    cluster.remote_store.state.repository: my-s3-repo
+
+extraInitContainers:
+  - name: install-plugins
+    image: opensearchproject/opensearch:2.15.0
+    command: ['sh', '-c', 'bin/opensearch-plugin install --batch repository-s3']
+```
+
 ### Развертывание промышленного кластера
 
-1.  **Настройка безопасности**:
-    *   Сгенерируйте сертификаты TLS для транспортного (порт 9300) и HTTP (порт 9200) уровней.
-    *   Создайте Secret: `kubectl create secret generic opensearch-certs --from-file=...`.
-2.  **Конфигурация Node Groups**:
-    *   Подготовьте `values-manager.yaml` с `roles: [cluster_manager]` и 3 репликами.
-    *   Подготовьте `values-data.yaml` с `roles: [data, ingest]`.
-3.  **Инициализация системы**:
-    *   Если нет возможности настроить узлы K8s напрямую, включите `sysctlInit.enabled: true`. Это потребует прав на запуск привилегированных контейнеров.
-4.  **Установка**:
+1.  **Настройка TLS (Cert-manager)**:
+    Используйте сертификаты от `cert-manager` для автоматизации. Создайте Secret `opensearch-certs` и смонтируйте его:
+    ```yaml
+    secretMounts:
+      - name: opensearch-certs
+        secretName: opensearch-certs
+        path: /usr/share/opensearch/config/certs
+    ```
+2.  **Установка Node Groups**:
     ```bash
-    # Установка Cluster Manager группы
-    helm install os-manager opensearch/opensearch -f values-manager.yaml
-    # Установка Data группы после готовности менеджеров
-    helm install os-data opensearch/opensearch -f values-data.yaml
+    # Установка менеджеров
+    helm install os-mgr opensearch/opensearch -f values-mgr.yaml
+    # Установка дата-узлов (Hot)
+    helm install os-data-hot opensearch/opensearch -f values-data-hot.yaml
     ```
 
-### Обновление кластера без простоя (Rolling Update)
+### Обновление без простоя (Rolling Update)
 
-Для успешного обновления версии или конфигурации без потери доступности:
-
-1.  **Проверка PDB**: убедитесь, что `maxUnavailable: 1` настроен для всех групп.
-2.  **Shard Allocation Awareness**: при развертывании в нескольких зонах доступности (AZ) настройте `cluster.routing.allocation.awareness.attributes: zone`.
+1.  **Shard Allocation Awareness**:
+    В `values.yaml` настройте учет зон доступности (AZ):
+    ```yaml
+    config:
+      opensearch.yml:
+        cluster.routing.allocation.awareness.attributes: "topology.kubernetes.io/zone"
+    ```
+2.  **Pod Anti-Affinity**:
+    Используйте `hard` anti-affinity для Cluster Manager:
+    ```yaml
+    antiAffinity: "hard"
+    ```
 3.  **Последовательность**:
-    *   Сначала обновляйте группы `data`. Kubernetes будет перезапускать по одному поду, дожидаясь восстановления шардов.
-    *   В последнюю очередь обновляйте `cluster_manager` узлы.
-4.  **Мониторинг**: во время обновления следите за состоянием кластера через `GET /_cluster/health`. Статус должен оставаться `green` или кратковременно переходить в `yellow`.
+    *   Обновляйте Data-узлы по одной группе.
+    *   Дождитесь `green` статуса и завершения `shards relocation` перед переходом к следующей группе.
+    *   В последнюю очередь обновляйте Cluster Manager.
 
-### Оптимизация JVM Heap
+### Оптимизация JVM Heap и ресурсов
 
-В Kubernetes крайне важно правильно соотнести лимиты памяти контейнера и Heap Size:
-*   Установите `resources.limits.memory` (например, `8Gi`).
-*   Установите `-Xms4g -Xmx4g` через `OPENSEARCH_JAVA_OPTS`.
-*   **Правило**: Heap должен составлять примерно 50% от доступной памяти контейнера, но не более 32 ГБ.
+**Strict Rule**: устанавливайте `requests` равными `limits` для обеспечения Guaranteed QoS.
+*   **Memory**: `resources.limits.memory: 8Gi`.
+*   **Heap**: `OPENSEARCH_JAVA_OPTS: "-Xms4g -Xmx4g"`.
+*   **Storage**: используйте `volumeClaimTemplates` для гарантированного выделения дисков в StatefulSet.
 
 ## Дополнительная информация
 
-* **[Администрирование и устранение неполадок](./opensearch_administration.md)** — управление кластером, работа с `securityadmin.sh`.
-* **[OpenSearch: Обзор системы](./opensearch_overview.md)** — архитектура и терминология OpenSearch 2.x.
-* **[Artifact Hub: OpenSearch Chart](https://artifacthub.io/packages/helm/opensearch/opensearch)** — актуальные версии и полный список параметров.
+* **[Администрирование OpenSearch](./opensearch_administration.md)** — управление индексами, безопасность и RBS.
+* **[OpenSearch: Обзор системы](./opensearch_overview.md)** — архитектура и ключевые компоненты.
+* **[Artifact Hub: OpenSearch Chart](https://artifacthub.io/packages/helm/opensearch/opensearch)** — первоисточник параметров чарта.

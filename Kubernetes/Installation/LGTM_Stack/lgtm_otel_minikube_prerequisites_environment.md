@@ -16,7 +16,7 @@
 
 **Git** — распределенная система управления версиями. Необходима для клонирования демонстрационных репозиториев и конфигураций. Подробнее: **[Git: Основы](../../../Git/git_basics.md)**.
 
-**Minikube** — инструмент, позволяющий запускать локальный кластер Kubernetes на персональном компьютере. Подробнее: **[Minikube: Концепции](../../Installation/minikube/minikube_concepts.md)**.
+**Minikube** — инструмент для запуска локального кластера Kubernetes на персональном компьютере. Подробнее: **[Minikube: Концепции](../../Installation/minikube/minikube_concepts.md)**.
 
 **kubectl** — утилита командной строки для управления кластерами Kubernetes. Подробнее: **[Kubernetes: Обзор](../../kubernetes_overview.md)**.
 
@@ -49,23 +49,25 @@
 
 ### Требования к ресурсам
 
-Для стабильной работы стека LGTM (Loki, Grafana, Tempo, Mimir/Prometheus) и OpenTelemetry требуются значительные ресурсы.
+Для стабильной работы стека LGTM (Loki, Grafana, Tempo, Mimir/Prometheus) и OpenTelemetry требуются значительные ресурсы. Недостаток памяти часто приводит к аварийному завершению подов (**OOMKill**).
 
 | Компонент | Минимальные | Рекомендуемые |
 | :--- | :--- | :--- |
-| **CPU** | 2 ядра | 4 ядра |
-| **Память (RAM)** | 4 ГБ | 8 ГБ |
-| **Дисковое пространство** | 20 ГБ | 40 ГБ |
+| **CPU** | 4 ядра | 6 ядер |
+| **Память (RAM)** | 8 ГБ | 12 ГБ |
+| **Дисковое пространство** | 40 ГБ | 60 ГБ |
 
-**Рекомендуемые параметры запуска Minikube:** `--cpus 4 --memory 8192mb`.
+**Рекомендуемые параметры запуска Minikube:** `--cpus 4 --memory 12288mb` (12 ГБ). Если планируется использование Mimir вместо Prometheus, память следует увеличить до 16 ГБ.
 
 ### Используемые Helm-репозитории (состояние на 2026 г.)
 
-| Репозиторий | URL | Назначение |
+С 2026 года многие чарты перешли на использование **OCI-репозиториев** для повышения безопасности и производительности.
+
+| Репозиторий | URL / Идентификатор OCI | Назначение |
 | :--- | :--- | :--- |
 | **prometheus-community** | `https://prometheus-community.github.io/helm-charts` | kube-prometheus-stack |
-| **grafana-community** | `https://grafana-community.github.io/helm-charts` | Loki, Tempo (OSS версии) |
-| **grafana** | `https://grafana.github.io/helm-charts` | Grafana, Mimir |
+| **grafana-community (OCI)** | `oci://ghcr.io/grafana-community/helm-charts` | Loki, Tempo (OSS версии) |
+| **grafana** | `https://grafana.github.io/helm-charts` | Grafana, Mimir, Alloy |
 | **jetstack** | `https://charts.jetstack.io` | cert-manager |
 | **twuni** | `https://twuni.github.io/docker-registry.helm` | Docker Registry (локальный) |
 | **open-telemetry** | `https://open-telemetry.github.io/opentelemetry-helm-charts` | OTel Operator |
@@ -103,27 +105,33 @@ git clone https://github.com/memori-dev/observability-practice.git
 #### Шаг 3: Настройка Helm-репозиториев
 
 ```bash
+# Классические репозитории
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana-community https://grafana-community.github.io/helm-charts
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo add jetstack https://charts.jetstack.io
 helm repo add twuni https://twuni.github.io/docker-registry.helm
 helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
 helm repo update
+
+# Примечание: OCI-репозитории (loki, tempo) не требуют выполнения 'helm repo add'.
+# Они используются напрямую в командах 'helm install' или 'helm upgrade'.
 ```
 
 #### Шаг 4: Запуск кластера Minikube
 
-Для работы стека LGTM и Ingress-контроллера требуются специфические параметры.
+Для работы стека LGTM, Ingress-контроллера и локального реестра требуются специфические параметры.
 
 ```bash
 minikube start \
   --cpus 4 \
-  --memory 8192mb \
-  --addons ingress \
+  --memory 12288mb \
+  --disk-size 50g \
+  --addons ingress,metrics-server \
   --insecure-registry "10.0.0.0/24" \
   --driver=docker
 ```
+
+> **Важно:** Использование драйвера `docker` является рекомендуемым. При использовании других драйверов (например, `virtualbox` или `qemu`) может потребоваться дополнительная настройка сети для доступа к `insecure-registry`.
 
 #### Шаг 5: Проверка готовности кластера
 
@@ -141,15 +149,17 @@ minikube addons list | grep enabled
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Ошибка при запуске Minikube** | Недостаточно свободной оперативной памяти или CPU | Закройте ресурсоемкие приложения или уменьшите параметры `--memory`/`--cpus` (не рекомендуется для LGTM) |
-| **Docker daemon не найден** | Служба Docker не запущена | Запустите Docker Desktop или выполните `sudo systemctl start docker` |
-| **Ошибка доступа к kubectl** | Неверные права на файл конфигурации | Выполните `chmod 600 ~/.kube/config` или проверьте контекст: `kubectl config current-context` |
+| **Ошибка при запуске Minikube** | Недостаточно оперативной памяти | Закройте ресурсоемкие приложения. Минимальный порог для LGTM — 8 ГБ. |
+| **Docker daemon не найден** | Docker не запущен | Запустите Docker Desktop или `sudo systemctl start docker`. |
+| **ImagePullBackOff (registry)** | Ошибка `insecure-registry` | Убедитесь, что параметр `--insecure-registry` указан верно при `minikube start`. |
+| **kubectl: connection refused** | Кластер не запущен или упал | Выполните `minikube status`. Если упал из-за ресурсов — увеличьте лимиты. |
 
 ### См. также
 
 - **[Minikube: Практические сценарии](../minikube/minikube_practical_scenarios.md)**
 - **[Helm: Обзор](../../ToolsUtilities/Helm/helm_overview.md)**
 - **[OpenTelemetry: Обзор](../../../OpenTelemetry/opentelemetry_overview.md)**
+- **[Grafana Alloy: Обзор](../../../Grafana/grafana_alloy_overview.md)**
 
 ---
 

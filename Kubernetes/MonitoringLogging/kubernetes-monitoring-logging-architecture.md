@@ -10,7 +10,7 @@
 - **Трассировки (Traces)** — путь прохождения запроса через распределенную систему.
 - **Профили (Profiles)** — данные об использовании ресурсов (CPU/память) на уровне кода.
 
-**OpenTelemetry (OTel)** — индустриальный стандарт и набор инструментов для унифицированного сбора всех типов сигналов телеметрии.
+**OpenTelemetry (OTel)** — индустриальный стандарт и набор инструментов для унифицированного сбора всех типов сигналов телеметрии. Проект **CNCF**, получивший статус **Graduated** (с мая 2026), что закрепило OTel как де-факто стандарт наблюдаемости.
 
 Подробно о концепциях: **[Observability Definitions](../../Concepts/Observability_and_Monitoring/observability_definitions.md)** и **[Four Pillars of Observability](../../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md)**.
 
@@ -27,10 +27,12 @@
 | **Инфраструктура** | Ноды и ядро | Node Exporter, eBPF (Falco, Tetragon) |
 
 ### Унифицированный пайплайн (OpenTelemetry)
-Современная архитектура 2024–2025 годов строится вокруг **OTel Collector**.
-- **Agent (DaemonSet)**: Собирает логи, системные метрики и данные eBPF с каждого узла.
-- **Gateway (Deployment)**: Агрегирует данные от агентов, выполняет фильтрацию, обогащение метаданными (pod name, namespace) и отправляет в бэкенды.
-- **Преимущество**: Отсутствие привязки к конкретному вендору (vendor lock-in).
+Современная архитектура (2026) строится вокруг **OTel Collector** как транзитной шины для всех сигналов.
+- **Agent (DaemonSet)**: Собирает данные и системные метрики eBPF с каждого узла, выполняет первичную агрегацию и буферизацию рядом с источником.
+- **Sidecar**: Разворачивается в том же поде, что и приложение, для сбора локального контекста и трассировок.
+- **Gateway (Deployment)**: Центральный кластер коллекторов. Агрегирует данные от агентов, выполняет фильтрацию PII, дедупликацию, обогащение метаданными (pod, namespace, node, cluster) и маршрутизацию в несколько бэкендов по протоколу **OTLP**.
+- **Преимущество**: Отсутствие привязки к конкретному вендору (vendor lock-in) и единая точка управления пайплайнами.
+- **Распределения (Distributions)**: Помимо стандартного `opentelemetry-collector`, в 2026 году актуальны специализированные сборки: **Grafana Alloy** (нативный для экосистемы Grafana: Loki, Tempo, Mimir), **otel-collector-contrib** (широкий набор приемников/экспортеров), **Fluent Bit** с OTLP-выходом для логов.
 
 ### Логирование в Kubernetes (Logging Architecture)
 
@@ -43,7 +45,7 @@
 - `/var/log/pods/<namespace>_<pod>_<uid>/<container>/<n>.log` (реальные файлы)
 
 **Роль Kubelet:**
-Kubelet отвечает за ротацию логов на узле (по умолчанию — 10 МБ на файл, хранение 5 старых копий). Если агент сбора логов (Fluent Bit) не успеет прочитать лог до ротации или удаления пода, данные будут потеряны.
+Kubelet отвечает за ротацию логов на узле (по умолчанию — 10 МБ на файл, хранение 5 старых копий). Параметры ротации настраиваются флагами `--container-log-max-size` и `--container-log-max-files` (или полями `containerLogMaxSize` / `containerLogMaxFiles` в `kubelet-config`). Если агент сбора логов не успеет прочитать лог до ротации или удаления пода, данные будут потеряны, поэтому агент должен читать файлы непрерывно и буферизовать отправку.
 
 #### 2. Архитектура сбора логов на уровне кластера
 
@@ -51,10 +53,20 @@ Kubelet отвечает за ротацию логов на узле (по ум
 graph TD
     Container[Контейнер] -- "stdout/stderr" --> Runtime[containerd/CRI-O]
     Runtime -- "Writes to" --> LogFiles["/var/log/pods/.../*.log"]
-    LogFiles -- "Read by" --> Agent[Fluent Bit DaemonSet]
+    LogFiles -- "Read by" --> Agent[Лог-агент: DaemonSet]
     Agent -- "Enrich (labels)" --> K8sAPI[Kubernetes API]
-    Agent -- "Send" --> CentralLog[Loki / Elasticsearch]
+    Agent -- "Send" --> CentralLog[Loki / Elasticsearch / ClickHouse]
 ```
+
+**Выбор агента сбора логов (2026):**
+
+| Агент | Специфика | Статус |
+| :--- | :--- | :--- |
+| **Fluent Bit** | Легковесный (C-ядро), высокая пропускная способность, широкий набор плагинов | Актуален |
+| **Grafana Alloy** | Нативный агент экосистемы Grafana, собирает метрики + логи + трейсы, экспорт в Loki/Tempo/Mimir по OTLP | Рекомендуется для стеков Grafana (заменяет устаревший Promtail) |
+| **Vector** | Высокая производительность, мощный язык конфигурации (VRL), поддержка ClickHouse | Актуален |
+| **Fluentd** | Медленнее Fluent Bit, но богаче экосистема плагинов | Легаси для новых инсталляций |
+| **OpenTelemetry Collector (logs pipeline)** | Унификация логов с метриками и трассами в едином пайплайне | Актуален |
 
 #### 3. Команды диагностики: kubectl logs
 
@@ -65,6 +77,20 @@ graph TD
 | `kubectl logs <pod> --previous` | Логи **предыдущего** (упавшего) экземпляра контейнера (критично для CrashLoopBackOff). |
 | `kubectl logs -l app=nginx --prefix` | Просмотр логов всех подов с меткой `app=nginx` с указанием имени пода. |
 | `kubectl logs <pod> --timestamps=true` | Добавить временные метки к выводу. |
+| `kubectl logs -l app=nginx --all-containers` | Просмотр логов всех контейнеров внутри подов (включая init-контейнеры). |
+| `kubectl events` (ранее `kubectl get events`) | Просмотр событий кластера (schedulling, probe failures, OOMKill) с типами Warning/Normal. |
+| `kubectl get events --field-selector reason=OOMKilling` | Фильтрация событий по конкретной причине. |
+
+#### 5. События кластера (Events) и аудит
+
+**События (Events)** — короткие записи о действиях объектов (`kubectl events`), помогают диагностировать проблемы на уровне планирования и жизненного цикла подов (нехватка ресурсов, провал ImagePull, OOMKill, crash из-за неготовых готовых зонд).
+
+**Аудит-логи (Audit Logs)** — отдельный от контейнерных логов уровень: журнал всех API-запросов к `kube-apiserver` (кто, когда и к какому ресурсу обращался). Включается через `--audit-log-path` и `audit-policy`. Ключевые уровни детализации: `None`, `Metadata`, `Request`, `RequestResponse`. Критичен для безопасной наблюдаемости доступа к секретам и ролевым объектам.
+
+```bash
+# Пример: включение аудита через конфигурацию apiserver
+kube-apiserver --audit-log-path=/var/log/audit.log --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+```
 
 #### 4. Проблемы и решения
 
@@ -152,8 +178,6 @@ eBPF позволяет получать данные напрямую из яд
 ## Дополнительная информация
 
 ### Смежные темы
-- **[Monitoring Methodologies](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md)** — USE, RED, Golden Signals.
-- **[OpenTelemetry Overview](../../Concepts/Observability_and_Monitoring/observability_definitions.md)** (если будет создан отдельный файл).
-- **[VictoriaMetrics](../../VictoriaMetrics/overview.md)** — глубокое погружение в TSDB.
-- **[Loki](../../Loki/loki_overview.md)** — архитектура сбора логов.
-- **[Prometheus](../../Prometheus/overview.md)** — классический сбор метрик.
+- **[OpenTelemetry: Обзор](../../OpenTelemetry/opentelemetry_overview.md)** — стандарт сбора сигналов, OTLP и сборки Collector.
+- **[Grafana Loki](../../Loki/loki_overview.md)** — архитектура сбора логов и современные агенты (Alloy).
+- **[Monitoring Methodologies](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md)** — методологии USE, RED, Golden Signals.

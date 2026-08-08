@@ -1,32 +1,38 @@
-# Интеграция Cert-manager с Gateway API: Практические сценарии
+# Интеграция cert-manager с Gateway API: Практические сценарии
 
 ## Определения
 
-**TLS Termination** — режим Gateway, при котором TLS-трафик расшифровывается на шлюзе и передаётся бэкенду в открытом виде (или через новое защищенное соединение).
+**Терминация TLS (TLS Termination)** — режим работы шлюза, при котором зашифрованный трафик расшифровывается на уровне Gateway и передается бэкенд-сервисам в открытом или перешифрованном виде. Основной метод интеграции с cert-manager.
 
-**TLS Passthrough** — режим, при котором TLS-трафик передаётся напрямую бэкенду без расшифровки на шлюзе (требуется `TLSRoute`, статус: `v1alpha2`). cert-manager в этом процессе не участвует.
+**Сквозное шифрование (TLS Passthrough)** — режим, при котором TLS-трафик передается напрямую бэкенду без расшифровки на шлюзе (требуется `TLSRoute`). cert-manager в этом процессе на уровне шлюза не участвует.
 
-**gateway-shim** — механизм в cert-manager, позволяющий автоматически выпускать TLS-сертификаты на основе аннотаций в ресурсах `Gateway` или `HTTPRoute` (аналог аннотаций Ingress).
+**gateway-shim** — механизм в cert-manager, автоматически выпускающий сертификаты на основе аннотаций в ресурсах `Gateway`, `HTTPRoute` или `ListenerSet` (аналог Ingress-аннотаций).
 
-**Wildcard-сертификат** — единый сертификат для всех поддоменов (например, `*.example.com`). Требует DNS-01 solver.
+**Wildcard-сертификат** — сертификат, выпускаемый для основного домена и всех его поддоменов первого уровня (например, `*.example.com`). В 2026 году для его получения обязателен метод DNS-01.
 
-**ReferenceGrant** — ресурс Gateway API, разрешающий перекрестные ссылки между пространствами имен (например, использование Secret из `app` в Gateway из `infra`).
+**ReferenceGrant** — ресурс безопасности Gateway API, разрешающий перекрестные ссылки между пространствами имен (например, когда Gateway в `infra` namespace использует Secret из `app` namespace).
 
 ---
 
 ## Основные концепции
 
-### Подготовительные шаги
+### Подготовительные шаги (2025–2026)
 
-Перед внедрением сценариев необходимо убедиться в выполнении следующих условий:
+Для реализации сценариев в современном окружении необходимо выполнить:
 
-1. **Установка Gateway API CRD:**
-   ```bash
-   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
-   ```
-2. **Установка cert-manager с поддержкой Gateway API:**
-   Поддержка включается флагом `--enable-gateway-api=true`. Подробно: [Установка cert-manager](../../installation.md).
-3. **Создание ClusterIssuer:** Настроенный ACME-issuer (Let's Encrypt или внутренний Vault).
+1.  **Установка Gateway API CRD (v1.1.0+):**
+    ```bash
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
+    ```
+2.  **Установка cert-manager (v1.20+):**
+    Контроллер должен быть запущен с поддержкой Gateway API:
+    ```bash
+    # Helm параметр
+    installCRDs: true
+    extraArgs:
+      - --enable-gateway-api=true
+    ```
+3.  **Создание ClusterIssuer:** Настроенный ACME (Let's Encrypt) или внутренний (Vault/PKI) эмитент.
 
 ### Архитектура интеграции
 
@@ -35,33 +41,34 @@ graph TD
     A[Certificate Resource] -->|создаёт| B[TLS Secret]
     B -->|ссылка в certificateRefs| C[Gateway Listener]
     D[Gateway Controller] -->|читает| C
-    D -->|настраивает| E[Data Plane / Envoy / Traefik]
+    D -->|настраивает| E[Data Plane / Envoy / Cilium]
 ```
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Базовый Gateway с TLS Termination (Явный Certificate)
+### Сценарий 1: Базовый шлюз с явным ресурсом Certificate
 
-**Цель:** Использование выделенного ресурса `Certificate` для максимального контроля.
+**Цель:** Максимальный контроль над параметрами сертификата (алгоритмы, ротация, ARI).
 
 **Certificate:**
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: gateway-tls
-  namespace: default
+  name: api-tls
+  namespace: infra-system
 spec:
-  secretName: gateway-tls-secret
+  secretName: api-tls-secret
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
   dnsNames:
     - api.example.com
-  duration: 2160h
-  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA # Рекомендация 2026 года
+    size: 256
 ```
 
 **Gateway:**
@@ -69,10 +76,10 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: example-gateway
-  namespace: default
+  name: public-gateway
+  namespace: infra-system
 spec:
-  gatewayClassName: traefik
+  gatewayClassName: cilium
   listeners:
   - name: https
     protocol: HTTPS
@@ -81,18 +88,18 @@ spec:
     tls:
       mode: Terminate
       certificateRefs:
-      - name: gateway-tls-secret
-        namespace: default
+      - name: api-tls-secret
+        namespace: infra-system
   allowedRoutes:
     namespaces:
-      from: Same
+      from: All
 ```
 
 ---
 
 ### Сценарий 2: Автоматический выпуск через аннотации (gateway-shim)
 
-**Цель:** Упрощенное управление в стиле Ingress. cert-manager сам создаст ресурс `Certificate`.
+**Цель:** Простота настройки в стиле Ingress. cert-manager сам создаст ресурс `Certificate`.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -120,18 +127,18 @@ spec:
 
 ---
 
-### Сценарий 3: Несколько HTTPS-слушателей с разными сертификатами
+### Сценарий 3: Несколько слушателей с индивидуальными сертификатами
 
-**Цель:** Один Gateway обслуживает несколько доменов с индивидуальными сертификатами.
+**Цель:** Разделение TLS-конфигураций для разных доменов на одном физическом шлюзе.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: multi-tls-gateway
-  namespace: default
+  name: multi-domain-gateway
+  namespace: infra-system
 spec:
-  gatewayClassName: traefik
+  gatewayClassName: istio
   listeners:
   - name: https-main
     hostname: main.example.com
@@ -147,35 +154,36 @@ spec:
     tls:
       mode: Terminate
       certificateRefs: [{name: api-tls-secret}]
-  allowedRoutes:
-    namespaces:
-      from: Same
 ```
 
 ---
 
 ### Сценарий 4: Wildcard-сертификат (DNS-01)
 
-**Цель:** Использование одного сертификата для всех поддоменов. Требует DNS-01 челлендж.
+**Цель:** Обслуживание множества поддоменов одним сертификатом.
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: wildcard-tls
-  namespace: default
+  namespace: infra-system
 spec:
   secretName: wildcard-tls-secret
-  issuerRef: {name: cloudflare-dns-issuer, kind: ClusterIssuer}
-  dnsNames: ["example.com", "*.example.com"]
+  issuerRef: 
+    name: cloudflare-dns-issuer
+    kind: ClusterIssuer
+  dnsNames: 
+    - "example.com"
+    - "*.example.com"
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: wildcard-gateway
-  namespace: default
+  namespace: infra-system
 spec:
-  gatewayClassName: traefik
+  gatewayClassName: cilium
   listeners:
   - name: https
     protocol: HTTPS
@@ -183,23 +191,23 @@ spec:
     tls:
       mode: Terminate
       certificateRefs: [{name: wildcard-tls-secret}]
-  allowedRoutes:
-    namespaces: {from: All}
+    allowedRoutes:
+      namespaces: {from: All}
 ```
 
 ---
 
-### Сценарий 5: Кросс-неймспейс доступ (ReferenceGrant)
+### Сценарий 5: Безопасный кросс-неймспейс доступ (ReferenceGrant)
 
-**Цель:** Использовать сертификат из namespace `app-team` в шлюзе `infra-system`.
+**Цель:** Использование сертификата из защищенного хранилища в публичном шлюзе.
 
-**ReferenceGrant (в namespace app-team):**
+**ReferenceGrant (в namespace с сертификатом — `cert-storage`):**
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:
   name: allow-infra-gateway
-  namespace: app-team
+  namespace: cert-storage
 spec:
   from:
   - group: gateway.networking.k8s.io
@@ -208,58 +216,60 @@ spec:
   to:
   - group: ""
     kind: Secret
-    name: app-tls-secret
+    name: central-tls-secret
 ```
 
-**Gateway (в namespace infra-system):**
+**Gateway (в namespace `infra-system`):**
 ```yaml
-# ... фрагмент
+# ... фрагмент манифеста
     tls:
       mode: Terminate
       certificateRefs:
-      - name: app-tls-secret
-        namespace: app-team
+      - name: central-tls-secret
+        namespace: cert-storage # Ссылка на другой namespace разрешена ReferenceGrant
 ```
 
 ---
 
-### Сценарий 6: Self-Service TLS через ListenerSet (cert-manager v1.20+)
+### Сценарий 6: Self-Service TLS через ListenerSet (v1.21+ Stable)
 
-**Цель:** Делегировать управление TLS команде разработки без прав на основной Gateway.
+**Цель:** Позволить разработчикам приложений управлять TLS самостоятельно, не имея прав на основной Gateway.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1alpha1
 kind: ListenerSet
 metadata:
-  name: dev-listeners
-  namespace: dev-namespace
+  name: app-team-listeners
+  namespace: app-team
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Аннотация для прохождения HTTP-01 через 80 порт родительского Gateway
+    acme.cert-manager.io/http01-parentreffallback: "true"
 spec:
   parentRef:
     name: shared-gateway
-    namespace: infra-namespace
+    namespace: infra-system
   listeners:
-  - name: https-dev
-    hostname: "dev.example.com"
+  - name: https-app
+    hostname: "app.team-a.example.com"
     port: 443
     protocol: HTTPS
     tls:
       mode: Terminate
-      certificateRefs: [{name: dev-tls-secret}]
+      certificateRefs: [{name: team-a-tls-secret}]
 ```
 
 ---
 
-### Сценарий 7: TLS Passthrough (mTLS)
+### Сценарий 7: Сквозное шифрование (TLS Passthrough / mTLS)
 
-**Цель:** Передача зашифрованного трафика напрямую бэкенду.
+**Цель:** Передача трафика до пода без расшифровки на шлюзе (для mTLS или строгой изоляции).
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: passthrough-gateway
+  name: secure-gateway
 spec:
   listeners:
   - name: tls-passthrough
@@ -270,46 +280,49 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1alpha2
 kind: TLSRoute
 metadata:
-  name: mtls-route
+  name: backend-mtls-route
 spec:
-  parentRefs: [{name: passthrough-gateway}]
+  parentRefs: [{name: secure-gateway}]
   rules:
-  - backendRefs: [{name: mtls-service, port: 8443}]
+  - backendRefs: [{name: mtls-enabled-service, port: 8443}]
 ```
 
 ---
 
-### Сценарий 8: HTTP-to-HTTPS Redirect
+### Сценарий 8: Нативный HTTP-to-HTTPS редирект
 
-**Цель:** Принудительный редирект через нативный фильтр Gateway API.
+**Цель:** Принудительное использование защищенного соединения без сторонних аннотаций.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: https-redirect
+  name: redirect-to-https
+  namespace: infra-system
 spec:
   parentRefs:
-  - name: main-gateway
-    sectionName: http-80
+  - name: public-gateway
+    sectionName: http-80 # Ссылка на слушатель порта 80 в Gateway
   rules:
   - filters:
     - type: RequestRedirect
-      requestRedirect: {scheme: https, statusCode: 301}
+      requestRedirect:
+        scheme: https
+        statusCode: 301
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Надёжность и актуальность
+### Рекомендации по эксплуатации
 
-- **Оценка надёжности:** 10 (SSoT: cert-manager.io + Gateway API Spec v1.1).
-- **Класс актуальности:** Инструментальный (Kubernetes 1.30+, cert-manager 1.20+).
-- **Последняя проверка:** Июль 2026.
+1.  **ARI и автоматизация**: В cert-manager v1.21+ ARI включен по умолчанию. Рекомендуется удалять `renewBefore` из ресурсов `Certificate`, чтобы передать управление окном продления протоколу ACME.
+2.  **Диагностика фидбека**: Состояние выпуска сертификата теперь транслируется в `status.conditions` ресурсов `Gateway` и `ListenerSet` (тип `ResolvedRefs`), что позволяет отлаживать TLS без прямого доступа к логам cert-manager.
+3.  **Безопасность RBAC**: Ограничивайте права на создание `ListenerSet` и `ReferenceGrant`, так как они позволяют манипулировать точками входа в кластер.
 
 ### Смотрите также
 
-- **[Определения и концепции](./definitions_and_concepts.md)** — база Gateway API.
-- **[Дополнительные темы](./advanced_topics.md)** — диагностика и отладка.
-- **[Cert-manager: Определения](../../definitions.md)** — детали работы Issuer и Certificate.
+- **[Определения и концепции Gateway API](./definitions_and_concepts.md)** — архитектура и ролевая модель.
+- **[Gateway API: Дополнительные темы](./advanced_topics.md)** — глубокая диагностика и Hostname-конфликты.
+- **[Cert-manager: Определения](../../definitions.md)** — базовые ресурсы контроллера.

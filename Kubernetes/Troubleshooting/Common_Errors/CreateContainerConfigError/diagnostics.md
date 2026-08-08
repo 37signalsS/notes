@@ -2,128 +2,116 @@
 
 ## Определения
 
-**Диагностика CreateContainerConfigError** — структурированный процесс выявления конкретной отсутствующей или некорректно настроенной внешней зависимости (ConfigMap, Secret, PersistentVolumeClaim, Volume, RBAC), которая препятствует формированию спецификации контейнера на стороне `kubelet`.
+**Диагностика CreateContainerConfigError** — систематический процесс выявления некорректно настроенных или отсутствующих зависимостей, которые блокируют формирование спецификации контейнера агентом `kubelet`. В отличие от прикладной отладки, этот процесс фокусируется на уровне управления (Control Plane) и взаимодействии узла с API-сервером.
 
-Общее описание ошибки: [definitions.md](./definitions.md).
+Основной вызов диагностики заключается в том, что на этом этапе контейнер еще не создан в Container Runtime (CRI), поэтому стандартные инструменты (`kubectl logs`, `kubectl exec`) недоступны.
 
 ## Основные концепции
 
 ### Алгоритм диагностики (Workflow)
 
-Процесс отладки всегда начинается с API Kubernetes, так как при этой ошибке контейнер еще не создан, и логи приложения отсутствуют.
+Процесс отладки должен следовать иерархии зависимостей: от API-объектов до прав доступа на узле.
 
-1.  **Сбор первичных данных:** Проверка статуса пода и последних событий (Events).
-2.  **Идентификация ресурса:** Определение типа и имени ресурса (например, ConfigMap "api-config"), на который ссылается ошибка.
-3.  **Валидация существования:** Проверка наличия ресурса в том же Namespace, что и Pod.
-4.  **Проверка контента:** Убедиться, что требуемые ключи (keys) присутствуют в `data` ресурса.
-5.  **Анализ прав доступа:** Проверка прав ServiceAccount пода на чтение указанного ресурса.
+1.  **Инспекция событий (Events):** Первичный поиск конкретного ресурса и причины отказа (NotFound, Forbidden).
+2.  **Валидация ссылок в PodSpec:** Проверка имен ConfigMap, Secret и PVC на наличие опечаток.
+3.  **Проверка доступности ресурса:** Подтверждение существования объекта в том же Namespace.
+4.  **Целостность данных (Data Integrity):** Проверка наличия конкретных ключей в `data` ресурса, если используется `keyRef`.
+5.  **RBAC и ServiceAccount:** Проверка разрешений на чтение ресурсов от имени пода.
+6.  **Уровень инфраструктуры (CSI/Provisioning):** Проверка статуса PVC и здоровья CSI-контроллеров, если ошибка связана с томами.
 
-### Ключевые команды
+### Ключевые команды и инструменты
 
-| Команда | Назначение |
-| :--- | :--- |
-| `kubectl describe pod <name>` | Основной инструмент: содержит детальные сообщения об ошибках в секции Events. |
-| `kubectl get <resource> <name>` | Проверка наличия ресурса. |
-| `kubectl get pod <name> -o yaml` | Проверка `env` и `volumeMounts` на наличие опечаток в именах ресурсов. |
-| `kubectl auth can-i get <resource>` | Имитация прав (impersonation) для проверки RBAC. |
-| `kubectl get events --field-selector involvedObject.name=<pod-name>` | Получение только релевантных событий для конкретного пода. |
-
-### Типичные сообщения в секции Events
-
-| Текст сообщения | Тип проблемы | Ссылка на решение |
+| Инструмент | Команда / Метод | Ожидаемый результат |
 | :--- | :--- | :--- |
-| `configmap "x" not found` | Отсутствует ConfigMap | [Проблемы с ConfigMap](./configmap_issues.md) |
-| `secret "x" not found` | Отсутствует Secret | [Проблемы с Secret](./secret_issues.md) |
-| `persistentvolumeclaim "x" not found` | Ошибка PVC | [Проблемы с PVC](./pvc_issues.md) |
-| `Error: Secret "x" is not a valid secret type` | Неверный тип секрета | [Проблемы с Secret](./secret_issues.md) |
+| **Events** | `kubectl get events --field-selector involvedObject.name=<pod>` | Список ошибок в хронологическом порядке. |
+| **JSONPath** | `kubectl get cm <name> -o jsonpath='{.data.key}'` | Быстрая проверка наличия ключа без вывода всего объекта. |
+| **RBAC Audit** | `kubectl auth can-i get secret/<name> --as system:serviceaccount:<ns>:<sa>` | Подтверждение (`yes`) наличия прав доступа. |
+| **Volume Check** | `kubectl describe pvc <pvc-name>` | Определение причин застревания тома в `Pending`. |
+| **CSI Health** | `kubectl get pods -n kube-system -l app.kubernetes.io/name=<driver>` | Проверка здоровья драйверов хранилища. |
 
 ## Практические сценарии
 
-### Сценарий 1: Быстрый поиск причины через Events
+### Сценарий 1: Быстрый поиск причины через Events и фильтрацию
+
+Самый эффективный способ — извлечь конкретное сообщение об ошибке, скрыв лишнюю информацию.
 
 ```bash
-# Получение только ошибок из событий пода
-kubectl describe pod <pod-name> | grep -iE "reason|message" | grep -A 1 "CreateContainerConfigError"
-# → reason: CreateContainerConfigError
-# → message: configmap "app-env" not found
+# Получение причины ожидания контейнера
+kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[0].state.waiting.message}'
+
+# Пример вывода:
+# → configmap "app-settings" not found
 ```
 
-### Сценарий 2: Глубокая проверка ConfigMap и Secret
+### Сценарий 2: Глубокая проверка ключей в ConfigMap/Secret
 
-Если в сообщении указано, что ресурс не найден, проверьте его наличие в текущем Namespace:
+Часто ресурс существует, но в нем отсутствует ключ, указанный в `env` или `envFrom`.
 
 ```bash
-# Проверка наличия и метаданных
-kubectl get configmap <name> -o wide
-# → NAME      DATA   AGE
-# → app-env   5      12h
+# Проверка всех ключей в Secret
+kubectl get secret <name> -o jsonpath='{.data}' | jq 'keys'
 
-# Проверка наличия конкретного ключа, на который ссылается Pod
-kubectl get configmap <name> -o jsonpath='{.data.DATABASE_URL}'
-# → postgres://user:pass@host:5432/db
+# Проверка, на какой ключ ссылается манифест пода
+kubectl get pod <pod-name> -o json | jq '.spec.containers[].env[] | select(.valueFrom.configMapKeyRef) | .valueFrom.configMapKeyRef.key'
 ```
 
 ### Сценарий 3: Диагностика проблем с PersistentVolumeClaim (PVC)
 
-При использовании PVC ошибка может возникать, если том не может быть привязан или монтирован.
+Если ошибка связана с PVC, необходимо проверить не только сам объект, но и `StorageClass`.
 
 ```bash
-# Проверка статуса PVC
-kubectl get pvc <pvc-name>
-# → NAME       STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-# → data-pvc   Pending                                      standard       5m
+# Проверка статуса и ошибок привязки
+kubectl describe pvc <pvc-name>
 
-# Просмотр причин задержки
-kubectl describe pvc <pvc-name> | tail -n 10
-# → Events: ... Failed to provision volume with StorageClass "standard": ...
+# Типичная ошибка топологии (Multi-AZ):
+# → Warning  FailedScheduling  ...  1 node(s) had volume node affinity conflict.
+
+# Проверка StorageClass на наличие WaitForFirstConsumer (рекомендуется для облаков)
+kubectl get sc <sc-name> -o jsonpath='{.volumeBindingMode}'
 ```
 
 Подробнее: [Проблемы с PVC](./pvc_issues.md).
 
-### Сценарий 4: Проверка RBAC через ServiceAccount
+### Сценарий 4: Проверка прав доступа через ServiceAccount (Impersonation)
 
-Если ресурс существует, но под его "не видит", возможно, у ServiceAccount нет прав на `get` или `list`.
+Если `kubectl get secret` работает у вас, это не значит, что он работает у пода.
 
 ```bash
-# 1. Узнаем SA пода
-SA_NAME=$(kubectl get pod <pod-name> -o jsonpath='{.spec.serviceAccountName}')
+# 1. Получаем SA пода
+SA=$(kubectl get pod <pod-name> -o jsonpath='{.spec.serviceAccountName}')
 
-# 2. Проверяем права (результат должен быть yes)
-kubectl auth can-i get configmap/<cm-name> --as=system:serviceaccount:<namespace>:$SA_NAME
-# → yes (или no при отсутствии прав)
+# 2. Проверяем возможность чтения конкретного секрета
+kubectl auth can-i get secret/<secret-name> --as=system:serviceaccount:<namespace>:$SA
+# → no  <-- Если 'no', нужно обновить RoleBinding/Role.
 ```
 
-### Сценарий 5: Скрипт для комплексной диагностики
-
-Этот скрипт собирает всю информацию о зависимостях пода в один отчет.
+### Сценарий 5: Автоматизированный скрипт диагностики зависимостей
 
 ```bash
 #!/bin/bash
-# usage: ./check-pod-deps.sh <pod-name> <namespace>
-
+# check-k8s-deps.sh: Проверка всех внешних зависимостей пода
 POD=$1
 NS=${2:-default}
 
-echo "=== Диагностика пода: $POD (Namespace: $NS) ==="
+echo "--- Диагностика зависимостей для $POD ---"
 
-# 1. События
-echo -e "\n[Events]"
-kubectl get events -n "$NS" --field-selector involvedObject.name="$POD" --sort-by='.lastTimestamp'
-
-# 2. Переменные окружения из ConfigMap/Secret
-echo -e "\n[EnvFrom Dependencies]"
-kubectl get pod "$POD" -n "$NS" -o jsonpath='{range .spec.containers[*].envFrom[*]}{.configMapRef.name}{.secretRef.name}{"\n"}{end}' | while read ref; do
-    if [ ! -z "$ref" ]; then
-        kubectl get cm,secret "$ref" -n "$NS" > /dev/null 2>&1 || echo "!!! РЕСУРС НЕ НАЙДЕН: $ref"
-    fi
+# Проверка ConfigMaps в env
+echo "[ConfigMaps]"
+for cm in $(kubectl get pod $POD -n $NS -o json | jq -r '.spec.containers[].env[].valueFrom.configMapKeyRef.name // empty'); do
+    kubectl get cm $cm -n $NS >/dev/null 2>&1 || echo "!! КРИТИЧНО: ConfigMap $cm не найден"
 done
 
-# 3. Тома (Volumes)
-echo -e "\n[Volume Dependencies]"
-kubectl get pod "$POD" -n "$NS" -o jsonpath='{range .spec.volumes[*]}{.configMap.name}{.secret.secretName}{.persistentVolumeClaim.claimName}{"\n"}{end}' | while read vol; do
-    if [ ! -z "$vol" ]; then
-        kubectl get cm,secret,pvc "$vol" -n "$NS" > /dev/null 2>&1 || echo "!!! ТОМ НЕ НАЙДЕН: $vol"
-    fi
+# Проверка Secrets в volumes
+echo "[Secrets (Volumes)]"
+for sec in $(kubectl get pod $POD -n $NS -o json | jq -r '.spec.volumes[].secret.secretName // empty'); do
+    kubectl get secret $sec -n $NS >/dev/null 2>&1 || echo "!! КРИТИЧНО: Secret $sec не найден"
+done
+
+# Проверка PVC
+echo "[PVC]"
+for pvc in $(kubectl get pod $POD -n $NS -o json | jq -r '.spec.volumes[].persistentVolumeClaim.claimName // empty'); do
+    STATUS=$(kubectl get pvc $pvc -n $NS -o jsonpath='{.status.phase}')
+    [[ "$STATUS" != "Bound" ]] && echo "!! ВНИМАНИЕ: PVC $pvc в статусе $STATUS"
 done
 ```
 
@@ -131,15 +119,16 @@ done
 
 ### Место в процессе Troubleshooting
 
-Диагностика `CreateContainerConfigError` — это "внешняя" отладка. Она предшествует проверке логов контейнера, так как на этом этапе контейнер еще не существует. Если вы видите эту ошибку, не пытайтесь использовать `kubectl logs` или `kubectl exec`.
+Диагностика `CreateContainerConfigError` — это граница между инфраструктурой и приложением. Она подтверждает, что «окружение готово», прежде чем управление будет передано процессу внутри контейнера.
 
-*   [Обзор процесса Troubleshooting](../../troubleshooting_overview.md)
-*   [Профилактика ошибок конфигурации](./prevention.md)
+*   [Жизненный цикл и состояния Pod](../../../Base/Pod/pod_lifecycle_and_state.md)
+*   [Профилактика CreateContainerConfigError](./prevention.md)
 
 ### Связанные ресурсы
 
+*   [Определения CreateContainerConfigError](./definitions.md)
 *   [Проблемы с ConfigMap](./configmap_issues.md)
 *   [Проблемы с Secret](./secret_issues.md)
 *   [Проблемы с PVC](./pvc_issues.md)
-*   [Проблемы с RBAC](./rbac_issues.md)
+*   [Проблемы с RBAC и ServiceAccount](./rbac_issues.md)
 *   [Проблемы с томами](./volume_issues.md)

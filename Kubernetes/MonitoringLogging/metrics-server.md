@@ -2,106 +2,123 @@
 
 ## Определения
 
-**Metrics Server** — легковесный агрегатор данных о потреблении ресурсов в кластере Kubernetes, работающий в оперативной памяти (in-memory). Он собирает метрики CPU и оперативной памяти с каждого узла через Summary API (`kubelet`) и предоставляет их через Metrics API (`metrics.k8s.io`).
+**Metrics Server** — масштабируемый, эффективный источник метрик использования ресурсов контейнеров для Kubernetes. Работает в оперативной памяти (in-memory) и не хранит исторические данные. Является реализацией **Resource Metrics API**.
 
-**cAdvisor (Container Advisor)** — встроенный в `kubelet` инструмент с открытым исходным кодом от Google для мониторинга и анализа производительности контейнеров. cAdvisor собирает данные в реальном времени об использовании ресурсов (CPU, память, сеть, диск) непосредственно с уровня контейнеров и предоставляет их Metrics Server через Summary API.
+**cAdvisor (Container Advisor)** — встроенный в `kubelet` компонент, который читает метрики напрямую из `cgroups` (control groups) ядра Linux. cAdvisor собирает данные об использовании ресурсов (CPU, память) с уровня контейнеров и предоставляет их Metrics Server через Kubelet Summary API (порт 10250).
 
-Metrics Server не предназначен для долгосрочного хранения данных или сложной аналитики. Его основная роль — служить источником оперативных данных для механизмов автоматизации Kubernetes.
+**Resource Metrics API (`metrics.k8s.io`)** — стандартный API Kubernetes, через который Metrics Server отдает данные агрегатору. Этот API критичен для работы механизмов автоскейлинга.
 
 **Область применения:**
-- Обеспечение работы команд `kubectl top nodes` и `kubectl top pods`.
-- Источник данных для **Horizontal Pod Autoscaler (HPA)**.
-- Предоставление данных для **Vertical Pod Autoscaler (VPA)**.
+- Обеспечение работы команд CLI `kubectl top nodes` и `kubectl top pods`.
+- Основной, "нативный" источник данных для **[Horizontal Pod Autoscaler (HPA)](../Autoscaling/HPA/index.md)** при масштабировании по CPU и RAM.
+- Предоставление данных для **[Vertical Pod Autoscaler (VPA)](../Autoscaling/vpa_detailed.md)**.
 
-> **Рекомендация:** Устанавливайте Metrics Server сразу после создания кластера. Он потребляет минимальное количество ресурсов, но его ценность для мониторинга и автоматизации масштабирования проявляется с первых секунд работы.
+> **Важно:** Metrics Server собирает метрики _только_ по CPU и Memory. Для масштабирования по кастомным метрикам (RPS, длина очереди, HTTP-задержки) требуется **Prometheus Adapter** или **KEDA**.
 
 ## Основные концепции
 
+### Место в конвейере данных (Pipeline)
+Поток данных телеметрии выглядит следующим образом:
+`Linux cgroups → kubelet (cAdvisor) → Metrics Server → Kube API Server (Aggregator Layer) → HPA / VPA`
+
+В отличие от Prometheus, который собирает метрики раз в 15-60 секунд и добавляет задержку на индексацию, Metrics Server оптимизирован для **минимальной задержки (Low Latency)**. Именно поэтому HPA по умолчанию использует его — это предотвращает эффект staleness (устаревания) при принятии решений об экстренном масштабировании.
+
 ### Архитектура и отказоустойчивость (HA)
-Metrics Server разворачивается как `Deployment` в пространстве имен `kube-system`. В крупных кластерах рекомендуется использовать режим высокой доступности:
-- **Количество реплик**: Оптимально 2 реплики. Большее количество не дает преимуществ, так как каждая реплика опрашивает все узлы кластера.
+Metrics Server разворачивается как `Deployment` в пространстве имен `kube-system`. В крупных (Production) кластерах рекомендуется использовать режим высокой доступности:
+- **Количество реплик**: Оптимально 2 реплики. Большее количество не дает преимуществ, так как _каждая_ реплика опрашивает все узлы кластера независимо, что может создать лишнюю нагрузку на kubelet.
 - **Aggregator Routing**: Для балансировки запросов между репликами `kube-apiserver` должен быть запущен с флагом `--enable-aggregator-routing=true`.
-- **Pod Disruption Budget**: Рекомендуется установить PDB с `maxUnavailable: 1`, чтобы гарантировать доступность Metrics API во время обслуживания узлов.
+- **Pod Disruption Budget (PDB)**: Обязательно установите PDB с `maxUnavailable: 1`, чтобы гарантировать доступность Metrics API во время обновления узлов (Node Drain).
 
-### Сбор данных и разрешение
-- **Периодичность (Resolution)**: По умолчанию Metrics Server опрашивает узлы каждые 60 секунд. Для ускорения реакции автоскейлинга рекомендуется установить `--metric-resolution=15s`.
-- **Регистрация API**: Metrics Server регистрируется в `kube-aggregator` как `APIService`. Если сервис недоступен, вызовы к `metrics.k8s.io` будут завершаться ошибкой.
-
-### Масштабирование ресурсов
-Потребление ресурсов Metrics Server растет линейно вместе с размером кластера.
+### Масштабирование ресурсов (VPA)
+Потребление ресурсов Metrics Server растет пропорционально количеству узлов и подов в кластере.
 **Формула расчета (на каждые 100 узлов):**
 - **CPU**: Базовые 100m + 1m на каждый узел.
 - **Memory**: Базовые 200Mi + 2Mi на каждый узел.
-Для автоматического управления ресурсами самого Metrics Server рекомендуется использовать VPA в режиме `Initial`.
+Поскольку кластер может динамически расти, рекомендуется использовать [VPA](../Autoscaling/vpa_detailed.md) в режиме `Auto` или `Initial` исключительно для пода Metrics Server, чтобы он автоматически получал больше RAM и не падал по OOM (Out Of Memory).
 
 ## Практические сценарии
 
-### Установка и настройка
+### Установка и настройка (Helm)
+Рекомендуется использовать Helm-чарт, так как он позволяет легко настроить параметры высокой доступности и разрешения метрик.
 
-**Шаг 1: Стандартная установка**
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-```
-
-**Шаг 2: Настройка для Production (Helm)**
-Рекомендуется использовать Helm-чарт для гибкой настройки флагов и HA:
 ```bash
 helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
-helm install metrics-server metrics-server/metrics-server \
-  --namespace kube-system \
-  --set args={--metric-resolution=15s,--kubelet-preferred-address-types=InternalIP} \
-  --set replicas=2
+helm repo update
+
+# Пример values.yaml для Production:
+# metrics-server-values.yaml
+replicas: 2
+apiService:
+  create: true
+args:
+  # Частота опроса kubelet (влияет на скорость HPA)
+  - --metric-resolution=15s
+  # Приоритет IP-адресов узлов (важно в облаках, чтобы избегать внешних IP)
+  - --kubelet-preferred-address-types=InternalIP
+  # - --kubelet-insecure-tls # Раскомментируйте ТОЛЬКО для Dev/Minikube!
+resources:
+  requests:
+    cpu: 100m
+    memory: 200Mi
+  limits:
+    memory: 500Mi # Защита узла от утечек
 ```
 
-**Параметры для отладки (Dev/Local):**
-Если `kubelet` использует самоподписанные сертификаты (например, в Minikube или `kubeadm` без настройки сертификатов), добавьте флаг:
-`--kubelet-insecure-tls` — отключает проверку TLS-сертификатов узлов (не рекомендуется для продакшена).
+```bash
+helm install metrics-server metrics-server/metrics-server \
+  --namespace kube-system \
+  --create-namespace \
+  -f metrics-server-values.yaml
+```
 
-### Проверка статуса
-После установки необходимо убедиться, что API-сервис доступен:
+### Проверка статуса (Troubleshooting)
+
+После установки данные становятся доступны через 1-2 минуты.
+
+**1. Проверка регистрации API:**
+Самый важный шаг. Если APIService не зарегистрирован или `AVAILABLE` равен `False`, HPA работать не будет.
 ```bash
 kubectl get apiservice v1beta1.metrics.k8s.io
 # → NAME                      SERVICE                      AVAILABLE   AGE
 # → v1beta1.metrics.k8s.io    kube-system/metrics-server   True        1m
 ```
 
-### Использование kubectl top
-Данные становятся доступны через 1-2 минуты после запуска.
-
-**Просмотр ресурсов узлов:**
+**2. Просмотр ресурсов:**
 ```bash
+# Ресурсы узлов
 kubectl top nodes
 # → NAME        CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
 # → control-1   150m         7%     1400Mi          36%
-```
 
-**Просмотр ресурсов подов:**
-```bash
+# Ресурсы подов с сортировкой
 kubectl top pods -A --sort-by=cpu
-# → NAMESPACE     NAME                              CPU(cores)   MEMORY(bytes)
-# → kube-system   metrics-server-74c698c975-f86p9   2m           18Mi
 ```
 
 ## Решение проблем
 
-### Ошибка ScalingActive в HPA
-Если HPA показывает статус `ScalingActive: False` с сообщением `failed to get CPU utilization`, проверьте:
-1. Доступность Metrics Server через `kubectl top pods`.
-2. Наличие `requests` у контейнеров в нагруженном Deployment (HPA не может рассчитать процент использования без заданных запросов).
-3. Флаги Metrics Server (особенно `--kubelet-preferred-address-types`).
+### Ошибка "ScalingActive: False" в HPA
+Если `kubectl describe hpa <name>` показывает причину `failed to get CPU utilization`, проверьте:
+1. Заданы ли `resources.requests` у контейнеров целевого приложения (HPA не может рассчитать проценты, если нет базы для расчета).
+2. Статус APIService (`kubectl get apiservice v1beta1.metrics.k8s.io`). Если он False, смотрите логи Metrics Server.
 
-### Metrics Server не запускается (CrashLoopBackOff)
-Частая причина в облачных средах — отсутствие разрешающих правил в Security Groups для порта 4443 (или 10250 для входящего трафика от агрегатора).
+### Metrics Server не запускается (CrashLoopBackOff / TLS errors)
+Если в логах (`kubectl logs -n kube-system deploy/metrics-server`) видны ошибки `x509: cannot validate certificate`:
+- **Причина**: Kubelet использует самоподписанные сертификаты (типично для `kubeadm`, k3s или локальных сред).
+- **Решение**: Добавить флаг `--kubelet-insecure-tls` в `args` Helm-чарта. В Production средах следует настроить доверие к CA узлов или использовать валидные сертификаты Kubelet.
+
+### Ошибки таймаутов (Timeout) от Aggregator
+Если `kubectl top` зависает и падает с Timeout:
+- **Причина**: `kube-apiserver` (Control Plane) не может установить сетевое соединение с подом Metrics Server.
+- **Решение**: Проверьте правила брандмауэра (Security Groups в AWS/GCP). `kube-apiserver` (через Egress) должен иметь доступ к порту пода Metrics Server (обычно 4443).
 
 ## Дополнительная информация
 
-### Отличие от Prometheus
-Metrics Server предоставляет только мгновенные значения (snapshot) и не хранит историю.
-- **Metrics Server**: Используется ядром Kubernetes для HPA/VPA.
-- **Prometheus**: Используется для долгосрочного мониторинга, алертинга и визуализации в Grafana.
-Для масштабирования на основе кастомных метрик (например, очереди RabbitMQ) используется **[Prometheus Adapter](../../Prometheus/overview.md)** или **[KEDA](../Autoscaling/keda/keda_concepts.md)**.
+### Отличие от Prometheus и cAdvisor
+- **cAdvisor** — это агент-сборщик на узле.
+- **Metrics Server** — это агрегатор данных от cAdvisor со всех узлов, создающий единый API реального времени для HPA. Он *не хранит* историю.
+- **Prometheus** — это база данных временных рядов (TSDB). Собирает данные для визуализации (Grafana), долгосрочной аналитики, расчетов бюджетов (FinOps) и сложных алертов.
 
 ### Смежные темы
-- **[HPA: Автомасштабирование подов](../Autoscaling/HPA/index.md)** — использование метрик для репликации.
-- **[VPA: Вертикальное масштабирование](../Autoscaling/vpa_detailed.md)** — оптимизация лимитов и запросов.
-- **[Monitoring Architecture](./kubernetes-monitoring-logging-architecture.md)** — обзор всех слоев мониторинга.
+- **[HPA: Автомасштабирование подов](../Autoscaling/HPA/index.md)** — глубокое погружение в горизонтальное масштабирование.
+- **[Monitoring Architecture](./kubernetes-monitoring-logging-architecture.md)** — обзор архитектуры мониторинга и интеграция с Prometheus.
+- **[Troubleshooting HPA](../Troubleshooting/Common_Errors/hpa_troubleshooting.md)** — детальный разбор ошибок `ScalingActive`.

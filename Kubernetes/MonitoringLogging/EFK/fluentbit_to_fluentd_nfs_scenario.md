@@ -146,7 +146,7 @@ data:
 
     <match application.**>
       @type file
-      path /fluentd/log/application/%Y/%m/%d/app.log
+      path /fluentd/log/application/%Y/%m/%d/#{Socket.gethostname}-app.log
       append true
       <buffer time>
         @type file
@@ -163,19 +163,28 @@ data:
     </match>
 ```
 
-1. **Развертывание (Deployment)**:
+1. **Развертывание (StatefulSet)**:
+В Kubernetes для процессов, пишущих данные на диск (особенно в общие файловые системы вроде NFS), строго рекомендуется использовать **StatefulSet** вместо Deployment. Это предотвращает состояния гонки (race conditions) при параллельной записи в один файл из разных подов, так как каждому поду можно выделить собственную поддиректорию или гарантировать уникальное имя.
+
 Важно настроить `securityContext`, чтобы Fluentd имел права на запись в NFS (обычно используется UID 1000).
 
 ```yaml
-# 04-fluentd-deployment.yaml
+# 04-fluentd-statefulset.yaml
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: fluentd-aggregator
   namespace: logging
 spec:
+  serviceName: "fluentd-aggregator"
   replicas: 2
+  selector:
+    matchLabels:
+      app: fluentd-aggregator
   template:
+    metadata:
+      labels:
+        app: fluentd-aggregator
     spec:
       securityContext:
         fsGroup: 1000 # Соответствует GID во Fluentd образе

@@ -10,44 +10,43 @@
 
 **Node Exporter** — стандартный экспортер для мониторинга аппаратных и системных метрик узлов кластера (диск, сеть, Load Average).
 
-**Текущая версия (февраль 2026):** Grafana 12.x+, kube-state-metrics 2.x+, Prometheus Operator.
+**Версия (2025 год):** Grafana 11.x+, kube-state-metrics 2.x+, Prometheus Operator.
 
 ## Базовые концепции
 
-### Категории мониторинга (Baseline 2026)
+### Категории мониторинга
 
 | Категория | Объекты | Основные метрики |
 | :--- | :--- | :--- |
 | **Уровень приложений** | Pod, Deployment, StatefulSet | Рестарты, OOMKilled, ImagePullBackOff, Readiness |
-| **Уровень ресурсов** | Container | CPU/Memory Limits vs Usage, Throttling |
-| **Уровень узлов** | Node | NodeNotReady, DiskPressure, MemoryPressure |
-| **Уровень хранилищ** | PVC, PV | PVC Capacity, Volume Errors |
+| **Уровень ресурсов** | Container | CPU/Memory Limits vs Usage, CPU Throttling |
+| **Уровень узлов** | Node | NodeNotReady, Pressure (Disk, Memory, PID) |
+| **Уровень хранилищ** | PVC, PV | PVC Capacity, Inode Usage, Volume Errors |
 | **Control Plane** | API Server, etcd | API Latency (99th), etcd Leader Changes |
 
 ### Рекомендации по настройке
 
 | Параметр | Рекомендация | Обоснование |
 | :--- | :--- | :--- |
-| **Интервал оценки** | 30s | Для K8s динамики интервал в 1m может быть слишком долгим для критичных сбоев. |
+| **Интервал оценки** | 30s | Для динамичного окружения K8s интервал в 1m может быть слишком долгим. |
 | **`for` (Задержка)** | 0m–15m | 0m для событий (OOM), 2m–5m для состояний (CrashLoop), 15m для ресурсов. |
-| **Метки (Labels)** | `severity`, `cluster`, `namespace` | Необходимы для фильтрации в Notification Policies и подавления (Inhibition). |
+| **Метки (Labels)** | `severity`, `cluster`, `namespace` | Необходимы для фильтрации в политиках уведомлений и подавления (Inhibition). |
 | **Аннотации** | `runbook_url`, `dashboard_url` | Прямая связь алерта с инструкцией по исправлению и визуальным контекстом. |
 
 ### Стратегия: От причин к симптомам
 
-В 2026 году рекомендуется разделять алерты на:
-1.  **Symptom-based (Critical):** То, что видит пользователь (ошибки API, недоступность сервиса). Будит инженера.
-2.  **Cause-based (Warning):** То, что может стать причиной сбоя скоро (нехватка памяти, высокая нагрузка CPU). Отправляется в мессенджеры.
+Рекомендуется разделять алерты на:
+1.  **Symptom-based (Critical):** То, что напрямую влияет на доступность (ошибки API, падение реплик). Требует немедленной реакции.
+2.  **Cause-based (Warning):** То, что является предвестником сбоя (рост потребления ресурсов, приближение к лимитам). Анализ в рабочее время.
+
+---
 
 ## Практические сценарии
 
 ### Группа: Состояние рабочих нагрузок (Workloads)
 
 #### Алерт: Цикличный перезапуск (CrashLoopBackOff)
-Обнаруживает поды, которые не могут запуститься или падают сразу после старта.
-
 ```yaml
-# provisioning/alerting/rules/k8s-workloads.yaml
       - uid: pod_crashloop_backoff
         title: Pod is in CrashLoopBackOff
         condition: A
@@ -57,7 +56,6 @@
         annotations:
           summary: "Пользовательский под {{ $labels.pod }} в состоянии CrashLoopBackOff"
           description: "Под в namespace {{ $labels.namespace }} перезапускается слишком часто."
-          runbook_url: "https://wiki.example.com/k8s/troubleshooting#crashloop"
         data:
           - refId: A
             datasourceUid: prometheus_ds_uid
@@ -65,28 +63,42 @@
               expr: 'kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1'
 ```
 
-#### Алерт: Ошибка загрузки образа (ImagePullBackOff)
-Критично при деплое новых версий.
-
+#### Алерт: Завершение по нехватке памяти (OOMKilled)
 ```yaml
-      - uid: pod_image_pull_error
-        title: Pod cannot pull image
+      - uid: pod_oomkilled
+        title: Pod was OOMKilled
         condition: A
-        for: 10m
+        for: 0m
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            datasourceUid: prometheus_ds_uid
+            model:
+              expr: 'kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1'
+```
+
+### Группа: Ресурсы и лимиты
+
+#### Алерт: CPU Throttling (Ограничение производительности)
+Сигнализирует о том, что контейнер упирается в CPU Limit и его производительность искусственно ограничивается.
+```yaml
+      - uid: container_cpu_throttling
+        title: Container is being CPU throttled
+        condition: A
+        for: 5m
         labels:
           severity: warning
         data:
           - refId: A
             datasourceUid: prometheus_ds_uid
             model:
-              expr: 'kube_pod_container_status_waiting_reason{reason="ImagePullBackOff"} == 1'
+              expr: 'sum(rate(container_cpu_cfs_throttled_seconds_total[5m])) by (namespace, pod, container) > 1'
 ```
 
 ### Группа: Инфраструктура узлов (Nodes)
 
 #### Алерт: Узел не готов (Node Not Ready)
-Критическая недоступность части вычислительных ресурсов кластера.
-
 ```yaml
       - uid: node_not_ready
         title: Node is not ready
@@ -94,9 +106,6 @@
         for: 5m
         labels:
           severity: critical
-        annotations:
-          summary: "Узел {{ $labels.node }} не в статусе Ready"
-          description: "Кластер {{ $labels.cluster }} потерял узел. Поды будут перенесены (evicted)."
         data:
           - refId: A
             datasourceUid: prometheus_ds_uid
@@ -104,14 +113,27 @@
               expr: 'kube_node_status_condition{condition="Ready", status="true"} == 0'
 ```
 
+#### Алерт: Давление на ресурсы узла (Node Pressure)
+```yaml
+      - uid: node_resource_pressure
+        title: Node is under resource pressure
+        condition: A
+        for: 2m
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            datasourceUid: prometheus_ds_uid
+            model:
+              expr: 'kube_node_status_condition{condition=~"DiskPressure|MemoryPressure|PIDPressure", status="true"} == 1'
+```
+
 ### Группа: Хранилища (Storage)
 
-#### Алерт: Переполнение тома (PVC Saturation)
-Предупреждение о нехватке места в PersistentVolume.
-
+#### Алерт: Исчерпание Inodes на томе
 ```yaml
-      - uid: pvc_disk_space_low
-        title: PVC disk space low
+      - uid: pvc_inodes_low
+        title: PVC Inodes low
         condition: A
         for: 15m
         labels:
@@ -120,47 +142,24 @@
           - refId: A
             datasourceUid: prometheus_ds_uid
             model:
-              expr: 'kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes * 100 < 10'
+              expr: 'kubelet_volume_stats_inodes_free / kubelet_volume_stats_inodes * 100 < 10'
 ```
 
-### Группа: Control Plane (API Server)
-
-#### Алерт: Высокая задержка API сервера
-Сигнализирует о деградации производительности всего кластера.
-
-```yaml
-      - uid: apiserver_latency_high
-        title: API Server Latency high
-        condition: A
-        for: 5m
-        labels:
-          severity: warning
-        data:
-          - refId: A
-            datasourceUid: prometheus_ds_uid
-            model:
-              expr: 'histogram_quantile(0.99, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver"}[5m])) by (le)) > 1'
-```
+---
 
 ## Управление алертами как кодом (Alerting as Code)
 
-В 2026 году ручное редактирование алертов в UI запрещено для Production-сред. Используйте следующие инструменты:
-- **Terraform/OpenTofu:** Для управления `grafana_alert_rule` и `grafana_notification_policy`.
-- **Grizzly:** Утилита от Grafana Labs для синхронизации YAML-описаний алертов.
-- **Prometheus Operator:** Если используется self-hosted стек, основным SSoT являются объекты `PrometheusRule` в Kubernetes.
-
-## Интеллектуальный анализ (AI RCA)
-
-Современные системы (например, **K8sGPT** или интегрированный **Grafana Incident AI**) позволяют автоматически обогащать алерты контекстом:
-- Анализ логов в момент срабатывания.
-- Предложение kubectl-команд для диагностики.
-- Группировка подов по общей причине (например, общая недоступность БД).
+Ручное редактирование алертов в UI не рекомендуется для Production-сред. Используйте следующие инструменты:
+- **Terraform/OpenTofu:** Ресурсы `grafana_alert_rule` и `grafana_notification_policy`.
+- **Grizzly:** Утилита от Grafana Labs для синхронизации YAML-описаний.
+- **Prometheus Operator:** Использование Custom Resources `PrometheusRule` (если Grafana работает в режиме управления правилами бэкенда).
+- **Provisioning:** Встроенный механизм Grafana для загрузки правил из YAML-файлов при старте.
 
 ## Дополнительная информация
 
 **См. также:**
 
-- [Provisioning алертов в Grafana](./provisioning.md) — детали настройки YAML.
-- [Best Practices: Алертинг](./best_practices.md) — методологии RED и USE.
+- [Провиженинг алертов в Grafana](./provisioning.md) — детали настройки YAML.
+- [Лучшие практики алертинга](./best_practices.md) — методологии RED и USE.
 - [Мониторинг ресурсов нод node-exporter](../../Prometheus/Exporters/node_exporter.md).
-- [Kube-state-metrics — детали метрик](../../Prometheus/Exporters/kube_state_metrics.md).
+- [Kube-state-metrics — детальное описание](../../Prometheus/Exporters/kube_state_metrics.md).

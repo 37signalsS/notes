@@ -2,12 +2,12 @@
 
 ## Определения
 
-**Grafana Alloy** — универсальный агент для сбора телеметрии (метрики, логи, трассировки, профили), использующий декларативный язык конфигурации River. Alloy является официальным преемником Promtail и Grafana Agent, обеспечивая нативную поддержку OpenTelemetry и глубокую интеграцию со стеком Grafana (Loki, Mimir, Tempo).
+**Grafana Alloy** — универсальный агент для сбора и обработки телеметрии (метрики, логи, трассировки, профили). Использует декларативный язык конфигурации River, который позволяет строить сложные конвейеры обработки данных (DAG). Alloy является официальным преемником Promtail и Grafana Agent, обеспечивая нативную поддержку OpenTelemetry и бесшовную интеграцию со стеком Grafana (Loki, Mimir, Tempo, Phlare).
 
 **Статус агентов (2026):**
-- **Promtail:** В статусе Deprecated (с весны 2026).
-- **Grafana Agent (Static Mode):** В статусе Deprecated (с конца 2025).
-- **Grafana Alloy:** Рекомендуемый стандарт для всех новых инсталляций.
+- **Promtail:** В статусе Deprecated (с весны 2026). Поддержка ограничена критическими багфиксами.
+- **Grafana Agent:** В статусе End-of-Life. Рекомендуется немедленная миграция на Alloy.
+- **Grafana Alloy:** Стандарт индустрии для сбора телеметрии в облачных и гибридных средах.
 
 **Подробнее:** [Обзор Grafana Alloy](../../Grafana/grafana_alloy_overview.md)
 
@@ -15,23 +15,21 @@
 
 ### Архитектура развертывания в Kubernetes
 
-В зависимости от задач, Alloy может быть развернут в различных режимах:
-
 | Режим | Тип контроллера | Назначение |
 | :--- | :--- | :--- |
-| **DaemonSet** | DaemonSet | Сбор логов с файлов на нодах, метрик ресурсов нод и данных eBPF |
-| **Deployment** | Deployment | Сбор метрик из подов (Pull модель), прием трассировок по OTLP |
-| **Clustered** | StatefulSet / Deployment | Агрегация данных, работа в режиме высокой доступности (HA) с балансировкой нагрузки |
+| **DaemonSet** | DaemonSet | Сбор системных логов (`/var/log/pods`), метрик нод (`node-exporter`) и eBPF данных. |
+| **Deployment** | Deployment | Сбор метрик сервисов (Pull), прием OTLP трафика, работа в качестве OpenTelemetry Collector. |
+| **StatefulSet** | StatefulSet | Кластерный режим с сохранением состояния (позиции логов, кеши) и высокой доступностью. |
 
 ### Язык конфигурации River
 
-River — это HCL-подобный язык, ориентированный на построение графа компонентов (DAG). Компоненты соединяются между собой, передавая данные от источников к приемникам.
+River базируется на блоках, аргументах и атрибутах. Основная ценность — динамическое обновление конфигурации без перезагрузки процесса (`hot reload`).
 
-**Типовой конвейер:**
-1. **Discovery:** Обнаружение объектов (подов, сервисов, файлов).
-2. **Source:** Чтение данных из обнаруженных объектов.
-3. **Process:** Фильтрация, трансформация и перемаркировка меток.
-4. **Write:** Отправка данных в хранилище.
+**Типовые стадии обработки (DAG):**
+1. **Discovery:** Автоматическое обнаружение целей (Kubernetes API, статические списки).
+2. **Scrape / Source:** Извлечение данных из целей.
+3. **Transform / Relabel:** Изменение структуры, фильтрация, обогащение метаданными.
+4. **Export / Write:** Отправка данных в один или несколько бэкендов.
 
 ## Практические сценарии
 
@@ -42,133 +40,150 @@ River — это HCL-подобный язык, ориентированный �
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
 
-# Просмотр доступных параметров конфигурации
+# Получение актуальных значений чарта
 helm show values grafana/alloy > alloy_values.yaml
 ```
 
-### Сценарий 1: Сбор логов Kubernetes с перемаркировкой меток
+### Сценарий 1: Сбор логов Kubernetes с поддержкой Loki 3.x
 
-Этот сценарий описывает сбор логов из контейнеров с обогащением данных метаданными (namespace, pod_name, container_name).
+Использование структурированных метаданных для уменьшения кардинальности индекса.
 
-**Конфигурация River (внутри `alloy_values.yaml`):**
+**Конфигурация River:**
 
 ```river
-// 1. Обнаружение подов на текущей ноде
-discovery.kubernetes "pods" {
+// Обнаружение всех подов в кластере
+discovery.kubernetes "all_pods" {
   role = "pod"
 }
 
-// 2. Чтение логов из файлов контейнеров
+// Сбор логов
 loki.source.kubernetes "container_logs" {
-  targets    = discovery.kubernetes.pods.targets
-  forward_to = [loki.relabel.kubernetes_metadata.receiver]
+  targets    = discovery.kubernetes.all_pods.targets
+  forward_to = [loki.process.add_metadata.receiver]
 }
 
-// 3. Обогащение меток
-loki.relabel "kubernetes_metadata" {
+// Обработка и добавление структурированных метаданных (Loki 3.0+)
+loki.process "add_metadata" {
   forward_to = [loki.write.loki_backend.receiver]
 
-  rule {
-    source_labels = ["__meta_kubernetes_namespace"]
-    target_label  = "namespace"
-  }
-  rule {
-    source_labels = ["__meta_kubernetes_pod_name"]
-    target_label  = "pod"
-  }
-  rule {
-    source_labels = ["__meta_kubernetes_pod_container_name"]
-    target_label  = "container"
+  stage.relabel {
+    rule {
+      source_labels = ["__meta_kubernetes_namespace"]
+      target_label  = "namespace"
+    }
+    rule {
+      source_labels = ["__meta_kubernetes_pod_name"]
+      target_label  = "pod"
+    }
   }
 }
 
-// 4. Отправка в Loki
+// Отправка данных
 loki.write "loki_backend" {
   endpoint {
     url = "http://loki-gateway.logging.svc.cluster.local/loki/api/v1/push"
+    // Включение структурированных метаданных для оптимизации хранилища
+    allow_structured_metadata = true
   }
 }
 ```
 
-### Сценарий 2: Авто-инструментирование через eBPF (Loki 3.x+)
+### Сценарий 2: Авто-инструментирование через eBPF (Application Observability)
 
-Alloy позволяет собирать сетевые метрики и трейсы без модификации кода приложения с помощью eBPF.
+**Требования:** ядро Linux 5.8+, привилегированный режим (CAP_SYS_ADMIN).
 
 ```river
-// Сбор сетевых метрик через eBPF
-otelcol.receiver.ebpf "network_metrics" {
+// Сбор сетевых метрик без модификации кода
+otelcol.receiver.ebpf "network_telemetry" {
   network_interface = "eth0"
-  forward_to        = [otelcol.exporter.prometheus.default.receiver]
+  forward_to        = [otelcol.exporter.otlp.tempo.receiver]
 }
 
-// Преобразование в формат Prometheus
-otelcol.exporter.prometheus "default" {
-  forward_to = [prometheus.remote_write.mimir.receiver]
+// Отправка трасс в Tempo
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo-distributor.tracing.svc.cluster.local:4317"
+    tls { insecure = true }
+  }
 }
 ```
 
-### Сценарий 3: Кластеризация и высокая доступность
+### Сценарий 3: Мультиарендность (Multi-tenancy)
 
-Для масштабирования Alloy и обеспечения отказоустойчивости используется встроенный механизм кластеризации.
+Разделение потоков данных для разных команд через заголовки.
 
-**Настройка в `values.yaml`:**
+```river
+loki.write "team_a" {
+  endpoint {
+    url = "http://loki-gateway.logging.svc.cluster.local/loki/api/v1/push"
+    headers = {
+      "X-Scope-OrgID" = "team-alpha",
+    }
+  }
+}
+
+loki.write "team_b" {
+  endpoint {
+    url = "http://loki-gateway.logging.svc.cluster.local/loki/api/v1/push"
+    headers = {
+      "X-Scope-OrgID" = "team-beta",
+    }
+  }
+}
+```
+
+## Безопасность и права доступа (RBAC)
+
+Для работы Discovery Alloy требуются права на чтение ресурсов Kubernetes API.
+
+**Пример ClusterRole в чарте:**
+```yaml
+controller:
+  rbac:
+    create: true
+  serviceAccount:
+    create: true
+    name: "alloy-collector"
+```
+По умолчанию Alloy запрашивает доступ к `pods`, `nodes`, `services`, `endpoints`, `configmaps`. Для eBPF необходимо дополнительно включить `privileged: true` в `securityContext`.
+
+## Мониторинг и эксплуатация
+
+### Интеграция с Prometheus Operator
+
+Для сбора метрик самого Alloy (состояние компонентов, ошибки конвейера):
 
 ```yaml
+# values.yaml
 alloy:
-  clustering:
+  metrics:
     enabled: true
-  configMap:
-    create: true
-    content: |
-      // Конфигурация, использующая кластерные возможности
-      prometheus.scrape "k8s_metrics" {
-        targets    = discovery.kubernetes.pods.targets
-        forward_to = [prometheus.remote_write.mimir.receiver]
-        clustering {
-          enabled = true
-        }
-      }
-```
-
-### Установка в кластер
-
-```bash
-# Установка Alloy в режиме DaemonSet для сбора логов
-helm upgrade --install alloy grafana/alloy \
-  --namespace logging \
-  --create-namespace \
-  -f alloy_values.yaml \
-  --wait --atomic
+  serviceMonitor:
+    enabled: true
+    interval: 30s
 ```
 
 ### Проверка работоспособности
 
-```bash
-# Проверка состояния подов
-kubectl get pods -n logging -l app.kubernetes.io/name=alloy
-
-# Доступ к UI Alloy для отладки графа компонентов (через port-forward)
-kubectl port-forward -n logging svc/alloy 12345:12345
-# → Откройте http://localhost:12345 для просмотра Graph и статуса компонентов
-```
+1.  **UI отладки:** `kubectl port-forward svc/alloy 12345:12345`.
+    *   `Graph`: Визуализация DAG и связей компонентов.
+    *   `Status`: Здоровье каждого отдельного блока River.
+2.  **Проверка логов:** `kubectl logs -l app.kubernetes.io/name=alloy -f`.
 
 ### Устранение неисправностей
 
-| Проблема | Возможная причина | Путь решения |
+| Ошибка | Возможная причина | Путь решения |
 | :--- | :--- | :--- |
-| **Pod в статусе CrashLoopBackOff** | Ошибка синтаксиса в River-конфигурации | Проверьте логи: `kubectl logs -l app.kubernetes.io/name=alloy`. Alloy укажет на строку с ошибкой. |
-| **Метки не добавляются** | Ошибка в блоке `loki.relabel` | Убедитесь, что `source_labels` соответствуют внутренним метаданным Kubernetes. |
-| **Высокое потребление памяти** | Слишком большой объем `positions` или кэша | Увеличьте лимиты ресурсов или настройте более агрессивную ротацию логов. |
-| **Проблемы с кластеризацией** | Нет сетевой связности между подами Alloy | Проверьте NetworkPolicies и работу внутреннего DNS кластера. |
+| **Component unhealthy** | Ошибка в аргументах блока (например, неверный URL) | Проверьте UI (вкладка Status) — там будет детальное описание ошибки. |
+| **OOMKilled** | Слишком много целей в discovery или большой объем логов в памяти | Увеличьте `memory.limits` или используйте `clustering` для распределения нагрузки. |
+| **Permission denied (eBPF)** | Недостаточно прав у контейнера | Убедитесь, что установлены `privileged: true` и нужные `capabilities`. |
 
 ## Дополнительная информация
 
-### Рекомендуемые ресурсы
-
 | Ресурс | Описание |
 | :--- | :--- |
-| [Обзор Grafana Alloy](../../Grafana/grafana_alloy_overview.md) | Архитектура, принципы работы и сравнение с другими агентами |
-| [Официальная документация Alloy](https://grafana.com/docs/alloy/latest/) | Полный справочник по компонентам и функциям |
-| [Конвертер конфигураций](https://grafana.com/docs/alloy/latest/tasks/migrate/) | Инструмент для автоматического перехода с Promtail и Grafana Agent |
-| [Обзор Loki](../loki_overview.md) | Архитектура системы хранения логов |
-| [Установка Promtail](promtail_installation.md) | Руководство по устаревшему агенту (только для legacy-систем) |
+| [Обзор Grafana Alloy](../../Grafana/grafana_alloy_overview.md) | Архитектура и сравнение с другими агентами |
+| [Установка Loki](loki_installation.md) | Настройка бэкенда для приема логов от Alloy |
+| [Примеры LogQL](logql_examples.md) | Язык запросов для анализа логов, собранных Alloy |
+| [Миграция с Promtail](https://grafana.com/docs/alloy/latest/tasks/migrate/from-promtail/) | Пошаговое руководство по переходу на River |
+| [Alloy на Minikube](../../Kubernetes/Installation/LGTM_Stack/lgtm_otel_minikube_lgtm_stack_deployment.md) | Полный цикл развертывания в тестовой среде |

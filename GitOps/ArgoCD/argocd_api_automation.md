@@ -1,119 +1,117 @@
 # ArgoCD: Автоматизация через API и Ansible
 
-Управление ArgoCD через REST API позволяет автоматизировать жизненный цикл приложений в разнородных инфраструктурах (облака, Kubernetes, Bare Metal). Использование Ansible в связке с API обеспечивает декларативный подход к управлению самими объектами ArgoCD.
+Управление ArgoCD через программные интерфейсы (REST и gRPC) позволяет автоматизировать жизненный цикл приложений в разнородных инфраструктурах. Использование Ansible в связке с API обеспечивает декларативный подход к управлению конфигурацией самого ArgoCD.
 
 ## Определения
 
-- **ArgoCD API**: RESTful интерфейс для управления всеми ресурсами ArgoCD (Applications, Projects, Clusters).
-- **API Token**: JWT-токен (JSON Web Token) для аутентификации запросов к API.
-- **Ansible `uri` module**: Модуль Ansible для взаимодействия с HTTP/HTTPS API.
-- **Swagger**: Встроенная интерактивная документация API, доступная по адресу `https://<argocd-url>/swagger-ui`.
+- **ArgoCD REST API** — HTTP-интерфейс для управления всеми ресурсами ArgoCD (Applications, Projects, Clusters).
+- **ArgoCD gRPC API** — высокопроизводительный бинарный интерфейс, используемый CLI-клиентом по умолчанию.
+- **Service Account (SA)** — специальный тип аккаунта в ArgoCD для программного доступа, не привязанный к конкретному пользователю.
+- **API Token** — JWT-токен (JSON Web Token) для аутентификации запросов.
+- **Ansible Collection `argoproj.argocd`** — официальный набор модулей для управления ресурсами ArgoCD.
 
 ## Базовые концепции
 
-### Управление токенами (Authentication)
+### Методы аутентификации
 
-Для взаимодействия с API требуется токен доступа. Существует два основных способа его получения:
+Для программного взаимодействия требуется токен доступа. В современных версиях ArgoCD (v2.0+) рекомендуется использовать **Service Accounts**.
 
-#### 1. Временный токен (Session)
-Генерируется через API-запрос с использованием учетных данных пользователя.
-```bash
-curl $ARGOCD_SERVER/api/v1/session -d '{"username":"admin","password":"your_password"}'
-```
-
-#### 2. Постоянный токен (API Key)
-Для автоматизации рекомендуется использовать постоянные токены, привязанные к аккаунтам.
-1. **Настройка аккаунта**: В `argocd-cm` (ConfigMap) добавьте возможность использования API-ключей для пользователя:
+#### 1. Сервисные аккаунты (Service Accounts)
+Это предпочтительный метод для CI/CD систем.
+1. **Создание SA:** Добавьте аккаунт в `argocd-cm` ConfigMap.
    ```yaml
    data:
-     accounts.admin: apiKey, login
+     accounts.github-actions: apiKey
    ```
-2. **Перезапуск**: Выполните рестарт `argocd-server`.
-3. **Генерация в UI**: `Settings -> Accounts -> admin -> Generate New Token`.
+2. **Назначение прав:** В `argocd-rbac-cm` свяжите аккаунт с ролью.
+   ```yaml
+   data:
+     policy.csv: |
+       p, role:ci-bot, applications, sync, *, allow
+       g, github-actions, role:ci-bot
+   ```
+3. **Генерация токена:**
+   ```bash
+   argocd account generate-token --account github-actions
+   ```
+
+#### 2. Временная сессия (User Session)
+Используется для разовых задач от имени пользователя.
+```bash
+curl -s -X POST $ARGOCD_SERVER/api/v1/session -d '{"username":"admin","password":"password"}' | jq -r .token
+```
+
+### Сравнение протоколов: REST vs gRPC
+
+| Протокол | Назначение | Особенности |
+| :--- | :--- | :--- |
+| **REST (HTTP/JSON)** | Интеграция с внешними скриптами, cURL, Ansible. | Прост в использовании, работает через стандартные HTTP-клиенты. |
+| **gRPC (HTTP/2)** | Внутреннее взаимодействие, работа через `argocd` CLI. | Высокая производительность, требует специальных клиентских библиотек. |
+
+*Примечание: Если ArgoCD находится за прокси-сервером, не поддерживающим HTTP/2, используйте флаг `--grpc-web` в CLI или REST API.*
 
 ## Практические сценарии
 
-### Сценарий 1: Управление приложениями через cURL
+### Сценарий 1: Управление ресурсами через cURL
 
-Экспортируйте токен:
-```bash
-export ARGOCD_TOKEN="ваш_токен"
-```
+Экспортируйте токен: `export ARGOCD_TOKEN="ваш_токен"`
 
-**Создание приложения (Helm):**
+**Создание AppProject:**
 ```bash
 curl -X POST -H "Authorization: Bearer $ARGOCD_TOKEN" -H "Content-Type: application/json" \
   -d '{
-    "metadata": {"name": "test-api-app", "namespace": "argocd"},
-    "spec": {
-      "project": "default",
-      "source": {
-        "repoURL": "https://github.com/example/charts.git",
-        "path": "my-chart",
-        "targetRevision": "main"
-      },
-      "destination": {
-        "server": "https://kubernetes.default.svc",
-        "namespace": "target-ns"
-      },
-      "syncPolicy": {
-        "automated": {"prune": true, "selfHeal": true}
+    "project": {
+      "metadata": {"name": "prod-project"},
+      "spec": {
+        "destinations": [{"server": "https://kubernetes.default.svc", "namespace": "prod"}],
+        "sourceRepos": ["https://github.com/my-org/*"]
       }
     }
-  }' https://<argocd-url>/api/v1/applications
+  }' $ARGOCD_SERVER/api/v1/projects
 ```
 
-**Удаление приложения:**
+**Принудительная синхронизация приложения:**
 ```bash
-curl -X DELETE -H "Authorization: Bearer $ARGOCD_TOKEN" \
-  https://<argocd-url>/api/v1/applications/test-api-app
+curl -X POST -H "Authorization: Bearer $ARGOCD_TOKEN" \
+  $ARGOCD_SERVER/api/v1/applications/my-app/sync
 ```
 
-### Сценарий 2: Интеграция Ansible с ArgoCD
+### Сценарий 2: Использование Ansible Collection
 
-Использование модуля `uri` позволяет интегрировать управление приложениями ArgoCD в общие плейбуки развертывания инфраструктуры.
+Официальная коллекция `argoproj.argocd` позволяет управлять приложениями без написания низкоуровневых HTTP-запросов.
 
-#### Структура роли `app-k8s-deploy`
-```text
-roles/app-k8s-deploy/
-├── defaults/
-│   └── main.yaml      # Переменные (URL, токен, имя приложения)
-├── tasks/
-│   ├── main.yaml      # Переключатель задач
-│   ├── create.yaml    # Реализация POST запроса
-│   └── delete.yaml    # Реализация DELETE запроса
+**Установка коллекции:**
+```bash
+ansible-galaxy collection install argoproj.argocd
 ```
 
-**Пример `defaults/main.yaml`:**
-```yaml
-ARGOCD_URL: "https://argocd.example.com"
-ARGOCD_TOKEN: ""  # Рекомендуется передавать через Vault
-APP_NAME: "test-api-app"
-```
-
-**Пример `tasks/main.yaml` (Диспетчер):**
-```yaml
-- name: Include create application tasks
-  include_tasks: create.yaml
-  when: task == 'install'
-
-- name: Include delete application tasks
-  include_tasks: delete.yaml
-  when: task == 'delete'
-```
-
-#### Запуск роли в основном плейбуке
+**Пример плейбука для создания приложения:**
 ```yaml
 - hosts: localhost
-  roles:
-    - { role: app-k8s-deploy, task: install }
+  tasks:
+    - name: Create ArgoCD Application
+      argoproj.argocd.app:
+        name: guestbook
+        namespace: argocd
+        repo_url: https://github.com/argoproj/argocd-example-apps.git
+        path: guestbook
+        dest_namespace: default
+        dest_server: https://kubernetes.default.svc
+        project: default
+        sync_policy:
+          automated:
+            prune: true
+            self_heal: true
+        auth_token: "{{ lookup('env', 'ARGOCD_TOKEN') }}"
+        server_url: "{{ lookup('env', 'ARGOCD_SERVER') }}"
 ```
 
 ## Дополнительная информация
 
 ### Безопасность
-- Не храните `ARGOCD_TOKEN` в открытом виде. Используйте **[Ansible Vault](../../Ansible/Vault/basics.md)**.
-- Ограничивайте права аккаунта, используемого для API, через **[RBAC политики](./argocd_sso_gitlab.md#шаг-4-разграничение-прав-доступа-rbac)**.
+- **Ansible Vault:** Всегда шифруйте токены доступа. Никогда не фиксируйте их в Git в открытом виде.
+- **Принцип минимальных привилегий:** Используйте Service Accounts с узкоспециализированными RBAC-ролями вместо токена администратора.
+- **Изоляция API:** Рекомендуется ограничить доступ к API ArgoCD на уровне сети (Ingress Allow-list) только доверенными IP-адресами (например, раннерами CI).
 
 **Связанные документы:**
 - [ArgoCD: Обзор системы](./argocd_overview.md)

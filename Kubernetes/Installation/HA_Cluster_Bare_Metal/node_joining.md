@@ -2,74 +2,72 @@
 
 ## Определения
 
-**kubeadm join** — команда присоединения узла к существующему кластеру.
+**kubeadm join** — команда для расширения кластера путём присоединения новых узлов (как мастеров, так и воркеров) к существующей среде.
 
-**Control Plane Endpoint** — стабильная точка входа (VIP:PORT или DNS) для доступа к API-серверу через балансировщик нагрузки.
+**Bootstrap Token** — временный секрет, используемый для аутентификации узла при первом подключении к кластеру. По умолчанию имеет срок жизни (TTL) 24 часа.
+
+**Control Plane Endpoint** — стабильная точка входа (VIP или DNS-имя балансировщика), через которую узлы обращаются к API-серверу кластера.
 
 ---
 
 ## Основные концепции
 
-### Процесс присоединения узлов
+### Процесс и механизмы присоединения
 
-Присоединение выполняется после [инициализации Control Plane](./control_plane_initialization.md) на первом мастер-узле. Команды `kubeadm join` получаются из вывода `kubeadm init`:
+Присоединение узлов — это многоэтапный процесс, который выполняется после [инициализации Control Plane](../kubeadm/cluster_initialization.md) первого узла.
 
-1. Остальные мастера присоединяются через `kubeadm join --control-plane --certificate-key`
-2. Worker-узлы присоединяются через `kubeadm join` без дополнительных флагов
-3. CNI-плагин разворачивается на всех узлах автоматически (DaemonSet)
+1.  **Аутентификация**: Узел использует Bootstrap Token для проверки подлинности в API-сервере.
+2.  **Проверка сертификатов**: Узел получает CA-сертификат кластера и проверяет его соответствие через хэш (`discovery-token-ca-cert-hash`).
+3.  **Конфигурация Kubelet**: `kubeadm` генерирует локальные конфигурационные файлы для `kubelet` и запускает его.
+4.  **Регистрация**: Узел регистрируется в API-сервере, после чего на него назначаются системные компоненты (kube-proxy, CNI).
 
-Подробнее об архитектуре инициализации — в [руководстве по control plane initialization](./control_plane_initialization.md).
+**Типы узлов:**
+- **Control Plane (Мастера)**: Присоединяются с флагом `--control-plane`. Требуют наличия сертификатов кластера (через `--certificate-key` или копирование вручную).
+- **Worker (Воркеры)**: Присоединяются без специальных флагов. Выполняют только рабочие нагрузки.
+
+Подробнее об архитектуре — в [руководстве по инициализации кластера](../kubeadm/cluster_initialization.md).
 
 ---
 
 ## Практические сценарии
 
-### Шаг 7: Присоединение остальных мастер-узлов
+### Шаг 7: Присоединение дополнительных мастер-узлов
 
-На **втором и третьем** мастер-узлах выполните команду `kubeadm join` для мастеров (из вывода `kubeadm init`):
+На **втором и третьем** мастер-узлах выполните команду, полученную при инициализации первого мастера.
+
+**Требования:**
+- Балансировщик нагрузки должен быть доступен по адресу `LOAD_BALANCER_VIP:6443`.
+- Порты `6443`, `2379-2380` (для etcd), `10250` должны быть открыты.
 
 ```bash
 sudo kubeadm join LOAD_BALANCER_VIP:6443 \
   --token <token> \
   --discovery-token-ca-cert-hash sha256:<hash> \
   --control-plane \
-  --certificate-key <key>
+  --certificate-key <key> \
+  --cri-socket=unix:///run/containerd/containerd.sock
 ```
 
-**Параметры**:
+**Разбор параметров**:
+- `--control-plane` — указывает, что узел будет частью управляющего слоя.
+- `--certificate-key` — ключ для расшифровки сертификатов, загруженных в секреты кластера во время `kubeadm init --upload-certs`.
+- `--cri-socket` — путь к сокету среды выполнения контейнеров (для containerd обязателен в случае нескольких сред).
 
-- `--control-plane` — указывает, что узел присоединяется как мастер
-- `--certificate-key` — ключ для загрузки сертификатов из кластера (генерируется при `kubeadm init` с `--upload-certs`)
-
-**После выполнения**:
-
-- Мастер присоединяется к кластеру
-- Запускаются компоненты Control Plane как статические поды
-- `etcd` формирует кластер (3 узла для кворума)
+**Результат**:
+- Узел добавится в кластер etcd.
+- Запустятся статические поды `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`.
+- На узел будет наложен Taint `node-role.kubernetes.io/control-plane:NoSchedule`.
 
 ### Шаг 8: Присоединение worker-узлов
 
-**На master-ноде (получение токена):**
+Если Bootstrap Token истёк (прошло >24 часов), сгенерируйте новую команду на любом исправном мастере:
 
 ```bash
-# Создаём новый токен (если старый истёк или не сохранили)
+# Генерация команды присоединения с новым токеном
 kubeadm token create --print-join-command
 ```
 
-**Вывод:**
-
-```bash
-kubeadm join k8s-node1:6443 --token xmyjho.oi5i30jgskg5esi3 \
-  --discovery-token-ca-cert-hash sha256:d3e0fa38c572bbed10f3e67fa709769b1cd9bed80f0d2c80a87d7db45b8ea75a
-```
-
-> **Важно:** Добавляем флаг `--cri-socket`, так как используем containerd:
->
-> ```bash
-> --cri-socket=unix:///run/containerd/containerd.sock
-> ```
-
-**На каждом worker-узле:**
+**Выполнение на каждом worker-узле:**
 
 ```bash
 sudo kubeadm join LOAD_BALANCER_VIP:6443 \
@@ -78,101 +76,105 @@ sudo kubeadm join LOAD_BALANCER_VIP:6443 \
   --cri-socket=unix:///run/containerd/containerd.sock
 ```
 
-> **Примечание:** Worker-узлы не требуют дополнительных флагов, так как не запускают компоненты Control Plane.
+> **Примечание:** Worker-узлы не требуют доступа к сертификатам через `--certificate-key`, так как они не запускают компоненты управляющего слоя.
 
 ---
 
-### Шаг 9: Мониторинг присоединения на master-ноде
+### Шаг 9: Мониторинг процесса присоединения
 
-**На control-plain ноде следим за появлением новых нод:**
+Следите за состоянием узлов с мастер-ноды:
 
 ```bash
-# В реальном времени
+# Наблюдение в реальном времени
 kubectl get nodes -w
 ```
 
-**Через некоторое время** (когда Calico развернётся на worker-нодах):
+**Типичный жизненный цикл статуса:**
+1.  `NotReady` — узел зарегистрирован, но сетевой плагин (CNI) ещё не запущен.
+2.  `Ready` — Calico/Flannel развёрнут, узел готов принимать нагрузку.
 
-```
+**Ожидаемый вид списка узлов (Kubernetes v1.35.x):**
+
+```text
 NAME       STATUS   ROLES           AGE   VERSION
-k8s-node1  Ready    control-plane   42m   v1.35.x
-k8s-node2  Ready    <none>          7m    v1.35.x
-k8s-node3  Ready    <none>          6m    v1.35.x
+k8s-m1     Ready    control-plane   60m   v1.35.x
+k8s-m2     Ready    control-plane   15m   v1.35.x
+k8s-m3     Ready    control-plane   14m   v1.35.x
+k8s-w1     Ready    <none>          5m    v1.35.x
 ```
-
-> **Обратите внимание:** У worker-нод роль `<none>` — это нормально, они просто workers.
 
 ---
 
-### Шаг 10: Проверка состояния кластера
+### Шаг 10: Верификация и детальная проверка
 
-**Детальная информация о нодах:**
-
-```bash
-kubectl get nodes -o wide
-```
-
-**Ожидаемый вывод:**
-
-```
-NAME       STATUS   ROLES           AGE   VERSION   INTERNAL-IP    EXTERNAL-IP
-k8s-node1  Ready    control-plane   42m   v1.35.x   192.168.1.1    <none>
-k8s-node2  Ready    <none>          7m    v1.35.x   192.168.1.2    <none>
-k8s-node3  Ready    <none>          6m    v1.35.x   192.168.1.3    <none>
-```
-
-**Проверка системных подов:**
+Для глубокого анализа состояния узла используйте:
 
 ```bash
-kubectl get pods -n kube-system -o wide
+# Подробная информация о ресурсах, taints и условиях (Conditions)
+kubectl describe node k8s-w1
 ```
 
-**Должны увидеть:**
-
-- На каждой ноде — `calico-node-xxx` (по одному на ноду)
-- На master — поды control-plane (apiserver, etcd, scheduler, controller-manager)
-- `CoreDNS` (2 реплики) — распределены по нодам
-- `kube-proxy` на каждой ноде
-
-**Проверка Calico на worker-нодах:**
+**Проверка системных компонентов:**
 
 ```bash
-# Проверяем поды Calico на всех нодах
-kubectl get pods -n kube-system -l k8s-app=calico-node -o wide
-
-# Проверяем логи Calico на конкретной ноде
-kubectl logs -n kube-system -l k8s-app=calico-node --tail=50
+# Убедитесь, что kube-proxy и CNI запущены на всех узлах
+kubectl get pods -n kube-system -o wide | grep -E 'kube-proxy|calico-node'
 ```
 
-Должны увидеть по одному поду на каждой ноде со статусом `Running`.
+**Проверка связности etcd (на мастерах):**
+
+```bash
+# Проверка кворума и списка участников кластера etcd
+sudo kubectl exec -n kube-system etcd-k8s-m1 -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint status --cluster -w table
+```
+
+---
 
 ## Дополнительная информация
 
-### Отладка проблем присоединения
+### Углублённая отладка
 
-```bash
-# Логи kubelet на присоединяемом узле
-sudo journalctl -u kubelet -f
+Если команда `kubeadm join` зависает или завершается ошибкой:
 
-# Проверка токена (на master)
-kubeadm token list
+1.  **Проверка логов kubelet**:
+    ```bash
+    sudo journalctl -u kubelet -f
+    ```
+2.  **Проверка доступности API через VIP**:
+    ```bash
+    curl -k https://LOAD_BALANCER_VIP:6443/healthz
+    # Должно вернуть: ok
+    ```
+3.  **Сброс состояния при неудаче**:
+    ```bash
+    sudo kubeadm reset -f
+    sudo rm -rf /etc/cni/net.d
+    sudo iptables -F && sudo iptables -t nat -F && sudo iptables -t mangle -F && sudo iptables -X
+    ```
 
-# Пересоздание токена если истёк
-kubeadm token create --print-join-command
+### Управление Bootstrap токенами
 
-# Проверка сертификатов
-sudo kubeadm init phase upload-certs --upload-certs
-```
+| Команда | Описание |
+| :--- | :--- |
+| `kubeadm token list` | Список активных токенов и их TTL |
+| `kubeadm token create --ttl 1h` | Создать временный токен на 1 час |
+| `kubeadm init phase upload-certs --upload-certs` | Повторная загрузка сертификатов для новых мастеров |
 
-**Типичные проблемы:**
+### Типичные проблемы Bare Metal
 
-| Проблема | Причина | Решение |
+| Проблема | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| `token expired` | Токен устарел (>24ч) | `kubeadm token create --print-join-command` |
-| `certificate-key invalid` | Неправильный ключ | Пересоздать: `kubeadm init phase upload-certs` |
-| `connection refused` | Балансировщик не работает | Проверить HAProxy/Keepalived |
-| `node already exists` | Узел уже в кластере | `kubeadm reset` на узле |
+| `CA hash mismatch` | Изменился CA сертификат | Получить актуальный хэш: `openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex` |
+| `ETCD_JOIN_ERROR` | Проблемы сети между мастерами | Проверить порты `2379-2380` и время (drift) между узлами |
+| `CRI contact error` | Неверный сокет в конфиге | Явно указать `--cri-socket` или проверить статус `containerd` |
 
 ### Интеграция с процессом развёртывания
 
-Присоединение узлов — **шаг 7–8** после [инициализации Control Plane](./control_plane_initialization.md) и [установки CNI](./cni_installation.md). Проверка состояния кластера описана в [руководстве по верификации](./k8s_ha_cluster_verification.md), настройка балансировщика — в [документации по HA с kubeadm](../kubeadm/ha_concepts.md).
+Присоединение узлов — **завершающий этап физического развёртывания** (шаги 7–8). Далее следуют этапы настройки [хранилищ (StorageClass)](../../Storage/storageclass.md) и [Ingress-контроллеров](../../Networking/Ingress/overview.md).
+
+Полный цикл проверки работоспособности описан в [руководстве по верификации](./k8s_ha_cluster_verification.md).

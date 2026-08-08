@@ -2,262 +2,225 @@
 
 ## Определения
 
-**Provisioning (Провиженинг) алертов** — подход Infrastructure as Code (инфраструктура как код) для декларативного управления правилами оповещений, контакт-пойнтами, политиками уведомлений, интервалами подавления и шаблонами Grafana через YAML-файлы.
+**Provisioning (Провиженинг) алертов** — методология Infrastructure as Code (IaC), позволяющая декларативно описывать все компоненты системы оповещений Grafana (правила, контакт-пойнты, политики, шаблоны) через YAML-файлы. Это исключает ручную настройку через UI и обеспечивает воспроизводимость конфигурации в разных окружениях (Dev/Stage/Prod).
 
 ## Базовые концепции
 
 ### Структура директорий
 
-Конфигурационные файлы сканируются Grafana при старте из стандартной директории:
+Grafana сканирует директорию `/etc/grafana/provisioning/alerting/` при запуске. Стандартная структура в 2025 году:
 
 ```
-/etc/grafana/provisioning/
-├── alerting/
-│   ├── rules/           # Правила алертинга
-│   ├── contactpoints/   # Контакт-пойнты (каналы уведомлений)
-│   ├── policies/        # Политики уведомлений (маршрутизация)
-│   ├── mute_timings/    # Интервалы подавления
-│   └── templates/       # Шаблоны сообщений
+/etc/grafana/provisioning/alerting/
+├── rules/           # Alerting и Recording rules
+├── contactpoints/   # Контакт-пойнты (каналы уведомлений)
+├── policies/        # Политики уведомлений (маршрутизация)
+├── mute_timings/    # Интервалы подавления (расписания)
+└── templates/       # Go-шаблоны сообщений
 ```
 
-**Важно:** В отличие от провиженинга дашбордов, рекурсивный поиск файлов в поддиректориях `alerting/` может не поддерживаться (в зависимости от версии). Рекомендуется размещать файлы непосредственно в корне соответствующих папок.
+**Важные нюансы:**
+- **Hot Reload:** Изменения в YAML-файлах подхватываются Grafana "на лету" без перезагрузки сервиса (за исключением глобальных настроек в `grafana.ini`).
+- **UID Consistency:** Всегда задавайте статичные `uid` для всех ресурсов. Это предотвращает создание дубликатов при пересоздании контейнеров и сохраняет историю в базе данных.
+- **Интерполяция переменных:** Используйте `${MY_SECRET}` для токенов. Для этого в `grafana.ini` должна быть включена опция `enable_env_vars_interpolation = true`.
 
-### Типы ресурсов
+---
 
-| Тип | Директория | Назначение |
-| :--- | :--- | :--- |
-| **Правила** | `rules/` | Группы правил и условия срабатывания |
-| **Контакт-пойнты** | `contactpoints/` | Каналы уведомлений (Email, Slack, Telegram) |
-| **Политики** | `policies/` | Маршрутизация и группировка уведомлений |
-| **Интервалы подавления** | `mute_timings/` | Определение времени, когда уведомления не должны отправляться |
-| **Шаблоны** | `templates/` | Глобальные шаблоны для формирования сообщений |
+## Правила (Alerting и Recording Rules)
 
-### Особенности и ограничения
+### Техническая структура правила (`data`)
 
-- **Read-only в UI:** Ресурсы, созданные через провиженинг, помечаются в интерфейсе как `Provisioned`. Их нельзя редактировать через UI, только через исходные файлы.
-- **OrgId:** Почти все ресурсы требуют указания `orgId` (по умолчанию `1`).
-- **UID:** Для правил и контакт-пойнтов крайне рекомендуется задавать фиксированные `uid`, чтобы избежать дублирования при перезагрузках.
+Поле `data` представляет собой массив объектов, описывающих конвейер обработки данных.
 
-### Структура правила алертинга
+| Поле | Описание |
+| :--- | :--- |
+| `refId` | Идентификатор шага (например, `A`, `B`, `C`). |
+| `datasourceUid` | UID источника данных или `__expr__` для вычислительных шагов. |
+| `model` | Объект с параметрами запроса или выражения. |
 
-| Поле | Описание | Пример |
-| :--- | :--- | :--- |
-| `uid` | Уникальный идентификатор правила | `api-error-rate-high` |
-| `title` | Название правила (отображается в интерфейсе) | `API error rate > 5%` |
-| `condition` | Идентификатор (RefId) условия срабатывания | `B` |
-| `for` | Время подтверждения состояния (пендинг) | `5m` |
-| `noDataState` | Состояние при отсутствии данных | `NoData`, `Alerting`, `OK` |
-| `execErrState` | Состояние при ошибке выполнения запроса | `Error`, `OK` |
-| `labels` | Метки для маршрутизации и фильтрации | `severity: critical` |
-| `annotations` | Описание, ссылки на документацию и контекст | `summary`, `runbook` |
-| `data` | Массив запросов и вычислительных выражений | PromQL + Threshold |
+**Параметры `model` для запросов (Query):**
+- `expr`: Строка запроса (PromQL, LogQL, SQL).
+- `instant`: `true/false` (для Prometheus/Mimir).
+- `format`: `time_series` или `table`.
 
-### Структура данных (поле data)
+**Параметры `model` для выражений (Expression):**
+- `type`: `math` (математика), `reduce` (агрегация), `resample` (изменение окна), `threshold` (порог).
+- `conditions`: Массив условий для типа `threshold`.
 
-| Идентификатор (RefId) | Тип | Назначение |
-| :--- | :--- | :--- |
-| `A`, `B`, `C` | Query | Запросы к источникам данных (PromQL, SQL) |
-| `__expr__` | Expression | Выражения: Threshold (порог), Reduce, Math |
-
-## Практические сценарии
-
-### Пример: Настройка правила для API
-
-Декларативное описание правила для мониторинга доли ошибок.
+### Пример: Alerting Rule с конвейером выражений
 
 ```yaml
-# provisioning/alerting/rules/api-alerts.yaml
+# provisioning/alerting/rules/app-alerts.yaml
 apiVersion: 1
 groups:
   - orgId: 1
-    name: api-alerts
-    folder: Production
+    name: "Application Alerts"
+    folder: "Production"
     interval: 1m
     rules:
-      - uid: api_error_rate_high
-        title: API error rate > 5%
-        condition: B
+      - uid: high_error_rate_api
+        title: "High Error Rate API"
+        condition: C
         for: 5m
         noDataState: NoData
         execErrState: Error
         labels:
-          service: api
           severity: critical
+          team: backend
         annotations:
-          summary: Высокая доля ошибок API
-          description: Доля 5xx ошибок превышает 5%
-          runbook: Проверьте логи и зависимые сервисы
+          summary: "Высокая доля ошибок на {{ $labels.instance }}"
+          description: "Доля ошибок: {{ $values.B.Value }}%"
         data:
           - refId: A
-            datasourceUid: prometheus_ds_uid
+            datasourceUid: prometheus_prod
             model:
-              expr: 'sum(rate(http_requests_total{job="api",status=~"5.."}[5m])) / sum(rate(http_requests_total{job="api"}[5m])) * 100'
-              instant: false
+              expr: "sum(rate(http_errors_total[5m]))"
               format: time_series
           - refId: B
-            datasourceUid: __expr__
+            datasourceUid: "__expr__"
             model:
-              type: threshold
-              conditions:
-                - evaluator: { type: gt, params: [5] }
-                  query: { params: [A] }
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: math
+              expression: "$B > 10"
+```
+
+### Пример: Recording Rule (Нативный провиженинг)
+
+Recording Rules позволяют вычислять метрики на стороне Grafana и записывать их обратно в источник.
+
+```yaml
+      - uid: node_cpu_usage_avg
+        title: "node:cpu_usage:avg5m"
+        record:
+          metric: "node:cpu_usage:avg5m"
+        data:
+          - refId: A
+            datasourceUid: mimir_ds
+            model:
+              expr: "avg(rate(node_cpu_seconds_total[5m]))"
 ```
 
 ---
 
-### Пример: Настройка контакт-пойнтов для Email
+## Контакт-пойнты (Contact Points)
+
+Декларативная настройка каналов уведомлений. В 2025 году поддерживаются расширенные настройки безопасности и форматирования.
+
+### Настройка Webhook и Kafka
 
 ```yaml
-# provisioning/alerting/contactpoints/email.yaml
+# provisioning/alerting/contactpoints/receivers.yaml
 apiVersion: 1
-
 contactPoints:
   - orgId: 1
-    name: team-devops-email
+    name: "Internal-Webhook"
     receivers:
-      - uid: team-devops-email-receiver
-        type: email
+      - uid: cp_webhook_01
+        type: webhook
         settings:
-          addresses: devops@example.com,ops@example.com
-          singleEmail: false
-          message: |
-            {{ define "email.default.message" }}
-            Алерт: {{ .CommonLabels.alertname }}
-            Статус: {{ .Status }}
-            {{ end }}
+          url: "https://alerts.internal.net/api/receive"
+          httpMethod: "POST"
+          maxAlerts: 10
+          authorization:
+            type: "Bearer"
+            credentials: ${WEBHOOK_TOKEN}
+  - name: "Kafka-Topic"
+    receivers:
+      - uid: cp_kafka_01
+        type: kafka
+        settings:
+          restProxyUrl: "http://kafka-rest:8082"
+          topic: "monitoring-events"
+          # Включение скриншота через встроенный Image Renderer
+          uploadImage: true 
 ```
 
----
+### Настройка Telegram и Slack
 
-### Пример: Настройка контакт-пойнтов для Slack
+Для детальной настройки Telegram (создание бота, получение Chat ID, шаблонизация MarkdownV2) см. специализированное руководство:
+- **[Интеграция с Telegram](./telegram-integration.md)** — основной SSoT по теме.
 
+Пример настройки Slack (кратко):
 ```yaml
-# provisioning/alerting/contactpoints/slack.yaml
-apiVersion: 1
-
-contactPoints:
-  - orgId: 1
-    name: team-devops-slack
+  - name: "Slack-Alerts"
     receivers:
-      - uid: slack-receiver
+      - uid: cp_slack_01
         type: slack
         settings:
-          recipient: '#alerts'
-          token: '<SLACK_BOT_TOKEN>'
-          username: Grafana Alerting
-          mentionUsers: '@oncall'
-          mentionGroups: '@devops'
-          mentionChannel: here
-          enabled: true
+          recipient: "#monitoring"
+          token: ${SLACK_TOKEN}
 ```
 
 ---
 
-### Пример: Политики уведомлений (маршрутизация)
+## Политики уведомлений (Маршрутизация)
+
+Политики определяют, как алерты распределяются по контакт-пойнтам с использованием **Label Matching**.
+
+### Использование object_matchers
 
 ```yaml
 # provisioning/alerting/policies/routing.yaml
 apiVersion: 1
-
 policies:
   - orgId: 1
-    receiver: default-receiver
-    group_by: ['alertname', 'service', 'environment']
+    receiver: "default-receiver"
+    group_by: ["alertname", "cluster"]
     group_wait: 30s
     group_interval: 5m
     repeat_interval: 4h
     routes:
-      - receiver: critical-channel
+      - receiver: "critical-oncall"
         object_matchers:
-          - ['severity', '=', 'critical']
+          - ["severity", "=", "critical"]  # Точное совпадение
+          - ["env", "=~", "prod.*"]        # Регулярное выражение
         group_wait: 10s
-        group_interval: 1m
-        repeat_interval: 1h
-        mute_time_intervals: []
-      - receiver: warning-channel
-        object_matchers:
-          - ['severity', '=', 'warning']
-        group_wait: 1m
-        group_interval: 10m
-        repeat_interval: 8h
+        continue: true  # Продолжить поиск по другим веткам
 ```
 
 ---
 
-### Пример: Использование шаблонов в метках и аннотациях
+## Взаимодействие с Kubernetes и AlertmanagerConfig
 
-Шаблонизация позволяет динамически формировать сообщения на основе данных алерта.
+Важно разделять сферу ответственности при работе в Kubernetes:
 
-```yaml
-labels:
-  service: '{{ $labels.service }}'
-  severity: '{{ if gt $value 10 }}critical{{ else }}warning{{ end }}'
+1.  **AlertmanagerConfig (CRD):** Это ресурс Prometheus Operator. Он управляет конфигурацией *внешнего* Alertmanager (того, который идет в комплекте с kube-prometheus-stack).
+2.  **Grafana Alerting Provisioning:** Управляет *внутренним* Alertmanager Grafana.
 
-annotations:
-  summary: '{{ .CommonAnnotations.summary }}'
-  description: |
-    Метрика: {{ .CommonLabels.alertname }}
-    Значение: {{ $value }}
-    Время: {{ .StartsAt.Format "2006-01-02 15:04:05" }}
-  runbook: 'https://wiki.example.com/runbooks/{{ .CommonLabels.alertname }}'
-```
+**Можно ли управлять AlertmanagerConfig через провиженинг Grafana?**
+Нет. `AlertmanagerConfig` — это объект Kubernetes, он создается через манифесты `kubectl` или Helm. Grafana Provisioning работает только с внутренними файлами Grafana.
+
+**Как их связать?**
+Если вы используете `AlertmanagerConfig` для настройки внешнего Alertmanager, вы можете через провиженинг Grafana настроить **Data Source** (Prometheus), чтобы он отправлял свои алерты именно туда, или использовать внешний Alertmanager в качестве основного бэкенда для уведомлений в настройках Grafana Alerting.
 
 ---
 
-### Пример: Настройка интервалов подавления (Mute Timings)
-
-Позволяет отключать уведомления в определенное время (например, в нерабочие часы).
+## Интервалы подавления (Mute Timings)
 
 ```yaml
-# provisioning/alerting/mute_timings/maintenance.yaml
+# provisioning/alerting/mute_timings/schedules.yaml
 apiVersion: 1
 muteTimes:
   - orgId: 1
-    name: off-hours
+    name: "Maintenance-Window"
     time_intervals:
-      - weekdays: ['saturday', 'sunday']
-      - times:
-          - start: '18:00'
-            end: '09:00'
+      - weekdays: ["monday"]
+        times:
+          - start: "02:00"
+            end: "04:00"
+        location: "UTC"
 ```
-
----
-
-### Пример: Настройка шаблонов уведомлений (Templates)
-
-Глобальные шаблоны для переиспользования в разных контакт-пойнтах.
-
-```yaml
-# provisioning/alerting/templates/common.yaml
-apiVersion: 1
-templates:
-  - orgId: 1
-    name: standard_template
-    template: |
-      {{ define "standard.message" }}
-      Внимание! Алерт: {{ .Labels.alertname }}
-      Состояние: {{ .Status }}
-      Описание: {{ .Annotations.description }}
-      {{ end }}
-```
-
----
-
-### Безопасность и секреты
-
-Для защиты чувствительных данных (токенов, паролей) в конфигурационных файлах рекомендуется использовать переменные окружения. Grafana поддерживает интерполяцию переменных в формате `${VAR_NAME}`.
-
-```yaml
-# Пример использования переменной окружения для токена Slack
-token: ${SLACK_TOKEN}
-```
-
-*Примечание: Интерполяция должна быть включена в конфигурации Grafana (`instance_name` или глобально).*
 
 ## Дополнительная информация
 
 **См. также:**
 
-- [Основные концепции Grafana Alerting](./concepts.md) — терминология и состояния правил.
-- [Best practices по алертингу](./best_practices.md) — рекомендации по настройке и минимизации шума.
-- [Общий провиженинг Grafana](../grafana_provisioning.md) — управление источниками данных и дашбордами.
+- [Основные концепции Grafana Alerting](./concepts.md) — архитектура конвейера выражений и HA.
+- [Best practices по алертингу](./best_practices.md) — рекомендации по фильтрации шума.
+- [Интеграция с Telegram](./telegram-integration.md) — подробная настройка ботов.
+- [Общий провиженинг Grafana](../grafana_provisioning.md) — управление дашбордами и плагинами.

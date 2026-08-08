@@ -1,11 +1,6 @@
 # Vector: Обзор
 
-> **Reliability Score: 10/10** (SSoT + Web Verification 2026)
-> **Freshness Trigger:** Vector v0.57.0 (Июль 2026), переход на gRPC API, поддержка Parquet/Arrow.
-
-## Определения
-
-**Vector** — высокопроизводительный, открытый (Mozilla Public License 2.0) конвейер для сбора, обработки и отправки логов, метрик и событий. Написан на Rust, что обеспечивает высокую производительность, безопасность памяти и минимальное потребление ресурсов.
+**Vector** — высокопроизводительный, открытый (Mozilla Public License 2.0) конвейер для сбора, обработки и отправки логов, метрик и событий (traces). Написан на Rust, что обеспечивает высокую производительность, безопасность памяти и минимальное потребление ресурсов.
 
 **Режимы работы:**
 *   **Agent** — легковесный агент на каждом хосте (альтернатива Fluent Bit, Grafana Alloy).
@@ -20,26 +15,36 @@
 Vector построен на базе направленного ациклического графа (DAG) компонентов:
 
 1.  **Sources (Источники)** — определяют точки входа данных:
-    *   **Файлы и система:** `/var/log/*.log`, `journald`, `windows_event_log` (native API).
-    *   **Сетевые протоколы:** Syslog, HTTP, TCP, UDP, `websocket`.
-    *   **Очереди сообщений:** Kafka, NATS, AWS SQS.
-    *   **Контейнеры и облака:** Docker, Kubernetes, AWS S3.
-    *   **Метрики:** Prometheus endpoints, StatsD.
+    *   **Файлы и система:** `/var/log/*.log`, `journald`, `windows_event_log` (native API), `exec`, `host_metrics`, `docker_logs`, `kubernetes_logs`.
+    *   **Сетевые протоколы:** Syslog, HTTP (server/client), TCP, UDP, `websocket`, `dnstap`.
+    *   **Очереди сообщений:** Kafka, NATS, AWS SQS, GCP Pub/Sub, Pulsar, Redis, AMQP.
+    *   **Контейнеры и облака:** Docker, Kubernetes, AWS S3, AWS Kinesis Firehose, Splunk HEC.
+    *   **Метрики:** Prometheus endpoints (`prometheus_scrape`), `prometheus_remote_write`, StatsD, Datadog Agent.
+    *   **Собственные метаданные:** `internal_logs`, `internal_metrics` — наблюдение за самим Vector.
+    *   **Открытая телеметрия:** `opentelemetry` — приём данных по OTLP (gRPC/HTTP), включая traces.
 
 2.  **Transforms (Преобразования)** — логика обработки:
     *   **`remap`** — основной компонент для работы с [VRL](./vrl_language.md).
     *   **`filter`** — отсеивание событий по условиям.
     *   **`route`** — условная маршрутизация.
     *   **`aggregate`** — агрегация (например, суммирование метрик).
-    *   **`enrichment_tables`** (New in 2025) — обогащение данными из In-memory таблиц.
+    *   **`enrichment_tables`** — обогащение данными из in-memory таблиц (обновляются без перезапуска, `reload_behavior` для сохранения состояния между перезагрузками).
+    *   **Прочие:** `delay` (новый, v0.56+), `dedupe`, `sample`, `throttle`, `reduce`, `log_to_metric`, `metric_to_log`, `tag_cardinality_limit`, `aws_ec2_metadata`.
 
 3.  **Sinks (Приёмники)** — точки выхода данных:
-    *   **Хранилища:** OpenSearch, Elasticsearch, [Loki](../Loki/loki_overview.md), ClickHouse (поддержка Native Arrow).
-    *   **Объектные хранилища:** AWS S3 (поддержка Native Parquet), GCS, Azure Blob.
-    *   **Мониторинг:** Prometheus remote write, Datadog, Azure Monitor (через новый Logs Ingestion API).
-    *   **Очереди:** Kafka, NATS, AWS Kinesis.
+    *   **Хранилища:** OpenSearch, Elasticsearch, [Loki](../Loki/loki_overview.md), ClickHouse (поддержка Native Arrow/`arrow_stream`), GreptimeDB, Databend.
+    *   **Объектные хранилища:** AWS S3 (Native Parquet, из коробки с v0.56), GCS, Azure Blob.
+    *   **Мониторинг:** Prometheus remote write, Datadog, Azure Monitor — через `azure_logs_ingestion` (новый sink по Azure Monitor Logs Ingestion API; прежний `azure_monitor_logs` устарел, поддержка старого Data Collector API завершается в сентябре 2026).
+    *   **Очереди:** Kafka, NATS, AWS Kinesis, Databricks Zerobus (v0.56+).
+    *   **Vector-to-Vector:** sink `vector` с компрессией `gzip`/`zstd` (zstd — v0.56+).
 
-**Internal gRPC API (v0.55+):** В 2026 году Vector полностью перешел с GraphQL на gRPC для внутренних нужд и инструментов мониторинга (`vector top`, `vector tap`), что повысило стабильность при экстремальных нагрузках.
+### Внутренний API (gRPC, v0.55+)
+
+Начиная с v0.55.0 внутренний API Vector полностью перешел с GraphQL на gRPC. Это касается и инструментов мониторинга (`vector top`, `vector tap`), что повысило стабильность при экстремальных нагрузках.
+
+*   **Включение:** секция `api.enabled = true` в конфигурации.
+*   **Адрес:** `127.0.0.1:8686` по умолчанию; единый порт для gRPC (tonic/HTTP2) и HTTP (`/health`), поддерживается gRPC reflection (grpcurl) и HTTP/1.1 для простых запросов.
+*   **Безопасность:** аутентификация отсутствует — рекомендуется включать только в изолированных средах. `/health` возвращает `{"ok":true}` и используется для Kubernetes liveness/readiness проб.
 
 ### Ключевые характеристики
 
@@ -48,15 +53,15 @@ Vector построен на базе направленного ациклич�
 | **Производительность** | В 10 раз быстрее Logstash; поддержка Apache Arrow и Parquet для бинарной передачи. |
 | **Безопасность памяти** | Гарантии Rust исключают утечки памяти и ошибки сегментации (Segfaults). |
 | **Гарантия доставки** | At-least-once delivery с персистентным дисковым буфером. |
-| **Наблюдаемость** | Встроенные метрики латентности компонентов и состояния буферов. |
+| **Наблюдаемость** | Встроенные метрики латентности компонентов, состояния буферов, capacity planning (`source_buffer_*`, `transform_buffer_*`, `component_latency_seconds`). |
 | **Конфигурация** | YAML, JSON, TOML (TOML рекомендуется как стандарт). |
 
 ### Режимы развёртывания
 
-#### Agent Mode
+#### Режим агента (Agent Mode)
 Разворачивается как DaemonSet (Kubernetes) или системный сервис (systemd). Основная задача — сбор данных "у источника", первичный парсинг и локальная буферизация.
 
-#### Aggregator Mode
+#### Режим агрегатора (Aggregator Mode)
 Централизованный кластер. Используется для сложной трансформации, дедупликации, сэмплирования и обогащения данных перед отправкой в финальное хранилище.
 
 ### Сравнение с аналогами (Актуально на 2026 год)
@@ -72,10 +77,14 @@ Vector построен на базе направленного ациклич�
 ### Инструментарий и диагностика
 
 Vector предоставляет мощный CLI для отладки и мониторинга:
-*   **`vector top`** — визуализация топологии и нагрузки на компоненты в реальном времени.
+*   **`vector top`** — визуализация топологии и нагрузки на компоненты в реальном времени (подключается к gRPC API, колонка `Events Out` корректна для компонентов с несколькими выходами).
 *   **`vector tap`** — инспекция событий на любом этапе конвейера (аналог `tcpdump` для логов).
 *   **`vector vrl`** — интерактивная REPL-среда для тестирования VRL-выражений.
-*   **`vector check`** — валидация конфигурации перед запуском.
+*   **`vector validate`** — валидация конфигурации перед запуском (заменяет прежнюю команду `vector check`). Флаг `--no-environment` пропускает проверки окружения, `--deny-warnings` превращает предупреждения в ошибки.
+*   **`vector graph`** — визуализация топологии в формате DOT (GraphViz).
+*   **`vector test`** — запуск нативных unit-тестов конфигурации (секция `[[tests]]`, поддержка `expected_event_count`).
+
+**Установка:** Vector компилируется в единый статический бинарник (зависимость только от `libc`; доступны musl-сборки без зависимостей). Рекомендуемый установщик: `curl --proto '=https' --tlsv1.2 -sSfL https://sh.vector.dev | bash`. Поддерживаются пакетные менеджеры (APT, RPM, Homebrew), Docker, Helm. Конфигурация по умолчанию: `/etc/vector/vector.yaml`.
 
 ### Интеграция с Kubernetes
 
@@ -84,18 +93,21 @@ Vector предоставляет мощный CLI для отладки и мо
 2.  **Deployment** — горизонтально масштабируемая агрегация (например, из Kafka).
 3.  **StatefulSet** — для источников, требующих персистентного состояния или дисковых буферов.
 
-### Миграция с других инструментов
+### Мониторинг самого Vector
 
-*   **С Logstash:** экспорт конфигурации → переписывание фильтров на VRL → тестирование на параллельном потоке трафика.
-*   **С Fluent Bit:** Fluent Bit часто оставляют как легкий агент на Edge, а Vector разворачивают как агрегатор для централизованной обработки.
+Vector наблюдает за собой через специальные sources:
+*   **`internal_logs`** — логи самого Vector (уровень по умолчанию `info`, настраивается флагами `-v/-vv/-q/-qq` или переменной `VECTOR_LOG`). Доступны также через `stderr` (перехватываются systemd/K8s).
+*   **`internal_metrics`** — метрики самого Vector, которые можно отправлять в Prometheus remote write, ClickHouse и другие sinks как обычные данные.
 
 ---
 
 ## Безопасность и стабильность
 
-1.  **Интерполяция переменных:** Начиная с v0.55, интерполяция переменных окружения отключена по умолчанию. Для включения требуется флаг `--dangerously-allow-env-var-interpolation`.
-2.  **Backpressure:** Vector автоматически замедляет источники (например, Kafka), если приемники не справляются с потоком.
-3.  **Дисковые буферы:** Рекомендуется использовать `type = "disk"` для защиты от потери данных при кратковременных сбоях или перезапусках.
+1.  **Интерполяция переменных окружения:** Начиная с v0.57, интерполяция `${VAR}` в конфигурационных файлах **отключена по умолчанию**. Для включения требуется флаг `--dangerously-allow-env-var-interpolation` или переменная `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true` (может раскрыть секреты в конфигурации). Прежние флаг `--disable-env-var-interpolation` и переменная `VECTOR_DISABLE_ENV_VAR_INTERPOLATION` удалены.
+2.  **Ограничение шаблонов маршрутизации (Template Confinement, v0.57):** Sinks, принимающие `{{ field }}` в шаблонах маршрутизации (ключи объектов, пути файлов, HTTP-заголовки, имена таблиц/стримов), отклоняют шаблоны без буквального префикса при старте — предотвращает выход за границы (path traversal). HTTP-family шаблоны не могут содержать `?`/`#`. Исключение — `file` sink с явным `base_dir`. Опт-аут: `dangerously_allow_unconfined_template_resolution: true`. Метрики: `component_errors_total{error_type="confinement_failed"}`.
+3.  **Backpressure:** Vector автоматически замедляет источники (например, Kafka), если приемники не справляются с потоком. Адаптивный механизм ограничивает concurrency на основе латентности (Adaptive Request Concurrency).
+4.  **Дисковые буферы:** Рекомендуется использовать `type = "disk"` для защиты от потери данных при кратковременных сбоях или перезапусках.
+5.  **Внутренний API:** не имеет аутентификации — включать только в изолированных средах.
 
 ---
 
@@ -104,8 +116,13 @@ Vector предоставляет мощный CLI для отладки и мо
 Детальные конфигурации вынесены в отдельный файл: **[Practical Scenarios](./practical_scenarios.md)**.
 
 *   Роутер логов из Kafka в OpenSearch.
-*   Сбор метрик с Prometheus endpoints.
-*   Обогащение логов данными GeoIP.
+*   Адаптивное сэмплирование при высокой нагрузке.
+*   Обогащение логов через Enrichment Tables (GeoIP).
+*   Высокопроизводительная доставка в ClickHouse через Arrow.
+*   Сбор метрик и конвертация в логи для Loki.
+*   Маршрутизация по уровням логирования (route).
+*   Наблюдаемость самого Vector (self-observability).
+*   Unit-тестирование конфигурации (vector test).
 
 ---
 

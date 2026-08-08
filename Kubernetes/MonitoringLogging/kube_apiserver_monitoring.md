@@ -8,7 +8,7 @@
 **SLO (Service Level Objective)** — целевое значение для SLI (например, 99% запросов должны выполняться быстрее 100 мс).
 
 Подробно о концепциях надежности: **[Концепции SRE: SLA, SLO, SLI](../../Concepts/sre_concepts_main.md)**.
-Архитектура плоскости управления: **[Control Plane Architecture](../Concepts/control_plane_architecture.md)** (если применимо).
+Архитектура плоскости управления: **[Control Plane Architecture](../Concepts/control_plane_architecture.md)**.
 
 ## Основные концепции
 
@@ -54,6 +54,45 @@ histogram_quantile(0.99, sum(rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m
 ```
 **SLO**: p99 < 10мс. Значения выше указывают на медленные диски, что приведет к деградации всего Control Plane.
 Подробнее: **[Мониторинг etcd](../../etcd/etcd_monitoring.md)**.
+
+### Мониторинг доступности (Availability)
+SLI доступности — доля успешных запросов (`code` `2xx`/`3xx`). Алертить стоит по доле `5xx` и `429`, а не по абсолютной нагрузке.
+
+**Пример PromQL — доля ошибок:**
+```promql
+sum(rate(apiserver_request_total{code=~"5.."}[5m])) by (group, version, resource)
+/
+sum(rate(apiserver_request_total[5m])) by (group, version, resource)
+# → {group="apps",version="v1",resource="deployments"} 0.0002
+```
+**SLO**: доля успешных запросов ≥ 99.9% (общий кластер), ≥ 99% для чтения/записи по конкретным ресурсам.
+
+### Ресурсы и загрузка процесса
+API-сервер — это Go-процесс. Собственное потребление CPU/RAM контейнера агрегируется через kubelet/cAdvisor, а метрики самого процесса (`process_*`) он публикует на собственном эндпоинте `/metrics`.
+
+```promql
+# Загрузка CPU процесса
+rate(process_cpu_seconds_total[5m]) > 0.8
+# Память процесса (RSS)
+process_resident_memory_bytes
+# Текущие выполняемые запросы (очередь APF) в реальном времени
+apiserver_flowcontrol_current_executing_requests
+```
+**Интерпретация**:
+- Частые перезапуски pod'а вместе с растущей RSS → утечка/давление памяти (митигация: увеличить `--per-connection-burst` и лимиты).
+- `apiserver_current_inflight_requests` (легаси-счетчик до APF) полезен для диагностики старых кластеров.
+- Приближение `apiserver_flowcontrol_current_executing_requests` к верхнему порогу означает насыщение очередей.
+
+### Аутентификация и авторизация
+Задержки на этапах authn/authz напрямую влияют на время ответа. Отделяйте их от времени самой обработки.
+
+```promql
+# P99 времени аутентификации
+histogram_quantile(0.99, sum(rate(apiserver_authentication_duration_seconds_bucket[5m])) by (le))
+# P99 времени авторизации
+histogram_quantile(0.99, sum(rate(apiserver_authorization_duration_seconds_bucket[5m])) by (le))
+```
+**Интерпретация**: рост `authentication_duration` обычно связан с webhook-провайдерами (OIDC, TokenReview) или медленной проверкой сертификатов; рост `authorization_duration` — с объёмом RBAC-правил и частыми обновлениями `ClusterRoleBinding`.
 
 ## Диагностика и дашборды
 

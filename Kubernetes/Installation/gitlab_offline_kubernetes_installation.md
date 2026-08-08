@@ -1,153 +1,144 @@
 # Установка GitLab в закрытом контуре Kubernetes
 
-Руководство по развертыванию GitLab в изолированной среде (air-gapped) с использованием локального реестра образов (Harbor) и объектного хранилища (MinIO).
+Руководство по развертыванию, настройке и поддержке платформы GitLab в изолированных средах (air-gapped) с использованием локальных реестров и объектных хранилищ.
 
 ---
 
 ## Определения
 
 | Термин | Описание |
-|--------|----------|
+| :--- | :--- |
 | **Air-gapped (Закрытый контур)** | Изолированная сетевая среда, не имеющая прямого доступа к публичному интернету. |
-| **OCI (Open Container Initiative)** | Стандарт для образов контейнеров и рантаймов. В контексте Helm позволяет хранить чарты в Docker-реестрах (например, Harbor). |
-| **Object Storage (S3)** | Протокол и тип хранилища для неструктурированных данных (артефакты, LFS, бэкапы). В данном руководстве используется MinIO. |
-| **Values-файл** | YAML-файл для переопределения параметров чарта при установке. |
+| **OCI (Open Container Initiative)** | Стандарт для образов и артефактов. Позволяет хранить Helm-чарты в Docker-реестрах. |
+| **Private CA (Локальный УЦ)** | Центр сертификации, выпускающий сертификаты для внутренних сервисов (Harbor, MinIO, GitLab). |
+| **Helper Image** | Вспомогательный образ GitLab Runner, используемый для служебных операций (кэширование, артефакты) в Kubernetes. |
+| **KAS (Kubernetes Agent Server)** | Компонент для связи GitLab с кластерами, требующий настройки внутренних адресов в оффлайн-режиме. |
 
 ---
 
 ## Основные концепции
 
-### Двухэтапный процесс установки
+### Стратегия оффлайн-развертывания
 
-Развертывание в изолированной среде состоит из двух фаз:
-
-1. **Внешний контур (Интернет)**: подготовка артефактов. Скачивание Helm-чарта, определение списка необходимых образов, их загрузка и упаковка в архивы.
-2. **Внутренний контур (Air-gapped)**: развертывание. Перенос архивов, импорт образов в локальный реестр (Harbor), публикация чарта и выполнение установки.
+Установка в закрытом контуре требует предварительной подготовки всех зависимостей во внешнем контуре (с доступом в интернет) и их последующего переноса. Ключевые аспекты:
+1.  **Зеркалирование образов:** Все образы (более 20 компонентов) должны быть перенесены в локальный Harbor.
+2.  **Управление доверием:** Все компоненты системы должны доверять корневому сертификату Private CA.
+3.  **Локальные зависимости:** Отключение функций, требующих внешних вызовов (Gravatar, Google Analytics, встроенный cert-manager для публичных доменов).
 
 ### Требования к инфраструктуре
 
-Для успешной работы GitLab в закрытом контуре должны быть развернуты:
-
-- **Kubernetes кластер**: версия 1.24+.
-- **Локальный реестр**: Harbor (рекомендуется) или Nexus для хранения образов и Helm-чартов.
-- **Объектное хранилище**: MinIO или Ceph для хранения артефактов CI/CD, LFS и бэкапов.
-- **Persistent Storage**: StorageClass (NFS, Longhorn, Ceph) для базы данных и Git-репозиториев.
+| Компонент | Роль в оффлайн-схеме |
+| :--- | :--- |
+| **Harbor / Nexus** | Хранение Docker-образов и Helm-чартов. |
+| **MinIO / Ceph S3** | Замена облачным S3 для хранения LFS, артефактов и бэкапов. |
+| **Локальный DNS** | Резолвинг имен внутренних сервисов внутри кластера и для клиентов. |
 
 ---
 
 ## Практические сценарии
 
-### Подготовка артефактов (Внешний контур)
+### 1. Подготовка артефактов (Внешний контур)
 
-На машине с доступом в интернет необходимо скачать чарт и подготовить список образов.
+На машине с доступом в интернет скачайте чарт и извлеките список образов:
 
 ```bash
 # Добавление репозитория и скачивание чарта
 helm repo add gitlab https://charts.gitlab.io
 helm pull gitlab/gitlab --untar
 
-# Генерация манифестов для извлечения имен образов
-helm template gitlab ./gitlab -f minimal-values.yaml > rendered.yaml
-
-# Получение уникального списка образов
-grep -oE 'image:\s*"?[^"]+' rendered.yaml | sed -E 's/^image:\s*"?//; s/"$//' | sort -u > gitlab-images.txt
+# Генерация списка всех образов из чарта
+helm template gitlab ./gitlab --set global.hosts.domain=local > rendered.yaml
+grep -oE 'image:\s*"?[^"]+' rendered.yaml | sed -E 's/^image:\s*"?//; s/"$//' | sort -u > images.txt
 ```
 
-#### Загрузка и упаковка образов
+### 2. Перенос и импорт образов (Внутренний контур)
 
-Используйте скрипт для скачивания и тегирования образов для вашего Harbor:
+После переноса архивов импортируйте их в Harbor. Рекомендуется сохранять иерархию репозиториев для упрощения `values.yaml`.
 
 ```bash
-export HARBOR="harbor.domain.local"
-export PROJECT="gitlab"
-
-cat gitlab-images.txt | while read img; do
-  # Очистка имени от префикса публичного реестра
-  cleaned=$(echo "$img" | sed -E 's#^(docker\.io|registry\.gitlab\.com|quay\.io|gcr\.io|ghcr\.io|registry\.k8s\.io)/##')
-  new_tag="${HARBOR}/${PROJECT}/${cleaned}"
-  
-  docker pull "$img"
-  docker tag "$img" "$new_tag"
-  echo "$new_tag" >> images-to-save.txt
-done
-
-# Сохранение в архив и упаковка чарта
-docker save -o gitlab-images.tar $(cat images-to-save.txt)
-tar -czvf gitlab-helm-chart.tar.gz gitlab/
+# Пример тегирования и пуша (автоматизируйте через скрипт)
+docker tag registry.gitlab.com/gitlab-org/build/cng/gitlab-webservice-ee:v17.2.0 \
+  harbor.local/gitlab/gitlab-webservice-ee:v17.2.0
+docker push harbor.local/gitlab/gitlab-webservice-ee:v17.2.0
 ```
 
-### Развертывание в изолированной среде
+### 3. Настройка доверия (Custom CA)
 
-После переноса файлов во внутренний контур необходимо импортировать образы и опубликовать чарт.
+Если Harbor или MinIO используют сертификаты от локального УЦ, GitLab должен им доверять.
 
-#### Импорт в Harbor
+```yaml
+# values.yaml
+global:
+  certificates:
+    customCAs:
+      - secret: gitlab-custom-ca
+        key: root-ca.crt
+```
+*Создайте секрет `gitlab-custom-ca` с содержимым вашего корневого сертификата.*
 
-```bash
-# Загрузка в локальный Docker/Podman
-docker load -i gitlab-images.tar
+### 4. Конфигурация Runner и KAS в оффлайне
 
-# Пуш в локальный реестр
-docker login harbor.domain.local
-cat images-to-save.txt | xargs -L 1 docker push
+Раннеру необходим доступ к вспомогательному образу (`helper image`) в локальном реестре.
 
-# Пуш Helm-чарта в OCI-репозиторий Harbor
-helm push gitlab-helm-chart.tar.gz oci://harbor.domain.local/helm
+```yaml
+# values.yaml (секция gitlab-runner)
+gitlab-runner:
+  runners:
+    config: |
+      [[runners]]
+        [runners.kubernetes]
+          helper_image = "harbor.local/gitlab/gitlab-runner-helper:x86_64-v17.2.0"
 ```
 
-### Конфигурация GitLab (values.yaml)
-
-В закрытом контуре необходимо перенаправить все запросы образов на локальный реестр и настроить внешнее хранилище.
-
-**Ключевые параметры конфигурации:**
-
+Для KAS укажите внутренний адрес, доступный для агентов:
 ```yaml
 global:
-  image:
-    registry: harbor.domain.local # Глобальный реестр для всех образов
-  hosts:
-    domain: gitlab.local
-  ingress:
-    configureCertmanager: false # Cert-manager обычно не используется в оффлайне
   appConfig:
-    object_store:
-      enabled: true
-      connection:
-        secret: gitlab-s3-secret # Секрет с параметрами подключения к MinIO
+    gitlab_kas:
+      externalUrl: wss://kas.gitlab.local
 ```
 
-### Настройка объектного хранилища MinIO
+### 5. Объектное хранилище (MinIO)
 
-GitLab требует наличия бакетов для артефактов, бэкапов, LFS и загрузок.
+GitLab требует настройки подключения к S3-совместимому хранилищу для всех типов данных.
 
-**Создание секрета подключения в Kubernetes:**
-
+**Пример секрета `gitlab-s3-secret`:**
 ```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: gitlab-s3-secret
-  namespace: gitlab
-stringData:
-  config: |
-    provider: AWS
-    region: us-east-1
-    endpoint: "http://minio.local"
-    aws_access_key_id: "ACCESS_KEY"
-    aws_secret_access_key: "SECRET_KEY"
-    path_style: true
+provider: AWS
+region: us-east-1
+endpoint: "https://minio.local"
+aws_access_key_id: "ADMIN"
+aws_secret_access_key: "STRONG_PASSWORD"
+path_style: true
 ```
+
+---
+
+## Решение проблем
+
+### Ошибка "X509: Certificate Signed by Unknown Authority"
+- **Причина:** Под не доверяет сертификату Harbor/MinIO.
+- **Решение:** Проверьте наличие сертификата в `global.certificates.customCAs` и перезапустите поды.
+
+### Ошибка "ImagePullBackOff"
+- **Причина:** Узлы Kubernetes не авторизованы в Harbor или не доверяют его сертификату.
+- **Решение:** 
+  1. Добавьте CA сертификат на **все узлы кластера** в `/etc/pki/ca-trust/source/anchors/` (для CentOS/RHEL) или `/usr/local/share/ca-certificates/` (для Ubuntu).
+  2. Настройте `imagePullSecrets` в `values.yaml`.
 
 ---
 
 ## Дополнительная информация
 
-### Рекомендации по безопасности
+### Рекомендации
 
-- **Доверенные сертификаты**: Если Harbor или MinIO используют самоподписанные сертификаты, их необходимо добавить в секрет `gitlab-custom-ca` и указать в `global.certificates.customCAs`.
-- **Обновление образов**: Процесс синхронизации образов должен быть регулярным для получения патчей безопасности.
+- **Отключение Gravatar:** В изолированной среде запросы к `gravatar.com` приведут к задержкам загрузки страниц. Установите `global.appConfig.gravatar.enabled: false`.
+- **Локальный реестр Helm:** Публикуйте чарты в Harbor (OCI), чтобы иметь версионированную копию внутри контура.
 
 ### См. также
 
 - [Установка GitLab через Helm](./gitlab_kubernetes_helm_installation.md)
 - [Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md)
 - [Обзор Harbor](../../Docker/Docker_registries/Harbor/overview.md)
+- [Системы хранения данных и S3](../../Concepts/Storage/data_storage_overview.md)
+- [S3 CSI-драйверы](../../Kubernetes/Storage/CSI/s3-csi-drivers.md)

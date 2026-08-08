@@ -2,143 +2,131 @@
 
 ## Определения
 
-Основные понятия, термины и жизненный цикл процесса загрузки образов (Image Pull) приведены в разделе [Определения](./definitions.md).
+Основные понятия, термины и архитектурное взаимодействие Kubelet ↔ CRI приведены в разделе [Определения](./definitions.md).
 
 ---
 
 ## Основные концепции
 
-### Алгоритм диагностики
+### Алгоритм системной диагностики
 
-Диагностика ошибок загрузки в Kubernetes требует системного подхода, переходящего от высокоуровневых абстракций (Pod) к низкоуровневым компонентам (Runtime, Network).
+Диагностика в Kubernetes требует последовательного спуска по уровням абстракции:
 
-1.  **Интроспекция Pod:** Изучение событий (Events) и статусов контейнеров.
-2.  **Валидация манифеста:** Проверка существования образа и тега в реестре.
-3.  **Проверка авторизации:** Аудит секретов (`imagePullSecrets`) и прав доступа.
-4.  **Сетевой аудит:** Проверка связности между узлом и реестром (DNS, Proxy, Firewall).
-5.  **Анализ рантайма:** Изучение логов `kubelet` и Container Runtime (`containerd`, `CRI-O`).
+1.  **L1: API/Resource (Pod)** — Анализ событий и статусов через `kubectl`.
+2.  **L2: Authorization (Secrets)** — Проверка `imagePullSecrets` и RBAC.
+3.  **L3: Infrastructure (Network)** — DNS, Proxy, Firewall, MTU.
+4.  **L4: Runtime Interface (CRI/gRPC)** — Анализ взаимодействия Kubelet с `containerd`/`CRI-O`.
+5.  **L5: Host/Storage** — Дисковое пространство, Inodes, Snapshotters (OverlayFS).
 
-### Ключевые точки анализа в kubectl describe
+### Анализ статус-кодов gRPC в событиях
 
-| Поле | Описание | Значение для анализа |
+При взаимодействии Kubelet с рантаймом через CRI, ошибки часто содержат gRPC-коды. Их понимание критично для быстрой локализации:
+
+| Код gRPC | Интерпретация | Значение для анализа |
 | :--- | :--- | :--- |
-| `Events[].Reason` | Тип события | `Failed` (ошибка Pull), `BackOff` (ожидание). |
-| `Events[].Message` | Текст ошибки | Содержит сырой ответ от Registry или CRI (например, `401 Unauthorized`). |
-| `ContainerStatuses[].State.Waiting.Reason` | Текущий статус | `ImagePullBackOff` или `ErrImagePull`. |
-| `Node` | Узел размещения | Позволяет сузить поиск до конкретного сегмента сети. |
+| `DeadlineExceeded` | Timeout | Проблемы сети или крайне медленная загрузка слоев. |
+| `Unauthenticated` | 401 Unauthorized | Неверный или отсутствующий `imagePullSecret`. |
+| `PermissionDenied` | 403 Forbidden | У учетной записи нет прав на чтение (Pull) в реестре. |
+| `NotFound` | 404 Not Found | Образ или тег не существует. |
+| `ResourceExhausted` | No space | Переполнение диска на узле (`/var/lib/containerd`). |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Анализ событий и первичная диагностика
+### Сценарий 1: Инспекция через kubectl (L1-L2)
 
-Первым шагом является получение детальной информации о поде:
+Первичный сбор данных без доступа к узлу.
 
+**1. Просмотр текущего статуса и причины ожидания:**
 ```bash
-kubectl describe pod <pod-name>
+kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[*].state.waiting}'
 ```
 
-**Анализ вывода (раздел Events):**
-- `Failed to pull image "..."`: указывает на проблемный образ.
-- `rpc error: code = Unknown desc = ...`: указывает на ошибку, переданную от рантайма.
-- `Error response from daemon: manifest for ... not found`: проблема в наличии образа.
-
-### Сценарий 2: Глубокая проверка imagePullSecrets
-
-Если ошибка указывает на `unauthorized` или `access denied`, необходимо проверить всю цепочку авторизации.
-
-1.  **Наличие секрета в спецификации:**
-    ```bash
-    kubectl get pod <pod-name> -o jsonpath='{.spec.imagePullSecrets}'
-    ```
-2.  **Валидация типа и данных секрета:**
-    ```bash
-    kubectl get secret <secret-name> -o jsonpath='{.type}'
-    # → Должно быть kubernetes.io/dockerconfigjson
-
-    # Проверка соответствия домена в секрете и в образе
-    kubectl get secret <secret-name> -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq .auths
-    ```
-3.  **Проверка ServiceAccount:**
-    Если секрет не указан в поде напрямую, он может быть привязан к SA:
-    ```bash
-    kubectl get sa <sa-name> -o yaml | grep imagePullSecrets
-    ```
-
-### Сценарий 3: Сетевая диагностика и инфраструктурные блокировки
-
-В редких случаях проблема кроется не в поде, а в сетевой конфигурации кластера.
-
-1.  **Блокировка на уровне CNI/NetworkPolicy:**
-    Сетевая политика или конфигурация CNI (например, Cilium, Calico) может случайно заблокировать исходящий трафик от самих узлов в интернет или к частному реестру по порту 443.
-    *   **Симптом:** `kubectl describe pod` показывает таймаут при попытке соединения с реестром, хотя DNS работает.
-    *   **Диагностика:** Проверьте `NetworkPolicy` в системных пространствах имен (например, `kube-system`).
-2.  **Использование отладочных подов:**
-    Для проверки связности рекомендуется использовать временные поды с набором сетевых утилит (например, `netshoot`).
-
-**Запуск отладочного пода:**
+**2. Анализ событий (Events):**
 ```bash
-kubectl run net-debug --image=nicolaka/netshoot --rm -it --restart=Never -- bash
+kubectl get events --field-selector involvedObject.name=<pod-name> --sort-by='.lastTimestamp'
+```
+*Ищите события `Failed` и сообщения `rpc error`.*
+
+**3. Проверка цепочки секретов:**
+```bash
+# Проверка домена и auth-данных внутри секрета
+kubectl get secret <secret-name> -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq .auths
 ```
 
-**Внутри пода:**
+### Сценарий 2: Сетевая отладка через эфемерные контейнеры (L3)
+
+Использование `kubectl debug` позволяет запустить отладочный контейнер в сетевом пространстве имен целевого пода.
+
 ```bash
-# Проверка DNS
-dig registry.example.com
-# Проверка порта 443
-nc -zv registry.example.com 443
-# Проверка TLS-сертификата
+# Запуск netshoot внутри неймспейса пода
+kubectl debug -it <pod-name> --image=nicolaka/netshoot --target=<app-container>
+```
+
+**Внутри отладочного контейнера:**
+```bash
+# Проверка разрешения имен реестра
+nslookup registry.example.com
+
+# Проверка MTU (частая причина зависания при загрузке больших слоев)
+ping -M do -s 1472 registry.example.com
+
+# Проверка TLS-цепочки
 openssl s_client -connect registry.example.com:443 -showcerts
 ```
 
-### Сценарий 4: Диагностика на уровне узла через crictl
+### Сценарий 3: Глубокая диагностика на узле через crictl (L4)
 
-Так как современные кластеры используют CRI, для диагностики на узле следует использовать `crictl` вместо `docker`.
+Если проблема не на уровне Kubernetes, требуется инспекция рантайма.
 
-**Подключение к узлу через kubectl debug:**
+**1. Подключение к узлу с системным профилем:**
 ```bash
-kubectl debug node/<node-name> -it --image=busybox
+kubectl debug node/<node-name> -it --image=busybox --profile=sysadmin
 # Внутри: chroot /host
 ```
 
-**Работа с crictl на узле:**
+**2. Инспекция манифеста и архитектуры образа:**
+Частая проблема: образ скачан, но не запускается из-за несоответствия архитектуры (например, `arm64` на `amd64`).
 ```bash
-# Просмотр списка образов и их ID
-crictl images
-
-# Ручная попытка загрузки образа с подробным выводом
-crictl pull --creds "user:pass" registry.example.com/my-app:1.0
-
-# Просмотр логов рантайма (containerd)
-journalctl -u containerd -f
+crictl inspecti <image-id> | jq .info.labels
 ```
 
-### Сценарий 5: Ошибки квотирования (Rate Limit)
+**3. Ручная проверка Pull с логированием:**
+```bash
+# Попытка пулла через CRI с явными кредами
+crictl pull --creds "user:pass" registry.example.com/my-app:1.0
+```
 
-При использовании Docker Hub без авторизации часто возникает ошибка `429 Too Many Requests`.
+### Сценарий 4: Отладка Kubelet и CRI (L4-L5)
 
-**Диагностика:**
-В событиях (Events) будет сообщение: `You have reached your pull rate limit`.
+При сложных ошибках (например, таймауты gRPC или ошибки snapshotter) необходимо повысить уровень логирования Kubelet.
 
-**Решение:**
-- Настройка `imagePullSecret` для Docker Hub (даже для Free-аккаунта лимиты выше).
-- Использование локального прокси-реестра (Pull-through Cache).
+**1. Временное повышение verbosity Kubelet (без перезагрузки):**
+```bash
+# На узле через SSH/Debug
+# ПРИМЕЧАНИЕ: Работает, если Kubelet поддерживает runtime-конфигурацию
+curl -X PUT http://localhost:10248/debug/flags/v -d "4"
+```
+
+**2. Анализ системных логов:**
+```bash
+# Логи containerd с фокусом на ошибки snapshotter
+journalctl -u containerd -g "error|snapshot"
+
+# Логи Kubelet с фокусом на CRI
+journalctl -u kubelet -f | grep "PullImage"
+```
 
 ---
 
-## Контрольный список при ImagePullBackOff (Interview Checklist)
+## Контрольный список (Interview Checklist)
 
-Если контейнер не запускается из-за ошибки получения образа, пройдите по следующим пунктам:
-
-1.  **Проверка имени и тега:** Наиболее распространенная причина — опечатка. Выполните `kubectl describe pod` и внимательно проверьте URL образа и тег.
-2.  **Проверка секретов (Private Registry):**
-    *   Существует ли `imagePullSecret`?
-    *   Находится ли секрет в **том же самом** пространстве имен (Namespace), что и Pod?
-    *   Правильно ли указана ссылка на секрет в спецификации пода/развертывания?
-3.  **Валидация учетных данных:** Декодируйте секрет (`kubectl get secret <name> -o yaml`), проверьте срок действия токенов или попробуйте выполнить `docker login` вручную на другой машине с этими данными.
-4.  **Сетевая связность:** Убедитесь, что узел имеет доступ к реестру (отсутствие блокировок на уровне брандмауэра или сетевых политик CNI).
-5.  **Прямая проверка с узла:** Зайдите на узел по SSH и попробуйте выполнить `crictl pull <image>` (или `docker pull`), чтобы исключить проблемы уровня Kubernetes.
+1.  **Namespace-scoped Secrets:** Секрет должен быть в том же неймспейсе, что и Под.
+2.  **Architecture Mismatch:** Проверьте, что образ поддерживает архитектуру процессора узла (`amd64`/`arm64`).
+3.  **Image GC:** Проверьте, не удаляет ли Garbage Collector (`ImageGCHighThresholdPercent`) образы сразу после загрузки из-за нехватки места.
+4.  **Insecure Registry:** Если реестр без TLS, он должен быть явно указан в `config.toml` (containerd).
+5.  **Kubelet Serialize Image Pulls:** Если поды зависают на `Pulling`, возможно, включена сериализация (`serializeImagePulls: true`), что замедляет массовые запуски.
 
 ---
 
@@ -146,8 +134,9 @@ journalctl -u containerd -f
 
 ### Связанные темы
 
-- [Определения и базовые концепции](./definitions.md) — терминология и фазы загрузки.
-- [Распространённые ошибки](./common_errors.md) — классификация ошибок (404, 401, 403).
-- [Лучшие практики и предотвращение](./best_practices.md) — мониторинг и использование immutable тегов.
-- [Сетевые проблемы](./network_issues.md) — глубокая настройка Proxy, TLS и NetworkPolicy.
-- [Air-gapped кластеры](./airgapped.md) — диагностика в изолированных средах.
+- [Определения и базовые концепции](./definitions.md) — терминология и статус-коды.
+- [Распространённые ошибки](./common_errors.md) — классификация 404, 401, 403.
+- [Сетевые проблемы](./network_issues.md) — настройка Proxy, MTU и локальных зеркал.
+- [Air-gapped кластеры](./airgapped.md) — диагностика и конфигурация `hosts.toml`.
+- [Среды выполнения контейнеров](../../../Concepts/container_runtime.md) — архитектура CRI и низкоуровневая отладка.
+

@@ -10,6 +10,10 @@
 
 **Commitizen** — CLI-инструмент для интерактивного создания коммитов по стандарту Conventional Commits.
 
+**Gitlint** — инструмент на Python для проверки сообщений коммитов на соответствие заданным правилам (длина, формат, запрещенные слова).
+
+**Commitlint** — Node.js инструмент для валидации сообщений согласно спецификации Conventional Commits.
+
 ---
 
 ## Базовые концепции
@@ -18,8 +22,8 @@
 
 Использование шаблона решает несколько задач:
 - **Стандартизация:** Обеспечение единого стиля сообщений во всей команде.
-- **Информативность:** Подсказки в шаблоне напоминают о необходимости указать ID задачи или описать причину изменений.
-- **Автоматизация:** Подготовка базы для инструментов автоматического релиза.
+- **Информативность:** Подсказки напоминают о необходимости указать ID задачи, описать причину изменений или BREAKING CHANGES.
+- **Автоматизация:** Подготовка базы для инструментов автоматического релиза (`semantic-release`, `standard-version`).
 
 ### Структура Conventional Commits
 
@@ -32,141 +36,167 @@
 <footer>
 ```
 
-| Тип | Описание |
-| :--- | :--- |
-| `feat` | Добавление новой функциональности. |
-| `fix` | Исправление ошибки. |
-| `docs` | Изменения только в документации. |
-| `style` | Правки, не влияющие на логику (пробелы, форматирование, пропущенные точки с запятой). |
-| `refactor` | Изменение кода, которое не исправляет ошибку и не добавляет функционал. |
-| `perf` | Изменения для улучшения производительности. |
-| `test` | Добавление или исправление существующих тестов. |
-| `build` | Изменения, влияющие на систему сборки или внешние зависимости (example scopes: gulp, broccoli, npm). |
-| `ci` | Изменения в конфигурационных файлах и скриптах CI (example scopes: GitHub Actions, GitLab CI). |
-| `chore` | Другие изменения, не влияющие на исходный код или тесты. |
-| `revert` | Откат предыдущего коммита. |
+| Тип | Описание | SemVer |
+| :--- | :--- | :--- |
+| `feat` | Добавление новой функциональности. | `MINOR` |
+| `fix` | Исправление ошибки. | `PATCH` |
+| `docs` | Изменения только в документации. | `PATCH`/None |
+| `style` | Правки, не влияющие на логику (пробелы, форматирование). | None |
+| `refactor` | Изменение кода без исправления ошибок или добавления функций. | None |
+| `perf` | Изменения для улучшения производительности. | `PATCH` |
+| `test` | Добавление или исправление существующих тестов. | None |
+| `build` | Изменения в системе сборки или зависимостях (npm, docker). | None |
+| `ci` | Настройка CI (GitHub Actions, GitLab CI). | None |
+| `chore` | Прочие изменения, не влияющие на исходный код. | None |
+| `revert` | Откат предыдущего коммита. | `PATCH` |
 
-**BREAKING CHANGE:** Критические изменения обозначаются восклицательным знаком после типа/области (например, `feat(api)!: update auth logic`) или через заголовок `BREAKING CHANGE:` в футере.
+### Правило 50/72 и гигиена сообщений
 
-### Настройка Git
-
-Конфигурация может быть локальной (для проекта) или глобальной (для пользователя).
-
-```bash
-# Локальная настройка
-git config commit.template .gitmessage
-
-# Глобальная настройка
-git config --global commit.template ~/.gitmessage
-
-# Проверка настройки
-git config --get commit.template
-# → .gitmessage
-```
+1.  **Заголовок (Subject):**
+    - **Длина:** Рекомендуется до 50 символов (максимум 72).
+    - **Регистр:** Обычно начинается с маленькой буквы (хотя допустимы вариации команды).
+    - **Наклонение:** Повелительное (`add feature`, а не `added feature` или `adds feature`).
+    - **Точка:** В конце заголовка точка **не ставится**.
+2.  **Тело (Body):**
+    - Отделяется от заголовка пустой строкой.
+    - Перенос строк: Каждая строка не должна превышать **72 символа** (для корректного отображения в `git log`).
+    - Описывает **почему** внесены изменения, а не **что** (код уже показывает "что").
+3.  **Футер (Footer) и трейлеры:**
+    - Используется для ссылок на задачи (Jira, GitHub Issues) и метаданных.
+    - **BREAKING CHANGE:** Должен начинаться с этого текста в футере, за которым следует описание.
+    - **Трейлеры:** Стандартизированные токены (`Co-authored-by`, `Signed-off-by`, `Resolves`).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Создание проекта с шаблоном
+### Сценарий 1: Создание детального шаблона проекта
 
-1. Создайте файл `.gitmessage` в корне репозитория:
+1. Создайте `.gitmessage` в корне репозитория:
 
 ```text
-# <type>(<scope>): <subject>
-# <Оставьте пустую строку здесь>
-# <body>
-# <Оставьте пустую строку здесь>
-# <footer>
-#
-# Типы: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
-# Subject: Краткое описание в повелительном наклонении, без точки в конце.
-# BREAKING CHANGE: Опишите критические изменения в футере.
+# <type>(<scope>): <subject> (Max 50 chars)
+# <Пустая строка>
+# <body> (Wrap at 72 chars. Why this change? What problem does it solve?)
+# <Пустая строка>
+# <footer> (Closes #123, BREAKING CHANGE: message)
+# 
+# TYPES: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+# -------------------------------------------------------------------------
+# Заголовок: маленькая буква, повелительное наклонение, без точки в конце.
+# Тело: объясните причину изменений.
 ```
 
-2. Примените и закоммитьте шаблон:
-
+2. Примените локально:
 ```bash
-git config commit.template .gitmessage
-git add .gitmessage
-git commit -m "chore: add commit message template"
+git config --local commit.template .gitmessage
 ```
 
-### Сценарий 2: Интеграция Commitlint и Husky (v9+)
+### Сценарий 2: Валидация через pre-commit (Gitlint)
 
-Для автоматической валидации сообщений в JavaScript-проектах.
+Подходит для проектов на любых языках (Python, Go, C++), не требует Node.js.
 
-1. Установите зависимости:
+1. Настройте `.gitlint` в корне:
+```ini
+[general]
+ignore=body-is-missing
+verbosity = 2
+
+[title-max-length]
+line-length=72
+
+[title-must-not-contain-word]
+words=wip,todo,fixme
+```
+
+2. Добавьте в `.pre-commit-config.yaml`:
+```yaml
+repos:
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+```
+
+### Сценарий 3: Интеграция Commitlint и Husky (v9+)
+
+Классика для JavaScript/TypeScript проектов.
+
+1. Установка:
 ```bash
 npm install --save-dev @commitlint/config-conventional @commitlint/cli husky
 ```
 
-2. Инициализируйте Husky:
-```bash
-npx husky init
+2. Настройка `commitlint.config.js`:
+```javascript
+module.exports = {
+  extends: ['@commitlint/config-conventional'],
+  rules: {
+    'type-enum': [2, 'always', ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert']],
+    'subject-case': [2, 'always', 'lower-case']
+  }
+};
 ```
 
-3. Добавьте хук для проверки сообщений:
+3. Инициализация Husky:
 ```bash
+npx husky init
 echo "npx --no -- commitlint --edit \$1" > .husky/commit-msg
 ```
 
-4. Создайте конфиг `commitlint.config.js`:
-```javascript
-module.exports = { extends: ['@commitlint/config-conventional'] };
+### Сценарий 4: Использование трейлеров для совместной работы
+
+Git позволяет указывать соавторов прямо в коммите, что корректно отображается в GitHub/GitLab.
+
+```text
+feat(ui): add dark mode toggle
+
+Implemented a new toggle component in the header to switch between
+light and dark themes using CSS variables.
+
+Co-authored-by: Alex Smith <alex@example.com>
+Resolves: PROJECT-456
 ```
 
-### Сценарий 3: Использование Commitizen для интерактивных коммитов
+### Сценарий 5: BREAKING CHANGES в коммитах
 
-Если разработчикам сложно запомнить все типы, можно использовать помощник.
+Критическое изменение может быть обозначено двумя способами:
 
-1. Установка и инициализация:
-```bash
-npm install -g commitizen
-commitizen init cz-conventional-changelog --save-dev --save-exact
-```
+1. **Короткий (в заголовке):**
+   `feat(api)!: remove deprecated v1 endpoints`
+2. **Полный (в футере):**
+```text
+fix(auth): update token validation logic
 
-2. Использование вместо `git commit`:
-```bash
-git cz
-# → Откроется интерактивное меню выбора типа и ввода описания
-```
-
-### Сценарий 4: Глобальный шаблон для всех проектов
-
-Полезно для соблюдения личного стиля во всех репозиториях.
-
-```bash
-# Создание глобального файла
-cat <<EOF > ~/.gitmessage
-# type(scope): subject
-# 
-# body
-# 
-# footer
-EOF
-
-# Глобальная регистрация
-git config --global commit.template ~/.gitmessage
+BREAKING CHANGE: The `validate` method now returns a Promise instead of a boolean.
+Update all calls to use `await`.
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Ограничения
+### Сравнение инструментов валидации
 
-- **Ручная активация:** После клонирования репозитория шаблон не активируется автоматически (требуется `git config`).
-- **Отсутствие жесткой блокировки:** Команда `git commit -m "..."` игнорирует шаблон. Для блокировки "плохих" коммитов обязательны хуки (Commitlint).
-- **Редакторы:** Некоторые GUI-клиенты (например, VS Code) могут игнорировать `commit.template` при использовании встроенных полей ввода.
+| Инструмент | Среда | Преимущества | Недостатки |
+| :--- | :--- | :--- | :--- |
+| **Commitlint** | Node.js | Огромная экосистема, пресеты для всех стандартов. | Требует `node_modules` в проекте. |
+| **Gitlint** | Python | Легкий, не требует JS-инфраструктуры, гибкие regex-правила. | Меньше готовых пресетов. |
+| **Standard-version** | Node.js | Автоматизирует SemVer и Changelog на базе коммитов. | В режиме обслуживания (maintenance). |
+
+### Ограничения и особенности
+
+- **Пропуск шаблона:** Команда `git commit -m "..."` полностью игнорирует `commit.template`. Для принудительного соблюдения правил используйте хук `commit-msg`.
+- **IDE:** JetBrains (IntelliJ, WebStorm) и VS Code имеют встроенную поддержку `commit.template`, но могут требовать включения в настройках ("Use commit template").
+- **Revert:** При использовании `git revert` Git автоматически создает сообщение `revert: <original subject>`. Не рекомендуется менять этот формат вручную, так как он используется инструментами анализа истории.
 
 ### Официальные ресурсы
 
-- **Документация Git:** [git-scm.com/docs/git-commit](https://git-scm.com/docs/git-commit)
 - **Спецификация Conventional Commits:** [conventionalcommits.org](https://www.conventionalcommits.org/ru/v1.0.0/)
+- **Git Documentation (Templates):** [git-scm.com/docs/git-config#Documentation/git-config.txt-committemplate](https://git-scm.com/docs/git-config#Documentation/git-config.txt-committemplate)
 
 ### См. также
 
-- [Git Hooks — автоматизация и валидация](./git_hooks.md#сценарий-3-проверка-сообщения-коммита-commitlint)
-- [Специальные файлы Git](./git_special_files_overview.md)
-- [Конфигурация Git](./git_configuration.md)
+- [Git Hooks — автоматизация и валидация](./git_hooks.md) — механизмы запуска проверок.
+- [Конфигурация Git](./git_configuration.md) — управление глобальными и локальными настройками.
+- [Специальные файлы Git](./git_special_files_overview.md) — роль `.gitmessage` в иерархии файлов.

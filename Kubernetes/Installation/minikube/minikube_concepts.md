@@ -1,15 +1,17 @@
-# Minikube: Определения и концепции
+# Minikube: определения и концепции
 
 ## Определения
 
-**Minikube** — инструмент для запуска локального однонодового кластера **K8s (Kubernetes)** на рабочей машине. Предназначен для разработки, тестирования и обучения. Minikube разворачивает полноценный, но упрощённый кластер Kubernetes внутри **VM (Virtual Machine — виртуальная машина)**, Docker-контейнера или на bare metal.
+**Minikube** — инструмент для запуска локального однонодового (по умолчанию) кластера **K8s (Kubernetes)** на рабочей машине. Предназначен для разработки, тестирования и обучения. Minikube разворачивает полноценный, но упрощённый кластер Kubernetes внутри **VM (Virtual Machine — виртуальная машина)**, Docker-контейнера или на bare metal.
 
-**container runtime** — программа для запуска и управления контейнерами (Docker, containerd, CRI-O). Обязательный компонент для работы Minikube.
+**Container runtime (среда выполнения контейнеров)** — программа для запуска и управления контейнерами (Docker, containerd, CRI-O). Обязательный компонент для работы Minikube. Начиная с последних версий, `containerd` является стандартом по умолчанию.
+
+**Драйвер (Driver)** — уровень абстракции, определяющий среду, в которой будет запущен узел Minikube (например, Docker, VirtualBox, KVM2).
 
 > **Связанные определения:**
 >
-> - **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — файл конфигурации для подключения к Kubernetes
-> - **[kubectl](../../kubernetes_overview.md)** — **CLI (Command Line Interface)** утилита для управления кластером
+> - **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — файл конфигурации для подключения к Kubernetes.
+> - **[kubectl](../../kubernetes_overview.md)** — **CLI (Command Line Interface)** утилита для управления кластером.
 
 ---
 
@@ -19,15 +21,16 @@
 
 | Компонент | Описание |
 | :--- | :--- |
-| **Однонодовый кластер** | Один узел control-plane (worker) — достаточно для изучения K8s |
-| **Виртуализация** | Запускается в VM, Docker-контейнере или на bare metal |
-| **Автоматическая настройка** | Minikube сам скачивает образы, настраивает kubeconfig |
-| **Интеграция с kubectl** | Команды выполняются через `minikube kubectl -- <command>` |
+| **Узлы (Nodes)** | Обычно один узел control-plane (worker), но поддерживается создание многонодовых кластеров (`--nodes`). |
+| **Виртуализация** | Запускается в VM, Docker-контейнере или на bare metal (драйвер `none`). |
+| **Автоматическая настройка** | Minikube сам скачивает образы, настраивает сертификаты и `kubeconfig`. |
+| **Интеграция с kubectl** | Команды могут выполняться через встроенную утилиту: `minikube kubectl -- <command>`. |
+| **Профили (Profiles)** | Позволяют запускать несколько независимых кластеров на одном хосте. |
 
 ### Поддержка версий
 
-Minikube поддерживает последнюю версию Kubernetes и 6 предыдущих минорных версий.
-> **Примечание:** Версии **v1.33** и ниже достигли **EOL (End of Life)**. Актуальные образы проверяйте в [release notes](https://github.com/kubernetes/minikube/releases).
+Minikube поддерживает последнюю стабильную версию Kubernetes и 6 предыдущих минорных версий (N-6).
+> **Актуальность (август 2026):** Рекомендуется использовать Kubernetes **v1.34+**. Версии **v1.30** и ниже считаются устаревшими (EOL) и могут иметь проблемы с современными аддонами.
 
 ---
 
@@ -35,11 +38,11 @@ Minikube поддерживает последнюю версию Kubernetes и 
 
 | Компонент | Назначение | Проверка |
 | :--- | :--- | :--- |
-| **Docker Desktop** (или другой runtime) | Среда исполнения контейнеров | `docker system info` |
+| **Docker Desktop** (или другой runtime/движок) | Среда исполнения контейнеров или VM | `docker system info` |
 | **Minikube** | Инструмент развёртывания кластера | `minikube version` |
-| **kubectl** (опционально) | CLI для управления K8s | `kubectl version --client` |
+| **kubectl** (опционально) | CLI для управления K8s напрямую | `kubectl version --client` |
 
-> **Примечание:** Если kubectl не установлен, используйте встроенную версию: `minikube kubectl -- <command>`
+> **Примечание:** Если kubectl не установлен в системе, используйте встроенную версию: `minikube kubectl -- <command>`
 
 ### Системные требования
 
@@ -47,7 +50,7 @@ Minikube поддерживает последнюю версию Kubernetes и 
 | :--- | :--- | :--- |
 | **CPU (Central Processing Unit)** | 2 ядра | 4 ядра и более |
 | **Память (RAM)** | 4 ГБ | 8–16 ГБ |
-| **Диск** | 20 ГБ | 50 ГБ и более |
+| **Диск** | 20 ГБ | 50–100 ГБ (с учётом кэша образов) |
 
 ---
 
@@ -57,32 +60,30 @@ Minikube поддерживает последнюю версию Kubernetes и 
 | :--- | :--- | :--- | :--- | :--- |
 | **[kind](../kind/kind_concepts.md)** | Контейнеры с стандартным K8s | Стандартная | Низкая | CI/CD, тестирование |
 | **[talosctl](../local_cluster_with_talosctl.md)** | Контейнеры с Talos OS | mTLS, immutable | Средняя | Безопасные кластеры |
-| **minikube** | VM с стандартным K8s | Стандартная | Низкая | Локальная разработка |
+| **[microk8s](../microk8s/microk8s_overview.md)** | Snap-пакет (нативный K8s) | Стандартная | Низкая | Workstations, Edge |
+| **minikube** | VM / Containers | Стандартная | Низкая | Локальная разработка |
 
 **Преимущества Minikube:**
-
-- Полнофункциональная VM с реальным K8s
-- Поддержка множества драйверов (Docker, VirtualBox, KVM, Hyperkit)
-- Встроенные аддоны (dashboard, ingress, metrics-server, registry)
-- Кроссплатформенность (Linux, macOS, Windows)
+- Полнофункциональная VM (имитация реального облачного узла).
+- Поддержка множества драйверов (Docker, VirtualBox, KVM, Hyperkit, QEMU).
+- Огромный набор встроенных аддонов (dashboard, ingress, istio, registry).
+- Кроссплатформенность и стабильность.
 
 **Ограничения Minikube:**
-
-- Тяжелее аналогов (особенно при использовании VM-драйверов вместо контейнерных)
-- Не предназначен для production-окружений (ориентирован на локальную разработку и тесты)
+- "Тяжелее" аналогов (особенно при использовании VM-драйверов).
+- Не предназначен для production-окружений.
 
 ---
 
-### kubeconfig и контексты
+### Конфигурация kubeconfig и контексты
 
 Minikube автоматически управляет конфигурацией подключения:
 
-1. **При запуске** (`minikube start`) создаётся запись в `~/.kube/config`
-2. **Контекст** называется `minikube` по умолчанию
-3. **kubectl** автоматически использует этот контекст
+1. **При запуске** (`minikube start`) создаётся или обновляется запись в `~/.kube/config`.
+2. **Контекст** называется `minikube` по умолчанию (или совпадает с именем профиля `-p`).
+3. **kubectl** автоматически переключается на этот контекст.
 
 **Проверка контекста:**
-
 ```bash
 kubectl config current-context
 # → minikube
@@ -92,12 +93,11 @@ kubectl config get-contexts
 ```
 
 **Использование встроенного kubectl:**
-
 ```bash
-# Если kubectl не установлен
+# Если kubectl не установлен в ОС
 minikube kubectl -- get nodes
 
-# Проверка состояния кластера
+# Проверка состояния кластера через встроенный CLI
 minikube kubectl -- get pods -A
 ```
 
@@ -109,109 +109,111 @@ Minikube поддерживает различные драйверы для з�
 
 | Драйвер | Платформа | Требования | Примечание |
 | :--- | :--- | :--- | :--- |
-| **docker** | Linux/macOS/Windows | Docker Engine или Docker Desktop | Рекомендуемый драйвер по умолчанию |
-| **vfkit / qemu2** | macOS | vfkit, qemu | Современные драйверы для macOS (Apple Silicon и Intel) |
-| **virtualbox** | Linux/macOS/Windows | VirtualBox | Классический VM-драйвер |
-| **kvm2** | Linux | KVM, libvirt | Лучшая производительность VM на Linux |
-| **hyper-v** | Windows | Hyper-V | Нативный гипервизор Windows |
-| **hyperkit** | macOS | Hyperkit | *Устаревший (legacy)* драйвер для старых версий macOS |
-| **none** | Linux | Bare metal, Docker (deb-пакет), root | Работает прямо на хосте, небезопасно для других сервисов |
+| **docker** | Linux/macOS/Windows | Docker Engine / Desktop | Рекомендуемый драйвер по умолчанию. Самый быстрый. |
+| **vfkit / qemu2** | macOS | vfkit, qemu | Современные драйверы для macOS (Apple Silicon и Intel). |
+| **virtualbox** | Linux/macOS/Windows | VirtualBox | Классический VM-драйвер. Хорош для полной изоляции. |
+| **kvm2** | Linux | KVM, libvirt | Лучшая производительность виртуализации на Linux. |
+| **hyper-v** | Windows | Hyper-V | Нативный гипервизор Windows. |
+| **hyperkit** | macOS | Hyperkit | *Устаревший (legacy)* драйвер для старых версий macOS. |
+| **none** | Linux | Bare metal, root | Работает прямо на хосте, небезопасно для других сервисов. |
 
 **Автоматический выбор драйвера:**
-
-Minikube автоматически определяет доступный драйвер в системе. Если установлен Docker — будет выбран `docker`. Явное указание через `--driver` не требуется.
+Minikube автоматически определяет доступный драйвер. Если установлен Docker — будет выбран `docker`. Явное указание через `--driver` обычно не требуется, но полезно для настройки.
 
 **Драйвер none (bare metal):**
-
 Запускает компоненты Kubernetes напрямую на хост-системе без виртуализации.
+- **Требования:** только Linux, Docker установлен как **deb-пакет** (snap-пакет не работает), root-привилегии.
+- **Предупреждение:** устанавливает kubelet, API-сервер и другие компоненты прямо на хост. Может конфликтовать с существующими сервисами.
+- **Не рекомендуется** для постоянного использования.
 
-- **Требования:** только Linux, Docker установлен как **deb-пакет** (snap-пакет не работает), root-привилегии
-- **Предупреждение:** устанавливает kubelet, kube-apiserver и другие компоненты на хост. Может конфликтовать с существующими сервисами.
-- **Не рекомендуется** для продакшн-окружений
+**Проблема со snap-пакетом Docker (Ubuntu/Debian):**
+**Snap-пакет Docker не работает** с Minikube должным образом из-за ограничений изоляции Snap. Необходимо использовать Docker из официального deb-репозитория (`download.docker.com`).
 
-**Проблема со snap-пакетом:**
+---
 
-На Debian и производных (Ubuntu) **snap-пакет Docker не работает** с Minikube. Необходимо использовать Docker из официального deb-репозитория.
+### Среды выполнения контейнеров (Container Runtimes)
 
-**Выбор драйвера:**
-
-```bash
-# Запуск с конкретным драйвером
-minikube start --driver=docker
-
-# Установка драйвера по умолчанию
-minikube config set driver docker
-```
+Внутри узла Minikube можно выбрать среду выполнения для подов через флаг `--container-runtime`:
+- **containerd** (рекомендуется): Стандартный современный runtime.
+- **docker**: Классический вариант (использует `cri-dockerd` в новых версиях K8s).
+- **cri-o**: Легковесная среда, ориентированная только на Kubernetes.
 
 ---
 
 ### Сеть и сервисы типа LoadBalancer
 
-По умолчанию облачные провайдеры предоставляют внешний IP-адрес для сервисов типа `LoadBalancer`. В локальной среде (Minikube) такие сервисы остаются в состоянии `<pending>`.
+По умолчанию локальные сервисы типа `LoadBalancer` остаются в состоянии `<pending>`, так как нет реального облачного балансировщика.
 
-Для решения этой проблемы используется команда `minikube tunnel`:
-- Она запускается как фоновый процесс с правами администратора.
+Для решения используется команда **`minikube tunnel`**:
+- Запускается как фоновый процесс с правами администратора.
 - Создаёт сетевой маршрут на хост-машине к CIDR-блоку кластера.
-- Назначает внешний IP-адрес для сервисов `LoadBalancer`, делая их доступными с хоста.
+- Назначает внешний IP-адрес сервисам `LoadBalancer`, делая их доступными по `localhost` или IP кластера.
+
+---
+
+### Управление профилями (Profiles)
+
+Профили позволяют запускать несколько кластеров с разными настройками одновременно:
+```bash
+# Создание профиля для разработки
+minikube start -p dev-env --cpus=4 --memory=8192
+
+# Создание профиля для тестов на старой версии K8s
+minikube start -p legacy-test --kubernetes-version=v1.28.0
+```
+
+---
+
+### Работа с образами и хранилищем
+
+**Хранение данных (Storage):**
+- Minikube использует **storage-provisioner** для автоматического создания PV типа `hostPath`.
+- Данные сохраняются внутри VM/контейнера. При выполнении `minikube delete` данные удаляются.
+- Для монтирования папок с хоста используйте `minikube mount`.
+
+**Локальные образы:**
+- **docker-env**: `eval $(minikube docker-env)` направляет ваш Docker CLI на демон внутри Minikube.
+- **image load**: `minikube image load <image_name>` копирует образ с хоста в кластер.
 
 ---
 
 ### Аддоны
 
-Minikube включает набор встроенных аддонов для расширения функциональности:
+Встроенные расширения, включаемые одной командой:
 
 | Аддон | Назначение |
 | :--- | :--- |
-| **dashboard** | Веб-интерфейс управления K8s |
-| **ingress** | Ingress-контроллер (NGINX) для маршрутизации |
-| **metrics-server** | Сбор метрик (необходим для `kubectl top`) |
-| **registry** | Локальный Docker Registry |
-| **storage-provisioner** | Автоматическое создание **PV (Persistent Volume)** (включён по умолчанию) |
-| **metallb** | Реализация LoadBalancer для bare metal и локальных сред |
-| **istio** | Service mesh для управления сетевым трафиком |
-| **inspektor-gadget** | Набор инструментов для отладки и инспекции кластера (eBPF) |
-
-**Управление аддонами:**
-
-```bash
-# Список доступных аддонов
-minikube addons list
-
-# Включение аддона
-minikube addons enable ingress
-
-# Отключение аддона
-minikube addons disable registry
-```
+| **dashboard** | Веб-интерфейс управления K8s. |
+| **ingress** | Ingress-контроллер (NGINX) для маршрутизации трафика. |
+| **metrics-server** | Сбор метрик ресурсов (необходим для `kubectl top` и HPA). |
+| **registry** | Локальный Docker Registry внутри кластера. |
+| **storage-provisioner** | Автоматическое создание PV (включён по умолчанию). |
+| **metallb** | Реализация балансировщика для bare metal сред. |
+| **istio** | Service mesh для управления микросервисами. |
+| **inspektor-gadget** | Инструменты отладки на базе eBPF. |
 
 ---
 
 ## Практические сценарии
 
-### Основные команды Minikube
+Ниже приведены ключевые команды. Подробные примеры см. в **[Практические сценарии](./minikube_practical_scenarios.md)**.
 
 | Команда | Описание |
 | :--- | :--- |
-| `minikube start` | Запуск кластера |
-| `minikube stop` | Остановка кластера (без удаления) |
-| `minikube delete` | Удаление кластера и всех данных |
-| `minikube pause` / `unpause` | Приостановка и возобновление работы K8s (полезно для экономии ресурсов) |
-| `minikube status` | Проверка состояния кластера |
-| `minikube kubectl -- <cmd>` | Выполнение команд kubectl |
-| `minikube dashboard` | Открытие Kubernetes Dashboard |
-| `minikube ip` | IP-адрес кластера |
-| `minikube ssh` | Подключение к узлу по SSH |
-| `minikube tunnel` | Проброс сети для сервисов типа LoadBalancer |
-| `minikube mount` | Проброс директории с хоста внутрь Minikube |
-| `minikube docker-env` | Настройка Docker CLI хоста на использование Docker-демона внутри Minikube |
-
-Подробные примеры использования см. в файле **[Практические сценарии](./minikube_practical_scenarios.md)**.
+| `minikube start` | Запуск кластера. |
+| `minikube stop` | Остановка кластера (данные сохраняются). |
+| `minikube delete` | Полное удаление кластера и данных. |
+| `minikube status` | Проверка состояния кластера. |
+| `minikube ip` | Получение IP-адреса узла. |
+| `minikube ssh` | Вход внутрь узла кластера. |
+| `minikube dashboard` | Открытие панели управления. |
+| `minikube addons list` | Список всех расширений. |
 
 ---
 
 ## Дополнительная информация
 
-- **Официальная документация:** [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/)
+- **Официальный сайт:** [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/)
 - **GitHub:** [kubernetes/minikube](https://github.com/kubernetes/minikube)
-- **Установка Docker Desktop:** [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop)
 - **Практические сценарии:** [minikube_practical_scenarios.md](./minikube_practical_scenarios.md)
+- **Репозиторий образов:** [k8s.gcr.io](https://console.cloud.google.com/gcr/images/k8s-artifacts-prod/GLOBAL)

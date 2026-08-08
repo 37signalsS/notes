@@ -2,16 +2,16 @@
 
 ## Определения
 
-**CSI Advanced Features** — это расширенный набор функций Container Storage Interface, выходящий за рамки базового жизненного цикла томов. Эти возможности позволяют реализовывать сложные стратегии резервного копирования, интеллектуальное планирование и динамическое управление ресурсами ([базовая информация](./csi_overview.md)).
+**Продвинутые возможности CSI (CSI Advanced Features)** — это расширенный набор функций Container Storage Interface, выходящий за рамки базового жизненного цикла томов (создание, удаление, монтирование). Эти возможности позволяют реализовывать сложные стратегии управления данными, такие как консистентное резервное копирование, интеллектуальное планирование с учётом топологии и проактивный мониторинг состояния хранилищ.
 
 Ключевые продвинутые функции:
-- **Volume Snapshots** — создание мгновенных снимков состояния томов.
-- **Volume Cloning** — создание независимых копий томов.
-- **CSI Topology** — учёт физического расположения СХД при планировании.
-- **Volume Expansion** — динамическое изменение размера томов.
-- **Volume Health Monitoring** — мониторинг состояния данных и оборудования.
-- **Storage Capacity Tracking** — учёт доступного пространства при планировании.
-- **CSI Migration** — перевод инфраструктуры со старых встроенных плагинов на CSI.
+- **Volume Snapshots** — создание мгновенных снимков состояния томов через Kubernetes API.
+- **Volume Cloning** — создание независимых копий существующих томов (клонов).
+- **CSI Topology** — учёт физического расположения СХД (зоны, регионы) при планировании подов.
+- **Volume Expansion & Performance Control** — динамическое изменение размера томов и параметров производительности (IOPS, пропускная способность).
+- **Volume Health Monitoring** — обнаружение сбоев на уровне файловой системы или оборудования СХД.
+- **Storage Capacity Tracking** — информирование планировщика о доступном свободном месте в конкретных зонах.
+- **CSI Migration** — механизм прозрачного перевода старых встроенных плагинов на современный CSI-стек.
 
 ---
 
@@ -19,79 +19,79 @@
 
 ### API снапшотов томов (Volume Snapshots)
 
-Механизм создания "снимков" состояния `PersistentVolume`. Реализуется через CSI-драйвер и стандартный Kubernetes API.
+Механизм создания "снимков" данных `PersistentVolume`. Реализуется через CSI-драйвер и стандартный Kubernetes API.
 
 #### Ключевые компоненты
-1. **`VolumeSnapshotClass`**: определяет параметры создания снапшотов (аналогично `StorageClass`).
-   - `driver`: имя драйвера (например, `ebs.csi.aws.com`).
+1. **snapshot-controller**: Служба Kubernetes, которая управляет объектами снапшотов.
+2. **external-snapshotter (Sidecar)**: Контейнер в поде CSI-драйвера, который взаимодействует с API СХД для создания снимка.
+3. **`VolumeSnapshotClass`**: Определяет параметры создания снапшотов (аналогично `StorageClass`).
+   - `driver`: Имя CSI-драйвера (например, `ebs.csi.aws.com`).
    - `deletionPolicy`: `Retain` (сохранить в СХД после удаления объекта в K8s) или `Delete`.
-   - `parameters`: специфичные настройки вендора (например, тип инкрементального бэкапа).
-2. **`VolumeSnapshot`**: запрос пользователя на создание снапшота конкретного PVC.
-3. **`VolumeSnapshotContent`**: физический указатель на снапшот в СХД (аналог PV).
-
-> **Требование:** В кластере должен быть развернут **snapshot-controller** и соответствующие CRD.
+   - `parameters`: Специфичные настройки вендора (например, тип инкрементального бэкапа).
+4. **`VolumeSnapshot`**: Запрос пользователя на создание снапшота конкретного PVC.
+5. **`VolumeSnapshotContent`**: Физический указатель на снапшот в СХД. Это ресурс уровня кластера (аналог PV).
 
 ### Клонирование томов (Volume Cloning)
 
-Создание новой копии существующего тома через PVC с использованием поля `dataSource`.
+Создание нового тома на основе существующего PVC через поле `dataSource`. В отличие от снапшота, клон создаётся как готовый к использованию `PersistentVolumeClaim`.
 
 #### Сравнение снапшотов и клонов
 
 | Параметр | Снапшот (Snapshot) | Клон (Clone) |
 | :--- | :--- | :--- |
 | **Цель** | Точка восстановления / бэкап | Независимая рабочая копия |
-| **Зависимость** | Часто зависит от родительского тома в СХД | Полностью независимый том |
+| **Зависимость** | Часто зависит от родительского тома в СХД | Обычно независимый (зависит от СХД) |
 | **Объект в K8s** | `VolumeSnapshot` | `PersistentVolumeClaim` |
-| **Использование** | Восстановление после сбоев | Тестирование на реальных данных, Fork БД |
+| **Использование** | Восстановление после сбоев | Тестирование, Fork БД, аналитика |
 
 #### Требования для клонирования
-- Драйвер должен поддерживать `CREATE_DELETE_VOLUME`.
-- Размер клона должен быть ≥ размера исходного тома.
-- Оба PVC должны находиться в одном Namespace.
+- Драйвер должен поддерживать операцию `CREATE_DELETE_VOLUME` с источником.
+- Размер клона должен быть **больше или равен** размеру исходного тома.
+- Оба PVC (источник и клон) должны находиться в **одном Namespace**.
 
 ### Топология CSI (CSI Topology)
 
-Механизм, решающий проблему "несвязанности" планировщика подов и расположения дисков в облаке или мульти-зональных кластерах.
+Решает проблему доступности данных в распределённых кластерах (например, диск AWS EBS доступен только в той зоне `Availability Zone`, где он был создан).
 
-#### Режимы volumeBindingMode
+#### Компоненты топологии
+1. **`CSINode`**: Объект, хранящий информацию о топологических метках узла (зоны, регионы).
+2. **`volumeBindingMode: WaitForFirstConsumer`**: Режим в `StorageClass`, при котором PV создаётся только после того, как планировщик выбрал узел для пода. Это гарантирует, что том будет создан именно в той зоне, где запустится под.
+3. **`allowedTopologies`**: Список зон/узлов в `StorageClass`, где разрешено создавать тома.
 
-| Режим | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| **`Immediate`** | PV создаётся сразу при появлении PVC. | Однозонные кластеры, сетевые ФС (NFS). |
-| **`WaitForFirstConsumer`** | PV создаётся только после того, как под назначен на узел. | Облачные диски (EBS, GCE PD), локальные диски, Ceph RBD. |
+### Расширение и управление атрибутами (Volume Expansion & Attributes)
 
-> **Рекомендация:** Для stateful-приложений в многозонных кластерах всегда используйте `WaitForFirstConsumer`.
+#### Динамическое расширение (Volume Expansion)
+Увеличение размера тома без потери данных.
+- **Online Expansion**: Выполняется на лету без остановки пода. Требует поддержки файловой системы (XFS, Ext4) и драйвера.
+- **Offline Expansion**: Требует отмонтирования тома (остановки пода).
 
-### Расширение томов (Volume Expansion)
-
-Увеличение размера тома без пересоздания PVC.
-
-#### Способы расширения
-1. **Offline Expansion**: требует остановки пода (отмонтирования тома).
-2. **Online Expansion**: расширение выполняется "на лету". Требует поддержки со стороны файловой системы (ext4, xfs) и CSI-драйвера.
-
-#### Требования
-- `allowVolumeExpansion: true` в `StorageClass`.
-- Драйвер должен поддерживать `EXPAND_VOLUME`.
+#### Volume Attributes Class (v1.31+)
+Новый механизм (Beta в 1.31) для динамического изменения параметров производительности без изменения размера.
+- Позволяет управлять **IOPS** и **Throughput** (пропускной способностью) через объект `VolumeAttributesClass`.
+- Параметры изменяются "на лету", если CSI-драйвер поддерживает эту функцию.
 
 ### Мониторинг здоровья томов (Volume Health Monitoring)
 
-Позволяет Kubernetes обнаруживать аномалии на уровне данных (например, ошибки ФС или выход из строя диска в СХД).
-- **External Health Monitor**: Sidecar-комтейнер, который опрашивает драйвер и генерирует Events для PVC/Pod.
-- Это позволяет автоматизированным системам (например, Descheduler) реагировать на проблемы с хранилищем до того, как приложение упадет.
+Позволяет обнаруживать проблемы с данными (например, Read-only FS после сбоя диска), которые не видны стандартным проверкам подов.
+
+#### Как это работает
+- **external-health-monitor**: Sidecar-контейнеры (Controller и Node), которые опрашивают СХД и Kubelet.
+- **События (Events)**: Если обнаружена проблема, генерируется Event **`VolumeConditionAbnormal`** для PVC (контроллером) или для Pod (через Kubelet на узле).
 
 ### Отслеживание ёмкости (Storage Capacity Tracking)
 
-Позволяет планировщику учитывать доступное место в конкретной топологической зоне перед назначением пода.
-- Актуально для локальных дисков и СХД с ограниченным объемом на узел/зону.
-- Использует объекты `CSIStorageCapacity`.
+Планировщик учитывает доступный объем хранилища в конкретной зоне перед назначением пода.
+- Актуально для локальных дисков (Local PV) и СХД с ограниченным ресурсом на группу узлов.
+- Используются объекты **`CSIStorageCapacity`**, которые создаёт CSI-драйвер.
 
 ### Миграция CSI (CSI Migration)
 
-Процесс прозрачного перевода старых встроенных (in-tree) плагинов на CSI-драйверы.
+Процесс перевода старых встроенных (in-tree) плагинов на внешние CSI-драйверы.
 
-> **Статус миграции (Kubernetes 1.31+):** Большинство встроенных плагинов (AWS EBS, GCP PD, Azure Disk, vSphere) полностью удалены. Kubernetes автоматически перенаправляет запросы к старым provisioner (например, `kubernetes.io/aws-ebs`) на соответствующие CSI-драйверы.
-> **Важно:** Плагины Ceph RBD и CephFS полностью удалены в v1.31. Миграция для них не поддерживается — необходимо явно использовать CSI-драйверы.
+> **Статус в Kubernetes 1.31+:**
+> - Большинство встроенных плагинов (**AWS EBS, GCP PD, Azure Disk, vSphere**) полностью удалены.
+> - **Ceph RBD и CephFS**: Полностью удалены. Автоматическая миграция для них **не поддерживается** — переход на `ceph-csi` должен быть явным.
+> - **Portworx**: Единственный драйвер, чья миграция находится в Alpha.
 
 ---
 
@@ -137,7 +137,7 @@ spec:
   storageClassName: ceph-rbd-ssd
   resources:
     requests:
-      storage: 20Gi
+      storage: 20Gi # Должно быть >= размера снапшота
   dataSource:
     name: pg-db-snapshot
     kind: VolumeSnapshot
@@ -163,20 +163,29 @@ spec:
     kind: PersistentVolumeClaim
 ```
 
-### Расширение тома (Online Resize)
+### Управление производительностью (VolumeAttributesClass)
 
-1. Обновите PVC, увеличив размер:
-```bash
-kubectl patch pvc my-app-pvc -p '{"spec":{"resources":{"requests":{"storage":"50Gi"}}}}'
+```yaml
+apiVersion: storage.k8s.io/v1alpha1
+kind: VolumeAttributesClass
+metadata:
+  name: high-iops-profile
+driverName: ebs.csi.aws.com
+parameters:
+  type: gp3
+  iops: "5000"
+  throughput: "250"
 ```
 
-2. Проверьте статус расширения:
-```bash
-kubectl get pvc my-app-pvc -o yaml
-# Ищите в status:
-# conditions:
-# - type: Resizing
-#   status: "True"
+Применение к PVC:
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+spec:
+  volumeAttributesClassName: high-iops-profile
+  # ...
 ```
 
 ### Использование топологии (AWS EBS)
@@ -199,18 +208,33 @@ allowedTopologies:
 
 ---
 
+## Диагностика и мониторинг
+
+### Мониторинг событий здоровья
+Проверка наличия проблем с томами через события:
+```bash
+kubectl get events --field-selector involvedObject.kind=PersistentVolumeClaim
+# Ищите событие: VolumeConditionAbnormal
+```
+
+### Проблемы планирования (Topology)
+Если под висит в `Pending` с ошибкой `node(s) had volume node affinity conflict`:
+1. Проверьте зоны в `StorageClass.allowedTopologies`.
+2. Проверьте метки на узлах: `kubectl get nodes --show-labels`.
+3. Убедитесь, что PV имеет корректный `nodeAffinity`.
+
+---
+
 ## Дополнительная информация
 
-### Диагностика и мониторинг
-
-- [Сравнение и эксплуатация CSI](./csi_drivers_comparison.md) — диагностика и выбор драйверов.
-- [Обзор CSI](./csi_overview.md) — архитектура и базовые понятия.
-- [PV, PVC и StorageClass](../pv_and_pvc.md) — основы хранения данных в Kubernetes.
-- [Концепции Ceph RBD](../Ceph/ceph_rbd_usage/definitions_and_concepts.md).
-- [Концепции CephFS](../Ceph/cephfs_setup_and_usage/definitions_and_concepts.md).
+### Ссылки на связанные темы
+- [Обзор CSI](./csi_overview.md) — архитектура и базовые компоненты.
+- [Сравнение CSI-драйверов](./csi_drivers_comparison.md) — возможности драйверов (Longhorn, Ceph, Cloud).
+- [PV, PVC и StorageClass](../pv_and_pvc.md) — базовые операции с томами.
+- [Обзор Ceph](../Ceph/ceph_overview.md) — общая информация о системе Ceph.
 
 ### Официальные источники
-
-- [Kubernetes Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
-- [Storage Capacity Tracking](https://kubernetes.io/docs/concepts/storage/storage-capacity/)
-- [Volume Health Monitoring](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-health-monitoring)
+- [Kubernetes: Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
+- [Kubernetes: Storage Capacity Tracking](https://kubernetes.io/docs/concepts/storage/storage-capacity/)
+- [Kubernetes: Volume Health Monitoring](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-health-monitoring)
+- [CSI Migration Guide](https://kubernetes.io/docs/concepts/storage/volumes/#csi-migration)

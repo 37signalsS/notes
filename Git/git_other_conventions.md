@@ -34,10 +34,9 @@
 Используется в проектах, применяющих систему ревью Gerrit (например, OpenStack, Android).
 - **Функция:** Описывает хост, порт и ветку по умолчанию для отправки кода на ревью командой `git review`.
 
-### Линтинг и хуки
+### Прочие конвенции
 
-- **`.gitlint`:** Конфигурация для проверки формата сообщений коммитов (длина заголовка, наличие ID задачи).
-- **`.pre-commit-config.yaml`:** Самый популярный современный стандарт для управления git-хуками через фреймворк [pre-commit](https://pre-commit.com/). Позволяет автоматически запускать линтеры и тесты перед созданием коммита.
+- **[Git Hooks — автоматизация](./git_hooks.md):** Использование фреймворков `pre-commit`, `husky` и `gitlint` для автоматизации проверок перед коммитом и пушем.
 
 ---
 
@@ -74,49 +73,6 @@ git commit -m "chore: add logs directory placeholder"
 ```bash
 git config include.path ../.gitconfig
 ```
-
-### Сценарий 3: Настройка pre-commit хуков
-
-Стандарт де-факто для автоматизации проверок в DevOps/SRE проектах.
-
-1. Создайте `.pre-commit-config.yaml`:
-```yaml
-repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
-    hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
--   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.0
-    hooks:
-    -   id: ruff
-```
-
-2. Установка:
-```bash
-pre-commit install
-# → pre-commit installed at .git/hooks/pre-commit
-```
-
-### Сценарий 4: Настройка .gitlint для Conventional Commits
-
-Если вы используете `gitlint` для валидации сообщений.
-
-```ini
-# .gitlint
-[general]
-ignore=body-is-missing
-
-[title-max-length]
-line-length=72
-
-[title-must-not-contain-word]
-words=wip,todo
-```
-
----
 
 ## Дополнительная информация
 

@@ -1,15 +1,12 @@
 # cURL — универсальный инструмент для передачи данных
 
-> **Надёжность: 10/10** (Официальная документация + практический опыт)
-> **Актуальность:** Июль 2024 (проверено для curl 8.x)
-
 ## Определения
 
-**cURL** (Client for URLs) — утилита командной строки для передачи данных по множеству протоколов (HTTP, HTTPS, FTP, SCP, SFTP, SMB, LDAP и др.). Стандарт де-факто для работы с API (Application Programming Interface) в скриптах и автоматизации.
+**cURL** (Client for URLs) — мощная утилита командной строки и кроссплатформенная библиотека (libcurl) для передачи данных с использованием синтаксиса URL. Поддерживает более 20 протоколов, включая HTTP(S), FTP, SCP, SFTP, SMB, LDAP, MQTT и другие. Является промышленным стандартом для взаимодействия с API, автоматизации задач (CI/CD) и низкоуровневой диагностики сетевых сервисов.
 
 ## Основные концепции
 
-### 1. Структура команды
+### Структура команды
 
 ```bash
 curl [опции] [URL]
@@ -17,106 +14,88 @@ curl [опции] [URL]
 
 **Основные группы опций:**
 
-- **Запрос:** `-X` (метод), `-H` (заголовок), `-d` (данные), `-F` (форма), `--json` (современный JSON-запрос)
-- **Ответ:** `-o` (сохранить в файл), `-O` (имя из URL), `-s` (тихий режим), `-v` (подробно)
-- **Безопасность:** `-u` (логин:пароль), `-k` (игнорировать SSL), `--cert`, `--key`
-- **Таймауты:** `--connect-timeout`, `--max-time`, `--speed-time`
-- **Производительность:** `-Z` (параллельные загрузки)
+- **Запрос:** `-X` (явное указание метода), `-H` (добавление заголовка), `-d` (отправка данных), `-F` (multipart-форма), `--json` (автоматический JSON-запрос).
+- **Ответ:** `-o` (сохранить в файл), `-O` (сохранить с именем из URL), `-s` (тихий режим), `-i` (вывод заголовков ответа), `-v` (подробный лог).
+- **Безопасность:** `-u` (аутентификация), `-k` (игнорировать ошибки SSL), `--cert`/`--key` (клиентские сертификаты).
+- **Таймауты и повторы:** `--connect-timeout`, `--max-time`, `--retry`, `--retry-delay`.
+- **Производительность:** `-Z` (параллельная загрузка нескольких ресурсов).
 
-### 2. Поддерживаемые протоколы
+### Поддерживаемые протоколы
 
-| Протокол | Описание |
+| Протокол | Описание и применение |
 | :--- | :--- |
-| **HTTP/HTTPS** | Веб-запросы (основное использование), включая HTTP/2 и HTTP/3 |
-| **FTP/FTPS** | Передача файлов по классическому протоколу |
-| **SCP/SFTP** | Безопасная передача через SSH (Secure Shell) |
-| **SMB** | Доступ к файловым ресурсам Windows |
-| **LDAP** | Взаимодействие со службами каталогов |
-| **MQTT** | Протокол для интернета вещей (IoT) |
-| **POP3/IMAP/SMTP** | Протоколы работы с электронной почтой |
+| **HTTP/HTTPS** | Работа с веб-сервисами, поддержка HTTP/1.1, HTTP/2 и HTTP/3 (QUIC). |
+| **gRPC** | Поддерживается через HTTP/2 (требуется специфическая передача заголовков). |
+| **FTP/FTPS** | Классическая передача файлов, включая защищенные TLS-версии. |
+| **SCP/SFTP** | Безопасная передача данных поверх SSH. |
+| **SMB/CIFS** | Доступ к файловым ресурсам Windows. |
+| **LDAP(S)** | Взаимодействие со службами каталогов. |
+| **MQTT** | Протокол для интернета вещей (IoT). |
+| **SMTP/POP3/IMAP** | Протоколы работы с электронной почтой. |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Безопасная работа в скриптах
+### Сценарий 1: Безопасная работа в скриптах и CI/CD
+
+В скриптах крайне важно обрабатывать ошибки сервера и ограничивать время ожидания.
 
 ```bash
-# -f (--fail): завершиться с ошибкой при HTTP 4xx/5xx
-# -s (--silent): подавить индикатор прогресса
-# -S (--show-error): показать ошибку при использовании -s
-curl -fsS https://api.example.com/health
-# → (пустой вывод при успехе, ошибка при 4xx/5xx)
+# -f (--fail): возвращает код 22 при HTTP 4xx/5xx (без него curl вернет 0)
+# -s (--silent): подавляет вывод прогресса (мусор в логах CI)
+# -S (--show-error): показывает ошибку даже в тихом режиме
+curl -fsS https://api.example.com/health || exit 1
 
-# С таймаутами для CI/CD (Continuous Integration / Continuous Deployment)
-curl -f --max-time 10 --connect-timeout 5 https://api.example.com/health
+# Настройка надежных таймаутов
+curl -f --max-time 10 --connect-timeout 5 https://api.example.com/api
 ```
-
-> **Важно:** Без `-f` curl вернёт код выхода 0 даже при получении HTTP 500, что может привести к ложноположительным результатам в пайплайнах.
 
 ### Сценарий 2: Работа с JSON API
 
 **Современный способ (curl 7.82.0+):**
-Опция `--json` автоматически добавляет заголовки `Content-Type: application/json` и `Accept: application/json`.
+Опция `--json` автоматически добавляет заголовки `Content-Type: application/json` и `Accept: application/json`, а также устанавливает метод POST (если не указано иное).
 
 ```bash
 # POST с JSON данными
-curl --json '{"name":"John","age":30}' https://api.example.com/users
+curl --json '{"user_id":42, "status":"active"}' https://api.example.com/v1/update
 ```
 
 **Классический способ:**
 ```bash
-# GET с заголовками
-curl -H 'Accept: application/json' \
-     -H 'Authorization: Bearer <token>' \
-     https://api.example.com/users
+# GET с аутентификацией и заголовком
+curl -H 'Accept: application/json' -H "Authorization: Bearer $TOKEN" https://api.example.com/data
 
-# POST с JSON
-curl -X POST \
-     -H 'Content-Type: application/json' \
-     -d '{"name":"John","age":30}' \
-     https://api.example.com/users
-# → { "id": 123, "status": "created" }
+# POST с данными из строки
+curl -X POST -H 'Content-Type: application/json' -d '{"name":"test"}' https://api.example.com/resource
 
-# PUT/PATCH (полное или частичное обновление)
-curl -X PUT \
-     -H 'Content-Type: application/json' \
-     -d '{"id":1,"name":"Jane"}' \
-     https://api.example.com/users/1
-
-# DELETE (удаление ресурса)
-curl -X DELETE https://api.example.com/users/1
-# → HTTP/1.1 204 No Content
+# PATCH (частичное обновление)
+curl -X PATCH -H 'Content-Type: application/merge-patch+json' -d '{"active":false}' https://api.example.com/resource/1
 ```
 
-### Сценарий 3: Отправка файлов и форм
+### Сценарий 3: Передача файлов и форм
 
 ```bash
 # multipart/form-data (загрузка файла через форму)
-curl -F 'user=John' \
-     -F 'avatar=@/path/to/photo.jpg' \
-     https://api.example.com/upload
+curl -F 'user=John' -F 'avatar=@/path/to/photo.jpg' https://api.example.com/upload
 
-# "Сырые" бинарные данные
-curl --data-binary @archive.zip \
-     https://api.example.com/upload
+# Отправка "сырых" бинарных данных (например, для S3 или объектных хранилищ)
+curl --data-binary @archive.zip https://api.example.com/storage
 
 # Загрузка нескольких файлов одновременно
-curl -F 'files=@file1.txt' \
-     -F 'files=@file2.txt' \
-     https://api.example.com/upload
+curl -F 'files=@f1.txt' -F 'files=@f2.txt' https://api.example.com/upload
 ```
 
-### Сценарий 4: Работа с cookies и сессиями
+### Сценарий 4: Работа с Cookies и сессиями
 
 ```bash
-# Сохранить полученные cookies в файл
+# Сохранить полученные cookies в файл (cookie jar)
 curl -c cookies.txt https://example.com/login
 
-# Загрузить cookies из файла для запроса
+# Загрузить cookies из файла для выполнения авторизованного запроса
 curl -b cookies.txt https://example.com/profile
 
-# Автоматическое управление (чтение из файла и запись обновлений)
+# Совместное использование (чтение и запись обновлений)
 curl -b cookies.txt -c cookies.txt https://example.com/api
 ```
 
@@ -126,32 +105,28 @@ curl -b cookies.txt -c cookies.txt https://example.com/api
 # Базовая аутентификация (Basic Auth)
 curl -u user:password https://api.example.com/protected
 
-# Digest аутентификация
-curl --digest -u user:password https://api.example.com/protected
-
 # Bearer токен (OAuth2 / JWT)
-curl -H 'Authorization: Bearer <token>' https://api.example.com/api/resource
+curl -H "Authorization: Bearer $TOKEN" https://api.example.com/api/resource
 
-# Использование файла .netrc для автоматической аутентификации
-# Файл ~/.netrc должен содержать: machine api.example.com login user password pass
+# Использование .netrc (наиболее безопасно для паролей)
+# Файл ~/.netrc должен иметь права 600 и содержать:
+# machine api.example.com login user password pass
 curl --netrc https://api.example.com/protected
 ```
 
 ### Сценарий 6: Отладка и диагностика
 
 ```bash
-# Подробная информация о TLS-рукопожатии и заголовках
+# Подробный лог TLS-рукопожатия и заголовков
 curl -v https://example.com
-# → * Connected to example.com (93.184.216.34) port 443 ...
 
-# Получение только заголовков ответа
+# Получение только заголовков (HEAD запрос)
 curl -I https://example.com
-# → HTTP/1.1 200 OK ...
 
-# Полный дамп обмена данными в текстовый файл
-curl --trace-ascii trace.log https://example.com
+# Полный дамп обмена в текстовом формате
+curl --trace-ascii debug.log https://example.com
 
-# Вывод временных метрик (DNS, TCP, TLS, время до первого байта)
+# Форматированный вывод временных метрик
 curl -o /dev/null -s -w \
   "DNS: %{time_namelookup}s\n\
    TCP: %{time_connect}s\n\
@@ -159,17 +134,14 @@ curl -o /dev/null -s -w \
    Server: %{time_starttransfer}s\n\
    Total: %{time_total}s\n" \
   https://example.com
-# → DNS: 0.001s ... Total: 0.050s
 ```
-
-> Для глубокой диагностики производительности см. **[curl_network_diagnostics.md](../../../Diagnostics/Networking/curl_network_diagnostics.md)**.
+*Для глубокого анализа см. [Диагностика задержек curl](../../../Diagnostics/Networking/curl_network_diagnostics.md).*
 
 ### Сценарий 7: Определение публичного IP-адреса
 
 ```bash
+# Быстрая проверка внешнего IP
 curl -s ifconfig.me
-# → 93.184.216.34
-
 curl -s icanhazip.com
 curl -s ipinfo.io/ip
 ```
@@ -177,46 +149,49 @@ curl -s ipinfo.io/ip
 ### Сценарий 8: Обход DNS и тестирование через SNI
 
 ```bash
-# Принудительное сопоставление домена и IP (удобно для тестирования конкретного сервера за балансировщиком)
+# Принудительное сопоставление домена и IP (тестирование ноды за балансировщиком)
 curl --resolve example.com:443:93.184.216.34 https://example.com
 
-# Тестирование локальной конфигурации без правки /etc/hosts
-curl --resolve site1.local:80:127.0.0.1 http://site1.local
+# Тестирование локальных виртуальных хостов
+curl --resolve site.local:80:127.0.0.1 http://site.local
 ```
 
-### Сценарий 9: Работа с большими файлами и пропускной способностью
+### Сценарий 9: Работа с большими файлами и повторы
 
 ```bash
 # Продолжение прерванной загрузки (Resume)
-curl -C - -O https://example.com/large-file.zip
+curl -C - -O https://example.com/huge-file.zip
 
-# Ограничение скорости скачивания (например, 100 КБ/с)
-curl --limit-rate 100K -O https://example.com/file.zip
+# Ограничение скорости (шейпинг) до 500 КБ/с
+curl --limit-rate 500K -O https://example.com/file.zip
 
-# Параллельная загрузка нескольких файлов (curl 7.66.0+)
-curl -Z -O https://host1.com/a.zip -O https://host2.com/b.zip
+# Логика повторов при сетевых сбоях
+# --retry-connrefused: повторять даже если соединение отклонено
+curl --retry 5 --retry-delay 2 --retry-connrefused https://api.example.com/unstable
 ```
 
 ### Сценарий 10: Обработка JSON через jq
 
+Интеграция curl и jq позволяет строить мощные конвейеры обработки данных.
+
 ```bash
-# Красивый вывод (Pretty print)
-curl -s https://api.example.com/users | jq .
+# Красивое форматирование JSON
+curl -s https://api.github.com/repos/curl/curl | jq .
 
-# Выборка значений по ключу
-curl -s https://api.example.com/users | jq '.[].name'
+# Выборка конкретных полей
+curl -s https://api.example.com/users | jq '.[].email'
 
-# Фильтрация объектов по условию
-curl -s https://api.example.com/users | jq '.[] | select(.age > 25)'
+# Сложная фильтрация
+curl -s https://api.example.com/orders | jq '.[] | select(.status == "failed") | .id'
 ```
 
 ### Сценарий 11: Проверка версий протокола (HTTP/2 и HTTP/3)
 
 ```bash
-# Принудительное использование HTTP/2
+# Проверка поддержки HTTP/2
 curl -I --http2 https://example.com/
 
-# Проверка поддержки HTTP/3 (требуется поддержка QUIC в сборке curl)
+# Проверка HTTP/3 (требуется поддержка QUIC в сборке curl)
 curl -I --http3 https://example.com/
 ```
 
@@ -224,61 +199,52 @@ curl -I --http3 https://example.com/
 
 ## Дополнительная информация
 
-### 1. Таймауты и предотвращение зависаний
+### 1. Конфигурация через .curlrc
 
-**Проблема:** По умолчанию curl может бесконечно ждать ответа, что критично для CI/CD-пайплайнов и систем мониторинга.
+Чтобы не указывать повторяющиеся опции (например, таймауты или User-Agent), используйте файл `~/.curlrc`.
 
-**Решение:**
-
-```bash
-# Безопасный набор опций
-curl --max-time 10 --connect-timeout 5 https://example.com
-
-# Умный таймаут (прервать, если скорость < 100 байт/с в течение 10 секунд)
-curl --connect-timeout 5 \
-     --speed-time 10 \
-     --speed-limit 100 \
-     https://example.com
+```ini
+# Пример ~/.curlrc
+--connect-timeout 10
+--max-time 30
+--fail
+--show-error
+--user-agent "SRE-Monitoring-Bot/1.2"
 ```
+
+### 2. Безопасность и передача секретов
+
+**Никогда не передавайте токены в строке команды**, так как они сохраняются в `history` и видны в списке процессов (`ps`).
+
+- **Безопасно:** Чтение данных из stdin или файла:
+  ```bash
+  curl -X POST -H "Authorization: Bearer $(cat token.txt)" -d @payload.json https://api.io
+  ```
+- **HSTS:** Начиная с версии 7.74.0, curl поддерживает кэширование политик HSTS (`--hsts hsts-cache.txt`).
+
+### 3. Таймауты и предотвращение зависаний
 
 | Опция | Описание |
 | :--- | :--- |
-| `--connect-timeout <sec>` | Максимальное время на установку соединения |
-| `--max-time <sec>` | Общее ограничение времени на всю операцию |
-| `--speed-time` + `--speed-limit` | Логика прерывания при низкой скорости |
-
-### 2. Игнорирование ошибок SSL (-k, --insecure)
-
-```bash
-curl -k https://self-signed.example.com
-```
-
-> **Предупреждение:** Использование `-k` отключает проверку цепочки сертификатов, что делает соединение уязвимым для атак Man-in-the-Middle (MITM). Используйте только в изолированных тестовых средах.
-
-### 3. Подмена User-Agent
-
-Используется для имитации запросов от различных браузеров или для обхода ограничений на стороне сервера.
-
-```bash
-curl -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' \
-     https://example.com
-```
+| `--connect-timeout <sec>` | Время на установку TCP-соединения. |
+| `--max-time <sec>` | Общее время на всю операцию (включая передачу данных). |
+| `--speed-time` / `--speed-limit` | Прервать, если скорость ниже лимита в течение N секунд. |
 
 ### 4. Основные коды возврата (Exit Codes)
 
-| Код | Описание |
-| :--- | :--- |
-| **0** | Успешное выполнение |
-| **1** | Указан неподдерживаемый протокол |
-| **6** | Не удалось разрешить DNS-имя хоста |
-| **7** | Ошибка подключения к хосту (Connection refused) |
-| **22** | HTTP-ошибка (требуется `-f` для возврата этого кода при 4xx/5xx) |
-| **28** | Тайм-аут операции (превышено `--max-time`) |
-| **35** | Ошибка при TLS/SSL рукопожатии |
+| Код | Значение | Рекомендация |
+| :--- | :--- | :--- |
+| **0** | Успех | — |
+| **6** | Could not resolve host | Проверить DNS или наличие интернета. |
+| **7** | Failed to connect | Проверить порт, firewall или статус сервиса. |
+| **22** | HTTP page not retrieved | Возникает при `-f`, если сервер вернул статус >= 400. |
+| **28** | Operation timeout | Превышен `--max-time`. Увеличить лимит или проверить задержки. |
+| **35** | SSL/TLS connect error | Ошибка рукопожатия. Проверить версии TLS или сертификаты. |
+| **52** | Empty reply from server | Сервер закрыл соединение без данных (возможен сбой приложения). |
 
 ### 5. Связанные заметки
 
-- **[Обзор HTTP-клиентов](./overview.md)** — сравнение curl, wget, httpie
-- **[Диагностика задержек curl](../../../Diagnostics/Networking/curl_network_diagnostics.md)**
-- **[Инструменты диагностики сети](../../network_diagnostics_tools.md)**
-- **[Методы HTTP](../../../../Networking/Protocols/HTTP/http_methods.md)**
+- **[Обзор HTTP-клиентов](./overview.md)** — сравнение curl, wget, httpie.
+- **[Диагностика задержек curl](../../../Diagnostics/Networking/curl_network_diagnostics.md)** — глубокий анализ производительности.
+- **[Инструменты диагностики сети](../../network_diagnostics_tools.md)** — контекст применения в траблшутинге.
+- **[Методы HTTP](../../../../Networking/Protocols/HTTP/http_methods.md)** — описание семантики методов.

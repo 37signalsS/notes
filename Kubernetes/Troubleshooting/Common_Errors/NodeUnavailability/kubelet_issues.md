@@ -1,114 +1,111 @@
 # Недоступность узла: Проблемы Kubelet
 
+Агент `kubelet` является критическим компонентом, обеспечивающим связь между API-сервером и рантаймом контейнеров. Его сбой или некорректная настройка — самая частая причина перехода узла в состояния `NotReady` или `Unknown`.
+
 ## Основные определения
 
-**Сбой Kubelet** (Kubelet Issue) — критическое состояние, при котором агент `kubelet` на узле не может выполнять свои функции (управление контейнерами, отчетность о состоянии узла, выполнение liveness-проб). Это приводит к переходу узла в статус `NotReady` (если агент жив, но сообщает об ошибке) или `Unknown` (если агент не отвечает).
+**Сбой Kubelet (Kubelet Issue)** — состояние, при котором агент не может выполнять жизненно важные функции: управление контейнерами (CRI), отчетность о состоянии (Heartbeats), выполнение проб (Probes) и управление ресурсами (Cgroups/Volumes).
 
-**Kubelet** — основной системный агент Kubernetes, работающий на каждом узле кластера. Он является «связующим звеном» между API-сервером и средой выполнения контейнеров (CRI).
+**Статусы при сбоях:**
+- **`NotReady`**: Kubelet запущен, но сообщает о внутренней ошибке (например, `NetworkUnavailable`, `DiskPressure` или сбой CNI).
+- **`Unknown`**: Kubelet не отправляет данные в API-сервер (процесс упал, завис или изолирован сетевым экраном).
 
-Подробное описание архитектуры агента: [Обзор Kubelet](../../../Concepts/kubelet.md).
+Подробная архитектура агента: [Обзор Kubelet](../../../Concepts/kubelet.md).
 
 ## Основные концепции
 
-### Критические зависимости Kubelet
+### Критические зависимости и точки отказа
 
-Для стабильной работы агенту необходимы:
-- **Связность с API-сервером**: Доступ по порту `6443` и валидные сертификаты в `kubeconfig`.
-- **Работоспособный CRI**: Связь через Unix-сокет (например, `/run/containerd/containerd.sock`).
-- **Корректный Cgroup Driver**: Совпадение драйвера в `kubelet` и в CRI (обычно `systemd`).
-- **Ресурсы ОС**: Достаточное количество RAM, CPU и свободных PID.
-
-### Точки отказа и диагностические файлы
-
-| Объект | Путь в ОС | Назначение |
+| Компонент | Требование / Зависимость | Последствие сбоя |
 | :--- | :--- | :--- |
-| **Файл конфигурации** | `/var/lib/kubelet/config.yaml` | Основные параметры (KubeletConfiguration). |
-| **Kubeconfig** | `/etc/kubernetes/kubelet.conf` | Реквизиты доступа к API-серверу. |
-| **Сертификаты** | `/var/lib/kubelet/pki/` | Клиентские сертификаты узла. |
-| **Файлы состояния** | `/var/lib/kubelet/cpu_manager_state` | Данные о выделении ресурсов (могут повреждаться). |
-| **Журнал (Logs)** | `journalctl -u kubelet` | Основной поток системных сообщений. |
+| **Связность с API** | Порт `6443` (Outbound), валидный `kubelet.conf` | Статус `Unknown`, невозможность запустить поды |
+| **CRI Runtime** | Доступ к Unix-сокету (containerd/CRI-O) | Статус `NotReady`, ошибка PLEG |
+| **Cgroup Driver** | Совпадение (`systemd` vs `cgroupfs`) | Kubelet не запускается (Panic) |
+| **Ресурсы ОС** | Свободная память, CPU и лимиты PID (`pid_max`) | Зависание агента, OOM-kill процесса `kubelet` |
+
+### Файловая структура и файлы состояния
+
+| Путь | Назначение |
+| :--- | :--- |
+| `/var/lib/kubelet/config.yaml` | Основная конфигурация (`KubeletConfiguration`). |
+| `/etc/kubernetes/kubelet.conf` | Kubeconfig для авторизации узла в API-сервере. |
+| `/var/lib/kubelet/pki/` | Сертификаты узла (клиентские и серверные). |
+| `/var/lib/kubelet/cpu_manager_state` | Данные о выделении ядер (могут повреждаться). |
+| `/var/lib/kubelet/memory_manager_state` | Данные о выделении памяти (NUMA). |
 
 ## Практические сценарии
 
-### Сценарий 1: Процесс Kubelet падает или не запускается
+### Сценарий 1: Kubelet не запускается (Cgroup Driver / YAML)
 
-**Симптомы**: Узел в статусе `Unknown`, сервис `kubelet` имеет статус `failed` или `activating`.
+**Симптом**: Сервис `failed`, в логах: `misconfiguration: kubelet cgroup driver: "systemd" is different from docker cgroup driver: "cgroupfs"`.
 
-**Диагностика**:
-```bash
-# 1. Проверка статуса сервиса
-systemctl status kubelet
-# → Active: failed (Result: exit-code)
+**Диагностика и решение**:
+1. Проверьте драйвер в конфиге Kubelet: `grep cgroupDriver /var/lib/kubelet/config.yaml`.
+2. Проверьте драйвер в рантайме (например, `/etc/containerd/config.toml` -> `SystemdCgroup = true`).
+3. **Важно:** В современных системах (cgroup v2) всегда используйте `systemd`. После правки:
+   ```bash
+   systemctl restart containerd kubelet
+   ```
 
-# 2. Поиск конкретной причины падения
-journalctl -u kubelet -n 50 --no-pager
-```
+### Сценарий 2: Повреждение файлов состояния (State Corruption)
 
-**Распространённые причины**:
-- **Несоответствие cgroup driver**: `kubelet` ожидает `systemd`, а рантайм настроен на `cgroupfs`.
-- **Повреждение файлов состояния**: Если в логах есть ошибки про `cpu_manager`, попробуйте:
-  ```bash
-  rm /var/lib/kubelet/cpu_manager_state
-  systemctl restart kubelet
-  ```
-- **Ошибка в YAML**: Невалидный синтаксис в `/var/lib/kubelet/config.yaml`.
-
-### Сценарий 2: Ошибки взаимодействия с CRI (Container Runtime)
-
-**Симптомы**: Узел `NotReady`, в логах ошибки `CRI: container runtime is down` или `failed to connect to socket`.
-
-**Диагностика**:
-```bash
-# 1. Проверка сокета через crictl
-crictl info
-# → Ошибка, если рантайм недоступен
-
-# 2. Проверка статуса containerd/CRI-O
-systemctl status containerd
-```
+**Симптом**: Kubelet падает с ошибкой в `cpu_manager` или не может запустить поды с гарантированным QoS.
 
 **Решение**:
-Перезапустите рантайм и проверьте права доступа к сокету. Подробнее: [Проблемы рантайма](./runtime_issues.md).
+Если файлы состояния повреждены или не соответствуют текущей конфигурации ядер, их можно безопасно удалить (Kubelet пересоздаст их при старте):
+```bash
+systemctl stop kubelet
+rm /var/lib/kubelet/cpu_manager_state
+rm /var/lib/kubelet/memory_manager_state
+systemctl start kubelet
+```
 
 ### Сценарий 3: Истечение сертификатов узла
 
-**Симптомы**: `kubelet` не может авторизоваться, ошибки `x509: certificate has expired`.
+**Симптом**: Ошибки `x509: certificate has expired` или `Unauthorized` в `journalctl`.
 
 **Диагностика**:
+Проверьте срок действия клиентского сертификата:
 ```bash
-# Проверка срока действия сертификата в kubeconfig
 openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -text -noout | grep -A 2 "Validity"
-# → Not After : Jul 20 2026 ...
 ```
 
 **Решение**:
-Если используется `kubeadm`, выполните:
-```bash
-kubeadm certs renew all
-systemctl restart kubelet
+1. Если используется `kubeadm`, обновите сертификаты: `kubeadm certs renew all`.
+2. Для автоматизации включите `serverTLSBootstrap: true` в `/var/lib/kubelet/config.yaml`.
+3. Если сертификаты уже просрочены, удалите файлы в `/var/lib/kubelet/pki/` и перезапустите агент — он создаст новый CSR (при наличии разрешающих RBAC правил в кластере).
+
+### Сценарий 4: Ошибки PLEG (PLEG is unhealthy)
+
+**Симптом**: Узел `NotReady`, логи забиты сообщениями `PLEG is unhealthy: relist period was too long`.
+
+**Причины и отладка**:
+- **Перегрузка CRI**: Проверьте `sudo crictl pods`. Если команда виснет — рантайм не отвечает.
+- **I/O Wait**: Если диск системного раздела занят на 100%, Kubelet не может записать статус.
+- **Решение**: Перезапуск рантайма (`systemctl restart containerd`) часто помогает как временная мера, но требует расследования причин зависания I/O.
+
+### Сценарий 5: Поддержка Swap (Kubernetes 1.31+)
+
+**Симптом**: Kubelet падает на узле с включенным Swap, хотя в 1.31 заявлена поддержка.
+
+**Решение**:
+Для работы со Swap необходимо явно настроить поведение в `KubeletConfiguration`:
+```yaml
+failSwapOn: false
+memorySwap:
+  swapBehavior: LimitedSwap
 ```
-*Примечание: Убедитесь, что включена опция `serverTLSBootstrap: true` в конфиге для автоматического продления в будущем.*
-
-### Сценарий 4: Проблемы с обновлением Node Lease
-
-**Симптомы**: `kubelet` работает, `crictl ps` показывает запущенные контейнеры, но узел в статусе `Unknown`.
-
-**Причина**: `kubelet` не может отправить heartbeats (объекты Lease) в API-сервер из-за сетевых блокировок или перегрузки Control Plane.
-
-**Диагностика**:
-```bash
-# Проверка связности с API-сервером
-curl -k https://<api-server-endpoint>:6443/healthz
-# → ok
-```
+Без этих параметров Kubelet по умолчанию требует `swapoff -a`.
 
 ## Дополнительная информация
 
-### Смежные разделы
-- [Обслуживание сертификатов](../../../Operations/certificate_management.md) — детали ротации и CSR.
-- [Диагностика узла](./diagnostics.md) — общий алгоритм поиска проблем.
-- [Давление ресурсов](./resource_pressure.md) — влияние OOM и дефицита ресурсов на `kubelet`.
+### Полезные команды диагностики
+- `journalctl -u kubelet -f` — логи в реальном времени.
+- `kubectl get node <name> -o yaml` — просмотр `status.conditions`.
+- `crictl info` — проверка связности Kubelet <-> Runtime.
 
-### Полезные инструменты
-- **`crictl`** — CLI для инспекции контейнеров напрямую через CRI.
-- **`journalctl -u kubelet -f`** — просмотр логов в реальном времени.
+### Смежные разделы
+- [Диагностика узла](./diagnostics.md) — системный алгоритм поиска проблем.
+- [Проблемы рантайма](./runtime_issues.md) — если причина в `containerd`/`CRI-O`.
+- [Давление ресурсов](./resource_pressure.md) — влияние Memory/Disk Pressure.
+- [Управление сертификатами](../../../Operations/certificate_management.md) — детали ротации.

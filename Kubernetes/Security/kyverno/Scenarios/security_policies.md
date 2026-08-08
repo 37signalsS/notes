@@ -2,47 +2,47 @@
 
 ## Определения
 
-**Сценарии безопасности** — практические примеры реализации защитных механизмов кластера Kubernetes с использованием Kyverno. Сценарии охватывают превентивную блокировку угроз, автоматическое исправление конфигураций и непрерывный аудит на соответствие стандартам (PSS, CIS).
+**Сценарии безопасности** — практические руководства по реализации защитных механизмов кластера Kubernetes с использованием декларативных политик Kyverno. Сценарии охватывают превентивную блокировку угроз, автоматическое исправление конфигураций и непрерывный аудит на соответствие стандартам (PSS, CIS Benchmark).
 
-В современных версиях (2024–2025) сценарии безопасности опираются на **CEL (Common Expression Language)** для обеспечения максимальной производительности и нативной совместимости с Kubernetes.
+В современной инфраструктуре (2025–2026) сценарии безопасности базируются на **CEL (Common Expression Language)** и интеграции с **Sigstore**, что обеспечивает нативную производительность и защиту на всех этапах жизненного цикла артефактов.
 
 ---
 
 ## Основные концепции
 
-### Эшелонированная защита с Kyverno
+### Эшелонированная защита (Defense in Depth)
 
-Использование Kyverno в сценариях безопасности строится по четырем ключевым направлениям:
+Применение Kyverno в контуре безопасности строится по принципу многоуровневого контроля:
 
-| Направление | Описание | Инструментарий |
+| Уровень | Техническая реализация | Цель |
 | :--- | :--- | :--- |
-| **Prevention** | Блокировка небезопасных ресурсов до их попадания в кластер. | `ValidatingPolicy` (CEL) или `ClusterPolicy` (Enforce). |
-| **Mutation** | Автоматическое добавление настроек безопасности (например, `runAsNonRoot`). | `MutatingPolicy` или `ClusterPolicy` (Mutate). |
-| **Audit** | Выявление дрифта конфигураций и нарушений в существующих ресурсах. | [Background Scans](../background.md) + `PolicyReports`. |
-| **Supply Chain** | Верификация подписей образов и аттестаций безопасности (SBOM). | `ImageValidatingPolicy` (Sigstore/Cosign). |
+| **Admission Control** | `ValidatingPolicy` (CEL) | Блокировка небезопасных ресурсов до их попадания в API-сервер. |
+| **Supply Chain** | `ImageValidatingPolicy` | Проверка подлинности образов, аттестаций SLSA и SBOM. |
+| **Hardening** | `MutatingPolicy` | Автоматическая инъекция `securityContext` и меток безопасности. |
+| **Post-deployment** | `Background Scan` | Выявление дрейфа конфигураций и нарушений в уже запущенных объектах. |
 
 ### Сосуществование с Pod Security Admission (PSA)
 
-Kyverno не заменяет встроенный в Kubernetes механизм PSA, а расширяет его возможности:
-*   **Генерация отчетов**: В отличие от PSA, Kyverno создает визуализируемые отчеты `PolicyReport`.
-*   **Мутация**: PSA умеет только блокировать; Kyverno может автоматически исправлять ресурсы.
-*   **Гранулярность**: Kyverno позволяет создавать точечные исключения через `PolicyException`.
+Kyverno дополняет встроенный механизм PSA, закрывая его архитектурные ограничения:
+- **Гибкость**: Kyverno позволяет создавать исключения на уровне конкретных подов или правил через `PolicyException`.
+- **Автоматизация**: Kyverno может исправлять (mutate) ресурсы, в то время как PSA умеет только блокировать.
+- **Наблюдаемость**: Kyverno генерирует детализированные `PolicyReport`, видимые в интерфейсах мониторинга.
 
 ---
 
 ## Практические сценарии
 
-### 1. Внедрение Pod Security Standards (CEL-валидация)
+### 1. Реализация профиля PSS Restricted (CEL)
 
-**Проблема**: Необходимо обеспечить соответствие кластера стандарту **PSS Restricted** без использования устаревших JMESPath-фильтров.
+**Проблема**: Стандартный PSA Restricted может быть слишком жестким или недостаточно гибким для специфических приложений.
 
-**Решение**: Использование `ValidatingPolicy` на базе CEL для эффективной проверки параметров безопасности.
+**Решение**: Использование `ValidatingPolicy` для точечной проверки параметров Restricted-профиля с высокой производительностью.
 
 ```yaml
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
-  name: pss-restricted-no-privileged
+  name: pss-restricted-hardening
 spec:
   validationActions: [Deny]
   matchConstraints:
@@ -52,52 +52,74 @@ spec:
         resources: ["pods"]
   validations:
     - expression: |
-        object.spec.containers.all(c, 
-          !has(c.securityContext) || !has(c.securityContext.privileged) || c.securityContext.privileged == false
+        (object.spec.containers + object.spec.?initContainers.orValue([])).all(c, 
+          has(c.securityContext) && 
+          c.securityContext.allowPrivilegeEscalation == false &&
+          c.securityContext.runAsNonRoot == true &&
+          c.securityContext.capabilities.drop.contains("ALL")
         )
-      message: "Запуск привилегированных контейнеров запрещен (PSS Restricted)."
+      message: "Нарушение стандартов PSS Restricted: проверьте привилегии и capabilities."
 ```
 
-### 2. Защита цепочки поставок (Image Verification)
+### 2. Верификация аттестаций SBOM и SLSA
 
-**Проблема**: Риск использования скомпрометированных образов из публичных реестров.
+**Проблема**: Факт подписи образа не гарантирует отсутствие уязвимостей или соответствие процесса сборки стандартам безопасности.
 
-**Решение**: Блокировка образов, не подписанных корпоративным ключом Cosign.
+**Решение**: Проверка аттестаций (доказательств), прикрепленных к образу в реестре.
 
 ```yaml
 apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
-  name: verify-image-signatures
+  name: verify-supply-chain-attestations
 spec:
   rules:
-    - name: verify-sigstore
-      imageReferences:
-        - "index.docker.io/my-company/*"
+    - name: check-sbom-presence
+      imageReferences: ["ghcr.io/my-company/*"]
       attestations:
-        - name: check-signature
-          verifier:
-            sigstore:
-              publicKey: |
-                -----BEGIN PUBLIC KEY-----
-                ...
-                -----END PUBLIC KEY-----
+        - name: verify-cyclonedx
+          type: "https://cyclonedx.org/bom"
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: "MFkwEwYHKo..."
+# Политика заблокирует образ, если к нему не приложен подписанный SBOM.
 ```
 
-### 3. Автоматическое исправление конфигураций (Mutation)
+### 3. Сетевое закаливание (Network Hardening)
 
-**Проблема**: Разработчики не всегда указывают `securityContext`, что приводит к блокировке деплоев.
+**Проблема**: Использование небезопасных портов (например, 22/SSH) внутри контейнеров увеличивает риск горизонтального перемещения злоумышленника.
 
-**Решение**: Автоматическая инъекция параметров безопасности при создании ресурса. Детали параметров см. в **[Security Context в Kubernetes](../../pod_security_context.md)**.
+**Решение**: Валидация портов контейнеров через CEL-фильтры.
+
+```yaml
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: disallow-unsafe-ports
+spec:
+  validations:
+    - expression: |
+        object.spec.containers.all(c, 
+          !has(c.ports) || c.ports.all(p, p.containerPort != 22 && p.containerPort != 23)
+        )
+      message: "Использование портов SSH (22) и Telnet (23) внутри подов запрещено."
+```
+
+### 4. Автоматическая инъекция Security Context (Mutation)
+
+**Проблема**: Ошибки конфигурации в манифестах разработчиков приводят к отказам в Admission Control.
+
+**Решение**: Автоматическое приведение подов к безопасному виду без участия человека.
 
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: auto-inject-security-context
+  name: auto-inject-hardening
 spec:
   rules:
-    - name: inject-non-root
+    - name: inject-root-prevention
       match:
         any:
           - resources:
@@ -107,24 +129,24 @@ spec:
           spec:
             securityContext:
               runAsNonRoot: true
-              runAsUser: 1000
+              seccompProfile:
+                type: RuntimeDefault
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Рекомендации по стратегии безопасности
+### Рекомендации по эксплуатации
 
-1.  **Shift-Left**: Используйте `kyverno CLI` в пайплайнах для проверки манифестов до деплоя. Это позволяет выявить ошибки до того, как они попадут в Admission-контроллер.
-2.  **Использование PolicyException**: Для временных разрешений (например, для инструментов миграции) создавайте отдельные ресурсы `PolicyException` вместо изменения основных политик.
-3.  **Исключение системных ресурсов**: Всегда добавляйте `kube-system` и `kyverno` в исключения политик мутации, чтобы не нарушить работу самого кластера.
-4.  **Мониторинг**: Связывайте сценарии с [Policy Reporter](../reporter.md) для отслеживания динамики нарушений в реальном времени.
+1.  **Shift-Left**: Интегрируйте `kyverno CLI` в CI-пайплайны для раннего обнаружения нарушений. Это снижает «шум» в Admission-контроллере.
+2.  **Управление исключениями**: Для временных допусков используйте ресурс `PolicyException`. Никогда не редактируйте основную политику для решения локальных проблем одной команды.
+3.  **Безопасность системных Namespace**: Всегда добавляйте `kube-system` и `kyverno` в `exclude` правил мутации, чтобы предотвратить циклические блокировки (Deadlocks).
+4.  **Мониторинг дрейфа**: Используйте [Policy Reporter](../reporter.md) для анализа результатов фонового сканирования. Обычные ошибки в существующих ресурсах не должны игнорироваться.
 
 ### См. также
 
-- **[Типы правил (validate, mutate, generate)](../rules.md)** — основы синтаксиса.
-- **[Автоматизация и комплаенс](./automation_compliance.md)** — сетевые политики и соответствие NIS2.
-- **[Библиотека политик](../policies/practical_scenarios.md)** — готовые примеры для копирования.
-- **[Отчеты (Policy Reports)](../reports.md)** — как анализировать нарушения.
-- **[Сравнение с другими инструментами](../concepts.md#сравнение-с-другими-инструментами)** — Kyverno vs Gatekeeper vs Falco.
+- **[Типы правил: глубокое погружение](../rules.md)** — синтаксис validate, mutate, verifyImages.
+- **[Библиотека практических примеров](../policies/practical_scenarios.md)** — расширенный набор YAML для копирования.
+- **[Система отчетов Policy Reports](../reports.md)** — как работать с результатами проверок.
+- **[Security Context в Kubernetes](../../pod_security_context.md)** — описание параметров безопасности.

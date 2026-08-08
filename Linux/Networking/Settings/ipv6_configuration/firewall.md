@@ -1,12 +1,5 @@
 # Настройка файрвола для IPv6 в Linux
 
----
-
-**Reliability Score: 10** (SSoT + Современные стандарты 2026 года)  
-**Freshness: Актуально на июль 2026**
-
----
-
 ## Определения
 
 **IPv6 Firewall** — механизм фильтрации сетевого трафика для адресов длиной 128 бит. В Linux реализуется через фреймворк **Netfilter**.
@@ -17,9 +10,9 @@
 
 ### Эволюция инструментов
 
-1.  **nftables (Рекомендуется)**: современный стандарт. Использует семейство `inet` для управления правилами IPv4 и IPv6 в рамках единой таблицы.
+1.  **nftables (Рекомендуется)**: современный стандарт. Использует семейство `inet` для управления правилами IPv4 и IPv6 в рамках единой таблицы. Позволяет эффективно фильтровать трафик по специфичным для IPv6 полям (например, Extension Headers).
 2.  **firewalld / UFW**: высокоуровневые оболочки (front-ends), использующие `nftables` в качестве бэкенда в современных дистрибутивах.
-3.  **ip6tables (Legacy)**: классический инструмент. Управляет правилами IPv6 отдельно от IPv4. Требует ручного дублирования политик безопасности.
+3.  **ip6tables (Legacy)**: классический инструмент. Управляет правилами IPv6 отдельно от IPv4. Требует ручного дублирования политик безопасности и менее эффективен при работе с наборами данных (sets).
 
 ### Критическая роль ICMPv6
 
@@ -61,7 +54,11 @@ table inet filter {
             mld-listener-query, mld-listener-report, mld-listener-done
         } accept
 
-        # 4. Разрешить SSH (пример для конкретных портов)
+        # 4. Ограничение входящих Router Advertisements (защита от ложных роутеров)
+        # Принимать RA только от доверенного Link-Local адреса шлюза (пример)
+        # ip6 saddr fe80::1 icmpv6 type nd-router-advert accept
+
+        # 5. Разрешить стандартные сервисы
         tcp dport { 22, 80, 443 } accept
     }
 }
@@ -78,11 +75,11 @@ grep "IPV6=" /etc/default/ufw
 # Разрешить порт для обоих протоколов (IPv4 и IPv6)
 sudo ufw allow 22/tcp
 
-# Разрешить конкретный адрес IPv6
-sudo ufw allow from 2001:db8::/32
+# Разрешить конкретную сеть IPv6
+sudo ufw allow from 2001:db8:1::/64
 ```
 
-### 3. firewalld (RHEL / Fedora / Alma / Rocky)
+### 3. firewalld (RHEL / Fedora)
 
 Управление через зоны. Команды без флага `--ipv6` применяются к обоим стекам.
 
@@ -90,64 +87,75 @@ sudo ufw allow from 2001:db8::/32
 # Разрешить сервис (IPv4 + IPv6)
 sudo firewall-cmd --permanent --add-service=http
 
-# Разрешить специфический порт только для IPv6
+# Разрешить специфический порт только для IPv6 через Rich Rules
 sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv6" port port="8080" protocol="tcp" accept'
 
 sudo firewall-cmd --reload
 ```
 
-### 4. ip6tables (Legacy подход)
+## Безопасность и защита
 
-Используется в старых системах или специфических контейнерных окружениях.
+### Фильтрация по Scope ID и Link-Local
+
+Пакеты с адресами Link-Local (`fe80::/10`) не должны покидать пределы L2-сегмента. На маршрутизаторах рекомендуется блокировать такие адреса на внешних интерфейсах в цепочке `forward`.
+
+### Проверка обратного пути (uRPF) для IPv6
+
+В отличие от IPv4, где есть `sysctl net.ipv4.conf.all.rp_filter`, для IPv6 в Linux uRPF настраивается через файрвол:
 
 ```bash
-# Базовая политика безопасности
-sudo ip6tables -P INPUT DROP
-sudo ip6tables -P FORWARD DROP
+# Пример для nftables
+table inet filter {
+    chain prerouting {
+        type filter hook prerouting priority -150;
+        # Проверка, что адрес отправителя доступен через тот же интерфейс, с которого пришел пакет
+        fib saddr . iif oif exists accept
+        drop
+    }
+}
+```
 
-# Разрешить established и loopback
-sudo ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-sudo ip6tables -A INPUT -i lo -j ACCEPT
+### Обработка Extension Headers
 
-# Разрешить ICMPv6 (упрощенно)
-sudo ip6tables -A INPUT -p icmpv6 -j ACCEPT
+Злоумышленники могут использовать Extension Headers для обхода файрволов или DoS-атак. `nftables` позволяет фильтровать пакеты с избыточными заголовками:
 
-# Разрешить SSH
-sudo ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
+```bash
+# Пример: ограничение длины Hop-by-Hop или фильтрация специфичных заголовков
+ip6 extension header hop-by-hop drop
 ```
 
 ## Диагностика и проверка
 
-### Проверка правил
+### Проверка активных правил
 
 ```bash
-# nftables
+# nftables (показать весь набор)
 sudo nft list ruleset
 
-# firewalld
+# firewalld (показать настройки текущей зоны)
 sudo firewall-cmd --list-all
 
-# ufw
-sudo ufw status verbose
+# ufw (статус и пронумерованные правила)
+sudo ufw status numbered
 ```
 
-### Тестирование портов
+### Тестирование связности
 
 ```bash
-# Использование netcat (флаг -6 обязателен для адресов)
+# Использование netcat (флаг -6 для IPv6)
 nc -6 -zv 2001:db8::1 80
 
-# Сканирование через nmap
-nmap -6 -p 80,443 2001:db8::1
+# Сканирование через nmap с указанием интерфейса для Link-Local
+nmap -6 -p 22 fe80::215:5dff:fe1e:81e%eth0
 ```
 
 ## Дополнительная информация
 
 ### Типичные ошибки
 
-- **Блокировка ICMPv6 Type 2 (Packet Too Big)**: приводит к тому, что маленькие пакеты проходят (например, SSH логин), а большие (вывод `ls -l` или HTTP-ответ) блокируются. Это классический симптом проблемы PMTUD.
-- **Отсутствие правил в ip6tables**: часто администраторы настраивают только `iptables` (IPv4), оставляя IPv6 либо полностью закрытым (policy DROP), либо полностью открытым (policy ACCEPT по умолчанию).
-- **Использование NAT для IPv6**: в IPv6 не рекомендуется использовать NAT (NAT66). Вместо него следует использовать прямую маршрутизацию и фильтрацию на уровне GUA (Global Unicast Address).
+- **Блокировка ICMPv6 Type 2 (Packet Too Big)**: разрушает механизм Path MTU Discovery. Симптом: мелкие пакеты проходят, большие сессии (например, передача файлов) "зависают".
+- **Асимметрия правил**: ситуация, когда `iptables` настроен, а `ip6tables` оставлен с политикой `ACCEPT` по умолчанию (или наоборот, всё закрыто, включая NDP).
+- **NDP на мостах (Bridges)**: при использовании `ebtables` или `nftables bridge` случайная блокировка Multicast-адресов приводит к потере связи между узлами в одном сегменте.
 
 ### См. также
 

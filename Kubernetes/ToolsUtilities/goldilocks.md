@@ -1,4 +1,4 @@
-# Goldilocks
+# Goldilocks — рекомендации по ресурсам Kubernetes
 
 ## Определения
 
@@ -29,11 +29,13 @@
 - **Guaranteed (Гарантированный):** Устанавливает `requests` равными `limits`. Это предотвращает вытеснение подов и гарантирует выделение ресурсов, что критично для высоконагруженных приложений.
 - **Burstable (С возможностью всплесков):** Устанавливает `requests` ниже, чем `limits`. Это позволяет экономить ресурсы кластера за счет более плотной упаковки (overcommitting), но несет риск троттлинга при нехватке физических ресурсов на узле.
 
-### Интеграция с VPA
+### Интеграция с VPA и актуальные возможности
 
 Goldilocks использует VPA как вычислительный движок, предоставляя над ним удобную абстракцию и UI.
 
 **Важные нюансы:**
+- **In-Place Pod Resizing (K8s 1.35+):** В современных кластерах рекомендации Goldilocks могут применяться без перезапуска подов благодаря стабильной поддержке изменения ресурсов "на лету" (при поддержке со стороны VPA и контейнерного рантайма).
+- **Поддержка cgroup v2:** Начиная с версии v4.15.0 Goldilocks полностью совместим с cgroup v2, что является обязательным требованием для Kubernetes v1.35+.
 - **Раздельное управление:** Рекомендуется устанавливать VPA отдельно от Goldilocks. Это гарантирует, что при удалении или обновлении панели управления данные и объекты VPA сохранятся.
 - **Конфликты:** Запрещено использовать Goldilocks и прямой (ручной) VPA для одного и того же workload — это приведет к непредсказуемому поведению и конфликтам в API.
 
@@ -51,23 +53,23 @@ Goldilocks позволяет гибко настраивать область �
 ```bash
 # Добавление репозитория
 helm repo add fairwinds-stable https://charts.fairwinds.com/stable
-# → "fairwinds-stable" has been added to your repositories
+# -> "fairwinds-stable" has been added to your repositories
 
 helm repo update
-# → Hang tight while we grab the latest from your chart repositories...
-# → ...Successfully got an update from the "fairwinds-stable" chart repository
+# -> Hang tight while we grab the latest from your chart repositories...
+# -> ...Successfully got an update from the "fairwinds-stable" chart repository
 
 # Установка Goldilocks (без встроенного VPA, если он уже есть в кластере)
 helm install goldilocks fairwinds-stable/goldilocks \
   --namespace goldilocks \
   --create-namespace \
   --set controller.rbac.clusterRoleName=goldilocks-clusterrole
-# → NAME: goldilocks
-# → STATUS: deployed
-# → NAMESPACE: goldilocks
+# -> NAME: goldilocks
+# -> STATUS: deployed
+# -> NAMESPACE: goldilocks
 ```
 
-**Примечание:** С версии v4.15.0 образы перемещены в Google Artifact Registry: `us-docker.pkg.dev/fairwinds-ops/oss/goldilocks`.
+**Примечание:** С версии v4.15.0 образы перемещены в Google Artifact Registry: `us-docker.pkg.dev/fairwinds-ops/oss/goldilocks`. Образы подписаны и имеют неизменяемые теги.
 
 ### Включение анализа для namespace
 
@@ -75,7 +77,7 @@ helm install goldilocks fairwinds-stable/goldilocks \
 
 ```bash
 kubectl label namespace my-namespace goldilocks.fairwinds.com/enabled=true
-# → namespace/my-namespace labeled
+# -> namespace/my-namespace labeled
 ```
 
 ### Просмотр рекомендаций
@@ -85,7 +87,7 @@ kubectl label namespace my-namespace goldilocks.fairwinds.com/enabled=true
 ```bash
 # Проброс порта для доступа к UI
 kubectl port-forward svc/goldilocks-dashboard -n goldilocks 8080:80
-# → Forwarding from 127.0.0.1:8080 -> 80
+# -> Forwarding from 127.0.0.1:8080 -> 80
 ```
 После этого интерфейс доступен по адресу `http://localhost:8080`.
 
@@ -94,15 +96,15 @@ kubectl port-forward svc/goldilocks-dashboard -n goldilocks 8080:80
 ```bash
 # Просмотр всех VPA объектов, созданных инструментом
 kubectl get vpa --all-namespaces -o wide
-# → NAMESPACE      NAME                MODE   CPU    MEM       AGE
-# → my-namespace   myapp-goldilocks    Off    150m   512Mi     12h
+# -> NAMESPACE      NAME                MODE   CPU    MEM       AGE
+# -> my-namespace   myapp-goldilocks    Off    150m   512Mi     12h
 
 # Детальное изучение рекомендаций конкретного объекта
 kubectl describe vpa myapp-goldilocks -n my-namespace
-# → Target: CPU: 120m, Memory: 300Mi
-# → Uncapped Target: CPU: 120m, Memory: 300Mi
-# → Lower Bound: CPU: 100m, Memory: 250Mi
-# → Upper Bound: CPU: 500m, Memory: 1Gi
+# -> Target: CPU: 120m, Memory: 300Mi
+# -> Uncapped Target: CPU: 120m, Memory: 300Mi
+# -> Lower Bound: CPU: 100m, Memory: 250Mi
+# -> Upper Bound: CPU: 500m, Memory: 1Gi
 ```
 
 ### Применение рекомендаций
@@ -149,7 +151,7 @@ spec:
 Удалите лейбл, если анализ больше не требуется:
 ```bash
 kubectl label namespace kube-system goldilocks.fairwinds.com/enabled-
-# → namespace/kube-system unlabeled
+# -> namespace/kube-system unlabeled
 ```
 
 **Исключение контейнеров:**
@@ -169,7 +171,7 @@ kubectl label namespace kube-system goldilocks.fairwinds.com/enabled-
 
 | Компонент | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| Kubernetes | 1.25+ | Полная поддержка до 1.32 включительно |
+| Kubernetes | 1.25+ | Полная поддержка до 1.35 включительно |
 | Metrics Server | 0.6+ | Критически важен для передачи метрик в VPA |
 | Helm | 3.0+ | Для стандартной установки |
 | VPA | 0.8+ | Должен быть предварительно развернут в кластере |

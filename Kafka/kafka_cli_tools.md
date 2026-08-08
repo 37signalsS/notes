@@ -4,31 +4,31 @@
 
 ## Определения
 
-- **Kafka CLI (Standard)**: Набор shell-скриптов (оберток над Java-приложениями), поставляемых с Kafka. Требуют наличия JVM.
-- **kcat (ранее kafkacat)**: Легковесный не-Java инструмент (на базе `librdkafka`) для потоковой передачи данных в Kafka.
-- **kafkactl**: Современный CLI-инструмент с интерфейсом в стиле `kubectl`, ориентированный на удобное управление несколькими кластерами через конфигурационные файлы и контексты.
-- **Контекст (Context)**: Именованный набор параметров подключения (брокеры, аутентификация, сертификаты) в `kafkactl`.
+- **Kafka CLI (Standard)**: Набор shell-скриптов (оберток над Java-приложениями), поставляемых в составе дистрибутива Apache Kafka. Требуют наличия JRE/JVM. Основные утилиты: `kafka-topics.sh`, `kafka-console-consumer.sh`, `kafka-configs.sh`.
+- **kcat (ранее kafkacat)**: Универсальный не-Java инструмент (на базе `librdkafka`) для работы с Kafka. Идеален для отладки, чтения данных и интеграции в shell-пайплайны.
+- **rpk (Redpanda CLI)**: Современный, быстрый инструмент на Go. Несмотря на то, что это основной CLI для Redpanda, он полностью совместим с Apache Kafka и часто используется как более удобная альтернатива стандартным скриптам.
+- **kafkactl**: Специализированный CLI с интерфейсом в стиле `kubectl`, ориентированный на управление множеством кластеров через контексты.
+- **Confluent CLI**: Фирменный инструмент для работы с Confluent Cloud и Confluent Platform.
 
-## Базовые концепции
+## Основные концепции
 
 ### Сравнение инструментов
 
-| Критерий | Стандартные утилиты | kcat | kafkactl |
-| :--- | :--- | :--- | :--- |
-| **Зависимости** | JVM (Java) | `librdkafka` | Статический бинарный файл |
-| **Синтаксис** | Разные утилиты под задачи | Флаги (`-C`, `-P`, `-L`) | Действие + Объект (`get topics`) |
-| **Конфигурация** | Параметры в каждой команде | Параметры в командной строке | YAML-конфиг с контекстами |
-| **Удобство** | Низкое (длинные команды) | Высокое для пайплайнов | Высокое для регулярной работы |
-| **Consumer Groups** | Полная поддержка | Ограниченно | Полная поддержка + визуализация |
+| Критерий | Стандартные утилиты | kcat | rpk | kafkactl |
+| :--- | :--- | :--- | :--- | :--- |
+| **Язык / Зависимости** | Java (JVM) | C (librdkafka) | Go (статический бинарный файл) | Go (статический бинарный файл) |
+| **Стиль команд** | Множество скриптов | Флаги (`-C`, `-P`, `-L`) | Глагол + Существительное (`rpk topic ...`) | Интерфейс `kubectl` (`get topics`) |
+| **Управление кластерами** | Параметры в каждой команде | Параметры командной строки | Конфигурационные профили | Контексты (YAML) |
+| **Администрирование** | Максимальное (ACL, Configs) | Только данные и метаданные | Высокое (Topic, Group, ACL) | Среднее (Topic, Group) |
 
-### Архитектура подключения kafkactl
+### Архитектура подключения и контексты
 
-`kafkactl` использует конфигурационный файл `config.yml` (обычно в `~/.config/kafkactl/`), что избавляет от необходимости передавать параметры подключения при каждом вызове.
+Современные инструменты (`kafkactl`, `rpk`, `confluent-cli`) используют концепцию **контекстов** или **профилей**. Это позволяет переключаться между разными кластерами (например, `dev`, `staging`, `prod`) без ручного ввода адресов брокеров и путей к сертификатам.
 
-**Иерархия конфигурации:**
-1. **Локальный конфиг**: `kafkactl.yml` в корне проекта (рядом с `.git`).
-2. **Глобальный конфиг**: Пользовательские настройки в домашней директории.
-3. **Переменные окружения**: Переопределение через `${VAR_NAME}` для безопасности (пароли).
+**Преимущества профилей:**
+1. **Безопасность**: Секреты хранятся в зашифрованных файлах или переменных окружения.
+2. **Скорость**: Отсутствие необходимости в длинных флагах `--bootstrap-server` и `--command-config`.
+3. **Единообразие**: Команды выглядят одинаково для любого окружения.
 
 ## Практические сценарии
 
@@ -41,116 +41,98 @@ kafka-topics.sh --bootstrap-server localhost:9092 --list
 
 # Описание топика
 kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic orders
+```
 
-# Увеличение партиций (партиции можно только добавлять)
-kafka-topics.sh --bootstrap-server localhost:9092 --alter --topic orders --partitions 24
+**rpk:**
+```bash
+# Список топиков
+rpk topic list
+
+# Создание топика с настройками
+rpk topic create orders -p 12 -r 3 --topic-config retention.ms=604800000
 ```
 
 **kafkactl:**
 ```bash
-# Список топиков
-kafkactl get topics
-
 # Детальная информация
 kafkactl describe topic orders
 ```
 
-### Сценарий 2: Отправка и чтение сообщений
+### Сценарий 2: Чтение и отправка данных
 
 **kcat:**
 ```bash
-# Чтение из топика orders
-kcat -b localhost:9092 -t orders -C
+# Чтение в JSON формате с метаданными
+kcat -b localhost:9092 -t orders -C -J
 
-# Отправка сообщения
-echo "message" | kcat -b localhost:9092 -t orders -P
+# Потребление сообщений с фильтрацией через jq
+kcat -b localhost:9092 -t orders -C -e | jq '.payload'
 ```
 
-**kafkactl:**
+**rpk:**
 ```bash
-# Чтение с начала
-kafkactl consume orders --from-beginning
+# Чтение сообщений
+rpk topic consume orders
 
-# Чтение последних N сообщений
-kafkactl consume orders --tail 10
-
-# Отправка JSON-сообщения
-echo '{"order_id":1001,"status":"created"}' | kafkactl produce orders
+# Отправка сообщения из файла
+rpk topic produce orders < message.json
 ```
 
-### Сценарий 3: Работа с Consumer Groups (kafkactl)
+### Сценарий 3: Группы потребителей и LAG
 
-Группы потребителей позволяют отслеживать прогресс обработки и распределять нагрузку.
-
+**Стандартные утилиты:**
 ```bash
-# Создание группы при чтении
-kafkactl consume orders --group orders-service
+# Список групп
+kafka-consumer-groups.sh --bootstrap-server localhost:9092 --list
 
-# Просмотр списка групп
-kafkactl get consumer-groups
-
-# Анализ состояния группы (LAG)
-kafkactl describe consumer-group orders-service
-# → Вывод содержит:
-# TOPIC 	PARTITION  NEWEST_OFFSET  CONSUMER_OFFSET  LAG
-# orders	0	   1005           1005             0
+# Проверка лага (самая частая операция)
+kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group my-service
 ```
-**LAG** — ключевая метрика, показывающая отставание консьюмера от конца топика (разница между `NEWEST_OFFSET` и `CONSUMER_OFFSET`).
 
-### Сценарий 4: Использование в shell-сценариях
+**rpk:**
+```bash
+# Просмотр состояния групп
+rpk group describe my-service
+```
 
-`kafkactl` отлично подходит для автоматизации благодаря поддержке стандартного ввода (stdin) и пайплайнов.
+### Сценарий 4: Динамическая конфигурация (kafka-configs.sh)
+
+Утилита `kafka-configs.sh` позволяет менять настройки брокеров и топиков «на лету» без перезагрузки.
 
 ```bash
-# Отправка содержимого JSON-файла
-cat orders.json | kafkactl produce orders
+# Ограничение скорости (квота) для пользователя
+kafka-configs.sh --bootstrap-server localhost:9092 --alter --add-config 'producer_byte_rate=1048576' --entity-type users --entity-name user1
 
-# Генерация тестовой последовательности сообщений
-seq 1 5 | while read n; do
-  echo "{\"order_id\":$n}" | kafkactl produce orders
-done
+# Включение сжатия для топика
+kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name orders --add-config compression.type=lz4
 
-# Мониторинг новых сообщений в реальном времени (tailing)
-kafkactl consume orders --tail 1
+# Просмотр текущих настроек брокера
+kafka-configs.sh --bootstrap-server localhost:9092 --describe --entity-type brokers --entity-name 1
 ```
 
-### Сценарий 5: Настройка kafkactl с TLS/SSL и SASL
+### Сценарий 5: Управление правами доступа (ACL)
 
-Пример `config.yml` для защищенного подключения:
+Используется для настройки безопасности в кластере.
 
-```yaml
-contexts:
-  prod-cluster:
-    brokers:
-      - broker-1.example.com:9093
-    sasl:
-      enabled: true
-      mechanism: scram-sha512
-      username: my-user
-      password: ${KAFKA_PASSWORD}
-    tls:
-      enabled: true
-      ca: /path/to/root.crt
-```
-
-**Переключение контекста:**
 ```bash
-# Выбор контекста для команды
-kafkactl get topics --context prod-cluster
+# Разрешить пользователю чтение из топика
+kafka-acls.sh --bootstrap-server localhost:9092 --add --allow-principal User:alice --operation Read --topic orders --group my-group
 
-# Установка текущего контекста (в current-context.yml)
-# current-context: prod-cluster
+# Список всех ACL
+kafka-acls.sh --bootstrap-server localhost:9092 --list
 ```
 
 ## Дополнительная информация
 
 ### Выбор инструмента
 
-- **kafkactl**: Идеален для регулярного администрирования, работы с несколькими кластерами и мониторинга групп потребителей.
-- **kcat**: Лучший выбор для интеграции в shell-пайплайны (`grep`, `jq`, `awk`) и быстрой диагностики потоков данных.
-- **Стандартные утилиты**: Необходимы для специфических административных задач (например, `kafka-reassign-partitions.sh` для перераспределения данных).
+- **rpk**: Лучший выбор для повседневных операций (Topic, Group, ACL). Быстрый, современный и не требует Java.
+- **kcat**: Незаменим для сложных пайплайнов обработки данных в shell.
+- **Стандартные утилиты**: "Последняя миля" для специфических задач (перераспределение партиций, низкоуровневые конфиги).
+- **kafkactl**: Удобен при работе с десятками разных кластеров.
 
-**Связанные документы:**
-- [Обзор Apache Kafka](./kafka_overview.md)
-- [Партиционирование и балансировка](./partitioning_and_balancing.md) — детали работы с разделами.
-- [Управление секретами в GitOps](../GitOps/secrets_encryption.md) — для настройки SOPS в конфигурациях.
+### См. также
+
+- **[Обзор Apache Kafka](./kafka_overview.md)** — архитектура и основные понятия.
+- **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — детали работы с разделами.
+- **[Гарантии доставки](./delivery_guarantees.md)** — настройки надежности (acks, retries).

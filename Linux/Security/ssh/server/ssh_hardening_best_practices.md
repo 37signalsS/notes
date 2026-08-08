@@ -2,221 +2,214 @@
 
 ## Определения
 
-**SSH Hardening** — комплекс мер по усилению безопасности SSH-сервера: отключение неиспользуемых функций, ограничение методов аутентификации, настройка файрвола, логирование и защита от автоматических атак.
+**SSH Hardening (Закалка SSH)** — комплекс мер по усилению безопасности SSH-сервера: отключение неиспользуемых функций, ограничение методов аутентификации, настройка криптографических параметров и мониторинг для защиты от автоматизированных и направленных атак.
 
-**Defense in Depth** — принцип многослойной защиты, при котором компрометация одного уровня не даёт полного доступа к системе.
+**Defense in Depth (Эшелонированная защита)** — принцип многослойной защиты, при котором компрометация одного уровня (например, подбор пароля) не дает полного доступа к системе благодаря другим барьерам (например, 2FA или ограничение прав пользователя).
+
+**Post-Quantum Cryptography (PQC)** — криптография, устойчивая к атакам квантовых компьютеров. В современных реализациях SSH (OpenSSH 9.8+) используются гибридные схемы, сочетающие классические алгоритмы (X25519) и постквантовые (ML-KEM/Kyber).
 
 ## Основные концепции
 
 ### Уровни защиты SSH
 
+Безопасность SSH должна выстраиваться на нескольких эшелонах:
+
 | Уровень | Механизм | Описание |
 | :--- | :--- | :--- |
-| **Сетевой** | Файрвол (iptables/nftables) | Фильтрация по IP, ограничение скорости |
-| **Транспортный** | Port Knocking / SPA | Скрытие порта от сканирования |
-| **Прикладной** | sshd_config | Аутентификация, таймауты, баннеры |
-| **Мониторинг** | fail2ban, логи | Блокировка brute-force, аудит |
+| **Сетевой** | Файрвол (nftables/iptables) | Ограничение доступа по IP, rate limiting новых соединений. |
+| **Транспортный** | Port Knocking / SPA | Скрытие порта от сканеров до прохождения первичной проверки. |
+| **Прикладной** | `sshd_config` | Тонкая настройка демона (аутентификация, шифры, таймауты). |
+| **Мониторинг** | fail2ban, аудит | Блокировка атакующих на основе анализа логов и аудит конфига. |
 
 ### Ключевые директивы sshd_config
 
-#### Аутентификация
+#### Аутентификация и контроль доступа
 
 | Директива | Рекомендуемое значение | Описание |
 | :--- | :--- | :--- |
-| `PubkeyAuthentication` | `yes` | [Вход по ключам](./ssh_authentication.md) |
-| `PasswordAuthentication` | `no` | [Отключение паролей](./ssh_authentication.md) |
-| `PermitRootLogin` | `no` | Запретить вход root |
-| `MaxAuthTries` | `3` | Ограничить попытки |
-| `PermitEmptyPasswords` | `no` | Запретить пустые пароли |
-| `AllowUsers` | `user1 user2` | [Белый список пользователей](./ssh_access_control.md) |
-| `ChallengeResponseAuthentication` | `no` | Отключить challenge-response |
-| `AuthenticationMethods` | `publickey` | Требовать только pubkey |
-| `PubkeyAcceptedAlgorithms` | `ssh-ed25519,rsa-sha2-512` | Ограничить алгоритмы |
+| **`PubkeyAuthentication`** | `yes` | [Вход по ключам](./ssh_authentication.md) — основной метод. |
+| **`PasswordAuthentication`** | `no` | Полное отключение паролей для защиты от brute-force. |
+| **`PermitRootLogin`** | `no` | Запрет прямого входа root. Альтернатива: `prohibit-password`. |
+| **`MaxAuthTries`** | `3` | Максимальное число попыток аутентификации на одну сессию. |
+| **`PermitEmptyPasswords`** | `no` | Запрет входа пользователям без пароля. |
+| **`AllowUsers`** | `user1 user2` | [Белый список пользователей](./ssh_access_control.md) (явное разрешение). |
+| **`AuthenticationMethods`** | `publickey` | Требовать именно этот метод (можно указать `publickey,keyboard-interactive` для MFA). |
+| **`KbdInteractiveAuthentication`** | `no` | Отключение интерактивных методов (если не используется MFA). |
 
-#### Сетевые настройки
+#### Сетевые и системные настройки
 
 | Директива | Рекомендуемое значение | Описание |
 | :--- | :--- | :--- |
-| `Port` | Нестандартный (например, `2239`) | [Смена порта](./ssh_access_control.md) |
-| `ListenAddress` | Конкретный IP | Слушать только на нужном интерфейсе (включая IPv6 `::` для всех) |
-| `Protocol` | `2` | Только SSHv2 (по умолчанию) |
-| `LoginGraceTime` | `30` | Таймаут на аутентификацию (сек) |
-| `ClientAliveInterval` | `300` | Таймаут неактивности (сек) |
-| `ClientAliveCountMax` | `2` | Кол-во пустых интервалов до разрыва |
-| `MaxSessions` | `3` | Макс. сессий на подключение |
+| **`Port`** | Нестандартный (напр. `2239`) | [Смена порта](./ssh_access_control.md) для снижения фонового шума ботов. |
+| **`ListenAddress`** | Конкретный IP | Привязка демона только к определенному интерфейсу. |
+| **`LoginGraceTime`** | `30s` | Время ожидания завершения аутентификации. |
+| **`ClientAliveInterval`** | `300` | Интервал проверки активности клиента (сек). |
+| **`ClientAliveCountMax`** | `0` | Разрыв сессии сразу при отсутствии ответа на проверку. |
+| **`MaxSessions`** | `2` | Максимальное количество открытых сессий на одно сетевое соединение. |
+| **`MaxStartups`** | `10:30:60` | Ограничение параллельных неавторизованных соединений (защита от DoS). |
 
 #### Безопасность и логирование
 
 | Директива | Рекомендуемое значение | Описание |
 | :--- | :--- | :--- |
-| `LogLevel` | `VERBOSE` | Детальное логирование (отпечатки ключей) |
-| `Banner` | `/etc/ssh/banner` | Показать предупреждение до входа |
-| `X11Forwarding` | `no` | Отключить, если не используется |
-| `AllowTcpForwarding` | `no` | Отключить, если не используется |
-| `PermitTunnel` | `no` | Отключить туннели |
-| `AllowAgentForwarding` | `no` | Отключить agent forwarding |
-| `PrintMotd` | `no` | Отключить MOTD (опционально) |
-| `UsePAM` | `yes` | Использовать PAM (для совместимости) |
-| `StrictModes` | `yes` | Проверять права файлов |
-| `IgnoreRhosts` | `yes` | Игнорировать `.rhosts` |
+| **`LogLevel`** | `VERBOSE` | Логирование отпечатков ключей (Fingerprints) при входе. |
+| **`Banner`** | `/etc/ssh/banner` | Предупреждающее сообщение для юр. защиты. |
+| **`X11Forwarding`** | `no` | Запрет проброса X11 (предотвращение атак на графический стек). |
+| **`AllowTcpForwarding`** | `no` | Запрет использования SSH как прокси/туннеля (если не требуется). |
+| **`PermitTunnel`** | `no` | Запрет туннелирования на уровне L2/L3 (TUN/TAP). |
+| **`AllowAgentForwarding`** | `no` | Запрет проброса SSH-агента (защита от кражи сокетов агента). |
+| **`StrictModes`** | `yes` | Обязательная проверка прав доступа на файлы в `~/.ssh/`. |
+| **`UsePAM`** | `yes` | Использование модулей PAM (необходимо для учета сессий и MFA). |
+| **`IgnoreRhosts`** | `yes` | Игнорировать устаревшие файлы доверия `.rhosts`. |
 
-### Алгоритмы шифрования (OpenSSH 8.8+)
+### Современные алгоритмы (Стандарты 2026)
 
-Старые алгоритмы уязвимы. Рекомендуется явно задать современные:
+Для обеспечения долгосрочной безопасности (включая защиту от квантовых угроз) следует ограничить поддерживаемые алгоритмы:
 
-```ini
-# KexAlgorithms (обмен ключами)
-KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
+```ssh
+# 1. KexAlgorithms (Обмен ключами) — Приоритет ML-KEM и Ed25519
+KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
 
-# Ciphers (шифрование)
+# 2. Ciphers (Шифрование) — Только современные AEAD шифры
 Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
 
-# MACs (целостность)
-MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+# 3. MACs (Целостность) — Использовать только EtM (Encrypt-then-MAC)
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-256
+
+# 4. HostKeyAlgorithms — Только безопасные типы
+HostKeyAlgorithms ssh-ed25519,ssh-ed25519-cert-v01@openssh.com,rsa-sha2-512,rsa-sha2-256
 ```
 
-**Проверка текущих настроек:**
-
+**Диагностика доступных алгоритмов:**
 ```bash
-ssh -Q kex       # Доступные KexAlgorithms
-ssh -Q cipher    # Доступные Ciphers
-ssh -Q mac       # Доступные MACs
+ssh -Q kex       # Список поддерживаемых KEX
+ssh -Q cipher    # Список поддерживаемых шифров
+ssh -Q mac       # Список поддерживаемых MAC
 ```
 
 ## Практические сценарии
 
-### Сценарий 1: Базовое укрепление SSH
+### Сценарий 1: Комплексное укрепление (Hardening Checklist)
 
-**Задача:** Применить минимально безопасную конфигурацию.
+**Задача:** Применить современную безопасную конфигурацию через модульный файл.
 
 ```bash
-# 1. Резервная копия
-sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+# 1. Создание директории для конфигов (если не используется)
+sudo mkdir -p /etc/ssh/sshd_config.d
 
-# 2. Применить основные директивы
-sudo tee -a /etc/ssh/sshd_config.d/hardening.conf << 'EOF'
+# 2. Создание файла закалки
+sudo tee /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
 # Аутентификация
 PubkeyAuthentication yes
 PasswordAuthentication no
 PermitRootLogin no
 MaxAuthTries 3
-PermitEmptyPasswords no
 AuthenticationMethods publickey
 
-# Сеть
-Port 2239
-LoginGraceTime 30
+# Тайм-ауты и ограничения
+LoginGraceTime 30s
 ClientAliveInterval 300
-ClientAliveCountMax 2
-MaxSessions 3
+ClientAliveCountMax 0
+MaxSessions 2
+MaxStartups 10:30:60
 
-# Безопасность
+# Безопасность окружения
 X11Forwarding no
 AllowTcpForwarding no
 PermitTunnel no
+AllowAgentForwarding no
 LogLevel VERBOSE
+StrictModes yes
+
+# Баннер
 Banner /etc/ssh/banner
 EOF
 
-# 3. Создать баннер
+# 3. Подготовка баннера
 sudo tee /etc/ssh/banner << 'EOF'
-AUTHORIZED ACCESS ONLY. All connections are monitored and recorded.
+***************************************************************************
+*                          UNAUTHORIZED ACCESS PROHIBITED                 *
+*                  All connections are monitored and recorded.            *
+***************************************************************************
 EOF
 
-# 4. Проверить конфигурацию
-sudo sshd -t
-
-# 5. Перезапустить SSH (убедиться в наличии ключей!)
-sudo systemctl restart sshd
+# 4. Проверка и перезапуск
+sudo sshd -t && sudo systemctl restart sshd
 ```
 
-### Сценарий 2: Настройка резервного SSH-доступа
+### Сценарий 2: Настройка резервного SSH-доступа (Emergency Access)
 
-**Задача:** Создать резервный экземпляр `sshd` на другом порту для восстановления доступа после сбоя файрвола.
+**Задача:** Запустить второй экземпляр `sshd` с минимальными настройками на альтернативном порту (например, для внутренних нужд или восстановления).
 
 ```bash
-# 1. Копия конфигурации
+# 1. Создание отдельного конфига
 sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config_alt
 
-# 2. Минимальный конфиг (/etc/ssh/sshd_config_alt)
+# 2. Настройка альта (только локальная сеть, порт 2222)
 sudo tee /etc/ssh/sshd_config_alt << 'EOF'
 Port 2222
 ListenAddress 192.168.100.10
-ListenAddress 2001:db8::10
 PidFile /run/sshd-alt.pid
 PubkeyAuthentication yes
 PasswordAuthentication no
 PermitRootLogin no
+StrictModes yes
+LogLevel VERBOSE
 EOF
 
-# 3. Запуск вручную
-sudo /usr/sbin/sshd -f /etc/ssh/sshd_config_alt
-
-# 4. Системная служба (создать /etc/systemd/system/sshd-alt.service)
+# 3. Создание systemd-сервиса (/etc/systemd/system/sshd-alt.service)
 sudo tee /etc/systemd/system/sshd-alt.service << 'EOF'
 [Unit]
-Description=OpenSSH Server (Alternative)
+Description=OpenSSH Server (Alternative Instance)
 After=network.target
 
 [Service]
-ExecStart=/usr/sbin/sshd -f /etc/ssh/sshd_config_alt -D
+ExecStart=/usr/sbin/sshd -D -f /etc/ssh/sshd_config_alt
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+# 4. Активация
 sudo systemctl daemon-reload
 sudo systemctl enable --now sshd-alt
 ```
 
-### Сценарий 3: Ограничение алгоритмов шифрования
+### Сценарий 3: Аудит через ssh-audit
 
-**Задача:** Отключить устаревшие алгоритмы и оставить только современные.
+**Задача:** Провести независимую проверку безопасности настроек шифрования.
 
 ```bash
-# Добавить в sshd_config или отдельный файл
-sudo tee /etc/ssh/sshd_config.d/ciphers.conf << 'EOF'
-KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
-Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
-MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
-HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
-EOF
+# 1. Установка инструмента (требуется python3)
+pip install ssh-audit
 
-# Проверить
-sudo sshd -t
-sudo systemctl restart sshd
+# 2. Сканирование локального сервера (порт 2239)
+ssh-audit -p 2239 localhost
 
-# Протестировать подключение
-ssh -oKexAlgorithms=curve25519-sha256 user@host
+# → В выводе ищите красные (критические) и желтые (предупреждения) строки.
+# Результат поможет скорректировать Ciphers и MACs под конкретную версию OpenSSH.
 ```
 
 ## Дополнительная информация
 
-### Инструменты защиты от атак
+### Инструменты защиты
 
-**fail2ban** — анализ логов и автоматическая блокировка IP при brute-force. См. [fail2ban: настройка и использование](../../Tools/fail2ban.md).
+- **[fail2ban](../../Tools/fail2ban.md)** — блокировка IP после нескольких неудачных попыток входа (L7 анализ логов).
+- **[Port Knocking](./port_knocking.md)** — механизм скрытия порта до прохождения последовательности «стуков».
+- **Endlessh** — SSH-ловушка (tarpit), которая бесконечно удерживает соединения ботов, замедляя их сканирование.
 
-**Endlessh** — SSH-tarpit, бесконечно отправляющий баннер ботам, замедляя сканирование.
+### Регулярный аудит
 
-**Port Knocking** — скрытие SSH от сканирования через последовательность "стуков". См. [Port Knocking](./port_knocking.md).
-
-### Аудит безопасности
-
-```bash
-# Проверить конфигурацию SSH
-sudo sshd -T                          # Показать эффективную конфигурацию
-sudo sshd -T | grep -i auth           # Только директивы аутентификации
-sudo sshd -T | grep -i cipher         # Только шифрование
-
-# Сканирование уязвимостей
-ssh-audit <hostname>                  # Анализ алгоритмов и настроек
-```
+1. **Проверка эффективного конфига**: `sudo sshd -T` (показывает настройки с учетом всех `Include` и `Match`).
+2. **Аудит логов**: `journalctl -u sshd --since "yesterday"` для поиска аномалий.
+3. **Обновление системы**: Уязвимости вроде `regreSSHion` (CVE-2024-6387) требуют немедленного обновления пакета `openssh-server`.
 
 ### См. также
 
-- [SSH Server Security Overview](./ssh_server_security_overview.md)
-- [SSH Access Control](./ssh_access_control.md)
-- [SSH Authentication](./ssh_authentication.md)
-- [Port Knocking](./port_knocking.md)
-- [fail2ban](../../Tools/fail2ban.md)
+- [SSH Server Security Overview](./ssh_server_security_overview.md) — общая стратегия защиты.
+- [SSH Access Control](./ssh_access_control.md) — ограничение доступа по IP и пользователям.
+- [SSH Authentication](./ssh_authentication.md) — методы аутентификации и ключи.
+- [fail2ban](../../Tools/fail2ban.md) — автоматизация блокировок.

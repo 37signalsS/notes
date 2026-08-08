@@ -1,140 +1,171 @@
-# Pod Evicted: Выселение по диску
+# Pod Evicted: Выселение по диску (Disk Eviction)
 
 ## Определения
 
-**DiskPressure Eviction** — принудительное завершение и выселение подов компонентом kubelet при критической нехватке дискового пространства или индексных дескрипторов (inodes) на узле. Процесс инициируется, когда состояние (condition) узла переходит в `DiskPressure=True`.
+**DiskPressure Eviction** — защитный механизм `kubelet`, который принудительно завершает поды при критической нехватке дискового пространства или индексных дескрипторов (inodes). Процесс инициируется, когда узел переходит в состояние `DiskPressure=True`.
 
-**Эфемерное хранилище (Ephemeral storage)** — временное дисковое пространство узла, используемое для логов контейнеров, временных файлов, томов `emptyDir` и кэша образов.
+**Эфемерное хранилище (Ephemeral storage)** — временное дисковое пространство узла, используемое подами. Оно включает:
+*   **Слой записи контейнера (Writable layer):** Изменения в файловой системе контейнера во время работы.
+*   **Логи контейнеров:** Файлы в `/var/log/pods`.
+*   **Тома типа `emptyDir`:** Локальные данные, время жизни которых ограничено временем жизни пода.
 
-**Порог выселения (Eviction Threshold)** — установленное значение свободного места или inode, при достижении которого начинается выселение. По умолчанию для `nodefs`: `< 10%` свободного места.
+**Порог выселения (Eviction Threshold)** — лимит ресурсов, при пересечении которого `kubelet` начинает освобождение места.
+*   **Hard Threshold:** Немедленное выселение (по умолчанию `nodefs.available < 10%`, `nodefs.inodesFree < 5%`).
+*   **Soft Threshold:** Выселение после льготного периода (grace period).
 
 Общие определения и типы выселения: **[Pod Evicted: Определения](./definitions.md)**.
 
 ## Основные концепции
 
-### Источники потребления диска
+### Разделение файловых систем (nodefs vs imagefs)
 
-Kubelet разделяет дисковое пространство на два основных типа (если они настроены на разных разделах):
+Kubernetes отслеживает два типа разделов через `Eviction Manager`:
 
-1. **`nodefs`**: Основная файловая система узла, используемая для томов `emptyDir`, логов контейнеров и локального хранилища kubelet (`/var/lib/kubelet`).
-2. **`imagefs`**: Опциональная файловая система, используемая рантаймом контейнеров (containerd/docker) для хранения образов и слоев записи (writable layers).
+1.  **`nodefs` (Основная ФС):** Корневой раздел узла. Содержит логи, локальное хранилище `kubelet` (`/var/lib/kubelet`), тома `emptyDir` и рабочие директории рантайма (если не выделен `imagefs`).
+2.  **`imagefs` (ФС образов):** Опциональный выделенный раздел для рантайма (containerd/CRI-O). Используется для хранения кэша образов и слоев записи контейнеров.
 
-| Источник | Описание | Типовой путь |
+| Раздел | Метрики Kubelet | Что занимает место |
 |:---|:---|:---|
-| **Логи контейнеров** | `stdout` и `stderr` процессов в контейнерах | `/var/log/containers/*.log` |
-| **Тома `emptyDir`** | Временные файлы подов, не использующие PV | `/var/lib/kubelet/pods/<uid>/volumes/` |
-| **Кэш образов** | Скачанные образы (Image filesystem) | `/var/lib/containerd/` |
-| **Слой записи** | Изменения в файловой системе контейнера | `/var/lib/containerd/io.containerd.runtime...` |
+| **`nodefs`** | `nodefs.available`, `nodefs.inodesFree` | `/var/log`, `/var/lib/kubelet` (`emptyDir`), `/var/lib/containerd` (если нет `imagefs`) |
+| **`imagefs`** | `imagefs.available`, `imagefs.inodesFree` | Кэш образов, Snapshot-ы рантайма, слои записи (writable layers) |
 
-### Пороги выселения в конфигурации kubelet
+**Архитектурная рекомендация:** Вынесение `/var/lib/containerd` на отдельный диск (логический раздел) изолирует рост логов приложения от кэша образов. Это предотвращает ситуацию, когда из-за переполнения логов удаляются образы, что приводит к циклической ошибке `ImagePullBackOff`.
 
-Параметры задаются в `/var/lib/kubelet/config.yaml`. Разделение порогов позволяет защищать системные логи отдельно от кэша образов.
+### Алгоритм Garbage Collection (GC) диска
 
-- **`nodefs.available`**: Доступное место в основной ФС.
-- **`nodefs.inodesFree`**: Доступные inode в основной ФС.
-- **`imagefs.available`**: Доступное место в ФС образов. Если этот раздел переполнен, выселение подов начнется только после агрессивной очистки неиспользуемых образов.
+Перед выселением подов `kubelet` выполняет следующие шаги для очистки места:
 
-### Порядок выселения при DiskPressure
+1.  **Контейнерный GC:** Удаление всех завершенных (exited) контейнеров и их слоев записи.
+2.  **Образный GC:** Если использование `imagefs` (или `nodefs`, если `imagefs` нет) превысило `HighThresholdPercent` (по умолчанию 85%), удаляются неиспользуемые образы, пока использование не упадет до `LowThresholdPercent` (по умолчанию 80%).
+3.  **Выселение (Eviction):** Если GC не помог и свободное место все еще ниже Hard Threshold, начинается выбор кандидатов на выселение.
 
-1. **Обнаружение**: Kubelet фиксирует переход `nodefs` или `imagefs` за пределы порогов.
-2. **Агрессивная очистка (Garbage Collection)**:
-   - Удаление всех остановленных (exited) контейнеров.
-   - Удаление неиспользуемых образов (если порог пройден для `imagefs`).
-3. **Ранжирование подов**:
-   - Поды без запросов (`requests`) на `ephemeral-storage` выселяются первыми.
-   - Затем поды, чье фактическое потребление диска максимально превышает их `requests`.
-4. **Выселение**: Поды завершаются по очереди до тех пор, пока ресурсы не вернутся в норму.
+### Порядок (Priority) выселения при DiskPressure
+
+Кандидаты выбираются по следующей логике:
+1.  **Нарушители лимитов:** Поды, потребление `ephemeral-storage` которых превышает `limits.ephemeral-storage`.
+2.  **BestEffort / Burstable без запросов:** Поды, у которых не указаны `requests.ephemeral-storage`.
+3.  **Относительное превышение:** Поды, у которых разница `Usage - Requests` максимально велика.
 
 ## Практические сценарии
 
-### Диагностика
+### 1. Диагностика состояния узла и пода
 
-#### Шаг 1: Проверка статуса узла
+При выселении под получает статус `Failed` с причиной `Evicted` и сообщением `The node was low on resource: ephemeral-storage`.
 
 ```bash
-kubectl describe node <node-name> | grep -A 5 "DiskPressure"
-# → DiskPressure   True   Mon, 01 Jan 2024 10:00:00 +0300   KubeletHasDiskPressure   Kubelet has critical disk pressure
+# 1. Проверка условий узла (Conditions)
+kubectl describe node <node-name> | grep -A 5 Conditions
+# Результат: DiskPressure: True
+
+# 2. Проверка Taints (узел помечается автоматически)
+kubectl describe node <node-name> | grep Taints
+# Результат: node.kubernetes.io/disk-pressure:NoSchedule
+
+# 3. Проверка сообщения в поде
+kubectl get pod <pod-name> -o jsonpath='{.status.message}'
 ```
 
-#### Шаг 2: Выявление причин на уровне ОС
+**Логи Kubelet (`journalctl -u kubelet`):**
+Ищите записи о нехватке места:
+`eviction manager: attempting to reclaim nodefs`
+`eviction manager: pod <pod> is evicted because it exceeds its ephemeral-storage limit`
 
-Требуется SSH-доступ к узлу для детального анализа разделов:
+### 2. Поиск причин переполнения на узле
+
+Если место закончилось на `nodefs`:
 
 ```bash
-# Общая проверка заполненности дисков
-df -h
-# → Filesystem      Size  Used Avail Use% Mounted on
-# → /dev/sda1        50G   46G  1.5G  97% /
+# Анализ emptyDir (тома подов)
+du -sh /var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir/* | sort -rh | head -n 5
 
-# Проверка использования Inode (частая причина при множестве мелких файлов/логов)
-df -i
-# → Filesystem      Inodes  IUsed  IFree IUse% Mounted on
-# → /dev/sda1         3.2M   3.1M   100K   97% /
+# Анализ логов (если ротация контейнеров не справляется)
+du -sh /var/log/pods/* | sort -rh | head -n 5
 
-# Поиск самых больших директорий в kubelet (логи и emptyDir)
-du -sh /var/lib/kubelet/pods/* | sort -rh | head -10
-# → 15G    /var/lib/kubelet/pods/a1b2c3d4...
+# Проверка удаленных, но удерживаемых файлов (deleted but held open)
+# Если df показывает 100%, а du - 50%, проверьте этот пункт
+lsof +L1 | grep deleted
+```
 
-# Анализ потребления рантаймом (образы и слои записи)
+Если место закончилось на `imagefs`:
+
+```bash
+# Просмотр использования диска через crictl
 crictl stats
-# → CONTAINER           CPU %    MEM       DISK      INODES
-# → db-container        0.10     512Mi     12Gi      150k
+
+# Список самых тяжелых образов
+crictl images --sort-by size
 ```
 
-### Решение проблемы
+### 3. Проблема Inode Exhaustion
 
-#### 1. Ручная очистка ресурсов
-
-Если выселение парализовало работу, можно форсировать очистку:
+Иногда `DiskPressure` возникает при наличии свободного места в гигабайтах, но при исчерпании лимита на количество файлов (Inodes). Это характерно для приложений, создающих миллионы мелких файлов.
 
 ```bash
-# Удаление всех неиспользуемых данных контейнеров (образы, контейнеры, сети)
-# Внимание: удалит все скачанные образы, которые не используются в данный момент
-crictl rmi --prune
-# → Deleted: sha256:d1b2... (freed 500MB)
+# Проверка количества свободных Inodes
+df -i
 
-# Очистка системного журнала (journald)
-journalctl --vacuum-size=500M
-# → Vacuuming done, freed 2.1G of archived journal space.
+# Поиск директории с наибольшим количеством файлов
+find /var/lib/kubelet/pods -type d -exec sh -c 'echo -n "{}: "; ls -1 "{}" | wc -l' \; | sort -n -k 2
 ```
 
-#### 2. Настройка лимитов ephemeral-storage
+### 4. Настройка лимитов (Resource Management)
 
-Лучшая практика — ограничивать потребление диска на уровне манифеста пода.
-
-```yaml
-resources:
-  requests:
-    ephemeral-storage: "2Gi"
-  limits:
-    ephemeral-storage: "4Gi" # Под будет немедленно выселен при достижении 4Gi
-```
-
-#### 3. Настройка параметров kubelet
-
-Если выселение происходит слишком часто при наличии свободного места, возможно, пороги установлены слишком консервативно.
+Всегда ограничивайте эфемерное хранилище, чтобы один под не "уронил" весь узел.
 
 ```yaml
-# /var/lib/kubelet/config.yaml
-evictionHard:
-  nodefs.available: "5%"    # Вместо стандартных 10%
-  nodefs.inodesFree: "3%"
+spec:
+  containers:
+  - name: app
+    resources:
+      requests:
+        ephemeral-storage: "1Gi"
+      limits:
+        ephemeral-storage: "2Gi" # Kubelet выселит под при превышении 2Gi
+  volumeMounts:
+  - name: temp-data
+    mountPath: /tmp
+spec:
+  volumes:
+  - name: temp-data
+    emptyDir:
+      sizeLimit: "500Mi" # Лимит конкретно для этого тома
 ```
 
 ## Дополнительная информация
 
-### Профилактика и мониторинг
+### Настройка порогов (KubeletConfiguration)
 
-| Мера | Описание |
-|:---|:---|
-| **`emptyDir.sizeLimit`** | Устанавливает лимит для конкретного тома. При превышении под выселяется. |
-| **Ротация логов** | Настройка `max-size` и `max-file` в `containerd` или `docker` конфигурациях. |
-| **Разделение дисков** | Рекомендуется выносить `/var/lib/containerd` (образы) на отдельный диск/раздел. |
-| **Мониторинг Inodes** | Настройте алерты в Prometheus на метрику `node_filesystem_inodes_free`. |
+Для современных узлов с большими дисками (1ТБ+) использование процентов неэффективно. Рекомендуется использовать абсолютные значения.
+
+```yaml
+# /var/lib/kubelet/config.yaml
+evictionHard:
+  nodefs.available: "5Gi"      # Жесткий порог
+  nodefs.inodesFree: "1%"
+  imagefs.available: "10Gi"
+evictionSoft:
+  nodefs.available: "10Gi"     # Мягкий порог
+evictionSoftGracePeriod:
+  nodefs.available: "2m"       # Время на "самоочистку" перед выселением
+```
+
+### Мониторинг (PromQL)
+
+```promql
+# Узлы в состоянии DiskPressure
+kube_node_status_condition{condition="DiskPressure", status="true"} == 1
+
+# Потребление эфемерного хранилища конкретным подом
+sum(container_fs_usage_bytes{container!=""}) by (pod, namespace)
+
+# Прогноз исчерпания Inodes на узле (на основе тренда за 6 часов)
+predict_linear(node_filesystem_files_free{mountpoint="/"}[6h], 3600 * 24) < 0
+```
 
 ### См. также
 
-- **[Pod Evicted: Определения](./definitions.md)**
-- **[Диагностика выселения](./diagnostics.md)**
-- **[Node Resource Pressure](../NodeUnavailability/resource_pressure.md)**
-- **[Управление логами Docker](../../../../Docker/Docker_logs/docker_log_rotation.md)**
+- **[Pod Evicted: Определения](./definitions.md)** — база по типам выселений.
+- **[Диагностика выселения](./diagnostics.md)** — общие шаги траблшутинга.
+- **[Профилактика выселения](./prevention.md)** — архитектурные меры защиты.
+- **[Node Resource Pressure](../NodeUnavailability/resource_pressure.md)** — детали по Inodes и системным дискам.
+- **[Управление логами Docker](../../../../Docker/Docker_logs/docker_log_rotation.md)** — настройка ротации на уровне рантайма.

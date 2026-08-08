@@ -1,28 +1,36 @@
 # Манифест Kubernetes Deployment и лучшие практики
 
+Руководство по созданию отказоустойчивых, безопасных и масштабируемых манифестов для stateless-приложений.
+
 ## 1. Определения
 
-**Deployment** — объект Kubernetes для декларативного управления stateless-приложениями. Он обеспечивает автоматическое развертывание, масштабирование и обновление групп идентичных подов.
+**Манифест Deployment** — декларативное описание желаемого состояния приложения, включающее параметры запуска контейнеров, стратегии обновления, требования к ресурсам и правила размещения в кластере.
 
 Общее описание и концепции см. в основном разделе: **[Kubernetes Deployment](./index.md)**.
 
 ## 2. Базовые концепции
 
-### Базовый манифест
+### Эталонный Production-манифест
+
+Пример манифеста, учитывающего требования безопасности, надежности и наблюдаемости:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-deployment
+  name: app-frontend
+  namespace: production
   labels:
-    app: nginx
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: my-project
 spec:
   replicas: 3
   revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
   selector:
     matchLabels:
-      app: nginx
+      app.kubernetes.io/name: frontend
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -31,107 +39,127 @@ spec:
   template:
     metadata:
       labels:
-        app: nginx
+        app.kubernetes.io/name: frontend
     spec:
+      # Безопасность и управление доступом
       securityContext:
         runAsNonRoot: true
-        runAsUser: 101
-        fsGroup: 101
-      terminationGracePeriodSeconds: 30
+        runAsUser: 1000
+        fsGroup: 2000
+      automountServiceAccountToken: false
+      
+      # Планирование и приоритеты
+      priorityClassName: production-high
+      terminationGracePeriodSeconds: 60
+      
       containers:
-      - name: nginx
-        image: nginx:1.28.1-alpine
+      - name: web-container
+        image: my-registry.com/frontend:1.4.2 # Senior practice: конкретный тег
+        imagePullPolicy: IfNotPresent
+        
         ports:
-        - containerPort: 80
+        - name: http
+          containerPort: 8080
+          
+        # Переменные окружения и секреты
+        envFrom:
+        - configMapRef:
+            name: app-config
+        
+        # Ресурсы (обязательно requests == limits для памяти в критических сервисах)
         resources:
           requests:
-            memory: "64Mi"
-            cpu: "100m"
-          limits:
-            memory: "128Mi"
             cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+            
+        # Триада проб (Health Checks)
         startupProbe:
           httpGet:
-            path: /
-            port: 80
+            path: /healthz
+            port: http
           failureThreshold: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /
-            port: 80
+            path: /ready
+            port: http
           initialDelaySeconds: 5
           periodSeconds: 10
         livenessProbe:
           httpGet:
-            path: /
-            port: 80
+            path: /live
+            port: http
           initialDelaySeconds: 15
           periodSeconds: 20
 ```
 
-### Ключевые поля манифеста
+### Ключевые поля спецификации (Pod Spec)
 
 | Поле | Назначение | Рекомендация |
 | :--- | :--- | :--- |
-| `replicas` | Количество реплик | Минимум 2 для высокой доступности |
-| `revisionHistoryLimit` | История версий для отката | 3–5 для баланса между откатами и чистотой API |
-| `selector.matchLabels` | Селектор для поиска подов | Должен строго совпадать с `template.metadata.labels` |
-| `image` | Образ контейнера | Использовать конкретную версию и легкие образы (например, `-alpine`) |
-| `resources` | Запросы и лимиты ресурсов | Обязательно для всех контейнеров. `requests` для планировщика, `limits` для стабильности узла |
-| `startupProbe` | Проверка начального запуска | Использовать для медленно стартующих приложений, чтобы liveness не убил их раньше времени |
-| `readinessProbe` | Проверка готовности к трафику | Обязательно. Исключает неготовую реплику из Service |
-| `livenessProbe` | Проверка жизнеспособности | Обязательно. Перезапускает зависший контейнер |
-| `securityContext` | Настройки безопасности | Запуск от не-root пользователя, ограничение прав. Подробнее: **[Security Context](../../Security/pod_security_context.md)** |
+| `priorityClassName` | Определяет важность пода при нехватке ресурсов. | Используйте для критических сервисов, чтобы предотвратить их вытеснение. |
+| `imagePullPolicy` | Правило скачивания образа. | `IfNotPresent` для экономии трафика. `Always` — только если вы используете мутабельные теги (антипаттерн). |
+| `automountServiceAccountToken` | Автомонтирование токена доступа к API. | Устанавливайте в `false`, если приложению не нужен доступ к Kubernetes API (защита от атак). |
+| `terminationGracePeriodSeconds` | Время на завершение работы (SIGTERM). | По умолчанию 30с. Увеличивайте для тяжелых приложений (DB, Java) для чистого закрытия соединений. |
+| `revisionHistoryLimit` | Глубина истории ReplicaSets. | 3–5 достаточно для отката. Большие значения создают лишнюю нагрузку на `etcd`. |
 
-### Поле containerPort
+### Метаданные и аннотации
 
-Поле `containerPort` в спецификации контейнера — это **мета-информация**, а не инструкция для открытия порта. Оно служит для документации и позволяет инструментам (например, Service или Ingress) ссылаться на порт по имени. Реальное управление трафиком осуществляется через объект [`Service`](../../Networking/Service/service_type_nodeport.md).
+Использование стандартных меток (`app.kubernetes.io/*`) позволяет инструментам мониторинга (Prometheus) и визуализации (Lens, Dashboard) корректно группировать ресурсы.
+
+**Полезные аннотации:**
+- `prometheus.io/scrape: "true"` — автоматический сбор метрик.
+- `kubernetes.io/change-cause` — краткое описание причины изменения (отображается в `rollout history`).
 
 ## 3. Практические сценарии
 
-### Обеспечение высокой доступности (Topology Spread Constraints)
+### Равномерное распределение (Topology Spread Constraints)
 
-Для равномерного распределения подов по разным зонам доступности (Availability Zones) или узлам в современных кластерах рекомендуется использовать `topologySpreadConstraints` вместо сложной настройки `affinity`.
+Для обеспечения высокой доступности (HA) на уровне дата-центров используйте распределение по зонам:
 
 ```yaml
 spec:
   topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: "topology.kubernetes.io/zone"
-    whenUnsatisfiable: DoNotSchedule
+    whenUnsatisfiable: DoNotSchedule # Жесткое ограничение
     labelSelector:
       matchLabels:
-        app: nginx
+        app.kubernetes.io/name: frontend
 ```
 
-### Настройка стратегии RollingUpdate
+### Тонкая настройка RollingUpdate
 
-Стратегия `RollingUpdate` позволяет обновлять приложение без простоя.
-
-| Конфигурация | Поведение | Когда использовать |
+| Конфигурация | Результат | Кейс использования |
 | :--- | :--- | :--- |
-| `maxUnavailable: 0`, `maxSurge: 1` | Сначала создается новый под, затем удаляется старый | **Рекомендуется.** Гарантирует наличие 100% мощности во время обновления |
-| `maxUnavailable: 1`, `maxSurge: 0` | Сначала удаляется один старый под, затем создается новый | Ограниченные ресурсы в кластере, допустима кратковременная деградация |
-
-### Многоконтейнерный Deployment (Sidecar-паттерн)
-
-Sidecar используется для расширения функциональности основного контейнера (логирование, проксирование, сбор метрик). Начиная с Kubernetes 1.29, sidecar-контейнеры могут быть объявлены как `initContainers` с `restartPolicy: Always`.
-
-Подробно паттерны описаны в [Sidecar Patterns](../Pod/pod_sidecar_patterns.md).
+| `maxUnavailable: 0`, `maxSurge: 1` | Сначала +1 новый, потом -1 старый. | **Стандарт.** Гарантирует 100% доступность во время обновления. |
+| `maxUnavailable: 25%`, `maxSurge: 0` | Сначала -25% старых, потом +25% новых. | Экономия ресурсов в кластере за счет временной деградации мощности. |
 
 ## 4. Дополнительная информация
 
-### Лучшие практики
+### Лучшие практики (Best Practices 2026)
 
-1.  **Immutability (Неизменяемость):** Никогда не используйте тег `:latest`. Всегда указывайте конкретную версию образа.
-2.  **Graceful Termination:** Настраивайте `terminationGracePeriodSeconds` (по умолчанию 30с) в зависимости от того, как быстро ваше приложение может завершить текущие запросы.
-3.  **Probes:** Настраивайте триаду проверок (`startup`, `readiness`, `liveness`) с разумными таймаутами.
-4.  **Безопасность:** Минимизируйте привилегии контейнера через `securityContext`. Используйте `readOnlyRootFilesystem: true`, если приложение не пишет на диск.
-5.  **Affinity vs Spreading:** Предпочитайте `topologySpreadConstraints` для обеспечения отказоустойчивости на уровне дата-центров.
+1.  **Принцип неизменяемости (Immutability):**
+    - Запрещено использовать `:latest`. Это делает деплой невоспроизводимым и ломает механизм отката.
+    - Используйте хеши образов (`sha256:...`) для максимальной безопасности в критических средах.
+2.  **Resources (QoS):**
+    - Всегда указывайте `requests` и `limits`.
+    - Для памяти рекомендуется устанавливать `requests == limits` (класс **Guaranteed**), чтобы защитить приложение от OOMKiller при фрагментации памяти на узле. См. [Управление ресурсами](../../Scheduling/qos_limit_and_requests.md).
+3.  **Безопасность (Security by Design):**
+    - `readOnlyRootFilesystem: true` — защищает от изменения кода в контейнере.
+    - `runAsNonRoot: true` — обязательное требование для всех production-нагрузок. См. [Pod Security Context](../../Security/pod_security_context.md).
+4.  **Graceful Termination:**
+    - Приложение должно корректно обрабатывать сигнал `SIGTERM`.
+    - Используйте `preStop` хуки, если приложение не умеет завершаться само (например, для плавного вывода из Nginx upstream).
+5.  **Аффинити и распределение:**
+    - Используйте `podAntiAffinity` или `topologySpreadConstraints`, чтобы поды одного сервиса не оказывались на одном узле (избегание Single Point of Failure). См. [Affinity и Anti-Affinity](../../Scheduling/affinity.md).
 
 ### См. также
 
-- [Управление жизненным циклом (Rollout/Rollback)](./lifecycle_management.md)
-- [Проверки состояния (Probes)](../probes.md)
-- [Стратегии развертывания](../../../CI-CD/Deployment_Strategies/comparison.md)
+- [Управление жизненным циклом Deployment](./lifecycle_management.md)
+- [Диагностика и Troubleshooting](./troubleshooting.md)
+- [Проверки состояния (Probes) в Kubernetes](../probes.md)
+- [HPA — автоматическое масштабирование](../../Autoscaling/HPA/index.md)

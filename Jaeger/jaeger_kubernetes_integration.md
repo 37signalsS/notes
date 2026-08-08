@@ -2,7 +2,7 @@
 
 > **Важно:** Документация описывает **Jaeger v2** (текущая версия). Jaeger v1 достиг **EOL (End of Life)**.
 
-Развертывание Jaeger v2 в Kubernetes базируется на использовании **OpenTelemetry Operator**. Поскольку вторая версия Jaeger построена на базе OpenTelemetry Collector, она нативно управляется через стандартные ресурсы OpenTelemetry, что обеспечивает глубокую интеграцию с экосистемой облачного мониторинга. Это позволяет автоматизировать не только развертывание самого Jaeger, но и процесс инструментирования приложений.
+Развертывание Jaeger v2 в Kubernetes базируется на использовании **OpenTelemetry Operator**. Поскольку вторая версия Jaeger построена на базе OpenTelemetry Collector, она нативно управляется через стандартные ресурсы OpenTelemetry. Это позволяет автоматизировать не только развертывание самого Jaeger, но и процесс инструментирования приложений, а также обеспечивать глубокую интеграцию с сетевой инфраструктурой кластера.
 
 ---
 
@@ -10,11 +10,12 @@
 
 | Термин | Описание |
 | :--- | :--- |
-| **OpenTelemetry Operator** | Основной контроллер для управления жизненным циклом Jaeger v2, автоматизирующий установку, настройку и масштабирование |
-| **OpenTelemetryCollector (CR)** | Ресурс Kubernetes, описывающий конфигурацию Jaeger v2 (приемники, процессоры, экспортеры) |
-| **Sidecar Injection** | Автоматическое внедрение контейнера Collector в под приложения для локального сбора телеметрии |
-| **Downward API** | Механизм Kubernetes для передачи метаданных пода (например, IP узла, имя пода) внутрь контейнера через переменные окружения |
-| **TrustStore** | Хранилище сертификатов (JKS или PKCS12), используемое Java-приложениями для проверки доверия к SSL-сертификатам бэкендов |
+| **OpenTelemetry Operator** | Kubernetes-контроллер, автоматизирующий жизненный цикл компонентов телеметрии: установку, настройку, инъекцию агентов и управление сертификатами |
+| **OpenTelemetryCollector (CR)** | Кастомный ресурс (Custom Resource), описывающий конфигурацию Jaeger v2 (пайплайны OTLP, процессоры, экспортеры в хранилище) |
+| **Instrumentation (CR)** | Ресурс для настройки автоматической инструментации приложений (Java, Python, NodeJS, Go) без изменения их исходного кода |
+| **Sidecar Injection** | Механизм автоматического внедрения контейнера Collector в под приложения через Mutating Admission Webhook |
+| **Downward API** | Механизм Kubernetes для передачи метаданных пода (IP узла, имя пода, неймспейс) внутрь контейнера через переменные окружения или файлы |
+| **Service Mesh (Istio/Linkerd)** | Инфраструктурный слой кластера, который может генерировать собственные спаны и требует согласованности заголовков трассировки с приложением |
 
 ---
 
@@ -22,33 +23,26 @@
 
 ### Паттерны развертывания коллектора
 
-В Jaeger v2 устаревший агент заменен на **OpenTelemetry Collector** (или сам бинарный файл Jaeger в роли агента). Выбор паттерна зависит от масштаба кластера и требований к изоляции.
+В Jaeger v2 выбор паттерна развертывания коллектора-агента определяет баланс между потреблением ресурсов и сетевой сложностью.
 
 | Паттерн | Описание | Плюсы | Минусы |
 | :--- | :--- | :--- | :--- |
-| **Sidecar** | Collector запускается как второй контейнер в каждом поде приложения | Минимальная сетевая задержка. Изоляция трафика. Не требует знания IP узла | Повышенное потребление RAM/CPU (по ~50-100MB на каждый под) |
-| **DaemonSet** | Один экземпляр Collector на каждом узле кластера | Эффективное использование ресурсов. Упрощенное агрегирование | Требует настройки `hostPort` и передачи `status.hostIP` через Downward API |
-| **Deployment** | Централизованный кластер коллекторов за Service | Удобство масштабирования независимо от количества узлов. Централизованная фильтрация | Дополнительные сетевые переходы (hop). Потенциальное узкое место при пиковых нагрузках |
+| **Sidecar** | Collector запускается как второй контейнер в каждом поде приложения | Прямая связь по localhost. Индивидуальная настройка для каждого сервиса | Оверхед по ресурсам на каждый инстанс приложения |
+| **DaemonSet** | Один экземпляр Collector на каждом узле кластера | Оптимальное использование ресурсов узла. Удобно для сбора системных метрик | Требует настройки `hostPort` и корректной передачи IP узла из приложений |
+| **Deployment** | Централизованный кластер коллекторов за Service | Удобство масштабирования (HPA). Централизованное управление политиками сэмплирования | Дополнительный сетевой переход (Extra Hop), требующий учета задержек |
 
-### Подключение приложений через Downward API
+### RBAC и безопасность
 
-При использовании **DaemonSet** SDK приложения должен знать IP-адрес узла, на котором запущен коллектор.
+Для корректной работы Jaeger v2 (особенно в режиме DaemonSet или при использовании процессоров типа `k8sattributes`) требуются специфичные права доступа:
+1.  **Ресурс `pods`, `nodes`, `namespaces`:** Права на `get`, `watch`, `list` для обогащения спанов метаданными Kubernetes.
+2.  **Ресурс `events`:** Для сбора событий кластера.
+3.  **Security Context:** Рекомендуется запускать коллектор от не-привилегированного пользователя, если не требуется доступ к `hostPath` (например, для чтения логов).
 
-```yaml
-# Пример в манифесте Deployment приложения
-spec:
-  template:
-    spec:
-      containers:
-      - name: app
-        env:
-        - name: HOST_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.hostIP
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: "http://$(HOST_IP):4317"
-```
+### Взаимодействие с Service Mesh
+
+При использовании Istio или Linkerd необходимо обеспечить корректную передачу заголовков:
+*   **W3C Trace Context (`traceparent`):** Стандарт по умолчанию для Jaeger v2 и OTel.
+*   **B3 Propagation:** Часто используется в Istio. Jaeger v2 может принимать B3 и конвертировать его в W3C для внутреннего хранения.
 
 ---
 
@@ -58,20 +52,16 @@ spec:
 
 В Jaeger v2 рекомендуется использовать `kind: OpenTelemetryCollector` с образом Jaeger.
 
-#### Сравнение Operator и Helm-чартов
-
-*   **Operator:** Рекомендуется для большинства сред. Автоматизирует инъекцию sidecar, управляет сертификатами (через Cert-Manager), обновляет конфигурацию на лету. Позволяет использовать **CRD (Custom Resource Definitions)** для декларативного описания.
-*   **Helm-чарты:** Обеспечивают "прозрачное" развертывание без фоновых контроллеров. Полезны в средах с жесткими ограничениями безопасности, где запрещено создание `MutatingWebhookConfiguration` или использование кастомных операторов.
-
-#### Создание экземпляра Jaeger v2 (all-in-one для разработки)
+#### Полная конфигурация Production-ready Collector (Deployment mode)
 
 ```yaml
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
 metadata:
-  name: jaeger-v2-dev
+  name: jaeger-collector
 spec:
   mode: deployment
+  replicas: 3
   image: jaegertracing/jaeger:2.0.0
   config: |
     receivers:
@@ -81,91 +71,73 @@ spec:
           http:
     processors:
       batch:
+      k8sattributes:
+        extract:
+          metadata: [k8s.pod.name, k8s.namespace.name, k8s.node.name]
     exporters:
-      # В v2 используется специализированный экспортер для памяти (тестирование)
-      logging:
-        verbosity: detailed
+      jaeger_storage_exporter:
+        trace_storage:
+          type: clickhouse
+          options:
+            clickhouse:
+              endpoint: "tcp://clickhouse-server:9000"
     service:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [batch]
-          exporters: [logging]
+          processors: [k8sattributes, batch]
+          exporters: [jaeger_storage_exporter]
 ```
 
-#### Автоматическое внедрение Sidecar (Sidecar Injection)
+### Сценарий 2: Автоматическая инструментация (Instrumentation CR)
 
-Чтобы Operator автоматически добавил sidecar-контейнер в ваши поды, добавьте аннотацию в Deployment приложения:
-`sidecar.opentelemetry.io/inject: "true"`
+OpenTelemetry Operator позволяет автоматически внедрять SDK в приложения.
 
-### Сценарий 2: Сквозная трассировка через Ingress-NGINX
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: java-instrumentation
+spec:
+  exporter:
+    endpoint: http://jaeger-collector:4317
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:latest
+  sampler:
+    type: parentbased_always_on
+```
 
-NGINX Ingress Controller версии 1.9+ поддерживает нативную интеграцию с OpenTelemetry, заменяя устаревший модуль OpenTracing.
+Для активации добавьте аннотацию в под приложения:
+`instrumentation.opentelemetry.io/inject-java: "true"`
+
+### Сценарий 3: Сквозная трассировка через Ingress-NGINX
+
+Интеграция позволяет видеть путь запроса от момента входа в кластер.
 
 **Настройка в ConfigMap контроллера:**
 
-| Параметр | Значение | Пояснение |
-| :--- | :--- | :--- |
-| `enable-opentelemetry` | `"true"` | Включает поддержку OpenTelemetry |
-| `otlp-collector-host` | `jaeger-collector.monitoring.svc` | Адрес gRPC-сервиса коллектора |
-| `otlp-collector-port` | `"4317"` | Порт для приема OTLP данных |
-| `otel-propagation-policy` | `"w3c"` | Использование стандарта W3C Trace Context (header `traceparent`) |
+| Параметр | Значение |
+| :--- | :--- |
+| `enable-opentelemetry` | `"true"` |
+| `otlp-collector-host` | `jaeger-collector.monitoring.svc` |
+| `otlp-collector-port` | `"4317"` |
+| `otel-propagation-policy` | `"w3c"` |
 
-**Пример аннотации для ресурса Ingress:**
-`nginx.ingress.kubernetes.io/enable-opentelemetry: "true"`
+### Сценарий 4: Создание Java TrustStore для безопасного подключения
 
-### Сценарий 3: Создание Java TrustStore для безопасного подключения
+При использовании внешних хранилищ (OpenSearch/Elasticsearch) с TLS требуется проброс сертификатов.
 
-При использовании OpenSearch с TLS и самоподписанным CA компонентам Jaeger (например, Spark Dependencies) требуется TrustStore.
-
-**Пошаговый технический процесс:**
-
-1.  **Генерация JKS файла:**
-    Запустите временный под с JDK, передав в него ваш CA-сертификат:
+1.  **Создание TrustStore:**
     ```bash
-    # Создаем под и копируем сертификат
     kubectl run jdk-helper --image=openjdk:11 --restart=Never -- sleep 3600
     kubectl cp ca.pem jdk-helper:/tmp/ca.pem
-
-    # Генерируем TrustStore внутри пода
     kubectl exec jdk-helper -- keytool -import -alias os-ca -file /tmp/ca.pem -keystore /tmp/truststore.jks -storepass changeit -noprompt
-
-    # Копируем результат обратно
     kubectl cp jdk-helper:/tmp/truststore.jks ./truststore.jks
-    ```
-
-2.  **Создание Secret в Kubernetes:**
-    Рекомендуется использовать Secret для хранения бинарных данных:
-    ```bash
     kubectl create secret generic jaeger-truststore --from-file=truststore.jks=./truststore.jks
     ```
 
-3.  **Использование в Spark Dependencies (CronJob):**
-    Монтируйте Secret как volume и передайте параметры через системные свойства Java:
-    ```yaml
-    spec:
-      containers:
-      - name: spark-job
-        env:
-        - name: JAVA_OPTS
-          value: "-Djavax.net.ssl.trustStore=/etc/trust/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"
-        volumeMounts:
-        - name: truststore-vol
-          mountPath: /etc/trust
-          readOnly: true
-      volumes:
-      - name: truststore-vol
-        secret:
-          secretName: jaeger-truststore
-    ```
-
-### Сценарий 4: Миграция с Jaeger Operator (v1) на OTel Operator (v2)
-
-Для корректного перехода на вторую версию необходимо:
-1.  **Установить Cert-Manager:** Обязательное условие для работы вебхуков OpenTelemetry Operator.
-2.  **Преобразовать ресурсы:** Заменить `kind: Jaeger` на `kind: OpenTelemetryCollector`.
-3.  **Обновить конфигурацию:** Перевести флаги командной строки (CLI flags) в формат YAML-пайплайнов OTel.
-4.  **Обновить аннотации:** Заменить `sidecar.jaegertracing.io/inject` на `sidecar.opentelemetry.io/inject`.
+2.  **Использование в подах:**
+    Монтируйте секрет и передавайте переменные: `JAVA_OPTS="-Djavax.net.ssl.trustStore=/etc/trust/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"`.
 
 ---
 
@@ -176,3 +148,8 @@ NGINX Ingress Controller версии 1.9+ поддерживает нативн
 * Варианты развертывания и масштабирования: **[Варианты развертывания](./jaeger_deployment_options.md)**
 * Архитектура и компоненты v2: **[Архитектура Jaeger](./jaeger_architecture.md)**
 * Работа с SDK и сигналами: **[OpenTelemetry Overview](../OpenTelemetry/opentelemetry_overview.md)**
+* Наблюдаемость в Service Mesh: **[Istio Observability](../Service_Mesh/istio_observability_and_tools.md)**
+
+### См. также
+* [OpenTelemetry Operator Documentation](https://github.com/open-telemetry/opentelemetry-operator)
+* [Jaeger Kubernetes Helm Charts](https://github.com/jaegertracing/helm-charts)

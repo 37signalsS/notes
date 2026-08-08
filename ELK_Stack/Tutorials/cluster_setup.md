@@ -1,138 +1,119 @@
 # Руководство: Настройка кластера Elasticsearch 8.x
 
-> Эта заметка является частью обзора [ELK стека](../elk_stack_overview.md) и описывает пошаговую настройку мультинодового кластера Elasticsearch 8.x.
->
-> Базовые понятия (роли узлов, шарды и реплики, статусы здоровья) — в [Обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md).
+> Эта заметка является SSoT (авторитетным источником) по развертыванию мультинодовых кластеров Elasticsearch версии 8.15+. Она охватывает процессы автоматической и ручной настройки безопасности, системный тюнинг и обеспечение отказоустойчивости на уровне стоек или зон доступности.
 
 ## Определения
 
-* **Токен регистрации (Enrollment Token)** — механизм автоматической настройки безопасности в Elasticsearch 8.x. Позволяет новому узлу или Kibana безопасно присоединиться к кластеру, автоматически получая сертификаты CA и необходимые настройки TLS от первого узла.
-* **Проверки при загрузке (Bootstrap Checks)** — системные проверки, которые выполняет Elasticsearch при переходе в "production mode" (когда `network.host` не является loopback-адресом). Если проверки не пройдены, узел не запустится.
+* **Токен регистрации (Enrollment Token)** — зашифрованный ключ, содержащий информацию для автоматического подключения нового узла к кластеру. Включает в себя отпечаток CA-сертификата и адрес мастер-узла.
+* **Проверки при загрузке (Bootstrap Checks)** — набор тестов конфигурации ОС (память, лимиты файлов), которые Elasticsearch выполняет при старте в сетевом режиме. Если проверки не пройдены, процесс завершается с ошибкой.
+* **Allocation Awareness (Осведомленность о распределении)** — механизм, позволяющий Elasticsearch учитывать физическую топологию серверов (зоны, стойки) при размещении реплик для предотвращения потери данных.
+* **Elasticsearch Keystore** — защищенное хранилище для чувствительных настроек (пароли облачных провайдеров, ключи API), которое предотвращает их хранение в открытом виде в `elasticsearch.yml`.
+* **Compressed OOPs (Сжатые указатели)** — технология JVM, позволяющая использовать 32-битные указатели в 64-битной среде, что экономит память. Работает только при размере Heap до ~31.5 ГБ.
 
 ## Основные концепции
 
-### Ключевые параметры конфигурации
+### Параметры формирования кластера
+
+В версиях 8.x процесс формирования кластера упрощен благодаря автоматизации, но требует понимания ключевых параметров:
 
 | Параметр | Назначение | Особенности |
 | :--- | :--- | :--- |
-| **`cluster.name`** | Имя кластера | Должно быть идентичным на всех узлах. |
-| **`node.name`** | Уникальное имя узла | По умолчанию — имя хоста. |
-| **`network.host`** | IP-адрес для прослушивания | Установка значения, отличного от `localhost`, активирует **Bootstrap Checks**. |
-| **`discovery.seed_hosts`** | Список узлов для обнаружения | IP-адреса мастер-нод. Используется для поиска кластера при старте. |
-| **`cluster.initial_master_nodes`** | Начальные мастер-узлы | Используется **только один раз** при самом первом создании кластера. |
+| **`cluster.initial_master_nodes`** | Список начальных мастеров | Используется **только один раз** при самом первом запуске (bootstrap). |
+| **`discovery.seed_hosts`** | Список узлов для поиска | IP или DNS-имена узлов, которые могут быть мастерами. |
+| **`node.roles`** | Список ролей узла | Для стабильности рекомендуется выделять 3 узла с ролью `master` в кластерах от 10 узлов. |
 
-### Системные настройки (Bootstrap Checks)
+### Системный тюнинг (Production Ready)
 
-Перед запуском в промышленной среде необходимо настроить ОС:
+Для прохождения Bootstrap Checks и стабильной работы под нагрузкой обязательны следующие настройки:
 
-1. **Виртуальная память (mmap)**: Elasticsearch использует `mmap` для хранения индексов. Лимит должен быть увеличен:
-    * `sysctl -w vm.max_map_count=262144` (или в `/etc/sysctl.conf`).
-2. **Лимиты файлов (ulimits)**: Увеличьте количество открытых файлов для пользователя `elasticsearch` до 65536 в `/etc/security/limits.conf`.
-3. **Отключение Swap**: Рекомендуется полностью отключить swap для предотвращения задержек GC.
+1.  **Память (mmap)**: Увеличение лимитов виртуальной памяти для Lucene.
+    ```bash
+    sysctl -w vm.max_map_count=262144
+    # Перманентно: echo "vm.max_map_count=262144" >> /etc/sysctl.conf
+    ```
+2.  **Блокировка памяти (mlockall)**: Предотвращает уход JVM в swap.
+    *   В `elasticsearch.yml`: `bootstrap.memory_lock: true`.
+    *   В системных лимитах (systemd): `LimitMEMLOCK=infinity`.
+3.  **Дескрипторы файлов**: Минимум 65536 открытых файлов.
+    *   `LimitNOFILE=65536`.
+
+### Осведомленность о топологии (Zones/Racks)
+
+Для защиты от падения целого дата-центра или стойки используйте Allocation Awareness:
+1.  **Метка узла**: `node.attr.zone: "zone-a"`.
+2.  **Настройка кластера**: `cluster.routing.allocation.awareness.attributes: "zone"`.
+3.  **Принудительная защита**: `cluster.routing.allocation.awareness.force.zone.values: ["zone-a", "zone-b"]`. Это предотвратит "скучивание" реплик в одной зоне, если вторая временно недоступна.
 
 ## Практические сценарии
 
-### Сценарий 1: Автоматическая настройка (Enrollment Token)
+### Сценарий 1: Автоматическое развертывание (Enrollment)
 
-Рекомендуемый способ для новых кластеров, использующий встроенный CA.
+Наиболее безопасный и простой метод для новых инсталляций.
 
-#### Шаг 1: Установка и первый запуск
-
-1. Установите Elasticsearch на все узлы.
-2. На **первом узле** запустите сервис без предварительной настройки `elasticsearch.yml`:
-
+#### Шаг 1: Инициализация первого узла
+1.  Установите пакет и запустите сервис. Elasticsearch сгенерирует CA и пароль `elastic`.
+2.  Сохраните вывод в консоли или найдите пароль в логах: `/var/log/elasticsearch/elasticsearch.log`.
+3.  Сгенерируйте токен для нового узла (действует 30 минут):
     ```bash
-    sudo systemctl start elasticsearch
+    /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s node
     ```
 
-3. **Важно:** При первом запуске в консоль (или в `/var/log/elasticsearch/`) будут выведены:
-    * Пароль суперпользователя `elastic`.
-    * Токен регистрации для новых узлов.
-    * Токен регистрации для Kibana.
-
-#### Шаг 2: Добавление новых узлов
-
-1. Сгенерируйте новый токен на первом узле, если старый истек (30 мин):
-
-    ```bash
-    sudo /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s node
-    ```
-
-2. На новом узле выполните команду настройки, указав токен:
-
-    ```bash
-    sudo /usr/share/elasticsearch/bin/elasticsearch-reconfigure-node --enrollment-token <TOKEN>
-    ```
-
-3. Отредактируйте `elasticsearch.yml`, задав `node.name` и `network.host`, затем запустите сервис.
-
----
-
-### Сценарий 2: Ручная настройка (Custom CA)
-
-Используется, если политика безопасности требует использования корпоративного Центра Сертификации.
-
-#### Шаг 1: Генерация сертификатов
-
-1. Создайте сертификаты для транспортного уровня (Transport TLS) и HTTP с помощью утилиты `bin/elasticsearch-certutil`.
-2. Скопируйте сертификаты в директорию `/etc/elasticsearch/certs/` на все узлы.
-
-#### Шаг 2: Настройка `elasticsearch.yml`
-
-На всех узлах настройте параметры безопасности вручную:
-
-```yaml
-cluster.name: production-cluster
-network.host: 10.0.0.1
-discovery.seed_hosts: ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
-
-# Security Settings
-xpack.security.enabled: true
-xpack.security.transport.ssl.enabled: true
-xpack.security.transport.ssl.verification_mode: certificate
-xpack.security.transport.ssl.keystore.path: certs/transport.p12
-xpack.security.transport.ssl.truststore.path: certs/transport.p12
-
-xpack.security.http.ssl.enabled: true
-xpack.security.http.ssl.keystore.path: certs/http.p12
+#### Шаг 2: Присоединение нового узла
+На чистом узле (без предварительно настроенного `elasticsearch.yml`) выполните:
+```bash
+/usr/share/elasticsearch/bin/elasticsearch-reconfigure-node --enrollment-token <TOKEN>
+# Система автоматически настроит TLS и укажет seed_hosts
+systemctl start elasticsearch
 ```
 
-#### Шаг 3: Инициализация кластера
+### Сценарий 2: Использование Keystore для секретов
 
-На первом узле при самом первом запуске добавьте:
-`cluster.initial_master_nodes: ["node-1", "node-2", "node-3"]`
-
-> После формирования кластера этот параметр следует удалить или закомментировать.
-
----
-
-### Проверка состояния
+Для хранения пароля к S3-репозиторию или кастомных настроек безопасности:
 
 ```bash
-# Проверка списка узлов и их ролей
-curl -k -u elastic:$ELASTIC_PASSWORD "https://localhost:9200/_cat/nodes?v"
+# 1. Создание хранилища
+/usr/share/elasticsearch/bin/elasticsearch-keystore create
 
-# Проверка распределения шардов
-curl -k -u elastic:$ELASTIC_PASSWORD "https://localhost:9200/_cat/shards?v"
+# 2. Добавление секрета
+/usr/share/elasticsearch/bin/elasticsearch-keystore add s3.client.default.access_key
+# -> введите значение интерактивно
+```
+*В `elasticsearch.yml` теперь можно использовать переменные или полагаться на то, что плагины сами найдут ключи в Keystore.*
 
-# Объяснение аллокации (полезно при статусе Yellow/Red)
-curl -k -u elastic:$ELASTIC_PASSWORD "https://localhost:9200/_cluster/allocation/explain?pretty"
+### Сценарий 3: Диагностика формирования кластера
+
+Если узлы не видят друг друга или кластер находится в статусе `Yellow`/`Red`:
+
+```bash
+# Проверка связности и ролей
+curl -k -u elastic:$PASS "https://localhost:9200/_cat/nodes?v"
+
+# Анализ проблем с аллокацией шардов (почему шард unassigned?)
+curl -k -u elastic:$PASS "https://localhost:9200/_cluster/allocation/explain?pretty"
+
+# Проверка порогов диска (Watermarks)
+curl -k -u elastic:$PASS "https://localhost:9200/_cluster/settings?include_defaults=true"
 ```
 
 ## Дополнительная информация
 
-### Типичные проблемы
+### Рекомендации по JVM
 
-* **`mmap` limit reached**: Узел падает сразу после старта. Решение: увеличить `vm.max_map_count`.
-* **Certificate Expired**: Узлы теряют связь. Регулярно проверяйте срок действия сертификатов, если используете ручную настройку.
-* **Quorum Loss**: Если упало более половины мастер-узлов, кластер перестанет принимать запросы. Потребуется процедура восстановления кворума.
+*   **Heap Size**: Всегда устанавливайте `Xms` равным `Xmx`.
+*   **Лимит 31 ГБ**: Не выделяйте 32 ГБ и более. При пересечении границы ~31.5 ГБ JVM перестает использовать сжатые указатели (Compressed OOPs), что приводит к резкому росту потребления памяти и снижению производительности.
+*   **Bundled JDK**: Начиная с 7.x/8.x, Elasticsearch поставляется с оптимизированной версией JDK. Используйте её, если нет строгой необходимости в специфической версии Java.
 
-### Рекомендации
+### Пороги заполнения диска (Watermarks)
 
-* **JVM Heap**: Настраивайте в `/etc/elasticsearch/jvm.options.d/heap.options`. Выделяйте 50% RAM, но не более 31 ГБ. Подробное обоснование — в [Обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md#оптимизация-производительности).
-* **Dedicated Masters**: В кластерах более 10 узлов выделяйте 3 узла только с ролью `master`.
-* **Мониторинг**: Используйте `elasticsearch_exporter` для сбора метрик в Prometheus.
+Elasticsearch автоматически блокирует запись при нехватке места:
+1.  **Low (85%)**: Перестает назначать новые шарды на узел.
+2.  **High (90%)**: Пытается выселить существующие шарды на другие узлы.
+3.  **Flood Stage (95%)**: Переводит все индексы на узле в режим `read-only`. Снять блокировку после очистки места можно через API:
+    ```http
+    PUT /*/_settings { "index.blocks.read_only_allow_delete": null }
+    ```
 
-> **См. также:**
-> * [Elasticsearch: Жизненный цикл индексов (ILM)](../Elasticsearch/elasticsearch_ilm_and_retention.md)
-> * [Сравнение Elasticsearch и OpenSearch](../OpenSearch/opensearch_overview.md)
+---
+*   **[Elasticsearch: Обзор](../Elasticsearch/elasticsearch_overview.md)** — архитектура, роли и возможности 8.15+.
+*   **[Elasticsearch: Жизненный цикл (ILM)](../Elasticsearch/elasticsearch_ilm_and_retention.md)** — автоматизация ротации после настройки.
+*   **[Официальное руководство по Bootstrap Checks](https://www.elastic.co/guide/en/elasticsearch/reference/current/bootstrap-checks.html)**.

@@ -1,10 +1,19 @@
 # Cilium: Высокопроизводительный CNI на базе eBPF
 
+---
+**Надёжность:** 10 (SSoT + Проектный контекст 2026)
+**Свежесть:** Актуально на август 2026 (Cilium v1.20.0)
+---
+
 ## Определения
 
 **Cilium** — это современный плагин интерфейса сетевой связности контейнеров (CNI), обеспечивающий сетевое взаимодействие, безопасность и наблюдаемость рабочих нагрузок. В основе Cilium лежит технология **eBPF** (Extended Berkeley Packet Filter), которая позволяет внедрять логику обработки пакетов напрямую в ядро Linux без изменения исходного кода ядра или приложений.
 
 **kube-proxy-replacement** — режим работы Cilium, полностью заменяющий стандартный `kube-proxy`. В этом режиме балансировка трафика сервисов (ClusterIP, NodePort, LoadBalancer) выполняется через eBPF, что исключает накладные расходы на `iptables` и `conntrack`.
+
+**Tetragon** — инструмент в экосистеме Cilium для обеспечения безопасности среды выполнения (Runtime Security) и глубокой наблюдаемости на базе eBPF. Позволяет отслеживать системные вызовы, доступ к файлам и выполнение процессов с минимальными накладными расходами.
+
+**Cilium Identity** — уникальный числовой идентификатор, присваиваемый группе подов с идентичным набором меток (labels). Используется для реализации политик безопасности на основе логических ролей, а не эфемерных IP-адресов.
 
 ### Ключевые отличия и преимущества eBPF
 В то время как другие решения CNI используют стандартный сетевой стек Linux `iptables` и сетевой экран, Cilium опирается на eBPF — высокоэффективную и программируемую структуру внутри ядра Linux. eBPF позволяет выполнять динамическую обработку пакетов без модификации ядра, что значительно повышает производительность сети для высоконагруженных систем.
@@ -61,11 +70,12 @@ Cilium расширяет стандартный API Kubernetes для упра�
 
 ### Расширенные сетевые возможности
 
-- **ClusterMesh:** Объединение нескольких кластеров Kubernetes в единую плоскую сеть. Позволяет сервисам обращаться друг к другу по именам (Global Services) и обеспечивать отказоустойчивость.
+- **ClusterMesh:** Объединение нескольких кластеров Kubernetes в единую плоскую сеть. Позволяет сервисам обращаться друг к другу по именам (Global Services) и обеспечивать отказоустойчивость. Начиная с v1.20 поддерживается стабильный MCS API.
 - **Шифрование трафика:** Поддержка прозрачного шифрования "узел-узел" через **WireGuard** (рекомендуется за производительность) или **IPsec**.
+- **BGP Control Plane:** Современная реализация BGP (заменяет старый BGP mode), позволяющая гибко анонсировать LoadBalancer IP и Pod CIDR внешним маршрутизаторам через `CiliumBGPPeeringPolicy`.
+- **XDP Acceleration:** Возможность обработки пакетов на уровне драйвера сетевой карты (eXpress Data Path), что обеспечивает максимальную защиту от DDoS и минимальную задержку для NodePort-сервисов.
 - **Load Balancer (L2 & BGP):** Нативная поддержка сервисов типа `LoadBalancer`, заменяющая сторонние решения (например, MetalLB).
-    - **L2 Mode:** Использует ARP-анонсы. IP-адрес приземляется на одну из нод (выбор лидера).
-    - **BGP Mode:** Анонсирование маршрутов через протокол BGP, что позволяет распределять трафик между несколькими узлами (ECMP).
+    - **L2 Mode:** Использует ARP/NDP-анонсы. IP-адрес приземляется на одну из нод (выбор лидера через Kubernetes Lease).
 - **Egress Gateway:** Маршрутизация исходящего трафика подов через фиксированные IP-адреса узлов (шлюзов) для интеграции с внешними корпоративными файрволами.
 - **Bandwidth Manager:** Управление полосой пропускания и предотвращение эффекта "шумного соседа" через очереди ядра (EDT - Earliest Departure Time).
 
@@ -135,17 +145,40 @@ Cilium поддерживает стандарт **Gateway API** и может �
 ```bash
 helm upgrade --install cilium cilium/cilium \
   --namespace kube-system \
+  --version 1.20.0 \
   --set kubeProxyReplacement=strict \
   --set k8sServiceHost=10.0.0.10 \
   --set k8sServicePort=6443 \
   --set l2announcements.enabled=true \
   --set externalIPs.enabled=true \
-  --set gatewayAPI.enabled=true
+  --set gatewayAPI.enabled=true \
+  --set bpf.masquerade=true
 ```
 
 **ВАЖНО:** После обновления конфигурации через Helm необходимо выполнить перезапуск Cilium Agent для применения изменений:
 ```bash
 kubectl rollout restart ds cilium -n kube-system
+```
+
+### Настройка BGP Control Plane
+
+Для анонсирования маршрутов внешним устройствам используется `CiliumBGPPeeringPolicy`:
+
+```yaml
+apiVersion: "cilium.io/v2alpha1"
+kind: CiliumBGPPeeringPolicy
+metadata:
+  name: "bgp-policy"
+spec:
+  nodeSelector:
+    matchLabels:
+      bgp-peering: "true"
+  virtualRouters:
+  - localASN: 64512
+    exportPodCIDR: true
+    neighbors:
+    - peerAddress: "192.168.1.1/32"
+      peerASN: 64512
 ```
 
 ### Настройка Load Balancer (L2 Mode)
@@ -224,12 +257,40 @@ kubectl rollout restart ds cilium -n kube-system
 ```bash
 # Установка Cilium с заменой kube-proxy и включенным Hubble
 cilium install \
-  --version 1.19.6 \
+  --version 1.20.0 \
   --set kubeProxyReplacement=strict \
   --set k8sServiceHost=10.0.0.10 \
   --set k8sServicePort=6443 \
   --set hubble.enabled=true \
   --set hubble.ui.enabled=true
+```
+
+### Безопасность среды выполнения (Tetragon)
+
+Tetragon позволяет отслеживать события безопасности на уровне ядра. Пример политики для отслеживания записи в чувствительные файлы:
+
+```yaml
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: "monitor-etc-passwd"
+spec:
+  kprobes:
+  - call: "vfs_write"
+    syscall: false
+    args:
+    - index: 0
+      type: "file"
+    selectors:
+    - matchPIDs:
+      - operator: NotIn
+        values:
+        - 1
+      matchArgs:
+      - index: 0
+        operator: "Prefix"
+        values:
+        - "/etc/passwd"
 ```
 
 ### Настройка шифрования (WireGuard)
@@ -376,8 +437,14 @@ kubectl get ciliumendpoints -A
 Наблюдение за отброшенными пакетами в реальном времени:
 ```bash
 hubble observe --type drop --follow
-# → результат: Jul 22 10:00:01.123: default/pod-a:1234 -> default/pod-b:80 policy-denied forward direction
+# → результат: Aug 06 14:45:01.123: default/pod-a:1234 -> default/pod-b:80 policy-denied forward direction
 ```
+
+### Тюнинг производительности и лимиты
+
+1. **BPF Map Limits:** В крупных кластерах (>1000 сервисов) стандартных лимитов BPF-карт может быть недостаточно. Настройка `bpf-map-dynamic-size-ratio` позволяет Cilium автоматически масштабировать карты в зависимости от RAM узла.
+2. **MTU и фрагментация:** Для VXLAN MTU должен быть на 50 байт меньше физического (1450 при стандартном 1500). Для Geneve — также 50 байт. Несоответствие MTU приводит к труднодиагностируемым проблемам с установкой TLS-соединений.
+3. **Direct Routing:** Если инфраструктура поддерживает BGP, использование `native-routing` вместо `overlay` значительно снижает нагрузку на CPU (до 15-20% на пакет) за счет отсутствия инкапсуляции.
 
 ---
 

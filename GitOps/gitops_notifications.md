@@ -1,113 +1,122 @@
-# GitOps — уведомления о статусе развертываний
+# GitOps: Уведомления о статусе развертываний
 
-Уведомления являются неотъемлемой частью **GitOps (инфраструктура как код в Git)** конвейера, позволяя командам получать оперативную информацию о состоянии приложений без необходимости ручной проверки интерфейса или консоли.
+Уведомления являются неотъемлемой частью GitOps-пайплайна (Infrastructure as Code). Они обеспечивают проактивный мониторинг состояния инфраструктуры и приложений, позволяя командам получать оперативную информацию о результатах синхронизации и изменениях состояния системы без необходимости ручного контроля консоли или интерфейса инструментов.
 
 ## Определения
 
-- **Уведомление (Notification)**: Автоматическое сообщение о событии в **GitOps-конвейере (Continuous Delivery — непрерывная доставка)**, например, об успехе или ошибке синхронизации, отправляемое во внешнюю систему (Slack, Telegram, Microsoft Teams, Email).
-- **Вебхук (Webhook)**: Основной механизм доставки уведомлений. Инструмент отправляет **HTTP POST (HyperText Transfer Protocol POST)** запрос с деталями события на заранее указанный **URL (Uniform Resource Locator)**.
-- **CDEvents**: Общая спецификация для описания событий в процессах непрерывной поставки, основанная на **CloudEvents (стандарт описания событий)**.
+- **Уведомление (Notification)**: Автоматическое сообщение о событии в жизненном цикле ресурсов (Sync Succeeded, Failed, Degraded), отправляемое во внешние системы (Slack, Telegram, MS Teams, Email).
+- **Вебхук (Webhook)**: Метод взаимодействия систем через HTTP POST-запросы. GitOps-контроллер отправляет JSON-пакет с деталями события на URL-адрес приемника (receiver).
+- **CDEvents**: Общая спецификация для описания событий в процессах Continuous Delivery, основанная на CloudEvents. Обеспечивает интероперабельность между различными инструментами CI/CD/GitOps.
+- **Статус здоровья (Health Status)**: Состояние ресурса в Kubernetes после применения манифестов (Healthy, Progressing, Degraded, Suspended).
+- **Контроллер уведомлений (Notification Controller)**: Специализированный компонент GitOps-инструментария (например, в Flux или ArgoCD), отвечающий за фильтрацию событий, формирование сообщений по шаблонам и их доставку провайдерам.
 
 ## Базовые концепции
 
-### Назначение уведомлений
+### Цели внедрения алертинга
 
-- **Оперативное информирование**: Оповещение об успешных и неудачных развертываниях в командных чатах.
-- **Проактивное реагирование**: Немедленное получение данных о проблемах со здоровьем приложений (`Degraded`) после синхронизации.
-- **Аудит и трассируемость**: Создание хронологической ленты всех изменений в выделенном канале для последующего анализа.
+- **Сокращение MTTR (Mean Time To Recovery)**: Мгновенное оповещение о сбоях в продуктивных окружениях.
+- **Прозрачность изменений**: Формирование ленты событий ("Audit Trail") в командных чатах для отслеживания того, кто, когда и какое изменение инициировал.
+- **Интеграция с ChatOps**: Возможность не только получать уведомления, но и взаимодействовать с кластером через команды в мессенджерах (при использовании дополнительных ботов).
 
-### Ключевые события для мониторинга
+### Ключевые события и уровни важности
 
-- Успешное завершение синхронизации (`Sync Succeeded`).
-- Ошибка процесса синхронизации (`Sync Failed`).
-- Изменение статуса здоровья приложения (например, переход из `Progressing` в `Healthy` или `Degraded`).
-- Автоматическое обновление образа с помощью специализированных контроллеров (например, Image Updater).
+Системы уведомлений обычно классифицируют события по уровням:
+- **Info**: Успешная синхронизация, начало процесса обновления образа.
+- **Warning**: Дрифт конфигурации (OutOfSync), задержка в достижении состояния Healthy.
+- **Error**: Ошибка применения манифеста, ошибка аутентификации в Git-репозитории, переход ресурса в статус Degraded.
 
-### Возможности контроллера уведомлений Flux v1.8 (февраль 2026)
+### Архитектурные паттерны
 
-- **Комментарии к запросам на слияние (PR Comments)**: Прямое комментирование **Pull Request (Запрос на слияние)** в GitHub или GitLab.
-- **Специализированные провайдеры**: Поддержка типов `githubpullrequestcomment`, `gitlabmergerequestcomment`, `giteapullrequestcomment`.
-- **Расширенная аутентификация NATS (Messaging System)**: Поддержка **JWT (JSON Web Token)**, NKey и стандартной связки Username/Password.
-- **Поддержка CDEvents**: Реализация спецификации в **Receiver API (Application Programming Interface)**.
-- **mTLS**: Использование **mutual TLS (Двусторонний TLS)** для алертов и транспорта GitHub App.
+1.  **Прямая интеграция**: Контроллер напрямую общается с API мессенджера (например, Telegram Bot API).
+2.  **Шина событий (Event Bus)**: Контроллер отправляет события в NATS или Kafka, откуда их забирают различные потребители (consumers).
+3.  **Агрегация через Webhook**: Использование промежуточных сервисов (Alertmanager, Zapier, n8n) для сложной маршрутизации и трансформации уведомлений.
 
-### Стратегии и фильтрация
+### Стратегии борьбы с "шумом"
 
-Для предотвращения "информационного шума" в GitOps-системах применяются следующие подходы:
-
-- **Маршрутизация (Routing)**: Направление критических алертов (ошибки синхронизации в продуктивном окружении) в основные каналы, а информационных (успешный деплой в окружение разработки) — в архивные.
-- **Дедупликация (Deduplication)**: Группировка повторяющихся уведомлений об одной и той же ошибке для предотвращения спама.
-- **Фильтрация по важности (Severity Filtering)**: Отправка только событий с уровнем `error` или `warning` для определенных окружений.
-- **Многопользовательская изоляция (Multi-tenancy)**: Разделение прав на получение уведомлений между разными командами на основе **RBAC (Role-Based Access Control — управление доступом на основе ролей)**.
+- **Дедупликация**: Группировка событий по объекту (Involved Object). Если Deployment падает 10 раз подряд, в чат уходит одно сообщение с обновленным счетчиком.
+- **Маршрутизация по окружениям**: Алерты из `production` уходят с тегом `@here` в основной канал, а из `dev` — в архивный канал без звуковых уведомлений.
+- **Mute Timings**: Подавление уведомлений во время плановых технических работ или в нерабочее время (для некритичных систем).
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка уведомлений в Argo CD
+### Сценарий 1: Уведомления в Flux (GitOps Toolkit)
 
-Подробное руководство по конфигурации ArgoCD Notifications, включая примеры для Telegram, доступно в специализированном документе: **[ArgoCD Notifications: Настройка уведомлений](./ArgoCD/argocd_notifications.md)**.
+Flux использует модульную архитектуру, где за уведомления отвечает `notification-controller`.
 
-Основные компоненты:
-- Использование контроллера `argocd-notifications-controller`.
-- Хранение конфигурации в ресурсах `ConfigMap` и `Secret`.
-- Подписка приложений через аннотации в манифестах.
+**Компоненты конфигурации:**
+1.  **Provider**: Описывает "куда" (Slack, Telegram, Webhook, S3).
+2.  **Alert**: Описывает "что" и "откуда" (Kustomization, HelmRelease, GitRepository).
 
-### Сценарий 2: Уведомления в Slack через Flux
+**Пример настройки Slack:**
 
-Flux использует `notification-controller` и ресурсы типов `Provider` и `Alert`.
+```yaml
+# 1. Секрет с токеном/вебхуком
+apiVersion: v1
+kind: Secret
+metadata:
+  name: slack-url
+  namespace: flux-system
+stringData:
+  address: "https://hooks.slack.com/services/..."
+---
+# 2. Провайдер
+apiVersion: notification.toolkit.fluxcd.io/v1beta3
+kind: Provider
+metadata:
+  name: slack-provider
+  namespace: flux-system
+spec:
+  type: slack
+  secretRef:
+    name: slack-url
+---
+# 3. Алерт
+apiVersion: notification.toolkit.fluxcd.io/v1beta3
+kind: Alert
+metadata:
+  name: critical-alerts
+  namespace: flux-system
+spec:
+  providerRef:
+    name: slack-provider
+  eventSeverity: error # Только ошибки
+  eventSources:
+    - kind: Kustomization
+      name: '*'
+    - kind: HelmRelease
+      name: '*'
+```
 
-1. **Создание секрета с URL вебхука Slack:**
+**Новое в Flux v1.8 (2026):**
+- **PR Comments**: Автоматическое комментирование Pull/Merge Request в GitHub/GitLab о статусе проверки манифестов.
+- **mTLS**: Поддержка двустороннего TLS для транспорта событий и связи с GitHub App.
 
-    ```yaml
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: slack-webhook-secret
-      namespace: flux-system
-    stringData:
-      address: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
-    ```
+### Сценарий 2: Уведомления в ArgoCD
 
-2. **Настройка ресурса Provider (куда отправлять):**
+ArgoCD Notifications интегрированы в основной контроллер (начиная с v3.x), что упрощает управление.
 
-    ```yaml
-    apiVersion: notification.toolkit.fluxcd.io/v1beta3
-    kind: Provider
-    metadata:
-      name: slack-provider
-      namespace: flux-system
-    spec:
-      type: slack
-      channel: '#deployments'
-      secretRef:
-        name: slack-webhook-secret
-    ```
+**Основные настройки:**
+- **Triggers**: Условия отправки (например, `on-deployed`, `on-health-degraded`).
+- **Templates**: Шаблоны сообщений с поддержкой переменных (`{{.app.metadata.name}}`).
+- **Subscriptions**: Подписка конкретных приложений через аннотации.
 
-3. **Настройка ресурса Alert (о чем уведомлять):**
+> **Детальное руководство по настройке:** см. **[ArgoCD Notifications: Настройка уведомлений](./ArgoCD/argocd_notifications.md)**.
 
-    ```yaml
-    apiVersion: notification.toolkit.fluxcd.io/v1beta3
-    kind: Alert
-    metadata:
-      name: deployment-alerts
-      namespace: flux-system
-    spec:
-      providerRef:
-        name: slack-provider
-      eventSources:
-        - kind: Kustomization
-          name: '*'
-        - kind: HelmRelease
-          name: '*'
-      eventSeverity: error
-      summary: "Deployment failed for ${{ .involvedObject.kind }} ${{ .involvedObject.name }}"
-    ```
+### Сценарий 3: Использование CDEvents для мультиинструментальных сред
+
+Если в организации используются одновременно ArgoCD, Flux и Tekton, целесообразно использовать стандарт CDEvents.
+
+- **Workflow**: Каждый инструмент отправляет события в формате CloudEvents на центральный брокер.
+- **Результат**: Единый формат уведомлений и возможность строить аналитику (DORA metrics) на основе стандартизированных данных.
 
 ## Дополнительная информация
 
 **Связанные документы:**
-- [ArgoCD Notifications: детальное руководство](./ArgoCD/argocd_notifications.md)
-- [Обзор Flux: архитектура и возможности](./flux.md)
+- [ArgoCD Notifications: детальное руководство](./ArgoCD/argocd_notifications.md) — SSoT по настройке ArgoCD.
+- [Flux: Обзор и Ключевые Концепции](./flux.md) — общая архитектура Flux.
+- [Интеграция Grafana с Telegram](../Grafana/alerting/telegram-integration.md) — примеры шаблонов для Telegram.
 
-**Официальные ресурсы:**
-- [Документация ArgoCD Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
-- [Flux Notification Controller Documentation](https://fluxcd.io/flux/components/notification/)
+**Рекомендации:**
+1. **Безопасность**: Никогда не храните токены ботов и URL вебхуков в открытом виде в Git. Используйте [Sealed Secrets](./secrets_encryption.md) или External Secrets.
+2. **Шаблонизация**: Включайте в уведомления ссылки на логи (Grafana/Kibana) и на сам ресурс в UI ArgoCD/Flux для ускорения диагностики.
+3. **Версионность**: При обновлении контроллеров всегда проверяйте API-версии ресурсов `Provider` и `Alert`, так как они часто обновляются (например, переход с `v1beta2` на `v1beta3`).

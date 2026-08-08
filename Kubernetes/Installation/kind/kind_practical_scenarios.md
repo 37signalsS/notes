@@ -18,12 +18,12 @@
 
 | Команда | Описание |
 | :--- | :--- |
-| `kind create cluster` | Создание нового кластера |
-| `kind get clusters` | Список существующих кластеров |
-| `kind delete cluster` | Удаление кластера |
-| `kind load docker-image` | Загрузка локального Docker-образа напрямую в узлы кластера |
-| `kind export kubeconfig` | Экспорт или обновление файла kubeconfig для доступа к кластеру |
-| `kind export logs` | Выгрузка диагностических логов узлов и компонентов кластера |
+| `kind create cluster` | Создание нового кластера. |
+| `kind get clusters` | Список существующих кластеров. |
+| `kind delete cluster` | Удаление кластера. |
+| `kind load docker-image` | Загрузка локального Docker-образа напрямую в узлы кластера. |
+| `kind export kubeconfig` | Экспорт или обновление файла kubeconfig для доступа к кластеру. |
+| `kind export logs` | Выгрузка диагностических логов узлов и компонентов кластера. |
 
 ---
 
@@ -34,7 +34,7 @@
 **Linux (amd64 — 64-разрядная архитектура x86):**
 
 ```bash
-# Скачивание бинарного файла актуальной версии v0.32.0 (середина 2026 года)
+# Скачивание бинарного файла актуальной версии v0.32.0 (август 2026 года)
 curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64
 chmod +x ./kind
 sudo mv ./kind /usr/local/bin/kind
@@ -56,7 +56,7 @@ curl.exe -Lo kind-windows-amd64.exe https://kind.sigs.k8s.io/dl/v0.32.0/kind-win
 Move-Item .\kind-windows-amd64.exe c:\some-dir-in-your-PATH\kind.exe
 ```
 
-> **Примечание:** Актуальная версия на середину 2026 года — `v0.32.0`. В новых релизах используется балансировщик **Envoy** (вместо HAProxy) для HA-кластеров. Проверяйте обновления на странице [GitHub Releases](https://github.com/kubernetes-sigs/kind/releases).
+> **Примечание:** Актуальная версия на август 2026 года — `v0.32.0`. В новых релизах используется балансировщик **Envoy** (вместо HAProxy) для HA-кластеров. Проверяйте обновления на странице [GitHub Releases](https://github.com/kubernetes-sigs/kind/releases).
 
 ---
 
@@ -71,9 +71,9 @@ kind create cluster
 kind create cluster --name my-cluster
 # → Creating cluster "my-cluster" ...
 
-# Создание кластера с применением файла конфигурации
-kind create cluster --name my-cluster --config kind-config.yaml
-# → Creating cluster "my-cluster" ...
+# Использование конкретной версии Kubernetes (например, v1.37.0)
+kind create cluster --image kindest/node:v1.37.0
+# →  • Ensuring node image (kindest/node:v1.37.0) 🖼 ...
 ```
 
 Пример минимального конфигурационного файла доступен в разделе **[Минимальная конфигурация](./kind_configuration.md#минимальная-конфигурация)**.
@@ -82,12 +82,12 @@ kind create cluster --name my-cluster --config kind-config.yaml
 
 ### HA-кластер (High Availability — высокая доступность)
 
-Для тестирования отказоустойчивости рекомендуется использовать многоузловую конфигурацию (несколько control-plane узлов).
+Для тестирования отказоустойчивости рекомендуется использовать многоузловую конфигурацию.
 
 ```bash
 kind create cluster --name ha-cluster --config kind-config-ha.yaml
 # → Creating cluster "ha-cluster" ...
-# →  • Ensuring node image (kindest/node:v1.36.0) 🖼  ...
+# →  • Ensuring node image (kindest/node:v1.37.0) 🖼  ...
 # →  • Preparing nodes 📦 📦 📦 📦  ...
 # →  • Starting control-plane 🕹️  ...
 ```
@@ -96,55 +96,63 @@ kind create cluster --name ha-cluster --config kind-config-ha.yaml
 
 ---
 
+### Поддержка типа LoadBalancer (cloud-provider-kind)
+
+По умолчанию в kind сервисы `type: LoadBalancer` находятся в состоянии `Pending`. Начиная с 2024–2025 годов, стандартным способом решения этой проблемы (помимо MetalLB) является использование **cloud-provider-kind**.
+
+```bash
+# 1. Установка cloud-provider-kind (как бинарный файл или через Go)
+go install sigs.k8s.io/cloud-provider-kind@latest
+
+# 2. Запуск провайдера в отдельном терминале (должен работать постоянно)
+cloud-provider-kind
+
+# 3. В другом терминале создаем сервис
+kubectl expose deployment nginx --port=80 --type=LoadBalancer
+
+# 4. Проверка получения внешнего IP
+kubectl get svc
+# → NAME    TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+# → nginx   LoadBalancer   10.96.114.155   172.18.0.100  80:31254/TCP   10s
+```
+
+---
+
 ### Проверка кластера
 
 ```bash
 # Список всех локальных кластеров kind
 kind get clusters
-# → my-cluster
-# → ha-cluster
 
-# Переключение контекста kubectl на созданный кластер
+# Переключение контекста kubectl
 kubectl config use-context kind-my-cluster
-# → Switched to context "kind-my-cluster".
 
-# Статус узлов (Ready)
-kubectl get nodes
-# → NAME                 STATUS   ROLES           AGE   VERSION
-# → my-cluster-control-plane   Ready    control-plane   2m    v1.36.0
+# Ожидание готовности узлов (полезно для скриптов)
+kubectl wait --for=condition=Ready nodes --all --timeout=60s
 
 # Статус критических системных компонентов
 kubectl get pods -n kube-system
-# → NAME                                         READY   STATUS    RESTARTS   AGE
-# → coredns-xxxxxxxxx-xxxxx                      1/1     Running   0          2m
-# → etcd-my-cluster-control-plane                1/1     Running   0          2m
 ```
 
 ---
 
 ### Загрузка локальных Docker-образов
 
-Для того чтобы Kubernetes мог запустить локально собранный образ (которого нет в публичных реестрах типа Docker Hub), его нужно загрузить напрямую в Container Runtime узлов кластера.
+Для запуска образов, которых нет в реестре, их необходимо загрузить в Container Runtime узлов.
 
 ```bash
-# 1. Сборка образа на хосте
+# 1. Сборка образа
 docker build -t my-app:dev .
 
-# 2. Загрузка образа в кластер
+# 2. Загрузка в кластер
 kind load docker-image my-app:dev --name my-cluster
-# → Image: "my-app:dev" with ID "sha256:..." not yet present on node "my-cluster-control-plane", loading...
-
-# 3. Развертывание
-kubectl create deployment my-app --image=my-app:dev
-# → deployment.apps/my-app created
 ```
 
-**Загрузка из tar-архива (полезно для CI/CD или передачи больших образов):**
+**Загрузка из tar-архива:**
 
 ```bash
 docker save -o my-app.tar my-app:dev
 kind load image-archive my-app.tar --name my-cluster
-# → Image: "my-app:dev" with ID "sha256:..." not yet present on node "my-cluster-control-plane", loading...
 ```
 
 ---
@@ -172,11 +180,6 @@ spec:
         image: nginx:1.27
         ports:
         - containerPort: 80
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 5
 ---
 apiVersion: v1
 kind: Service
@@ -194,12 +197,7 @@ spec:
 
 ```bash
 kubectl apply -f nginx-deployment.yaml
-# → deployment.apps/nginx-deployment created
-# → service/nginx-service created
-
 kubectl get pods -l app=nginx
-# → NAME                                READY   STATUS    RESTARTS   AGE
-# → nginx-deployment-xxxxxxxxx-xxxxx    1/1     Running   0          1m
 ```
 
 ---
@@ -207,91 +205,60 @@ kubectl get pods -l app=nginx
 ### Удаление кластера
 
 ```bash
-# Удаление конкретного кластера
 kind delete cluster --name my-cluster
-# → Deleting cluster "my-cluster" ...
-
-# Удаление всех существующих кластеров kind
 kind delete clusters --all
-# → Deleted clusters: ["my-cluster", "ha-cluster"]
 ```
 
 ---
 
-### Интеграция с CI/CD (Continuous Integration / Continuous Deployment)
+### Интеграция с CI/CD
 
-**GitHub Actions (с использованием официального Action):**
-
-```yaml
-name: CI-Kubernetes-Test
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    # Использование официального экшена (v1 указывает на актуальный 1.x.x релиз, например v1.14.0+)
-    - name: Setup kind
-      uses: helm/kind-action@v1
-      with:
-        cluster_name: 'ci-cluster'
-        version: v0.32.0
-        # Опционально: загрузка файла конфигурации для настройки узлов
-        # config: kind-config.yaml 
-        
-    - name: Run Integration Tests
-      run: |
-        kubectl apply -f manifests/
-        kubectl wait --for=condition=ready pod -l app=test --timeout=120s
-```
-
-**GitLab CI (использование Docker-in-Docker):**
+**GitHub Actions:**
 
 ```yaml
-test_kubernetes:
-  image: docker:26-dind
-  services:
-    - docker:26-dind
-  variables:
-    KIND_VERSION: "v0.32.0"
-  script:
-    # Установка kind
-    - curl -Lo ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64
-    - chmod +x ./kind
-    
-    # Установка kubectl (для запуска манифестов)
-    - apk add --no-cache kubectl
-    
-    # Создание кластера
-    - ./kind create cluster --name gitlab-test-cluster
-    
-    # Деплой и тестирование
-    - kubectl apply -f manifests/
-    - kubectl wait --for=condition=ready pod --all -n default --timeout=300s
+- name: Setup kind
+  uses: helm/kind-action@v1
+  with:
+    cluster_name: 'ci-cluster'
+    version: v0.32.0
+    node_image: kindest/node:v1.37.0
 ```
 
 ---
 
 ### Отладка и диагностика
 
+**Низкоуровневая проверка внутри узла:**
+
 ```bash
-# Просмотр логов systemd и containerd внутри узла-контейнера
-docker logs kind-control-plane
-# → <вывод логов systemd>
-
-# Экспорт полной диагностики (логи kubelet, containerd, journald) из всех узлов
-kind export logs ./kind-logs-directory --name my-cluster
-# → Exporting logs for cluster "my-cluster" to:
-# → ./kind-logs-directory
-
-# Прямое подключение к узлу для низкоуровневой отладки (например, проверки сети через crictl или ip)
+# Подключение к узлу
 docker exec -it my-cluster-control-plane bash
-# → root@my-cluster-control-plane:/#
 
-# Принудительное обновление и экспорт kubeconfig (если файл был утерян)
+# Проверка контейнеров через crictl (внутри узла)
+crictl ps
+crictl images
+
+# Проверка логов CNI (kindnet)
+tail -f /var/log/kindnetd.log
+
+# Проверка сетевых интерфейсов узла
+ip addr show
+```
+
+**Экспорт логов для анализа:**
+
+```bash
+kind export logs ./kind-logs-directory --name my-cluster
+```
+
+**Обновление kubeconfig (Internal vs External):**
+
+```bash
+# По умолчанию используется для доступа с хоста (127.0.0.1)
 kind export kubeconfig --name my-cluster
-# → Set kubectl context to "kind-my-cluster"
+
+# --internal используется для доступа из других Docker-контейнеров
+kind export kubeconfig --name my-cluster --internal
 ```
 
 ---
@@ -306,4 +273,5 @@ kind export kubeconfig --name my-cluster
 
 - [kind — определения и концепции](./kind_concepts.md) — внутреннее устройство, сеть, хранилище
 - [kind — конфигурация](./kind_configuration.md) — проброс портов, multi-node кластеры, патчи containerd
+- [Официальная документация cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind)
 - [Официальная документация kind](https://kind.sigs.k8s.io/)

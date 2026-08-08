@@ -1,10 +1,10 @@
-# Minikube: Практические сценарии
+# Minikube: практические сценарии
 
 ## Определения
 
-**Minikube** — инструмент для запуска локального однонодового кластера **K8s (Kubernetes)**. Используется для разработки, тестирования и обучения.
+**Minikube** — основной инструмент для локального запуска и управления однонодовым или многонодовым кластером **Kubernetes (K8s)**. Он автоматизирует создание среды (VM или контейнер) и первичную инициализацию компонентов Control Plane.
 
-Подробные определения и описание архитектуры см. в **[Minikube: Определения и концепции](./minikube_concepts.md)**.
+Подробные определения и описание архитектуры см. в **[Minikube: определения и концепции](./minikube_concepts.md)**.
 
 ---
 
@@ -12,12 +12,11 @@
 
 ### Предварительные требования
 
-Перед началом работы убедитесь, что система соответствует требованиям:
+Перед началом работы убедитесь, что система соответствует актуальным требованиям (на август 2026):
 
-- **Аппаратные ресурсы и поддержка версий:** см. в **[Minikube: Определения и концепции](./minikube_concepts.md)**.
-- **Драйвер и среда исполнения:** для работы Minikube на Linux рекомендуется использовать Docker. Инструкции по установке: **[Установка Docker на Ubuntu](../../../Docker/docker_install_ubuntu.md)**.
-
-> **Важно:** Для стабильной работы рекомендуется выделить **VM** минимум **4 ГБ RAM**.
+- **Аппаратные ресурсы:** минимум 2 ядра CPU и 4 ГБ RAM (рекомендуется 8 ГБ+). Подробнее см. в **[minikube_concepts.md](./minikube_concepts.md)**.
+- **Драйвер:** на Linux и macOS рекомендуется использовать Docker.
+- **Docker:** должен быть установлен из официальных репозиториев (не snap). См. **[Установка Docker на Ubuntu](../../../Docker/docker_install_ubuntu.md)**.
 
 ---
 
@@ -25,217 +24,193 @@
 
 ### Установка Minikube
 
-| **ОС** | Команда |
+| ОС | Команда установки |
 | :--- | :--- |
 | **macOS (Homebrew)** | `brew install minikube` |
-| **Linux (binary)** | `curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && sudo install minikube-linux-amd64 /usr/local/bin/minikube` |
+| **Linux (Binary)** | `curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && sudo install minikube-linux-amd64 /usr/local/bin/minikube` |
 | **Windows (Chocolatey)** | `choco install minikube` |
 
-**Проверка:** `minikube version`
-
-### Установка kubectl (опционально)
-
-Minikube включает встроенную команду `minikube kubectl`, которая позволяет выполнять команды без отдельной установки утилиты. Однако для полноценной работы рекомендуется установить `kubectl` в систему.
-
-Инструкции по установке для всех ОС: [Установка kubectl](../kubectl_installation.md)
+**Проверка установки:** `minikube version`
 
 ---
 
-### Запуск кластера
+### Запуск и базовая настройка
 
-#### Базовый запуск
-
+#### Запуск с параметрами по умолчанию
 ```bash
 minikube start
 ```
+При первом запуске Minikube автоматически выберет лучший доступный драйвер (обычно Docker) и скачает образ актуальной версии Kubernetes.
 
-**Процесс:** автоматический выбор драйвера, скачивание образа узла, создание контейнера или VM, инициализация Kubernetes (включая настройку **PV/PVC — Persistent Volume / Persistent Volume Claim** через storage-provisioner) и настройка **kubeconfig**.
-
-**Результат:** кластер запущен, kubectl настроен на контекст `minikube`.
-
-> **Примечание:** Флаг `--driver=docker` необязателен. Подробнее о драйверах — в **[minikube_concepts.md](./minikube_concepts.md)**.
-
-#### Запуск с драйвером none (bare metal)
-
+#### Настройка ресурсов и версии
+Для специфических задач рекомендуется явно указывать ресурсы:
 ```bash
-minikube start --driver=none
+minikube start \
+  --cpus=4 \
+  --memory=8192mb \
+  --disk-size=50g \
+  --kubernetes-version=v1.36.0 \
+  --container-runtime=containerd
 ```
 
-**Особенности:** требует Linux и установки Docker через deb-пакет (не snap). Устанавливает компоненты K8s напрямую на хост-систему.
+#### Постоянная конфигурация
+Чтобы не вводить параметры каждый раз, используйте `minikube config`:
+```bash
+# Установка драйвера по умолчанию
+minikube config set driver docker
 
-#### Запуск с параметрами
-
-| Параметр | Команда |
-| :--- | :--- |
-| **Ресурсы** | `minikube start --cpus=4 --memory=8192mb` |
-| **Версия K8s** | `minikube start --kubernetes-version=v1.36.0` |
-| **Драйвер** | `minikube start --driver=virtualbox` |
-| **Реестр** | `minikube start --insecure-registry="10.0.0.0/24"` |
-| **Профиль** | `minikube start -p dev-cluster` |
-
-### Проверка состояния
-
-| Проверка | Команда |
-| :--- | :--- |
-| **Статус** | `minikube status` |
-| **Узлы** | `kubectl get nodes` или `minikube kubectl -- get nodes` |
-| **Пространства имен** | `kubectl get namespaces` |
+# Установка лимитов ресурсов
+minikube config set cpus 4
+minikube config set memory 8192
+```
 
 ---
 
-### Работа с кластером
+### Управление профилями (Profiles)
 
-#### Развёртывание приложения
+Профили позволяют запускать несколько изолированных кластеров.
 
 ```bash
-# Создание Deployment
-kubectl create deployment nginx --image=nginx:1.27
-# → deployment.apps/nginx created
+# Запуск кластера для проекта "alpha"
+minikube start -p alpha --nodes=2
 
-# Проверка подов
-kubectl get pods
-# → NAME                     READY   STATUS    RESTARTS   AGE
-# → nginx-6f8d...-xxxxx      1/1     Running   0          10s
+# Переключение между профилями (изменение контекста kubectl)
+minikube profile alpha
 
-# Экспонирование сервиса (NodePort)
-kubectl expose deployment nginx --port=80 --type=NodePort
-# → service/nginx exposed
-
-# Получение URL сервиса
-minikube service nginx --url
-# → http://192.168.49.2:31234
+# Список всех профилей и их статус
+minikube profile list
 ```
 
-#### Экспонирование сервиса (LoadBalancer)
+---
 
-При использовании типа сервиса `LoadBalancer`, необходимо запустить локальный туннель:
+### Работа с сетью
 
+#### Доступ к сервисам типа NodePort
 ```bash
-# Запуск туннеля (требует прав администратора)
+# Экспонирование приложения
+kubectl expose deployment my-app --type=NodePort --port=80
+
+# Получение URL для доступа с хоста
+minikube service my-app --url
+```
+
+#### Использование LoadBalancer (minikube tunnel)
+Поскольку в локальной среде нет облачного балансировщика, внешний IP останется в состоянии `<pending>`. Для назначения IP запустите:
+```bash
+# Команда должна работать в отдельном терминале
 minikube tunnel
-# → Status:
-# → machine: minikube
-# → pid: 12345
-# → route: 10.96.0.0/12 -> 192.168.49.2
-# → minikube: Routing CIDR 10.96.0.0/12 to ...
 ```
+После запуска туннеля `EXTERNAL-IP` в `kubectl get svc` сменится с `pending` на реальный IP (обычно `127.0.0.1` или IP из сети Docker).
 
-После этого внешний IP-адрес сервиса станет доступен в `kubectl get svc`.
-
-#### Доступ к Dashboard и SSH
-
-- **Веб-интерфейс:** `minikube dashboard` (открывает панель управления в браузере).
-- **SSH доступ:** `minikube ssh` (подключение к узлу кластера).
-
-#### Копирование и монтирование файлов
-
-```bash
-# Копирование файла в кластер
-minikube cp ./config.yaml /home/docker/config.yaml
-
-# Копирование файла из кластера
-minikube cp /var/log/pods/mypod.log ./logs/
-```
-
-**Монтирование директории с хоста:**
-
-Позволяет пробросить локальную директорию напрямую в виртуальную машину кластера:
-
-```bash
-# Монтирование локальной папки в /data внутри Minikube
-minikube mount /path/to/local/dir:/data
-# → Mounting host path /path/to/local/dir into VM as /data ...
-```
-> Процесс будет заблокирован в терминале. Для остановки монтирования нажмите `Ctrl+C`.
+#### Настройка Ingress
+1.  Включите аддон: `minikube addons enable ingress`.
+2.  Добавьте запись в `/etc/hosts`:
+    ```text
+    # IP можно узнать через minikube ip
+    192.168.49.2  my-app.local
+    ```
+3.  Создайте ресурс Ingress, указывающий на ваш сервис.
 
 ---
 
-### Управление и аддоны
+### Работа с образами и файлами
 
-| Операция | Команда |
-| :--- | :--- |
-| **Остановка** | `minikube stop` |
-| **Удаление** | `minikube delete` (флаг `--all` для всех профилей) |
-| **Список аддонов** | `minikube addons list` |
-| **Включение аддона** | `minikube addons enable <name>` |
-
-**Популярные аддоны:** `ingress`, `metrics-server`, `registry`.
-
----
-
-### Работа с образами Docker
-
-В Minikube есть два основных способа работы с локальными образами: использование встроенного демона и прямая загрузка архивов.
-
-#### Способ 1: Использование демона Minikube
-
-Позволяет K8s видеть образы, собранные локально, без отправки во внешний реестр.
-
+#### Использование локальных образов (без Push)
+Самый эффективный способ разработки — использование демона Minikube:
 ```bash
-# Переключение окружения Docker CLI на демона внутри Minikube
+# Настройка текущей сессии терминала
 eval $(minikube docker-env)
 
-# Сборка образа (происходит прямо в кластере)
-docker build -t myapp:1.0 .
-# → Successfully tagged myapp:1.0
+# Теперь docker build соберет образ сразу ВНУТРИ Minikube
+docker build -t local-image:latest .
 
-# Использование в Deployment (образ уже локально доступен узлу)
-kubectl create deployment myapp --image=myapp:1.0
+# В манифесте пода укажите imagePullPolicy: Never
 ```
 
-#### Способ 2: Загрузка готового образа (`image load`)
-
-Если образ уже собран на хост-машине (или скачан), его можно напрямую загрузить в кэш Minikube:
-
+#### Копирование файлов в контейнер
 ```bash
-# Прямая загрузка образа в Minikube
-minikube image load myapp:1.0
+# Копирование файла в узел Minikube
+minikube cp ./config.yaml /home/docker/config.yaml
 
-# Проверка, что образ доступен в кластере
-minikube image ls
-# → docker.io/library/myapp:1.0
+# Копирование из узла на хост
+minikube cp minikube:/var/log/syslog ./local_syslog.log
 ```
+
+#### Монтирование директорий (Mount)
+Для работы с большими объемами данных или кодом в реальном времени:
+```bash
+minikube mount /Users/user/project:/data/project
+```
+> **Внимание:** Процесс `mount` должен быть активен (не закрывайте терминал).
 
 ---
 
-### Multi-node конфигурация
+### Аддоны и расширения
 
+| Задача | Команда |
+| :--- | :--- |
+| **Список всех аддонов** | `minikube addons list` |
+| **Мониторинг ресурсов** | `minikube addons enable metrics-server` |
+| **Веб-интерфейс** | `minikube dashboard` |
+| **Локальный реестр** | `minikube addons enable registry` |
+| **Service Mesh** | `minikube addons enable istio` |
+
+---
+
+### Многонодовые конфигурации (Multi-node)
+
+Для тестирования планирования (scheduling) и отказоустойчивости:
 ```bash
 # Запуск с 3 узлами
 minikube start --nodes=3
 
-# Управление узлами
+# Добавление узла в работающий кластер
 minikube node add --worker
-minikube node remove minikube-m03
+
+# Удаление конкретного узла
+minikube node remove minikube-m02
 ```
 
 ---
 
-### Отладка и мониторинг
+### Обслуживание и отладка
 
-- **Логи:** `kubectl logs <pod-name>` (флаг `-l app=name` для группы подов).
-- **Описание:** `kubectl describe pod <pod-name>`.
-- **Метрики:** `kubectl top nodes` (требуется аддон `metrics-server`).
+#### Остановка и удаление
+```bash
+# Остановка (состояние сохраняется)
+minikube stop
 
-### Типичные ошибки
+# Полное удаление (все данные и тома будут стерты)
+minikube delete --all --purge
+```
 
-| Ошибка | Решение |
+#### Диагностика
+- **Статус компонентов:** `minikube status`.
+- **Логи запуска:** `minikube logs`.
+- **Вход в консоль узла:** `minikube ssh`.
+- **Проверка встроенного kubectl:** `minikube kubectl -- get pods`.
+
+---
+
+### Типичные ошибки и решения
+
+| Проблема | Решение |
 | :--- | :--- |
-| Docker не запущен | Запустить Docker Desktop или службу Docker |
-| Ошибка подключения | Выполнить `minikube start` для восстановления сессии |
-| Статус `Pending` | Недостаточно ресурсов (CPU/RAM). Увеличьте лимиты при старте |
-| `ImagePullBackOff` | Образ недоступен. Проверьте имя или используйте `docker-env` |
+| **The "docker" driver should not be used with root privileges** | Не запускайте `minikube start` через `sudo`. Используйте обычного пользователя, состоящего в группе `docker`. |
+| **Exiting due to GUEST_MISSING_CONN_TRACK** | Необходима установка `conntrack` на хосте (актуально для драйвера `none`). |
+| **ImagePullBackOff** | Проверьте `imagePullPolicy`. Если используете `docker-env`, установите `Never`. |
+| **Tunnels not working on macOS** | Убедитесь, что у `minikube tunnel` есть права администратора (запросит пароль). |
+| **Insufficient memory** | Minikube требует минимум 2ГБ для K8s, но для аддонов (Istio, Ingress) нужно 8ГБ+. |
 
 ---
 
 ## Дополнительная информация
 
-### Рекомендации по поиску
+### См. также
+- **[Minikube: определения и концепции](./minikube_concepts.md)** — архитектура, драйверы и теория.
+- **[kubectl: установка](../kubectl_installation.md)** — подготовка основного инструмента управления.
+- **[Docker: установка на Ubuntu](../../../Docker/docker_install_ubuntu.md)** — настройка среды исполнения.
 
-При поиске специфических инструкций (например, для конкретной версии ОС) используйте уточняющие запросы, такие как `install minikube ubuntu 24.04`. Официальная документация может не учитывать особенности пакетных менеджеров конкретных дистрибутивов.
-
-### Смотрите также
-
-- **Официальный сайт:** [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/)
-- **Концепции и архитектура:** **[minikube_concepts.md](./minikube_concepts.md)**
-- **GitHub репозиторий:** [kubernetes/minikube](https://github.com/kubernetes/minikube)
+### Полезные ссылки
+- **Примеры манифестов:** [GitHub minikube/examples](https://github.com/kubernetes/minikube/tree/master/examples)
+- **Troubleshooting guide:** [Official Docs](https://minikube.sigs.k8s.io/docs/handbook/debugging/)

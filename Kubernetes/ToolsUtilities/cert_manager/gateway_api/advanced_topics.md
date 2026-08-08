@@ -1,97 +1,69 @@
-# Интеграция Cert-manager с Gateway API: Дополнительные темы
+# Интеграция cert-manager с Gateway API: Продвинутые темы и диагностика
 
 ## Определения
 
-**Hostname-конфликт** — логическая ошибка, при которой контроллер `gateway-shim` (в составе cert-manager) пытается выпустить сертификат на основе поля `hostname` в `Listener`, в то время как пользователь уже определил `dnsNames` в ресурсе `Certificate` или другом `Listener`.
+**Конфликт Hostname** — ситуация, при которой логика `gateway-shim` не может однозначно определить список доменов для выпуска сертификата из-за противоречий между полем `hostname` в слушателе Gateway и явными настройками в ресурсе `Certificate` или аннотациями.
 
-**TLS Passthrough** — режим Gateway, при котором TLS-трафик передаётся напрямую бэкенду без терминации на шлюзе (статус ресурса TLSRoute: `v1alpha2`). cert-manager в этом режиме не участвует в терминации.
+**TLS Passthrough (Сквозной TLS)** — режим работы шлюза, при котором TLS-трафик передаётся бэкенду без расшифровки. Используется ресурс `TLSRoute`. В этом режиме шлюз не управляет сертификатами, и cert-manager на уровне инфраструктуры шлюза не задействуется.
 
-**gateway-shim** — внутренний компонент cert-manager, который отслеживает ресурсы Gateway и ListenerSet и автоматически создает ресурсы `Certificate` на основе аннотаций.
+**gateway-shim** — компонент cert-manager, отвечающий за автоматическую генерацию ресурсов `Certificate` на основе структуры и аннотаций `Gateway` и `ListenerSet`.
 
-**Dedicated Challenge Gateway** — архитектурный паттерн, при котором для прохождения HTTP-01 проверок используется отдельный шлюз (Gateway), изолированный от продуктового трафика.
+**Dedicated Challenge Gateway (Выделенный шлюз для проверок)** — архитектурный паттерн, изолирующий трафик ACME-проверок (HTTP-01) на отдельном шлюзе, что предотвращает конфликты с продуктовыми маршрутами и повышает безопасность.
 
 ---
 
 ## Основные концепции
 
-### Проблема hostname в Gateway
+### Разрешение конфликтов Hostname
 
-При указании `hostname` в спецификации слушателя Gateway cert-manager может некорректно определять домены для автоматической генерации Certificate.
+При использовании автоматизации (gateway-shim) cert-manager извлекает список доменов из поля `spec.listeners[].hostname`. 
 
-**Причина:** cert-manager извлекает домены из поля `hostname` слушателя, что может конфликтовать с явным указанием `dnsNames` в Certificate.
+**Нюансы и рекомендации:**
+1.  **Приоритет явных ресурсов:** Если вы создаете ресурс `Certificate` вручную, cert-manager игнорирует попытки автоматического выпуска для тех же доменов через аннотации Gateway. Это рекомендуемый подход для Production-сред.
+2.  **Пустые Hostname (Wildcard):** Если в слушателе поле `hostname` не заполнено, Gateway API трактует это как «принимать любой трафик». В этом случае автоматический выпуск через аннотации невозможен — домены должны быть указаны явно в `Certificate`.
+3.  **Дублирование в HTTPRoute:** Аннотации на уровне `HTTPRoute` имеют приоритет над аннотациями `Gateway` для конкретного маршрута.
 
-**Решения:**
-1. **Создать Certificate вручную** перед применением Gateway — явное определение `dnsNames` исключает неоднозначность.
-2. **Дождаться создания Secret** — cert-manager автоматически создаст Certificate при наличии аннотации на Gateway.
-3. **Применить Gateway с ссылкой на Secret** — после создания Secret указать его в `certificateRefs`.
-4. **Явное указание в Listener:** Всегда заполняйте поле `hostname` в слушателе, если планируете использовать аннотации. Если поле пустое (Wildcard в терминах Gateway API), автоматический выпуск через аннотации может завершиться ошибкой.
+### Механика HTTP-01 ParentRef Fallback (v1.21+)
 
-### Особенности TLS Passthrough
+В 2026 году стандартом для Self-Service TLS является использование `ListenerSet`, который часто работает только на порту 443. Однако проверка HTTP-01 требует порта 80.
 
-- Требуется ресурс `TLSRoute` (статус: `v1alpha2`, Alpha).
-- cert-manager **не участвует** в терминации — бэкенд самостоятельно управляет сертификатами.
-- Подходит для сценариев mTLS, где backend валидирует клиентские сертификаты.
+**Решение:** Аннотация `acme.cert-manager.io/http01-parentreffallback: "true"`.
+- Позволяет `ListenerSet` использовать слушатель порта 80 родительского `Gateway` для размещения временного `HTTPRoute` с ACME-токеном.
+- Это исключает необходимость открывать порт 80 в каждом `ListenerSet`.
 
-### Безопасность: ReferenceGrant для TLS
+### Безопасность: ReferenceGrant в мультитеннантных средах
 
-В мультитенентных кластерах часто возникает ситуация, когда Gateway в одном namespace (`infra`) должен использовать Secret из другого (`app`).
-- **Namespace `app`**: содержит `Certificate` и `Secret`.
-- **Namespace `infra`**: содержит `Gateway`.
-
-Чтобы шлюз получил доступ к секрету, необходимо создать `ReferenceGrant` в пространстве имен `app`. Без него контроллер шлюза (например, Envoy Gateway) выдаст ошибку доступа к TLS-ключам.
+Gateway API запрещает кросс-неймспейс ссылки по умолчанию. Для работы TLS в распределенной среде:
+1.  **Namespace `apps`**: Содержит `Certificate` и итоговый `Secret`.
+2.  **Namespace `infra`**: Содержит `Gateway`.
+3.  **ReferenceGrant**: Должен быть создан в namespace `apps`, разрешая группе `gateway.networking.k8s.io` (ресурс `Gateway`) доступ к объектам `Secret`.
 
 ---
 
 ## Практические сценарии
 
-### Диагностика интеграции (Базовая)
+### Глубокая диагностика цепочки ресурсов
+
+Если TLS-терминация не работает, используйте метод последовательного анализа (Resource Archaeology):
 
 ```bash
-# Статус Gateway
-kubectl get gateway -n <namespace>
+# 1. Проверка условий в ресурсе Gateway (уровни ResolvedRefs и Ready)
+kubectl describe gateway <name> -n <namespace>
 
-# Детали Gateway (включая события и условия)
-kubectl describe gateway <gateway-name> -n <namespace>
+# 2. Проверка статуса в ListenerSet (если используется)
+kubectl describe listenerset <name> -n <namespace>
 
-# Статус Certificate и Challenge
-kubectl get certificate,challenge -n <namespace>
+# 3. Анализ CertificateRequest (трансляция ошибок от Issuer)
+kubectl get certificaterequest -n <namespace>
+kubectl describe certificaterequest <name>
 
-# Логи cert-manager (фильтр по Gateway)
-kubectl logs -n cert-manager -l app=cert-manager --tail=200 | grep -i gateway
+# 4. Отслеживание временных маршрутов ACME
+kubectl get httproute -A | grep "acme-http-01"
 ```
 
-### Глубокая диагностика и отладка
+### Настройка выделенного шлюза для проверок (Dedicated Challenge Gateway)
 
-1. **Проверка Gateway API CRD и версий:**
-   ```bash
-   kubectl get crd | grep gateway.networking.k8s.io
-   # Проверка поддержки версий (требуется v1.0+)
-   kubectl get gatewayclasses -o jsonpath='{.items[*].spec.controllerName}'
-   ```
-
-2. **Проверка флага --enable-gateway-api:**
-   ```bash
-   kubectl get deployment cert-manager -n cert-manager -o jsonpath='{.spec.template.spec.containers[0].args}'
-   ```
-
-3. **Анализ цепочки CertificateRequest:**
-   ```bash
-   # Если Certificate завис в состоянии False
-   kubectl get certificaterequest -n <namespace>
-   kubectl describe certificaterequest <cr-name> -n <namespace>
-   ```
-
-4. **Отслеживание временных HTTPRoute (для HTTP-01):**
-   При прохождении проверки cert-manager создает временный маршрут для челленджа.
-   ```bash
-   kubectl get httproute -A | grep "acme-http-01"
-   # Проверьте, привязан ли он к вашему Gateway (Admitted: True)
-   kubectl describe httproute <name>
-   ```
-
-### Настройка Dedicated Challenge Gateway
-
-В `ClusterIssuer` это настраивается через `http01.gatewayHTTPRoute`:
+Для крупных кластеров рекомендуется выносить все ACME-проверки на отдельный технический шлюз. Это настраивается в `ClusterIssuer`:
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -109,28 +81,39 @@ spec:
             kind: Gateway
 ```
 
+### Отладка в реальном времени через cmctl
+
+Утилита `cmctl` (v1.20+) предоставляет нативный способ диагностики Gateway API:
+
+```bash
+# Проверка готовности инфраструктуры Gateway API для cert-manager
+cmctl check api
+
+# Статус сертификата с учетом привязки к Gateway
+cmctl status certificate <name>
+```
+
 ---
 
 ## Дополнительная информация
 
-### Частые ошибки и решения
+### Частые ошибки и методы их устранения
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `Gateway API not enabled` | Флаг `--enable-gateway-api` не указан | Добавить флаг в Deployment или Helm-чарт cert-manager. |
-| `CertificateRef not found` | Secret не создан или в другом namespace | Проверить статус Certificate и наличие `ReferenceGrant`. |
-| `hostname конфликт` | cert-manager не определяет домен из Gateway | Заполнить `hostname` в Listener или создать Certificate вручную. |
-| `CRD missing` | Gateway API CRD не установлены | `kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml` |
-| `Challenge pending` | DNS-01 не настроен или HTTP-01 недоступен | Проверить доступность 80 порта извне и логи `challenge`. |
-| `Forbidden Secret reference` | Нет прав на чтение секрета | Создать `ReferenceGrant` в целевом namespace. |
+| `Gateway API not enabled` | Отсутствует флаг в контроллере | Добавить `--enable-gateway-api=true` в аргументы запуска cert-manager. |
+| `Forbidden Secret reference` | Отсутствует `ReferenceGrant` | Создать `ReferenceGrant` в namespace, где лежит TLS-секрет. |
+| `Hostname conflict` | Неоднозначность доменов | Указать `hostname` в слушателе явно или использовать ручной ресурс `Certificate`. |
+| `ResolvedRefs: False` | Ошибка контроллера шлюза | Проверить, поддерживает ли ваш Gateway Controller версию Gateway API v1.1+. |
+| `Challenge pending` | Недоступность 80 порта | Проверить наличие слушателя HTTP на родителе и аннотацию `http01-parentreffallback`. |
 
-### Особенности версий (на июль 2026 г.)
+### Специфика версий (состояние на 2026 год)
 
-- **cert-manager v1.20+**: Полная поддержка `ListenerSet`. Рекомендуется использовать для динамического Self-Service TLS.
-- **Gateway API v1.5+**: Введена поддержка GRPCRoute и улучшена валидация. Переход на Gateway API обязателен, так как `ingress-nginx` в статусе EOL.
+*   **cert-manager v1.21+**: Стабильная поддержка `ListenerSet` и интеграция с протоколом ARI. Теперь ошибки выпуска сертификата транслируются непосредственно в `status.conditions` шлюза с детальным описанием причины (например, `RateLimitExceeded`).
+*   **Gateway API v1.1+**: Является стандартом. Использование старых Ingress-контроллеров для новых сервисов не рекомендуется (статус EOL для многих реализаций).
 
 ### Смотрите также
 
-- **[Практические сценарии](./practical_scenarios.md)** — полные YAML-примеры конфигураций.
-- **[Определения и концепции](./definitions_and_concepts.md)** — ролевая модель и ReferenceGrant.
-- **[Миграция с Ingress](../../../Networking/gateway_api/migration.md)** — инструкции по переносу.
+- **[Практические сценарии интеграции](./practical_scenarios.md)** — полные YAML-примеры.
+- **[Определения и концепции](./definitions_and_concepts.md)** — теоретическая база и ролевая модель.
+- **[Cert-manager: Диагностика Let's Encrypt](../LetsEncrypt/letsencrypt_advanced.md)** — решение общих проблем с ACME.

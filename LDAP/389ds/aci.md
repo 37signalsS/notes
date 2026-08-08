@@ -5,10 +5,24 @@
 **ACI (Access Control Instructions)** — основной механизм управления доступом в 389 Directory Server. В отличие от OpenLDAP, где права обычно хранятся в конфигурации сервера (`cn=config`), ACI в 389DS являются атрибутами самих записей в дереве LDAP.
 
 **Target** — объект, на который распространяется действие правила. Может быть DN записи, набором атрибутов или фильтром.
+  - `target` — DN целевой записи или ветки.
+  - `targetattr` — список атрибутов (например, `targetattr="attr1 || attr2"`).
+  - `targetfilter` — LDAP-фильтр для выбора объектов (например, `targetfilter="(objectClass=person)"`).
+  - `targetscope` — область действия (`base`, `one`, `subtree`). По умолчанию `subtree`.
+  - `targattrfilters` — фильтрация доступа на основе *значений* атрибутов при операциях записи/добавления.
 
-**Permission** — разрешенное или запрещенное действие (`read`, `write`, `add`, `delete`, `search`, `compare`, `selfwrite`, `proxy`).
+**Permission** — разрешенное или запрещенное действие.
+- `read`, `search`, `compare` — чтение и поиск.
+- `write`, `add`, `delete` — модификация структуры и данных.
+- `selfwrite` — право добавлять/удалять свой собственный DN из списков (например, в группах).
+- `proxy` — право выполнять операции от имени другого пользователя (имперсонация).
 
-**Subject** — субъект, которому предоставляются права (`userdn`, `groupdn`, `roledn`, `anyone`, `self`).
+**Subject** — субъект, которому предоставляются права.
+- `userdn` — конкретный пользователь или список.
+- `groupdn` — члены группы.
+- `roledn` — пользователи с определённой ролью.
+- `anyone` — анонимный доступ и все аутентифицированные пользователи.
+- `self` — сам объект (для саморедактирования).
 
 **Bind Rule** — дополнительные условия, при которых правило вступает в силу (например, требование TLS, ограничение по IP или времени).
 
@@ -26,10 +40,15 @@
 
 ### Логика обработки
 
-1. **Явный запрет (Deny):** Если хотя бы одно правило `deny` совпадает с запросом, доступ запрещается немедленно.
+1. **Явный запрет (Deny):** Если хотя бы одно правило `deny` совпадает с запросом (субъект, объект, действие, условия Bind Rule), доступ запрещается немедленно.
 2. **Явное разрешение (Allow):** Если правил `deny` нет, сервер ищет подходящее правило `allow`.
 3. **Запрет по умолчанию:** Если ни одно правило не разрешило доступ, он запрещается.
-4. **Наследование:** Правила, заданные на уровне `dc=example,dc=com`, применяются ко всем вложенным объектам, если они не перекрыты более специфичными правилами.
+4. **Наследование:** Правила, заданные на уровне `dc=example,dc=com`, применяются ко всем вложенным объектам. Более специфичные правила (ниже по дереву) дополняют или перекрывают родительские (в случае с `deny`).
+
+### Механизм Effective Rights
+
+В 389DS права вычисляются динамически при каждом запросе. Поскольку ACI могут быть распределены по всему дереву, расчет итоговых прав (Effective Rights) является ресурсоемкой операцией. 
+Сервер использует кэширование ACL для оптимизации, но при большом количестве сложных ACI производительность поиска может снизиться.
 
 ### Синтаксис ACI
 
@@ -107,6 +126,33 @@ aci: (target="ldap:///dc=example,dc=com")(targetattr="*")
   allow (all) groupdn="ldap:///cn=Directory Administrators,ou=groups,dc=example,dc=com" and ip = "10.0.0.*";)
 ```
 
+### Тонкая фильтрация значений (targattrfilters)
+
+Разрешить пользователям службы поддержки (`ou=support`) менять статус аккаунта только на `inactive` или `locked`.
+
+```ldif
+dn: ou=people,dc=example,dc=com
+changetype: modify
+add: aci
+aci: (targetattr="nsAccountLock")
+  (targattrfilters="add=nsAccountLock:(nsAccountLock=true),delete=nsAccountLock:(nsAccountLock=true)")
+  (version 3.0; acl "Support can only lock accounts";
+  allow (write) groupdn="ldap:///cn=Support,ou=groups,dc=example,dc=com";)
+```
+
+### Предоставление прав Proxy
+
+Разрешить приложению (Bind DN приложения) выполнять поиск от имени любого пользователя. Это часто требуется для интеграции с внешними системами авторизации.
+
+```ldif
+dn: dc=example,dc=com
+changetype: modify
+add: aci
+aci: (target="ldap:///dc=example,dc=com")
+  (version 3.0; acl "App proxy rights";
+  allow (proxy) userdn="ldap:///uid=auth-app,ou=services,dc=example,dc=com";)
+```
+
 ### Управление ACI через dsconf
 
 Современный способ управления 389DS — утилита `dsconf`.
@@ -118,22 +164,40 @@ dsconf -D "cn=Directory Manager" ldap://localhost aci list "dc=example,dc=com"
 # Добавление ACI (упрощенный пример)
 dsconf -D "cn=Directory Manager" ldap://localhost aci add "dc=example,dc=com" \
   --name "Allow Search" --type "allow" --permission "search" --userdn "ldap:///anyone"
+
+# Удаление ACI по имени
+dsconf -D "cn=Directory Manager" ldap://localhost aci delete "dc=example,dc=com" --name "Allow Search"
+
+# Проверка синтаксиса ACI в файле перед импортом
+# dsconf не имеет встроенного линтера, используйте пробный импорт на тестовом инстансе
 ```
 
 ### Проверка эффективных прав (Effective Rights)
 
-Для отладки сложных правил используйте расширение `getEffectiveRights`.
+Для отладки сложных правил используйте расширение `getEffectiveRights`. Оно позволяет увидеть "глазами сервера", какие права реально есть у пользователя.
 
 ```bash
 # Проверить, какие права имеет пользователь на конкретную запись
 ldapsearch -H ldap://localhost -D "cn=Directory Manager" -W \
   -b "uid=jdoe,ou=people,dc=example,dc=com" \
-  "(objectClass=*)" \
+  -x "(objectClass=*)" \
   "aclRights" "effectiveRights"
-# → result: aclRights: read,search,compare,write,delete,add,proxy (зависит от прав)
+
+# → result:
+# dn: uid=jdoe,ou=people,dc=example,dc=com
+# control: 1.3.6.1.4.1.42.2.27.9.5.2 false 
+# effectiveRights: rscxd
 ```
 
 ## Дополнительная информация
+
+### Аудит и логирование ACI
+
+Все отказы в доступе (`Insufficient Access`) фиксируются в `access` логе сервера.
+
+1. **Access Log:** Ищите записи с кодом `err=50`. Если в ACI задано имя (`acl "Name"`), оно может быть указано в логе для облегчения поиска виновного правила.
+2. **Audit Log:** При включенном аудите все изменения атрибута `aci` (добавление/удаление правил) записываются в `audit` лог с указанием того, кто и когда внес изменения.
+3. **LogLevel:** Для глубокой отладки можно временно повысить уровень логирования ACL (параметр `nsslapd-accesslog-level` в `cn=config`), но это существенно замедляет сервер.
 
 ### Рекомендации (Best Practices)
 
@@ -164,3 +228,5 @@ ACI хранятся в атрибуте `aci`, который является 
 - [Обзор 389DS](./overview.md) — архитектура и основные возможности
 - [Docker развёртывание](./docker.md) — запуск и базовая настройка
 - [Репликация](./replication.md) — настройка Multi-Master окружения
+- [Администрирование в Kubernetes](./k8s_deploy/k8s-administration.md) — управление инстансами в кластере
+- [Интеграция с SSSD](../../Linux/SystemAdministration/Users/LDAP_SSSD/index.md) — настройка клиентов для работы с 389DS

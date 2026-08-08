@@ -2,109 +2,148 @@
 
 ## Определения
 
-**ResourceQuota (Ресурсные квоты)** — объект Kubernetes в хост-кластере, ограничивающий суммарное потребление ресурсов (процессорное время, память) и общее количество объектов (Pods, Services, Secrets) внутри пространства имен, выделенного под виртуальный кластер.
+**Pod Security Admission (PSA)** — встроенный механизм Kubernetes (v0.35+ полностью интегрирован в vCluster), позволяющий применять стандарты безопасности (Privileged, Baseline, Restricted) на уровне виртуального кластера. Автоматически блокирует запуск небезопасных подов внутри vCluster.
 
-**LimitRange (Диапазоны ограничений)** — ресурс внутри виртуального кластера, устанавливающий значения по умолчанию (requests/limits) и допустимые пороги для контейнеров. Позволяет контролировать "раздувание" ресурсов внутри vCluster.
+**ResourceQuota (Ресурсные квоты)** — объект в хост-кластере, ограничивающий суммарное потребление ресурсов (CPU, RAM, количество объектов) пространством имен, в котором работает vCluster.
 
-**Rootless Mode (Безрутовый режим)** — конфигурация эксплуатации, при которой процессы API-сервера и синхронизатора запускаются с UID/GID не-привилегированного пользователя. Это предотвращает возможность атаки типа Container Escape с получением прав root на узле хоста.
+**LimitRange (Диапазоны ограничений)** — политика внутри vCluster, устанавливающая значения по умолчанию и границы для ресурсов подов тенанта.
 
-**Generic Sync (Универсальная синхронизация)** — механизм v0.20+, позволяющий синхронизировать Custom Resource Definitions (CRD) и их объекты между виртуальным и хостовым кластерами без написания кастомного кода.
+**Generic Sync (Нативная синхронизация CRD)** — механизм (v0.35+), позволяющий декларативно синхронизировать произвольные Custom Resource Definitions (например, Cert-Manager, Istio) между виртуальным и хостовым окружениями без внешних плагинов.
+
+**Sync Patches (CEL-патчи)** — инструмент модификации ресурсов "на лету" при синхронизации, использующий Common Expression Language (CEL). Позволяет динамически изменять поля объектов (например, добавлять префиксы к именам секретов) при их переносе на хост.
+
+**Namespace 1:1 Syncing** — режим работы, при котором пространства имен внутри vCluster отображаются в хост-кластер без изменения имен (no rewriting), что упрощает работу инструментов безопасности и мониторинга.
+
+**Rootless Mode (Безрутовый режим)** — запуск компонентов vCluster с минимальными привилегиями (non-root UID/GID) для минимизации рисков при потенциальном взломе контейнера.
 
 ## Основные концепции
 
-### Направления синхронизации
+### Векторы синхронизации
 
-Синхронизатор (Syncer) работает по двум основным векторам:
+Синхронизатор (Syncer) управляет потоками данных между плоскостями:
 
-1. **toHost (vCluster → Host):** репликация рабочих нагрузок. Syncer создает "теневые" поды в хост-кластере, которые фактически выполняются на узлах.
-2. **fromHost (Host → vCluster):** импорт ресурсов окружения. Позволяет виртуальному кластеру видеть системные объекты хоста (StorageClasses, Nodes).
+1.  **toHost (vCluster → Host):** Репликация подов, сервисов и маршрутов. Syncer создает "теневые" объекты на хосте для фактического исполнения нагрузки.
+2.  **fromHost (Host → vCluster):** Импорт инфраструктурных ресурсов (StorageClasses, Nodes, ClusterIssuers). Позволяет тенантам использовать ресурсы физического кластера.
 
-### Изоляция Control Plane
+### Изоляция и стандарты безопасности (PSS)
 
-В версии v0.20+ усилена сетевая изоляция. Параметр `isolatedControlPlane` блокирует прямой доступ подов виртуального кластера к API-серверу хост-кластера, заставляя их взаимодействовать только с локальным API-сервером vCluster.
+vCluster v0.35+ поддерживает автоматическое применение **Pod Security Standards**. При установке уровня `restricted` в конфигурации, виртуальный API-сервер будет отклонять любые запросы на создание подов, не соответствующих жестким требованиям безопасности (запрет root, hostPath, привилегий).
 
-### Механизм патчей ресурсов (Resource Patching)
+### Динамическая модификация (Resource Patching)
 
-vCluster позволяет модифицировать объекты "на лету" при синхронизации. Это используется для добавления специфических аннотаций, меток (labels) или изменения конфигурации ресурсов (например, добавление Sidecar-контейнеров) при их переносе в хост-кластер.
+Патчи позволяют адаптировать ресурсы виртуального кластера под требования хоста.
+- **Маскировка имен:** Добавление уникальных суффиксов к именам ресурсов для предотвращения коллизий.
+- **Изменение типов:** Например, принудительное преобразование `LoadBalancer` в `ClusterIP` при синхронизации на хост для экономии публичных IP.
+- **Инъекция Sidecar:** Добавление агентов мониторинга или безопасности во все синхронизируемые поды.
+
+### Сетевая изоляция и NetworkPolicies
+
+vCluster может автоматически генерировать `NetworkPolicies` на хосте, которые:
+- Разрешают трафик только между компонентами одного vCluster.
+- Изолируют Control Plane от подов тенанта.
+- Блокируют доступ подов vCluster к API-серверу хост-кластера (`isolatedControlPlane`).
 
 ## Практические сценарии
 
-### Настройка политик и квот в vcluster.yaml
+### Настройка безопасности и квот в vcluster.yaml (v0.35+)
 
-В новом формате конфигурации управление ресурсами централизовано:
+Централизованное управление стандартами безопасности и ресурсными ограничениями.
 
 ```yaml
 # vcluster.yaml
 policies:
+  # Применение Pod Security Standards (Restricted по умолчанию)
+  podSecurityStandard: restricted
+  
+  # Автоматическая генерация NetworkPolicies для изоляции
+  networkPolicy:
+    enabled: true
+    
+  # Ресурсные квоты на уровне неймспейса хоста
   resourceQuota:
     enabled: true
     quota:
-      requests.cpu: "8"
-      requests.memory: 16Gi
-      pods: "100"
+      requests.cpu: "4"
+      requests.memory: 8Gi
+      pods: "50"
+      
+  # Лимиты по умолчанию внутри vCluster
   limitRange:
     enabled: true
     default:
-      cpu: 1000m
-      memory: 1Gi
-    defaultRequest:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 500m
+      memory: 512Mi
 ```
 
-### Реализация сетевой изоляции и Rootless Mode
+### Настройка нативной синхронизации CRD (Generic Sync)
 
-Настройка максимального уровня безопасности для Control Plane:
-
-```yaml
-# vcluster.yaml
-controlPlane:
-  statefulSet:
-    securityContext:
-      runAsUser: 10000
-      runAsNonRoot: true
-  
-networking:
-  # Полная изоляция от API хост-кластера
-  isolatedControlPlane:
-    enabled: true
-```
-
-### Синхронизация Custom Resources (Generic Sync)
-
-Пример синхронизации объектов Cert-Manager из виртуального кластера в хостовый:
-
-```yaml
-# vcluster.yaml
-sync:
-  generic:
-    config: |-
-      - apiVersion: cert-manager.io/v1
-        kind: Certificate
-        # Синхронизировать объекты этого типа в хост-кластер
-```
-
-### Использование патчей ресурсов
-
-Пример автоматического добавления метки ко всем подам, синхронизируемым в хост-кластер:
+Синхронизация объектов `cert-manager` с использованием CEL-патчей для предотвращения конфликтов.
 
 ```yaml
 # vcluster.yaml
 sync:
   toHost:
-    pods:
+    customResources:
+      certificates.cert-manager.io:
+        enabled: true
+        patches:
+          - path: spec.secretName
+            # Добавление префикса к имени секрета на хосте
+            expression: '"v-secret-" + value'
+      issuers.cert-manager.io:
+        enabled: true
+  fromHost:
+    customResources:
+      clusterissuers.cert-manager.io:
+        enabled: true
+```
+
+### Использование CEL-патчей для модификации ресурсов
+
+Пример изменения типа сервиса и добавления метаданных при синхронизации.
+
+```yaml
+# vcluster.yaml
+sync:
+  toHost:
+    services:
       enabled: true
       patches:
-        - op: add
-          path: metadata.labels.vcluster-instance
-          value: "team-alpha-prod"
+        - path: metadata.annotations["managed-by"]
+          value: "vcluster-prod"
+        - path: spec.type
+          # Преобразование LoadBalancer в ClusterIP для экономии ресурсов хоста
+          expression: 'value == "LoadBalancer" ? "ClusterIP" : value'
+```
+
+### Сетевая изоляция и Rootless Mode
+
+Максимальное ужесточение безопасности для Control Plane.
+
+```yaml
+# vcluster.yaml
+controlPlane:
+  backingStore:
+    etcd:
+      embedded: true
+  statefulSet:
+    securityContext:
+      runAsUser: 10000
+      runAsNonRoot: true
+      
+networking:
+  # Блокировка доступа к API хост-кластера для подов vCluster
+  isolatedControlPlane:
+    enabled: true
 ```
 
 ## Лучшие практики безопасности
 
-- **Минимизация Syncer прав:** по умолчанию vCluster требует широких прав в своем namespace. Используйте `controlPlane.serviceAccount.name` для подключения SA с минимально необходимым набором RBAC-ролей.
-- **Поддержка Pod Security Standards:** используйте `podSecurityStandard: baseline` или `restricted` в конфигурации vCluster для автоматического применения политик безопасности Kubernetes к виртуальным нагрузкам.
-- **Изоляция хранилищ:** при импорте `PersistentVolumes` через `fromHost` убедитесь, что политики доступа запрещают одному vCluster монтировать тома, принадлежащие другому виртуальному кластеру.
+- **Принудительное использование PSA:** Всегда устанавливайте `podSecurityStandard: restricted` для недоверенных тенантов. Это предотвращает запуск контейнеров с привилегиями root и доступ к хостовой ФС.
+- **Минимизация RBAC для Syncer:** Избегайте использования `ClusterRole` для vCluster. Ограничивайте права синхронизатора только необходимым набором в целевом неймспейсе. Используйте `controlPlane.serviceAccount.name` для подключения SA с минимальными правами.
+- **Включение сетевой изоляции:** Используйте `policies.networkPolicy.enabled` для автоматического создания политик, блокирующих межкластерный трафик и доступ к метаданным облачного провайдера.
+- **Namespace 1:1 Syncing:** Используйте этот режим, если ваши инструменты безопасности (например, Falco или Sysdig) требуют соответствия имен неймспейсов между виртуальным и хостовым слоями.
+- **Изоляция хранилищ:** При импорте `PersistentVolumes` через `fromHost` убедитесь, что политики доступа запрещают одному vCluster монтировать тома, принадлежащие другому виртуальному кластеру.
 
 ## Дополнительная информация
 
@@ -114,8 +153,13 @@ sync:
 - [vCluster — установка и развертывание](./vcluster_installation.md)
 - [vCluster — подключение и доступ](./vcluster_connectivity.md)
 
+### См. также
+
+- [Security Context в Kubernetes](../Security/pod_security_context.md) — детали PSA и PSS.
+- [Мульти-тенантность в Kubernetes](../Concepts/multi-tenancy.md) — общие подходы к изоляции.
+
 ### Внешние ссылки
 
-- [vCluster Security Official Docs](https://www.vcluster.com/docs/architecture/security)
-- [Generic Resource Sync Guide](https://www.vcluster.com/docs/config/sync/generic-resources)
-- [Network Isolation Features](https://www.vcluster.com/docs/features/network-isolation)
+- [vCluster Security Documentation](https://www.vcluster.com/docs/architecture/security)
+- [Resource Syncing and Patches](https://www.vcluster.com/docs/config/sync/overview)
+- [Common Expression Language (CEL) in Kubernetes](https://kubernetes.io/docs/reference/using-api/cel/)

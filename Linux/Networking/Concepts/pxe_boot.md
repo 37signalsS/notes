@@ -2,103 +2,104 @@
 
 ## Определения
 
-**PXE (Preboot Execution Environment — среда исполнения перед загрузкой)** — это стандартная среда, позволяющая компьютеру загружаться по сети, используя только свою сетевую карту (NIC), без необходимости в локальном загрузочном устройстве (жестком диске, USB-накопителе).
+**PXE (Preboot Execution Environment — среда исполнения перед загрузкой)** — стандартная среда, позволяющая компьютеру загружаться по сети, используя только сетевую карту (NIC), без необходимости в локальном загрузочном устройстве (HDD/SSD/USB).
 
-**NBP (Network Boot Program — программа сетевой загрузки)** — небольшой исполняемый файл (например, `pxelinux.0` или `ipxe.efi`), который скачивается клиентом по сети и управляет дальнейшим процессом загрузки ОС.
+**NBP (Network Boot Program)** — исполняемый файл (например, `pxelinux.0`, `ipxe.efi`, `grubx64.efi`), который скачивается клиентом по сети и управляет дальнейшим процессом загрузки ОС или инсталлятора.
 
-**HTTP Boot** — современное расширение спецификации UEFI, позволяющее загружать NBP или ядро ОС напрямую по протоколам HTTP/HTTPS вместо медленного и ненадежного TFTP.
+**ProxyDHCP** — расширение PXE, позволяющее развернуть PXE-инфраструктуру без модификации основного DHCP-сервера (например, если он управляется другим отделом). ProxyDHCP отвечает только на PXE-запросы, предоставляя параметры загрузки, в то время как основной DHCP выдает IP-адреса.
+
+**Virtual Media (Redfish/IPMI)** — современная альтернатива PXE, позволяющая монтировать ISO-образы напрямую через контроллер управления (BMC) по протоколам HTTP/NFS/Samba.
 
 ## Базовые концепции
 
-PXE является стандартом де-факто для автоматизированного развертывания серверов (Bare Metal Provisioning), работы бездисковых станций (VDI) и систем аварийного восстановления.
+PXE является фундаментом для Bare Metal Provisioning (MAAS, Tinkerbell, Ironic), работы бездисковых станций и систем быстрого восстановления.
 
 ### Компоненты PXE-инфраструктуры
 
-1.  **Клиент:** Устройство с сетевой картой, поддерживающей стек PXE (в ПЗУ карты или в прошивке UEFI).
-2.  **DHCP-сервер:** Выдает клиенту временный IP-адрес и передает параметры загрузки:
-    *   `next-server` (Option 66): IP-адрес сервера загрузки.
-    *   `filename` (Option 67): Имя загрузочного файла.
-3.  **TFTP-сервер:** Предоставляет загрузчик (NBP) по упрощенному протоколу UDP. В современных сетях TFTP используется только для доставки первичного загрузчика (iPXE/GRUB), который затем переходит на HTTP.
-4.  **Файловый сервер (HTTP/NFS):** Хранит тяжелые компоненты: ядро Linux (`vmlinuz`), `initramfs`, файлы инсталлятора или корневую файлорую систему (`rootfs`).
+1.  **Клиент:** NIC с поддержкой PXE Stack (Legacy BIOS) или EFI Network Stack (UEFI).
+2.  **DHCP-сервер:** Выдает IP и указывает путь к загрузчику:
+    *   `next-server` (Option 66): IP TFTP-сервера.
+    *   `filename` (Option 67): Путь к NBP.
+    *   `vendor-class-identifier` (Option 60): В режиме ProxyDHCP клиент ищет этот тег для идентификации PXE-сервера.
+3.  **TFTP-сервер:** Протокол (UDP/69) для доставки NBP. Главный недостаток — отсутствие встроенной проверки целостности и низкая скорость из-за подтверждения каждого блока (ACK).
+    *   **Оптимизация:** Современные серверы (tftpd-hpa, dnsmasq) поддерживают `blksize` (увеличение блока с 512 до 1468+ байт) и `windowsize` (отправка нескольких блоков без ожидания ACK).
+4.  **Файловый сервер (HTTP/S, NFS, iSCSI):** Используется для доставки "тяжелых" компонентов (Kernel, Initrd, RootFS), так как TFTP неэффективен для файлов >100 МБ.
 
 ### Процесс загрузки (Legacy vs UEFI)
 
 | Этап | Legacy (BIOS) | UEFI |
 | :--- | :--- | :--- |
-| **Инициализация** | 16-битный стек PXE | 32/64-битный EFI Network Stack |
-| **DHCP Запрос** | Обычный DHCP Discover | DHCP Discover с указанием Architecture Type (Option 93) |
-| **Получение NBP** | Скачивает `pxelinux.0` через TFTP | Скачивает `.efi` файл (через TFTP или HTTP Boot) |
-| **Режим CPU** | Реальный режим (1 МБ памяти) | Защищенный режим (доступ ко всей памяти) |
-| **Безопасность** | Отсутствует | Поддержка Secure Boot (подпись загрузчика) |
+| **Инициализация** | 16-битный PXE Stack | 32/64-битный EFI Network Stack |
+| **DHCP Запрос** | Обычный DHCP Discover | DHCP Discover + Architecture Type (Option 93) |
+| **Протоколы** | Только TFTP | TFTP, HTTP, HTTPS (HTTP Boot) |
+| **Режим CPU** | Реальный режим (1 МБ) | Защищенный режим (Long Mode) |
+| **Безопасность** | Отсутствует | Secure Boot (цепочка доверия) |
 
-#### Детальный механизм DORA-загрузки:
-1.  **Discover:** Клиент рассылает широковещательный запрос.
-2.  **Offer:** DHCP-сервер предлагает IP и указывает `next-server`.
-3.  **Request:** Клиент запрашивает предложенные параметры.
-4.  **Acknowledge:** Сервер подтверждает аренду и передает `filename` (путь к NBP).
-5.  **Transfer:** Клиент обращается к TFTP-серверу за файлом NBP.
+#### UEFI Secure Boot Chain
+Для загрузки в режиме Secure Boot используется **Shim** — легковесный загрузчик, подписанный ключом Microsoft.
+1. `UEFI Firmware` (проверяет подпись `shim.efi`).
+2. `Shim` (проверяет подпись `grubx64.efi` или `ipxe.efi` ключом дистрибутива или владельца).
+3. `GRUB/iPXE` (загружает ядро).
+4. `Kernel` (должен быть подписан).
+
+### PXE в сетях IPv6 (DHCPv6)
+В IPv6 процесс отличается отсутствием широковещательных рассылок (используется Multicast):
+*   Клиент отправляет `Solicit` с запросом опции 59 (`OPT_BOOTFILE_URL`).
+*   Сервер отвечает `Advertise`, предоставляя URL (например, `tftp://[2001:db8::1]/ipxe.efi` или `http://[2001:db8::1]/boot.efi`).
 
 Подробнее о [процессе загрузки Linux](../../Core/kernel/boot_process.md).
 
 ## Практические сценарии
 
-### 1. Настройка сетевой загрузки в прошивке
+### 1. Настройка DHCP для PXE (Dnsmasq)
 
-*   **BIOS:** Включить `LAN Option ROM` или `Network Stack`. Установить `Network/PXE` первым в `Boot Priority`.
-*   **UEFI:** Включить `Network Stack`, выбрать режим `IPv4 PXE Support` или `IPv6 PXE Support`. Для использования **HTTP Boot** необходимо выбрать соответствующий тип загрузки в меню BIOS (доступно в UEFI 2.5+).
-
-### 2. Настройка DHCP для PXE (Dnsmasq)
-
-`dnsmasq` — наиболее удобный инструмент для малых и средних сред, совмещающий DHCP, TFTP и DNS.
+Пример конфигурации с оптимизацией TFTP и поддержкой разных архитектур:
 
 ```bash
 # /etc/dnsmasq.conf
-interface=eth0
-dhcp-range=192.168.1.50,192.168.1.150,255.255.255.0,12h
+interface=eth1
+dhcp-range=192.168.10.50,192.168.10.150,255.255.255.0,12h
 
-# Параметры для PXE
+# Оптимизация TFTP
 enable-tftp
 tftp-root=/srv/tftp
+tftp-max-blocksize=1468 # Избегаем фрагментации (MTU 1500 - заголовки)
 
 # Определение типа клиента (Option 93)
+# 0: BIOS, 7: EFI x86-64, 11: EFI ARM64
+dhcp-match=set:bios,option:client-arch,0
 dhcp-match=set:efi64,option:client-arch,7
 dhcp-match=set:efi64,option:client-arch,9
-dhcp-match=set:bios,option:client-arch,0
+dhcp-match=set:arm64,option:client-arch,11
 
-# Выдача разных загрузчиков в зависимости от архитектуры
-dhcp-boot=tag:bios,pxelinux.0
-dhcp-boot=tag:efi64,ipxe.efi
+# Выдача загрузчиков
+dhcp-boot=tag:bios,bios/pxelinux.0
+dhcp-boot=tag:efi64,efi64/syslinux.efi
+dhcp-boot=tag:arm64,arm64/ipxe.efi
 ```
 
-### 3. Развертывание iPXE: Продвинутая загрузка
+### 2. Сценарий ProxyDHCP
+Позволяет добавить PXE в существующую сеть без доступа к основному DHCP-серверу (например, Windows DHCP или роутер провайдера).
 
-**iPXE** — это open-source реализация PXE, которая позволяет обходить ограничения классического PXE (медленный TFTP, отсутствие скриптов).
+```bash
+# Настройка dnsmasq в режиме Proxy
+dhcp-range=192.168.1.0,proxy
+pxe-service=x86PC, "Boot from Network (Legacy)", bios/pxelinux
+pxe-service=x86-64_EFI, "Boot from Network (UEFI)", efi64/ipxe.efi
+```
 
-**Преимущества iPXE:**
-*   Загрузка через **HTTP/HTTPS** (в 10-50 раз быстрее TFTP).
-*   Загрузка через **iSCSI**, **NFS**, **Fibre Channel**.
-*   Поддержка скриптов для меню выбора ОС.
+### 3. Продвинутая загрузка через iPXE (HTTP)
+iPXE позволяет загружать образы по HTTP/HTTPS, что критично для облачных сред и медленных каналов.
 
-**Пример скрипта iPXE (`boot.ipxe`):**
+**Пример скрипта `boot.ipxe` с использованием облачного конфига:**
 ```ipxe
 #!ipxe
 dhcp
-set server_ip 192.168.1.10
-set base-url http://${server_ip}/os
+set base-url http://repo.local/os/ubuntu/24.04
 
-menu Choose Operating System
-item ubuntu_24_04 Install Ubuntu 24.04 LTS
-item rescue       System Rescue
-choose --default ubuntu_24_04 --timeout 5000 target || goto cancel
-
-:ubuntu_24_04
-kernel ${base-url}/ubuntu/vmlinuz initrd=initrd.gz cloud-config-url=${base-url}/configs/user-data ip=dhcp
-initrd ${base-url}/ubuntu/initrd.gz
-boot
-
-:rescue
-kernel ${base-url}/rescue/vmlinuz
-initrd ${base-url}/rescue/initrd.img
+# Загрузка ядра с параметрами автоустановки (Cloud-Init)
+kernel ${base-url}/vmlinuz initrd=initrd.gz autoinstall ds=nocloud-net;s=http://cfg.local/nodes/${mac:hex}/ ip=dhcp
+initrd ${base-url}/initrd.gz
 boot
 ```
 
@@ -108,19 +109,20 @@ boot
 
 | Симптом | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| **PXE-E32: TFTP Timeout** | TFTP сервер недоступен или заблокирован файрволом | Проверить UDP порт 69. Проверить `tftp-root`. |
-| **PXE-E51: No DHCP offers** | Клиент не видит DHCP-сервер или пул адресов пуст | Проверить L2-связность. Включить [DHCP Snooping](../../../Networking/Protocols/DHCP/dhcp_security.md#dhcp-snooping---отслеживание-dhcp) на коммутаторе. |
-| **PXE-E53: No boot filename** | DHCP-сервер выдал IP, но не передал Option 67 | Проверить конфиг DHCP на наличие параметра `filename`. |
-| **UEFI: Secure Boot Violation** | Загрузчик (`ipxe.efi`) не подписан | Отключить Secure Boot или использовать подписанный загрузчик `shim.efi`. |
+| **PXE-E32: TFTP Timeout** | Файрвол или проблемы с MTU | Проверить UDP/69. Уменьшить `blksize` до 512, если сеть нестабильна. |
+| **TFTP Error: Access Violation** | Права доступа на файлы | `chmod -R 644 /srv/tftp`. Проверить владельца (обычно `nobody` или `tftp`). |
+| **PXE-E51: No DHCP offers** | Проблемы L2 или DHCP Snooping | Проверить `Helper Address` на L3-коммутаторе. Проверить лимиты DHCP-пула. |
+| **MTU/Fragmentation Issues** | Пакеты TFTP отбрасываются | Отключить `blksize` или настроить `MSS Clamping` на роутере. |
+| **Secure Boot Violation** | Неподписанный NBP | Использовать `shim.efi` или добавить хеш загрузчика в базу UEFI (MOK). |
 
 ### Современные решения для Provisioning (2026)
 
-| Решение | Описание | Основной метод |
+| Решение | Описание | Метод доставки |
 | :--- | :--- | :--- |
-| **Netbox + Netbox-Provisioning** | Автоматизация на основе данных из IPAM/DCIM | iPXE API |
-| **Tinkerbell (Equinix)** | Cloud-native Provisioning через Kubernetes | PXE + Hook (Docker images) |
-| **Canonical MAAS** | Управление физическими серверами как облаком | PXE + DHCP + IPMI |
-| **Red Hat Ironic** | Компонент OpenStack для Bare Metal | iPXE / Virtual Media |
+| **Canonical MAAS** | Превращает дата-центр в "облако" | PXE + iPXE + IPMI/Redfish |
+| **Tinkerbell** | Стек от Equinix для K8s-native Bare Metal | PXE + Hook (Docker images) |
+| **Red Hat Ironic** | Управление физическими узлами в OpenStack/OpenShift | iPXE / Virtual Media |
+| **Netbox + Custom Hooks** | Автоматизация на основе Inventory | API-driven PXE configs |
 
 ### См. также
 * [Настройка DHCP-сервера](../Services/DHCP/isc_dhcp_server_overview.md)

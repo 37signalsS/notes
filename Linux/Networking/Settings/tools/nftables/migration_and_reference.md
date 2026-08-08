@@ -1,9 +1,5 @@
 # nftables — миграция и справочник синтаксиса
 
-> **Reliability Score: 10/10** (SSoT + Verified nftables syntax)  
-> **Последнее обновление:** 2026-07-25  
-> **Статус:** Актуально (nftables 1.0+)
-
 ## Определения
 
 **Миграция на nftables** — процесс перехода от классического стека `iptables` к современной подсистеме `nftables`. Включает конвертацию правил, адаптацию скриптов и переход на нативный синтаксис `nft`.
@@ -23,6 +19,7 @@
 | Задача | iptables (Legacy) | nftables (Native) |
 | :--- | :--- | :--- |
 | **Добавить правило** | `iptables -A INPUT -p tcp --dport 22 -j ACCEPT` | `nft add rule inet filter input tcp dport 22 accept` |
+| **Вставить в начало** | `iptables -I INPUT 1 ...` | `nft insert rule inet filter input ...` |
 | **Удалить правило** | `iptables -D INPUT 5` | `nft delete rule inet filter input handle 5` |
 | **Просмотр правил** | `iptables -L -n -v` | `nft list ruleset` |
 | **Очистка (Flush)** | `iptables -F` | `nft flush ruleset` |
@@ -30,6 +27,14 @@
 | **Переменные** | Нет (только через Bash) | `define ext_if = "eth0"` |
 | **NAT (Masquerade)** | `-t nat -A POSTROUTING -o eth0 -j MASQUERADE` | `add rule nat postrouting oif eth0 masquerade` |
 | **Порты (Множеств.)** | `-m multiport --dports 80,443` | `tcp dport { 80, 443 }` |
+
+### Идентификаторы правил (Handles)
+
+В отличие от `iptables`, где правила идентифицируются порядковым номером (индексом), в `nftables` каждое правило имеет уникальный и неизменный **handle** (хэндл) в рамках таблицы.
+
+- **Зачем нужны**: Удаление правила по индексу в `iptables` опасно в многопоточной среде (индексы сдвигаются). Хэндлы в `nftables` гарантируют, что вы удаляете именно то правило, которое планировали.
+- **Просмотр**: `nft list ruleset -a` (флаг `-a` или `--handle` показывает идентификаторы).
+- **Удаление**: `nft delete rule <family> <table> <chain> handle <id>`.
 
 ### Инструменты управления (CLI — Command Line Interface)
 
@@ -43,6 +48,19 @@
 | `nft -c -f <файл>` | Проверка синтаксиса конфигурационного файла без применения |
 | `nft -j list ruleset` | Экспорт конфигурации в формате **JSON (JavaScript Object Notation)** |
 | `nft describe <объект>` | Получение подробной справки о полях и типах данных объекта |
+
+### Эквиваленты расширений (Match Extensions)
+
+Многие функции, которые в `iptables` требовали внешних модулей (`-m`), в `nftables` являются встроенными выражениями.
+
+| Модуль iptables | Эквивалент nftables | Пример |
+| :--- | :--- | :--- |
+| `limit` | `limit` | `limit rate 10/second` |
+| `quota` | `quota` | `quota over 100 mbytes drop` |
+| `state / conntrack` | `ct state` | `ct state { established, related } accept` |
+| `recent` | `meter` / `set` | `update @blackhole { ip saddr timeout 1m }` |
+| `comment` | `comment` | `... comment "Allow SSH"` |
+| `addrtype` | `fib` | `fib saddr type local accept` |
 
 ### Переменные и модульность
 
@@ -154,9 +172,68 @@ nft add rule inet filter input meta hour "09:00-18:00" accept
 nft add rule nat prerouting numgen random mod 100 vmap { 0-29 : jump chain1, 30-99 : accept }
 ```
 
-### 4. Использование наборов (Sets) и карт (Verdict Maps)
+### 4. Работа с состояниями (Connection Tracking)
+
+В `nftables` вместо `-m state` или `-m conntrack` используется объект `ct` (conntrack). Это базовый механизм для Stateful Firewall.
+
+**Типовые состояния:**
+- `new`: первый пакет соединения.
+- `established`: пакеты установленного соединения.
+- `related`: пакеты, связанные с существующим соединением (например, ICMP error или FTP data).
+- `invalid`: пакеты, не принадлежащие ни одному известному соединению.
+
+**Пример базовой цепочки с conntrack:**
+```bash
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        # Разрешить уже установленные соединения (самое частое правило — в начало)
+        ct state { established, related } accept
+
+        # Отбрасывать некорректные пакеты
+        ct state invalid drop
+
+        # Разрешить loopback
+        iifname "lo" accept
+
+        # Разрешить SSH для новых соединений
+        tcp dport 22 ct state new accept
+    }
+}
+```
+
+### 5. Использование наборов (Sets) и карт (Verdict Maps)
 
 Наборы и карты позволяют объединять множество правил в одно, значительно повышая производительность.
+
+**Типы наборов:**
+1.  **Анонимные**: определяются прямо в правиле `{ 80, 443 }`. Не могут быть изменены без удаления правила.
+2.  **Именованные**: определяются отдельно, могут быть динамическими.
+
+**Расширенные возможности наборов (Flags):**
+- `timeout`: элементы набора удаляются по истечении времени (замена `ipset` с таймаутами).
+- `interval`: поддержка подсетей и диапазонов портов.
+- `size`: ограничение максимального количества элементов.
+
+**Пример именованного динамического набора (Blacklist):**
+```bash
+table inet filter {
+    set denylist {
+        type ipv4_addr
+        flags dynamic, timeout
+        timeout 1h
+    }
+
+    chain input {
+        # Блокировать всех из списка
+        ip saddr @denylist drop
+
+        # Добавить в список при попытке доступа к закрытому порту (Port Scanning)
+        tcp dport 1234 update @denylist { ip saddr }
+    }
+}
+```
 
 **Конкатенация (Concatenation):**
 Позволяет проверять несколько полей одновременно.
@@ -170,6 +247,26 @@ nft add rule inet filter input ip saddr . tcp dport { 192.168.1.10 . 22, 192.168
 ```bash
 # Разделение трафика по интерфейсам
 nft add rule inet filter input iifname vmap { "eth0" : jump external_chain, "eth1" : jump internal_chain }
+```
+
+### 6. Логирование и мониторинг
+
+В `nftables` логирование гибко настраивается и может быть направлено в `syslog`, `nflog` (для пользовательских утилит типа `tcpdump`) или в журналы ядра.
+
+**Пример логирования с префиксом и ограничением скорости:**
+```bash
+# Логировать новые SSH-соединения (не более 2 в минуту)
+nft add rule inet filter input tcp dport 22 ct state new limit rate 2/minute log prefix "SSH-ACCESS: " accept
+```
+
+**Мониторинг событий (Runtime):**
+Утилита `nft` позволяет подписываться на изменения правил или появление новых соединений в реальном времени.
+```bash
+# Просмотр изменений правил в реальном времени
+nft monitor
+
+# Просмотр только добавления элементов в наборы
+nft monitor sets
 ```
 
 ## Дополнительная информация

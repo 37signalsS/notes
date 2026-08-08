@@ -2,35 +2,30 @@
 
 ## Определения
 
-**Политика (Policy)** — основной декларативный ресурс Kyverno, содержащий набор правил для автоматизации процессов безопасности, мутации или генерации объектов в кластере.
+**Библиотека политик** — структурированная коллекция проверенных манифестов Kyverno, предназначенная для быстрого внедрения стандартов безопасности и автоматизации в кластер Kubernetes.
 
-### Типы ресурсов
-
-*   **ClusterPolicy**: Глобальный ресурс кластера, правила которого применяются ко всем пространствам имен (Namespaces).
-*   **Policy**: Локальный ресурс, действующий только в рамках конкретного пространства имен.
-*   **ValidatingPolicy / MutatingPolicy (v1.14+)**: Специализированные CEL-ресурсы для повышения производительности и нативной интеграции с Kubernetes API.
+**ValidatingPolicy / MutatingPolicy** — специализированные ресурсы (v1.14+), оптимизированные для выполнения CEL-выражений (Common Expression Language). Они обеспечивают нативную интеграцию с Kubernetes API и работают значительно быстрее классических `ClusterPolicy`.
 
 ---
 
 ## Основные концепции
 
-### Структура и стандарты
+Библиотека построена на принципах **Pod Security Standards (PSS)** и **Supply Chain Security**. Все примеры соответствуют стандартам 2026 года и ориентированы на использование CEL-first подхода.
 
-Примеры в библиотеке ориентированы на стандарты безопасности Kubernetes (PSS — Pod Security Standards) и используют синтаксис Kyverno YAML или CEL (Common Expression Language).
-
-| Параметр | Описание |
-| :--- | :--- |
-| **`validationFailureAction`** | Режим реакции: `Audit` (запись в отчет) или `Enforce` (блокировка). |
-| **`background`** | Включение фонового сканирования для существующих ресурсов (`true`/`false`). |
-| **`match` / `exclude`** | Условия выбора ресурсов по типам, пространствам имен или субъектам. |
+| Категория | Цель | Основные инструменты |
+| :--- | :--- | :--- |
+| **Prevention** | Блокировка небезопасных ресурсов. | `ValidatingPolicy` (CEL). |
+| **Correction** | Автоматическое исправление манифестов. | `MutatingPolicy`, `patchStrategicMerge`. |
+| **Automation** | Генерация зависимых объектов. | `generate`, `clone`. |
+| **Verification** | Проверка целостности артефактов. | `verifyImages`, Sigstore. |
 
 ---
 
 ## Практические сценарии
 
-### 1. Запрет привилегированных контейнеров (CEL)
+### 1. Запрет привилегированных контейнеров (PSS Baseline)
 
-Реализация стандарта **PSS Baseline**. Предотвращает запуск контейнеров, имеющих неограниченный доступ к ресурсам хоста.
+Предотвращает запуск контейнеров, имеющих неограниченный доступ к ресурсам хоста. Использует современный синтаксис `ValidatingPolicy`.
 
 ```yaml
 apiVersion: policies.kyverno.io/v1
@@ -50,12 +45,41 @@ spec:
         (object.spec.containers + object.spec.?initContainers.orValue([]) + object.spec.?ephemeralContainers.orValue([])).all(c, 
           !has(c.securityContext) || !has(c.securityContext.privileged) || c.securityContext.privileged == false
         )
-      message: "Привилегированные контейнеры запрещены."
+      message: "Привилегированные контейнеры запрещены стандартами безопасности."
 ```
 
-### 2. Ограничение типов томов (hostPath)
+### 2. Верификация образов через Sigstore (Supply Chain)
 
-Реализация стандарта **PSS Restricted**. Запрещает использование `hostPath`, предотвращая возможный побег из контейнера на файловую систему узла.
+Блокировка запуска образов, которые не были подписаны доверенным ключом в реестре. Это критично для предотвращения атак на цепочку поставок.
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signature
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: verify-sigstore
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      verifyImages:
+        - imageReferences: ["ghcr.io/my-org/*"]
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+                      -----END PUBLIC KEY-----
+```
+
+### 3. Ограничение типов томов hostPath (PSS Restricted)
+
+Запрещает использование `hostPath`, что предотвращает несанкционированный доступ контейнеров к файловой системе узла.
 
 ```yaml
 apiVersion: policies.kyverno.io/v1
@@ -72,59 +96,64 @@ spec:
   validations:
     - expression: |
         !has(object.spec.volumes) || object.spec.volumes.all(vol, !has(vol.hostPath))
-      message: "Использование hostPath томов запрещено стандартами безопасности."
+      message: "Использование hostPath запрещено. Используйте PVC или emptyDir."
 ```
 
-### 3. Автоматическая установка non-root (Мутация)
+### 4. Автоматическое внедрение лимитов ресурсов (Мутация)
 
-Автоматизирует процесс приведения ресурсов к безопасному виду, принудительно устанавливая `runAsNonRoot: true`, если это не противоречит логике приложения.
+Если разработчик не указал лимиты, Kyverno автоматически добавит их, предотвращая деградацию кластера из-за «прожорливых» приложений.
 
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: mutate-run-as-non-root
+  name: set-default-resources
 spec:
   rules:
-    - name: set-non-root
+    - name: set-cpu-memory-limits
       match:
         any:
           - resources:
-              kinds:
-                - Pod
+              kinds: [Pod]
       mutate:
         patchStrategicMerge:
           spec:
-            securityContext:
-              runAsNonRoot: true
-              runAsUser: 1000
+            containers:
+              - (name): "*" # Применить ко всем контейнерам
+                resources:
+                  limits:
+                    cpu: "500m"
+                    memory: "512Mi"
+                  requests:
+                    cpu: "100m"
+                    memory: "128Mi"
 ```
 
-### 4. Синхронизация ConfigMap между Namespace (Генерация)
+### 5. Инициализация Namespace (Генерация)
 
-Позволяет автоматически копировать конфигурации (например, настройки прокси или корпоративные сертификаты) во все новые пространства имен.
+Автоматическое создание стандартных ресурсов (NetworkPolicy, LimitRange) при создании нового пространства имен.
 
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: sync-global-config
+  name: init-new-namespace
 spec:
   rules:
-    - name: copy-configmap
+    - name: create-default-network-policy
       match:
         any:
           - resources:
-              kinds:
-                - Namespace
+              kinds: [Namespace]
       generate:
-        kind: ConfigMap
-        name: global-config
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: default-deny-ingress
         namespace: "{{request.object.metadata.name}}"
-        clone:
-          namespace: default
-          name: source-config
-        synchronize: true
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
 ```
 
 ---
@@ -133,14 +162,14 @@ spec:
 
 ### Рекомендации по эксплуатации
 
-1.  **Постепенное внедрение**: Новые политики следует внедрять в режиме `Audit` (или `Warn` для CEL). Используйте **[Policy Reports](../reports.md)** для анализа нарушений перед блокировкой.
-2.  **Исключения (PolicyException)**: Вместо загромождения блока `exclude` внутри политики, используйте отдельный ресурс `PolicyException` для временных или специфических разрешений.
-3.  **Исключение системных ресурсов**: Всегда добавляйте `exclude` для `kube-system`, `kyverno` и других критических инфраструктурных пространств имен, чтобы избежать блокировки кластера.
-4.  **Валидация в CI/CD**: Используйте `kyverno CLI` для проверки манифестов на этапе сборки (Shift-Left Security).
+1.  **Shift-Left Security**: Используйте `kyverno CLI` для проверки манифестов в CI пайплайнах. Это позволяет исправить нарушения до того, как они попадут в Admission-контроллер.
+2.  **Режим Audit для новых правил**: Всегда внедряйте политики сначала в режиме `Audit`. Проверьте результаты через **[Policy Reports](../reports.md)**, чтобы убедиться в отсутствии ложноположительных срабатываний.
+3.  **Исключения (PolicyException)**: Используйте ресурс `PolicyException` для временных разрешений (например, для специфического legacy-приложения), не ослабляя общую политику кластера.
+4.  **Безопасность системных Namespace**: Всегда добавляйте исключения (`exclude`) для `kube-system` и `kyverno`, чтобы предотвратить «мертвую петлю», когда контроллер блокирует сам себя.
 
 ### См. также
 
-- **[Типы правил (подробный синтаксис)](../rules.md)** — match, validate, mutate, generate.
+- **[Типы правил (подробный синтаксис)](../rules.md)** — глубокое погружение в validate, mutate, generate.
 - **[Определения и структура](./definitions_and_concepts.md)** — база для написания манифестов.
-- **[Фоновое сканирование](../background.md)** — аудит уже запущенных объектов.
-- **[Отчеты (Policy Reports)](../reports.md)** — анализ результатов выполнения политик.
+- **[Интеграция с Argo CD](../argo-cd.md)** — GitOps и визуализация отчетов.
+- **[Supply Chain Security: Обзор](../../../Security/Supply_Chain_Security/overview.md)** — теория защиты цепочки поставок.

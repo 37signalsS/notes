@@ -1,8 +1,5 @@
 # Интеграция Grafana с Graphite и Collectd
 
-> **Надежность: 8** (Технология считается устаревшей, документация проверена для целей поддержки legacy-систем на июль 2026)
-> **Статус:** Устаревший стек (Legacy)
-
 > **ВНИМАНИЕ:** Graphite и Collectd считаются устаревшими компонентами. Для новых проектов настоятельно рекомендуется использовать современный стек на базе OpenTelemetry и Prometheus.
 >
 > - **Метрики:** [Prometheus](../Prometheus/overview.md) + [Grafana Alloy](./grafana_alloy_overview.md)
@@ -25,19 +22,37 @@
 
 ## Базовые концепции
 
-Процесс мониторинга в данном стеке строится по следующей схеме:
+### Поток данных
+
+Процесс мониторинга строится по следующей схеме:
 
 1. **Сбор:** Служба `Collectd` на целевом хосте собирает показатели системы с помощью плагинов.
 2. **Передача:** `Collectd` отправляет данные на входной порт `Carbon` (обычно TCP/UDP `2003`).
 3. **Хранение:** `Carbon` сохраняет данные в файлы `.wsp` (Whisper).
 4. **Запрос:** `Grafana` через свой источник данных (Data Source) обращается к API `Graphite-web`.
-5. **Визуализация:** `Graphite-web` считывает данные из `Whisper`, применяет функции (если указаны) и передает их `Grafana` для отрисовки.
+5. **Визуализация:** `Graphite-web` считывает данные из `Whisper`, применяет функции и передает их `Grafana` для отрисовки.
+
+### Иерархия метрик и теги
+
+Традиционно Graphite использует иерархическую структуру имен, разделенных точками:
+`servers.web-01.cpu.usage.user`
+
+Начиная с версии **1.1.0**, Graphite поддерживает **теги** (tags), что приближает его к многомерной модели Prometheus:
+`seriesByTag('name=cpu.usage', 'server=web-01', 'type=user')`
+
+### Функции обработки
+
+Graphite-web предоставляет сотни встроенных функций для манипуляции данными на лету:
+- `aliasByNode(series, node)` — переименование серии по части пути.
+- `summarize(series, interval, function)` — агрегация данных за период.
+- `movingAverage(series, window)` — сглаживание графиков.
+- `asPercent(series1, series2)` — расчет процентного соотношения.
 
 ## Практические сценарии
 
 ### Развертывание стека через Docker Compose
 
-Для быстрого развертывания или тестирования используется официальный образ, объединяющий компоненты Graphite.
+Для быстрого развертывания используется официальный образ, объединяющий компоненты Graphite.
 
 **Файл `docker-compose.yml`:**
 
@@ -58,7 +73,7 @@ services:
       - graphite_conf:/opt/graphite/conf
 
   grafana:
-    image: grafana/grafana:12.x
+    image: grafana/grafana:13.x
     container_name: grafana
     restart: always
     ports:
@@ -67,7 +82,7 @@ services:
       - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin # Измените при первом входе
+      - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
     depends_on:
       - graphite
@@ -78,32 +93,24 @@ volumes:
   grafana_data:
 ```
 
-**Запуск стека:**
-```bash
-docker compose up -d
-# → Создание сетей и контейнеров
-```
-
 ### Настройка Collectd на целевом хосте
 
 #### Установка
-
-В большинстве Linux-дистрибутивов пакет доступен в стандартных репозиториях:
 
 ```bash
 sudo apt update && sudo apt install collectd -y
 ```
 
-#### Настройка плагина отправки данных
+#### Настройка плагина write_graphite
 
-Отредактируйте `/etc/collectd/collectd.conf`, включив плагин `write_graphite`.
+Отредактируйте `/etc/collectd/collectd.conf`:
 
 ```conf
 LoadPlugin write_graphite
 
 <Plugin write_graphite>
   <Node "graphite_server">
-    Host "192.168.1.100" # IP-адрес сервера Graphite
+    Host "192.168.1.100"
     Port "2003"
     Protocol "tcp"
     LogSendErrors true
@@ -115,7 +122,7 @@ LoadPlugin write_graphite
 </Plugin>
 ```
 
-Перезапустите службу для применения изменений:
+Перезапустите службу:
 ```bash
 sudo systemctl restart collectd
 ```
@@ -125,17 +132,16 @@ sudo systemctl restart collectd
 1. Войдите в Grafana (`http://localhost:3000`).
 2. Перейдите в **Connections → Data sources**.
 3. Нажмите **Add new data source** и выберите **Graphite**.
-4. Укажите URL: `http://graphite:80` (внутри сети Docker).
-5. В поле **Version** выберите версию вашего Graphite (например, `1.1.x`).
+4. Укажите URL: `http://graphite:80`.
+5. В поле **Version** выберите версию (например, `1.1.x`).
 6. Нажмите **Save & test**.
 
 ## Дополнительная информация
 
 ### Управление хранением (Whisper)
 
-База Whisper требует предварительной настройки политик хранения (retention) в файле `storage-schemas.conf`. Если настройки меняются после создания файла метрики, существующие `.wsp` файлы необходимо изменять вручную утилитой `whisper-resize.py`.
-
-**Пример `storage-schemas.conf`:**
+#### Политики хранения (storage-schemas.conf)
+Определяют точность и длительность хранения данных.
 ```ini
 [collectd]
 pattern = ^collectd\.
@@ -143,28 +149,43 @@ retentions = 10s:1d,1m:7d,10m:1y
 # 10 сек точность на 1 день, 1 мин на 7 дней, 10 мин на 1 год
 ```
 
+#### Агрегация данных (storage-aggregation.conf)
+Определяет способ вычисления значений при переходе на менее точный уровень (downsampling).
+```ini
+[min]
+pattern = \.min$
+xFilesFactor = 0.1
+aggregationMethod = min
+
+[default_average]
+pattern = .*
+xFilesFactor = 0.5
+aggregationMethod = average
+```
+- `xFilesFactor`: минимальная доля заполненных данных для записи агрегата (0.5 = 50%).
+- `aggregationMethod`: среднее (`average`), сумма (`sum`), минимум, максимум.
+
 ### Устранение неполадок
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Нет данных в Grafana** | `Collectd` не может подключиться | Проверьте `journalctl -u collectd`. Убедитесь, что порт 2003 открыт на сервере. |
-| **Пустые списки метрик** | Ошибка Carbon или права доступа | Проверьте логи Carbon в контейнере: `docker logs graphite`. Проверьте `/opt/graphite/storage/whisper`. |
-| **"Broken" графики** | Несовпадение интервалов | Убедитесь, что интервал `collectd` (по умолчанию 10с) совпадает с первым уровнем retention в `storage-schemas.conf`. |
+| **Нет данных в Grafana** | `Collectd` не может подключиться | Проверьте `journalctl -u collectd`. Убедитесь, что порт 2003 открыт. |
+| **Пустые списки метрик** | Ошибка Carbon или права доступа | Проверьте логи: `docker logs graphite`. Проверьте директорию `/opt/graphite/storage/whisper`. |
+| **"Broken" графики** | Несовпадение интервалов | Интервал `collectd` (Interval в конфиге) должен совпадать с первым уровнем retention. |
 
 ### Миграция на современный стек
 
-План перехода с Graphite/Collectd на Prometheus/Alloy:
-
-1. **Параллельный запуск:** Установите [Grafana Alloy](./grafana_alloy_overview.md) на те же хосты.
-2. **Сбор метрик:** Настройте в Alloy компонент `prometheus.exporter.unix` для сбора системных показателей.
+План перехода:
+1. **Параллельный запуск:** Установите [Grafana Alloy](./grafana_alloy_overview.md).
+2. **Сбор метрик:** Используйте в Alloy компонент `prometheus.exporter.unix`.
 3. **Хранение:** Направьте Alloy в [Mimir](../Mimir/mimir_overview.md) или Prometheus.
-4. **Конвертация:** Перепишите запросы в дашбордах с Graphite-функций на PromQL.
-5. **Вывод из эксплуатации:** Отключите `Collectd` и Graphite после подтверждения идентичности данных.
+4. **Конвертация:** Перепишите Graphite-запросы на PromQL.
+5. **Вывод из эксплуатации:** Отключите Graphite после проверки данных.
 
 ### Безопасность
 
-- **Отсутствие аутентификации:** Протокол Carbon не поддерживает встроенную проверку подлинности. Любой, кто имеет доступ к порту `2003`, может записать любые данные. Используйте IP Whitelisting (Firewall).
-- **Безопасность API:** Ограничьте доступ к API Graphite-web, разрешив запросы только со стороны Grafana.
+- **Отсутствие аутентификации:** Протокол Carbon (порт 2003) не имеет встроенной проверки подлинности. Используйте сетевые экраны (firewall) для ограничения доступа.
+- **Безопасность API:** Ограничьте доступ к порту 80 (Graphite-web), разрешив запросы только от IP-адреса Grafana.
 
 **См. также:**
 - [Обзор Grafana](./grafana_overview.md)

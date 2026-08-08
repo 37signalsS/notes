@@ -83,7 +83,29 @@ PAM служит абстрактной прослойкой: системные
 | `pam_mkhomedir.so` | Автоматическое создание домашней директории при первом входе | — |
 | `pam_wheel.so` | Ограничение `su` членам группы `wheel` | — |
 | `pam_sss.so` | Аутентификация через SSSD/LDAP | — |
+| `pam_systemd.so` | Интеграция с systemd (сессии, cgroups, `XDG_RUNTIME_DIR`) | — |
+| `pam_env.so` | Установка переменных окружения | `/etc/environment`, `/etc/security/pam_env.conf` |
+| `pam_exec.so` | Выполнение произвольных команд/скриптов при событиях PAM | — |
+| `pam_cap.so` | Наследование Capabilities процессами пользователя | `/etc/security/capability.conf` |
 | `pam_google_authenticator.so` | Многофакторная аутентификация (MFA/2FA) через TOTP | `~/.google_authenticator` |
+
+**Логика обработки (Stacking):**
+PAM обрабатывает модули в стеке сверху вниз. Итоговое решение формируется на основе кодов возврата всех модулей в группе (тип):
+1.  **Required:** Ошибка помечается, но стек идет дальше. Итог будет Fail.
+2.  **Requisite:** Ошибка немедленно прерывает стек с результатом Fail.
+3.  **Sufficient:** Успех немедленно прерывает стек с результатом Success (если ранее не было ошибок в Required).
+4.  **Optional:** Результат учитывается только если это единственный модуль в стеке.
+
+**Расширенный синтаксис управления:**
+Синтаксис `[value1=action1 ...]` позволяет переопределить стандартные флаги.
+- `ok`: Считать успех промежуточным успехом.
+- `done`: Немедленный успех (аналог `sufficient`).
+- `die`: Немедленная ошибка (аналог `requisite`).
+- `bad`: Считать ошибку критической (аналог `required`).
+- `ignore`: Игнорировать код возврата.
+- `N` (число): Пропустить следующие N модулей в стеке.
+
+Пример: `auth [success=1 default=ignore] pam_unix.so` — если `pam_unix` успешен, пропустить следующий модуль (например, проверку в LDAP).
 
 **Ключевая особенность:** изменения в конфигурации PAM применяются немедленно, перезапуск сервисов не требуется.
 
@@ -242,28 +264,70 @@ sudo systemctl enable --now oddjobd
 | Аргумент | Описание |
 | :--- | :--- |
 | `skel` | Шаблон файлов для новой директории |
-| `umask` | Права доступа к создаваемой директории |
+### 9. Выполнение скриптов при входе (`pam_exec.so`)
+
+**Задача:** отправлять уведомление в Telegram при каждом входе пользователя по SSH.
+
+**Шаг 1:** создать скрипт `/usr/local/bin/login-notify.sh`:
+```bash
+#!/bin/bash
+if [ "$PAM_TYPE" = "open_session" ]; then
+  curl -s -X POST "https://api.telegram.org/bot<token>/sendMessage" \
+    -d chat_id="<id>" -d text="User $PAM_USER logged in to $(hostname) from $PAM_RHOST"
+fi
+```
+
+**Шаг 2:** добавить модуль в `/etc/pam.d/sshd`:
+```text
+session optional pam_exec.so /usr/local/bin/login-notify.sh
+```
+
+| Переменная PAM | Описание |
+| :--- | :--- |
+| `PAM_USER` | Имя пользователя |
+| `PAM_RHOST` | Удаленный хост |
+| `PAM_TYPE` | Тип вызова (`auth`, `open_session`, `close_session` и др.) |
+
+## Диагностика и отладка
+
+### 1. Анализ журналов
+Все события PAM записываются в системные логи. Это первый источник информации при ошибках доступа.
+- **Debian/Ubuntu:** `/var/log/auth.log`
+- **RHEL/CentOS:** `/var/log/secure`
+- **Универсально:** `journalctl -u sshd` или `journalctl -t PAM`
+
+### 2. Режим отладки (Debug)
+Большинство модулей поддерживают аргумент `debug`, который заставляет модуль писать детальную информацию в `syslog`.
+Пример: `auth required pam_unix.so debug`
+
+### 3. Тестирование без риска блокировки
+Для проверки конфигурации без перезахода в систему можно использовать утилиту `pamtester` (если установлена):
+```bash
+pamtester sshd <user> authenticate
+```
+
+## Лучшие практики безопасности
+
+1.  **Правило "Открытой сессии":** При редактировании файлов в `/etc/pam.d/` ВСЕГДА держите открытой одну сессию с правами `root`. Если вы допустите ошибку и заблокируете вход, вы сможете исправить её из этой сессии.
+2.  **Использование стандартных утилит:** Предпочитайте `pam-auth-update` (Debian) или `authselect` (RHEL) ручному редактированию. Они минимизируют риск синтаксических ошибок.
+3.  **Порядок имеет значение:** Модули `pam_faillock.so` (или устаревший `pam_tally2`) должны стоять в самом начале стека `auth`, чтобы учитывать все попытки, включая системные.
+4.  **Принцип минимизации:** Не включайте `optional` модули, если они не несут практической пользы, чтобы уменьшить поверхность атаки и упростить отладку.
+5.  **Защита от lockout:** Никогда не ставьте `requisite` или `required` на модули, зависящие от внешних сервисов (LDAP/AD) без наличия локального резервного метода аутентификации (`pam_unix.so`).
 
 ## Дополнительная информация
 
 ### Связанные документы
 
-**PAM-модули и конфигурация:**
-
+**PAM и лимиты:**
 - [Управление доступом ФСТЭК](./Fstec/user_access_control.md)
-- [Лимиты ресурсов](../Core/processes/resource_limits_concepts.md)
-- [Персистентные лимиты](../Core/processes/persistent_limits_configuration.md)
+- [Постоянная настройка лимитов (limits.d)](../Core/processes/persistent_limits_configuration.md)
 
-**Парольные политики:**
-
+**Аутентификация и политики:**
 - [Хэширование паролей](../SystemAdministration/Users/password_hashing.md)
-- [Политика паролей](../SystemAdministration/Users/password_policy_chage.md)
+- [Интеграция с LDAP/SSSD](../SystemAdministration/Users/LDAP_SSSD/configuration.md)
 
-**Интеграция с LDAP/SSSD:**
+**Мониторинг и аудит:**
+- [Аудит системы (auditd)](../SystemAdministration/Logging/auditd.md)
+- [Логирование в Linux](../SystemAdministration/Logging/logging_overview.md)
+- [Мониторинг пользователей](../SystemAdministration/Users/user_monitoring.md)
 
-- [Настройка SSSD](../SystemAdministration/Users/LDAP_SSSD/configuration.md)
-
-**Смежные темы:**
-
-- [Управление пользователями](../SystemAdministration/users_management.md)
-- [Управление привилегиями](../SystemAdministration/privilege_management.md)

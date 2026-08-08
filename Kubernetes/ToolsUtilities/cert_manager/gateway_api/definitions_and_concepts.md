@@ -1,99 +1,70 @@
-# Интеграция Cert-manager с Gateway API: Определения и концепции
+# Интеграция cert-manager с Gateway API: Определения и концепции
 
 ## Определения
 
-**Gateway API** — современный стандарт Kubernetes для управления трафиком (L4/L7), заменяющий Ingress API. Предоставляет ролевую модель разделения ответственности между инфраструктурой и приложениями. Подробное описание: [Gateway API: Определения](../../../Networking/gateway_api/definitions.md).
+**Gateway API** — стандарт Kubernetes для управления трафиком (L4/L7), предоставляющий ролевую модель разделения ответственности. В 2026 году является основным API для управления входящим трафиком, полностью заменив Ingress. Подробное описание: [Gateway API: Определения](../../../Networking/gateway_api/definitions.md).
 
-**cert-manager (v1.20+)** — нативный контроллер Kubernetes для автоматизации выпуска и обновления TLS-сертификатов. В контексте Gateway API работает через `gateway-shim` (автоматизация через аннотации) или через прямое управление ресурсами `Certificate`.
+**cert-manager (v1.20+)** — контроллер для автоматизации выпуска TLS-сертификатов. Поддерживает нативную интеграцию с ресурсами Gateway API через `gateway-shim` (автоматизация через аннотации) или через декларативное управление ресурсами `Certificate`.
 
-**ListenerSet (v1.20+ Alpha/Beta)** — новый ресурс в Gateway API, позволяющий делегировать управление слушателями (включая TLS) от владельца Gateway (Ops) владельцам приложений (Dev). Является основным способом обеспечения Self-Service TLS в мультитенентных кластерах.
+**ListenerSet (v1.21+ Stable)** — ресурс Gateway API, обеспечивающий **Self-Service TLS**. Позволяет разработчикам приложений («владельцам маршрутов») самостоятельно определять параметры TLS (включая сертификаты) для своих поддоменов, привязываясь к общему инфраструктурному `Gateway`.
 
-**ReferenceGrant** — ресурс Gateway API, разрешающий перекрестные ссылки между пространствами имен (например, когда Gateway в `infra` ссылается на Secret или Certificate в `app-namespace`).
+**Gateway Controller** — реализация Gateway API (например, Envoy Gateway, Cilium, Istio), которая считывает ресурсы API и настраивает сетевое оборудование или прокси-серверы. В процессе TLS-терминации контроллер считывает `Secret`, созданный cert-manager.
 
-**Интеграция с cert-manager:** поддержка включается флагом `--enable-gateway-api` в контроллере cert-manager. Требуется предварительная установка Gateway API CRD.
+**ReferenceGrant** — механизм безопасности Gateway API, разрешающий перекрестные ссылки между пространствами имен (например, когда Gateway в namespace `infra` использует Secret из namespace `app`).
 
 ---
 
 ## Основные концепции
 
-### Поток работы при интеграции (Self-Service TLS)
+### Модель Self-Service TLS (ListenerSet)
 
-В 2026 году стандартным подходом является использование **ListenerSet** для изоляции прав.
+В современных мультитеннантных кластерах (2026+) использование `ListenerSet` является стандартом де-факто для изоляции ответственности.
 
-```mermaid
-graph TD
-    A[Установка Gateway API CRD] --> B[Установка cert-manager v1.20+ с --enable-gateway-api]
-    B --> C[Ops: Создание Gateway]
-    C --> D[Dev: Создание ListenerSet с аннотацией Issuer]
-    D --> E[cert-manager: Создание Certificate]
-    E --> F[cert-manager: Выпуск Secret]
-    F --> G[Gateway: Терминация TLS через Secret]
-```
+1.  **Инфраструктурный слой (Ops):** Создает `Gateway` с разрешением на подключение слушателей (`allowedListeners`).
+2.  **Прикладной слой (Dev):** Создает `ListenerSet` в своем namespace, указывая `parentRef` на общий `Gateway`.
+3.  **Автоматизация:** cert-manager обнаруживает аннотации на `ListenerSet`, выпускает сертификат и сохраняет его в локальный `Secret`.
+4.  **Связывание:** Gateway Controller динамически подключает новый слушатель с TLS к общему шлюзу.
 
 ### Методы управления сертификатами
 
-| Аспект | Gateway-shim (Аннотации) | Явные Certificate (Рекомендуется) |
+| Аспект | Gateway-shim (Аннотации) | Явные ресурсы Certificate |
 | :--- | :--- | :--- |
-| **Управление** | Автоматическое через аннотации на Gateway/ListenerSet | Декларативное через CRD `Certificate` |
-| **Гибкость** | Ограничена (только базовые параметры) | Полная (алгоритмы, ротация, дополнительные DNS) |
-| **Сложность** | Низкая (минимум манифестов) | Средняя (требуется отдельный ресурс) |
-| **SSoT** | Ресурс Gateway/ListenerSet | Ресурс Certificate |
-| **Кросс-неймспейс** | Затруднено без ReferenceGrant | Полная поддержка через ReferenceGrant |
+| **Целевой ресурс** | `Gateway` или `ListenerSet` | Ресурс `Certificate` |
+| **Автоматизация** | cert-manager сам создает `Certificate` | Пользователь создает `Certificate` вручную |
+| **Контроль** | Упрощенный, через аннотации | Полный контроль (ARI, алгоритмы, SAN) |
+| **Поддержка ARI** | Да (через профили Issuer) | Да (полная декларативная поддержка) |
+| **Сложность** | Низкая (подходит для типовых задач) | Средняя (рекомендуется для Production) |
 
-### Безопасность и ReferenceGrant
+### Безопасность и кросс-неймспейс ссылки
 
-Если сертификат (Secret) находится в одном пространстве имен, а Gateway в другом, **обязательно** создание `ReferenceGrant`:
+Для обеспечения безопасности в Gateway API запрещены неявные ссылки на ресурсы в других namespace. 
 
-```yaml
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: ReferenceGrant
-metadata:
-  name: allow-gateway-to-certs
-  namespace: app-namespace
-spec:
-  from:
-  - group: gateway.networking.k8s.io
-    kind: Gateway
-    namespace: infra-namespace
-  to:
-  - group: ""
-    kind: Secret
-```
-
-### Особенности интеграции v1.20
-
-1. **Feature Gate ListenerSets:** Требует явного включения в cert-manager для поддержки динамического Self-Service.
-2. **Dedicated Challenge Gateway:** Для проверок HTTP-01 рекомендуется выделенный шлюз, чтобы избежать смешивания трафика проверок с продуктовым.
-3. **Статус-фидбек:** Ошибки выпуска сертификатов теперь транслируются напрямую в `status.conditions` ресурсов Gateway и ListenerSet.
+*   **Scenario:** Gateway в namespace `infra` должен использовать TLS-секрет из namespace `app`.
+*   **Requirement:** В namespace `app` должен быть создан ресурс `ReferenceGrant`, разрешающий доступ группе `gateway.networking.k8s.io` к ресурсам типа `Secret`.
 
 ---
 
-## Практические сценарии
+## Технические особенности интеграции v1.21
 
-Подробные примеры настройки и манифесты (TLS Termination, Wildcard, ListenerSet) доступны в специализированном руководстве:
-
-- **[Практические сценарии](./practical_scenarios.md)**
+1.  **ARI (ACME Renewal Information):** cert-manager 1.21+ полностью интегрирован с ARI. При использовании `ListenerSet` контроллер автоматически учитывает рекомендации Let's Encrypt по окнам продления, минимизируя нагрузку на API.
+2.  **HTTP-01 ParentRef Fallback:** Для прохождения проверок HTTP-01 в условиях, когда приложение работает только на 443 порту, используется аннотация `acme.cert-manager.io/http01-parentreffallback`. Она позволяет использовать 80 порт родительского `Gateway` для размещения токенов ACME.
+3.  **Фидбек в статусе:** Состояние выпуска сертификата теперь транслируется в `status.conditions` ресурсов `Gateway` и `ListenerSet` (тип `ResolvedRefs` или `Ready`), что упрощает диагностику без обращения к логам cert-manager.
 
 ---
 
 ## Дополнительная информация
 
-### Версии и совместимость (на июль 2026 г.)
+### Версии и совместимость (2026 г.)
 
-| Компонент | Минимальная версия | Рекомендуемая | Примечание |
-| :--- | :--- | :--- | :--- |
-| **cert-manager** | 1.13+ | **1.20.2** | Поддержка ListenerSet и ARI |
-| **Gateway API CRD** | v1.0+ | **v1.5.0** | Требуется Standard install |
-| **Kubernetes** | 1.25+ | **1.30+** | Поддержка современных API-каналов |
-
-### Надёжность и свежесть данных
-
-- **Оценка надёжности:** 10 (SSoT: cert-manager.io + верификация через Web-поиск 2026).
-- **Класс актуальности:** Инструментальный (обновление требуется при выходе мажорных версий cert-manager или Gateway API).
-- **Последняя проверка:** Июль 2026.
+| Компонент | Минимальная версия | Рекомендация |
+| :--- | :--- | :--- |
+| **cert-manager** | 1.15+ | **1.21.0+** (ARI + Stable ListenerSet) |
+| **Gateway API CRD** | v1.0.0 | **v1.1.0+** (Standard Release) |
+| **Kubernetes** | 1.27+ | **1.30+** |
 
 ### Смотрите также
 
-- **[Gateway API: Дополнительные темы](./advanced_topics.md)** — диагностика и Hostname-конфликт.
-- **[Cert-manager: Определения](../../definitions.md)** — базовые концепции Issuer и Certificate.
-- **[Gateway API: Определения](../../../Networking/gateway_api/definitions.md)** — общие принципы маршрутизации.
+- **[Практические сценарии интеграции](./practical_scenarios.md)** — манифесты для Gateway, ListenerSet и HTTP-01/DNS-01.
+- **[Gateway API: Дополнительные темы](./advanced_topics.md)** — диагностика, конфликты Hostname и отладка.
+- **[Cert-manager: Определения](../../definitions.md)** — базовая теория Issuer и Certificate.
+- **[Gateway API: Официальная документация](../../../Networking/gateway_api/definitions.md)** — архитектура и ролевая модель.

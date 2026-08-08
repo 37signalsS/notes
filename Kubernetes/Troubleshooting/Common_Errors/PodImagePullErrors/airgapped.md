@@ -12,6 +12,8 @@
 
 **Перехват реестра (Registry Redirection)** — конфигурация рантайма контейнеров (containerd, CRI-O), позволяющая прозрачно перенаправлять запросы с публичных адресов (например, `docker.io`) на локальные зеркала без изменения манифестов подов.
 
+**Sandbox Image (Pause container)** — вспомогательный образ (обычно `registry.k8s.io/pause`), используемый Kubernetes для создания сетевого пространства имен пода. В air-gapped средах это критическая точка отказа, если рантайм пытается скачать его извне.
+
 ---
 
 ## Основные концепции
@@ -26,24 +28,60 @@
 | **Проблемы DNS** | `no such host` / `lookup failed` | Узлы кластера не могут разрешить имя локального реестра. |
 | **TLS/SSL ошибки** | `x509: certificate signed by unknown authority` | Отсутствие корневого CA локального реестра в доверенном хранилище узла. |
 | **Ошибка маршрутизации** | `connection timed out` | Сетевые политики (NetworkPolicies) или firewall блокируют доступ к реестру. |
+| **Sandbox Failure** | `failed to pull sandbox image` | Рантайм не может запустить под из-за отсутствия локального образа `pause`. |
 
-### Механизм переноса образов (Image Delivery Pipeline)
+### Проблема Sandbox Image (Pause container)
 
-Процесс доставки образов в закрытый контур требует промежуточного звена (Jump Host или переносной носитель):
+Для работы любого пода Kubelet требует наличия образа "паузы". По умолчанию рантайм пытается скачать его с `registry.k8s.io/pause`.
+В изолированной среде необходимо:
+1. Заранее загрузить образ `pause` в локальный реестр.
+2. Явно переопределить путь к нему в конфигурации рантайма (`containerd` или `CRI-O`) или через аргументы запуска `kubelet` (`--pod-infra-container-image`).
 
-1. **Экспорт (External):** Скачивание образа на хосте с интернетом. Использование `skopeo copy` предпочтительнее `docker save`, так как позволяет копировать образы напрямую между реестрами или в промежуточный формат без участия Docker-демона.
-2. **Транспортировка:** Физический перенос данных в контур.
-3. **Импорт (Internal):** Загрузка образа в локальный реестр.
-4. **Потребление:** `kubelet` запрашивает образ из локального источника.
+### Конфигурация рантайма: containerd
 
-### Конфигурация рантайма (containerd)
+Для современных версий containerd (1.5+) рекомендуется использовать систему `hosts.toml`, которая позволяет настраивать зеркала и параметры TLS без перезагрузки демона.
 
-Современные кластеры используют `containerd`. Для работы в air-gapped среде необходимо настроить зеркала в `/etc/containerd/config.toml` или через `hosts.toml` (для новых версий).
-
-Пример настройки зеркалирования для `docker.io`:
+**1. Включение поддержки в `/etc/containerd/config.toml`:**
 ```toml
-[plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-  endpoint = ["https://harbor.local/v2/proxy-docker-io"]
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "/etc/containerd/certs.d"
+```
+
+**2. Настройка зеркала для `docker.io` в `/etc/containerd/certs.d/docker.io/hosts.toml`:**
+```toml
+server = "https://registry-1.docker.io"
+
+[host."https://harbor.local/v2/proxy-docker-io"]
+  capabilities = ["pull", "resolve"]
+```
+
+**3. Переопределение Sandbox Image:**
+В `/etc/containerd/config.toml`:
+```toml
+[plugins."io.containerd.grpc.v1.cri"]
+  sandbox_image = "harbor.local/k8s/pause:3.9"
+```
+
+### Конфигурация рантайма: CRI-O
+
+CRI-O использует файл `/etc/containers/registries.conf` (или файлы в `/etc/containers/registries.conf.d/`) для управления зеркалами.
+
+Пример настройки в формате TOML:
+```toml
+[[registry]]
+location = "docker.io"
+
+[[registry.mirror]]
+location = "harbor.local/v2/proxy-docker-io"
+
+[unqualified-search-registries]
+registries = ['harbor.local', 'docker.io']
+```
+
+Переопределение образа паузы в `/etc/crio/crio.conf`:
+```toml
+[crio.image]
+pause_image = "harbor.local/k8s/pause:3.9"
 ```
 
 ---
@@ -52,40 +90,72 @@
 
 ### Сценарий 1: Синхронизация образов через Skopeo
 
-`skopeo` — более эффективный инструмент, чем связка `docker save/load`, так как он работает с манифестами напрямую.
+`skopeo` — основной инструмент для air-gapped сред. Он позволяет работать с образами без локального Docker-демона.
 
-**На хосте с интернетом:**
+**1. Копирование одного образа (с поддержкой всех архитектур):**
 ```bash
-# Сохранение образа в локальную директорию в формате OCI
-skopeo copy docker://docker.io/library/nginx:1.25 dir:/tmp/nginx-image
+# --all копирует все платформы (amd64, arm64 и т.д.), что критично для мультиплатформенных кластеров
+skopeo copy --all docker://docker.io/library/nginx:1.25 dir:/tmp/nginx-image
 ```
 
-**В закрытом контуре:**
+**2. Массовая синхронизация (skopeo sync):**
+Позволяет синхронизировать целые репозитории или списки образов.
 ```bash
-# Загрузка из директории в локальный Harbor
-skopeo copy --dest-tls-verify=false dir:/tmp/nginx-image docker://harbor.local/library/nginx:1.25
+# Файл images.yaml
+# docker.io/library:
+#   images:
+#     nginx: [ "1.25", "latest" ]
+#     redis: [ "7.0" ]
+
+skopeo sync --all --src yaml --dest docker images.yaml harbor.local/library
 ```
 
-### Сценарий 2: Добавление CA сертификата реестра на узлы
+### Сценарий 2: Добавление сертификата и аутентификация
 
-Если локальный реестр использует самоподписанный сертификат, загрузка образа завершится ошибкой `x509`.
+Если локальный реестр защищен паролем и использует самоподписанный TLS, настройки выполняются в `hosts.toml` (для containerd).
 
-**Действия на каждом узле кластера:**
-1. Скопировать сертификат в `/usr/local/share/ca-certificates/registry.crt`.
-2. Обновить хранилище: `update-ca-certificates`.
-3. Перезапустить рантайм: `systemctl restart containerd`.
-
-**Альтернатива для containerd (без изменения системного хранилища):**
-Создать файл `/etc/containerd/certs.d/harbor.local/hosts.toml`:
+**Конфигурация `/etc/containerd/certs.d/harbor.local/hosts.toml`:**
 ```toml
 server = "https://harbor.local"
+
 [host."https://harbor.local"]
+  capabilities = ["pull", "resolve"]
+  # Путь к CA сертификату для этого конкретного хоста
   ca = "/etc/containerd/certs.d/harbor.local/ca.crt"
+  
+  [host."https://harbor.local".header]
+    # base64(username:password)
+    authorization = "Basic dXNlcm5hbWU6cGFzc3dvcmQ="
 ```
 
 ### Сценарий 3: Использование ImagePolicyWebhook
 
 В крупных организациях для автоматической подмены путей к образам (например, с `docker.io/nginx` на `internal-registry.io/nginx`) используется **ImagePolicyWebhook** или мутирующие Admission-контроллеры (Kyverno, Gatekeeper). Это позволяет разработчикам использовать стандартные манифесты, которые автоматически корректируются под инфраструктуру air-gapped.
+
+### Сценарий 4: Диагностика и проверка через crictl
+
+`crictl` — CLI для взаимодействия с CRI-совместимыми рантаймами. Он позволяет проверить настройки "глазами" Kubernetes, минуя Docker.
+
+**1. Проверка настроек рантайма:**
+```bash
+# Проверка используемого sandbox_image
+crictl info | grep -A 5 "sandboxImage"
+```
+
+**2. Ручная проверка загрузки образа:**
+```bash
+# Тестовый пулл образа через рантайм
+# Если зеркала настроены верно, запрос к docker.io уйдет на локальный реестр
+crictl pull docker.io/library/nginx:1.25
+```
+
+**3. Просмотр логов рантайма:**
+Если пулл не удается, причины (DNS, TLS, Auth) будут видны в системном логе:
+```bash
+journalctl -u containerd -f
+# или
+journalctl -u crio -f
+```
 
 ---
 
@@ -93,8 +163,11 @@ server = "https://harbor.local"
 
 ### Связанные темы
 
-- [Kubespray: Offline установка](../../Installation/Kubespray/offline_installation/offline_definitions.md) — особенности развертывания кластера в изоляции.
+- [Kubespray: Offline установка](../../../Installation/Kubespray/offline_installation/offline_definitions.md) — базовые понятия и подготовка артефактов для оффлайн-кластера.
+- [Kubespray: Диагностика оффлайн-установки](../../../Installation/Kubespray/offline_installation/troubleshooting.md) — решение проблем с Cilium digest и доверием к сертификатам.
 - [Определения и терминология](./definitions.md) — базовые статусы `ErrImagePull` и `ImagePullBackOff`.
-- [Harbor: Обзор](../../../../Docker/Docker_registries/Harbor/overview.md) — настройка и эксплуатация корпоративного реестра.
+- [Harbor: Обзор](../../../../Docker/Docker_registries/Harbor/overview.md) — настройка и эксплуатация корпоративного реестра образов.
+- [Longhorn: Установка в закрытом контуре](../../../Storage/longhorn-air-gapped.md) — практический пример массового переноса образов и деплоя в изоляции.
 - [Пошаговая диагностика](./diagnostics.md) — общий алгоритм поиска причин ошибок загрузки.
 - [Сетевые проблемы](./network_issues.md) — отладка DNS и прокси в Kubernetes.
+- [Среды выполнения контейнеров](../../../Concepts/container_runtime.md) — архитектура CRI, containerd и CRI-O.

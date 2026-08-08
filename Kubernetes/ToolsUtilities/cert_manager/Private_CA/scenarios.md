@@ -12,149 +12,123 @@
 
 При настройке внутренних сертификатов рекомендуется использовать современные стандарты безопасности и совместимости:
 
-| Параметр | Назначение | Рекомендация |
+| Параметр | Назначение | Рекомендация (2026) |
 | :--- | :--- | :--- |
 | `isCA: true` | Позволяет использовать сертификат для подписи других сертификатов | Обязательно для Root и Intermediate CA |
-| `rotationPolicy: Always` | Генерирует новый закрытый ключ при каждом обновлении сертификата | **Обязательно** для повышения безопасности |
-| `privateKey.algorithm: ECDSA` | Современный алгоритм (P-256/P-384) | Рекомендуется вместо RSA (быстрее, меньше размер) |
-| `privateKey.encoding: PKCS8` | Формат хранения закрытого ключа | Обязательно для Java-стека (Spring, Elasticsearch, Kafka) |
-| `duration` | Срок жизни сертификата | CA: 2–5 лет, Сервисы: 90 дней – 1 год |
+| `rotationPolicy: Always` | Генерирует новый закрытый ключ при каждом обновлении сертификата | **Обязательно** для всех уровней, кроме Root |
+| `privateKey.algorithm: Ed25519` | Наиболее современный и быстрый алгоритм | Рекомендуется для mTLS и внутреннего трафика |
+| `privateKey.encoding: PKCS8` | Формат хранения закрытого ключа | Стандарт для Java (Spring, Kafka, Elasticsearch) |
+| `duration` | Срок жизни сертификата | Root: 5 лет, Intermediate: 1 год, Сервисы: 7–30 дней |
 | `dnsNames` | Список имен (SAN) | Для K8s: `svc`, `svc.ns.svc`, `svc.ns.svc.cluster.local` |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Базовый локальный CA (Namespace-scoped)
+### Сценарий 1: Двухуровневая иерархия (Root -> Intermediate -> Service)
 
-**Цель:** Создать изолированный центр сертификации для сервисов в одном пространстве имен.
+**Цель:** Обеспечить максимальную безопасность за счет изоляции корневого ключа и делегирования выпуска промежуточному CA.
 
-#### 1. Создание самоподписанного Issuer (Self-signed)
-
-Этот Issuer используется только один раз — для подписи самого корневого сертификата.
+#### 1. Создание Root CA (Корневой уровень)
 
 ```yaml
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: selfsigned-ca-issuer
-  namespace: my-app
-spec:
-  selfSigned: {}
-```
-
-#### 2. Выпуск корневого сертификата (Root CA)
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: my-root-ca
-  namespace: my-app
-spec:
-  isCA: true
-  commonName: "my-root-ca"
-  secretName: my-root-ca-secret
-  duration: 43800h # 5 лет
-  renewBefore: 2160h # 90 дней
-  privateKey:
-    algorithm: ECDSA
-    size: 256
-    encoding: PKCS8
-    rotationPolicy: Always
-  issuerRef:
-    name: selfsigned-ca-issuer
-    kind: Issuer
-```
-
-#### 3. Создание рабочего CA Issuer
-
-Этот Issuer будет подписывать сертификаты приложений, используя секрет от Root CA.
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: my-ca-issuer
-  namespace: my-app
-spec:
-  ca:
-    secretName: my-root-ca-secret
-```
-
-#### 4. Выпуск сертификата сервиса
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: my-service-tls
-  namespace: my-app
-spec:
-  secretName: my-service-tls-secret
-  duration: 2160h # 90 дней
-  renewBefore: 360h # 15 дней
-  privateKey:
-    rotationPolicy: Always
-    encoding: PKCS8
-  issuerRef:
-    name: my-ca-issuer
-    kind: Issuer
-  commonName: "my-service"
-  dnsNames:
-    - my-service
-    - my-service.my-app.svc.cluster.local
-```
-
----
-
-### Сценарий 2: Глобальный ClusterIssuer с дистрибуцией доверия
-
-**Цель:** Создать единый CA для всего кластера и автоматически распространить его публичный ключ (CA Bundle) во все Namespace через **trust-manager**.
-
-#### 1. Иерархия ClusterIssuer
-
-Все ресурсы создаются в системном пространстве имен (например, `cert-manager`).
-
-```yaml
-# 1. Самоподписанный ClusterIssuer для Root CA
+# 1. Самоподписанный Issuer для Root CA
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: cluster-selfsigned-issuer
+  name: root-selfsigned-issuer
 spec:
   selfSigned: {}
 ---
-# 2. Корневой сертификат (Root CA) в системном namespace
+# 2. Корневой сертификат (Root CA)
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: cluster-root-ca
+  name: root-ca
   namespace: cert-manager
 spec:
   isCA: true
-  commonName: "cluster-root-ca"
-  secretName: cluster-root-ca-secret
+  commonName: "internal-root-ca"
+  secretName: root-ca-secret
+  duration: 43800h # 5 лет
   privateKey:
     algorithm: ECDSA
-    rotationPolicy: Always
+    size: 384
+    rotationPolicy: Never # Root CA ротируется вручную
   issuerRef:
-    name: cluster-selfsigned-issuer
+    name: root-selfsigned-issuer
     kind: ClusterIssuer
 ---
-# 3. Глобальный CA Issuer для приложений
+# 3. Issuer корневого уровня
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: global-ca-issuer
+  name: root-ca-issuer
 spec:
   ca:
-    secretName: cluster-root-ca-secret
+    secretName: root-ca-secret
 ```
 
-#### 2. Дистрибуция доверия через trust-manager
+#### 2. Создание Intermediate CA (Промежуточный уровень)
 
-Чтобы приложения доверяли этому CA, его публичную часть нужно доставить в каждый Namespace.
+```yaml
+# 1. Сертификат Intermediate CA, подписанный Root CA
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: intermediate-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: "team-alpha-intermediate-ca"
+  secretName: intermediate-ca-secret
+  duration: 8760h # 1 год
+  renewBefore: 720h # 30 дней
+  privateKey:
+    algorithm: Ed25519
+    rotationPolicy: Always
+  issuerRef:
+    name: root-ca-issuer
+    kind: ClusterIssuer
+---
+# 2. Issuer промежуточного уровня для выпуска сертификатов сервисов
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: intermediate-ca-issuer
+spec:
+  ca:
+    secretName: intermediate-ca-secret
+```
+
+#### 3. Выпуск сертификата сервиса
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: alpha-service-tls
+  namespace: team-alpha
+spec:
+  secretName: alpha-service-tls-secret
+  duration: 720h # 30 дней
+  renewBefore: 168h # 7 дней
+  privateKey:
+    algorithm: Ed25519
+    rotationPolicy: Always
+  issuerRef:
+    name: intermediate-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+    - alpha-service
+    - alpha-service.team-alpha.svc.cluster.local
+```
+
+---
+
+### Сценарий 2: Глобальная дистрибуция через trust-manager
+
+**Цель:** Сделать корневой сертификат доверенным во всех Namespace кластера без ручного копирования.
 
 ```yaml
 apiVersion: trust.cert-manager.io/v1alpha1
@@ -163,60 +137,78 @@ metadata:
   name: global-trust-bundle
 spec:
   sources:
+  - useDefaultCAs: true  # Включить системные сертификаты (Let's Encrypt и др.)
   - secret:
-      name: cluster-root-ca-secret
+      name: root-ca-secret
       key: ca.crt
   target:
     configMap:
-      key: "ca-certificates.crt" # Будет создан во всех namespaces
+      key: "ca-certificates.crt" # Будет создан во всех Namespaces
+    # Опционально: фильтрация по Namespace
+    # namespaceSelector:
+    #   matchLabels:
+    #     trust: "enabled"
 ```
 
 ---
 
-### Сценарий 3: Private CA для Java-приложений (Elasticsearch/Kafka)
+### Сценарий 3: Интеграция с Java (Elasticsearch/Kafka) через JKS/PKCS12
 
-Для систем на базе JVM критически важен формат **PKCS8** и наличие полной цепочки.
+Для Java-приложений cert-manager может автоматически генерировать Keystore и Truststore.
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: elasticsearch-node-tls
-  namespace: database
+  name: kafka-node-tls
+  namespace: messaging
 spec:
-  secretName: elasticsearch-node-tls
-  duration: 8760h
+  secretName: kafka-node-tls-secret
+  duration: 2160h
   privateKey:
-    algorithm: RSA # Некоторые старые версии Java требуют RSA
+    algorithm: RSA # RSA 2048 остается стандартом совместимости для некоторых JVM
     size: 2048
-    encoding: PKCS8 # Обязательно для Java
+    encoding: PKCS8
     rotationPolicy: Always
+  # Автоматическая генерация хранилищ для Java
+  keystores:
+    jks:
+      create: true
+      passwordSecretRef:
+        name: jks-password
+        key: password
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: jks-password
+        key: password
   issuerRef:
-    name: global-ca-issuer
+    name: intermediate-ca-issuer
     kind: ClusterIssuer
-  commonName: "elasticsearch-node-1"
-  subject:
-    organizations:
-      - "Database-Cluster"
+  commonName: "kafka-node-1"
   dnsNames:
-    - elasticsearch-node-1.database.svc
+    - kafka-node-1.messaging.svc.cluster.local
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Сравнение подходов
+### Сравнение алгоритмов (2026)
 
-| Сценарий | Преимущества | Недостатки |
-| :--- | :--- | :--- |
-| **Namespace Issuer** | Максимальная изоляция, безопасность | Трудно управлять доверием между разными NS |
-| **ClusterIssuer** | Простота использования для всего кластера | Единая точка отказа при компрометации ключа |
-| **trust-manager** | Автоматизация доставки доверия (SSoT) | Требует установки дополнительного компонента |
+| Алгоритм | Производительность | Совместимость | Рекомендация |
+| :--- | :--- | :--- | :--- |
+| **Ed25519** | Максимальная (mTLS) | Современное ПО (Go, Rust, Python) | **Default для mTLS** |
+| **ECDSA (P-256)** | Высокая | Почти везде (Nginx, Envoy, Java 11+) | Баланс скорости и совместимости |
+| **RSA 4096** | Низкая | Универсальная | Только для внешних Root CA |
+
+### Особенности ротации Intermediate CA
+
+При ротации промежуточного CA (Intermediate) сертификаты сервисов продолжат работать до своего истечения, если они были подписаны старым Intermediate, а Root CA не менялся. Однако для обеспечения консистентности рекомендуется перевыпустить все зависимые сертификаты сразу после обновления Intermediate через `cmctl renew --all`.
 
 ### Смотрите также
 
 - **[Приватный CA: Обзор](./index.md)** — архитектура и выбор типа Issuer
 - **[Приватный CA: Операции](./operations.md)** — ротация корневого CA и отладка
-- **[trust-manager: Документация](./trust-manager.md)** — детальная настройка дистрибуции
+- **[trust-manager: Настройка](./scenarios.md#сценарий-2-глобальная-дистрибуция-через-trust-manager)** — детальная настройка дистрибуции в кластере.
 - **[Cert-manager: Troubleshooting](../Administration/troubleshooting.md)** — решение проблем выпуска

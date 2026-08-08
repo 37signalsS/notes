@@ -2,115 +2,114 @@
 
 ## Определения
 
-**Высокая доступность (High Availability, HA)** в контексте Grafana — архитектурный подход, обеспечивающий бесперебойную работу системы мониторинга при отказе одного или нескольких узлов. Реализуется через развертывание нескольких stateless-экземпляров приложения за балансировщиком нагрузки с использованием внешних хранилищ состояния (БД, Redis).
+**Высокая доступность (High Availability, HA)** в Grafana — архитектурное решение, обеспечивающее непрерывную работу системы визуализации и алертинга при отказе одного или нескольких узлов. 
 
-**Связанные темы:**
-- [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
-- [Провиженинг](./grafana_provisioning.md) — автоматизация конфигурации в HA
-- [Обзор High Availability](../Concepts/High_Availability/ha_overview.md) — общие принципы отказоустойчивости
+**Ключевые принципы реализации:**
+- **Stateless-узлы:** Все запущенные экземпляры Grafana идентичны и не хранят уникальное состояние локально.
+- **Разделяемое состояние (Shared State):** Использование внешних отказоустойчивых систем для хранения конфигураций, сессий и кэша.
+- **Дедупликация алертов:** Межсерверная коммуникация для предотвращения отправки повторяющихся уведомлений.
+
+**Текущая версия (август 2026):** Grafana 13.1.x.
 
 ## Базовые концепции
 
-### Архитектура HA в Grafana 13.x
+### Архитектура "Три столпа"
 
-Современная архитектура HA Grafana опирается на три столпа: общая база данных, внешнее хранилище сессий и межсерверная коммуникация для алертинга.
+Надежный HA-кластер Grafana опирается на три независимых слоя хранения данных:
 
-1. **Внешняя БД (Configuration Storage):** PostgreSQL или MySQL для хранения дашбордов, пользователей и настроек. SQLite в HA не поддерживается.
-2. **Remote Cache / Session Storage:** Использование Redis для хранения сессий пользователей и временных данных. Это позволяет избежать зависимости от «липких сессий» (Sticky Sessions) на балансировщике.
-3. **Alerting HA (Gossip Protocol):** Узлы обмениваются состоянием алертов через Memberlist (порт 9094) для предотвращения дублирования уведомлений.
+1.  **База данных конфигураций (Configuration Storage):** Хранит дашборды, пользователей и настройки алертов. Допускается только **PostgreSQL** (рекомендуется v15+) или **MySQL**. SQLite в режиме HA не поддерживается из-за ограничений на одновременную запись.
+2.  **Удаленный кэш и сессии (Remote Cache):** **Redis Cluster** или **Sentinel** используются для хранения пользовательских сессий. Это позволяет балансировщику распределять запросы в режиме Round Robin без использования "липких сессий" (Sticky Sessions).
+3.  **Хранилище артефактов (Object Storage):** Для хранения скриншотов панелей, прикрепляемых к алертам, используются облачные хранилища (**S3**, **GCS**, **Azure Blob**) или общая файловая система (NFS/CephFS).
 
-### Ключевые компоненты
+### Single-Node Evaluation (SNE)
 
-| Компонент | Назначение | Рекомендация |
+Начиная с версии 13.0, Grafana поддерживает режим **Single-Node Evaluation** для системы оповещений. 
+- **Проблема:** В классическом HA каждый узел выполняет все алерты, что создает избыточную нагрузку на источники данных (Prometheus, ClickHouse).
+- **Решение:** В режиме SNE кластер выбирает "Primary"-узел (Position 0), который выполняет вычисления, а остальные узлы работают в режиме ожидания или распределенной обработки, получая результаты через Gossip-протокол.
+
+### Ключевые компоненты кластера
+
+| Компонент | Роль в системе | Требование к отказоустойчивости |
 | :--- | :--- | :--- |
-| **Load Balancer** | L7-балансировка (HTTP/HTTPS) | Nginx, HAProxy, AWS ALB |
-| **Grafana Nodes** | 2 или более идентичных узла | Минимум 3 для кворума в алертинге |
-| **Shared Database** | Основное хранилище настроек | PostgreSQL 16+ (Patroni) |
-| **Redis** | Хранение сессий и кэширование | Redis Cluster или Sentinel |
+| **Load Balancer** | Точка входа для пользователей и API | L7 (Nginx/HAProxy) с проверкой `/api/health` |
+| **Grafana Nodes** | Выполнение логики и рендеринг | Минимум 2 узла (рекомендуется 3 для кворума) |
+| **PostgreSQL** | Персистентность настроек | Кластер на базе Patroni или Managed Service |
+| **Redis** | Кэширование и сессии | Redis Sentinel или Cluster |
+| **Memberlist** | Gossip-протокол (порт 9094) | Открытые порты TCP/UDP между всеми узлами |
 
 ## Практические сценарии
 
-### Конфигурация HA (grafana.ini)
+### Конфигурация кластера (grafana.ini)
 
-Для корректной работы кластера необходимо синхронизировать настройки безопасности и подключить внешние хранилища.
+Для сборки HA-кластера необходимо синхронизировать `secret_key` и настроить внешние бэкенды.
 
 ```ini
 [database]
 type = postgres
-host = postgres-ha-proxy:5432
+host = postgres-ha-lb:5432
 name = grafana
 user = grafana_user
 password = grafana_password
-# Включает распределенные блокировки для фоновых задач
+# Включает механизмы распределенных блокировок
 high_availability = true
 
 [remote_cache]
-# Рекомендуется для HA вместо базы данных
 type = redis
-connstr = addr=redis-ha-proxy:6379,pool_size=100,db=0
+connstr = addr=redis-cluster:6379,pool_size=100,db=0
 
 [session]
-# Использование Redis для сессий позволяет балансировщику работать в режиме Round Robin
 provider = redis
-provider_config = addr=redis-ha-proxy:6379,pool_size=100,prefix=grafana_sess
+provider_config = addr=redis-cluster:6379,pool_size=100,prefix=grafana_sess
 
 [security]
-# КЛЮЧЕВОЙ ПАРАМЕТР: должен быть идентичен на всех узлах
-secret_key = <your_random_long_string>
-```
+# Должен быть идентичен на всех узлах для валидации Cookie/JWT
+secret_key = <long_random_string_from_vault>
 
-### Настройка Unified Alerting HA
-
-В версии 13.x Grafana использует Gossip-протокол для дедупликации уведомлений.
-
-**Настройка через Memberlist:**
-Каждый узел должен знать о соседях. В Kubernetes это обычно решается через headless service.
-```ini
 [unified_alerting]
 enabled = true
-# Список IP или DNS-имен других узлов кластера
-ha_peers = grafana-node-1:9094, grafana-node-2:9094
+# Включение режима Single-Node Evaluation (v13+)
+ha_single_node_evaluation = true
+# Настройка Gossip-протокола
 ha_listen_address = 0.0.0.0:9094
-
-# Новинка v13: Single-node Evaluation
-# Снижает нагрузку на Prometheus, вычисляя алерты только на одном (primary) узле
-ha_evaluation_mode = single-node
+# В K8s используется DNS headless-сервиса
+ha_peers = grafana-headless.monitoring.svc.cluster.local:9094
 ```
 
-**Примечание по сети:** Убедитесь, что порт **9094 (TCP и UDP)** открыт между всеми узлами Grafana.
+### Мониторинг здоровья HA-кластера
 
-### Развертывание в Docker Compose (HA-стек)
+Для отладки и мониторинга состояния кластера используются внутренние метрики Grafana (экспортируются на `/metrics`):
+
+- `grafana_alertmanager_cluster_members` — количество активных узлов в Gossip-сети.
+- `grafana_alerting_ha_single_node_evaluation_position` — роль узла (0 — Primary, выполняющий алерты).
+- `grafana_alerting_ha_single_node_evaluation_broadcast_dropped_total` — индикатор перегрузки очереди широковещательных сообщений (сигнал к увеличению `ha_single_evaluation_alert_broadcast_queue_size`).
+
+### Развертывание в Docker Compose
+
+Пример минимального HA-стека для тестирования:
 
 ```yaml
 services:
-  grafana-1: &grafana_base
-    image: grafana/grafana:13.1.1
+  grafana-node-1: &grafana_template
+    image: grafana/grafana:13.1.x
     environment:
       - GF_DATABASE_TYPE=postgres
-      - GF_DATABASE_HOST=postgres:5432
+      - GF_DATABASE_HOST=db:5432
+      - GF_SECURITY_SECRET_KEY=supersecret
       - GF_REMOTE_CACHE_TYPE=redis
       - GF_REMOTE_CACHE_CONNSTR=addr=redis:6379
-      - GF_SECURITY_SECRET_KEY=secret_123
-      - GF_UNIFIED_ALERTING_HA_PEERS=grafana-2:9094
-    ports: [ "3001:3000", "9094:9094" ]
+      - GF_UNIFIED_ALERTING_HA_PEERS=grafana-node-2:9094
+    ports: [ "3001:3000" ]
 
-  grafana-2:
-    <<: *grafana_base
+  grafana-node-2:
+    <<: *grafana_template
     environment:
-      - GF_DATABASE_TYPE=postgres
-      - GF_DATABASE_HOST=postgres:5432
-      - GF_REMOTE_CACHE_TYPE=redis
-      - GF_REMOTE_CACHE_CONNSTR=addr=redis:6379
-      - GF_SECURITY_SECRET_KEY=secret_123
-      - GF_UNIFIED_ALERTING_HA_PEERS=grafana-1:9094
-    ports: [ "3002:3000", "9095:9094" ]
+      - GF_UNIFIED_ALERTING_HA_PEERS=grafana-node-1:9094
+    ports: [ "3002:3000" ]
 
-  postgres:
-    image: postgres:16
+  db:
+    image: postgres:16-alpine
     environment:
-      - POSTGRES_DB=grafana
-      - POSTGRES_USER=grafana_user
-      - POSTGRES_PASSWORD=grafana_password
+      POSTGRES_DB: grafana
 
   redis:
     image: redis:7-alpine
@@ -120,21 +119,12 @@ services:
 
 ### Рекомендации по эксплуатации
 
-- **Синхронизация времени:** Используйте NTP. Разница во времени между узлами > 500мс приведет к дублированию алертов.
-- **Sticky Sessions:** При использовании Redis для сессий липкие сессии **не обязательны**, но рекомендуются для оптимизации работы Grafana Live (WebSockets).
-- **База данных:** PostgreSQL является критической точкой отказа. Используйте **Patroni** для обеспечения HA на уровне СУБД.
-- **Изоляция:** Если Grafana используется для критических алертов, не перегружайте ее тяжелыми ad-hoc запросами.
+- **Синхронизация времени:** Разница во времени между узлами более 500 мс гарантированно приводит к "дребезгу" алертов и дублированию уведомлений. Использование NTP/Chrony обязательно.
+- **Split-Brain:** Для предотвращения ситуации, когда два узла считают себя Primary, всегда используйте нечетное количество узлов (3 и более) и надежное DNS-имя для `ha_peers`.
+- **База данных:** PostgreSQL является единственным источником истины. Убедитесь, что лимит соединений (`max_connections`) на стороне СУБД достаточен для всех узлов Grafana с учетом их пулов соединений.
+- **Сетевая доступность:** Порт **9094** должен быть доступен по **TCP** (для надежной передачи) и **UDP** (для gossip-трафика).
 
-### Контрольный список (HA Checklist)
-
-- [ ] Идентичный `secret_key` на всех узлах.
-- [ ] Внешняя БД в отказоустойчивом режиме.
-- [ ] Redis подключен для сессий и кэша.
-- [ ] Порт 9094 открыт (TCP/UDP) для Alerting HA.
-- [ ] Настроены Health Checks (`/api/health`) на балансировщике.
-- [ ] Все узлы синхронизированы по времени (NTP).
-
-**Ссылки:**
-- [Официальная документация Grafana HA](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/high-availability/)
-- [Настройка Unified Alerting HA](https://grafana.com/docs/grafana/latest/alerting/set-up/high-availability/)
-- [Репозиторий Patroni (PostgreSQL HA)](https://github.com/zalando/patroni)
+**См. также:**
+- [Grafana: Обзор](./grafana_overview.md)
+- [Обзор High Availability](../Concepts/High_Availability/ha_overview.md)
+- [PostgreSQL HA: Обзор](../Databases/PostgreSQL/Concepts/high_availability.md)

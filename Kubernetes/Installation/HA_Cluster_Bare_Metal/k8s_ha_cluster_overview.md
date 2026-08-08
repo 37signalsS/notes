@@ -2,17 +2,15 @@
 
 ## Определения
 
-**Bare-Metal** — физические серверы без гипервизора. Обеспечивают максимальную производительность, но требуют ручного управления инфраструктурой и отказами.
+**Bare-Metal** — физические серверы без слоя виртуализации. Обеспечивают максимальную производительность и прямой доступ к ресурсам, но требуют автономного управления жизненным циклом (IPMI, PXE) и обработки отказов на уровне ОС.
 
-**kubeadm** — официальный инструмент для bootstrapping production-ready кластеров Kubernetes. Фокус на командах `init` и `join`. Подробнее: [kubeadm quickstart](../kubeadm/index.md).
+**kubeadm** — стандартная утилита для развертывания кластеров Kubernetes. В 2026 году (v1.35+) поддерживает расширенные функции жизненного цикла, включая автоматическую ротацию сертификатов и интеграцию с внешними etcd. Подробнее: [Индекс kubeadm](../kubeadm/index.md).
 
-**containerd** — высокоуровневая CRI-совместимая среда выполнения контейнеров. Проект CNCF, стандарт для Kubernetes. Подробнее: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md).
+**containerd** — индустриальный стандарт среды выполнения контейнеров. В современных инсталляциях используется с поддержкой плагинов для расширенной изоляции (например, gVisor или Kata Containers через RuntimeClass).
 
-**Высокая доступность (High-Availability, HA)** — свойство системы непрерывно выполнять функции при отказах компонентов. Достигается дублированием Control Plane и использованием балансировщика. Базовые концепции: [HA Overview](../../../Concepts/High_Availability/ha_overview.md).
+**Высокая доступность (High-Availability, HA)** — архитектурный подход, исключающий единую точку отказа (SPoF). Для Kubernetes это означает наличие 3+ узлов Control Plane и отказоустойчивой точки входа (Endpoint). Базовые принципы: [Обзор HA](../../../Concepts/High_Availability/ha_overview.md).
 
-**CRI (Container Runtime Interface)** — API Kubernetes для взаимодействия `kubelet` со средами выполнения (`containerd`, `CRI-O`). Спецификация: [CRI и OCI](../../../Docker/alternative_runtimes_and_tools.md#стандарты-cri-и-oci).
-
-**Control Plane Endpoint** — стабильная точка входа (VIP:PORT или DNS) для доступа к API-серверу через балансировщик нагрузки.
+**Control Plane Endpoint** — виртуальный адрес (VIP) или DNS-имя, которое всегда указывает на доступные экземпляры API-сервера.
 
 ---
 
@@ -20,118 +18,88 @@
 
 ### Архитектура HA кластера
 
-Для bare-metal используется схема **stacked Control Plane**: `etcd` и компоненты Control Plane размещаются на одних узлах.
+Для bare-metal наиболее распространена схема **Stacked Control Plane**, где база данных `etcd` работает на тех же узлах, что и управляющие компоненты.
 
-#### Ключевые компоненты
+#### Ключевые компоненты отказоустойчивости
 
-1. **Балансировщик нагрузки (L4 Load Balancer)**
-   - Распределяет TCP-трафик на порт `6443` между всеми `kube-apiserver`
-   - Примеры: HAProxy, Nginx, F5, облачные NLB
-   - Должен быть отказоустойчивым (например, связка Keepalived + HAProxy)
-   - Подробнее: [Keepalived + HAProxy для HA](../kubeadm/index.md)
+1.  **Балансировка нагрузки API (L4 Load Balancer)**
+    - **Классический подход**: Связка `Keepalived` (для VIP) и `HAProxy` (для балансировки на порт 6443).
+    - **Современный подход**: [**kube-vip**](../kubeadm/ha_concepts.md#альтернатива-kube-vip) — cloud-native решение, работающее как Static Pod. Оно управляет VIP и может анонсировать маршруты через BGP.
+    - **Локальная балансировка**: `kube-proxy` или `node-local-dns` на worker-узлах могут работать в паре с локальным балансировщиком для снижения нагрузки на центральный VIP.
 
-2. **Виртуальный IP (VIP)**
-   - "Плавающий" IP, не привязанный к одному серверу
-   - Мигрирует между узлами при отказе (протокол VRRP через Keepalived)
-   - Все клиенты (`kubectl`, `kubelet`, `kubeadm join`) используют VIP
+2.  **Плоскость управления (Control Plane Nodes)**
+    - Минимум **3 узла** для обеспечения кворума etcd.
+    - **Статус компонентов**: `kube-apiserver` является stateless-компонентом, тогда как `kube-scheduler` и `kube-controller-manager` используют механизм выбора лидера (Leader Election).
+    - **Требования к etcd**: Критически важна низкая задержка дисковой подсистемы (рекомендуется NVMe) и стабильность сети между мастерами (Latency < 10ms).
 
-3. **Control Plane Nodes (мастер-узлы)**
-   - Минимум **3 узла** для кворума etcd
-   - Нечётное количество: 3, 5, 7 (требование алгоритма Raft)
-   - Каждый запускает: `etcd`, `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`
+3.  **Сетевая связность (CNI)**
+    - В HA-средах CNI должен поддерживать отказоустойчивость путей передачи трафика. [Calico](../cni_installation.md) часто выбирается за счет поддержки BGP-пиринга с физическим оборудованием.
 
-4. **Worker Nodes (рабочие узлы)**
-   - Подключаются через VIP к Control Plane
-   - Запускают пользовательские workload в подах
+### Топологии размещения etcd
 
-### Топологии Control Plane
-
-| Топология | Описание | Применение |
+| Характеристика | Stacked etcd (Совмещенный) | External etcd (Выделенный) |
 | :--- | :--- | :--- |
-| **Stacked etcd** | `etcd` на тех же узлах, что и Control Plane | Стандарт для kubeadm, меньше серверов |
-| **External etcd** | `etcd` на выделенных узлах | Production с высокими требованиями |
+| **Ресурсы** | Экономия серверов (мин. 3) | Требует больше железа (мин. 3+3) |
+| **Изоляция** | API и etcd делят CPU/RAM/Disk | Полная изоляция ресурсов |
+| **Сложность** | Настраивается через `kubeadm` автоматически | Требует отдельного управления сертификатами |
+| **Масштабируемость** | Ограничена ресурсами узла | Позволяет масштабировать etcd независимо |
 
-Подробнее: [Архитектура Control Plane](../../Concepts/control_plane_architecture.md), [etcd overview](../../Concepts/etcd_overview.md).
-
-### Почему 3 мастер-узла?
-
-- **Кворум etcd**: `(N/2) + 1` — большинство для записи
-- **3 узла**: переживают отказ 1 узла
-- **5 узлов**: переживают отказ 2 узлов
-- **Чётное число**: не добавляет отказоустойчивости, но требует больше ресурсов
+Подробнее: [Сценарии etcd](../../Concepts/etcd_overview.md), [Архитектура Control Plane](../../Concepts/control_plane_architecture.md).
 
 ---
 
 ## Практические сценарии
 
-### Этапы развёртывания HA кластера
+### Жизненный цикл развёртывания HA кластера
 
-Полный процесс развёртывания включает 8 шагов. Детальные инструкции — в соответствующих руководствах:
+Процесс состоит из последовательных фаз, каждая из которых описана в детальных руководствах:
 
-1. **Подготовка узлов** — настройка ОС, cgroups, sysctl ([требования](./k8s_ha_environment_requirements.md), [подготовка](./k8s_ha_node_preparation.md))
-2. **Установка containerd** — настройка CRI ([инструкция](./k8s_ha_component_installation.md))
-3. **Установка kubeadm/kubelet/kubectl** — установка компонентов
-4. **Настройка балансировщика** — Keepalived + HAProxy для VIP ([инструкция](../kubeadm/ha_concepts.md))
-5. **Инициализация первого мастера** — `kubeadm init` с `--control-plane-endpoint` ([инструкция](./control_plane_initialization.md))
-6. **Установка CNI** — Calico или другой плагин ([инструкция](./cni_installation.md))
-7. **Присоединение мастеров** — `kubeadm join` с `--control-plane` ([инструкция](./node_joining.md))
-8. **Присоединение воркеров** — `kubeadm join` без дополнительных флагов
+1.  **Окружение**: Проверка соответствия [аппаратным и программным требованиям](./k8s_ha_environment_requirements.md).
+2.  **Подготовка**: Настройка параметров ядра, модулей и `/etc/hosts` на [всех узлах](./k8s_ha_node_preparation.md).
+3.  **Компоненты**: Установка Runtime (`containerd`) и утилит Kubernetes на [каждый сервер](./k8s_ha_component_installation.md).
+4.  **Load Balancer**: Развертывание [Keepalived + HAProxy](../kubeadm/keepalived_haproxy_setup.md) или [kube-vip](../kubeadm/ha_concepts.md#альтернатива-kube-vip).
+5.  **Bootstrap**: [Инициализация первого мастера](../kubeadm/cluster_initialization.md) с флагом `--control-plane-endpoint`.
+6.  **Сетевой плагин**: Установка и настройка [CNI (Calico)](./cni_installation.md).
+7.  **Масштабирование CP**: [Присоединение остальных мастеров](./node_joining.md) через `join --control-plane`.
+8.  **Worker Nodes**: Присоединение рабочих узлов и [финальная верификация](./k8s_ha_cluster_verification.md).
 
-**Важно**: CIDR для подов и сервисов выбираются на шаге 5. Диапазоны не должны пересекаться с существующей инфраструктурой. Подробнее: [Выбор CIDR](./control_plane_initialization.md#выбор-cidr-для-подов-и-сервисов).
+### Сценарий: Самовосстановление при отказе мастера
 
-### Сценарий 1: Отказ одного мастер-узла
-
-1. Keepalived обнаруживает отказ через VRRP heartbeat
-2. VIP мигрирует на резервный узел (MASTER → BACKUP)
-3. HAProxy исключает отказавший узел из ротации (health check)
-4. `kubelet` на worker-узлах переподключается к новому MASTER
-5. `etcd` сохраняет кворум (2 из 3), запись продолжается
-
-### Сценарий 2: Плановое обслуживание
-
-1. Дренаж узла: `kubectl drain <node> --ignore-daemonsets`
-2. Остановка сервисов на узле
-3. Обновление/ремонт
-4. Возврат в кластер: `kubectl uncordon <node>`
-
-Подробнее: [Обслуживание узлов](../../Operations/node_maintenance.md).
+1.  **Детекция**: Балансировщик (или Keepalived) фиксирует недоступность узла через health-check (обычно < 5 секунд).
+2.  **Failover**: VIP переходит на исправный узел. Новые запросы к API направляются на работающие бэкенды.
+3.  **Кворум**: etcd продолжает работу в режиме Read/Write (2 из 3 узлов доступны).
+4.  **Worker Response**: `kubelet` на воркерах может кратковременно потерять связь, но поды продолжают работать (если не используется короткий Grace Period для Node Lease).
 
 ---
 
 ## Дополнительная информация
 
-### Отладка проблем HA
+### Мониторинг и отладка HA
 
 ```bash
-# Проверка статуса VIP (на любом узле с Keepalived)
-ip addr show | grep <VIP>
+# 1. Проверка доступности API через Endpoint (VIP)
+curl -k https://<CONTROL_PLANE_ENDPOINT>:6443/healthz
 
-# Проверка состояния Keepalived
-systemctl status keepalived
-journalctl -u keepalived -f
+# 2. Список участников etcd и их состояние
+kubectl exec -n kube-system etcd-<master-node-name> -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint status --cluster -w table
 
-# Проверка HAProxy
-systemctl status haproxy
-echo "show stat" | socat /var/run/haproxy.sock stdio
-
-# Проверка кворума etcd
-etcdctl --endpoints=https://<VIP>:2379 endpoint health
-etcdctl --endpoints=https://<VIP>:2379 member list
-
-# Проверка статуса Control Plane
-kubectl get --raw='/readyz?verbose'
-kubectl get --raw='/healthz?verbose'
+# 3. Статус выбора лидера в Control Plane
+kubectl get endpoints -n kube-system kube-scheduler -o jsonpath='{.metadata.annotations.control-plane\.alpha\.kubernetes\.io/leader}'
 ```
 
-**Типичные проблемы:**
+**Критические показатели здоровья:**
+- `etcd_disk_wal_fsync_duration_seconds`: задержка записи в лог (должна быть < 10ms).
+- `apiserver_request_duration_seconds`: время ответа API на запросы.
 
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| `VIP не доступен` | Keepalived не запущен | `systemctl start keepalived` |
-| `etcd lost quorum` | Отказ ≥2 мастеров | Восстановить узлы или форсировать кворум |
-| `HAProxy 503` | Бэкенды недоступны | Проверить `kube-apiserver` на мастерах |
-| `VRRP advertisement` | Блокировка firewall | Разрешить протокол 112 (VRRP) |
+### Связанные руководства
 
-### Интеграция с документацией
-
-Архитектура HA описана в этом файле. Требования к среде — в [environment requirements](./k8s_ha_environment_requirements.md), подготовка узлов — в [node preparation](./k8s_ha_node_preparation.md). Практические инструкции: [component installation](./k8s_ha_component_installation.md), [control plane initialization](./control_plane_initialization.md), [CNI installation](./cni_installation.md), [node joining](./node_joining.md), [cluster verification](./k8s_ha_cluster_verification.md). Теория: [HA overview](../../../Concepts/High_Availability/ha_overview.md), [Control Plane architecture](../../Concepts/control_plane_architecture.md), [etcd overview](../../Concepts/etcd_overview.md). Альтернативный подход: [Kubespray HA](../Kubespray/HA/index.md).
+- **Развертывание**: [Подготовка узлов](./k8s_ha_node_preparation.md), [Компоненты](./k8s_ha_component_installation.md).
+- **Инициализация**: [Инициализация мастера](../kubeadm/cluster_initialization.md), [Присоединение узлов](./node_joining.md).
+- **Проверка**: [Верификация HA](./k8s_ha_cluster_verification.md).
+- **Инфраструктура**: [Балансировка HAProxy](../kubeadm/keepalived_haproxy_setup.md), [Концепции HA](../../../Concepts/High_Availability/ha_overview.md).
+- **Альтернативы**: [HA через Kubespray](../Kubespray/HA/index.md).

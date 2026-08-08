@@ -1,42 +1,43 @@
-# Ingress — установка через манифест (Bare-Metal)
+# Ingress — ручная установка через манифесты (Bare-Metal)
 
 > [!CAUTION]
-> **Внимание (март 2026):** Проект `kubernetes/ingress-nginx` официально перешел в статус **End of Life (EOL — завершение жизненного цикла)**. Поддержка прекращена, патчи безопасности не выпускаются. Для новых инсталляций в bare-metal средах настоятельно рекомендуется использовать решения на базе **Gateway API (Application Programming Interface)** или альтернативные контроллеры (например, **HAProxy** или **Traefik**).
+> **Внимание (март 2026):** Проект `kubernetes/ingress-nginx` официально перешел в статус **End of Life (EOL)**. Поддержка прекращена. Для новых Bare-metal сред настоятельно рекомендуется использовать решения на базе **Gateway API** (например, **Envoy Gateway**) или современные контроллеры (**Traefik v3**, **Cilium Ingress**).
 
 ## Определения
 
-**Bare-Metal установка** — метод развертывания Ingress-контроллера путем прямого применения манифестов Kubernetes без использования пакетных менеджеров. Обеспечивает максимальный контроль над составом ресурсов: `Namespace`, `ServiceAccount`, `ConfigMap`, `ClusterRole`, `Deployment`, `Service`.
+**Ручная установка (Manifest-based)** — метод развертывания Ingress-контроллера путем прямого применения YAML-манифестов. Этот подход обеспечивает максимальный контроль над ресурсами (`RBAC`, `ServiceAccount`, `DaemonSet`), что критично в изолированных (Air-gapped) сетях или при глубокой кастомизации под специфическое оборудование.
 
-**Kustomize** — инструмент для декларативной настройки манифестов Kubernetes, встроенный в `kubectl`. Позволяет изменять базовые файлы без их прямого редактирования через оверлеи (overlays).
+**hostNetwork** — режим работы пода, при котором он использует сетевой стек узла напрямую (порты 80/443 узла). Это исключает накладные расходы на `iptables/ipvs` и `kube-proxy`, обеспечивая максимальную производительность в Bare-Metal.
 
-**Ingress-контроллер** — приложение (обычно `Deployment` или `DaemonSet`), которое реализует правила маршрутизации L7 (Layer 7). Подробнее: **[Ingress — обзор и основные концепции](../overview.md)**.
+**Kustomize** — декларативный инструмент для настройки манифестов Kubernetes без их изменения (через наложения/overlays). Является стандартом для управления "сырыми" YAML-файлами.
 
-## Основные концепции
+## Базовые концепции
 
-### Сравнение методов управления
+### Стратегии публикации в Bare-Metal
 
-| Критерий | Манифесты + Kustomize | Helm |
-| :--- | :--- | :--- |
-| **Контроль** | Полный (видны все YAML-поля) | Ограничен шаблонами чарта |
-| **Среда** | Bare-metal, Air-gapped (изолированные сети) | Облака, стандартные окружения |
-| **Обновление** | Ручное (через `kustomize build`) | Автоматическое (`helm upgrade`) |
-| **Сложность** | Требует понимания структуры ресурсов | Скрывает детали реализации |
+При отсутствии облачного `LoadBalancer`, выбор стратегии публикации контроллера определяет производительность и видимость клиентских IP:
 
-**Рекомендация:** Используйте установку через манифесты только в случаях, когда Helm недоступен или требуется нестандартная топология ресурсов, которую сложно описать через `values.yaml`.
+1.  **NodePort (L4):**
+    - **Плюсы:** Стандартный механизм K8s, простота настройки.
+    - **Минусы:** Требует `externalTrafficPolicy: Local` для сохранения IP; ограничен диапазоном портов (30000+).
+2.  **hostNetwork (L3/L4):**
+    - **Плюсы:** Минимальные задержки; использование стандартных портов (80, 443) напрямую на узлах.
+    - **Минусы:** Конфликты портов (на узле может быть только один контроллер); риски безопасности (под имеет доступ к сетевым сервисам узла).
+3.  **MetalLB (L2/BGP):**
+    - **Плюсы:** Эмуляция поведения облачного LoadBalancer.
+    - **Минусы:** Требует поддержки со стороны сетевого оборудования или возможности ARP-анонсов.
 
----
+### Выбор контроллера (DaemonSet vs Deployment)
+
+В Bare-metal рекомендуется использовать **DaemonSet** с `nodeSelector` для запуска контроллера на выделенных "Edge-нодах". Это гарантирует предсказуемость маршрутизации внешнего трафика.
 
 ## Практические сценарии
 
-### 1. Подготовка структуры Kustomize
+### Сценарий 1 — Установка Traefik v3 через Kustomize
 
-Вместо скачивания одного огромного файла `deploy.yaml`, рекомендуется использовать `kustomization.yaml` для управления базой и локальными правками.
+Traefik — современная замена устаревшим контроллерам. Ниже приведен пример структуры для ручной установки.
 
-```bash
-mkdir -p ingress-setup && cd ingress-setup
-```
-
-Создайте файл `kustomization.yaml`:
+**1. Подготовка `kustomization.yaml`:**
 
 ```yaml
 # kustomization.yaml
@@ -44,98 +45,80 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  # Ссылка на официальный базовый манифест для Bare-metal
-  - https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/baremetal/deploy.yaml
+  - https://github.com/traefik/traefik-helm-chart/raw/master/traefik/values.yaml # Пример абстрактный, обычно используются выгруженные манифесты
+  - rbac.yaml
+  - daemonset.yaml
 
 patches:
-  - path: service-patch.yaml
-  - path: configmap-patch.yaml
+  - path: patch-host-network.yaml
+    target:
+      kind: DaemonSet
+      name: traefik
 ```
 
-### 2. Настройка Service через патч
-
-Для Bare-metal без внешнего LoadBalancer (балансировщика нагрузки) необходимо настроить `NodePort` и обеспечить сохранение IP-адреса клиента.
-
-Создайте файл `service-patch.yaml`:
+**2. Настройка hostNetwork (patch-host-network.yaml):**
 
 ```yaml
-apiVersion: v1
-kind: Service
+apiVersion: apps/v1
+kind: DaemonSet
 metadata:
-  name: ingress-nginx-controller
-  namespace: ingress-nginx
+  name: traefik
 spec:
-  type: NodePort
-  externalTrafficPolicy: Local # Сохранение исходного IP клиента
-  ports:
-    - name: http
-      port: 80
-      targetPort: http
-      nodePort: 31080 # Статический порт (30000-32767)
-    - name: https
-      port: 443
-      targetPort: https
-      nodePort: 31443
+  template:
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet # Критично для резолвинга внутри K8s
+      containers:
+      - name: traefik
+        ports:
+        - name: web
+          containerPort: 80
+          hostPort: 80
+        - name: websecure
+          containerPort: 443
+          hostPort: 443
 ```
 
-**Нюанс:** Режим `externalTrafficPolicy: Local` отключает SNAT (Source Network Address Translation), позволяя приложению видеть реальный IP клиента, но требует, чтобы поды контроллера были запущены именно на тех узлах, куда приходит трафик. Подробнее: **[NodePort — механизмы работы](../../Service/service_type_nodeport.md)**.
+### Сценарий 2 — Обслуживание Legacy Ingress-NGINX
 
-### 3. Тонкая настройка через ConfigMap
+Если миграция невозможна, используйте Kustomize для применения патчей безопасности вручную.
 
-Создайте файл `configmap-patch.yaml` для включения оптимизаций и логирования:
+```bash
+# Проверка манифестов перед применением
+kubectl kustomize ./overlays/production > full-deploy.yaml
+
+# Применение
+kubectl apply -f full-deploy.yaml
+# → namespace/ingress-nginx created
+# → daemonset.apps/ingress-nginx-controller created
+```
+
+### Сценарий 3 — Настройка RBAC и лимитов
+
+При ручной установке крайне важно ограничить привилегии контроллера.
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
+# rbac.yaml (фрагмент)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata:
-  name: ingress-nginx-controller
-  namespace: ingress-nginx
-data:
-  # Включение JSON-логов для систем сбора (ELK/Loki)
-  log-format-upstream: '{"time":"$time_iso8601","remote_addr":"$remote_addr","status":"$status"}'
-  # Оптимизация для работы за внешним прокси
-  use-forwarded-headers: "true"
-  compute-full-forwarded-for: "true"
+  name: ingress-controller
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "nodes"]
+    verbs: ["get", "list", "watch"]
 ```
-
-### 4. Применение конфигурации
-
-Используйте флаг `-k` для применения директории Kustomize:
-
-```bash
-kubectl apply -k .
-# → namespace/ingress-nginx created
-# → serviceaccount/ingress-nginx created
-# → configmap/ingress-nginx-controller patched
-# → service/ingress-nginx-controller patched
-# → deployment.apps/ingress-nginx-controller created
-```
-
-### 5. Проверка состояния
-
-```bash
-kubectl get pods -n ingress-nginx
-# → NAME                                        READY   STATUS    RESTARTS   AGE
-# → ingress-nginx-controller-78d59469-abcde   1/1     Running   0          2m
-
-kubectl get svc -n ingress-nginx
-# → NAME                       TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
-# → ingress-nginx-controller   NodePort   10.96.123.45   <none>        80:31080/TCP,443:31443/TCP   2m
-```
-
----
 
 ## Дополнительная информация
 
-### Рекомендации по эксплуатации
+### Рекомендации по оптимизации
 
-- **High Availability (HA):** При установке через манифест не забудьте увеличить количество реплик в `Deployment` (по умолчанию часто `1`) и настроить `podAntiAffinity`, чтобы поды не оказывались на одном узле.
-- **NodeSelector:** В bare-metal средах часто выделяют отдельные узлы под Ingress (Edge Nodes). Используйте `nodeSelector` в манифесте для жесткой привязки контроллера.
-- **Обновление:** Перед обновлением всегда делайте `kubectl kustomize . > current-state.yaml` для аудита планируемых изменений.
+-   **Ядро Linux:** При использовании `hostNetwork` убедитесь, что на Edge-нодах оптимизированы параметры `net.core.somaxconn` и `net.ipv4.ip_local_port_range`.
+-   **Логирование:** Выносите логи в `stdout` в формате JSON для интеграции с Vector или Fluent Bit.
+-   **Автоматизация:** Даже при ручной установке используйте ArgoCD или Flux для отслеживания изменений в репозитории манифестов.
 
-### Смежные темы
+### См. также
 
-- **[Ingress — установка через Helm](./helm-installation.md)** — стандартный метод для облачных сред.
-- **[Ingress-контроллеры — сравнение](../controllers_comparison.md)** — выбор альтернатив после EOL NGINX.
-- **[Gateway API — будущее маршрутизации](../../gateway_api/migration.md)** — подготовка к переезду на современный стандарт.
-- **[MetalLB — LoadBalancer для Bare-metal](../../metallb.md)** — как получить `External-IP` без облака.
+-   **[Сравнение Ingress-контроллеров](../controllers_comparison.md)** — актуальные альтернативы на 2026 год.
+-   **[Настройка внешнего прокси (Bare-Metal)](../bare_metal_manual_proxy.md)** — архитектура с Nginx перед кластером.
+-   **[MetalLB — LoadBalancer для Bare-metal](../../metallb.md)** — решение проблемы External IP.

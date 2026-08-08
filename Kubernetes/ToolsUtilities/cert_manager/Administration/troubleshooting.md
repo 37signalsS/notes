@@ -1,140 +1,114 @@
-# Диагностика и troubleshooting cert-manager
+# Диагностика и устранение неисправностей cert-manager
 
 ## Определения
 
-**Troubleshooting cert-manager** — комплексный процесс выявления, анализа и устранения сбоев в работе контроллера, механизмов валидации (webhook) и процессов выпуска или продления сертификатов.
+**Troubleshooting cert-manager** — комплексный процесс выявления и устранения сбоев в жизненном цикле сертификатов, работе Admission Webhooks и интеграции с внешними API центров сертификации (CA).
+
+**cmctl** — основная CLI-утилита для диагностики, заменяющая устаревшие методы ручного осмотра ресурсов. С версии v2.0 полностью поддерживает ARI и Gateway API.
+
+**Resource Archaeology (Археология ресурсов)** — методология отладки путем последовательного анализа иерархии объектов от высокоуровневого `Certificate` до низкоуровневых `Challenge`.
+
+**ARI (ACME Renewal Information)** — механизм, позволяющий CA рекомендовать конкретное время для продления. Ошибки в работе ARI могут приводить к преждевременному или неудачному обновлению.
+
+---
 
 ## Основные концепции
 
-### Компоненты и их роль в диагностике
+### Иерархия диагностики ресурсов
 
-cert-manager состоит из трёх ключевых подов, каждый из которых отвечает за свой участок:
-1.  **cert-manager (controller):** Основная логика. Отвечает за мониторинг ресурсов `Certificate`, создание `CertificateRequest` и взаимодействие с Issuer (например, Let's Encrypt через ACME или Vault).
-2.  **cert-manager-webhook:** Валидирует корректность манифестов при их создании/изменении и выполняет мутации. Если webhook не работает, вы не сможете создать или обновить ресурсы cert-manager.
-3.  **cert-manager-cainjector:** Обеспечивает доверие внутри кластера, подставляя (инжектируя) CA-сертификаты в `MutatingWebhookConfiguration`, `ValidatingWebhookConfiguration` и `CustomResourceDefinition`.
+Для эффективного поиска ошибок необходимо двигаться "вниз" по цепочке ресурсов. Ошибка почти всегда транслируется снизу вверх:
 
-### Жизненный цикл ACME-выпуска
+1.  **Certificate:** Отражает общее состояние готовности (`Ready`).
+2.  **CertificateRequest:** Содержит статус формирования CSR и взаимодействия с Issuer.
+3.  **Order (для ACME):** Отражает состояние заказа в API центра сертификации.
+4.  **Challenge (для ACME):** Содержит детальную причину сбоя проверки владения доменом (DNS-01/HTTP-01).
 
-Для эффективной диагностики важно понимать цепочку создания ресурсов:
-`Certificate` → `CertificateRequest` → `Order` → `Challenge` → `Secret`.
+### Ключевые компоненты и их индикаторы сбоев
 
-Сбой на любом из этих этапов блокирует всю цепочку. Статус каждого ресурса (особенно `Challenge`) содержит детальную информацию об ошибке в поле `status.conditions` или `status.reason`.
+| Компонент | Роль | Признак сбоя |
+| :--- | :--- | :--- |
+| **cert-manager** | Основная логика | Статус ресурсов не обновляется, ошибки в логах ACME. |
+| **webhook** | Валидация API | Ошибки `Internal error occurred: failed calling webhook` при `kubectl apply`. |
+| **cainjector** | Доверие в кластере | CRD или Webhook конфигурации не имеют валидных CA-сертификатов. |
+| **trust-manager** | Дистрибуция CA | Ресурсы `Bundle` не синхронизируются в ConfigMap целевых namespace. |
+
+---
 
 ## Практические сценарии
 
-### Шаг 1: Проверка состояния ресурсов
+### Шаг 1: Экспресс-диагностика через cmctl
 
-Диагностику всегда следует начинать с верхнего уровня — ресурса `Certificate`.
-
-```bash
-# Посмотреть статус всех сертификатов в кластере
-kubectl get certificates --all-namespaces
-
-# Детальный анализ конкретного сертификата (смотрим раздел Events и Conditions)
-kubectl describe certificate <name> -n <namespace>
-```
-
-Если сертификат не готов (`Ready: False`), спускаемся ниже по цепочке:
+В 2026 году использование `cmctl` является обязательным стандартом для SRE.
 
 ```bash
-# Проверка запросов на выпуск (CertificateRequest)
-kubectl get certificaterequest -n <namespace>
-kubectl describe certificaterequest <name-of-request> -n <namespace>
+# 1. Проверка работоспособности API и вебхуков
+cmctl check api --wait=2m
 
-# Проверка заказов ACME (Order)
-kubectl get orders -n <namespace>
-kubectl describe order <name-of-order> -n <namespace>
+# 2. Визуализация всей цепочки ресурсов для проблемного сертификата
+cmctl status certificate <name> -n <namespace>
 
-# Самый детальный уровень — проверка проверок (Challenge)
-kubectl get challenges -n <namespace>
-kubectl describe challenge <name-of-challenge> -n <namespace>
+# 3. Инспекция состава секрета (SAN, сроки, алгоритм)
+cmctl inspect secret <secret-name> -n <namespace>
 ```
 
-### Шаг 2: Анализ логов компонентов
+### Шаг 2: Глубокий анализ ACME и ARI
 
-Если ресурсы в порядке, но сертификат не выпускается, или если возникают системные ошибки, проверяем логи контроллеров.
+Если сертификат застрял в процессе обновления или выдает ошибки 400 Malformed:
 
-```bash
-# Логи основного контроллера (фильтруем по ошибкам и ACME-событиям)
-kubectl logs -n cert-manager -l app=cert-manager --tail=200 | grep -iE "error|fail|acme"
-
-# Проверка webhook (часто возникают таймауты или ошибки сертификата самого webhook)
-kubectl logs -n cert-manager -l app=webhook --tail=100
-
-# Проверка cainjector (если есть проблемы с RBAC или инжекцией сертификатов)
-kubectl logs -n cert-manager -l app=cainjector --tail=100
-```
-
-### Шаг 3: Частые проблемы и способы решения
-
-#### Сценарий: Certificate в статусе Pending (ACME-проверка)
-
-Это самая частая проблема. Причина обычно кроется в невозможности CA подтвердить владение доменом.
-
-| Проблема | Диагностика | Решение |
-| :--- | :--- | :--- |
-| **HTTP-01 недоступен** | `curl -v http://<domain>/.well-known/acme-challenge/<token>` | Проверить Ingress, Firewall (порт 80 должен быть открыт), настройки Service/Endpoints для `cm-acme-http-solver`. |
-| **DNS-01 не прошёл** | `dig TXT _acme-challenge.<domain>` | Проверить права доступа к API DNS-провайдера (Secret), время TTL и распространение записей. |
-| **Rate limit (Let's Encrypt)** | Проверить `kubectl describe order` на наличие сообщения об ограничении. | Использовать Let's Encrypt Staging для тестов. Подождать сброса лимита (обычно от 1 часа до 7 дней). |
-| **Неверный Issuer** | `kubectl get issuer,clusterissuer` | Убедиться, что `issuerRef` в Certificate указывает на существующий и готовый (Ready: True) ресурс. |
-
-#### Сценарий: Webhook timeout или ошибки валидации
-
-Если при попытке применить манифест вы получаете ошибку `Internal error occurred: failed calling webhook...`:
-
-1.  **Проверка сети:** Убедитесь, что API-сервер может "достучаться" до пода webhook на порту 10250 или через сервис на 443.
-2.  **Проверка NetworkPolicies:** Если в кластере используется NetworkPolicy, разрешите трафик из namespace `kube-system` (где обычно живет API-сервер) в namespace `cert-manager`.
-3.  **Перезагрузка:** Часто помогает простой рестарт:
+1.  **Проверка статуса ARI:**
     ```bash
-    kubectl rollout restart deployment cert-manager-webhook -n cert-manager
+    kubectl get certificate <name> -o jsonpath='{.status.acme.ari}'
+    ```
+2.  **Принудительное продление (если ARI заблокировал заказ):**
+    ```bash
+    cmctl renew <name> --force
+    ```
+3.  **Отладка HTTP-01:** Убедитесь, что временный под `cm-acme-http-solver` доступен извне.
+    ```bash
+    kubectl get pods -l acme.cert-manager.io/http-domain -A
     ```
 
-#### Сценарий: Секрет (Secret) не создаётся или содержит старые данные
+### Шаг 3: Частые проблемы и методы их решения (2025–2026)
 
-1.  **Проверка прав (RBAC):** Убедитесь, что у cert-manager есть права на создание секретов в целевом namespace.
-    ```bash
-    kubectl auth can-i create secrets -n <namespace> --as system:serviceaccount:cert-manager:cert-manager
-    ```
-2.  **Конфликт OwnerReference:** Если включен Garbage Collection, проверьте, не удаляет ли какой-то другой контроллер (например, ArgoCD с включенным prune) ваш Secret.
-3.  **Ручная проверка данных:**
-    ```bash
-    # Извлечение и проверка срока действия из существующего Secret
-    kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -dates
-    ```
+#### Сценарий: Ошибки Gateway API (ReferenceGrant)
 
-#### Сценарий: Ошибка цепочки доверия (Trust Chain)
+**Симптом:** Gateway не видит сертификат, или cert-manager не создает Certificate для Gateway.
+1.  **Проверка ReferenceGrant:** Если Secret в другом namespace, создайте `ReferenceGrant` в namespace секрета.
+2.  **ParentRef Fallback:** Если используется только 443 порт, убедитесь в наличии аннотации `acme.cert-manager.io/http01-parentreffallback: "true"`.
 
-Приложение выдаёт ошибку `X509: Certificate Signed by Unknown Authority`.
+#### Сценарий: Ошибки RBAC в версии 1.21+
 
-1.  **Проверка CA:** Убедитесь, что в секрете присутствует `ca.crt` (если используется внутренний CA).
-2.  **Валидация через openssl:**
-    ```bash
-    # Сохраняем сертификат и CA для проверки
-    kubectl get secret <name> -o jsonpath='{.data.tls\.crt}' | base64 -d > cert.crt
-    kubectl get secret <name> -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
-    # Проверяем цепочку
-    openssl verify -CAfile ca.crt cert.crt
-    ```
-3.  **Решение:** Если вы используете self-signed или внутренний CA, убедитесь, что корневой сертификат добавлен в доверенное хранилище (Trust Store) вашего приложения или ОС. Используйте **trust-manager** для автоматизации этого процесса.
+**Симптом:** Ошибки `permission denied` при работе с Route53 или Vault.
+*   **Причина:** Удаление прав на создание ServiceAccount токенов из стандартного чарта.
+*   **Решение:** Вручную добавьте права `serviceaccounts/token: create` в ClusterRole контроллера или используйте IRSA (для AWS).
+
+#### Сценарий: Webhook Timeout
+
+**Симптом:** Блокировка любых операций с ресурсами cert-manager.
+1.  **Сеть:** Проверьте доступность порта 10250 на подах webhook.
+2.  **NetworkPolicy:** Разрешите трафик из namespace `kube-system` (API-сервер) в namespace `cert-manager`.
+3.  **Перезагрузка:** `kubectl rollout restart deployment cert-manager-webhook -n cert-manager`.
+
+#### Сценарий: trust-manager Bundle не обновляется
+
+1.  **Namespace Selector:** Убедитесь, что целевые namespace имеют метки, соответствующие `namespaceSelector` в ресурсе `Bundle`.
+2.  **Метки по умолчанию:** В новых версиях пустой селектор **не** означает "все namespace".
+
+---
 
 ## Дополнительная информация
 
-### Рекомендации по отладке
+### Рекомендации по логированию
 
-- Всегда используйте Let's Encrypt **Staging** окружение для отладки новых конфигураций, чтобы не попасть под жесткие лимиты (Rate Limits) продакшена.
-- Если сертификат "завис" в процессе обновления, иногда помогает удаление ресурсов `CertificateRequest`, `Order` и `Challenge` — контроллер создаст их заново.
-
-### Надёжность информации
-
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| Проверка ресурсов | **10** | Фундаментальные механизмы Kubernetes и cert-manager. |
-| Логи компонентов | **10** | Стандартный подход к диагностике в K8s. |
-| Типовые проблемы | **10** | Основано на многолетнем опыте эксплуатации и официальном troubleshooting guide. |
-| Команды OpenSSL | **10** | Стандарт индустрии для работы с сертификатами. |
+Для глубокой отладки ACME-взаимодействия повысьте уровень логирования контроллера:
+```bash
+# Установка уровня 6 для детального вывода JWS-сообщений
+kubectl patch deployment cert-manager -n cert-manager --type='json' \
+  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--v=6"}]'
+```
 
 ### Смотрите также
 
-- **[Cert-manager: Администрирование](./index.md)** — управление жизненным циклом и конфигурация.
+- **[Cert-manager: Администрирование](./index.md)** — HA, ресурсы и ротация ключей.
 - **[Cert-manager: Операции](./operations.md)** — мониторинг, алертинг и резервное копирование.
-- **[Cert-manager: Установка](../installation.md)** — параметры Helm и развертывание.
+- **[Let's Encrypt: Диагностика](../LetsEncrypt/letsencrypt_advanced.md)** — решение специфичных проблем ACME.

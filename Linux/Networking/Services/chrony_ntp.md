@@ -1,17 +1,14 @@
----
-Надёжность: 10 (SSoT + Практический опыт 2026)
-Свежесть: Актуально на июль 2026
----
-
 # Chrony — NTP-сервер
 
 ## Определения
 
-**Chrony** — полноценный NTP-демон для Linux. Состоит из двух компонентов: `chronyd` (фоновый демон) и `chronyc` (утилита управления). Предпочтительный выбор для серверов, требующих высокой точности времени и стабильной работы в нестабильных сетях.
+**Chrony** — полноценный NTP-демон для Linux, оптимизированный для работы в условиях нестабильного сетевого соединения, виртуализации и необходимости микросекундной точности. Состоит из двух компонентов: `chronyd` (фоновый демон) и `chronyc` (утилита управления).
 
 **NTP (Network Time Protocol)** — протокол синхронизации часов компьютеров через сети. Работает по иерархической модели stratum (0–15), где stratum 0 — атомные часы/GPS, stratum 1 — серверы, подключённые напрямую к stratum 0.
 
-**NTS (Network Time Security)** — расширение NTP, обеспечивающее аутентификацию и целостность данных с использованием TLS и AEAD, предотвращая атаки типа Man-in-the-Middle (MitM).
+**NTS (Network Time Security)** — расширение NTP (RFC 8915), обеспечивающее аутентификацию и целостность данных с использованием TLS 1.3 и AEAD, предотвращая атаки типа Man-in-the-Middle (MitM).
+
+**PTP (Precision Time Protocol)** — протокол сверхточной синхронизации (IEEE 1588). Chrony может использовать аппаратные метки времени (Hardware Timestamping) сетевых карт для достижения наносекундной точности.
 
 > Базовая синхронизация через `systemd-timesyncd` описана в [time_synchronization.md](../../../Linux/Core/systemd/time_synchronization.md).
 
@@ -19,16 +16,18 @@
 
 ### Сравнение: Chrony vs systemd-timesyncd vs ntpd
 
-| Характеристика | systemd-timesyncd | Chrony | ntpd |
+| Характеристика | systemd-timesyncd | Chrony (v4.5+) | ntpd |
 | :--- | :--- | :--- | :--- |
 | Тип | SNTP-клиент | Полный NTP-клиент/сервер | Полный NTP-клиент/сервер |
 | Серверный режим | Нет | Да | Да |
-| Точность | Средняя (секунды) | Высокая (миллисекунды) | Высокая (миллисекунды) |
+| Точность | Средняя (секунды) | **Сверхвысокая** (мкс/нс) | Высокая (миллисекунды) |
 | Работа без сети | Нет | Да (`local stratum`) | Частично |
 | Быстрая синхронизация | Нет | Да (`iburst`) | Нет |
 | Коррекция дрейфа | Нет | Да (файл drift) | Да (файл drift) |
 | Безопасность (NTS) | Нет | Да (v4.0+) | Нет |
-| Рекомендуемое применение | Рабочие станции, простые серверы | Все серверы, виртуальные машины, изолированные сети | Устаревший, не рекомендуется |
+| Аппаратное ускорение | Нет | **Да (HW Timestamping)** | Да |
+| Zero-downtime | Нет | **Да (Socket Activation)** | Нет |
+| Рекомендуемое применение | Рабочие станции, простые серверы | Все серверы, виртуальные машины, высокоточные сети | Устаревший, не рекомендуется |
 
 > Chrony заменил `ntpd` как NTP-демон по умолчанию в RHEL 8+, Fedora, Alpine Linux.
 
@@ -44,6 +43,14 @@ sudo apt install chrony
 sudo dnf install chrony
 ```
 
+**Управление службой и сокетами (Chrony 4.5+):**
+
+```bash
+sudo systemctl enable --now chrony
+# Проверка активации через сокет (позволяет перезапускать демон без потери пакетов)
+systemctl status chrony.socket
+```
+
 **Файлы конфигурации:**
 
 | Дистрибутив | Путь конфига | Демон |
@@ -57,17 +64,18 @@ sudo dnf install chrony
 | :--- | :--- | :--- |
 | `pool` | DNS-имя, разрешаемое в несколько серверов | `pool pool.ntp.org iburst` |
 | `server` | Конкретный NTP-сервер | `server 10.0.0.1 iburst` |
-| `iburst` | Ускорение начальной синхронизации (несколько запросов вместо одного) | `pool pool.ntp.org iburst` |
+| `iburst` | Ускорение начальной синхронизации | `pool pool.ntp.org iburst` |
 | `makestep` | Пошаговая коррекция при большом расхождении | `makestep 1.0 3` |
 | `rtcsync` | Синхронизация RTC (аппаратных часов) | `rtcsync` |
 | `driftfile` | Файл хранения дрейфа частоты | `driftfile /var/lib/chrony/drift` |
-| `logdir` | Каталог логов | `logdir /var/log/chrony` |
+| `hwtimestamp` | Включить аппаратные метки времени на интерфейсе | `hwtimestamp eth0` |
+| `extfield F324` | Использовать поле коррекции PTP (Chrony 4.5+) | `server ntp.local extfield F324` |
+| `leapsecmode` | Метод обработки високосной секунды | `leapsecmode slew` |
+| `smoothtime` | Плавное размытие (smearing) времени | `smoothtime 3600 0.001` |
 | `allow` | Разрешить клиентам из сети | `allow 192.168.10.0/24` |
-| `local stratum` | Объявить себя основным источником при потере связи с вышестоящими серверами | `local stratum 10` |
-| `bindaddress` | Привязка к конкретному интерфейсу | `bindaddress 10.0.0.1` |
-| `cmdallow` | Разрешить команды chronyc | `cmdallow 127.0.0.1` |
-| `nts` | Включить Network Time Security (требует поддержки сервером) | `server time.cloudflare.com nts iburst` |
-| `cmdport` | Порт управления (0 для отключения сети) | `cmdport 0` |
+| `local stratum` | Режим автономного сервера | `local stratum 10` |
+| `nts` | Включить Network Time Security | `server time.cloudflare.com nts iburst` |
+| `ntsdumpdir` | Хранение сессионных данных NTS | `ntsdumpdir /var/lib/chrony` |
 
 ### Символы источников в `chronyc sources`
 
@@ -92,10 +100,6 @@ sudo dnf install chrony
 # Пул серверов (рекомендуется)
 pool pool.ntp.org iburst
 
-# Или конкретные серверы
-# server 0.pool.ntp.org iburst
-# server 1.pool.ntp.org iburst
-
 # Пошаговая коррекция: если расхождение > 1 сек, исправить за 3 обновления
 makestep 1.0 3
 
@@ -110,8 +114,22 @@ logdir /var/log/chrony
 log measurements statistics tracking
 ```
 
-```bash
-sudo systemctl enable --now chrony
+### Настройка высокоточного клиента (PTP + HW)
+
+Для сред, где требуется точность выше миллисекунд (финансовые системы, распределенные БД).
+
+```ini
+# /etc/chrony/chrony.conf
+
+# Включаем аппаратные метки времени
+hwtimestamp *
+
+# Использование расширенных полей коррекции (Chrony 4.5+)
+# F324 учитывает задержки на коммутаторах (Transparent Clocks)
+server ntp.local iburst minpoll -4 maxpoll -4 extfield F324
+
+# Ограничение скорости подстройки частоты
+maxslewrate 100
 ```
 
 ### Настройка безопасной синхронизации (NTS)
@@ -126,8 +144,26 @@ server time.cloudflare.com nts iburst
 server nts.netnod.se nts iburst
 server ptbtime1.ptb.de nts iburst
 
-# Хранилище для NTS-ключей
+# Хранилище для NTS-ключей (важно для ускорения старта)
 ntsdumpdir /var/lib/chrony
+```
+
+### Настройка обработки високосных секунд (Leap Seconds)
+
+**Вариант А: Размытие (Leap Smearing)**
+Рекомендуется для баз данных, чтобы избежать прыжков времени.
+
+```ini
+# Размытие в течение 12 часов (43200 сек)
+leapsecmode slew
+smoothtime 43200 0.001
+```
+
+**Вариант Б: Внешний список**
+Для точного определения момента наступления секунды.
+
+```ini
+leapseclist /usr/share/zoneinfo/leap-seconds.list
 ```
 
 ### Настройка в облачных средах (Cloud)
@@ -143,7 +179,6 @@ server metadata.google.internal iburst prefer
 
 # Azure
 server time.windows.com iburst
-# Или через виртуальный IP, если доступен (зависит от региона)
 ```
 
 ### Настройка Chrony в качестве сервера
@@ -160,12 +195,20 @@ pool pool.ntp.org iburst
 allow 192.168.10.0/24
 allow 192.168.31.0/24
 
+# Аутентификация по симметричным ключам (для старых клиентов или изоляции)
+keyfile /etc/chrony/chrony.keys
+
 # Работать как сервер при потере интернета
 local stratum 10
 
 makestep 1.0 3
 rtcsync
 driftfile /var/lib/chrony/drift
+```
+
+**Пример `chrony.keys`:**
+```text
+1 SHA1 HEX:45A1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A9
 ```
 
 > `local stratum 10` — chrony продолжит раздавать время даже в изолированной сети. Клиенты получат stratum 11.
@@ -184,7 +227,7 @@ cmdport 0
 bindcmdaddress 127.0.0.1
 bindcmdaddress ::1
 
-# Запуск от непривилегированного пользователя (обычно по умолчанию)
+# Запуск от непривилегированного пользователя
 user _chrony
 
 # Отключить неиспользуемые функции
@@ -201,6 +244,15 @@ noclientlog
 - `node_ntp_offset_seconds`: отклонение от сервера.
 - `chrony_stratum`: уровень стратума.
 - `chrony_source_reachable`: доступность источника.
+
+#### Ожидание синхронизации при загрузке
+
+Используйте `chrony-wait.service` для сервисов, критичных к точному времени (например, etcd, базы данных).
+
+```bash
+sudo systemctl enable chrony-wait.service
+```
+Настройка параметров в `/etc/default/chrony-wait` (MAXWAIT, MAXALLOWACC).
 
 #### Утилита управления chronyc
 
@@ -227,6 +279,9 @@ chronyc tracking
 # Статистика источников (за историю)
 chronyc sourcestats
 
+# Статистика сервера (запросы от клиентов)
+chronyc serverstats
+
 # Проверить статус NTS соединений
 chronyc ntsstats
 
@@ -236,7 +291,7 @@ chronyc makestep
 
 ### Работа в виртуальной среде
 
-В виртуальных машинах рекомендуется использовать гипервизор как источник времени или разрешить более агрессивную коррекцию.
+В виртуальных машинах рекомендуется использовать гипервизор как источник времени.
 
 ```ini
 # Для KVM/QEMU (через PTP)
@@ -244,13 +299,6 @@ chronyc makestep
 
 # Или использование гипервизора как NTP-сервера
 server hypervisor.local iburst
-```
-
-Если сеть нестабильна, увеличьте порог коррекции:
-
-```ini
-# Разрешить резкие скачки при загрузке
-makestep 10.0 5
 ```
 
 ### Конфигурация для изолированной сети
@@ -290,13 +338,8 @@ refclock SHM 0 refid GPS precision 1e-1
 # PPS через сокет (ttyS0 — пример порта)
 refclock SOCK /var/run/chrony.ttyS0.sock refid PPS lock GPS
 
-# Разрешить клиентам из локальной сети
-allow 192.168.0.0/16
-
 # Объявить себя сервером с низким stratum
 local stratum 1
-
-driftfile /var/lib/chrony/drift
 ```
 
 ## Дополнительная информация
@@ -312,9 +355,14 @@ systemctl is-active chrony             # → active
 
 Подробности управления временем через systemd: [time_synchronization.md](../../../Linux/Core/systemd/time_synchronization.md).
 
-### Поддержка IPv6
+### Работа в контейнерах (Docker/K8s)
 
-Настройка прослушивания и доступа по протоколу IPv6.
+**Важно:** Внутри контейнера Chrony запускать **нельзя**.
+- Контейнеры используют системные часы хоста.
+- Попытка смены времени в контейнере требует прав `--privileged` и влияет на весь хост.
+- Настраивайте Chrony только на уровне хост-системы.
+
+### Поддержка IPv6
 
 ```ini
 # /etc/chrony/chrony.conf
@@ -327,12 +375,6 @@ allow fc00::/64
 
 # Слушать все интерфейсы (IPv4 и IPv6)
 bindaddress ::
-```
-
-```bash
-sudo systemctl restart chrony
-ss -6 -unap | grep chrony
-# → udp  UNCONN  0  0  [::]:123  [::]:*  users:(("chronyd",pid=123,fd=5))
 ```
 
 ### См. также

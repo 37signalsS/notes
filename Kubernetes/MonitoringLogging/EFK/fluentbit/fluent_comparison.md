@@ -24,7 +24,7 @@ Fluent Bit перестал быть только "легким агентом" 
 | **Многопоточность** | Да (Threaded Inputs/Outputs) | Да (Worker processes) |
 | **Расширяемость** | Lua, WASM (Go, Rust, C++), C | Ruby (1000+ плагинов) |
 | **Конфигурация** | YAML (рекомендуется), Classic INI | Ruby DSL, XML-подобный формат |
-| **Обработка данных** | SQL-запросы, Процессоры, Фильтры | Фильтры, Ruby-скрипты |
+| **Обработка данных** | SQL-запросы (Stream Processor), Processors, Filters | Фильтры, Ruby-скрипты |
 
 ### Сходства инструментов
 
@@ -50,8 +50,8 @@ Fluent Bit перестал быть только "легким агентом" 
 |:---|:---|:---|
 | **Буфер по умолчанию** | В памяти (`memory`) | На диске (`file`) для большинства плагинов |
 | **Типы буферизации** | `memory`, `filesystem` (дисковая) | `memory`, `file` |
-| **Защита от перегрузки** | `Mem_Buf_Limit`, Backpressure | `overflow_action`, блокировка очереди |
-| **Надежность доставки** | Высокая (при `storage.type=filesystem`) | Очень высокая (механизм `retry_forever`) |
+| **Защита от перегрузки** | `mem_buf_limit`, Backpressure | `overflow_action`, блокировка очереди |
+| **Надежность доставки** | Высокая (при `storage.type: filesystem`) | Очень высокая (механизм `retry_forever`) |
 
 Подробности настройки буферов Fluent Bit приведены в [buffering_routing.md](./buffering_routing.md).
 

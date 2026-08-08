@@ -1,124 +1,69 @@
 # Kustomize — Продвинутые возможности
 
+В данном разделе рассматриваются механизмы Kustomize, позволяющие управлять сложными конфигурациями, интегрировать внешние инструменты (Helm) и расширять возможности инструмента через плагины и кастомные схемы.
+
 ## 1. Определения
 
-**Генераторы (Generators)** — механизмы Kustomize для динамического создания ресурсов (ConfigMap, Secret) из внешних источников (файлы, переменные окружения, литералы) с автоматическим управлением жизненным циклом (хеширование имен).
+**Генераторы (Generators)** — механизмы Kustomize для динамического создания ресурсов (ConfigMap, Secret) из внешних источников (файлы, переменные окружения, литералы) с автоматическим управлением жизненным циклом через хеширование имен.
 
-**Компоненты (Components)** — высокоуровневый механизм для создания переиспользуемых фрагментов конфигурации, которые могут содержать ресурсы и патчи. В отличие от `base`, компоненты позволяют подмешивать логику в разные оверлеи без создания жестких иерархий.
+**Компоненты (Components)** — высокоуровневый механизм для создания переиспользуемых фрагментов конфигурации, которые могут содержать ресурсы и патчи. В отличие от `base`, компоненты позволяют «подмешивать» логику (например, мониторинг или прокси) в разные оверлеи без создания жестких иерархий.
 
-**Замены (Replacements)** — современный механизм (пришел на смену `vars`) для копирования значений из одного поля ресурса в другое. Позволяет динамически обновлять переменные окружения, аргументы командной строки и другие поля на основе данных из других ресурсов.
+**Замены (Replacements)** — механизм (пришел на смену устаревшим `vars`) для типизированного копирования значений из одного поля ресурса в другое. Позволяет динамически обновлять переменные окружения, аргументы командной строки и другие поля на основе данных из других ресурсов.
 
-**Интеграция с Helm** — встроенная возможность Kustomize рендерить Helm-чарты без использования внешних скриптов, позволяя накладывать Kustomize-патчи поверх сгенерированных Helm-манифестов.
+**Плагины (Plugins)** — расширения для Kustomize, позволяющие генерировать или трансформировать ресурсы с помощью внешних исполняемых файлов (Exec plugins) или модулей Go.
+
+**OpenAPI Integration** — использование пользовательских схем OpenAPI для обучения Kustomize правилам обработки Custom Resources (CRD), например, для корректного применения патчей или добавления меток.
 
 ## 2. Основные концепции
 
 ### Хеширование имен (Name Hashing)
 
 По умолчанию Kustomize добавляет хеш содержимого к именам ресурсов, созданных через генераторы (например, `app-config-f7h8z9`).
-- **Зачем:** Это гарантирует обновление Подов (Rolling Update). Когда данные в ConfigMap меняются, хеш меняется → имя ресурса меняется → Deployment видит изменение в `volumes` или `envFrom` → инициируется перезапуск Подов.
-- **Шаблон:** Это реализация паттерна **Immutable ConfigMap/Secret**.
+- **Зачем:** Это гарантирует обновление Подов (Rolling Update). Когда данные в ConfigMap меняются, хеш меняется → имя ресурса меняется → Deployment видит изменение в ссылке → инициируется перезапуск Подов.
+- **Паттерн:** Реализация концепции **Immutable Infrastructure**.
 
 ### Поведение генераторов (Behavior)
 
 При наследовании (base → overlay) можно управлять тем, как новый генератор взаимодействует с базовым:
 - `create`: создает новый независимый ресурс (по умолчанию).
 - `merge`: объединяет данные из overlay с данными из base.
-- `replace`: полностью заменяет генератор из базы, игнорируя базовые данные.
+- `replace`: полностью заменяет генератор из базы.
 
-### Компоненты против Баз (Components vs Base)
+### Композиция через Components
 
 | Характеристика | Base | Components |
 | :--- | :--- | :--- |
-| **Использование** | Основа проекта | Опциональные фичи |
-| **Связь** | Иерархическая (вертикальная) | Композиционная (горизонтальная) |
-| **Гибкость** | Низкая (одна база на оверлей) | Высокая (несколько компонентов на оверлей) |
-| **Пример** | Основной Deployment | Включение Prometheus, Sidecar-логирование |
+| **Использование** | Фундамент проекта | Опциональные возможности |
+| **Связь** | Вертикальная (иерархия) | Горизонтальная (подмешивание) |
+| **Гибкость** | Одна база на оверлей | Неограниченное количество компонентов |
 
-### Замены против Переменных (Replacements vs Vars)
+### Использование OpenAPI схем
 
-> **Важно:** Поле `vars` официально признано устаревшим (deprecated) в Kustomize v5 и будет удалено. Рекомендуется использовать `replacements`.
-
-`Replacements` обладают более строгой типизацией и позволяют точно указывать источник (source) и цели (targets) для копирования данных, не полагаясь на глобальный поиск подстрок.
+Kustomize «из коробки» знает, как работать со стандартными ресурсами Kubernetes. Для корректной обработки **Custom Resources** (например, чтобы `commonLabels` добавлялись в правильные поля CRD) требуется предоставить Kustomize схему OpenAPI. Это предотвращает ошибки при слиянии патчей и обеспечивает безопасность типов.
 
 ## 3. Практические сценарии
 
-### 3.1. Генерация из разных источников
-
-```yaml
-# kustomization.yaml
-configMapGenerator:
-  - name: app-env
-    envs:
-      - configs.env        # Загрузка всех пар KEY=VALUE из файла
-  - name: app-config
-    files:
-      - config.json        # Файл целиком в секцию data
-  - name: app-literals
-    literals:
-      - LOG_LEVEL=debug    # Прямое указание значений
-```
-
-### 3.2. Генерация секретов (Opaque и TLS)
-
-```yaml
-# kustomization.yaml
-secretGenerator:
-  - name: db-secret
-    literals:
-      - password=S3cr3t
-  - name: site-tls
-    type: kubernetes.io/tls
-    files:
-      - tls.crt
-      - tls.key
-```
-
-### 3.3. Настройка генераторов (generatorOptions)
-
-Позволяет добавить метаданные ко всем сгенерированным ресурсам или отключить хеширование.
+### 3.1. Продвинутая генерация ресурсов
 
 ```yaml
 # kustomization.yaml
 generatorOptions:
-  disableNameSuffixHash: false
+  disableNameSuffixHash: false # Включение/выключение хеша для всех генераторов
   labels:
     type: generated
-  annotations:
-    managed-by: kustomize
 
 configMapGenerator:
-  - name: static-config
-    behavior: create
+  - name: app-config
+    behavior: merge # Объединение с базовым конфигом
+    files:
+      - settings.json
     literals:
-      - VERSION=1.0
+      - LOG_LEVEL=info
 ```
 
-### 3.4. Использование Компонентов (Components)
+### 3.2. Работа с Replacements (взамен Vars)
 
-Полезно для включения функционала «по требованию».
-
-```yaml
-# components/monitoring/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1alpha1 # Для компонентов часто используется этот API
-kind: Component
-patches:
-  - target:
-      kind: Deployment
-    patch: |-
-      - op: add
-        path: /spec/template/metadata/annotations/prometheus.io~1scrape
-        value: "true"
-
-# overlays/production/kustomization.yaml
-resources:
-  - ../../base
-components:
-  - ../../components/monitoring
-```
-
-### 3.5. Механизм Замен (Replacements)
-
-Пример копирования хешированного имени ConfigMap в переменную окружения другого ресурса.
+Копирование хешированного имени ConfigMap в аргументы контейнера.
 
 ```yaml
 # kustomization.yaml
@@ -130,55 +75,88 @@ replacements:
     targets:
       - select:
           kind: Deployment
-          name: api-server
+          name: web-app
         fieldPaths:
-          - spec.template.spec.containers.[name=api].env.[name=CONFIG_NAME].value
+          - spec.template.spec.containers.[name=main].args.0
+        options:
+          delimiter: "="
+          index: 1 # Замена только части значения после разделителя
 ```
 
-### 3.6. Интеграция с Helm (Декларативная)
+### 3.3. Встроенные трансформаторы (Built-in Transformers)
 
-Kustomize может скачивать и рендерить чарты в процессе сборки.
+Массовое обновление образов и меток без написания патчей.
+
+```yaml
+# kustomization.yaml
+images:
+  - name: my-api
+    newName: my-registry.com/api
+    newTag: v1.2.3
+
+commonLabels:
+  app.kubernetes.io/part-of: billing-system
+
+commonAnnotations:
+  team: backend-ops
+```
+
+### 3.4. Интеграция с Helm
+
+Декларативное описание Helm-чарта как ресурса Kustomize.
 
 ```yaml
 # kustomization.yaml
 helmCharts:
-  - name: redis
+  - name: postgresql
     repo: https://charts.bitnami.com/bitnami
-    version: 17.x.x
-    releaseName: my-redis
-    namespace: database
-    includeCRDs: true
-    valuesFile: values.yaml
+    version: 12.x.x
+    releaseName: db
+    valuesFile: values-prod.yaml
+```
+# → Команда сборки: kustomize build --enable-helm .
+
+### 3.5. Использование OpenAPI для CRD
+
+Помогает Kustomize понять структуру Custom Resource для правильного наложения меток.
+
+```yaml
+# kustomization.yaml
+openapi:
+  path: schema.json # Схема, содержащая определения ваших CRD
 ```
 
-**Запуск:** `kustomize build --enable-helm .` (требует установленного `helm` в системе).
+### 3.6. Плагины (Exec Plugins)
 
-### 3.7. Валидация результата (CI/CD)
+Пример использования внешнего генератора (например, для получения секретов из Vault).
 
-Всегда проверяйте итоговый манифест перед деплоем.
+```yaml
+# vault-secret-gen.yaml
+apiVersion: my-plugins/v1
+kind: VaultSecretGenerator
+metadata:
+  name: db-creds
+path: secret/data/db
 
-```bash
-# 1. Проверка синтаксиса Kustomize
-kustomize build overlays/production/ > result.yaml
-
-# 2. Валидация против схем Kubernetes через kubeconform
-kustomize build overlays/production/ | kubeconform -strict -summary -
-
-# 3. Dry-run проверка через API сервер (если есть доступ)
-kubectl apply -k overlays/production/ --dry-run=server
+# kustomization.yaml
+generators:
+  - vault-secret-gen.yaml
 ```
+# → Требует настройки KUSTOMIZE_PLUGIN_HOME и --enable-alpha-plugins
 
 ## 4. Дополнительная информация
 
 ### Ограничения и особенности
 
-1. **Порядок применения:** Kustomize применяет генераторы раньше, чем патчи. Это позволяет патчить сгенерированные ресурсы.
-2. **Безопасность Secret:** Помните, что `secretGenerator` хранит значения в YAML в открытом виде (если не используются плагины типа `sops`). Не коммитьте реальные секреты в Git.
-3. **Производительность Helm:** Использование `helmCharts` замедляет сборку, так как требует сетевых запросов и запуска бинарного файла Helm.
+1. **Порядок обработки:** Kustomize выполняет операции в строгом порядке: `resources` → `generators` → `transformers` → `validators`. Патчи применяются в фазе трансформации.
+2. **Безопасность плагинов:** Использование сторонних плагинов требует осторожности, так как они запускают произвольный код в системе сборки.
+3. **Версионность:** Replacements доступны только в Kustomize v4.0.0+. Использование `vars` в новых проектах запрещено (deprecated).
 
-### Связь с другими разделами
+### См. также
+- **[Обзор и основные концепции](./kustomize_overview.md)** — базовые определения и установка.
+- **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — механизм работы Strategic Merge и JSON патчей.
+- **[Интеграция в CD конвейеры](./kustomize_cd_integration.md)** — использование в Jenkins и GitOps.
 
-- [Обзор и основные концепции](./kustomize_overview.md) — базовые определения и установка
-- [Структура и синтаксис](./kustomize_structure_and_syntax.md) — структура kustomization.yaml
-- [Наложения и патчи](./kustomize_overlays_and_patches.md) — механизм работы патчей
-- [Валидация манифестов (kubeconform)](../kubeconform_overview.md) — подробнее о проверке схем
+### Внешние ресурсы
+- [Kustomize Built-in Plugins](https://kubectl.docs.kubernetes.io/guides/extending_kustomize/builtins/)
+- [Kustomize Replacements Guide](https://kubectl.docs.kubernetes.io/references/kustomize/kustomization/replacements/)

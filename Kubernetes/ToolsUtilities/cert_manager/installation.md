@@ -6,10 +6,10 @@
 
 **Связанные темы:**
 
-- **[Определения и концепции](./definitions.md)** — архитектура, CRD и жизненный цикл ACME
-- **[Администрирование: Операции](./Administration/operations.md)** — мониторинг, резервное копирование и стратегии обновления
-- **[Диагностика (Troubleshooting)](./Administration/troubleshooting.md)** — решение проблем с установкой и выпуском
-- **[Приватный CA: Сценарии](./Private_CA/scenarios.md)** — настройка внутренних иерархий и trust-manager
+- **[Определения и концепции](./definitions.md)** — архитектура, CRD и жизненный цикл ACME.
+- **[Администрирование: Операции](./Administration/operations.md)** — мониторинг, резервное копирование и стратегии обновления.
+- **[Диагностика (Troubleshooting)](./Administration/troubleshooting.md)** — решение проблем с установкой и выпуском.
+- **[Приватный CA: Сценарии](./Private_CA/scenarios.md)** — настройка внутренних иерархий и trust-manager.
 
 ---
 
@@ -19,18 +19,19 @@
 
 | Метод | Преимущества | Недостатки | Рекомендация |
 | :--- | :--- | :--- | :--- |
-| **Helm** | Управление версиями, шаблонизация (values), поддержка атомарных откатов | Требует Helm-клиент в инфраструктуре | **Стандарт для Production** |
-| **kubectl apply** | Максимальная простота, отсутствие внешних зависимостей | Сложность обновления и кастомизации параметров | Быстрые тесты, простые CI-пайплайны |
-| **Operator Hub** | Автоматизированное управление жизненным циклом в OpenShift | Зависимость от Operator Lifecycle Manager (OLM) | Среды Red Hat OpenShift |
+| **Helm** | Управление версиями, шаблонизация (values), поддержка атомарных откатов. | Требует Helm-клиент в инфраструктуре. | **Стандарт для Production** |
+| **kubectl apply** | Максимальная простота, отсутствие внешних зависимостей. | Сложность обновления и кастомизации параметров. | Быстрые тесты, простые CI-пайплайны. |
+| **Operator Hub** | Автоматизированное управление жизненным циклом в OpenShift. | Зависимость от Operator Lifecycle Manager (OLM). | Среды Red Hat OpenShift. |
 
 ### Предварительные требования (версии 2026 года)
 
 | Требование | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| **Kubernetes** | 1.25+ | Рекомендуется 1.29+ для полной поддержки Gateway API |
-| **kubectl** | 1.25+ | Должен соответствовать версии кластера |
-| **Helm** | 3.10+ | Требуется для поддержки OCI-репозиториев и новых схем валидации |
-| **Gateway API** | v1.1.0+ | Должен быть установлен **строго до** cert-manager |
+| **Kubernetes** | 1.25+ | Рекомендуется 1.30+ для полной поддержки Gateway API. |
+| **kubectl** | 1.25+ | Должен соответствовать версии кластера. |
+| **Helm** | 3.12+ | Требуется для поддержки OCI-репозиториев и новых схем валидации. |
+| **cmctl** | 1.21+ | CLI-утилита для проверки и диагностики (заменяет плагин kubectl). |
+| **Gateway API** | v1.1.0+ | Должен быть установлен **строго до** cert-manager. |
 
 ### Компоненты системы
 
@@ -62,7 +63,7 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 
 **3. Установка контроллера:**
 
-Для версии `v1.21.0` (актуальная стабильная на июль 2026):
+Для версии `v1.21.0` (актуальная стабильная на август 2026):
 
 ```bash
 helm install cert-manager jetstack/cert-manager \
@@ -106,7 +107,7 @@ helm install cert-manager jetstack/cert-manager \
 
 ---
 
-### Сценарий 3: Расширенная конфигурация (Add-ons)
+### Сценарий 3: Дополнительные компоненты и расширения
 
 #### Включение поддержки Gateway API
 
@@ -143,16 +144,71 @@ helm upgrade cert-manager jetstack/cert-manager \
 
 ---
 
-### Сценарий 4: Проверка и верификация
+### Сценарий 4: Установка cert-manager-csi-driver
+
+Позволяет монтировать сертификаты напрямую в поды без использования Kubernetes Secrets.
+
+**1. Установка драйвера через Helm:**
+
+```bash
+helm upgrade --install cert-manager-csi-driver jetstack/cert-manager-csi-driver \
+  --namespace cert-manager \
+  --set "app.certManager.namespace=cert-manager" \
+  --set "app.driver.name=csi.cert-manager.io"
+```
+
+**2. Пример использования в Pod:**
+
+```yaml
+volumes:
+  - name: tls
+    csi:
+      driver: csi.cert-manager.io
+      readOnly: true
+      volumeAttributes:
+        csi.cert-manager.io/issuer-name: letsencrypt-prod
+        csi.cert-manager.io/dns-names: app.example.com
+```
+
+---
+
+### Сценарий 5: Конфигурация высокой доступности (HA)
+
+Для обеспечения отказоустойчивости в Production рекомендуется запускать компоненты в нескольких репликах.
+
+```bash
+helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --set replicaCount=3 \
+  --set webhook.replicaCount=3 \
+  --set cainjector.replicaCount=2 \
+  --set global.leaderElection.namespace=cert-manager
+```
+
+*Примечание: `replicaCount` настраивает количество подов для основного контроллера, а `webhook.replicaCount` — для вебхука.*
+
+---
+
+### Сценарий 6: Проверка и верификация
 
 **1. Проверка статуса подов:**
 
 ```bash
 kubectl get pods -n cert-manager
-# → Должно быть 3 пода в статусе Running
+# → Должно быть 3+ пода в статусе Running
 ```
 
-**2. Тестовый самоподписанный Issuer:**
+**2. Проверка через cmctl (Рекомендуется):**
+
+```bash
+# Проверка готовности API
+cmctl check api
+
+# Проверка статуса установки
+cmctl status certificate cert-example-tls -n default
+```
+
+**3. Тестовый самоподписанный выпуск:**
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -176,18 +232,11 @@ spec:
     name: test-selfsigned
 ```
 
-**3. Проверка выпуска:**
-
-```bash
-kubectl get certificate test-cert
-# → READY должен быть True
-```
-
 ---
 
-### Сценарий 5: Удаление системы
+### Сценарий 7: Удаление системы
 
-> **Предупреждение:** Удаление CRD приведет к удалению всех ресурсов Certificate, Issuer и ClusterIssuer.
+> **Предупреждение:** Удаление CRD приведет к безвозвратному удалению всех ресурсов Certificate, Issuer и ClusterIssuer.
 
 **1. Удаление через Helm:**
 
@@ -195,7 +244,7 @@ kubectl get certificate test-cert
 helm uninstall cert-manager -n cert-manager
 ```
 
-**2. Ручное удаление CRD (если требуется):**
+**2. Ручное удаление CRD (если устанавливались отдельно):**
 
 ```bash
 kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.0/cert-manager.crds.yaml
@@ -209,23 +258,15 @@ kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download
 
 | Параметр | Назначение | По умолчанию |
 | :--- | :--- | :--- |
-| `installCRDs` | Автоматическая установка CRD | `false` |
-| `replicaCount` | Количество реплик (для HA) | `1` |
-| `webhook.timeoutSeconds` | Таймаут вызова вебхука | `10` |
-| `global.priorityClassName` | Приоритет подов в K8s | `""` |
-| `prometheus.enabled` | Экспорт метрик для Prometheus | `true` |
-
-### Надёжность информации
-
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| Helm установка | **10** | Основной метод, поддерживаемый Jetstack |
-| Gateway API v1.1 | **10** | Соответствует спецификации K8s 2026 года |
-| trust-manager | **9** | Стабильный аддон, рекомендованный для PKI |
-| Ручное управление CRD | **10** | Best practice для систем высокой доступности |
+| `installCRDs` | Автоматическая установка CRD. | `false` |
+| `replicaCount` | Количество реплик основного контроллера. | `1` |
+| `webhook.replicaCount` | Количество реплик вебхука. | `1` |
+| `webhook.timeoutSeconds` | Таймаут вызова вебхука. | `10` |
+| `prometheus.enabled` | Экспорт метрик для Prometheus. | `true` |
+| `extraArgs` | Дополнительные флаги запуска контроллера. | `{}` |
 
 ### Смотрите также
 
-- **[Администрирование: Операции](./Administration/operations.md)** — обновление до v1.22+
-- **[Приватный CA: Сценарии](./Private_CA/scenarios.md)** — использование trust-manager Bundle
-- **[Troubleshooting](./Administration/troubleshooting.md)** — если вебхук не отвечает при установке
+- **[Администрирование: Операции](./Administration/operations.md)** — обновление до v1.22+ и стратегии ротации.
+- **[Приватный CA: Сценарии](./Private_CA/scenarios.md)** — использование trust-manager Bundle.
+- **[Troubleshooting](./Administration/troubleshooting.md)** — диагностика проблем с вебхуком и API.

@@ -1,112 +1,130 @@
 # iSCSI: Настройка Target (Сервер)
 
-> **Надёжность: 10/10** (Проверено на LIO и tgt)
-> **Актуальность: 2026-07** (Ядро Linux 6.x+, LIO/targetcli)
+Руководство по развертыванию, конфигурации и эксплуатации серверного компонента iSCSI в ОС Linux.
 
-**iSCSI Target (Таргет)** — серверный компонент, экспортирующий локальные дисковые ресурсы (физические диски, LVM-тома или файлы) инициаторам по сети. В современном Linux стандартом является реализация **LIO**, работающая на уровне ядра.
-
-## Определения
+## Определения и сокращения
 
 | Термин | Описание |
 | :--- | :--- |
-| **Backstore** | Тип и путь к реальному хранилищу данных (fileio, block, pscsi, ramdisk). |
-| **TPG (Target Portal Group)** | Контейнер для настроек группы порталов, LUN и ACL. |
-| **ACL (Access Control List)** | Список IQN инициаторов, которым разрешен доступ к конкретному таргету. |
-| **Portal** | IP-адрес и порт (по умолчанию 3260), на которых таргет ожидает соединения. |
-| **Targetcli** | Интерактивная оболочка для управления LIO таргетом. |
+| **Target (Таргет)** | Серверный компонент, экспортирующий дисковые ресурсы по сети. |
+| **Backstore** | Метод реализации хранилища в ядре (block, fileio, pscsi, ramdisk). |
+| **TPG (Target Portal Group)** | Группа порталов, LUN и ACL, объединенных общей политикой доступа. |
+| **LUN (Logical Unit Number)** | Логическая единица хранения, сопоставленная с конкретным Backstore. |
+| **IQN (iSCSI Qualified Name)** | Уникальный идентификатор узла (инициатора или таргета). |
+| **Portal** | IP-адрес и порт (3260/tcp), на которых таргет ожидает подключения. |
+| **ACL (Access Control List)** | Список IQN инициаторов, которым разрешен вход в конкретную TPG. |
+| **targetcli** | Основной инструмент администрирования стека LIO. |
 
 ## Основные концепции
 
-### Типы хранилищ (Backstores)
-1.  **fileio**: Использование файла-образа на существующей ФС (медленнее, удобно для тестов).
-2.  **block**: Прямое использование блочного устройства (диск, раздел, LVM). Рекомендуется для продакшена (максимальная производительность).
-3.  **pscsi**: Прямой проброс SCSI-устройства (Pass-through).
-4.  **ramdisk**: Хранилище в оперативной памяти (экстремальная скорость, данные теряются при перезагрузке).
+### Архитектура LIO (linux-iscsi.org)
 
-### Безопасность
-По умолчанию LIO требует явного указания IQN инициатора в ACL. Дополнительно рекомендуется использовать **CHAP** для аутентификации.
+В современном Linux стандартом является **LIO** — реализация таргета на уровне ядра. Она взаимодействует с пользователем через псевдофайловую систему `configfs` (обычно монтируется в `/sys/kernel/config/target/`). Утилита `targetcli` предоставляет иерархическую оболочку для управления этой структурой.
+
+### Типы хранилищ (Backstores)
+
+1.  **block**: Использование блочных устройств напрямую (диски, LVM, Zvol). **Рекомендуется** для продакшена (минимальные задержки).
+2.  **fileio**: Использование файла как виртуального диска. Удобно для тестов, но создает накладные расходы на ФС.
+3.  **pscsi**: Прямой проброс физических SCSI-команд устройству (Pass-through).
+4.  **ramdisk**: Хранилище в ОЗУ (данные теряются при перезагрузке).
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка LIO (Современный стандарт)
-
-LIO (linux-iscsi.org) — это подсистема ядра Linux для работы в режиме таргета.
+### Сценарий 1: Настройка LIO (Стандарт)
 
 #### 1. Установка
 ```bash
 sudo apt update && sudo apt install targetcli-fb -y
-# → Установка утилиты управления и демона rtslib-fb-targetctl
+# Для RHEL/Rocky: sudo dnf install targetcli -y
 ```
 
-#### 2. Интерактивная настройка
-Запустите `targetcli`:
+#### 2. Конфигурация через targetcli
+Запустите интерактивную оболочку: `sudo targetcli`.
+
 ```bash
-sudo targetcli
-```
-Выполните последовательность команд (пример для LVM-тома):
-```bash
-# 1. Создание блочного хранилища
-/backstores/block create name=disk1 dev=/dev/vg_storage/lv_iscsi_01
+# 1. Создание хранилища на базе LVM или раздела
+/backstores/block create name=storage01 dev=/dev/vg_data/lv_iscsi
 
 # 2. Создание таргета
 /iscsi create iqn.2026-07.com.example:target01
 
-# 3. Привязка LUN к TPG
-/iscsi/iqn.2026-07.com.example:target01/tpg1/luns create /backstores/block/disk1
-
-# 4. Создание портала (слушать на всех интерфейсах)
+# 3. Привязка портала (по умолчанию 0.0.0.0:3260)
 /iscsi/iqn.2026-07.com.example:target01/tpg1/portals create 0.0.0.0
 
-# 5. Настройка прав доступа (IQN инициатора)
+# 4. Сопоставление LUN с хранилищем
+/iscsi/iqn.2026-07.com.example:target01/tpg1/luns create /backstores/block/storage01
+
+# 5. Настройка доступа (ACL) для инициатора
 /iscsi/iqn.2026-07.com.example:target01/tpg1/acls create iqn.2026-07.com.example:initiator01
-
-# 6. Сохранение и выход
-exit
-# → Configuration saved to /etc/rtslib-fb-target/saveconfig.json
 ```
 
----
+### Сценарий 2: Настройка безопасности (CHAP)
 
-### Сценарий 2: Настройка через tgt (Legacy)
+LIO поддерживает одностороннюю и взаимную (Mutual) аутентификацию.
 
-`tgt` работает в user-space. В 2026 году считается устаревшим, но всё еще встречается в старых системах.
-
-#### 1. Установка и базовая конфигурация
+#### Односторонний CHAP (Таргет проверяет инициатора)
+В `targetcli`:
 ```bash
-sudo apt install tgt -y
+cd /iscsi/iqn.2026-07.com.example:target01/tpg1/acls/iqn.2026-07.com.example:initiator01
+set auth userid=user1
+set auth password=secret_pass_123
 ```
-Создайте файл `/etc/tgt/conf.d/iscsi.conf`:
-```apache
-<target iqn.2026-07.com.example:storage.legacy>
-    backing-store /dev/vg_storage/lv_iscsi_legacy
-    initiator-address 192.168.1.0/24
-</target>
-```
-#### 2. Запуск
+
+#### Взаимный CHAP (Инициатор также проверяет таргет)
 ```bash
-sudo systemctl restart tgt
-sudo systemctl enable tgt
+set auth mutual_userid=target_user
+set auth mutual_password=target_pass_456
 ```
+
+## Эксплуатация и обслуживание
+
+### Резервное копирование конфигурации
+
+Конфигурация LIO хранится в JSON-формате.
+
+- **Путь по умолчанию:** `/etc/rtslib-fb-target/saveconfig.json`.
+- **Ручное сохранение:** В `targetcli` выполнить `saveconfig`.
+- **Создание бэкапа:**
+  ```bash
+  sudo targetcli saveconfig /root/iscsi_backup_$(date +%F).json
+  ```
+- **Восстановление:**
+  ```bash
+  sudo targetcli restoreconfig /root/iscsi_backup.json
+  ```
+
+### Персистентность
+Убедитесь, что конфигурация автоматически загружается при старте системы:
+```bash
+sudo systemctl enable --now target
+```
+*Примечание:* В некоторых дистрибутивах сервис называется `targetcli.service`.
+
+### Диагностика на стороне сервера
+
+1.  **Проверка активных сессий:**
+    ```bash
+    ls /iscsi/iqn.2026-07.com.example:target01/tpg1/acls/iqn.2026-07.com.example:initiator01/
+    # → Если папка 'info' содержит данные, сессия активна.
+    ```
+2.  **Просмотр структуры через sysfs:**
+    ```bash
+    ls -R /sys/kernel/config/target/
+    ```
+3.  **Логи ошибок:**
+    ```bash
+    sudo dmesg | grep -i target
+    ```
 
 ## Дополнительная информация
 
-### Настройка Firewall
-iSCSI использует порт **3260/tcp**.
+### Сравнение с tgt (Legacy)
 
-**Firewalld:**
-```bash
-sudo firewall-cmd --permanent --add-port=3260/tcp
-sudo firewall-cmd --reload
-# → success
-```
+`tgt` (scsi-target-utils) — user-space реализация. В 2026 году считается устаревшей и используется только для поддержки старых систем или специфических эмуляций. LIO превосходит `tgt` по производительности и нативной интеграции с ядром.
 
-### Персистентность настроек (LIO)
-В отличие от `tgt`, где конфиг хранится в текстовом файле, LIO сохраняет состояние в двоичном JSON. Убедитесь, что сервис автозагрузки активен:
-```bash
-sudo systemctl enable target
-```
+### Интеграция и оптимизация
 
-### См. также
-- **[Настройка iSCSI Initiator](./iscsi_initiator_setup.md)** — подключение клиента к созданному таргету.
+- **[Настройка iSCSI Initiator](./iscsi_initiator_setup.md)** — подключение клиента.
 - **[Оптимизация производительности iSCSI](./iscsi_performance.md)** — тюнинг сетевого стека и параметров I/O.
-- **[Настройка Multipath I/O](./iscsi_multipath.md)** — создание нескольких путей для отказоустойчивости.
+- **[Диагностика iSCSI](./iscsi_diagnostics.md)** — решение проблем связности.
+- **[Настройка Firewall](../Settings/tools/firewalld.md)** — открытие порта 3260/tcp.

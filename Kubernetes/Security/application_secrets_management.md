@@ -2,108 +2,131 @@
 
 ## Определения
 
-- **Secret**: Объект Kubernetes, предназначенный для хранения и управления конфиденциальной информацией, такой как пароли, OAuth-токены и SSH-ключи.
-- **ConfigMap**: Объект API для хранения неконфиденциальных данных в парах "ключ-значение". Используется для отвязки конфигурационных артефактов от кода приложения.
-- **initContainer**: Специализированный контейнер, который запускается и должен успешно завершиться до того, как будут запущены основные контейнеры в поде.
-- **Volume**: Абстракция хранилища в Kubernetes. Подробнее о типах томов (включая `emptyDir`) см. в разделе [Тома в Kubernetes](../Base/Pod/volume_types/volume_types.md).
+- **Secret**: Объект Kubernetes для хранения конфиденциальных данных (пароли, токены). Данные кодируются в base64, но по умолчанию не шифруются в etcd.
+- **ConfigMap**: Ресурс для хранения несекретных конфигураций. Позволяет отделить параметры запуска от кода и образа контейнера.
+- **initContainer**: Вспомогательный контейнер, завершающий работу до старта основного приложения. Идеален для подготовки конфигов.
+- **Sidecar Container (Native)**: Начиная с Kubernetes 1.28, sidecar-контейнеры имеют собственный жизненный цикл (`restartPolicy: Always` внутри `initContainers`) и могут работать на протяжении всей жизни пода, обеспечивая, например, динамическое обновление секретов.
+- **Secrets Store CSI Driver**: Механизм монтирования секретов из внешних хранилищ (Vault, AWS KMS) напрямую в файловую систему пода как том (tmpfs).
+- **Vault Secrets Operator (VSO)**: Современный оператор для синхронизации секретов из HashiCorp Vault в нативные объекты `Secret` Kubernetes с поддержкой автоматической ротации.
+- **Immutable Secrets/ConfigMaps**: Ресурсы, помеченные как `immutable: true`. Они запрещают изменение данных, что снижает нагрузку на `kube-apiserver` (kubelet не опрашивает их на предмет изменений) и предотвращает случайные ошибки при обновлении.
 
-**Важно:** Этот документ описывает паттерн динамической генерации конфигурации. Для безопасного хранения секретов в Git используйте [Sealed Secrets](./sealed_secrets_overview.md) или [SOPS](../../Security/Tools/sops_overview.md).
+**Важно:** Этот документ описывает паттерны *доставки* и *потребления* секретов приложениями. Для стратегий хранения в Git см. [Sealed Secrets](./sealed_secrets_overview.md) или [SOPS](../../Security/Tools/sops_overview.md).
 
 ## Основные концепции
 
-Основная проблема заключается в том, что хранение секретов в файлах конфигурации в системе контроля версий (например, Git) в открытом виде является серьезной уязвимостью безопасности.
+Проблема "секретов в коде" решается разделением ответственности между инфраструктурой и приложением. Существует два основных подхода к доставке секретов:
 
-Паттерн решения этой проблемы заключается в динамической генерации конфигурационного файла при старте пода.
+### 1. Модель синхронизации (Push/Pull)
+Внешний оператор (ESO, VSO) считывает данные из внешнего хранилища и создает нативный `Secret` в Kubernetes.
+- **Плюсы**: Приложению не нужны специальные библиотеки; стандартная работа через `env` или `volume`.
+- **Минусы**: Секреты хранятся в etcd (нужно шифрование etcd); администраторы кластера могут их прочитать.
 
-1. **Шаблон конфигурации**: Создается `ConfigMap`, содержащий шаблон конфигурационного файла. В местах, где должны быть секретные значения, используются переменные-плейсхолдеры (например, `${DB_PASSWORD}`).
-2. **Хранение секретов**: Конфиденциальные данные (пароли, ключи API) создаются как объект `Secret` в Kubernetes.
-3. **Динамическая генерация**: `initContainer` запускается перед основным приложением.
-    - Он монтирует `ConfigMap` с шаблоном и `Secret` с нужными данными.
-    - Данные из `Secret` передаются в `initContainer` как переменные окружения.
-    - С помощью утилиты (`sed`, `envsubst`) `initContainer` подставляет значения из переменных окружения в шаблон.
-    - Итоговый конфигурационный файл записывается в `emptyDir` том, который является общим для `initContainer` и основного контейнера приложения.
-4. **Запуск приложения**: Основной контейнер приложения монтирует `emptyDir` том и читает из него уже готовый конфигурационный файл с подставленными секретами.
+### 2. Модель прямого монтирования (CSI)
+Секреты монтируются напрямую из внешнего хранилища в память пода.
+- **Плюсы**: Секреты никогда не попадают в etcd и API Kubernetes; максимальная безопасность.
+- **Минусы**: Сложнее в настройке; требует установки CSI-драйверов на узлы.
+
+### Паттерн динамической генерации
+Если приложение ожидает специфический формат файла (например, `.ini` или `.properties`) с подставленными секретами, используется `initContainer` для генерации финального конфига из шаблона.
 
 ## Практические сценарии
 
-### Способ 1: Использование `sed`
+### Сценарий 1: Генерация конфига через `envsubst` (Рекомендуемый для шаблонов)
 
-Этот подход использует стандартный образ `busybox` и утилиту `sed` для замены плейсхолдеров.
-
-- **Образ `initContainer`**: `busybox`
-- **Процесс**: Переменные из `Secret` передаются в `initContainer`. Команда `sed` используется для поиска и замены каждого плейсхолдера в файле-шаблоне на соответствующее значение из переменной окружения.
-- **Преимущества**:
-  - Не требует создания кастомных Docker-образов.
-- **Недостатки**:
-  - При большом количестве переменных скрипт становится громоздким, так как требует явного описания каждой замены.
+Использование `envsubst` (пакет `gettext`) позволяет элегантно подставлять переменные окружения в шаблон.
 
 ```yaml
-# Пример initContainer с sed
-initContainers:
-- name: prepare-config
-  image: busybox
-  command: ['sh', '-c']
-  args:
-    - |
-      sed "s|\${CLIENT_SECRET}|${CLIENT_SECRET}|g" /config-template/config.yml > /init-config/config.yml && 
-      sed -i "s|\${ENCRYPTION_KEY}|${ENCRYPTION_KEY}|g" /init-config/config.yml
-  envFrom:
-  - secretRef:
-      name: my-app-secret
-  volumeMounts:
-  - name: config-template
-    mountPath: /config-template
-  - name: init-config
-    mountPath: /init-config
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  initContainers:
+  - name: config-builder
+    image: alpine:3.18
+    command: ['sh', '-c']
+    args:
+      - apk add --no-cache gettext && envsubst < /tmpl/config.yaml.tmpl > /config/config.yaml
+    envFrom:
+    - secretRef:
+        name: my-db-secrets
+    volumeMounts:
+    - name: template-vol
+      mountPath: /tmpl
+    - name: config-vol
+      mountPath: /config
+  containers:
+  - name: app
+    image: my-app:latest
+    volumeMounts:
+    - name: config-vol
+      mountPath: /app/config
+  volumes:
+  - name: template-vol
+    configMap:
+      name: app-config-template
+  - name: config-vol
+    emptyDir:
+      medium: Memory # Важно: храним секрет только в RAM
 ```
 
-### Способ 2: Использование `envsubst`
+### Сценарий 2: Использование Native Sidecar (K8s 1.28+)
 
-`envsubst` является частью пакета `gettext` и автоматически подставляет в шаблон переменные окружения. Это более элегантный способ.
-
-- **Образ `initContainer`**: Кастомный образ на базе `alpine` с установленным `gettext` (`apk add gettext`). Стандартный `busybox` не содержит `envsubst`.
-- **Процесс**: `envsubst` читает файл-шаблон со стандартного ввода и выводит на стандартный вывод результат с подставленными значениями всех переменных окружения, найденных в шаблоне (в формате `${VAR}` или `$VAR`).
-- **Преимущества**:
-  - Простота и лаконичность. Не требуется описывать замену для каждой переменной.
-- **Недостатки**:
-  - Требует наличия Docker-образа с утилитой `envsubst`.
+Для приложений, требующих динамического обновления секретов без перезагрузки, можно использовать нативные sidecar-контейнеры.
 
 ```yaml
-# Пример Dockerfile для кастомного образа
-FROM alpine:3.14
-RUN apk add --no-cache gettext
-
-# Пример initContainer с envsubst
 initContainers:
-- name: prepare-config
-  image: my-registry/alpine-with-envsubst:latest
-  command: ['sh', '-c']
-  args:
-    - envsubst < /config-template/config.yml > /init-config/config.yml
-  envFrom:
-  - secretRef:
-      name: my-app-secret
+- name: vault-agent
+  image: hashicorp/vault-agent:latest
+  restartPolicy: Always # Делает контейнер sidecar-ом
+  args: ["agent", "-config=/etc/vault/config.hcl"]
   volumeMounts:
-  - name: config-template
-    mountPath: /config-template
-  - name: init-config
-    mountPath: /init-config
+  - name: config-vol
+    mountPath: /app/config
 ```
 
-### Альтернативы: Внешние системы (Vault)
+### Сценарий 3: Secrets Store CSI Driver (Максимальная безопасность)
 
-При использовании внешних хранилищ (например, HashiCorp Vault), существует три основных паттерна интеграции:
+Этот метод исключает создание `Secret` в Kubernetes. Приложение видит секреты как файлы в `/mnt/secrets-store`.
 
-1. **Vault Operator / External Secrets Operator**: Синхронизирует секреты из внешнего хранилища в нативные `Secret` Kubernetes.
-   - *Недостаток*: Секреты остаются видимыми (в base64) для кластер-администраторов и хранятся в `etcd`.
-2. **Vault Agent Sidecar**: Инъекция sidecar-контейнера, который авторизуется в Vault и скачивает секреты.
-   - *Недостаток*: Значительный оверхед по ресурсам, так как при масштабировании (например, до 1000 подов) поднимается 1000 дополнительных агентов.
-3. **Secrets Store CSI Driver (Рекомендуемый)**: Устанавливается как DaemonSet и монтирует секреты напрямую в файловую систему пода (tmpfs), минуя создание объекта `Secret` в Kubernetes.
-   - *Преимущество*: Наиболее безопасный и ресурсоэффективный метод. См. [Интеграция Vault и Kubernetes](../../Vault/guides/vault_kubernetes_integration.md).
+1. **SecretProviderClass**: Описывает, что и откуда брать (например, из Vault).
+2. **Монтирование в Pod**:
+```yaml
+spec:
+  containers:
+  - name: app
+    volumeMounts:
+    - name: secrets-store-inline
+      mountPath: "/mnt/secrets-store"
+      readOnly: true
+  volumes:
+    - name: secrets-store-inline
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: "vault-db-creds"
+```
+Подробнее см. в [Внешние менеджеры секретов](../Base/secrets/external_managers.md).
 
 ## Дополнительная информация
 
-- **Безопасность и производительность**: Для `emptyDir` тома рекомендуется использовать опцию `medium: Memory`. Это создаст том в оперативной памяти (tmpfs), что предотвратит запись конфигурационного файла с секретами на диск ноды.
-- **RBAC**: Доступ к объектам `Secret` должен быть строго ограничен с помощью [RBAC](./rbac/rbac_overview.md). Только `ServiceAccount`, от имени которого запускается под приложения, должен иметь права `get` и `list` на используемые им секреты.
-- **Безопасность образа**: Для повышения безопасности основной контейнер приложения может быть собран без `shell` (`bash`, `sh` и т.д.). Это усложнит злоумышленнику, получившему доступ к контейнеру, исследование файловой системы и чтение конфигурационных файлов. См. [Pod Security Context](./pod_security_context.md).
-- **Шифрование в Git**: Для безопасного хранения секретов в Git используйте [Sealed Secrets](./sealed_secrets_overview.md) или [SOPS](../../Security/Tools/sops_overview.md). Общий обзор подходов — в [Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md). Для GitOps-пайплайнов см. [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md).
+### Безопасность и оптимизация
+- **RBAC**: Ограничивайте доступ к объектам `Secret`. Только ServiceAccount, от имени которого работает под, должен иметь права `get` на нужные секреты. См. [RBAC](./rbac/rbac_overview.md).
+- **Memory-backed emptyDir**: Всегда используйте `medium: Memory` для томов, содержащих временные файлы с секретами. Это предотвращает утечку данных на диск (особенно на HDD/SSD без шифрования).
+- **Immutable ресурсы**: Если конфигурация или секрет не должны меняться в течение жизненного цикла пода, установите `immutable: true`. Это защищает от случайных изменений и снижает нагрузку на API.
+- **Security Context**:
+  - `runAsNonRoot: true`: Запускайте контейнеры от не-привилегированных пользователей.
+  - `fsGroup`: Используйте для предоставления прав на чтение томов с секретами определенной группе пользователей.
+  - `readOnlyRootFilesystem: true`: Рекомендуется для минимизации поверхности атаки.
+
+### Проверка и отладка
+- **Отсутствие секрета**: Если под висит в `CreateContainerConfigError`, проверьте наличие Secret/ConfigMap через `kubectl get secret`.
+- **Ошибки монтирования**: При использовании CSI драйверов ошибки логируются в событиях пода (`kubectl describe pod`) или в логах драйвера (DaemonSet в namespace `kube-system`).
+
+### См. также
+- **[Основы Kubernetes Secret](../Base/secrets/secrets_basics.md)** — типы и базовое использование.
+- **[Безопасность Secret в Kubernetes](../Base/secrets/security.md)** — шифрование etcd и RBAC.
+- **[Внешние менеджеры секретов](../Base/secrets/external_managers.md)** — детали работы ESO и CSI Driver.
+- **[Sealed Secrets](./sealed_secrets_overview.md)** — хранение зашифрованных секретов в Git.
+- **[Интеграция Vault и Kubernetes](../../Vault/guides/vault_kubernetes_integration.md)** — глубокое погружение в Vault.

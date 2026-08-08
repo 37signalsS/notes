@@ -2,115 +2,136 @@
 
 ## Определения
 
-**Addons (Дополнения)** — вспомогательные компоненты Kubernetes, которые расширяют функциональность кластера (Ingress-контроллеры, балансировщики, дашборды). В Kubespray аддоны обычно разворачиваются в пространство имен `kube-system`. Подробнее: [Namespace (Пространства имен)](../../Base/namespace.md).
+**Addons (Дополнения)** — вспомогательные компоненты Kubernetes, которые расширяют функциональность кластера (мониторинг, балансировщики, хранилища). В Kubespray аддоны обычно разворачиваются в пространство имен `kube-system` или специализированные неймспейсы (например, `metallb-system`).
 
-**kube-system** — зарезервированное пространство имен для системных компонентов Kubernetes и дополнений, обеспечивающих работу инфраструктуры кластера.
+**kube-system** — системное пространство имен для критически важных компонентов кластера и базовых дополнений (DNS, прокси, CNI).
+
+**Helm** — менеджер пакетов для Kubernetes. Kubespray позволяет автоматически установить Helm на мастер-узлы для последующего ручного управления сложными приложениями.
 
 ## Основные концепции
 
 ### Управление дополнениями в Kubespray
 
-Kubespray управляет установкой дополнений через Ansible-переменные в каталоге `group_vars/k8s-cluster/addons.yml`. Большинство аддонов по умолчанию выключены (`enabled: false`).
+Kubespray использует Ansible для управления жизненным циклом дополнений. Основной файл конфигурации — `inventory/mycluster/group_vars/k8s-cluster/addons.yml`.
 
-### Типовой состав системного пространства имен
+**Типы дополнений:**
+1. **Core Apps:** системные утилиты (Metrics Server, CoreDNS, Local Path Provisioner).
+2. **Network Addons:** сетевые компоненты (MetalLB, Ingress-контроллеры).
+3. **External Tools:** инструменты интеграции (Cert-manager, Node Feature Discovery).
 
-После успешной установки кластера через Kubespray, в `kube-system` присутствуют следующие компоненты:
+> [!WARNING]
+> Начиная с версии **v2.31.0 (2026)**, прямая поддержка `ingress-nginx` и `kubernetes-dashboard` была удалена из состава Kubespray. Рекомендуется использовать Helm для их установки.
 
-| Компонент | Префикс подов | Описание |
+### Состав системного пространства имен
+
+Пример стандартного набора компонентов после развертывания:
+
+| Компонент | Префикс подов | Назначение |
 | :--- | :--- | :--- |
-| **Control Plane** | `kube-apiserver-*`, `kube-controller-manager-*`, `kube-scheduler-*` | Основные узлы управления кластером (статические поды) |
-| **CNI** | `calico-node-*`, `cilium-*`, `flannel-*` | Сетевой плагин. См. [CNI и kube-proxy](../../Networking/Network/cni_kube_proxy_roles.md) |
-| **kube-proxy** | `kube-proxy-*` | Обеспечивает работу сервисов через iptables или IPVS |
-| **DNS** | `coredns-*`, `dns-autoscaler`, `nodelocaldns-*` | Система доменных имен внутри кластера |
-| **Addons** | `kubernetes-dashboard-*`, `nginx-ingress-*`, `metallb-*` | Опциональные компоненты, включенные пользователем |
+| **Control Plane** | `kube-apiserver-*` | Статические поды управления |
+| **CNI** | `calico-node-*` / `cilium-*` | Сетевой плагин. См. [CNI и kube-proxy](../../Networking/Network/cni_kube_proxy_roles.md) |
+| **DNS** | `coredns-*` | Резолвинг имен внутри кластера |
+| **Metrics** | `metrics-server-*` | Сбор ресурсов для HPA и `kubectl top` |
+| **DNS Cache** | `nodelocaldns-*` | Локальное кэширование DNS-запросов на узлах |
 
 ## Практические сценарии
 
-### Выделенные узлы для Ingress
+### 1. Настройка Metrics Server
 
-Изоляция Ingress-контроллеров на выделенных узлах (DMZ) повышает безопасность и предсказуемость производительности. Для этого используются механизмы `taints` и `tolerations`. Подробнее: [Taints and Tolerations (Тейнты и толерантности)](../../Scheduling/taints_and_tolerations.md).
+Metrics Server необходим для работы Horizontal Pod Autoscaler (HPA) и команды `kubectl top`.
 
-**Конфигурация в `group_vars/k8s-cluster/addons.yml`:**
-
+**Конфигурация в `addons.yml`:**
 ```yaml
-# Активация Ingress NGINX
-ingress_nginx_enabled: true
-ingress_nginx_host_network: true
-
-ingress_nginx_configmap:
-  server-tokens: "false"
-  proxy-body-size: "2048m"
-
-# Настройка запуска только на определенных узлах
-ingress_nginx_nodeselector:
-  node-role.kubernetes.io/ingress: ""
-
-ingress_nginx_tolerations:
-- key: "node-role.kubernetes.io/ingress"
-  operator: "Exists"
-  effect: "NoSchedule"
+metrics_server_enabled: true
+# Игнорировать проверку TLS сертификатов kubelet (часто нужно в Bare Metal)
+metrics_server_kubelet_insecure_tls: true
+# Настройка частоты сбора данных
+metrics_server_metric_resolution: 15s
 ```
 
-**Настройка меток и тейнтов в `inventory/mycluster/group_vars/all/all.yml` или через inventory:**
+### 2. Конфигурация MetalLB (Layer 2)
 
+MetalLB предоставляет External IP для сервисов типа `LoadBalancer` без использования облачных провайдеров. Подробнее: [MetalLB: Обзор и настройка](../../Networking/metallb.md).
+
+**Конфигурация в `addons.yml`:**
 ```yaml
-# Автоматическое назначение меток и тейнтов при установке
-node_labels:
-  node-role.kubernetes.io/ingress: ""
-
-node_taints:
-  - "node-role.kubernetes.io/ingress:NoSchedule"
-```
-
-### Конфигурация MetalLB
-
-MetalLB позволяет использовать сервисы типа `LoadBalancer` в средах без облачного провайдера. Подробнее: [MetalLB: Обзор и настройка](../../Networking/metallb.md).
-
-**Конфигурация в `group_vars/k8s-cluster/addons.yml`:**
-
-```yaml
-# Включение MetalLB
 metallb_enabled: true
-metallb_speaker_enabled: true
+# Рекомендуется для большинства локальных сетей
+metallb_protocol: "layer2"
 
 # Определение пулов IP-адресов
 metallb_config:
   address_pools:
     primary:
       ip_range:
-        - "192.168.1.200/32" # Одиночный IP
-        - "192.168.1.210-192.168.1.220" # Диапазон
+        - "192.168.1.200-192.168.1.250"
+      auto_assign: true
+  # Обязательно для Layer 2
+  l2_advertisements:
+    default:
+      ip_pools:
+        - primary
 ```
 
-**Важное требование для IPVS:**
-При использовании `kube-proxy` в режиме `ipvs` необходимо установить `strictARP: true`. В Kubespray это делается автоматически при включении MetalLB, но можно задать явно:
-`kube_proxy_strict_arp: true`
+### 3. Динамическое локальное хранилище (Local Path Provisioner)
 
-### Проверка состояния системных компонентов
+Позволяет автоматически создавать `PersistentVolumes`, используя дисковое пространство узлов. Идеально для небольших кластеров или тестовых сред.
 
-**Просмотр всех подов в системном пространстве имен:**
-
-```bash
-kubectl get pods -n kube-system -o wide
+**Конфигурация в `addons.yml`:**
+```yaml
+local_path_provisioner_enabled: true
+local_path_provisioner_storage_class: "local-path"
+local_path_provisioner_reclaim_policy: Delete
+local_path_provisioner_claim_root: /opt/local-path-provisioner
 ```
 
-**Проверка статуса CNI-плагина (на примере Calico):**
+### 4. Оптимизация DNS: Node Local DNS
 
-```bash
-kubectl get pods -n kube-system -l k8s-app=calico-node
+Уменьшает задержки и количество запросов к CoreDNS за счет запуска локального кэширующего агента на каждом узле.
+
+**Конфигурация в `group_vars/k8s-cluster/k8s-cluster.yml`:**
+```yaml
+enable_nodelocaldns: true
+# IP-адрес для локального прослушивания (обычно 169.254.20.10)
+nodelocaldns_ip: 169.254.20.10
 ```
 
-**Проверка версии API-сервера:**
+### 5. Использование Helm (для удаленных аддонов)
 
+Если вам нужен Ingress NGINX в версиях 2.31+, включите Helm в Kubespray и установите чарт вручную.
+
+**Включение Helm в `addons.yml`:**
+```yaml
+helm_enabled: true
+```
+
+**Пример установки Ingress после развертывания кластера:**
 ```bash
-kubectl describe pod kube-apiserver-control-1 -n kube-system | grep Image
-# → Image: registry.k8s.io/kube-apiserver:v1.29.0
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm install my-ingress ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
+```
+
+### 6. Выделенные узлы для Ingress (Архивный метод)
+
+Для версий Kubespray **ниже 2.31**, где Ingress еще встроен, можно использовать изоляцию:
+
+**Конфигурация в `addons.yml`:**
+```yaml
+ingress_nginx_enabled: true
+ingress_nginx_host_network: true
+ingress_nginx_nodeselector:
+  node-role.kubernetes.io/ingress: ""
+ingress_nginx_tolerations:
+- key: "node-role.kubernetes.io/ingress"
+  operator: "Exists"
+  effect: "NoSchedule"
 ```
 
 ## Дополнительная информация
 
-- [Обзор Kubespray](./overview.md) — общие принципы и возможности.
-- [Установка кластера](./kubespray_install/basic_concepts.md) — пошаговое руководство по развертыванию.
-- [MetalLB: Балансировщик для Bare-metal](../../Networking/metallb.md) — глубокое погружение в работу MetalLB.
-- [CNI и kube-proxy](../../Networking/Network/cni_kube_proxy_roles.md) — описание сетевой подсистемы.
-- [Taints and Tolerations](../../Scheduling/taints_and_tolerations.md) — механизмы планирования подов.
+- [Обзор Kubespray](./overview.md) — базовые принципы.
+- [Установка кластера](./kubespray_install/basic_concepts.md) — пошаговое руководство.
+- [MetalLB: Балансировщик для Bare-metal](../../Networking/metallb.md) — детальная настройка сети.
+- [Persistent Volumes](../../Storage/pv_and_pvc.md) — работа с хранилищами.
+- [Local Path Provisioner](../../Storage/local-path-provisioner.md) — детальное описание провизионера.

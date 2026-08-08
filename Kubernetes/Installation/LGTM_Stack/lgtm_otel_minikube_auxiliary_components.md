@@ -76,7 +76,7 @@
 
 #### Шаг 1: Установка cert-manager
 
-Используется актуальная версия (на июль 2026 г. — v1.20.2). Подробности в SSoT: **[Установка cert-manager](../../ToolsUtilities/cert_manager/installation.md)**.
+Используется актуальная версия (на август 2026 г. — v1.21.1). Подробности в SSoT: **[Установка cert-manager](../../ToolsUtilities/cert_manager/installation.md)**.
 
 ```bash
 helm repo add jetstack https://charts.jetstack.io
@@ -86,7 +86,7 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   --namespace cert-manager \
   --create-namespace \
   --set installCRDs=true \
-  --version v1.20.2
+  --version v1.21.1
 ```
 
 #### Шаг 2: Создание ClusterIssuer
@@ -135,11 +135,11 @@ EOF
 
 ### Сценарий 2: Развертывание локального Docker Registry
 
-**Цель:** Обеспечить хранилище для артефактов внутри кластера с поддержкой TLS.
+**Цель:** Обеспечить хранилище для артефактов внутри кластера с поддержкой TLS и персистентности.
 
 #### Шаг 1: Настройка Helm-репозитория
 
-В 2025 году репозиторий twuni был перенесен.
+Репозиторий twuni является официальным для Helm-чарта Docker Registry.
 
 ```bash
 helm repo add twuni https://twuni.github.io/docker-registry.helm
@@ -147,6 +147,8 @@ helm repo update
 ```
 
 #### Шаг 2: Установка реестра
+
+Для обеспечения сохранности образов рекомендуется использовать `persistence`. В Minikube это создаст HostPath PV.
 
 ```bash
 helm upgrade --install docker-registry twuni/docker-registry \
@@ -157,7 +159,9 @@ helm upgrade --install docker-registry twuni/docker-registry \
   --set ingress.enabled=true \
   --set ingress.hosts[0]=registry.test \
   --set ingress.tls[0].secretName=registry-tls \
-  --set ingress.annotations."cert-manager.io/cluster-issuer"=minikube-ca-issuer
+  --set ingress.annotations."cert-manager.io/cluster-issuer"=minikube-ca-issuer \
+  --set persistence.enabled=true \
+  --set persistence.size=10Gi
 ```
 
 #### Шаг 3: Настройка окружения
@@ -167,6 +171,7 @@ helm upgrade --install docker-registry twuni/docker-registry \
 echo "$(minikube ip) registry.test" | sudo tee -a /etc/hosts
 
 # Настройка доверия к реестру в Minikube
+# Требуется для того, чтобы Docker внутри Minikube мог скачивать образы из registry.test:30000
 minikube ssh "sudo tee /etc/docker/daemon.json <<< '{\"insecure-registries\": [\"registry.test:30000\"]}'"
 minikube ssh "sudo systemctl restart docker"
 ```
@@ -174,13 +179,14 @@ minikube ssh "sudo systemctl restart docker"
 #### Шаг 4: Настройка аутентификации в Kubernetes
 
 ```bash
+# Создание ImagePullSecret для доступа к локальному реестру
 kubectl create secret docker-registry regcred \
   --docker-server=registry.test:30000 \
   --docker-username=admin \
   --docker-password=admin \
   --namespace default
 
-# Автоматическое использование секрета для всех подов
+# Автоматическое добавление секрета в ServiceAccount default
 kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred"}]}'
 ```
 
@@ -192,19 +198,23 @@ kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred
 
 | Симптом | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| **Pod завис в Pending** | Дефицит ресурсов ноды | Проверить лимиты Minikube через `minikube status` |
-| **Certificate не готов (False)** | Ошибка в Issuer или ресурсе | Изучить статус: `kubectl describe certificate -n <namespace>` |
-| **Registry возвращает 502/503** | Ingress не видит сервис | Проверить готовность пода в `docker-registry` namespace |
-| **Docker push fail (x509)** | Недоверенный сертификат | Проверить `insecure-registries` в конфиге докера или импортировать CA |
+| **Pod завис в Pending** | Дефицит ресурсов ноды | Проверить лимиты Minikube через `minikube status` и `kubectl describe node` |
+| **Certificate не готов (False)** | Ошибка в ClusterIssuer | Изучить события: `kubectl get events -n cert-manager` |
+| **Registry возвращает 502/503** | Ingress не видит сервис | Проверить readinessProbe в подах реестра |
+| **Docker push fail (x509)** | Недоверенный сертификат | Добавить CA в `/etc/docker/certs.d/registry.test:30000/ca.crt` |
+| **ImagePullBackOff** | Секрет regcred не найден | Убедиться, что секрет создан в том же namespace, что и под |
 
 ### Диагностические команды
 
 ```bash
-# Проверка работы контроллера
-kubectl logs -n cert-manager -l app=cert-manager --tail=50
+# Проверка статуса ресурсов cert-manager
+kubectl get clusterissuer,certificate,order,challenge -A
 
-# Статус всех сертификатов в кластере
-kubectl get certificate -A
+# Логи контроллера при ошибках выпуска
+kubectl logs -n cert-manager -l app=cert-manager
+
+# Проверка монтирования томов реестра
+kubectl describe pod -n docker-registry -l app=docker-registry
 ```
 
 ### Связанные материалы
@@ -219,10 +229,11 @@ kubectl get certificate -A
 
 | Параметр | Текущий (Dev) | Production (рекомендация) |
 | :--- | :--- | :--- |
-| **Тип сертификатов** | Self-signed | Let's Encrypt или Enterprise PKI |
-| **Хранилище реестра** | Local PV (emptyDir) | S3-совместимое хранилище (MinIO, AWS S3) |
-| **Аутентификация** | Basic (упрощенная) | OIDC / Интеграция с LDAP |
-| **Изоляция** | Отсутствует | Ограничение доступа через NetworkPolicies |
+| **Тип сертификатов** | CA на базе Self-signed | Let's Encrypt (ACME HTTP-01/DNS-01) |
+| **Хранилище реестра** | Local PV (hostPath) | Объектное хранилище S3 / Azure Blob / GCS |
+| **Аутентификация** | Basic (статическая) | OIDC / Интеграция с корпоративным IAM |
+| **Изоляция** | Отсутствует | NetworkPolicies, выделенные NodePools |
+| **Управление секретами** | Kubernetes Secrets | HashiCorp Vault / AWS Secrets Manager |
 
 ---
 

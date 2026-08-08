@@ -1,10 +1,10 @@
-# Установка кластера Ceph: ceph-ansible
+# Установка и поддержка Ceph через ceph-ansible
 
 ## Определения
 
-**`ceph-ansible`** — официальный набор ролей Ansible для автоматизации развертывания и управления кластером Ceph. 
+**`ceph-ansible`** — официальный в прошлом набор ролей Ansible для автоматизации развертывания и управления кластером Ceph.
 
-> **Статус проекта**: **Устарел (Legacy)**. Активная поддержка и добавление новых функций прекращены после выхода версии Ceph Octopus (15.x). Начиная с версии Pacific (16.x) и более новых (Quincy, Reef, Squid, Tentacle), основным инструментом развертывания является **cephadm**. Использование `ceph-ansible` рекомендуется исключительно для поддержки и обслуживания существующих (legacy) кластеров.
+> **Статус проекта (Август 2026)**: **Legacy (Устарел)**. Проект находится в режиме ограниченной поддержки для критических исправлений. Начиная с версии Ceph Pacific (16.x) и более новых (**Squid**, **Tentacle**, **Umbrella**), основным инструментом является **cephadm**. Использование `ceph-ansible` в 2026 году рекомендуется исключительно для обслуживания существующих (legacy) кластеров и подготовки их к миграции.
 
 ## Основные концепции
 
@@ -14,37 +14,26 @@
 
 *   **Сетевые настройки**:
     *   `public_network`: Сеть для клиентского трафика и взаимодействия узлов MON.
-    *   `cluster_network`: Изолированная сеть для внутреннего трафика (репликация OSD, восстановление данных, heartbeat).
-    *   **Рекомендация**: Для production-сред использование отдельной физической сети с пропускной способностью 10+ Гбит/с для `cluster_network` является обязательным для предотвращения деградации производительности клиентов во время восстановления данных (backfill/recovery).
-
+    *   `cluster_network`: Изолированная сеть для внутреннего трафика (репликация OSD, восстановление данных, heartbeat). В 2026 году стандартом является использование 25/40+ Гбит/с для этой сети.
 *   **Тип хранилища OSD (`osd_objectstore`)**:
-    *   **BlueStore**: Современный (с версии Luminous) и рекомендуемый тип. Напрямую управляет блочным устройством без промежуточной файловой системы, что повышает производительность и исключает накладные расходы на POSIX-слой.
-    *   **FileStore**: Устаревший вариант, использующий файловую систему (XFS) и отдельный журнал (Journal). Требует сложной настройки параметров монтирования и параметров XFS для достижения приемлемой производительности.
-
+    *   **BlueStore**: Современный и рекомендуемый тип. Работает напрямую с блочным устройством.
+    *   **FileStore**: **Устарел**. Использовал файловую систему (XFS) и журнал. Не рекомендуется для новых или обновляемых систем.
 *   **Сценарий развертывания OSD (`osd_scenario`)**:
-    *   `lvm`: Рекомендуемый сценарий. Использует `ceph-volume` для создания LVM-томов, что упрощает управление дисками.
-    *   `collocated` / `non-collocated`: Устаревшие методы (заменены на `lvm`), где данные и журнал OSD располагались на одном или разных физических устройствах соответственно.
-
-*   **Требования к операционной системе**:
-    *   `ceph-ansible` наиболее стабильно работает на Ubuntu 18.04/20.04 и CentOS 7/8 (Stream).
-    *   **Внимание**: CentOS 7/8 достигли EOL, что может вызвать проблемы с доступностью пакетов в стандартных репозиториях.
-
+    *   `lvm`: Рекомендуемый сценарий. Использует `ceph-volume` для создания LVM-томов.
 *   **Параметры кластера (`ceph_conf_overrides`)**:
-    *   `osd_pool_default_size`: Фактор репликации (стандарт — 3 для обеспечения отказоустойчивости при выходе из строя двух узлов).
-    *   `osd_pool_default_min_size`: Минимальное количество "живых" реплик для подтверждения записи (обычно 2 при `size=3`).
-    *   `osd_pool_default_pg_num` / `osd_pool_default_pgp_num`: Количество Placement Groups. Важно: `pgp_num` должен всегда быть равен `pg_num`. Подробности расчета приведены в [ceph_placement_groups.md](ceph_placement_groups.md).
-
-*   **Синхронизация времени (`ntp_service`)**:
-    *   Ceph крайне чувствителен к рассинхронизации часов между узлами. Отклонение более 0.05 сек может привести к потере кворума мониторами (MON) и переходу кластера в состояние `HEALTH_WARN`. Рекомендуется использовать `chronyd`.
+    *   `osd_pool_default_size`: Фактор репликации (стандарт — 3).
+    *   `osd_pool_default_min_size`: Мин. реплик для записи (обычно 2).
+    *   `osd_pool_default_pg_num`: Количество Placement Groups. См. [Расчет PG](ceph_placement_groups.md).
 
 ### Соответствие веток и версий Ceph
 
-| Ветка ceph-ansible | Версия Ceph | Статус |
+| Ветка ceph-ansible | Версия Ceph | Статус (Август 2026) |
 | :--- | :--- | :--- |
-| `stable-3.2` | Nautilus (14.x) | EOL |
-| `stable-4.0` | Nautilus (14.x) | EOL |
-| `stable-5.0` | Octopus (15.x) | EOL |
-| `stable-6.0` | Pacific (16.x) | Ограниченная поддержка |
+| `stable-5.0` | Octopus (15.x) | **End of Life** |
+| `stable-6.0` | Pacific (16.x) | **Maintenance Only** |
+| `stable-7.0` | Quincy (17.x) | **Legacy Support** |
+| `stable-8.0` | Reef (18.x) | **Limited Support** |
+| `stable-9.0` | Squid/Tentacle | **Experimental/Not recommended** |
 
 ### Пример конфигурации group_vars/all.yml
 
@@ -52,7 +41,7 @@
 # Источник пакетов
 ceph_origin: repository
 ceph_repository: community
-ceph_stable_release: octopus
+ceph_stable_release: quincy # Последняя стабильно поддерживаемая ветка для ansible
 
 # Сетевые настройки
 public_network: 172.21.0.0/24
@@ -70,9 +59,9 @@ ceph_conf_overrides:
   global:
     osd_pool_default_size: 3
     osd_pool_default_min_size: 2
-    osd_pool_default_pg_num: 32
-    osd_pool_default_pgp_num: 32
-    osd_journal_size: 1024  # Размер журнала в МБ (актуально для FileStore)
+    osd_pool_default_pg_num: 128
+    osd_pool_default_pgp_num: 128
+    mon_clock_drift_allowed: .05
 ```
 
 ## Практические сценарии
@@ -81,27 +70,24 @@ ceph_conf_overrides:
 
 #### 1. Подготовка Ansible Controller
 
+Для работы со старыми ветками требуются специфические версии Ansible (2.9–2.11).
+
 ```bash
 # Клонирование репозитория
 git clone https://github.com/ceph/ceph-ansible.git
-# → Cloning into 'ceph-ansible'...
-
 cd ceph-ansible
 
-# Переключение на ветку для Octopus
-git checkout stable-5.0
-# → Switched to a new branch 'stable-5.0'
+# Переключение на стабильную ветку
+git checkout stable-7.0
 
-# Установка зависимостей (рекомендуется использовать venv для изоляции старых версий Ansible)
+# Установка зависимостей в изолированном окружении
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-# → Successfully installed ansible-2.9.27 ...
+# → Установка ansible-core 2.11.x и зависимостей
 ```
 
 #### 2. Настройка инвентаря (inventory.ini)
-
-Для обеспечения высокой доступности (HA) в production-среде необходимо минимум 3 узла.
 
 ```ini
 [mons]
@@ -118,44 +104,83 @@ ceph-node3
 ceph-node1
 ceph-node2
 ceph-node3
+
+[clients]
+k8s-master-1
 ```
 
 #### 3. Запуск развертывания
 
 ```bash
-# Подготовка основного файла playbook
+# Копирование образца плейбука
 cp site.yml.sample site.yml
 
 # Запуск установки
 ansible-playbook -i inventory.ini site.yml \
   -u <user> -b --ask-become-pass --diff
-# → PLAY RECAP *********************************************************************
-#   ceph-node1 : ok=350 changed=50 unreachable=0 failed=0
-#   ...
 ```
 
-### Проверка состояния кластера
+### Обслуживание и проверка
 
-После завершения работы Ansible необходимо убедиться в корректности развертывания:
+#### Проверка состояния кластера
+
+После завершения работы Ansible выполните диагностику:
 
 ```bash
-# Общий статус кластера
+# Общий статус
 ceph -s
 # → health: HEALTH_OK
 #   services: mon: 3 daemons, mgr: 3 daemons, osd: 9 osds
 
-# Состояние OSD в иерархии
-ceph osd status
-# → ID  HOST        USED  AVAIL  WR OPS  WR DATA  RD OPS  RD DATA  STATE
-#   0   node1       10G   190G      0        0       0        0   exists,up
+# Проверка OSD
+ceph osd tree
+# → Просмотр иерархии узлов и дисков
 
 # Проверка кворума мониторов
 ceph mon stat
-# → e3: 3 mons at {node1=...,node2=...,node3=...}, quorum node1,node2,node3
 ```
+
+#### Добавление нового OSD
+
+В `ceph-ansible` для добавления диска на существующий узел:
+1. Отредактируйте `group_vars/osds.yml` (если диски указаны явно) или убедитесь, что новые диски подпадают под правила автообнаружения.
+2. Запустите плейбук с ограничением по тегам:
+```bash
+ansible-playbook -i inventory.ini site.yml --limit osds --tags osds
+```
+
+## Администрирование и Troubleshooting
+
+### Традиционное управление (Systemd)
+
+В отличие от `cephadm`, демоны здесь работают как обычные юниты ОС.
+
+| Задача | Команда |
+| :--- | :--- |
+| **Логи** | `tail -f /var/log/ceph/ceph-osd.0.log` |
+| **Статус службы** | `systemctl status ceph-osd@0` |
+| **Перезапуск MON** | `systemctl restart ceph-mon@$(hostname)` |
+
+### Типичные проблемы legacy-установок
+
+*   **Рассинхронизация времени**: Если `ntp_service` не настроен или `chronyd` завис, MON выпадут из кворума.
+*   **Права на Keyrings**: Ansible может иногда некорректно выставить владельца на `/etc/ceph/ceph.client.admin.keyring`. Проверьте, чтобы у пользователя `ceph` был доступ.
+
+## Стратегия миграции на cephadm (Путь к 2026)
+
+Для кластеров на `ceph-ansible` критически важно запланировать миграцию:
+
+1.  **Обновление ОС**: Убедитесь, что узлы поддерживают контейнеризацию (Podman/Docker).
+2.  **Обновление Ceph**: Доведите кластер до версии Pacific (16.2.x) через Ansible.
+3.  **Adoption**: Выполните процедуру переноса управления:
+    ```bash
+    cephadm shell -- cephadm adopt --style legacy --name mon.ceph-node1
+    ```
+4.  **Полный переход**: После миграции всех демонов удалите пакеты `ceph-ansible`.
 
 ## Дополнительная информация
 
-*   [Обзор Ceph](ceph_overview.md) — фундаментальные компоненты и архитектура RADOS.
-*   [Расчет Placement Groups](ceph_placement_groups.md) — подробная математика распределения данных.
-*   [Документация cephadm](https://docs.ceph.com/en/latest/cephadm/) — актуальный метод установки для современных версий Ceph.
+*   [Обзор Ceph](ceph_overview.md) — фундаментальные основы.
+*   [Расчет Placement Groups](ceph_placement_groups.md) — математика PG.
+*   [Документация cephadm](https://docs.ceph.com/en/latest/cephadm/) — для новых систем.
+*   [Cephadm Adoption Guide](https://docs.ceph.com/en/latest/cephadm/adoption/) — инструкции по миграции.

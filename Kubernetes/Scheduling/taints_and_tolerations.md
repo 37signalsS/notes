@@ -9,9 +9,12 @@
     # Пример:
     kubectl taint nodes worker-1 dedicated=ml:NoSchedule
     # → node/worker-1 tainted
+    # Пример удаления (дефис в конце):
+    kubectl taint nodes worker-1 dedicated=ml:NoSchedule-
     ```
 
 * **Tolerations (терпимость)**: Свойство, задаваемое в спецификации пода (`pod.spec`), которое позволяет ему «терпеть» `taint` на узле и быть размещённым на нём.
+* **Node Controller (Контроллер узлов)**: Системный компонент Control Plane, который следит за состоянием узлов и автоматически накладывает Taints при аппаратных или сетевых сбоях.
 
 ### Эффекты Taint
 
@@ -51,7 +54,7 @@
 В `toleration` пода указывается оператор для сопоставления с `taint` узла:
 
 * `operator: "Equal"`: `toleration` срабатывает, если `key`, `value` и `effect` точно совпадают с `taint`.
-* `operator: "Exists"`: `toleration` срабатывает для любого `taint` с указанным `key` и `effect`, независимо от `value`.
+* `operator: "Exists"`: `toleration` срабатывает для любого `taint` с указанным `key` и `effect`, независимо от `value`. Если указан только `operator: "Exists"`, под стерпит **любые** taints на узле.
 
 > **Важно**: `toleration` не гарантирует, что под попадёт именно на ноду с соответствующим `taint` — он лишь снимает запрет на размещение. Для направления пода на конкретную ноду используйте `nodeSelector` или `nodeAffinity`.
 
@@ -71,7 +74,7 @@ spec:
     effect: "NoExecute"
 ```
 
-### Стандартные Taints узлов
+### Стандартные Taints узлов (Taint-based Eviction)
 
 Kubernetes автоматически применяет следующие `taints` к узлам:
 
@@ -91,7 +94,7 @@ Kubernetes автоматически применяет следующие `tai
 
 1. **Обнаружение**: `node-controller` ждёт время, указанное в `--node-monitor-grace-period` (по умолчанию 40с).
 2. **Маркировка**: Состояние узла меняется на `Unknown`, добавляется taint `unreachable:NoExecute`.
-3. **Ожидание**: Поды без специфических `tolerations` начинают выселяться по истечении `tolerationSeconds` (по умолчанию 300с для стандартных taints).
+3. **Ожидание**: Поды без специфических `tolerations` начинают выселяться по истечении `tolerationSeconds` (по умолчанию 300с для стандартных taints `not-ready` и `unreachable`). Для каждого пода запускается индивидуальный таймер.
 4. **Удаление**: Поды удаляются из API и планируются на другие узлы.
 
 ### Параметры Node Controller
@@ -99,7 +102,14 @@ Kubernetes автоматически применяет следующие `tai
 | Параметр | По умолчанию | Описание |
 | :--- | :--- | :--- |
 | `--node-monitor-grace-period` | 40s | Время до присвоения статуса `Unknown` |
-| `--pod-eviction-timeout` | 5m | Интервал между попытками выселения (не время до начала) |
+| `--pod-eviction-timeout` | 5m | Интервал между попытками выселения (в современных версиях приоритет отдается логике `tolerationSeconds`) |
+
+### Поведение DaemonSet
+
+Начиная с Kubernetes 1.17, поды DaemonSet планируются стандартным планировщиком (kube-scheduler), но с определенными послаблениями:
+* **Автоматические Tolerations:** DaemonSet Controller автоматически добавляет tolerations для `node.kubernetes.io/unreachable:NoExecute` и `node.kubernetes.io/not-ready:NoExecute` без таймаута (`tolerationSeconds: null`), чтобы агент сбора логов или CNI никогда не выселялся с проблемного узла.
+* **Игнорирование изоляции:** DaemonSet автоматически получает `toleration` для `node.kubernetes.io/unschedulable:NoSchedule` (при `kubectl cordon`).
+* **Control Plane:** Однако, для запуска DaemonSet на master-узлах (Control Plane) **необходимо явно** прописать `toleration` в манифесте, так как этот taint имеет пользовательскую (административную) природу.
 
 ### Сравнение с Affinity
 
@@ -157,7 +167,7 @@ tolerations:
 
 ### Сценарий 3: Управление временем выселения (Graceful Eviction)
 
-Если под должен оставаться на недоступном узле дольше стандартных 5 минут (например, при кратковременных сбоях сети):
+Если под должен оставаться на недоступном узле дольше стандартных 5 минут (например, при кратковременных сбоях сети или для StatefulSet, который болезненно переносит смену хоста):
 
 ```yaml
 tolerations:
@@ -166,6 +176,7 @@ tolerations:
   effect: "NoExecute"
   tolerationSeconds: 600 # 10 минут
 ```
+*Для быстрого выселения (stateless микросервисы) можно установить `tolerationSeconds: 30`.*
 
 ### Сценарий 4: Динамическое управление и обслуживание (Maintenance)
 
@@ -197,7 +208,9 @@ tolerations:
 * **Упрощение ключей и значений**: Используйте четкие, краткие и понятные ключи (например, `gpu=true`, `env=prod`). Избегайте чрезмерно сложных конфигураций, которые затрудняют чтение и обслуживание манифестов.
 * **Сочетание с Node Affinity**: Для максимальной точности используйте Taints для *отталкивания* лишних подов и Node Affinity для *притяжения* нужных подов к конкретным узлам. Это особенно важно для оборудования со специфическими конфигурациями.
 * **Мониторинг эффективности**: Чрезмерное использование taints может привести к фрагментации кластера и недоиспользованию ресурсов. Используйте инструменты мониторинга (например, **Kubecost**) для анализа распределения ресурсов и оптимизации затрат.
-* **Изоляция при сбоях**: При обнаружении проблем на узле немедленно применяйте `NoSchedule` taint, чтобы предотвратить деградацию новых рабочих нагрузок до выяснения причин.
+* **Изоляция при сбоях (Проактивная защита)**: При обнаружении проблем на узле (например, перегрев, сбои диска) немедленно применяйте `NoSchedule` taint вручную, чтобы предотвратить деградацию новых рабочих нагрузок до выяснения причин.
+* **Мгновенное выселение проблемных подов (`NoExecute`)**: Если узел был скомпрометирован (Security Breach) или на нем обнаружен сбой файловой системы, наложите `NoExecute` taint. Это немедленно "смахнёт" с узла все пользовательские поды без потери времени на Graceful Shutdown.
+* **Взаимодействие с Pod Disruption Budget (PDB)**: Выселение по Taint `NoExecute` игнорирует PDB в старых версиях K8s, но начиная с K8s 1.31 выселения TaintManager обрабатываются более безопасно (добавляется условие `DisruptionTarget`).
 
 ---
 
@@ -208,6 +221,9 @@ tolerations:
 * **Диагностика**:
 
     ```bash
+    # Вывод всех узлов с их taints (кастомные колонки)
+    kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+
     # Проверка taints на узле
     kubectl describe node <node-name> | grep Taints
     # → Taints:             dedicated=ml:NoSchedule
@@ -215,4 +231,11 @@ tolerations:
     # Проверка tolerations пода
     kubectl get pod <pod-name> -o jsonpath='{.spec.tolerations}'
     # → [{"key":"key1","operator":"Equal","value":"value1","effect":"NoSchedule"}]
+    
+    # Поиск причины зависания пода в Pending
+    kubectl get events --field-selector reason=FailedScheduling
+    # Пример ошибки: "0/3 nodes are available: 1 node(s) had untolerated taint {hardware: gpu}"
     ```
+
+**См. также:**
+* [Недоступность узла: Taints и выселение](../Troubleshooting/Common_Errors/NodeUnavailability/taints_and_eviction.md) — глубокий разбор аварийных ситуаций, связанных с `NoExecute` taints.

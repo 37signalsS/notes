@@ -166,7 +166,7 @@ VPA решает проблему «угадывания» правильных 
 ### Связанные темы и документация
 
 *   [Pod Disruption Budget (PDB)](pod_disruption_budget.md) — защита доступности.
-*   [Правила распределения подов (Affinity/Distribution)](pod_distribution.md).
+*   [Управление размещением подов (Affinity, TSC)](../Scheduling/affinity.md).
 *   [Metrics Server и мониторинг](../MonitoringLogging/metrics-server.md).
 *   [Шардирование и изоляция нагрузки](sharding.md).
 *   [In-Place Pod Resize: Глубокое погружение](in_place_pod_resize.md).

@@ -2,56 +2,80 @@
 
 ## Определения
 
-**Харденинг ядра (Kernel Hardening)** — процесс настройки параметров ОС и ядра для минимизации поверхности атаки, предотвращения эксплуатации уязвимостей (LPE, Memory Corruption) и ограничения возможностей злоумышленника после проникновения.
+**Харденинг ядра (Kernel Hardening)** — комплекс мер по настройке конфигурации и параметров ядра Linux для минимизации поверхности атаки, предотвращения эксплуатации известных классов уязвимостей (LPE, Memory Corruption) и ограничения возможностей злоумышленника на этапе пост-эксплуатации.
 
-**Kernel Lockdown** — механизм безопасности, запрещающий любые действия, которые могут позволить коду в пространстве пользователя изменять образ работающего ядра или получать доступ к конфиденциальным данным ядра (даже пользователю root).
+**KSPP (Kernel Self-Protection Project)** — инициатива сообщества по внедрению в основную ветку ядра технологий, которые делают эксплуатацию ошибок безопасности экономически невыгодной или технически невозможной.
+
+**Kernel Lockdown** — модуль безопасности (LSM), ограничивающий доступ к функциям ядра, которые могут быть использованы для обхода Secure Boot или модификации образа работающего ядра (даже пользователем `root`).
 
 ## Основные концепции
 
-### Защита от атак класса Page Cache Write (Dirty Frag, Copy Fail)
+### 1. Защита памяти и предотвращение эксплуатации
 
-Для минимизации риска эксплуатации уязвимостей, использующих `splice()` и криптографические сокеты, необходимо ограничить доступ к отладочным интерфейсам и неиспользуемым подсистемам.
+Современные ядра (6.x/7.0) включают механизмы для борьбы с Corruption-атаками:
+*   **Memory Sanitization**: Очистка страниц при выделении или освобождении (`init_on_alloc=1`, `init_on_free=1`) предотвращает утечку данных через Use-After-Free.
+*   **Shadow Stack (CET / Shadow Stack)**: Аппаратная поддержка предотвращения перезаписи адреса возврата в стеке (защита от ROP-цепочек).
+*   **SLAB_FREELIST_HARDENED**: Рандомизация и проверка целостности списков свободных блоков в аллокаторе памяти.
+*   **STACKLEAK**: Очистка системного стека перед возвратом из системного вызова в пространство пользователя.
 
-#### Параметры sysctl
+### 2. Режимы Kernel Lockdown
 
-| Параметр | Рекомендуемое значение | Описание |
-| :--- | :--- | :--- |
-| `kernel.kptr_restrict` | `2` | Полностью скрывает адреса структур ядра в `/proc/kallsyms`. |
-| `kernel.dmesg_restrict` | `1` | Запрещает непривилегированным пользователям читать `dmesg`. |
-| `kernel.perf_event_paranoid` | `3` | Максимально ограничивает доступ к подсистеме `perf`. |
-| `kernel.unprivileged_userns_clone` | `0` | (Debian/Ubuntu) Отключает создание user namespaces обычными пользователями. |
-| `kernel.modules_disabled` | `1` | Запрещает загрузку новых модулей после старта системы. |
+Активируется через параметр загрузки `lockdown=...` или при включенном Secure Boot:
+*   **Integrity**: Блокирует прямую запись в `/dev/mem`, использование `kexec` неподписанных ядер, доступ к отладочным интерфейсам процессора (MSR).
+*   **Confidentiality**: Включает `Integrity` + запрещает чтение памяти ядра (защита ключей и секретов).
 
-### Режимы Lockdown
+### 3. Ограничение подсистем (Attack Surface Reduction)
 
-Настраивается через параметр загрузки ядра `lockdown=...`:
-- **none**: Механизм отключен.
-- **integrity**: Запрещаются операции, позволяющие изменять работающее ядро (например, запись в `/dev/mem`, использование `kexec` без проверки подписи).
-- **confidentiality**: Включает `integrity` + запрещает извлечение конфиденциальных данных из памяти ядра.
+*   **eBPF**: Из-за сложности и потенциальных JIT-уязвимостей доступ для непривилегированных пользователей должен быть закрыт.
+*   **User Namespaces**: Несмотря на пользу для контейнеров, механизм часто используется в цепочках LPE-эксплуатации.
+*   **Legacy Interfaces**: Отключение старых сетевых протоколов (DCCP, SCTP) и TTY-дисциплин.
 
 ## Практические сценарии
 
-### Сценарий 1: Конфигурация для защиты от LPE
+### 1. Эталонная конфигурация sysctl (2026)
+
+Создайте файл `/etc/sysctl.d/99-kernel-hardening.conf` для применения при загрузке:
 
 ```bash
-# Создайте файл /etc/sysctl.d/99-kernel-hardening.conf
-kernel.kptr_restrict = 2
-kernel.dmesg_restrict = 1
-kernel.perf_event_paranoid = 3
-kernel.unprivileged_userns_clone = 0
-dev.tty.ldisc_autoload = 0
-vm.unprivileged_userfaultfd = 0
+# --- Защита от LPE и инспекции памяти ---
+kernel.kptr_restrict = 2            # Скрыть адреса ядра в /proc/kallsyms
+kernel.dmesg_restrict = 1           # Запрет чтения dmesg обычным пользователям
+kernel.perf_event_paranoid = 3      # Максимальное ограничение подсистемы perf
+kernel.yama.ptrace_scope = 2        # Разрешить ptrace только для дочерних процессов (или root)
+kernel.unprivileged_bpf_disabled = 1 # Отключить eBPF для пользователей
+net.core.bpf_jit_harden = 2         # Постоянная JIT-защита для всех процессов
+
+# --- Защита адресного пространства (ASLR) ---
+kernel.randomize_va_space = 2
+vm.mmap_rnd_bits = 32               # Усиление рандомизации mmap (для x86_64)
+
+# --- Ограничение User Namespaces (если не используются) ---
+# kernel.unprivileged_userns_clone = 0 # Для Debian/Ubuntu
+
+# --- Защита от атак через файловые дескрипторы ---
+fs.protected_fifos = 2
+fs.protected_regular = 2
+fs.protected_symlinks = 1
+fs.protected_hardlinks = 1
 ```
 
-### Сценарий 2: Митигация Dirty Frag / Copy Fail
+### 2. Параметры загрузки ядра (GRUB)
 
-Если специфические модули не используются, их следует заблокировать на уровне загрузчика:
+Добавьте в `GRUB_CMDLINE_LINUX_DEFAULT`:
+```text
+lockdown=integrity slab_nomerge init_on_alloc=1 init_on_free=1 pti=on page_alloc.shuffle=1
+```
+
+### 3. Запрет загрузки опасных модулей
 
 ```bash
 # /etc/modprobe.d/security-blacklist.conf
-install xfrm_user /bin/true
-install af_alg /bin/true
-install rxrpc /bin/true
+install dccp /bin/true
+install sctp /bin/true
+install rds /bin/true
+install tipc /bin/true
+install firewire-core /bin/true
+install thunderbolt /bin/true
 ```
 
 ## SCA: Проверка харденинга в Wazuh
@@ -64,8 +88,8 @@ SCA-политика для автоматизированного контро�
 policy:
   id: "kernel_hardening"
   file: "kernel_hardening.yml"
-  name: "Kernel hardening for Page-cache write vulnerabilities"
-  description: "Checks kernel parameters that mitigate page-cache write attacks"
+  name: "Kernel Hardening Compliance 2026"
+  description: "Checks kernel parameters according to KSPP and modern best practices"
   regex_type: "pcre2"
 
 requirements:
@@ -76,32 +100,36 @@ requirements:
 
 checks:
   - id: 100001
-    title: "kernel.kptr_restrict should be >= 1"
+    title: "kernel.kptr_restrict should be 2"
     rules:
-      - 'f:/proc/sys/kernel/kptr_restrict -> n:^(\d+) compare >= 1'
+      - 'f:/proc/sys/kernel/kptr_restrict -> 2'
   - id: 100002
     title: "kernel.dmesg_restrict should be 1"
     rules:
       - 'f:/proc/sys/kernel/dmesg_restrict -> 1'
   - id: 100003
-    title: "kernel.perf_event_paranoid should be >= 2"
+    title: "kernel.unprivileged_bpf_disabled should be 1"
     rules:
-      - 'f:/proc/sys/kernel/perf_event_paranoid -> n:^(\d+) compare >= 2'
+      - 'f:/proc/sys/kernel/unprivileged_bpf_disabled -> 1'
   - id: 100004
-    title: "Unprivileged user namespaces should be disabled"
-    condition: any
-    rules:
-      - 'f:/proc/sys/kernel/unprivileged_userns_clone -> 0'
-      - 'f:/proc/sys/user/max_user_namespaces -> 0'
-  - id: 100005
-    title: "Kernel lockdown mode should be enabled"
+    title: "Kernel lockdown mode should be enabled (integrity/confidentiality)"
     rules:
       - 'f:/sys/kernel/security/lockdown -> r:\[(integrity|confidentiality)\]'
+  - id: 100005
+    title: "Yama ptrace_scope should be >= 1"
+    rules:
+      - 'f:/proc/sys/kernel/yama/ptrace_scope -> n:^(\d+) compare >= 1'
 ```
 
 ## Дополнительная информация
 
+### Инструменты аудита
+*   **kernel-hardening-checker**: Скрипт для проверки конфигурации ядра и параметров загрузки на соответствие рекомендациям KSPP.
+*   **lynis**: Проводит комплексный аудит безопасности системы, включая параметры ядра.
+
 ### См. также
+- [KASLR (Kernel Address Space Layout Randomization)](../KASLR.md)
+- [KPTI (Kernel Page Table Isolation)](../KPTI.md)
+- [Linux Capabilities](../Capabilities.md)
 - [auditd: аудит системных вызовов](../../SystemAdministration/Logging/auditd.md)
 - [Мониторинг ядра через Wazuh](../../../Security/Tools/Wazuh/kernel_monitoring.md)
-- [Wazuh: общая конфигурация](../../../Security/Tools/wazuh.md)

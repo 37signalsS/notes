@@ -1,14 +1,14 @@
 # Samba: Безопасность и VFS-модули
 
-> **Надежность: 10** (Подтверждено официальной документацией Samba 4.24+ и стандартами 2026 года)
-
 ## Определения
 
-**VFS (Virtual File System) modules** — расширяемые модули Samba, подключаемые к сетевым ресурсам (шарам) для добавления функциональности: аудит, корзина, снапшоты, антивирусная проверка. Указываются в директиве `vfs objects` без префикса `vfs_`.
+**VFS (Virtual File System) modules** — расширяемые модули Samba, подключаемые к сетевым ресурсам (шарам) для добавления функциональности: аудит, корзина, снапшоты, антивирусная проверка. Указываются в директиве `vfs objects`.
 
-**SMB encryption** — шифрование трафика на уровне протокола SMB (AES-256 в SMBv3.1.1). Обеспечивает защиту данных при передаче, предотвращая перехват и модификацию трафика.
+**SMB Encryption** — шифрование трафика на уровне протокола SMB (AES-256-GCM в SMBv3.1.1). Защищает данные от перехвата и модификации (MitM).
 
-**Zero Trust SMB** — архитектурный подход, при котором доступ к ресурсам Samba требует обязательного шифрования, сильной аутентификации и минимально необходимых привилегий (Least Privilege).
+**POSIX ACL vs NTFS ACL** — взаимодействие прав доступа Linux и Windows. Samba использует расширенные атрибуты (`xattr`) для хранения полнофункциональных дескрипторов безопасности Windows поверх файловой системы Linux.
+
+**Zero Trust SMB** — архитектурный подход, требующий обязательного шифрования (`smb encrypt = required`), сильной аутентификации (Kerberos) и строгой изоляции сервиса.
 
 ## Базовые концепции
 
@@ -18,107 +18,124 @@
 | :--- | :--- | :--- |
 | **`server min protocol`** | Минимальная версия SMB | **`SMB3_11`** |
 | **`smb encrypt`** | Шифрование трафика | **`required`** (обязательно для всех) |
-| **`ntlm auth`** | Тип NTLM-аутентификации | **`ntlmv2-only`** (или `disabled` в пользу Kerberos) |
-| **`ldap server require strong auth`** | Защита LDAP-соединений | **`yes`** (обязательный Channel Binding) |
-| **`kdc require canonicalization`** | Защита Kerberos | **`yes`** (защита от impersonation атак) |
+| **`ntlm auth`** | Тип NTLM-аутентификации | **`disabled`** (в пользу Kerberos) |
+| **`restrict anonymous`** | Ограничение анонимного доступа | **`2`** (полный запрет) |
+| **`lanman auth`** | Устаревшая аутентификация | **`no`** |
 
-> **Важно:** В 2026 году рекомендуется полностью отказаться от NTLM в пользу Kerberos. Если NTLM необходим, используйте только NTLMv2 с обязательным шифрованием.
+### Виртуальная файловая система (VFS)
 
-### VFS-модули
+Использование нескольких модулей требует соблюдения порядка (справа налево в цепочке вызовов).
 
 | Модуль | Описание | Применение |
 | :--- | :--- | :--- |
-| **`fruit`** | Оптимизация для Apple/macOS | Обязателен для смешанных сетей. |
-| **`full_audit`** | Расширенный аудит операций | Мониторинг действий пользователей. |
-| **`recycle`** | Корзина | Защита от случайного удаления файлов. |
-| **`shadow_copy2`** | Снапшоты (Previous Versions) | Интеграция с ZFS/Btrfs/LVM snapshots. |
-| **`aio_ratelimit`** | Throttling (I/O Limiting) | **Новое в 2026.** Ограничение IOPS/BW на шару. |
-| **`virusfilter`** | Антивирусная проверка | Сканирование файлов (ClamAV) при записи. |
+| **`acl_xattr`** | Хранение ACL в атрибутах | Обеспечивает полноценную работу прав Windows. |
+| **`fruit`** | Оптимизация для macOS | Обязателен для предотвращения утечек метаданных Apple. |
+| **`shadow_copy2`** | Снапшоты | Реализация «Предыдущих версий» Windows. |
+| **`virusfilter`** | Антивирус | Онлайн-сканирование через ClamAV/Sophos. |
+| **`full_audit`** | Аудит | Логирование операций (соответствие ФЗ/GDPR). |
 
-### Контексты SELinux
+### Изоляция сервиса (AppArmor и SELinux)
 
-Для систем с активным SELinux (RHEL, Fedora) необходимо корректно размечать файловую систему:
+**AppArmor (Профиль для Debian/Ubuntu):**
+Профиль `/etc/apparmor.d/usr.sbin.smbd` должен ограничивать доступ только к путям шар:
+```text
+/srv/samba/shares/** rwk,
+/var/lib/samba/** rwk,
+```
 
+**SELinux (Контексты для RHEL/Alma):**
 ```bash
-# Установка контекста для Samba-шары
-sudo semanage fcontext -a -t samba_share_t "/srv/samba/data(/.*)?"
-sudo restorecon -Rv /srv/samba/data/
-
-# Разрешение экспорта домашних директорий
-sudo setsebool -P samba_enable_home_dirs on
+# Разрешение записи для Samba
+sudo setsebool -P samba_export_all_rw on
+# Установка контекста на директорию
+sudo chcon -t samba_share_t /srv/samba/data
 ```
 
 ## Практические сценарии
 
-### "Закаленная" (Hardened) конфигурация 2026
+### 1. Настройка антивирусной проверки (ClamAV)
 
-Секция `[global]` с максимальным уровнем защиты:
+Требует установленного и запущенного демона `clamd`.
 
 ```ini
-[global]
-   # Принудительный SMB 3.1.1 и шифрование
-   server min protocol = SMB3_11
-   server smb encrypt = required
-   
-   # Отключение слабых протоколов и анонимного доступа
-   restrict anonymous = 2
-   map to guest = Never
-   
-   # Безопасность Kerberos (AES-only)
-   kdc default domain supported enctypes = aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96
-   kdc require canonicalization = yes
-   
-   # Защита LDAP
-   ldap server require strong auth = yes
+[secure_share]
+   path = /srv/samba/secure
+   vfs objects = virusfilter
+   virusfilter:scanner = clamd
+   virusfilter:socket = /var/run/clamav/clamd.ctl
+   virusfilter:on_access = yes
+   virusfilter:infected_file_action = quarantine
+   virusfilter:quarantine_directory = /srv/samba/quarantine
 ```
 
-### Настройка аудита, корзины и macOS-оптимизации
+### 2. Реализация снапшотов («Предыдущие версии»)
 
-Пример для шары с полным набором модулей:
+Пример для файловой системы Btrfs/ZFS, где снапшоты находятся в директории `.snapshots`.
 
 ```ini
-[corp_data]
+[data]
    path = /srv/samba/data
-   vfs objects = catia fruit streams_xattr full_audit recycle
-   
-   # Оптимизация для Apple
-   fruit:metadata = stream
-   fruit:model = MacSamba
-   
-   # Настройка аудита
-   full_audit:success = open mkdir rename unlink chmod chown
-   full_audit:failure = open mkdir
-   full_audit:prefix = %u|%I|%m|%S
-   
-   # Настройка корзины
-   recycle:repository = .recycle/%U
-   recycle:keeptree = yes
-   recycle:versions = yes
-   recycle:maxsize = 1000000
+   vfs objects = shadow_copy2
+   shadow_copy2:mountpoint = /srv/samba/data
+   shadow_copy2:snapshotsdir = .snapshots
+   shadow_copy2:format = GMT-%Y.%m.%d-%H.%M.%S
+   shadow_copy2:sort = desc
 ```
 
-### Диагностика безопасности
+### 3. Глубокий аудит операций
+
+Настройка для отслеживания удаления и изменения прав доступа.
+
+```ini
+[audit_share]
+   vfs objects = full_audit
+   full_audit:prefix = %u|%I|%m|%S
+   full_audit:success = unlink chmod chown rename
+   full_audit:failure = connect
+   full_audit:facility = LOCAL7
+   full_audit:priority = NOTICE
+```
+
+### 4. Настройка сетевого экрана (nftables)
+
+Ограничение доступа к портам Samba только из доверенной подсети.
+
+```text
+table inet filter {
+    chain input {
+        tcp dport 445 ip saddr 192.168.1.0/24 accept
+        tcp dport 445 drop
+    }
+}
+```
+
+## Мониторинг безопасности
+
+### Проверка активного шифрования
 
 ```bash
-# Проверка используемого протокола и шифрования для текущих сессий
+# Просмотр статуса шифрования текущих сессий
 smbstatus -v
-# → Protocol: SMB3_11
-# → Encryption: AES-256-GCM
+# → Encryption: AES-256-GCM (Active)
+```
 
-# Проверка базы пользователей на наличие слабых флагов
-pdbedit -v -u username
-# → Account Flags: [U          ] (должно быть без 'L' - LanMan или 'D' - Disabled)
+### Анализ расширенных атрибутов (ACL)
+
+Проверка того, как Samba хранит права Windows в Linux:
+```bash
+getfattr -d -m "user.SAMBA_PAI" /srv/samba/data/file.txt
 ```
 
 ## Дополнительная информация
 
-- [Обзор Samba](./index.md) — общая архитектура и версии протокола
-- [Настройка сервера](./samba_setup.md) — базовые параметры конфигурации
-- [Интеграция с AD](./samba_ad.md) — работа в домене Active Directory
-- [Устранение неполадок](./samba_troubleshooting.md) — отладка и чтение логов
+- [Samba: Обзор](./index.md) — архитектура и стандарты.
+- [Samba: Настройка сервера](./samba_setup.md) — базовые параметры.
+- [Samba: Интеграция с AD](./samba_ad.md) — управление пользователями.
+- [Устранение неполадок](./samba_troubleshooting.md) — анализ ошибок доступа.
 
-## Смотрите также
+## См. также
 
 - [Механизмы SELinux](../../../Security/Mechanisms/SELinux.md)
-- [Протокол Kerberos: основы](../../../../Security/Concepts/kerberos.md)
-- [firewalld: настройка портов](../../Settings/tools/firewalld.md)
+- [AppArmor: профилирование](../../../Security/Mechanisms/AppArmor.md)
+- [Протокол Kerberos](../../../../Security/Concepts/kerberos.md)
+- [Безопасность сетевого уровня (nftables)](../../Settings/tools/nftables/architecture_and_concepts.md)

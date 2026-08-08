@@ -22,12 +22,35 @@
 
 *   **Namespaced-ресурсы (внутри Namespace):**
     *   **Рабочие нагрузки:** [Pod](./Pod/pod_overview.md), [Deployment](./Deployment/index.md), [StatefulSet](./StatefulSet/statefulset_overview.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
-    *   **Конфигурация и сервисы:** [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
+    *   **Конфигурация и сервисы:** [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [HTTPRoute](../Networking/gateway_api/httproute.md) (Gateway API), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
     *   **Политики и ограничения:** `NetworkPolicy`, `ResourceQuota`, `LimitRange`.
 *   **Общекластерные ресурсы (Cluster-wide):**
-    *   **Инфраструктура:** `Node` (узлы), `PersistentVolume` (физические тома).
-    *   **Безопасность:** `ClusterRole`, `ClusterRoleBinding`.
-    *   **Системные метаданные:** `Namespace`, `StorageClass`, `PriorityClass`.
+    *   **Инфраструктура:** `Node` (узлы), `PersistentVolume` (физические тома), [Gateway](../Networking/gateway_api/gateway.md) (может быть как кластерным, так и namespaced в зависимости от реализации).
+    *   **Безопасность:** `ClusterRole`, `ClusterRoleBinding`, `ValidatingAdmissionPolicy`.
+    *   **Системные метаданные:** `Namespace`, `StorageClass`, `PriorityClass`, `RuntimeClass`.
+
+### Ограничения именования (DNS-1123)
+
+Имя `Namespace` должно соответствовать стандарту **RFC 1123** для доменных имен. Это обусловлено тем, что имя пространства имен является частью DNS-записей для сервисов.
+
+**Требования:**
+*   Длина: до **63 символов**.
+*   Символы: только строчные латинские буквы (`a-z`), цифры (`0-9`) и дефис (`-`).
+*   Начало и конец: имя должно начинаться и заканчиваться буквой или цифрой.
+
+### Безопасность (Pod Security Admission)
+
+В современных версиях Kubernetes (1.25+) на уровне Namespace настраивается **Pod Security Admission (PSA)** — механизм, пришедший на смену Pod Security Policies (PSP). Он управляет тем, какие настройки безопасности (Security Context) допустимы для подов в данном пространстве имен.
+
+PSA настраивается через метки:
+*   `pod-security.kubernetes.io/enforce`: блокирует создание подов, нарушающих политику.
+*   `pod-security.kubernetes.io/warn`: выдает предупреждение пользователю.
+*   `pod-security.kubernetes.io/audit`: записывает нарушение в лог аудита.
+
+**Уровни политик:**
+1.  **Privileged**: Неограниченный доступ (обычно для `kube-system`).
+2.  **Baseline**: Запрет наиболее известных привилегированных настроек.
+3.  **Restricted**: Строгие ограничения (best practices по безопасности).
 
 ### Автоматические метки (v1.21+)
 
@@ -123,6 +146,10 @@ kubectl api-resources --namespaced=false
     ```bash
     kubectl get ns <name> -o json | jq '.status.conditions'
     ```
+4.  **Агрегированные API:** Если в кластере есть неработающие `APIService` (например, от старых версий metrics-server или cert-manager), это может блокировать удаление Namespace. Проверьте статус всех API:
+    ```bash
+    kubectl get apiservice | grep False
+    ```
 
 Подробнее о механизмах решения проблем с финализаторами см. в разделе **[Проблемы с финализаторами (Finalizers)](../Troubleshooting/Common_Errors/PodTerminating/finalizer_issues.md)**.
 
@@ -137,14 +164,21 @@ kubectl api-resources --namespaced=false
 
 ### Ресурсные квоты и лимиты
 
-*   **ResourceQuota:** Позволяет администратору ограничить суммарное потребление ресурсов (CPU, RAM, количество Pod/Service/PVC) в рамках одного Namespace.
-*   **LimitRange:** Позволяет задать значения запросов (requests) и лимитов (limits) по умолчанию для контейнеров, если разработчик не указал их в манифесте, а также ограничить минимальные и максимальные значения.
+*   **ResourceQuota:** Позволяет администратору ограничить суммарное потребление ресурсов (CPU, RAM, количество Pod/Service/PVC) в рамках одного Namespace. Подробнее: **[Квоты ресурсов](../Scheduling/qos_limit_and_requests.md)**.
+*   **LimitRange:** Позволяет задать значения запросов (requests) и лимитов (limits) по умолчанию для контейнеров, если разработчик не указал их в манифесте.
+
+### Рекомендации по разделению (Best Practices)
+
+1.  **По окружениям:** Разделяйте `dev`, `staging` и `prod`. Это минимизирует риск случайного удаления или изменения продуктовых ресурсов.
+2.  **По командам/проектам:** Используйте Namespace для делегирования прав доступа (RBAC) конкретным командам.
+3.  **Избегайте "Mega-Namespace":** Не размещайте сотни разнородных сервисов в одном пространстве имен. Это усложняет аудит, квотирование и может привести к деградации производительности API-сервера.
+4.  **Маркировка (Labels):** Всегда добавляйте метки с информацией о владельце, проекте и уровне критичности. Это критично для PSA и сетевых политик.
 
 ### Ограничения изоляции
 
 Namespace обеспечивает **логическую**, но не **физическую** изоляцию по умолчанию:
 1.  **Сетевая доступность:** По умолчанию поды из разных Namespace могут свободно взаимодействовать по сети. Для запрета трафика необходимо использовать [Network Policies](../Networking/Network/network_policy.md).
-2.  **Общие узлы:** Поды из разных Namespace могут запускаться на одном и том же физическом узле (Node), разделяя его ядро, диск и сеть.
+2.  **Общие узлы:** Поды из разных Namespace могут запускаться на одном и том же физическом узле (Node), разделяя его ядро, диск и сеть. Для физической изоляции используйте `Taints/Tolerations` и `NodeAffinity`.
 3.  **Каскадное удаление:** Удаление Namespace приводит к немедленному и безвозвратному удалению всех ресурсов внутри него. **Будьте крайне осторожны с этой операцией в Production.**
 
 ### См. также
@@ -153,3 +187,4 @@ Namespace обеспечивает **логическую**, но не **физ�
 *   **[Сетевые политики (Network Policies)](../Networking/Network/network_policy.md)** — реализация сетевой изоляции.
 *   **[Квоты и лимиты ресурсов](../Scheduling/qos_limit_and_requests.md)** — управление потреблением ресурсов.
 *   **[Приоритеты подов (PriorityClass)](../Concepts/priorityclass.md)** — влияние на планирование в условиях дефицита ресурсов.
+*   **[Gateway API](../Networking/gateway_api/definitions.md)** — современный стандарт управления трафиком.

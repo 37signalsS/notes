@@ -2,169 +2,135 @@
 
 ## Определения
 
-**Автоматизация (Automation)** — процесс принудительного исполнения эксплуатационных стандартов и политик безопасности без ручного вмешательства. В Kyverno реализуется через мутацию существующих данных (`mutate`) и динамическую генерацию новых объектов (`generate`).
+**Автоматизация (Automation)** — процесс принудительного исполнения эксплуатационных стандартов и политик безопасности без ручного вмешательства. В Kyverno реализуется через мутацию данных (`mutate`) и динамическую генерацию новых объектов (`generate`).
 
-**Соответствие (Compliance)** — непрерывное обеспечение и подтверждение соблюдения нормативных требований (PCI DSS 4.0, NIS2, CIS Benchmarks, GDPR). В контексте Kubernetes комплаенс переходит от модели «периодических проверок» к модели «непрерывного аудита» (Continuous Compliance) через механизм Policy-as-Code.
+**Соответствие (Compliance)** — непрерывное подтверждение соблюдения нормативных требований (PCI DSS 4.0, NIS2, CIS Benchmarks, HIPAA). В современной инфраструктуре комплаенс реализуется через модель **Continuous Compliance** (непрерывный аудит), где политика выступает в роли «живого» контроля качества.
+
+**Мультиарендность (Multi-tenancy)** — модель использования кластера, где Kyverno обеспечивает жесткую изоляцию ресурсов команд, автоматизируя создание границ безопасности (NetworkPolicies, RBAC, Quotas).
 
 ---
 
 ## Основные концепции
 
-### Механизмы автоматизированного контроля
+### Стратегии автоматизированного контроля
 
-Kyverno использует специализированные контроллеры для реализации четырех основных стратегий автоматизации ([подробнее о правах контроллеров](../additional.md)):
+Kyverno использует специализированные контроллеры для реализации четырех основных стратегий ([подробнее о правах контроллеров](../additional.md)):
 
-| Механизм | Описание | Основная цель |
+| Стратегия | Описание | Применение в 2026 году |
 | :--- | :--- | :--- |
-| **Mutate (Мутация)** | Изменение манифеста в оперативной памяти перед сохранением в `etcd`. | Исправление ошибок конфигурации, добавление настроек безопасности по умолчанию. |
-| **Generate (Генерация)** | Создание нового ресурса (например, `NetworkPolicy`) на основе события (создание `Namespace`). | Автоматизация развертывания сопутствующей инфраструктуры. |
-| **Clone (Клонирование)** | Копирование существующего ресурса (например, `Secret`) в новый `Namespace`. | Синхронизация общих ресурсов между командами (Docker Registry Credentials, CA Bundles). |
-| **CEL Validate** | Нативная валидация через Common Expression Language (v1.14+). | Высокопроизводительная проверка сложных условий комплаенса без сетевых задержек. |
+| **Mutate** | Изменение манифеста «на лету» перед сохранением. | Инъекция sidecar-контейнеров, логов и меток. |
+| **Generate** | Создание ресурсов на основе событий API. | Инициализация Namespace (создание Quotas, NetPol). |
+| **Clone** | Копирование эталонных ресурсов. | Синхронизация корпоративных CA и Secrets. |
+| **CEL Validate** | Сверхбыстрая проверка условий. | Блокировка некомплаентных конфигураций в CI и Admission. |
 
-### Принцип Policy-as-Code и CI/CD
+### Принцип Shift-Left и тестирование
 
-Хранение политик в Git позволяет использовать стандартные инструменты разработки для контроля качества безопасности.
+Для предотвращения деградации кластера и сокращения цикла обратной связи используется **Kyverno CLI**. Он позволяет выполнять юнит-тестирование политик до их деплоя.
 
-**Структура репозитория политик:**
+**Рекомендуемая структура тестов:**
+```text
+tests/
+├── policy.yaml        # Тестируемая политика
+├── resource.yaml      # Пример ресурса (Pod, Deployment)
+└── kyverno-test.yaml  # Ожидаемый результат (pass/fail)
 ```
-policy-repo/
-├── policies/      # Манифесты ClusterPolicy и ValidatingPolicy в YAML
-├── tests/         # Тестовые ресурсы (положительные и отрицательные тесты)
-│   └── values.yaml # Переменные для тестирования
-└── .github/       # Пайплайны автоматизации (GitHub Actions, GitLab CI)
-```
-
-**Kyverno CLI**: Основной инструмент для «сдвига влево» (Shift-Left). Он позволяет протестировать влияние новой политики на тысячи ресурсов до её применения в кластере.
 
 ```bash
-# Проверка синтаксиса и тестирование на ресурсах
-kyverno apply policies/ --resource=tests/
-# → PASS: policy check-labels on resource pod-1
+# Выполнение тестов в CI
+kyverno test tests/
 ```
 
 ---
 
 ## Практические сценарии
 
-### 1. Инфраструктура как код и CI/CD валидация
+### 1. Интеграция в CI/CD пайплайн (Shift-Left)
 
-Интеграция Kyverno в пайплайн предотвращает попадание небезопасных или некомплаентных манифестов в кластер.
+Предотвращение попадания небезопасных манифестов в GitOps-репозиторий.
 
 ```yaml
-# Пример GitHub Actions пайплайна (актуально для v1.14+)
-name: Validate Security Policies
-on: [push, pull_request]
+# Пример GitHub Actions (v1.18+)
 jobs:
-  validate:
+  policy-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Kyverno CLI
-        run: |
-          # Установка актуальной версии CLI
-          curl -LO https://github.com/kyverno/kyverno/releases/download/v1.14.0/kyverno-cli_v1.14.0_linux_x86_64.tar.gz
-          tar -xzf kyverno-cli_v1.14.0_linux_x86_64.tar.gz
-          sudo mv kyverno /usr/local/bin/
-      - name: Test Policies
-        run: kyverno apply policies/ --resource=tests/
+      - name: Setup Kyverno CLI
+        run: brew install kyverno
+      - name: Validate Manifests
+        run: kyverno apply policies/ --resource=manifests/
+      - name: Unit Tests
+        run: kyverno test tests/
 ```
 
-### 2. Соответствие PCI DSS 4.0 и NIS2 (2025)
+### 2. Соответствие PCI DSS 4.0: Контроль шифрования
 
-Для критических инфраструктур (финтех, энергетика) Kyverno обеспечивает выполнение требований по защите цепочки поставок и шифрованию.
+Требование по обеспечению защищенной передачи данных. Блокировка Ingress с устаревшими версиями TLS.
 
-**Сценарий: Проверка аттестаций SBOM (Requirement 6.3.3)**:
 ```yaml
 apiVersion: policies.kyverno.io/v1
-kind: ImageValidatingPolicy
+kind: ValidatingPolicy
 metadata:
-  name: pci-verify-sbom
+  name: pci-enforce-tls-1-3
 spec:
-  rules:
-    - name: check-cyclonedx-attestation
-      imageReferences: ["pci-registry.io/*"]
-      attestations:
-        - name: check-sbom
-          type: "https://cyclonedx.org/schema" # Требуем наличие спецификации компонентов ПО
-          verifier:
-            sigstore:
-              publicKey: |
-                -----BEGIN PUBLIC KEY-----
-                ...
-                -----END PUBLIC KEY-----
+  validations:
+    - expression: |
+        !has(object.metadata.annotations['ingress.kubernetes.io/ssl-min-ver']) ||
+        object.metadata.annotations['ingress.kubernetes.io/ssl-min-ver'] == 'TLSv1.3'
+      message: "Стандарт PCI DSS 4.0 требует использования TLS 1.3 для всех входящих соединений."
 ```
 
-### 3. Автоматическое управление сетевой изоляцией (Generate)
+### 3. Инициализация Namespace (Multi-tenancy)
 
-**Сценарий**: Реализация концепции Zero Trust. При создании каждого нового Namespace Kyverno обязан автоматически создать `NetworkPolicy`, запрещающий весь входящий трафик по умолчанию.
+Автоматическое создание границ ресурсов для каждой новой команды.
 
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: generate-default-deny
+  name: team-resource-guard
 spec:
   rules:
-    - name: deny-all-ingress
+    - name: create-default-quota
       match:
         any:
           - resources:
               kinds: [Namespace]
       generate:
-        kind: NetworkPolicy
-        name: default-deny-ingress
+        kind: ResourceQuota
+        name: default-team-quota
         namespace: "{{request.object.metadata.name}}"
-        synchronize: true # Автообновление при изменении политики
         data:
           spec:
-            podSelector: {}
-            policyTypes: [Ingress]
+            hard:
+              cpu: "10"
+              memory: 20Gi
+              pods: "50"
 ```
 
-### 4. Синхронизация Docker Registry Credentials (Clone + Mutate)
+### 4. Глобальная инъекция Proxy-настроек (Mutation)
 
-**Сценарий**: Автоматизация доступа к приватному реестру для всех команд без ручного копирования секретов.
+Автоматическое добавление переменных окружения HTTP_PROXY во все поды, если они не указаны.
 
-1. **Клонирование секрета** из эталонного пространства имен:
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: sync-reg-secrets
+  name: inject-corporate-proxy
 spec:
   rules:
-    - name: clone-secret
-      match:
-        any:
-          - resources:
-              kinds: [Namespace]
-      generate:
-        kind: Secret
-        name: reg-creds
-        namespace: "{{request.object.metadata.name}}"
-        clone:
-          namespace: cert-manager # Источник
-          name: reg-creds
-```
-
-2. **Автоматическая инъекция** секрета во все поды (Мутация):
-```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: inject-reg-secrets
-spec:
-  rules:
-    - name: add-imagepullsecrets
+    - name: add-proxy-env
       match:
         any:
           - resources:
               kinds: [Pod]
       mutate:
-        patchStrategicMerge:
-          spec:
-            imagePullSecrets:
-              - name: reg-creds
+        foreach:
+          - list: "request.object.spec.containers"
+            patchStrategicMerge:
+              env:
+                - name: HTTP_PROXY
+                  value: "http://proxy.corp.internal:8080"
 ```
 
 ---
@@ -173,19 +139,19 @@ spec:
 
 ### Рекомендации по эксплуатации
 
-1.  **Синхронизация (`synchronize: true`)**: При использовании `generate` этот параметр гарантирует, что если вы обновите шаблон политики (например, добавите новый разрешенный порт в `NetworkPolicy`), изменения моментально применятся ко всем сгенерированным ресурсам во всех неймспейсах.
-2.  **Постепенное внедрение (Audit → Enforce)**: Даже при полной уверенности в комплаенсе, сначала применяйте политики в режиме `Audit`. Используйте [Policy Reporter](../reporter.md) для анализа ложных срабатываний.
-3.  **Агрегированные роли**: Контроллеры Kyverno (`background` и `reports`) должны иметь права на создание и изменение генерируемых ресурсов. Проверьте конфигурацию [агрегированных ролей](../additional.md).
-4.  **Аннотации комплаенса**: Для упрощения аудита всегда добавляйте в метаданные политики аннотации с кодами стандартов:
+1.  **Использование UpdateRequests**: При выполнении фоновых генераций всегда проверяйте статус в `kubectl get updaterequests -n kyverno`. Это единственный способ отследить ошибки асинхронных операций.
+2.  **Синхронизация (Synchronize)**: Всегда устанавливайте `synchronize: true` для правил `generate`, чтобы изменения в шаблоне политики (например, обновление CA-сертификата в клонируемом секрете) моментально отразились во всех Namespace.
+3.  **Тэгирование политик**: Используйте аннотации для связи политик с пунктами стандартов. Это упрощает формирование отчетов для аудиторов.
     ```yaml
     annotations:
-      policies.kyverno.io/category: "Compliance: PCI-DSS 4.0"
-      policies.kyverno.io/severity: "High"
+      compliance.kyverno.io/standard: "NIS2"
+      compliance.kyverno.io/control: "Article 21"
     ```
+4.  **Оптимизация CEL**: Для массовых проверок в CI/CD используйте `ValidatingPolicy` (CEL), так как они потребляют на 30% меньше ресурсов при выполнении тестов.
 
 ### См. также
 
-- **[Типы правил (validate, mutate, generate)](../rules.md)** — детальный синтаксис.
-- **[Библиотека практических примеров](../policies/practical_scenarios.md)** — готовые манифесты.
-- **[Отчеты (Policy Reports)](../reports.md)** — база для комплаенс-мониторинга.
-- **[Официальный портал комплаенса Kyverno](https://kyverno.io/docs/compliance/)**
+- **[Типы правил (SSoT)](../rules.md)** — глубокий разбор match, validate, generate.
+- **[Библиотека практических примеров](../policies/practical_scenarios.md)** — готовые YAML для копирования.
+- **[Агрегированные роли](../additional.md)** — права контроллеров на генерацию.
+- **[Отчеты и AdmissionReports](../reports.md)** — визуализация результатов комплаенса.

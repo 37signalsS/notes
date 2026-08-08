@@ -1,132 +1,132 @@
-# Policy Reporter
+# Визуализация и мониторинг: Policy Reporter
 
 ## Определения
 
-**Policy Reporter** — специализированное приложение для визуализации, мониторинга и агрегации отчетов безопасности в Kubernetes. Инструмент преобразует «сырые» данные из PolicyReports (Custom Resources) в наглядные дашборды, генерирует метрики для систем мониторинга и обеспечивает оперативную рассылку уведомлений о нарушениях политик.
+**Policy Reporter** — специализированный инструмент для визуализации, агрегации и мониторинга отчетов безопасности в Kubernetes. Он преобразует декларативные данные из ресурсов `PolicyReport` ( Custom Resource) в интерактивные дашборды, формирует метрики для систем наблюдения (Prometheus/Grafana) и обеспечивает маршрутизацию уведомлений о нарушениях.
 
-В современных версиях (2024–2025) проект поддерживает инициативу **OpenReports**, что позволяет объединять результаты не только от Kyverno, но и от других инструментов (Falco, Trivy, Kube-bench) в едином интерфейсе.
+На 2026 год Policy Reporter является ключевым компонентом для реализации **Compliance-as-Code**, поддерживая стандарт **OpenReports**. Это позволяет объединять результаты проверок от различных движков (Kyverno, Falco, Trivy, Kube-bench) в единой консоли управления.
 
 ---
 
 ## Основные концепции
 
-### Возможности инструмента
+### Возможности и компоненты
 
-| Компонент | Назначение |
-|-----------|------------|
-| **Web UI** | Графическая панель управления для поиска, фильтрации и глубокого анализа отчетов. |
-| **Метрики** | Формирование данных в формате Prometheus для долгосрочного анализа трендов. |
-| **Мульти-инструментальность** | Поддержка любых движков политик, совместимых с форматом PolicyReport (Kyverno, CEL, Falco). |
-| **Высокая доступность (HA)** | Режим работы с Leader Election для предотвращения дублирования уведомлений в нагруженных кластерах. |
-| **Targets (Цели)** | Отправка алертов в Slack, Telegram, Microsoft Teams, Discord, Loki, S3 и Elasticsearch. |
-| **Безопасность** | Поддержка NetworkPolicies для изоляции компонентов и BasicAuth для защиты API и метрик. |
+| Компонент | Функциональное назначение |
+| :--- | :--- |
+| **Web UI** | Графический интерфейс для анализа текущего состояния безопасности и поиска нарушений. |
+| **Metrics Engine** | Генерация Prometheus-метрик для анализа трендов безопасности во времени. |
+| **OpenReports Plugin** | Обеспечивает прием и нормализацию данных от сторонних сканеров (Falco, Trivy). |
+| **High Availability (HA)** | Поддержка режима Active-Passive с Leader Election для предотвращения дублирования алертов. |
+| **Target Routing** | Гибкая настройка получателей уведомлений (Slack, Telegram, Loki, Elasticsearch, S3). |
 
-### Архитектура взаимодействия
+### Модульная архитектура (OpenReports)
 
-Процесс обработки данных строится по следующей схеме:
+Процесс сбора и визуализации данных строится на принципе нормализации:
 
-1.  **Engine (Kyverno/CEL)**: Генерирует отчеты в виде ресурсов `PolicyReport` или `ClusterPolicyReport`.
-2.  **Core компонент**: Считывает данные через Kubernetes API, используя оптимизированные очереди (`workerqueue`) для снижения нагрузки на Control Plane.
-3.  **Распределение**:
-    *   **UI**: Отображение в реальном времени.
-    *   **Prometheus**: Экспорт числовых метрик (результаты pass/fail/warn).
-    *   **Notifications**: Отправка в настроенные внешние системы (Targets).
+1.  **Сбор данных**: Плагины (Kyverno, Falco) отслеживают изменения соответствующих ресурсов в кластере.
+2.  **Нормализация**: Данные приводятся к стандарту `openreports.io`, что позволяет корректно отображать специфические метаданные (например, уровни CVE от Trivy или системные вызовы от Falco).
+3.  **Обработка**: Core-компонент применяет фильтры и правила маршрутизации.
+4.  **Визуализация и алертинг**: Обновление UI и отправка событий в настроенные Targets.
 
 ---
 
 ## Практические сценарии
 
-### Установка через Helm (v3.x)
+### 1. Промышленная установка через Helm
 
-Для актуальных версий чарта используется модульная структура, где плагины включаются отдельно.
+В 2026 году рекомендуется модульная установка с разделением компонентов для повышения безопасности.
 
 ```bash
-# Добавление и обновление репозитория
+# Добавление репозитория
 helm repo add policy-reporter https://kyverno.github.io/policy-reporter
 helm repo update
 
-# Установка с включенным UI, метриками и плагином для Kyverno
+# Установка с HA и интеграцией Kyverno
 helm install policy-reporter policy-reporter/policy-reporter \
   --namespace policy-reporter \
   --create-namespace \
   --set ui.enabled=true \
   --set plugin.kyverno.enabled=true \
   --set metrics.enabled=true \
-  --set prometheus.enabled=true
-# → NAME: policy-reporter, STATUS: deployed
+  --set leaderElection.enabled=true \
+  --set replicaCount=2
 ```
 
-### Настройка уведомлений и логирования
+### 2. Настройка безопасности UI (Ingress + BasicAuth)
 
-Пример конфигурации `values.yaml` для отправки алертов в Telegram и логирования в Grafana Loki:
+Для защиты доступа к дашборду рекомендуется использовать Ingress-контроллер с аутентификацией.
+
+**Конфигурация Ingress в `values.yaml`**:
+```yaml
+ui:
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/auth-type: basic
+      nginx.ingress.kubernetes.io/auth-secret: basic-auth-secret
+    hosts:
+      - host: policy-reporter.example.org
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+```
+
+### 3. Интеграция Falco и Trivy (OpenReports)
+
+Для объединения runtime-событий Falco и результатов сканирования Trivy в Policy Reporter необходимо включить соответствующие адаптеры.
+
+**Настройка плагинов**:
+```yaml
+plugin:
+  falco:
+    enabled: true
+  trivy:
+    enabled: true
+# После включения Policy Reporter начнет отображать CVE и runtime-инциденты в общем списке.
+```
+
+### 4. Маршрутизация уведомлений (Slack и Loki)
+
+Пример настройки `values.yaml` для разделения потоков данных: критические алерты в Slack, все события — в Loki.
 
 ```yaml
-# Уведомления в Telegram
-telegram:
-  enabled: true
-  token: "BOT_TOKEN"
-  chatID: "CHAT_ID"
-  minimumPriority: "critical"
-
-# Отправка отчетов в Loki для анализа логов
-loki:
-  enabled: true
-  host: "http://loki-gateway.monitoring.svc.cluster.local"
-  minimumPriority: "warning"
-
-# Фильтрация по пространствам имен
-filter:
-  namespaces:
-    include: ["production", "security-audit"]
-    exclude: ["kube-system", "temp-*"]
-```
-
-### Проверка состояния и доступ к UI
-
-```bash
-# Проверка подов (Core, UI и Plugins)
-kubectl get pods -n policy-reporter
-# → NAME                                     READY   STATUS    RESTARTS   AGE
-# → policy-reporter-5f8c9d7b9c-abc12         1/1     Running   0          5m
-# → policy-reporter-ui-6d9f8e7c8d-def34      1/1     Running   0          5m
-# → policy-reporter-kyverno-67f9b8c5-xzy78   1/1     Running   0          5m
-
-# Доступ к интерфейсу через Port-Forward
-kubectl port-forward svc/policy-reporter-ui -n policy-reporter 8080:80
-# → Forwarding from 127.0.0.1:8080 -> 80
-```
-
-### Использование REST API
-
-```bash
-# Получение сводной статистики по результатам (Pass/Fail)
-curl http://localhost:8080/api/v1/statistics
-# → {"pass": 120, "fail": 5, "warn": 2, "error": 0}
-
-# Получение списка отчетов с фильтрацией по результату
-curl "http://localhost:8080/api/v1/policy-reports?result=fail"
+target:
+  slack:
+    enabled: true
+    webhook: "https://hooks.slack.com/services/..."
+    minimumPriority: "critical"
+  loki:
+    enabled: true
+    host: "http://loki-gateway.monitoring.svc:3100"
+    minimumPriority: "warning"
+    # Добавление кастомных лейблов для Loki
+    customLabels:
+      cluster: "prod-cluster-01"
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Производительность и масштабируемость
+### Производительность и лимиты
 
-| Параметр | Рекомендация |
-|----------|--------------|
-| **Ресурсы (RAM)** | 150–300 MB (зависит от количества PolicyReports в кластере). |
-| **Ресурсы (CPU)** | 0.1–0.3 ядра. |
-| **Масштабирование** | При использовании более 500 namespaces рекомендуется включить HA-режим (`replicaCount: 2` + `leaderElection.enabled: true`). |
+| Аспект | Рекомендация | Примечание |
+| :--- | :--- | :--- |
+| **Память (RAM)** | 256 MB - 1 GB | Зависит от количества `PolicyReport` в памяти. |
+| **Процессор (CPU)** | 200m - 500m | Основная нагрузка приходится на парсинг JSON/YAML. |
+| **Кэширование** | Включено по умолчанию | Снижает нагрузку на API-сервер K8s. |
 
-### Решение проблем (Troubleshooting)
+### Поиск и устранение неисправностей (Troubleshooting)
 
-*   **UI пустой**: Убедитесь, что Kyverno генерирует отчеты (`kubectl get polr -A`). Проверьте, включен ли соответствующий плагин в Policy Reporter (`plugin.kyverno.enabled`).
-*   **Дубликаты уведомлений**: Проверьте, не запущено ли несколько реплик Core-компонента без включенного Leader Election.
-*   **Ошибка RBAC**: Policy Reporter требует прав на чтение `policyreports.wgpolicyk8s.io` во всех пространствах имен.
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| **UI пустой** | Плагин не активирован или нет прав RBAC. | Проверьте `plugin.<name>.enabled` и наличие ClusterRole. |
+| **Дубли алертов** | Отключен Leader Election в HA-режиме. | Убедитесь, что `leaderElection.enabled=true`. |
+| **Нет данных в Loki** | Ошибка авторизации или сетевой доступ. | Проверьте логи пода `policy-reporter` на наличие 401/403 ошибок. |
 
-### Полезные ссылки
-
-*   [Отчеты Kyverno](./reports.md) — структура и типы данных.
-*   [Установка Kyverno](./install.md) — базовый движок политик.
-*   [Официальная документация](https://kyverno.github.io/policy-reporter/) — актуальные параметры конфигурации.
+### См. также
+- [Отчеты Kyverno и стандарты PolicyReport](./reports.md)
+- [Интеграция Kyverno с Argo CD](./argo-cd.md)
+- [Официальный репозиторий Policy Reporter](https://github.com/kyverno/policy-reporter)

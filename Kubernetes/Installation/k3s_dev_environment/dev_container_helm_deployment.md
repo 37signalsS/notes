@@ -1,16 +1,8 @@
 # Развертывание Dev-контейнера с помощью Helm
 
-Практическое руководство по развертыванию изолированного рабочего пространства в кластере K3s (Kubernetes K3s) с использованием Helm-чарта. Чарт управляет объектами `Deployment`, `Service`, `ConfigMap` и обеспечивает персистентность домашней директории.
+Практическое руководство по развертыванию изолированного рабочего пространства в кластере K3s с использованием Helm-чарта. Чарт управляет объектами `Deployment`, `Service`, `ConfigMap` и обеспечивает персистентность домашней директории.
 
-> **Контекст:** Продолжение руководства по созданию [Dev-контейнера с SSH](./dev_container_ssh.md). Предварительно требуется создание [вспомогательного образа kubeutils](./kubeutils_image.md) для пайплайнов CI/CD.
-
----
-
-## Надежность и актуальность
-
-- **Уровень надежности:** 9 (Базируется на внутренних стандартах и проверенных сценариях развертывания)
-- **Дата последнего обновления:** Июль 2024
-- **Актуальность:** Проверено для Kubernetes v1.28–v1.30, Helm v3.14+
+> **Контекст:** Продолжение руководства по созданию [Dev-контейнера с SSH](./dev_container_ssh.md). Предварительно требуется создание [вспомогательного образа kubeutils](./kubeutils_image.md) для пайплайнов CI/CD. См. также [Архитектура K3s](./k3s_architecture.md).
 
 ---
 
@@ -18,10 +10,11 @@
 
 | Термин | Описание |
 |--------|----------|
-| **Init Container** | Вспомогательный контейнер, запускаемый до основного. В данном сценарии используется для подготовки SSH-ключей и директории `.ssh`. Подробнее: [Init-контейнеры](../../Base/Pod/pod_init_containers.md) |
-| **HostPath Volume** | Тип тома, монтирующий файл или директорию с хост-узла в под. Используется для персистентности данных. См. [Тома в Kubernetes](../../Base/Pod/volume_types/volume_types.md) |
-| **OCI-реестр** | Реестр Open Container Initiative для хранения образов и Helm-чартов. Пример: [Harbor](../../../Docker/Docker_registries/Harbor/overview.md) |
-| **GitOps** | Методология управления инфраструктурой через Git. В сценарии применяется [ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md) |
+| **Helm 4** | Современный стандарт пакетного менеджера (с 2025 г.), обеспечивающий нативную поддержку OCI-артефактов и улучшенную безопасность. |
+| **OCI-артефакт** | Метод дистрибуции Helm-чартов через Container Registry (Harbor, GitLab Registry), объединяющий жизненный цикл образов и манифестов. |
+| **Init Container** | Вспомогательный контейнер для подготовки окружения (SSH-ключи, права доступа) перед запуском основного приложения. Подробнее: [Init-контейнеры](../../Base/Pod/pod_init_containers.md). |
+| **Gateway API** | Современная замена Ingress для управления внешним трафиком, обеспечивающая лучшую типизацию и разделение ответственности. |
+| **HostPath Volume** | Тип тома, монтирующий директорию с хост-узла в под. Используется для персистентности данных в dev-окружениях. См. [Тома в Kubernetes](../../Base/Pod/volume_types/volume_types.md). |
 
 **Навигация по Helm:** [Обзор Helm](../../ToolsUtilities/Helm/helm_overview.md) | [Структура чарта](../../ToolsUtilities/Helm/helm_chart_structure.md) | [Безопасность Helm](../../ToolsUtilities/Helm/Advanced/security_best_practices.md)
 
@@ -31,32 +24,29 @@
 
 ### Архитектура решения
 
-Helm-чарт развертывает под (Pod) с двумя контейнерами:
+Helm-чарт развертывает под (Pod) с двумя контейнерами, обеспечивая идемпотентность и безопасность:
 
-1. **Init Container** — подготовка окружения для SSH-доступа.
-2. **Dev-container** — основной рабочий контейнер с SSH-сервером.
+1.  **Init Container (Инициализация):**
+    - Создает структуру директорий пользователя, если она отсутствует.
+    - Перезаписывает файл `authorized_keys` актуальными ключами из параметров чарта (через `cat <<EOF`).
+    - Устанавливает корректные права доступа (`700` для папки, `600` для файла) и рекурсивно меняет владельца (`chown`).
+2.  **Dev-container (Рабочая среда):**
+    - Основной контейнер с SSH-сервером и предустановленным инструментарием.
+    - Запускается от имени не-привилегированного пользователя.
+    - Монтирует персистентное хранилище и системные CA-сертификаты.
 
-**Ключевые особенности:**
+**Ключевые особенности 2026 года:**
+- **Персистентность:** Сохранение данных через `hostPath` (для локальных K3s) или CSI-драйверы.
+- **Безопасность:** Запрет `runAsRoot`, использование `readinessProbe` для проверки SSH-порта (22).
+- **Ресурсы:** Обязательное указание `limits` и `requests` для предотвращения перегрузки ноды.
 
-- **Персистентность:** Домашняя директория сохраняется на узле K3s через `hostPath` или `Local Persistent Volume`.
-- **Безопасность:** SSH-доступ строго по публичным ключам.
-- **Доверие к CA:** Сертификат центра сертификации (Certificate Authority) монтируется из `ConfigMap` или `Secret` для взаимодействия с внутренним реестром.
-- **Изоляция:** Запуск от имени пользователя с фиксированным UID/GID (User ID / Group ID).
+---
 
-### Принцип работы Init Container
+## Практические сценарии
 
-Инициализирующий контейнер обеспечивает идемпотентность настройки:
+### 1. Конфигурация через values.yaml
 
-1. Создает директорию `.ssh`, если она отсутствует.
-2. Перезаписывает файл `authorized_keys` актуальными ключами из параметров чарта.
-3. Устанавливает корректные права доступа (`700` для папки, `600` для файла).
-4. Рекурсивно меняет владельца на целевого пользователя.
-
-**Важное замечание по Shell:** При использовании многострочных команд в YAML-манифестах Kubernetes всегда проверяйте синтаксис условий, чтобы избежать `CrashLoopBackOff`.
-
-### Конфигурация через values.yaml
-
-Файл параметров следует структуре, описанной в [документации по values.yaml](../../ToolsUtilities/Helm/helm_chart_structure.md#файл-valuesyaml):
+Файл параметров следует структуре, обеспечивающей гибкость настройки рабочего пространства:
 
 ```yaml
 # Параметры пользователя внутри контейнера
@@ -64,38 +54,46 @@ user:
   name: artur
   id: 1001
 
-# Базовый путь на хосте для монтирования данных
-baseHostPath: /home
+# Образ контейнера (из Harbor)
+image:
+  repository: harbor.example.com/library/dev-container
+  tag: "2026.1.2"
+  pullPolicy: IfNotPresent
 
-# Список публичных SSH-ключей
+# Список публичных SSH-ключей (Ed25519 рекомендуется)
 publicKeys:
-  - "ssh-rsa AAAA..."
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..."
 
-# Корневой сертификат (CA) в текстовом виде
+# Корневой сертификат (CA) для доверия к реестру
 caCrt: |
   -----BEGIN CERTIFICATE-----
   ...
   -----END CERTIFICATE-----
 
-# Настройки Service для внешнего доступа
+# Ресурсы (Стандарт 2026)
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2000m"
+    memory: "4Gi"
+
+# Настройки Service
 service:
   type: NodePort
   sshPort: 32022
 ```
 
----
+### 2. Описание шаблона deployment.yaml
 
-## Практические сценарии
-
-### Структура Helm-чарта
-
-#### Описание deployment.yaml
+Манифест включает логику инициализации и современные контексты безопасности.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dev-container
+  name: {{ include "dev-container.fullname" . }}
 spec:
   replicas: 1
   selector:
@@ -106,6 +104,11 @@ spec:
       labels:
         app: dev-container
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.user.id }}
+        fsGroup: {{ .Values.user.id }}
+      
       initContainers:
         - name: init-ssh
           image: ubuntu:24.04
@@ -128,11 +131,17 @@ spec:
           volumeMounts:
             - name: home-dir
               mountPath: /home/{{ .Values.user.name }}
+      
       containers:
         - name: dev-container
-          image: ubuntu:24.04
-          securityContext:
-            runAsUser: {{ .Values.user.id }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 22
+            initialDelaySeconds: 5
+            periodSeconds: 10
           env:
             - name: DEV_USER_NAME
               value: {{ .Values.user.name | quote }}
@@ -142,99 +151,83 @@ spec:
             - name: ca-certs
               mountPath: /etc/ssl/certs/custom-ca.crt
               subPath: custom-ca.crt
+              readOnly: true
+      
       volumes:
         - name: home-dir
           hostPath:
-            path: /home/{{ .Values.user.name }}
+            path: "/mnt/data/homes/{{ .Values.user.name }}"
             type: DirectoryOrCreate
         - name: ca-certs
           configMap:
-            name: dev-container-ca-certs
+            name: {{ include "dev-container.fullname" . }}-ca
 ```
 
-### Публикация чарта в OCI-реестр (Harbor)
+### 3. Публикация в OCI-реестр и GitOps
 
-Для автоматизации используется вспомогательный образ [`kubeutils`](./kubeutils_image.md).
+#### Автоматизация через CI/CD (.gitlab-ci.yml)
 
-#### Пример конфигурации .gitlab-ci.yml
+Использование `kubeutils` для работы с Helm 4 и OCI.
 
 ```yaml
 publish-helm-chart:
   stage: deploy
-  image: $dev.registry/library/kube-utils:v1.30.0
+  image: $dev.registry/library/kube-utils:v1.36.2
   script:
-    # Добавление CA в системное хранилище
-    - cp $CUSTOM_CA_FILE /usr/local/share/ca-certificates/internal-ca.crt
-    - update-ca-certificates
-    # Аутентификация в реестре
     - helm registry login $dev.registry -u $dev.registry_user -p $dev.registry_password
-    # Сборка и отправка
-    - helm package ./dev-container
-    - helm push dev-container-*.tgz oci://$dev.registry/charts
-  rules:
-    - if: '$CI_COMMIT_TAG'
+    - helm package ./dev-container --version $CI_COMMIT_TAG
+    - helm push dev-container-$CI_COMMIT_TAG.tgz oci://$dev.registry/charts
 ```
 
-### Развертывание через ArgoCD
-
-Использование декларативного подхода [ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md) для управления жизненным циклом.
-
-#### Манифест типа Application
+#### Развертывание через ArgoCD v3.x
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: dev-container
-  namespace: argocd
 spec:
-  project: default
   source:
-    repoURL: 'harbor.your-domain.com/charts'
+    repoURL: oci://harbor.example.com/charts
     chart: dev-container
-    targetRevision: 1.0.0
+    targetRevision: 1.2.0
+    path: .
     helm:
       values: |
         user:
           name: developer
           id: 1000
-        publicKeys:
-          - "ssh-ed25519 AAAAC3Nza..."
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: dev-workspaces
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
 ```
 
-#### Проверка подключения
+### 4. Проверка подключения
 
-После успешной синхронизации (Sync) контейнер станет доступен по SSH:
+После синхронизации контейнер доступен по SSH (используйте NodePort или Gateway IP):
 
 ```bash
 # Подключение к NodePort сервису
 ssh -p 32022 developer@<node-ip>
-# → Welcome to Ubuntu 24.04 LTS
+# → Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.x)
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Связанные темы
-
-- **Dev-контейнер:** [Создание базового образа с SSH](./dev_container_ssh.md)
-- **K3s:** [Архитектура кластера K3s](./k3s_architecture.md)
-- **Хранилище:** [Типы томов в Pod](../../Base/Pod/volume_types/volume_types.md)
-- **CI/CD:** [Интеграция GitLab и Harbor](./gitlab_harbor_integration.md)
-
-### Предупреждения и ограничения
+### Предупреждения и риски
 
 | Аспект | Риск | Рекомендация |
 |--------|------|--------------|
-| **hostPath** | Небезопасный доступ к узлу | Используйте только в dev-окружениях. Для production рассмотрите CSI-драйверы. |
-| **NodePort** | Открытый порт на всех узлах | Ограничивайте доступ на уровне NetworkPolicy или внешнего Firewall. |
-| **Секреты** | Хранение ключей в values.yaml | Рекомендуется использовать [Sealed Secrets](../../Security/sealed_secrets_overview.md) или External Secrets. |
-| **Безопасность** | Привилегированные контейнеры | Избегайте запуска от root; используйте `securityContext` для ограничения прав. |
+| **hostPath** | Привязка к конкретной ноде | Используйте только для локальной разработки. Для отказоустойчивости используйте **Longhorn**. |
+| **Безопасность** | Статические SSH-ключи | Рекомендуется периодическая ротация или переход на OIDC-аутентификацию через **Teleport**. |
+| **NodePort** | Открытый порт в сети | Ограничивайте доступ через `NetworkPolicy` или используйте VPN (Tailscale). |
+| **Ресурсы** | CrashLoopBackOff при нехватке RAM | Всегда устанавливайте `requests` чуть ниже среднего потребления и `limits` с запасом. |
+
+### Связанные темы
+
+- **Dev-контейнер:** [Создание базового образа с SSH](./dev_container_ssh.md)
+- **CI/CD:** [Интеграция GitLab и Harbor](./gitlab_harbor_integration.md)
+- **Утилиты:** [Вспомогательный образ kubeutils](./kubeutils_image.md)
+- **Хранилище:** [Типы томов в Pod](../../Base/Pod/volume_types/volume_types.md)

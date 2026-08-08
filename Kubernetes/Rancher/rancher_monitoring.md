@@ -2,115 +2,121 @@
 
 ## Определения
 
-**Rancher Monitoring (Monitoring V2)** — интегрированное решение для развертывания и управления стеком наблюдаемости (observability) на базе Prometheus и Grafana. Инструмент построен на базе Prometheus Operator и является оберткой над Helm-чартом `kube-prometheus-stack`, адаптированной для работы в экосистеме Rancher.
+**Rancher Monitoring (Monitoring V2)** — интегрированное решение для развертывания и управления полным стеком наблюдаемости (observability), базирующееся на **Prometheus Operator**. Пакет представляет собой адаптированную версию Helm-чарта `kube-prometheus-stack`, оптимизированную для мультикластерной среды Rancher.
 
-**Prometheus Operator** — контроллер Kubernetes, который автоматизирует управление жизненным циклом компонентов мониторинга через Custom Resource Definitions (CRD). Он позволяет описывать цели сбора метрик и правила оповещений в виде стандартных объектов Kubernetes.
+**Prometheus v3.x (2026)** — текущее поколение сервера мониторинга, поддерживающее нативный прием данных по протоколу OTLP (OpenTelemetry), высокую производительность TSDB и улучшенное управление памятью.
 
-**AlertmanagerConfig** — ресурс (CRD), введенный для реализации многопользовательского (multi-tenant) алертинга. Он позволяет настраивать маршруты и получателей оповещений на уровне отдельных Namespace, не требуя доступа к глобальной конфигурации Alertmanager.
+**Grafana Alloy** — универсальный агент (наследник Grafana Agent), который в современных инсталляциях Rancher (v2.10+) может использоваться совместно с Prometheus Operator для унифицированного сбора метрик, логов и трассировок.
+
+**AlertmanagerConfig** — ресурс Kubernetes (CRD) для декларативного управления маршрутизацией алертов. Позволяет делегировать настройку уведомлений владельцам проектов (Projects) без предоставления доступа к глобальному Alertmanager.
 
 ## Базовые концепции
 
-### Архитектура решения
+### Архитектура и компоненты 2026 года
 
-Пакет `rancher-monitoring` развертывает полный стек мониторинга внутри кластера. В актуальных версиях (Rancher v2.8+) архитектура включает:
+Пакет `rancher-monitoring` обеспечивает глубокую интеграцию компонентов мониторинга с ресурсами кластера.
 
-1.  **Prometheus Server**: основной компонент для сбора (scraping) и хранения метрик. Поддерживает два режима работы:
-    *   **Standard Mode**: сбор данных, хранение в локальном TSDB и выполнение правил алертинга.
-    *   **Agent Mode** (v2.8+): оптимизированный режим только для сбора и пересылки метрик (Remote Write) во внешние хранилища. Снижает потребление ресурсов на 30–40%.
-2.  **Alertmanager**: система управления оповещениями, обеспечивающая дедупликацию, группировку и доставку уведомлений.
-3.  **Grafana**: визуализация данных с набором предустановленных дашбордов для узлов кластера, компонентов Kubernetes и ресурсов Rancher.
-4.  **Экспортеры**:
-    *   **Node Exporter**: сбор системных метрик узлов.
-    *   **Kube-State-Metrics**: генерация метрик на основе состояния объектов API (Deployment, Pod, Node).
-
-### Уровни мониторинга
-
-*   **Кластерный мониторинг**: сбор метрик с системных компонентов (etcd, scheduler, kube-proxy). Настраивается администратором кластера.
-*   **Пользовательский мониторинг**: сбор метрик с приложений через ресурсы `ServiceMonitor` и `PodMonitor`.
-*   **Многопользовательское оповещение**: использование `AlertmanagerConfig` для изоляции уведомлений разных команд внутри одного кластера.
+1.  **Prometheus Server**:
+    *   **Server Mode**: хранение данных в локальном TSDB. Рекомендуется для Management-кластера или небольших Downstream-кластеров.
+    *   **Agent Mode (v2)**: только сбор и пересылка данных (Remote Write / OTLP) во внешние хранилища (VictoriaMetrics, Mimir). В 2026 году является стандартом для крупных продуктивных сред.
+2.  **Grafana Unified Alerting**: интеграция, позволяющая управлять всеми оповещениями (Prometheus, Loki, Tempo) из единого интерфейса Grafana с привязкой к RBAC Rancher.
+3.  **OpenTelemetry Integration**: поддержка сбора метрик напрямую через OTLP без использования промежуточных экспортеров.
 
 ### Особенности интеграции Rancher
 
-*   **Унифицированный UI**: управление конфигурацией (Retention, Storage, Remote Write) через графический интерфейс Rancher.
-*   **Автоматизация etcd**: безопасное подключение к etcd с использованием сертификатов узлов (только для RKE/RKE2/K3s).
-*   **Интеграция с проектами**: автоматическое создание RBAC для доступа пользователей к Grafana и Prometheus.
+*   **Мультикластерная агрегация**: возможность настройки Remote Write для всех кластеров в единый "Monitoring Hub".
+*   **RBAC & Projects**: Rancher автоматически настраивает права доступа к дашбордам Grafana на основе членства пользователя в проектах (Projects).
+*   **Автоматизация etcd**: встроенные механизмы безопасного скрейпинга etcd для дистрибутивов RKE2 и K3s.
 
 ## Практические сценарии
 
-### Установка и настройка стека
+### Настройка Agent Mode v2 с Remote Write
 
-1.  **Развертывание**: В интерфейсе Rancher перейдите в **Apps** → **Charts** и выберите **Monitoring**.
-2.  **Настройка хранилища (Persistence)**:
-    *   Всегда включайте `Persistent Storage` для Prometheus и Grafana в продуктивных средах.
-    *   Настройте `Retention` (срок хранения). Для длительного хранения рекомендуется использовать `Remote Write` во внешние системы (VictoriaMetrics, Thanos).
-3.  **Лимиты ресурсов**: задавайте CPU и Memory limits исходя из количества метрик (cardinality). В кластерах с 100+ узлами Prometheus может требовать 16GB+ RAM.
+Для минимизации потребления ресурсов в Downstream-кластере настройте Prometheus в режиме агента через `values.yaml` (или UI):
 
-### Настройка сбора метрик с приложения
+```yaml
+prometheus:
+  prometheusSpec:
+    enableFeatures:
+      - agent
+      - otlp-receiver # Включение нативной поддержки OTLP (v3+)
+    remoteWrite:
+      - url: "https://mimir.example.com/api/v1/push"
+        basicAuth:
+          username:
+            name: mimir-creds
+            key: user
+          password:
+            name: mimir-creds
+            key: password
+```
 
-Для автоматического обнаружения приложения создайте `ServiceMonitor`.
+### Сбор метрик приложения через ServiceMonitor
+
+Стандартный метод интеграции пользовательских приложений в мониторинг:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: billing-api-monitor
-  namespace: billing
+  name: app-monitor
+  namespace: prod-app
   labels:
-    # Обязательная метка для обнаружения оператором в Rancher
-    release: rancher-monitoring
+    release: rancher-monitoring # Метка обязательна для обнаружения оператором
 spec:
   selector:
     matchLabels:
-      app: billing-api
+      app: my-app
   endpoints:
-  - port: metrics-port
+  - port: web
     interval: 30s
     path: /metrics
 ```
 
-### Настройка уведомлений через AlertmanagerConfig
+### Изоляция алертов через AlertmanagerConfig
 
-Пример настройки отправки уведомлений в Slack для конкретного пространства имен:
+Пример настройки уведомлений в Telegram для конкретной команды разработчиков (Namespace-scoped):
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
-  name: slack-notifications
-  namespace: billing
+  name: team-alerts
+  namespace: prod-app
   labels:
     release: rancher-monitoring
 spec:
   route:
-    receiver: 'slack-receiver'
-    groupBy: ['alertname']
+    receiver: 'telegram-receiver'
+    groupBy: ['alertname', 'severity']
   receivers:
-  - name: 'slack-receiver'
-    slackConfigs:
-    - apiURL: 
-        name: slack-webhook-url # Ссылка на Secret
-        key: url
-      channel: '#alerts-billing'
+  - name: 'telegram-receiver'
+    telegramConfigs:
+    - botToken:
+        name: telegram-secret
+        key: token
+      chatID: -100123456789
 ```
 
 ## Дополнительная информация
 
-### Статус компонентов и актуальность
+### Статус компонентов и версионность (2026)
 
-| Компонент | Версия (ориентир) | Статус | Примечание |
+| Компонент | Версия | Статус | Рекомендация |
 | :--- | :--- | :--- | :--- |
-| **Prometheus Operator** | v0.65+ | Актуально | Поддержка Agent Mode и AlertmanagerConfig |
-| **Prometheus** | v2.45+ | Актуально | LTS-ветка с оптимизацией TSDB |
-| **Grafana** | v10.x / v11.x | Актуально | Новый интерфейс и поддержка AlertmanagerConfig |
+| **Prometheus Operator** | v0.89+ | Актуально | Полная поддержка OTLP и ScrapeConfigs |
+| **Prometheus** | v3.x | Stable | Использовать OTLP для новых приложений |
+| **Grafana** | v13.x | Актуально | Основной интерфейс Unified Alerting |
 
-### Рекомендации по эксплуатации
+### Рекомендации по масштабированию
 
-*   **Изоляция**: Размещайте стек мониторинга в выделенных узлах (через `nodeSelector` и `tolerations`), чтобы всплески нагрузки при сборе метрик не влияли на бизнес-приложения.
-*   **Remote Write**: Используйте этот механизм для централизации мониторинга в мультикластерных средах.
-*   **Фильтрация**: Настраивайте `metricRelabelConfigs` для удаления ненужных высокочастотных метрик (например, от cAdvisor), чтобы снизить нагрузку на хранилище.
+*   **Sharding**: используйте `spec.shards` в ресурсе Prometheus для горизонтального масштабирования сбора метрик в сверхкрупных кластерах (1000+ узлов).
+*   **Alloy Collector**: для гибридных задач (метрики + логи + профилирование) внедряйте Grafana Alloy вместо набора разрозненных экспортеров.
+*   **Cardinality Management**: регулярно анализируйте "тяжелые" метрики через дашборд "Prometheus Stats" и применяйте `metricRelabelConfigs` для удаления неиспользуемых лейблов.
 
 **Связанные темы:**
 
-* [Обзор kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md) — глубокая настройка Helm-чарта.
-* [VictoriaMetrics](../../VictoriaMetrics/overview.md) — решение для долгосрочного хранения и высокой нагрузки.
-* [rancher_overview](./rancher_overview.md) — общая архитектура платформы Rancher.
+* [Обзор kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md) — детализация Helm-параметров.
+* [VictoriaMetrics](../../VictoriaMetrics/overview.md) — высокопроизводительное долгосрочное хранилище.
+* [rancher_overview](./rancher_overview.md) — архитектура платформы Rancher.
+* [OpenTelemetry: архитектура](../../OpenTelemetry/architecture_signals.md) — основы работы с сигналами OTel.

@@ -4,9 +4,11 @@
 
 ## Определения
 
-**NetworkPolicy** — ресурс Kubernetes, определяющий правила прохождения трафика между группами подов и сетевыми сегментами на уровнях L3 (IP) и L4 (TCP/UDP).
+**NetworkPolicy** — ресурс Kubernetes (API-группа `networking.k8s.io`), предназначенный для декларативного управления сетевым доступом на уровнях L3 (IP) и L4 (TCP/UDP). Функционирует по принципу «белых списков» (Allow-lists).
 
-**Селекторная связность** — принцип работы NetworkPolicy, основанный на точном совпадении меток (labels). В контексте Helm это требует синхронизации меток между манифестами Deployment/StatefulSet и самой политикой.
+**Селекторная связность** — принцип работы NetworkPolicy, основанный на точном совпадении меток (labels). В контексте Helm это требует синхронизации меток между манифестами управления (Deployment, StatefulSet) и самой политикой через общие хелперы.
+
+**CNI-реализация** — техническое исполнение правил NetworkPolicy осуществляется сетевым плагином (Cilium, Calico, Antrea). Helm лишь обеспечивает корректную генерацию манифестов, но не гарантирует их работу, если CNI в кластере не поддерживает сетевые политики.
 
 ---
 
@@ -14,15 +16,30 @@
 
 ### Проблема рассинхронизации меток
 
-NetworkPolicy работает по принципу «белого списка» (allow-list). Если селектор в политике не совпадает с метками пода из-за опечатки или изменения логики именования, политика либо не применится, либо заблокирует весь трафик. 
+NetworkPolicy изолирует поды на основе `podSelector`. Если селектор в политике не совпадает с реальными метками пода (из-за опечатки или изменения логики в `_helpers.tpl`), трафик будет либо полностью заблокирован (при Default Deny), либо политика просто не применится.
 
-При шаблонизации необходимо решить две задачи:
-1. **DRY (Don't Repeat Yourself):** Использование единого источника меток через именованные шаблоны.
+При шаблонизации необходимо решить три задачи:
+1. **DRY (Don't Repeat Yourself):** Использование единого источника меток через именованные шаблоны `include`.
 2. **Гибкость:** Возможность включать/выключать политики и настраивать CIDR-блоки через `values.yaml`.
+3. **Безопасность:** Использование подхода Default Deny по умолчанию.
 
-### Почему использование include обязательно
+### Именованные порты (Named Ports)
 
-В отличие от Service, где селектор часто прост, NetworkPolicy может содержать множество правил `from` и `to`. Использование `{{ include "myapp.selectorLabels" . }}` гарантирует, что при изменении структуры меток в `_helpers.tpl` изменения автоматически применятся ко всей сетевой инфраструктуре чарта.
+Рекомендуется использовать имена портов (например, `http`, `grpc`) вместо жестко прописанных чисел. Это позволяет изменять порты в контейнерах через `values.yaml` без необходимости обновления манифестов NetworkPolicy.
+
+```yaml
+ports:
+  - protocol: TCP
+    port: {{ .Values.service.targetPort | default "http" }}
+```
+
+### Валидация через required
+
+Для критически важных параметров (например, внешних IP-адресов) следует использовать функцию `required`. Это прервет процесс `helm install/upgrade` с понятной ошибкой, если пользователь забыл указать необходимые данные.
+
+```yaml
+cidr: {{ required "A valid CIDR is required for external-db egress rule" .Values.networkPolicy.egress.db.cidr }}
+```
 
 ---
 
@@ -30,7 +47,7 @@ NetworkPolicy работает по принципу «белого списка
 
 ### Стандартная политика для приложения (Ingress)
 
-Разрешение входящего трафика на порт приложения только из определенных сегментов.
+Разрешение входящего трафика на порт приложения только от Ingress-контроллера и внутри кластера от определенных компонентов.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -45,23 +62,23 @@ spec:
     - Ingress
   ingress:
     - from:
-      # Разрешаем трафик от Ingress Controller (по меткам)
+      # Трафик от Ingress Controller
       - podSelector:
           matchLabels:
             app.kubernetes.io/component: controller
-      # Разрешаем трафик внутри Namespace от определенных подов
+      # Внутренний трафик от фронтенда
       - podSelector:
           matchLabels:
             {{- include "myapp.selectorLabels" . | nindent 12 }}
             component: frontend
       ports:
         - protocol: TCP
-          port: {{ .Values.service.port }}
+          port: {{ .Values.service.targetPort | default "http" }}
 ```
 
 ### Изоляция (Default Deny)
 
-Рекомендуемый паттерн безопасности — блокировка всего трафика по умолчанию с последующим точечным разрешением.
+Блокировка всего входящего и исходящего трафика для подов приложения. Это «нулевой рубеж» безопасности.
 
 ```yaml
 {{- if .Values.networkPolicy.defaultDeny }}
@@ -79,28 +96,28 @@ spec:
 {{- end }}
 ```
 
-### Работа с внешними CIDR-блоками
+### Работа с внешними CIDR и исключениями
 
-Шаблонизация доступа к внешним системам (например, базам данных вне кластера) через списки IP-адресов.
+Доступ к внешней базе данных с использованием `ipBlock` и исключением локальных подсетей.
 
 **values.yaml:**
 ```yaml
 networkPolicy:
   egress:
-    dbExternal:
+    externalDb:
       enabled: true
-      cidrs:
-        - 192.168.1.10/32
-        - 10.0.4.0/24
+      cidr: 1.2.3.4/32
+      except:
+        - 10.0.0.0/8
 ```
 
 **templates/networkpolicy-egress.yaml:**
 ```yaml
-{{- if .Values.networkPolicy.egress.dbExternal.enabled }}
+{{- if .Values.networkPolicy.egress.externalDb.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "myapp.fullname" . }}-external-db
+  name: {{ include "myapp.fullname" . }}-egress-db
 spec:
   podSelector:
     matchLabels:
@@ -109,14 +126,31 @@ spec:
     - Egress
   egress:
     - to:
-      {{- range .Values.networkPolicy.egress.dbExternal.cidrs }}
       - ipBlock:
-          cidr: {{ . }}
-      {{- end }}
+          cidr: {{ required "CIDR is required" .Values.networkPolicy.egress.externalDb.cidr }}
+          {{- if .Values.networkPolicy.egress.externalDb.except }}
+          except:
+            {{- toYaml .Values.networkPolicy.egress.externalDb.except | nindent 12 }}
+          {{- end }}
       ports:
         - protocol: TCP
           port: 5432
 {{- end }}
+```
+
+### Динамический список портов
+
+Если приложение прослушивает несколько портов, их список можно генерировать динамически через цикл.
+
+```yaml
+ingress:
+  - from:
+    - podSelector: {}
+    ports:
+      {{- range .Values.networkPolicy.ingressPorts }}
+      - protocol: {{ .protocol | default "TCP" }}
+        port: {{ .port }}
+      {{- end }}
 ```
 
 ### Кросс-пространственное взаимодействие (Monitoring)
@@ -145,7 +179,7 @@ spec:
             app.kubernetes.io/name: prometheus
       ports:
         - protocol: TCP
-          port: 9090
+          port: {{ .Values.monitoring.port | default 9090 }}
 {{- end }}
 ```
 
@@ -155,11 +189,19 @@ spec:
 
 ### Лучшие практики
 
-1. **Имена шаблонов:** Всегда используйте префикс чарта в именах `define` (например, `myapp.selectorLabels`), чтобы избежать конфликтов при использовании субчартов.
-2. **Валидация CIDR:** При работе с `ipBlock` убедитесь, что в `values.yaml` передаются валидные CIDR-строки, иначе Helm успешно отрендерит манифест, но Kubernetes отклонит его при применении.
-3. **Селектор Namespace:** Помните, что `namespaceSelector` требует наличия соответствующих меток на самих объектах Namespace. В современных версиях K8s метка `kubernetes.io/metadata.name` добавляется автоматически.
+1. **Имена шаблонов:** Всегда используйте префикс чарта в `define` (например, `myapp.selectorLabels`), чтобы избежать коллизий при использовании чарта как зависимости (Subchart).
+2. **Типизация CIDR:** При использовании `ipBlock` передавайте строки в кавычках в `values.yaml`, чтобы избежать интерпретации чисел как других типов.
+3. **Автоматические метки:** Используйте метку `kubernetes.io/metadata.name` для `namespaceSelector`, так как она автоматически добавляется в Kubernetes 1.21+.
+4. **Приоритет AdminNetworkPolicy:** Помните, что глобальные политики администратора (ANP) имеют приоритет над обычными `NetworkPolicy`.
+
+### Отладка и верификация
+
+Для проверки корректности генерации манифестов NetworkPolicy используйте:
+- `helm template .` — для просмотра отрендеренных YAML-файлов.
+- `helm install --dry-run --debug` — для симуляции установки с проверкой API-версий.
+- `kubectl get networkpolicy -n <namespace>` — для проверки наличия объектов в кластере.
 
 ### См. также
 - [Именованные шаблоны и хелперы](../_helpers.md) — управление метками и DRY.
 - [Обзор сценариев шаблонизации](./overview.md) — каталог практических примеров.
-- [NetworkPolicy: навигатор](../../../../Networking/Networking/Network/network_policy.md) — подробная теория сетевых политик.
+- [NetworkPolicy: навигатор](../../../../Networking/Network/network_policy.md) — подробная теория сетевых политик.

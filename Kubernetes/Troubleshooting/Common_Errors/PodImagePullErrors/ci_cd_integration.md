@@ -4,11 +4,13 @@
 
 **Конвейер CI/CD (Pipeline)** — автоматизированная последовательность шагов сборки, тестирования и развертывания приложения. В контексте Image Pull конвейер отвечает за своевременную публикацию образа и обеспечение кластера правами доступа.
 
-**Автоматизация секретов (Secret Management)** — процесс динамического создания и обновления `imagePullSecrets` в кластере. Предотвращает простои из-за истечения токенов или смены паролей к реестру.
+**Image Promotion (Продвижение образа)** — процесс перемещения или перетегирования проверенного образа между различными реестрами или пространствами имен (например, из `staging-reg` в `prod-reg`) без пересборки. Это гарантирует, что в продакшн попадет именно тот артефакт, который прошел тестирование.
 
-**Неизменяемые теги (Immutable Tags)** — практика использования уникальных идентификаторов для каждой сборки (например, короткий SHA коммита Git), исключающая перезапись существующих образов и гарантирующая идентичность среды.
+**Wait-for-image (Ожидание образа)** — паттерн проектирования, предотвращающий запуск развертывания до момента физического завершения процесса Push образа в реестр и обновления манифестов.
 
 **Workload Identity / OIDC** — механизмы аутентификации в облачных реестрах (ECR, GCR, ACR) без использования статических паролей, основанные на доверии между облачным провайдером и кластером Kubernetes.
+
+**Эфемерные реестры (Ephemeral Registries)** — временные хранилища образов с коротким временем жизни (TTL), используемые для промежуточных сборок в динамических окружениях (например, `ttl.sh`).
 
 ---
 
@@ -20,80 +22,109 @@
 
 | Проблема | Роль CI/CD | Решение |
 | :--- | :--- | :--- |
-| **Race Condition** | Deployment стартует до завершения Push образа. | Настройка зависимостей (dependencies/needs) и проверка наличия манифеста перед деплоем. |
-| **Expired Tokens** | Использование токенов с TTL (например, AWS ECR). | Использование Workload Identity или фоновое обновление секрета через CronJob. |
-| **Rate Limiting** | Массовые тесты вызывают блокировку по IP. | Интеграция с локальными кэширующими прокси (Pull-through Cache). |
-| **Tag Overwriting** | Использование `:latest` приводит к запуску неверной версии. | Принудительное использование уникальных тегов на уровне CI-скриптов. |
+| **Race Condition** | Deployment стартует до завершения Push образа. | Паттерн `Wait-for-image` на уровне пайплайна или K8s Init-контейнера. |
+| **Expired Tokens** | Использование токенов с TTL (например, AWS ECR). | Использование **Workload Identity (IRSA/WIF)** или External Secrets Operator. |
+| **Promotion Failure** | Ошибки при копировании образа между реестрами. | Использование специализированных утилит (Skopeo/Crane) вместо связки `docker pull/tag/push`. |
+| **Tag Overwriting** | Использование `:latest` приводит к запуску неверной версии. | Принудительное использование уникальных тегов (SHA коммита) и неизменяемых репозиториев. |
 
-### Рекомендуемая стратегия именования (Tagging)
+### Стратегия Build Once, Deploy Anywhere
 
-Для предотвращения ошибок несоответствия образов в production-средах следует придерживаться стратегии:
-- **Разработка:** Теги на основе номера ветки или MR (например, `feature-login-abc123`).
-- **Стейджинг/Продакшн:** Теги на основе SHA коммита или семантического версионирования (`v1.2.3`).
-- **Запрет на `:latest`**: Использование этого тега скрывает версию и ломает механизм отката (Rollback).
+Для минимизации ошибок `ErrImagePull` рекомендуется использовать стратегию "одной сборки":
+1.  Образ собирается один раз на этапе `build`.
+2.  Образ помечается уникальным тегом (Commit SHA).
+3.  Тот же самый дайджест образа продвигается (promote) через контуры (Dev -> Staging -> Prod) путем копирования манифестов, а не пересборки из исходников.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Использование Workload Identity (GitHub Actions + AWS ECR)
+### Сценарий 1: Продвижение образов через Skopeo (Promotion)
 
-В современных облачных средах от статических `imagePullSecrets` отказываются в пользу временных ролей (IRSA).
+Использование `skopeo` позволяет копировать образы напрямую между реестрами, экономя время и дисковое пространство раннера.
 
-**Принцип работы:**
-1. GitHub Actions проходит OIDC-аутентификацию в AWS.
-2. `kubelet` на узле (через IAM роль узла) получает доступ к ECR.
-3. В манифестах K8s секреты не требуются.
+**Копирование между реестрами:**
+```bash
+# Копирование из стейджинга в продакшн без скачивания слоев на хост
+skopeo copy \
+  --src-creds $STAGING_USER:$STAGING_PASS \
+  --dest-creds $PROD_USER:$PROD_PASS \
+  docker://staging-registry.io/my-app:v1.2.3 \
+  docker://prod-registry.io/my-app:v1.2.3
+```
 
-**Преимущество:** Полное исключение ошибок `Unauthorized` из-за протухших паролей.
+### Сценарий 2: Паттерн Wait-for-image (K8s-native)
 
-### Сценарий 2: Декларативное управление через External Secrets Operator
+Если вы не можете гарантировать порядок завершения CI-джобов, используйте Init-контейнер для ожидания образа.
 
-В модели GitOps (ArgoCD/Flux) секреты не хранятся в Git в открытом виде.
+**Пример манифеста:**
+```yaml
+spec:
+  initContainers:
+  - name: wait-for-image
+    image: curlimages/curl  # Или легковесный образ с skopeo/crane
+    command:
+    - "/bin/sh"
+    - "-c"
+    - |
+      # Цикл ожидания доступности манифеста в реестре
+      until curl -s -f -o /dev/null "https://registry.example.com/v2/my-app/manifests/v1.2.3"; do
+        echo "Waiting for image..."
+        sleep 5
+      done
+```
 
-**Конфигурация (ExternalSecret):**
+### Сценарий 3: Использование Workload Identity (IRSA в AWS)
+
+Полное исключение `imagePullSecrets` из манифестов за счет федерации идентичностей.
+
+1.  **Создание IAM роли** с правами `AmazonEC2ContainerRegistryReadOnly`.
+2.  **Аннотирование ServiceAccount** в Kubernetes:
+    ```yaml
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: my-app-sa
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/my-app-ecr-role
+    ```
+3.  **Kubelet** автоматически использует эту роль для получения временного токена при обращении к ECR.
+
+### Сценарий 4: Эфемерные реестры для Review-окружений
+
+Для временных веток (Pull Requests) использование основного реестра может привести к его замусориванию. Используйте `ttl.sh` — анонимный эфемерный реестр.
+
+**CI-конвейер:**
+```bash
+# Образ будет автоматически удален через 24 часа
+IMAGE_TAG="ttl.sh/my-app-pr-${PR_NUMBER}:24h"
+docker build -t $IMAGE_TAG .
+docker push $IMAGE_TAG
+```
+
+### Сценарий 5: Автоматизация секретов через External Secrets Operator (ESO)
+
+Синхронизация учетных данных реестра из HashiCorp Vault напрямую в `imagePullSecrets`.
+
+**Манифест ExternalSecret:**
 ```yaml
 apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
-  name: registry-credentials
+  name: registry-auth
 spec:
   refreshInterval: 1h
   secretStoreRef:
     name: vault-backend
     kind: ClusterSecretStore
   target:
-    name: regcred  # Этот секрет будет создан в K8s
+    name: regcred
     template:
       type: kubernetes.io/dockerconfigjson
   data:
   - secretKey: .dockerconfigjson
     remoteRef:
-      key: secret/data/registry/auth
+      key: secret/data/registry/production
 ```
-**Результат:** ArgoCD видит манифест `ExternalSecret`, а оператор автоматически создает `regcred`, необходимый для загрузки образов.
-
-### Сценарий 3: Предотвращение Race Condition в GitLab CI
-
-Обеспечение того, что манифест образа доступен в реестре перед применением `kubectl apply`.
-
-```yaml
-# .gitlab-ci.yml
-deploy:
-  script:
-    # Ожидание готовности образа (использование crane)
-    - crane digest $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA || (echo "Image not found" && exit 1)
-    # Применение деплоя с конкретным тегом
-    - helm upgrade --install my-app ./charts --set image.tag=$CI_COMMIT_SHORT_SHA
-```
-
-### Сценарий 4: Оптимизация через Harbor Pull-through Cache
-
-Если конвейер CI/CD запускает сотни подов для тестирования, используйте Harbor в качестве зеркала для Docker Hub.
-
-1. Создайте проект-прокси в Harbor (например, `hub-proxy`).
-2. В кластере настройте `containerd` на использование этого зеркала (см. [Сетевые проблемы](./network_issues.md)).
-3. Это исключит ошибку `429 Too Many Requests` во время выполнения CI-тестов.
 
 ---
 
@@ -101,7 +132,9 @@ deploy:
 
 ### Связанные темы
 
-- [Лучшие практики](./best_practices.md) — стратегии управления тегами и политиками.
-- [Распространённые ошибки](./common_errors.md) — детальный разбор ошибок 401, 403, 429.
-- [Внешние менеджеры секретов](../../Base/secrets/external_managers.md) — глубокая интеграция с Vault и AWS SM.
-- [Сетевые проблемы](./network_issues.md) — настройка прокси и кэширующих реестров.
+- [Лучшие практики](./best_practices.md) — стратегии управления тегами и GC.
+- [Распространённые ошибки](./common_errors.md) — детальный разбор кодов 401, 403, 429.
+- [Image Promotion (CI/CD)](../../../../Docker/Docker_fs/images/promotion_cicd.md) — глубокое погружение в стратегии продвижения артефактов.
+- [External Secrets Operator](../../Base/secrets/external_managers.md) — настройка провайдеров секретов.
+- [Workload Identity](../../../../Cloud/Concepts/workload_identity.md) — общие принципы облачной идентификации.
+

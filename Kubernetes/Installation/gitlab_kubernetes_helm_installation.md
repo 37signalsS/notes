@@ -1,6 +1,6 @@
 # Установка GitLab в Kubernetes через Helm
 
-Руководство по развертыванию GitLab в кластере Kubernetes при помощи официального Helm-чарта.
+Руководство по развертыванию, настройке и поддержке платформы GitLab в кластере Kubernetes при помощи официального Helm-чарта.
 
 > **Контекст:** Официальный чарт GitLab — полноценное решение для production-развертывания. Включает Ingress, cert-manager, Prometheus, Redis и другие зависимости. См. [Обзор Helm](../ToolsUtilities/Helm/helm_overview.md), [Структура Helm-чарта](../ToolsUtilities/Helm/helm_chart_structure.md).
 
@@ -9,11 +9,14 @@
 ## Определения
 
 | Термин | Описание |
-|--------|----------|
-| **GitLab Helm Chart** | Официальный Helm-чарт для развертывания GitLab в Kubernetes. Включает компоненты: GitLab Rails, Sidekiq, Gitaly, PostgreSQL, Redis, Ingress, cert-manager |
-| **Таймаут установки** | Максимальное время ожидания завершения установки. Рекомендуется 600s (10 минут) из-за сложности платформы |
-| **StorageClass** | Объект для динамического выделения PersistentVolume. Требуется для хранения данных (репозитории, БД, кэш) |
-| **Values-файл** | YAML-файл для переопределения параметров чарта при установке |
+| :--- | :--- |
+| **GitLab Helm Chart** | Официальный пакет шаблонов (`umbrella chart`) для развертывания всех компонентов GitLab (Rails, Sidekiq, Gitaly и др.). |
+| **Subchart (Субчарт)** | Вложенный чарт для зависимостей (PostgreSQL, Redis, MinIO). Параметры субчартов настраиваются через корневой `values.yaml`. |
+| **Global Scope** | Секция `global` в `values.yaml`, значения из которой используются всеми компонентами платформы (домен, настройки хранилища, SSL). |
+| **Gitaly** | Сервис уровня хранения (Stateful), обеспечивающий доступ к Git-репозиториям по протоколу gRPC. |
+| **Таймаут установки** | Максимальное время ожидания завершения установки (рекомендуется 600s+ из-за сложности платформы). |
+| **StorageClass** | Объект для динамического выделения PersistentVolume. Требуется для хранения репозиториев, БД и кэша. |
+| **KAS (Kubernetes Agent Server)** | Компонент GitLab для интеграции с кластерами через GitLab Agent. |
 
 ---
 
@@ -21,108 +24,118 @@
 
 ### Архитектура официального чарта
 
-Официальный чарт GitLab (`gitlab/gitlab`) включает следующие ключевые сервисы:
-
-- **GitLab Rails** — основной веб-интерфейс и API.
+Официальный чарт (`gitlab/gitlab`) включает следующие ключевые сервисы:
+- **GitLab Rails (Puma)** — основной веб-интерфейс и API.
 - **Sidekiq** — обработка фоновых задач.
-- **Gitaly** — управление Git-репозиториями.
-- **PostgreSQL / Redis** — база данных и кэш.
-- **cert-manager** — автоматизация SSL/TLS (опционально).
+- **Gitaly** — управление Git-репозиториями (требует быстрых дисков).
+- **PostgreSQL / Redis** — база данных и кэш (встроены как субчарты).
+- **cert-manager** — автоматизация SSL/TLS через Let's Encrypt.
 
 ### Предварительные требования
 
 | Компонент | Требование | Примечание |
-|-----------|------------|------------|
-| **Kubernetes** | >= 1.24 | Рекомендуется 1.26+ |
-| **Helm** | >= 3.9.4 | См. [Обзор Helm](../ToolsUtilities/Helm/helm_overview.md#установка-cli) |
-| **StorageClass** | Обязателен | NFS, Ceph или облачные PV |
-| **CPU / RAM** | 4 ядра / 8 ГБ | Минимально для тестового запуска |
+| :--- | :--- | :--- |
+| **Kubernetes** | >= 1.24 | Рекомендуется 1.26+ для поддержки современных API. |
+| **Helm** | >= 3.9.4 | См. [Обзор Helm](../ToolsUtilities/Helm/helm_overview.md#установка-cli). |
+| **StorageClass** | Обязателен | Поддержка динамического провижининга (NFS, Ceph, Cloud PV). |
+| **CPU / RAM** | 4 ядра / 8 ГБ | Минимально для тестового запуска. Для Production: 8+ ядер / 32+ ГБ. |
 
 ### Ключевые параметры values.yaml
 
 | Параметр | Описание | Пример значения |
-|----------|----------|-----------------|
+| :--- | :--- | :--- |
 | `global.hosts.domain` | Основной домен GitLab | `example.com` |
-| `global.hosts.gitlab.name` | Полный хостнейм | `gitlab.example.com` |
-| `certmanager.install` | Установка cert-manager | `true` / `false` |
-| `nginx-ingress.enabled` | Встроенный Ingress | `true` / `false` |
+| `global.hosts.gitlab.name` | Полный хостнейм для UI | `gitlab.example.com` |
+| `certmanager.install` | Установка встроенного cert-manager | `true` / `false` |
+| `nginx-ingress.enabled` | Включение встроенного Ingress-контроллера | `true` / `false` |
+| `postgresql.install` | Использование встроенной БД PostgreSQL | `false` для внешней RDS/БД. |
 
 ---
 
 ## Практические сценарии
 
-### Добавление репозитория GitLab
+### 1. Подготовка и изучение чарта
+
+Перед установкой необходимо добавить репозиторий и рекомендуется изучить параметры по умолчанию:
 
 ```bash
 # Добавление официального репозитория
 helm repo add gitlab https://charts.gitlab.com/
-
-# Обновление локального кэша чартов
 helm repo update
-```
 
-### Подготовка и изучение чарта
-
-Перед установкой рекомендуется загрузить чарт для анализа параметров:
-
-```bash
-# Скачивание и распаковка чарта
+# Скачивание и распаковка чарта для анализа
 helm pull gitlab/gitlab --untar
-
-# Просмотр структуры и параметров по умолчанию
 cd gitlab
-ls -la
-cat values.yaml
+ls -la values.yaml
 ```
 
-### Базовая установка
+### 2. Базовая установка
 
 ```bash
 # Создание выделенного пространства имен
 kubectl create namespace gitlab
 
-# Установка платформы
+# Установка платформы с базовыми параметрами
 helm upgrade --install gitlab gitlab/gitlab \
   --namespace gitlab \
   --timeout 600s \
   --set global.hosts.domain=example.com \
-  --set global.hosts.gitlab.name=gitlab.example.com
-```
-
-### Установка с внешним cert-manager
-
-Если управление сертификатами осуществляется внешним компонентом:
-
-```bash
-helm upgrade --install gitlab gitlab/gitlab \
-  --namespace gitlab \
-  --timeout 600s \
-  --set global.hosts.domain=example.com \
-  --set certmanager.install=false \
+  --set global.hosts.gitlab.name=gitlab.example.com \
   --set certmanager-issuer.email=admin@example.com
 ```
 
-### Проверка состояния развертывания
+### 3. Установка с внешним cert-manager и БД
 
-```bash
-# Список всех ресурсов в namespace
-kubectl get all -n gitlab
+Для production рекомендуется использовать внешние сервисы для стабильности.
 
-# Проверка статуса подов и хранилищ
-kubectl get pods,pvc -n gitlab
+**Пример values.yaml для интеграции с внешней БД:**
+
+```yaml
+global:
+  hosts:
+    domain: example.com
+  psql:
+    host: postgres.internal.db
+    password:
+      secret: gitlab-db-password
+      key: password
+certmanager:
+  install: false # Использование существующего в кластере контроллера
+postgresql:
+  install: false # Отключение встроенного субчарта
 ```
 
-### Получение начального пароля root
-
-Начальный пароль генерируется автоматически и хранится в секрете:
+### 4. Проверка состояния и получение пароля
 
 ```bash
-# Извлечение пароля из секрета
+# Список всех ресурсов и проверка статуса PVC
+kubectl get all,pvc -n gitlab
+
+# Получение начального пароля root (автоматически генерируется)
 kubectl get secret -n gitlab gitlab-initial-root-password \
   -o jsonpath='{.data.password}' | base64 -d
 ```
 
-> **Важно:** Используйте логин `root`. После первого входа система потребует сменить пароль.
+### 5. Обновление GitLab
+
+GitLab поддерживает обновления только по [путям обновления (Upgrade Paths)](https://docs.gitlab.com/ee/update/index.html#upgrade-paths). Никогда не перескакивайте через мажорные версии без промежуточных обновлений.
+
+```bash
+# Обновление до целевой версии
+helm upgrade gitlab gitlab/gitlab \
+  --namespace gitlab \
+  -f custom-values.yaml \
+  --version <version_tag>
+```
+
+### 6. Резервное копирование (Backup)
+
+В Kubernetes бэкап метаданных выполняется через специальную задачу:
+
+```bash
+# Запуск Job для создания бэкапа в объектное хранилище
+kubectl exec -it <webservice-pod> -n gitlab -- backup-utility
+```
 
 ---
 
@@ -137,18 +150,12 @@ global:
   hosts:
     domain: example.com
     https: true
-    gitlab:
-      name: gitlab.example.com
   registry:
     enabled: false # При использовании внешнего Harbor
   ingress:
     configureCertmanager: true
     tls:
       enabled: true
-
-certmanager:
-  install: true
-
 gitlab-runner:
   install: false # Рекомендуется устанавливать отдельно
 ```
@@ -156,10 +163,10 @@ gitlab-runner:
 ### Ограничения и рекомендации
 
 | Аспект | Рекомендация |
-|--------|--------------|
-| **Хранилище** | Всегда проверяйте доступность StorageClass. См. [Решение проблем с PVC](./gitlab_installation_troubleshooting.md) |
-| **Доступ** | Для bare-metal используйте MetalLB или NodePort. См. [Методы доступа](./gitlab_kubernetes_access.md) |
-| **Runner** | Устанавливайте Runner как отдельный релиз. См. [Установка GitLab Runner](./gitlab_runner_kubernetes_installation.md) |
+| :--- | :--- |
+| **Хранилище** | Всегда проверяйте доступность StorageClass. См. [Решение проблем с PVC](./gitlab_installation_troubleshooting.md). |
+| **Доступ** | Для bare-metal используйте MetalLB или NodePort. См. [Методы доступа](./gitlab_kubernetes_access.md). |
+| **Обновления** | Всегда делайте бэкап БД перед `helm upgrade`. |
 
 ### См. также
 

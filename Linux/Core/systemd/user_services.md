@@ -1,118 +1,113 @@
-# Пользовательские службы systemd
+# Пользовательские службы systemd: Режим --user
 
 ## Определения
 
-* **`systemd --user`** — это режим работы менеджера `systemd`, позволяющий пользователям запускать и контролировать собственные юниты (службы, таймеры, сокеты) без прав администратора. Каждый активный пользователь получает отдельный экземпляр менеджера процессов.
-* **Пользовательский менеджер** — процесс `systemd`, запущенный от имени пользователя. Он управляет жизненным циклом служб в рамках сессии или постоянно (при включенном linger).
+* **`systemd --user`** — системный механизм, позволяющий непривилегированным пользователям управлять собственным экземпляром менеджера процессов. Это позволяет запускать службы, таймеры и сокеты, которые не требуют прав root и изолированы в рамках пользовательского контекста.
+* **Пользовательская шина D-Bus (Session Bus)** — канал межпроцессного взаимодействия, через который `systemctl --user` общается с пользовательским экземпляром systemd.
+* **Linger (Задержка)** — состояние пользователя в `logind`, при котором его экземпляр `systemd --user` запускается при старте ОС и не завершается после закрытия всех сессий.
 
 ## Основные концепции
 
-### Жизненный цикл и режим linger
+### Жизненный цикл и режим Linger
 
-По умолчанию экземпляр `systemd --user` запускается при первом входе пользователя (логине) и завершается после закрытия последней сессии.
-* **Режим Linger** — позволяет пользовательскому менеджеру запускаться при старте системы и продолжать работу после логаута. Это необходимо для работы фоновых ботов, серверов и планировщиков.
+По умолчанию экземпляр `systemd --user` создается при первом логине пользователя и уничтожается при выходе из последней сессии. Для серверных задач (боты, мониторинг, безрутовые контейнеры) необходимо включить режим **Linger**.
 
 ```bash
-# Включить постоянную работу менеджера для пользователя
-sudo loginctl enable-linger username
+# Включение постоянной работы менеджера для текущего пользователя
+sudo loginctl enable-linger $USER
 
-# Проверка статуса
-loginctl show-user username | grep Linger
+# Проверка: статус Linger в выводе loginctl
+loginctl show-user $USER --property=Linger
 # → Linger=yes
 ```
 
-### Управление переменными окружения
+### Переменные окружения
 
-Пользовательские службы не наследуют переменные из `.bashrc` или `.profile`, так как запускаются напрямую менеджером `systemd`.
+Пользовательские юниты **не наследуют** переменные из файлов `.bashrc`, `.zshrc` или `.profile`.
 
-1. **`environment.d` (Рекомендуемый способ)**: Создайте файл `~/.config/environment.d/60-var.conf` для статических переменных.
-2. **`import-environment`**: Используется для передачи динамических переменных (например, `$DISPLAY` или `$XDG_RUNTIME_DIR`) из текущей сессии в менеджер.
-   ```bash
-   systemctl --user import-environment DISPLAY XAUTHORITY
-   ```
-3. **`set-environment`**: Установка конкретных значений «на лету».
-   ```bash
-   systemctl --user set-environment MY_VAR=value
-   ```
+1.  **`environment.d` (Рекомендуется):** Создайте файл `~/.config/environment.d/99-custom.conf`. Формат: `KEY=VALUE`. Эти переменные будут доступны всем пользовательским службам.
+2.  **`systemctl --user import-environment`:** Передает переменные из текущей оболочки в менеджер (полезно для `$DISPLAY`, `$XDG_RUNTIME_DIR`).
+3.  **`DefaultEnvironment=`:** Можно задать в `~/.config/systemd/user.conf` для глобального применения.
 
-### XDG Autostart
+### Ограничение ресурсов (Cgroups)
 
-Современные графические оболочки (KDE Plasma 6, GNOME) используют `systemd-xdg-autostart-generator` для преобразования `.desktop` файлов в нативные юниты systemd. Это позволяет управлять приложениями автозапуска через стандартный `systemctl --user`.
+Все пользовательские службы работают внутри системного слайса **`user-$UID.slice`**. 
+* Вы можете накладывать лимиты на все службы пользователя сразу через системный `systemctl set-property user-$UID.slice MemoryMax=2G`.
+* Индивидуальные лимиты прописываются в секции `[Service]` пользовательского юнита так же, как в системных.
 
 ## Практические сценарии
 
-### Настройка иерархии конфигурации
+### 1. Иерархия и пути конфигурации
 
-Менеджер ищет юниты в порядке приоритета:
-1. `~/.config/systemd/user/` — локальные юниты пользователя (**рекомендуется**).
-2. `~/.local/share/systemd/user/` — юниты от локально установленных пакетов.
-3. `/etc/systemd/user/` — системные юниты для всех пользователей.
-4. `/usr/lib/systemd/user/` — юниты, поставляемые дистрибутивом.
+Пользовательский менеджер ищет юниты в следующем порядке (по убыванию приоритета):
+1.  **`$XDG_CONFIG_HOME/systemd/user/`** (обычно `~/.config/systemd/user/`) — основные пользовательские конфиги.
+2.  **`$XDG_DATA_HOME/systemd/user/`** (обычно `~/.local/share/systemd/user/`) — юниты от установленного пользователем ПО.
+3.  **`/etc/systemd/user/`** — общие юниты для всех пользователей системы (управляются root).
 
-### Пример создания службы (Telegram-бот)
+### 2. Пример службы: Фоновый Python-скрипт
 
-Создайте файл `~/.config/systemd/user/tg-bot.service`:
-
+Создайте файл `~/.config/systemd/user/my-script.service`:
 ```ini
 [Unit]
-Description=Telegram Notification Bot
+Description=My Background Python Script
 After=network-online.target
 
 [Service]
-ExecStart=%h/bin/bot-executable
-Restart=on-failure
-Environment=TOKEN_FILE=%h/.config/bot/token
+Type=simple
+# %h раскрывается в путь к домашней директории
+ExecStart=/usr/bin/python3 %h/scripts/app.py
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=default.target
 ```
 
-**Активация и запуск:**
+**Активация:**
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now tg-bot.service
-
-# Проверка статуса
-systemctl --user status tg-bot.service
-# → ● tg-bot.service - Telegram Notification Bot
-# →    Active: active (running) since Mon 2024-06-10 12:00:00 UTC
+systemctl --user enable --now my-script.service
 ```
 
-### Использование спецификаторов
+### 3. Активация через сокеты (Socket Activation)
 
-В пользовательских юнитах часто применяются переменные для переносимости:
-* **`%h`** — Путь к домашней директории (`/home/user`).
-* **`%u`** — Имя пользователя.
-* **`%E`** — Путь к конфигурации (`~/.config`).
-* **`%t`** — Путь к runtime-директории (`/run/user/1000`).
+Позволяет запускать службу только при поступлении входящего соединения на порт (например, для личного HTTP-прокси).
+```ini
+# ~/.config/systemd/user/proxy.socket
+[Socket]
+ListenStream=8080
+
+[Install]
+WantedBy=sockets.target
+```
 
 ## Диагностика и управление
 
+### Базовые команды
 ```bash
-# Просмотр всех пользовательских служб
-systemctl --user list-units --type=service
+# Просмотр всех юнитов пользователя
+systemctl --user list-units
 
-# Чтение логов конкретной службы
-journalctl --user -u tg-bot.service -f
+# Чтение журналов (journald фильтрует по UID автоматически)
+journalctl --user -u my-script.service -f
 
-# Проверка ошибок в конфигурации
-systemd-analyze --user verify ~/.config/systemd/user/tg-bot.service
+# Проверка конфигурации на ошибки
+systemd-analyze --user verify ~/.config/systemd/user/my-script.service
 ```
 
-### Типичные ошибки
+### Типичные проблемы и решения
 
-| Ошибка | Причина | Решение |
+| Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Failed to connect to bus** | Сессия не инициализирована корректно (часто при `su -`). | Используйте `machinectl shell user@host` или проверьте `$XDG_RUNTIME_DIR`. |
-| **Служба не видит `$PATH`** | Переменные из shell не проброшены в systemd. | Используйте `environment.d` или полные пути в `ExecStart`. |
-| **Permission denied (Socket)** | Попытка занять порт < 1024. | Используйте порты > 1024 или настройте `AmbientCapabilities=CAP_NET_BIND_SERVICE`. |
+| **Failed to connect to bus** | Ошибка инициализации `$XDG_RUNTIME_DIR` или D-Bus при использовании `su` или `sudo`. | Используйте `machinectl shell $USER@.host` или явно задайте `export XDG_RUNTIME_DIR=/run/user/$UID`. |
+| **Error: Permission denied (Socket)** | Попытка занять порт < 1024. | Непривилегированные пользователи не могут слушать системные порты. Используйте порты > 1024. |
+| **Служба «забывает» переменные** | Ожидание переменных из `.bashrc`. | Перенесите переменные в `~/.config/environment.d/*.conf`. |
 
 ## Дополнительная информация
 
 ### См. также
-* [Обзор юнитов systemd](./systemd_units_overview.md)
-* [Структура unit-файлов](./systemd_unit_file_structure.md)
-* [Управление сессиями (logind)](./logind_session_management.md)
-* [Таймеры systemd](./timers.md)
-* [Логирование (journald)](../../SystemAdministration/Logging/journald.md)
-* [Зависимости юнитов](./systemd_dependencies.md)
+* [Обзор юнитов systemd](./systemd_units_overview.md) — базовые типы и логика.
+* [Управление сессиями (logind)](./logind_session_management.md) — детали работы `enable-linger`.
+* [Таймеры systemd](./timers.md) — планирование задач в контексте пользователя.
+* [Журналирование (journald)](../../SystemAdministration/Logging/journald.md) — работа с логами без прав root.
+* [Безрутовый Podman](../../Podman/podman_rootless.md) — использование пользовательских служб для контейнеров.

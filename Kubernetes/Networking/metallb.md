@@ -1,4 +1,6 @@
-# MetalLB
+# MetalLB: Балансировщик нагрузки для Bare-metal
+
+---
 
 ## Определения
 
@@ -7,6 +9,10 @@
 **Speaker** — компонент MetalLB, работающий на каждом узле кластера в виде `DaemonSet`. Отвечает за анонсирование IP-адресов во внешней сети, используя протоколы L2 (Layer 2) — ARP (Address Resolution Protocol) / NDP (Neighbor Discovery Protocol) или BGP (Border Gateway Protocol). В современных версиях используется **FRR-K8s** (интеграция Free Range Routing для Kubernetes).
 
 **Controller** — компонент MetalLB, работающий как `Deployment`. Отслеживает сервисы с типом `LoadBalancer` и назначает IP-адреса из пулов — **IPAddressPool**.
+
+**FRR-K8s** — современный бэкенд на базе Free Range Routing, позволяющий MetalLB безопасно сосуществовать с другими BGP-компонентами (например, Cilium).
+
+---
 
 ## Основные концепции
 
@@ -30,6 +36,11 @@ MetalLB поддерживает два основных режима анонс
 - **Преимущества:** Поддержка ECMP (Equal-Cost Multi-Path) обеспечивает истинную балансировку трафика между всеми узлами. Использование **BFD (Bidirectional Forwarding Detection)** позволяет добиться переключения маршрутов за доли секунды.
 - **Требования:** Сетевое оборудование с поддержкой BGP.
 
+### Поддержка IPv6 и Dual-stack
+MetalLB полностью поддерживает работу в сетях IPv4, IPv6 и Dual-stack. В режиме L2 используются протоколы ARP (IPv4) и NDP (IPv6). В режиме BGP анонсируются соответствующие семейства адресов. Сервисы могут получать адреса обоих семейств одновременно при наличии соответствующих пулов.
+
+---
+
 ## Практические сценарии
 
 ### Установка
@@ -47,7 +58,7 @@ kubectl edit configmap -n kube-system kube-proxy
 
 ```bash
 helm repo add metallb https://metallb.github.io/metallb
-helm install metallb metallb/metallb --namespace metallb-system --create-namespace
+helm install metallb metallb/metallb --namespace metallb-system --create-namespace --set frrk8s.enabled=true
 ```
 
 **Установка через манифесты (актуально для v0.16.x):**
@@ -71,6 +82,7 @@ metadata:
 spec:
   addresses:
   - 192.168.10.100-192.168.10.200
+  - 2001:db8::100/120
 ```
 
 #### Анонсирование уровня 2 (L2Advertisement)
@@ -90,7 +102,7 @@ spec:
       kubernetes.io/hostname: worker-1
 ```
 
-#### Настройка BGP и BFD
+#### Настройка BGP, BFD и Communities
 
 ```yaml
 apiVersion: metallb.io/v1beta2
@@ -114,6 +126,18 @@ spec:
   receiveInterval: 300
   transmitInterval: 300
   detectMultiplier: 3
+
+---
+# BGP Communities для управления маршрутами на стороне роутера
+apiVersion: metallb.io/v1beta1
+kind: Community
+metadata:
+  name: bgp-communities
+  namespace: metallb-system
+spec:
+  communities:
+  - name: internal-only
+    value: 64512:100
 ```
 
 ### Статические IP и выбор контроллера
@@ -168,9 +192,17 @@ spec:
     app: my-app
 ```
 
-### Устранение неисправностей
+### Мониторинг и метрики
+MetalLB экспортирует метрики в формате Prometheus на порту `9128`.
+- `metallb_allocator_addresses_in_use_total`: общее количество выделенных IP.
+- `metallb_bgp_session_up`: статус BGP-сессий (0 — down, 1 — up).
+- `metallb_speaker_announce_count`: счетчик анонсов, отправленных спикером.
 
-#### Проверка состояния конфигурации
+---
+
+## Устранение неисправностей
+
+### Проверка состояния конфигурации
 
 Новый ресурс `ConfigurationState` позволяет быстро найти ошибки в CRD:
 
@@ -180,7 +212,7 @@ kubectl get configurationstate -n metallb-system
 # → speaker   Valid    
 ```
 
-#### Диагностика сервиса
+### Диагностика сервиса
 
 Если сервис висит в статусе `PENDING`:
 
@@ -189,7 +221,7 @@ kubectl describe svc my-service
 # В событиях (Events) будет указана причина, например: "Failed to allocate IP from pool"
 ```
 
-#### Просмотр логов анонсирования
+### Просмотр логов анонсирования
 
 ```bash
 # Логи спикера для конкретного узла
@@ -198,7 +230,9 @@ kubectl logs -n metallb-system -l app.kubernetes.io/component=speaker --tail=50
 
 ### Устаревшая конфигурация (ConfigMap)
 
-Метод настройки через `ConfigMap` полностью **удален** начиная с версии v0.13.0. При обновлении со старых версий необходимо выполнить миграцию на CRD.
+Метод настройки через `ConfigMap` полностью **удален** начиная с версии v0.13.0. При обновлении со старых версий необходимо выполнить миграцию на CRD. MetalLB перестал поддерживать обратную совместимость с конфигурацией через ConfigMap, что требует переписывания всей логики на пулы (IPAddressPool) и анонсы (L2Advertisement/BGPAdvertisement).
+
+---
 
 ## Дополнительная информация
 

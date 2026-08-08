@@ -16,7 +16,11 @@
 
 **Minikube** — инструмент для запуска локального кластера Kubernetes. Подробнее: [Концепции Minikube](../../Installation/minikube/minikube_concepts.md).
 
-**Docker Registry** — сервис хранения образов. Подробнее: [Docker Registries](../../../Docker/docker_registries.md).
+**Docker Registry** — сервис хранения образов. В Minikube часто используется встроенный реестр или локальный `localhost:5000`. Подробнее: [Docker Registries](../../../Docker/docker_registries.md).
+
+**OTLP (OpenTelemetry Protocol)** — унифицированный протокол передачи данных телеметрии (gRPC/HTTP).
+
+**Persistence (Хранение)** — в Minikube данные обычно хранятся в `emptyDir` или `hostPath`. Для сохранения данных между перезапусками требуется настройка [StorageClass](../../Concepts/Storage/data_storage_overview.md).
 
 **Cert-manager** — контроллер для управления TLS-сертификатами. Подробнее: [Cert-manager](../../ToolsUtilities/cert_manager/definitions.md).
 
@@ -49,6 +53,7 @@
 2. **OpenTelemetry Collector** — центральный компонент для обработки и экспорта данных по протоколу [OTLP](../../../OpenTelemetry/otlp_protocol.md).
 3. **Grafana** — интерфейс для анализа сигналов с поддержкой корреляции.
 4. **Вспомогательные компоненты:** [Cert-manager](../../ToolsUtilities/cert_manager/cluster_ca.md), [Локальный Docker Registry](../../../Docker/docker_registries.md), Ingress Controller.
+5. **Хранилище:** по умолчанию в Minikube используется эфемерное хранилище. Для Production необходимы блочные (EBS, Longhorn) или объектные (S3, MinIO) хранилища.
 
 ### Сигналы наблюдаемости
 
@@ -57,6 +62,7 @@
 | **Метрики** | Состояние системы (CPU, RAM) | OTel SDK -> Collector | Prometheus | Grafana |
 | **Логи** | События с метками времени | OTel SDK -> Collector | Loki | Grafana |
 | **Трассировки** | Путь запроса в системе | OTel SDK -> Collector | Tempo | Grafana |
+| **Профилирование** | Расход ресурсов кодом | Grafana Pyroscope | Grafana Cloud/OSS | Grafana |
 
 ### Кросс-сигнальная корреляция
 
@@ -103,9 +109,9 @@ minikube start --cpus 4 --memory 12288 --disk-size 50g --addons ingress,metrics-
 
 | Компонент | Версия Helm | Документация |
 | :--- | :--- | :--- |
-| **kube-prometheus-stack** | `>=87.18.x` | [Prometheus K8s](../../../Prometheus/kubernetes/overview.md) |
-| **Loki** | `>=7.0.x` | [Обзор Loki](../../../Loki/loki_overview.md) |
-| **Tempo** | `>=2.2.x` | [Обзор Tempo](../../../Tempo/index.md) |
+| **kube-prometheus-stack** | `>=88.1.x` | [Prometheus K8s](../../../Prometheus/kubernetes/overview.md) |
+| **Loki** | `>=18.7.x` | [Обзор Loki](../../../Loki/loki_overview.md) |
+| **Tempo** | `>=3.0.x` | [Обзор Tempo](../../../Tempo/index.md) |
 | **OpenTelemetry Operator** | `>=0.120.x` | [Обзор OTel](../../../OpenTelemetry/opentelemetry_overview.md) |
 | **Cert-Manager** | `>=1.21.x` | [Cert-manager](../../ToolsUtilities/cert_manager/definitions.md) |
 | **Docker Registry** | `>=2.x` | [Docker Registries](../../../Docker/docker_registries.md) |
@@ -120,25 +126,28 @@ minikube start --cpus 4 --memory 12288 --disk-size 50g --addons ingress,metrics-
 | **Tempo** | 100m / 500m | 128Mi / 512Mi |
 | **OTel Collector** | 100m / 500m | 128Mi / 512Mi |
 
-**Минимальные требования Minikube:** `--cpus 4 --memory 8192mb`. Для стабильной работы при развертывании нескольких микросервисов рекомендуется увеличить память до `12288mb` (12Gi). При использовании Mimir вместо Prometheus требования к памяти возрастают до 16Gi.
+**Минимальные требования Minikube:** `--cpus 4 --memory 8192mb`. Для стабильной работы при развертывании нескольких микросервисов рекомендуется увеличить память до `12288mb` (12Gi). При использовании Mimir вместо Prometheus требования к памяти возрастают до 16Gi. В случае дефицита ресурсов возможны **OOMKill** (Out Of Memory) процессов, что приведет к нестабильности сбора телеметрии.
 
 ### Поиск и устранение неисправностей
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
 | **Grafana не открывается** | Ingress не настроен | Проверить Ingress, добавить запись в `/etc/hosts` |
-| **Нет данных в Loki** | Ошибка экспорта | Проверить логи Collector |
-| **Tempo не принимает трейсы** | Ошибка эндпоинта | Проверить конфигурацию `tempo.tempo:4317` |
+| **Нет данных в Loki** | Ошибка экспорта | Проверить логи Collector и сетевую доступность Loki |
+| **Tempo не принимает трейсы** | Ошибка эндпоинта | Проверить конфигурацию `tempo.tempo:4317` (gRPC) |
+| **OOMKill в подах** | Недостаточно лимитов | Увеличить `resources.limits` или память Minikube |
+| **ImagePullBackOff** | Ошибка локального реестра | Проверить статус реестра и доступ к `localhost:5000` |
 
 ### Безопасность
 
-> **Внимание:** Конфигурация только для тестовых окружений.
+> **Внимание:** Конфигурация предназначена исключительно для тестовых и демонстрационных окружений.
 
 | Аспект | Текущая конфигурация | Рекомендация для Production |
 | :--- | :--- | :--- |
 | **TLS** | Самоподписанные (Cert-Manager) | Публичные (Let's Encrypt) / Корпоративный CA |
-| **Аутентификация** | Отсутствует | OIDC/OAuth2 в Grafana |
-| **Изоляция** | Отсутствует | NetworkPolicies, namespace |
+| **Аутентификация** | Отсутствует | Интеграция OIDC/OAuth2 (Keycloak, Okta) |
+| **Изоляция** | Отсутствует | NetworkPolicies, RBAC, Namespace isolation |
+| **Секреты** | Plaintext в Helm/Manifests | Vault, Sealed Secrets, External Secrets Operator |
 
 ### Альтернативы для продуктивной среды
 

@@ -2,13 +2,11 @@
 
 ## Определения
 
-**Sealed Secrets** — инструмент от Bitnami для безопасного хранения Kubernetes Secrets в публичных Git-репозиториях через асимметричное шифрование.
-
-**SealedSecret** — кастомный ресурс Kubernetes (CRD), содержащий зашифрованные данные секрета.
-
-**Controller** — компонент Sealed Secrets в кластере, управляющий ключами и расшифровкой.
-
-**kubeseal** — CLI-утилита для шифрования Secrets публичным ключом контроллера.
+- **Sealed Secrets**: Инструмент от Bitnami для безопасного хранения Kubernetes Secrets в публичных Git-репозиториях через асимметричное шифрование.
+- **SealedSecret**: Кастомный ресурс Kubernetes (CRD), содержащий зашифрованные данные секрета.
+- **Controller**: Компонент Sealed Secrets в кластере, управляющий ключевыми парами и расшифровкой.
+- **kubeseal**: CLI-утилита для шифрования Secrets публичным ключом контроллера.
+- **Master Key**: Пара ключей RSA, хранящаяся в виде обычного Kubernetes Secret в пространстве имен контроллера, используемая для расшифровки всех SealedSecrets.
 
 ## Основные концепции
 
@@ -25,34 +23,37 @@
 
 ### Гибридная схема шифрования
 
-Для каждого значения секрета:
+Для обеспечения безопасности и производительности Sealed Secrets использует гибридную схему. Для каждого значения секрета:
 
-1. Генерация случайного симметричного ключа
-2. Шифрование данных AES-GCM симметричным ключом
-3. Шифрование симметричного ключа RSA-OAEP публичным ключом контроллера
-4. Привязка к имени и namespace секрета (контекст)
+1. **Генерация сессионного ключа**: Генерируется случайный симметричный ключ.
+2. **Шифрование данных**: Данные шифруются алгоритмом **AES-GCM** с использованием симметричного ключа.
+3. **Шифрование ключа**: Симметричный ключ шифруется алгоритмом **RSA-OAEP** публичным ключом контроллера.
+4. **Привязка контекста**: В зашифрованные данные вшивается информация об имени и пространстве имен секрета (в зависимости от Scope) для предотвращения атак подмены.
 
 ### Области шифрования (Scope)
 
+Область определяет, насколько жестко зашифрованный секрет привязан к своим метаданным.
+
 | Режим | Привязка | Переносимость | Назначение |
 |-------|----------|---------------|------------|
-| `strict` (по умолчанию) | Имя + namespace | Нет | Максимальная безопасность |
-| `namespace-wide` | Только namespace | Ограниченная | Переименование секрета |
-| `cluster-wide` | Нет | Высокая | Редко используется |
+| `strict` (по умолчанию) | Имя + namespace | Нет | Максимальная безопасность. Секрет нельзя переименовать или переместить в другой namespace. |
+| `namespace-wide` | Только namespace | Ограниченная | Позволяет переименовывать секрет, но фиксирует его в рамках одного namespace. |
+| `cluster-wide` | Нет | Высокая | Секрет можно переименовывать и перемещать между любыми namespace внутри кластера. |
 
 ### Жизненный цикл
 
-1. **Создание**: Разработчик создаёт обычный Secret
-2. **Шифрование**: `kubeseal` шифрует с публичным ключом
-3. **Хранение**: SealedSecret коммитится в Git
-4. **Деплой**: Применяется в кластер (kubectl/GitOps)
-5. **Расшифровка**: Controller создаёт Secret
-6. **Использование**: Pod'ы получают доступ к Secret
+1. **Создание**: Разработчик создаёт обычный манифест `Secret`.
+2. **Шифрование**: Утилита `kubeseal` шифрует его публичным ключом контроллера.
+3. **Хранение**: Ресурс `SealedSecret` коммитится в Git-репозиторий.
+4. **Деплой**: Ресурс применяется в кластер (через `kubectl` или GitOps-оператор).
+5. **Расшифровка**: Контроллер обнаруживает `SealedSecret` и создает нативный `Secret`.
+6. **Использование**: Pod'ы монтируют созданный `Secret` стандартными средствами Kubernetes.
 
 ## Практические сценарии
 
-### Сценарий 1: Установка контроллера
+### Сценарий 1: Установка и резервное копирование ключей
 
+**Установка контроллера:**
 ```bash
 # Установка с помощью Helm 3
 helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
@@ -62,10 +63,17 @@ helm install sealed-secrets sealed-secrets/sealed-secrets \
   --set fullnameOverride=sealed-secrets
 ```
 
+**Резервное копирование мастер-ключа (КРИТИЧНО):**
+Если вы потеряете мастер-ключ, все ваши зашифрованные секреты в Git станут бесполезны.
+```bash
+# Поиск секрета с ключом (имеет метку sealedsecrets.bitnami.com/sealed-secrets-key)
+kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealed-secrets-master-key.yaml
+```
+
 ### Сценарий 2: Шифрование секрета
 
 ```bash
-# Получение публичного ключа контроллера
+# Получение публичного сертификата контроллера
 kubeseal --controller-name=sealed-secrets \
   --controller-namespace=kube-system \
   --fetch-cert > pub-cert.pem
@@ -76,30 +84,13 @@ kubectl create secret generic my-secret \
   --dry-run=client -o yaml | \
   kubeseal --cert pub-cert.pem --format yaml > my-sealed-secret.yaml
 
-# Результат безопасен для Git
+# Полученный SealedSecret можно безопасно коммитить в Git
 kubectl apply -f my-sealed-secret.yaml
-```
-
-Полученный манифест:
-
-```yaml
-apiVersion: bitnami.com/v1alpha1
-kind: SealedSecret
-metadata:
-  name: my-secret
-  namespace: default
-spec:
-  encryptedData:
-    password: AgByM4hO...
-  template:
-    metadata:
-      name: my-secret
-      namespace: default
 ```
 
 ### Сценарий 3: RBAC для CI/CD
 
-Ограничение прав CI-системы только созданием SealedSecret:
+Ограничение прав CI-системы только созданием и управлением `SealedSecret`, без доступа к расшифрованным секретам:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -110,7 +101,7 @@ metadata:
 rules:
 - apiGroups: ["bitnami.com"]
   resources: ["sealedsecrets"]
-  verbs: ["create", "get", "list"]
+  verbs: ["create", "get", "list", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -127,12 +118,11 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-Подробнее о RBAC: [RBAC Overview](./rbac/rbac_overview.md), [Role и ClusterRole](./rbac/roles.md), [Привязки](./rbac/bindings.md)
+### Сценарий 4: Интеграция с Argo CD
 
-### Сценарий 4: GitOps-интеграция
+При использовании Argo CD для синхронизации `SealedSecret`, важно настроить политику синхронизации:
 
 ```yaml
-# ArgoCD Application
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -149,63 +139,74 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
 ```
 
-В репозитории:
+### Сценарий 5: Работа с Helm-чартами
 
-```
-├── base/
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   └── sealed-secret.yaml  # Безопасно хранить в Git
-└── overlays/
-    └── production/
-        └── kustomization.yaml
+Рекомендуется хранить зашифрованные строки в `values.yaml`, а в шаблонах использовать структуру `SealedSecret`:
+
+```yaml
+# templates/sealedsecret.yaml
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: {{ include "mychart.fullname" . }}-db-pass
+spec:
+  encryptedData:
+    password: {{ .Values.secrets.dbPasswordEncrypted | quote }}
 ```
 
-### Сценарий 5: Ротация ключей
+### Сценарий 6: Ротация ключей и перешифрование
+
+Контроллер по умолчанию создает новый ключ каждые 30 дней. Все старые ключи сохраняются. Для повышения безопасности рекомендуется перешифровывать секреты в Git актуальным ключом:
 
 ```bash
-# Проверка текущего сертификата
-kubeseal --fetch-cert --controller-namespace=kube-system
-
-# Перешифрование на новый ключ
-kubeseal --re-encrypt < old.sealed.yaml > new.sealed.yaml
-
-# Обновление в Git и применение
-kubectl apply -f new.sealed.yaml
+# Перешифрование существующего SealedSecret на новый сертификат
+kubeseal --re-encrypt < old.sealed.yaml --cert new-pub-cert.pem > new.sealed.yaml
 ```
+
+### Сценарий 7: Troubleshooting (Диагностика)
+
+**Проблема:** SealedSecret не превращается в Secret.
+1. Проверьте логи контроллера: `kubectl logs -n kube-system -l app.kubernetes.io/name=sealed-secrets`.
+2. Проверьте события ресурса: `kubectl describe sealedsecret <name>`.
+3. Ошибка `decryption error: no key could decrypt secret` обычно означает:
+   - Секрет зашифрован ключом другого кластера.
+   - Изменены имя или namespace в режиме `strict`.
+   - Мастер-ключ был удален/изменен без восстановления бэкапа.
 
 ## Дополнительная информация
 
 ### Преимущества
 
-- **Безопасность**: Секреты в открытом виде никогда не попадают в Git
-- **Декларативность**: Часть GitOps-процесса
-- **Аудит**: История изменений через Git
-- **Изоляция**: Каждый кластер имеет уникальную ключевую пару
+- **Безопасность**: Секреты в открытом виде никогда не попадают в Git.
+- **Декларативность**: Полная совместимость с GitOps-пайплайнами.
+- **Аудит**: История изменений через Git-логи.
+- **Изоляция**: Каждый кластер имеет уникальную ключевую пару по умолчанию.
 
 ### Модель угроз
 
 | Угроза | Уровень | Митигация |
 |--------|---------|-----------|
-| Компрометация приватного ключа | Критический | Защита [RBAC](./rbac/rbac_overview.md), etcd encryption |
-| Перенос между кластерами | Низкий | Кластеры изолированы по дизайну |
-| Утечка в Git | Низкий | Данные зашифрованы |
-| Физический доступ к etcd | Средний | Encryption at rest |
+| Компрометация приватного мастер-ключа | Критический | Защита [RBAC](./rbac/rbac_overview.md) к секретам контроллера, включение шифрования etcd (Encryption at rest). |
+| Перенос между кластерами | Низкий | Ключи уникальны для каждого кластера по умолчанию. |
+| Утечка в Git-репозиторий | Низкий | Данные зашифрованы асимметрично. |
+| Физический доступ к etcd | Средний | Настройка [EncryptionConfiguration](../../Kubernetes/Base/secrets/security.md). |
 
 ### Ограничения
 
-- Секреты привязаны к конкретному кластеру (в режиме `strict` — также к namespace и имени)
-- При потере приватного ключа контроллера расшифровка невозможна
-- Не обеспечивает ротацию секретов — только шифрование при хранении
-- Для ротации требуется перешифрование всех SealedSecret новым ключом
+- Секреты жестко привязаны к кластеру (в режиме `strict` — также к namespace и имени).
+- При потере всех приватных ключей контроллера расшифровка невозможна (требуется бэкап).
+- Инструмент не обеспечивает автоматическую ротацию самих паролей (только шифрование для хранения).
+- Для полноценной ротации паролей требуется автоматизация внешних систем.
 
-### Альтернативы
+### См. также
 
-- **[External Secrets Operator](../Base/secrets/external_managers.md)** — интеграция с внешними KMS
-- **[SOPS](../../Security/Tools/sops_overview.md)** — шифрование с ключами AWS/GCP/Age
-- **[Vault](../../Vault/zero_trust.md)** — полноценное secrets management
-- Общий обзор — [Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md). Для GitOps-пайплайнов см. [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md).
-
-Паттерн динамической генерации конфигурации с initContainer — [Application Secrets Management](./application_secrets_management.md).
+- **[External Secrets Operator](../Base/secrets/external_managers.md)** — интеграция с внешними KMS (Vault, AWS Secrets Manager).
+- **[SOPS](../../Security/Tools/sops_overview.md)** — шифрование файлов с ключами AWS/GCP/Age без привязки к контроллеру.
+- **[Vault](../../Vault/zero_trust.md)** — полноценная система управления секретами.
+- Общий обзор стратегий — **[Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)**.
+- Пайплайны GitOps — **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)**.
+- Паттерн динамической конфигурации — **[Application Secrets Management](./application_secrets_management.md)**.

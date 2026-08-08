@@ -2,108 +2,151 @@
 
 ## Определения
 
-**CNI (Container Network Interface)** — стандартный плагин для обеспечения сетевой связности между подами на разных узлах кластера. Kubernetes не включает CNI по умолчанию — администратор выбирает плагин в зависимости от требований ([подробнее о выборе CNI](../../Networking/Network/CNI/selection_and_external_access.md)).
+**CNI (Container Network Interface)** — открытый стандарт интерфейса, используемый Kubernetes для делегирования функций сетевого взаимодействия внешним плагинам. Отвечает за создание сетевых интерфейсов контейнеров, выделение IP-адресов (IPAM) и обеспечение связности между подами.
 
-**pod-network-cidr** — диапазон IP-адресов для подов, указываемый при инициализации кластера (`kubeadm init --pod-network-cidr`). Не должен пересекаться с существующей инфраструктурой.
+**Pod Network CIDR** — диапазон IP-адресов, из которого поды получают свои адреса. Задается параметром `--pod-network-cidr` при инициализации кластера.
+
+**Инкапсуляция (Encapsulation)** — метод передачи трафика подов через физическую сеть узлов путем оборачивания L3-пакетов подов в пакеты физической сети (например, VXLAN или IPIP).
+
+**MTU (Maximum Transmission Unit)** — максимальный размер пакета. При использовании инкапсуляции MTU сети подов должен быть меньше MTU физической сети (обычно на 20-50 байт) для предотвращения фрагментации.
 
 ---
 
 ## Основные концепции
 
-### Почему CNI устанавливается отдельно
+### Роль CNI в HA кластере
 
-Kubernetes делегирует сетевую функциональность внешним плагинам через CNI-спецификацию. До установки CNI все узлы кластера находятся в статусе `NotReady`, а поды не могут быть запланированы.
+В высокодоступных (HA) кластерах CNI играет критическую роль не только в связности подов, но и в обеспечении доступности сервисов при отказе узлов. До установки CNI узлы находятся в статусе `NotReady`, так как `kubelet` ожидает готовности сетевой подсистемы.
 
-**Рекомендация для bare-metal HA кластеров**: Calico — проверенное решение с поддержкой BGP-маршрутизации и NetworkPolicy ([сравнение CNI](../../Networking/Network/CNI/selection_and_external_access.md)).
+### Выбор метода установки Calico
 
-### Версии и совместимость
+В 2026 году для production-сред рекомендуется использование **Tigera Operator** вместо обычных манифестов.
 
-| Компонент | Версия | Примечание |
+| Метод | Плюсы | Минусы | Применение |
+| :--- | :--- | :--- | :--- |
+| **Tigera Operator** | Автоматическое обновление, управление через CRD, контроль жизненного цикла | Требует установки дополнительных CRD | Production, HA кластеры |
+| **Manifest (Legacy)** | Простота (один файл), отсутствие лишних сущностей | Ручное управление обновлениями, сложность тонкой настройки | Test, Dev, малые кластеры |
+
+### Совместимость версий (актуально на август 2026)
+
+| Компонент | Версия | Статус |
 | :--- | :--- | :--- |
-| **Calico** | v3.31.x | Актуальная стабильная ветка (поддерживается до 2026) |
-| **Kubernetes** | 1.29–1.31 | Calico v3.31 совместим с N-2 версиями K8s |
-
-> **Важно**: Calico следует политике N-2 — каждая версия поддерживает текущую и две предыдущие версии Kubernetes. Проверяйте [матрицу совместимости](https://docs.tigera.io/calico/latest/about/supported-releases) перед установкой.
+| **Kubernetes** | v1.34.x — v1.35.x | Рекомендуемые стабильные версии |
+| **Calico** | v3.33.x | Текущая стабильная ветка |
 
 ---
 
 ## Практические сценарии
 
-### Шаг 5: Установка Calico
+### Сценарий 1: Установка Calico через Tigera Operator (Рекомендуемый)
 
-Установка выполняется **один раз** с любого мастер-узла после `kubeadm init`. Master-ноды будут в статусе `NotReady` до применения CNI.
+Этот метод позволяет гибко настраивать параметры сети через Custom Resources.
 
 ```bash
-# 1. Скачиваем манифест Calico
-# Замените v3.31.4 на актуальную версию из официальной документации
-curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/calico.yaml -o calico.yaml
+# 1. Установка оператора Tigera
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manifests/tigera-operator.yaml
 
-# 2. Заменяем CIDR на ваш pod-network-cidr
-# (должен совпадать с --pod-network-cidr из kubeadm init)
-sed -i 's|192.168.0.0/16|100.64.0.0/16|g' calico.yaml
+# 2. Создание конфигурации установки (Custom Resource)
+# ВАЖНО: Укажите ваш CIDR в поле ipPools -> cidr
+cat <<EOF > calico-config.yaml
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  # Настройка сетевой среды
+  calicoNetwork:
+    ipPools:
+    - blockSize: 26
+      cidr: 100.64.0.0/16
+      encapsulation: VXLANCrossSubnet
+      natOutgoing: Enabled
+      nodeSelector: all()
+---
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}
+EOF
 
-# 3. Применяем манифест
-kubectl apply -f calico.yaml
+kubectl apply -f calico-config.yaml
 ```
 
-**Критические требования**:
+### Сценарий 2: Настройка MTU для Bare-Metal
 
-- CIDR в манифесте **должен совпадать** с `--pod-network-cidr` из `kubeadm init`
-- Изменение CIDR после применения невозможно без пересоздания CNI
-- Версия Calico должна соответствовать версии Kubernetes
+Если в вашей физической сети используется стандартный MTU 1500, а Calico использует VXLAN, MTU подов должен быть **1450**.
 
-**Альтернативные CNI** (не рекомендуются для production bare-metal):
+**Настройка через Tigera Operator:**
+```yaml
+# Добавить в spec.calicoNetwork файла calico-config.yaml
+mtu: 1450
+```
 
-- **Flannel**: `kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml` — проще в настройке, но без NetworkPolicy
-- **Cilium**: `kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/master/install/kubernetes/quick-install.yaml` — eBPF-режим с заменой kube-proxy, сложнее в отладке
+**Проверка на узле:**
+```bash
+# Проверка MTU на интерфейсе caliXXXX
+ip link show | grep cali
+```
 
-### Шаг 6: Проверка состояния кластера
+### Сценарий 3: Режимы инкапсуляции
+
+Для bare-metal кластеров выбор режима критичен для производительности:
+
+1.  **VXLAN (Default)**: Работает в любой L2/L3 сети. Самый универсальный режим.
+2.  **IPIP**: Чуть выше производительность, чем у VXLAN, но может блокироваться некоторыми сетевыми экранами.
+3.  **No Encapsulation (BGP)**: Максимальная производительность. Требует поддержки BGP на физических коммутаторах (Top-of-Rack). Поды получают маршрутизируемые IP в локальной сети.
+
+### Шаг 6: Проверка состояния и связности
+
+После применения конфигурации необходимо убедиться в готовности сети:
 
 ```bash
-# Проверка всех системных подов
-kubectl get pods -n kube-system
-
-# Проверка узлов (должны быть Ready после установки CNI)
+# Проверка статуса узлов
 kubectl get nodes
+# → Должны перейти в статус Ready
 
-# Проверка подов Calico
-kubectl get pods -n kube-system -l k8s-app=calico-node
+# Проверка подов Calico в namespace calico-system (при использовании Operator)
+kubectl get pods -n calico-system
 
-# Детальная проверка компонентов Control Plane
-kubectl get pods -n kube-system -l component=kube-apiserver
-kubectl get pods -n kube-system -l component=kube-controller-manager
-kubectl get pods -n kube-system -l component=kube-scheduler
-kubectl get pods -n kube-system -l component=etcd
+# Проверка состояния IPAM
+kubectl get ippools
 ```
 
-**Ожидаемый результат для HA кластера**:
+**Тест связности (East-West):**
+```bash
+# Запуск тестового пода
+kubectl run busybox --image=busybox --restart=Never -- sleep 3600
 
-| Компонент | Количество | Статус |
-| :--- | :--- | :--- |
-| `etcd` | 3 | Running |
-| `kube-apiserver` | 3 | Running |
-| `kube-controller-manager` | 2+ | Running |
-| `kube-scheduler` | 2+ | Running |
-| `calico-node` | По одному на узел | Running |
-| Все узлы | — | Ready |
+# Пинг API-сервера или другого пода изнутри
+kubectl exec busybox -- ping -c 3 10.96.0.1
+```
 
 ---
 
 ## Дополнительная информация
 
-### Отладка проблем с CNI
+### Диагностика типичных проблем
 
-```bash
-# Логи Calico на узле
-kubectl logs -n kube-system -l k8s-app=calico-node
+**1. Узлы застряли в Ready: False**
+- **Причина**: Неверный `pod-network-cidr` (не совпадает с `kubeadm init`).
+- **Решение**: Проверьте логи оператора: `kubectl logs -n tigera-operator -l k8s-app=tigera-operator`.
 
-# Проверка IPAM (выделение IP)
-kubectl exec -n kube-system <calico-pod> -- calicoctl ipam show
+**2. Поды не могут связаться между собой (MTU Issue)**
+- **Симптомы**: Маленькие пакеты (ping) проходят, большие (HTTP/DB) зависают.
+- **Диагностика**: `ping -s 1472 <pod-ip>` (тест с учетом заголовков).
+- **Решение**: Уменьшите MTU в конфигурации Calico.
 
-# Диагностика сетевых политик
-kubectl exec -n kube-system <calico-pod> -- calicoctl get networkpolicy
-```
+**3. Проблемы с BGP (в режиме без инкапсуляции)**
+- **Команда**: `calicoctl node status` (требует установки `calicoctl` как плагина kubectl).
+- **Ожидаемый результат**: `Peer Status: Established`.
+
+### Полезные ссылки
+- [Официальная документация Calico](https://docs.tigera.io/calico/latest/)
+- [Матрица совместимости CNI](https://docs.tigera.io/calico/latest/about/supported-releases)
+- [Сравнение производительности CNI (Cilium vs Calico)](../../Networking/Network/CNI/selection_and_external_access.md)
+- [Диагностика сети в Kubernetes](../../Networking/Network/network_troubleshooting.md)
 
 ### Интеграция с процессом развёртывания HA кластера
 
-Установка CNI — **шаг 5** после [инициализации Control Plane](./control_plane_initialization.md) и перед [подключением узлов](./node_joining.md). Подробнее об архитектуре HA кластера — в [обзоре](./k8s_ha_cluster_overview.md). Теоретические основы CNI и разделение ролей с kube-proxy описаны в [документации по CNI](../../Networking/Network/CNI/definitions.md), сравнение плагинов — в [руководстве по выбору CNI](../../Networking/Network/CNI/selection_and_external_access.md). Официальная документация Calico: <https://docs.tigera.io/calico/latest/>
+Установка CNI — **шаг 5** после [инициализации Control Plane](./control_plane_initialization.md) и перед [подключением узлов](./node_joining.md). Архитектурные детали HA описаны в [обзоре кластера](./k8s_ha_cluster_overview.md).

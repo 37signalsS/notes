@@ -2,12 +2,24 @@
 
 ## Определения
 
-**Volume-related CreateContainerConfigError** — состояние пода, при котором запуск контейнера блокируется на этапе подготовки конфигурации из-за проблем с эфемерными или статическими томами (Projected Volume, emptyDir, hostPath, ConfigMap/Secret), не связанными с механизмом PVC.
+**Volume-related CreateContainerConfigError** — критическое состояние пода, возникающее на этапе подготовки к запуску контейнера, когда `kubelet` не может подготовить локальную файловую систему узла для монтирования томов. 
+
+В отличие от проблем с PVC (сетевые диски), этот тип ошибки обычно связан с локальными ресурсами узла (hostPath), эфемерными хранилищами (emptyDir) или агрегированными источниками данных (Projected Volumes), которые должны быть успешно разрешены и подготовлены **до** вызова Container Runtime (CRI).
 
 Подробные определения ошибки: [definitions.md](./definitions.md).
 Общие концепции томов в Kubernetes: [Типы томов](../../../Base/Pod/volume_types/volume_types.md).
 
 ## Основные концепции
+
+### Механизм возникновения ошибки
+
+1.  **SyncPod Loop:** `kubelet` получает команду на запуск пода и начинает итерацию жизненного цикла.
+2.  **Volume Manager Stage:** `kubelet` считывает секцию `volumes` в PodSpec. Для каждого тома вызывается операция `SetUp`.
+3.  **Data Fetching & Verification:** 
+    *   Для **ConfigMap/Secret/Projected**: Агент запрашивает данные из API-сервера и записывает их во временную директорию на узле (`/var/lib/kubelet/pods/...`).
+    *   Для **hostPath**: Проверяется существование пути и соответствие заявленному типу (Directory, File, Socket и т.д.).
+4.  **CRI Config Generation:** `kubelet` формирует конфигурацию для Container Runtime, в которой прописаны пути монтирования (bind mounts).
+5.  **Блокировка:** Если на этапе 3 данные недоступны, ресурс не найден или путь `hostPath` не прошел валидацию — процесс формирования конфига прерывается, выставляется статус `CreateContainerConfigError`.
 
 ### Типы томов и причины блокировки
 
@@ -15,16 +27,10 @@
 |:---|:---|:---|
 | **Projected Volume** | Отсутствует один из источников данных | `projected volume error: configmap "x" not found` |
 | **emptyDir** | Превышение лимитов или квот узла | `failed to create emptyDir: quota exceeded` |
-| **hostPath** | Несоответствие типа или отсутствие пути | `hostPath path not accessible` |
+| **hostPath** | Несоответствие типа или отсутствие пути | `hostPath type check failed: /path is not a directory` |
 | **ConfigMap/Secret** | Ресурс не найден (при монтировании томом) | `configmap/secret "x" not found` |
 | **Generic Ephemeral** | Ошибки провижининга инлайн-тома | `failed to provision ephemeral volume` |
-
-### Механизм возникновения ошибки
-
-1.  **Обнаружение спецификации:** `kubelet` считывает секцию `volumes` в PodSpec.
-2.  **Проверка источников:** Перед созданием контейнера `kubelet` обязан убедиться, что все источники данных для томов доступны.
-3.  **Остановка процесса:** Если хотя бы один ConfigMap, Secret или путь `hostPath` недоступен, формирование спецификации контейнера прерывается.
-4.  **Статус:** Поду присваивается статус `CreateContainerConfigError`.
+| **subPath** | Ошибка разрешения пути внутри тома | `subPath "x" not found in volume "y"` |
 
 ## Практические сценарии
 
@@ -40,10 +46,7 @@ kubectl describe pod <pod-name> | grep -A 2 "Events:"
 
 # Проверка наличия всех источников, указанных в манифесте
 kubectl get cm,secret -n <namespace>
-# → Error from server (NotFound): secrets "db-pass" not found
 ```
-
-**Решение:** Создайте отсутствующий ресурс или исправьте опечатку в имени источника.
 
 ### Сценарий 2: emptyDir и лимиты Ephemeral Storage
 
@@ -67,7 +70,7 @@ volumes:
 
 ### Сценарий 3: hostPath — ограничения безопасности и типы
 
-Часто ошибка возникает, когда в манифесте указан тип `Directory` (обязательное существование), но директория на узле отсутствует.
+Часто ошибка возникает, когда в манифесте указан тип `Directory` (обязательное существование), но директория на узле отсутствует. Также на работу `hostPath` влияет Admission-контроллер `NodeRestriction`.
 
 **Диагностика:**
 ```bash
@@ -75,12 +78,11 @@ kubectl describe pod <pod-name>
 # → message: hostPath type check failed: /var/logs/app is not a directory
 ```
 
-**Решение:** Используйте `DirectoryOrCreate`, если допустимо автоматическое создание директории kubelet-ом. 
-**Внимание:** Использование `hostPath` в Production не рекомендуется по соображениям безопасности.
+**Решение:** Используйте `DirectoryOrCreate`, если допустимо автоматическое создание директории kubelet-ом.
 
 ### Сценарий 4: Generic Ephemeral Volumes (K8s 1.23+)
 
-Это "инлайн" PVC, жизненный цикл которых привязан к поду. Ошибки здесь часто связаны с некорректным `storageClassName`.
+Это "инлайн" PVC, жизненный цикл которых привязан к поду. Ошибки здесь часто связаны с некорректным `storageClassName` или отсутствием прав у провижинера.
 
 **Диагностика:**
 ```bash
@@ -91,25 +93,35 @@ kubectl describe pvc <ephemeral-pvc-name>
 
 Подробнее о проблемах с PVC: [pvc_issues.md](./pvc_issues.md).
 
-### Сценарий 5: Права доступа на тома (fsGroup)
+### Сценарий 5: Ошибки разрешения subPath
 
-Иногда под переходит в `CreateContainerConfigError`, если `kubelet` не может применить `fsGroup` (изменение владельца файлов) из-за ограничений файловой системы узла.
+Использование `subPath` часто приводит к `CreateContainerConfigError`, если путь внутри тома изменился, является битой символической ссылкой или не совпадает с ключом в ConfigMap/Secret.
 
-**Решение:** Проверьте `securityContext` пода и параметры монтирования.
+**Решение:** Убедитесь, что ключи в ресурсе соответствуют именам файлов, указанным в `subPath`.
+
+### Сценарий 6: Права доступа на тома (fsGroup)
+
+Иногда под переходит в `CreateContainerConfigError`, если `kubelet` не может применить `fsGroup` (изменение владельца файлов) из-за ограничений файловой системы узла или специфики драйвера.
+
+### Сценарий 7: Recursive Read-Only Mounts (v1.30+)
+
+Новая функциональность K8s позволяет делать монтирования рекурсивно "только для чтения". Если нижележащая файловая система узла не поддерживает этот флаг ядра, под может застрять в ошибке конфигурации на этапе `SetUp`.
 
 ## Список проверок (Checklist)
 
-1.  **Existence:** Все ConfigMap и Secret, указанные в томах, созданы в том же Namespace.
-2.  **Typo:** Проверьте имена томов в `volumes` и их соответствие в `volumeMounts`.
-3.  **hostPath Type:** Если используете `hostPath`, убедитесь, что путь существует на узле или используйте `*OrCreate` типы.
-4.  **Storage Quota:** Проверьте `ResourceQuota` на предмет ограничений `ephemeral-storage`.
-5.  **CSI Status:** Если используются CSI-драйверы для эфемерных томов, убедитесь, что соответствующие поды драйверов запущены.
+1.  **Sources Existence:** Все ConfigMap и Secret, указанные в томах, созданы в том же Namespace.
+2.  **Typo & Mapping:** Имена томов в `volumes` и их соответствие в `volumeMounts` проверены.
+3.  **hostPath Validity:** Путь на узле существует (для типа `Directory`) или используется `*OrCreate`.
+4.  **Storage Quota:** Квота `ephemeral-storage` в Namespace не превышена.
+5.  **CSI/Driver Health:** Поды CSI-драйверов запущены и не имеют ошибок в `kube-system`.
+6.  **subPath Consistency:** Пути внутри томов соответствуют ключам в манифестах ConfigMap/Secret.
+7.  **Recursive Mounts Support:** Проверена совместимость ядра узла при использовании рекурсивных Read-Only монтирований.
 
 ## Дополнительная информация
 
 ### Сравнение с PVC-проблемами
 
-| Аспект | Эфемерные тома | Persistent Volume Claims (PVC) |
+| Аспект | Эфемерные / Локальные тома | Persistent Volume Claims (PVC) |
 |:---|:---|:---|
 | **Уровень ресурса** | Описываются внутри PodSpec | Отдельный объект API |
 | **Жизненный цикл** | Удаляются вместе с подом | Независимы от пода |
@@ -122,3 +134,4 @@ kubectl describe pvc <ephemeral-pvc-name>
 - [Проблемы с PVC](./pvc_issues.md)
 - [Projected Volumes — детальный обзор](../../../Base/Pod/volume_types/projected_volumes.md)
 - [Диагностика эвикции (DiskPressure)](../../PodEvicted/disk_eviction.md)
+- [Recursive Read-Only Mounts (K8s docs)](https://kubernetes.io/docs/concepts/storage/volumes/#recursive-read-only-mounts)

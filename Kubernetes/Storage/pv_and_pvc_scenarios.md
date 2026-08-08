@@ -2,191 +2,291 @@
 
 ## Определения
 
-В данном файле собраны практические примеры использования `PersistentVolume` (PV) и `PersistentVolumeClaim` (PVC) для различных типов систем хранения данных (СХД) и сценариев развертывания приложений.
+В данном файле собраны практические примеры и YAML-манифесты для работы с `PersistentVolume` (PV) и `PersistentVolumeClaim` (PVC) в реальных окружениях.
 
-Базовые концепции и теория: [Persistent Volumes и PVC](./pv_and_pvc.md).
-Настройка классов хранения: [StorageClass](./storageclass.md).
+- **Теория и концепции:** [Persistent Volumes и PVC](./pv_and_pvc.md).
+- **Продвинутые механизмы (Binding, Mode, RWOP):** [Расширенные сценарии](./pv_pvc_advanced.md).
+- **Настройка классов:** [StorageClass](./storageclass.md).
 
 ---
 
-## Сценарии использования
+## 1. Динамическое выделение (CSI / Cloud)
 
-### Динамическое выделение: Ceph RBD
+Самый распространенный сценарий в облаках (AWS, GCP, Azure) и современных On-premise СХД.
 
-Сценарий использования блочного хранилища Ceph через CSI-драйвер. Подходит для баз данных и приложений, требующих высокой производительности (RWO).
+### Сценарий 1.1: Блочное хранилище (AWS EBS / Ceph RBD)
+Подходит для баз данных (PostgreSQL, MongoDB), где требуется высокая производительность и режим `ReadWriteOnce` (RWO).
 
 ```yaml
-# 1. StorageClass для Ceph RBD
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: ceph-ssd
-provisioner: rbd.csi.ceph.com
-parameters:
-  pool: replicapool
-  clusterID: rook-ceph
-  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
-reclaimPolicy: Retain
-volumeBindingMode: WaitForFirstConsumer
-allowVolumeExpansion: true
-
----
-# 2. Запрос на выделение (PVC)
+# 1. Запрос на выделение (PVC)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: database-pvc
+  name: data-pvc-ssd
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: ceph-ssd
+  storageClassName: gp3 # В AWS или ceph-ssd
   resources:
     requests:
       storage: 20Gi
-
 ---
-# 3. Подключение к Поду
+# 2. Использование в Поде
 apiVersion: v1
 kind: Pod
 metadata:
-  name: postgres-db
+  name: storage-app
 spec:
   containers:
-    - name: postgres
-      image: postgres:15
-      volumeMounts:
-        - name: db-data
-          mountPath: /var/lib/postgresql/data
+  - name: app
+    image: alpine
+    command: ["sh", "-c", "while true; do date >> /data/log.txt; sleep 60; done"]
+    volumeMounts:
+    - name: storage
+      mountPath: /data
   volumes:
-    - name: db-data
-      persistentVolumeClaim:
-        claimName: database-pvc
+  - name: storage
+    persistentVolumeClaim:
+      claimName: data-pvc-ssd
 ```
 
-**Ключевые моменты:**
-- `reclaimPolicy: Retain` гарантирует, что при случайном удалении PVC данные в Ceph останутся целыми.
-- `volumeBindingMode: WaitForFirstConsumer` критически важен, чтобы диск был создан в той же зоне доступности, где будет запущен Под.
+**Особенности:**
+- **Топология:** Если кластер растянут между AZ, используйте `volumeBindingMode: WaitForFirstConsumer` в StorageClass, чтобы диск был создан в той же зоне, что и под.
+- **Шифрование:** В облачных SC можно добавить параметры шифрования (KMS).
 
-### Статическое выделение: NFS
+---
 
-Используется для интеграции с существующими файловыми серверами. Администратор вручную описывает параметры подключения.
+## 2. Сетевое хранилище (Shared Storage)
+
+Используется для общих файлов, медиа-контента или статики веб-серверов.
+
+### Сценарий 2.1: Статическое выделение NFS
+Администратор заранее знает параметры NFS-сервера и создает PV вручную.
 
 ```yaml
-# 1. PV (создается администратором)
+# 1. PV (создает админ)
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: nfs-shared-pv
+  name: nfs-static-pv
 spec:
   capacity:
     storage: 100Gi
   accessModes:
-    - ReadWriteMany
+    - ReadWriteMany # Позволяет многим узлам писать одновременно
   persistentVolumeReclaimPolicy: Retain
   nfs:
-    path: /export/k8s-data
-    server: 10.0.0.50
-
+    path: /srv/nfs/data
+    server: 192.168.1.100
 ---
-# 2. PVC (создается разработчиком)
+# 2. PVC (создает разработчик)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: web-content-pvc
+  name: nfs-pvc
 spec:
   accessModes:
     - ReadWriteMany
   resources:
     requests:
-      storage: 50Gi # Может быть меньше или равно объему PV
+      storage: 50Gi # Должен быть <= размеру PV
 ```
 
-**Пояснения:**
-- NFS поддерживает `ReadWriteMany` (RWX), что позволяет многим подам одновременно читать и писать в одну директорию.
-- При статическом выделении PVC "связывается" с подходящим по параметрам PV автоматически.
-
-### Deployment с общим хранилищем (RWX)
-
-Стандартный подход для веб-серверов, которым нужен общий доступ к статическим файлам или общая директория для загрузки файлов.
+### Сценарий 2.2: Deployment с общим томом (RWX)
+Пример масштабируемого Nginx, где все реплики видят один и тот же контент.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-cluster
+  name: web-cluster
 spec:
   replicas: 3
-  selector:
-    matchLabels:
-      app: nginx
   template:
-    metadata:
-      labels:
-        app: nginx
     spec:
       containers:
       - name: nginx
-        image: nginx:latest
+        image: nginx:alpine
         volumeMounts:
-        - name: shared-html
+        - name: html
           mountPath: /usr/share/nginx/html
       volumes:
-      - name: shared-html
+      - name: html
         persistentVolumeClaim:
-          claimName: web-content-pvc # PVC должен поддерживать RWX
+          claimName: nfs-pvc
 ```
 
-**Риски RWX:**
-- **Блокировки:** Сама файловая система NFS не управляет конкурентным доступом на уровне файлов. Приложение должно самостоятельно обрабатывать возможные race conditions.
-- **Производительность:** Большое количество клиентов к одному NFS-серверу может создать "бутылочное горлышко" по сети.
+---
 
-### StatefulSet: Индивидуальное хранилище для каждой реплики
+## 3. Локальное хранилище (Local Persistent Volumes)
 
-Для систем, где каждая реплика должна иметь свои уникальные данные (Prometheus, ElasticSearch, Kafka).
+Используется для задач с экстремальными требованиями к I/O (NVMe) или когда внешняя СХД отсутствует.
+
+### Сценарий 3.1: Статический Local PV
+Требует ручного создания PV с привязкой к конкретному узлу через `nodeAffinity`.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-ssd-pv
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /mnt/disks/ssd1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - node-worker-1
+```
+*Примечание: Для автоматизации этого процесса часто используют [Local Path Provisioner](./local-path-provisioner.md).*
+
+---
+
+## 4. Stateful-приложения (StatefulSet)
+
+Основной способ развертывания баз данных и брокеров сообщений.
+
+### Сценарий 4.1: Автоматические тома через volumeClaimTemplates
 
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: redis-cluster
+  name: redis
 spec:
   serviceName: "redis"
   replicas: 3
-  selector:
-    matchLabels:
-      app: redis
-  template:
-    metadata:
-      labels:
-        app: redis
-    spec:
-      containers:
-      - name: redis
-        image: redis:7-alpine
-        volumeMounts:
-        - name: data
-          mountPath: /data
   volumeClaimTemplates:
   - metadata:
-      name: data
+      name: redis-data
     spec:
       accessModes: [ "ReadWriteOnce" ]
-      storageClassName: "ceph-ssd"
+      storageClassName: "fast-ssd"
       resources:
         requests:
-          storage: 5Gi
+          storage: 10Gi
 ```
 
-**Особенности работы:**
-- `volumeClaimTemplates` автоматически создает PVC для каждой реплики с именами `data-redis-0`, `data-redis-1` и т.д.
-- При удалении StatefulSet его PVC **не удаляются** автоматически. Это механизм защиты от потери данных.
+**Важно:**
+- **Sticky ID:** Под `redis-0` всегда будет получать PVC `redis-data-redis-0`.
+- **Retention:** По умолчанию при удалении StatefulSet его PVC **сохраняются**. Это можно изменить через `.spec.persistentVolumeClaimRetentionPolicy` (GA в 1.32).
+
+---
+
+## 5. Продвинутые операции (Snapshots & Cloning)
+
+### Сценарий 5.1: Клонирование существующего тома
+Позволяет быстро создать копию БД для тестирования.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clone-of-db
+spec:
+  storageClassName: gp3
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 20Gi # Должен быть >= оригиналу
+  dataSource:
+    kind: PersistentVolumeClaim
+    name: source-db-pvc
+```
+
+### Сценарий 5.2: Восстановление из Snapshot
+Требует наличия `VolumeSnapshot` объекта.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restore-pvc
+spec:
+  dataSource:
+    name: prod-snapshot-2026-08-06
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+  resources:
+    requests:
+      storage: 20Gi
+```
+
+---
+
+## 6. Эфемерное хранилище (Generic Ephemeral Volumes)
+
+Используется для временных данных, которым нужны SSD или большой объем, но которые должны удаляться вместе с подом.
+
+```yaml
+kind: Pod
+metadata:
+  name: scratch-app
+spec:
+  containers:
+  - name: worker
+    image: worker-image
+    volumeMounts:
+    - name: temp-data
+      mountPath: /scratch
+  volumes:
+  - name: temp-data
+    ephemeral:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: "fast-ssd"
+          accessModes: [ "ReadWriteOnce" ]
+          resources:
+            requests:
+              storage: 50Gi
+```
+
+---
+
+## Практические советы и Troubleshooting
+
+### Изменение размера тома (Expansion)
+Если `StorageClass` поддерживает `allowVolumeExpansion: true`:
+1. Увеличьте `storage` в PVC манифесте.
+2. Примените: `kubectl apply -f pvc.yaml`.
+3. Дождитесь события `FileSystemResizePending` и убедитесь, что под запущен (некоторые ФС требуют монтирования для расширения).
+
+### Проблемы с правами доступа (Permissions)
+Если под не может писать в том:
+- Используйте `fsGroup` в `securityContext`:
+```yaml
+spec:
+  securityContext:
+    fsGroup: 2000
+```
+- Kubernetes автоматически выполнит `chown -R` при монтировании (для RWO томов).
+
+### Диагностика Pending PVC
+```bash
+# 1. Посмотреть события
+kubectl describe pvc <name>
+
+# 2. Проверить StorageClass
+kubectl get sc
+
+# 3. Проверить шедулинг пода (если SC имеет WaitForFirstConsumer)
+kubectl describe pod <name>
+```
 
 ---
 
 ## Дополнительная информация
 
-- Хранилище на локальных дисках: [Local Path Provisioner](./local-path-provisioner.md).
-- Интеграция с Ceph: [Обзор Ceph](./Ceph/ceph_overview.md).
-- Работа с Longhorn: [Longhorn — установка и настройка](./longhorn.md).
-- Основы StatefulSet: [Концепции StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md).
+- [Local Path Provisioner](./local-path-provisioner.md) — легковесный локальный провижинер.
+- [Продвинутые возможности CSI](./CSI/csi_advanced.md) — детали снимков и топологии.
+- [Troubleshooting PVC](../../Troubleshooting/Common_Errors/CreateContainerConfigError/pvc_issues.md).
+- [VictoriaMetrics на StatefulSet](../../VictoriaMetrics/deployment/kubernetes_statefulset.md).

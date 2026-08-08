@@ -1,6 +1,6 @@
-# Зависимости и Library Charts в Helm
+# Зависимости и библиотечные чарты в Helm
 
-Механизмы композиции чартов через зависимости (subcharts) и переиспользования шаблонов через library charts.
+Механизмы композиции чартов через зависимости (subcharts) и переиспользования логики через библиотечные чарты (library charts) в среде **v4 (стандарт 2026 года)**.
 
 ---
 
@@ -8,11 +8,12 @@
 
 | Термин | Описание |
 |--------|----------|
-| **Subchart (Зависимость)** | Helm-чарт, устанавливаемый вместе с родительским чартом. Основной механизм композиции. См. [Структура Helm-чарта](./helm_chart_structure.md) для общей организации файлов |
-| **Library Chart** | Чарт типа `library` для предоставления переиспользуемых шаблонов другим чартам. Не рендерит ресурсы самостоятельно |
-| **Chart.lock** | Файл с зафиксированными версиями зависимостей. См. [Управление версиями релизов](./helm_release_versioning.md) |
-| **condition** | Поле в `dependencies`, позволяющее включать/отключать установку зависимости через `values.yaml` |
-| **alias** | Псевдоним зависимости для использования одного чарта несколько раз |
+| **Subchart (Зависимость)** | Вложенный чарт, устанавливаемый вместе с родительским. Основной механизм композиции ресурсов. См. [Структура Helm-чарта](./helm_chart_structure.md). |
+| **Library Chart** | Чарт типа `library` для предоставления общих шаблонов другим чартам. Не рендерит ресурсы самостоятельно. |
+| **Chart.lock** | Файл фиксации точных версий зависимостей. Должен находиться под контролем версий (Git). См. [Управление версиями релизов](./helm_release_versioning.md). |
+| **condition / tags** | Механизмы динамического включения или отключения зависимостей через файл `values.yaml`. |
+| **alias** | Псевдоним зависимости, позволяющий использовать один и тот же чарт несколько раз с разными настройками. |
+| **import-values** | Механизм экспорта значений из дочернего чарта в область видимости родительского. |
 
 ---
 
@@ -20,19 +21,19 @@
 
 ### Управление зависимостями
 
-Зависимости определяются в `Chart.yaml` в секции `dependencies`.
+В Helm v4 зависимости описываются исключительно в `Chart.yaml` в секции `dependencies`. Использование устаревшего файла `requirements.yaml` запрещено.
 
 ```yaml
 # Chart.yaml
 apiVersion: v2
 name: my-application
-description: A Helm chart for my web application
-version: 0.1.0
+description: Промышленный чарт с зависимостями
+version: 1.0.0
 
 dependencies:
   - name: postgresql
-    version: "14.2.4"
-    repository: "https://charts.bitnami.com/bitnami"
+    version: "15.x.x"
+    repository: "oci://registry.example.com/charts"
     # Зависимость установится, только если postgresql.enabled = true
     condition: postgresql.enabled
   - name: redis
@@ -40,31 +41,36 @@ dependencies:
     repository: "https://charts.bitnami.com/bitnami"
     # Псевдоним: в values.yaml обращаемся как 'cache'
     alias: cache
+    tags:
+      - database
 ```
 
 | Поле | Описание |
-|------|----------|
-| `name` | Имя чарта-зависимости |
-| `version` | Версия чарта |
-| `repository` | URL Helm-репозитория |
-| `condition` | Включение/отключение зависимости по значению из `values.yaml` |
-| `alias` | Переименование зависимости внутри родительского чарта |
+| :--- | :--- |
+| **name** | Имя чарта-зависимости. |
+| **version** | Версия чарта (поддерживаются диапазоны SemVer). |
+| **repository** | URL Helm-репозитория или OCI-ссылка (`oci://...`). |
+| **condition** | Путь к булеву флагу в `values.yaml` для управления установкой. |
+| **tags** | Группировка зависимостей. Если в родительском `values.yaml` указано `tags.database: true`, все чарты с этим тегом будут установлены. |
+| **alias** | Переименование зависимости внутри родительского чарта для устранения конфликтов имен. |
+| **import-values** | Описание полей, которые будут импортированы из дочернего чарта в родительский. |
 
-Для загрузки/обновления зависимостей:
+Для загрузки и фиксации зависимостей:
 
 ```bash
-helm dependency update ./my-chart-directory
+# Обновление зависимостей и создание Chart.lock
+helm dependency update ./my-chart
+
+# Сборка зависимостей строго по Chart.lock (рекомендуется для CI/CD)
+helm dependency build ./my-chart
 ```
 
-Команда скачивает архивы (`.tgz`) в `charts/` и создаёт `Chart.lock` для фиксации версий.
+### Передача значений (Values) в дочерние чарты
 
-### Передача значений (Values) в Subcharts
+Существует три основных способа управления значениями в иерархии чартов:
 
-Два способа передачи значений из родительского чарта в дочерний:
-
-**1. Вложенная структура (предпочтительный):**
-
-В `values.yaml` родительского чарта создаётся секция с именем дочернего чарта (или псевдонима).
+**1. Вложенная структура (Nested Values):**
+Родительский чарт переопределяет значения дочернего через секцию, имя которой совпадает с именем зависимости (или ее `alias`). Это наиболее частый и безопасный способ.
 
 ```yaml
 # parent-chart/values.yaml
@@ -73,86 +79,107 @@ helm dependency update ./my-chart-directory
 postgresql:
   primary:
     persistence:
-      size: 2Gi
+      size: 10Gi
 
 # Переопределение для redis (через alias 'cache')
 cache:
   architecture: standalone
 ```
 
-**2. Глобальные значения (`global`):**
-
-Значения в секции `global` доступны всем дочерним чартам через `.Values.global`.
+**2. Глобальные значения (Global Values):**
+Значения, помещенные в секцию `global`, доступны всем дочерним чартам любого уровня вложенности через объект `.Values.global`. Это стандарт для общих параметров инфраструктуры.
 
 ```yaml
 # parent-chart/values.yaml
 global:
   env: production
-  domain: my-company.com
+  domain: company.internal
+  imageRegistry: registry.company.com
 ```
 
-### Использование Library Charts
+**3. Импорт значений (import-values):**
+Позволяет "поднимать" значения из дочернего чарта в родительский. Это полезно, когда родительскому чарту нужно знать параметры своих компонентов для настройки логики шаблонов.
+
+```yaml
+# Chart.yaml родителя
+dependencies:
+  - name: backend-service
+    import-values:
+      - data  # Импортирует секцию 'data' из дочернего values.yaml в корень родительского
+```
+
+### Использование библиотечных чартов (Library Charts)
 
 Library-чарт объявляется через `type: library` в `Chart.yaml`.
 
-```yaml
-# my-library/Chart.yaml
-apiVersion: v2
-name: my-library
-description: A library of common Helm templates
-type: library
-version: 0.1.0
-```
-
-- **Особенность:** Helm не устанавливает library-чарт. `helm install ./my-library` вернёт ошибку.
-- **Назначение:** Хранение переиспользуемых шаблонов в `_helpers.tpl`. Другие чарты подключают его как зависимость и используют шаблоны для сокращения дублирования кода (DRY).
+- **Особенность:** Helm не устанавливает библиотечный чарт как самостоятельный релиз.
+- **Назначение:** Служит контейнером для переиспользуемых именованных шаблонов (Named Templates) в файлах `_helpers.tpl`. Другие чарты подключают его как зависимость для соблюдения принципа DRY.
 
 ---
 
 ## Практические сценарии
 
-### Создание общего чарта для микросервисов
+### Создание общей библиотеки для микросервисов
 
-Классический пример library-чартов — единый шаблон для множества однотипных микросервисов.
+Для исключения дублирования кода в сотнях микросервисов создается единая библиотека шаблонов.
 
-**Задача:** Создать общий шаблон для `Deployment`, `Service` и `Ingress`, переиспользуемый для каждого микросервиса.
+**1. В библиотечном чарте (`common-lib`):**
+Создайте файл `templates/_helpers.tpl` с общей логикой деплоймента.
 
-**Решение:**
+```go
+{{/* common-lib/templates/_helpers.tpl */}}
+{{- define "common.deployment" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "common.fullname" . }}
+  labels: {{ include "common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    matchLabels: {{ include "common.selectorLabels" . | nindent 6 }}
+  template:
+    ...
+{{- end -}}
+```
 
-1. Создать Library Chart (`common-chart`) с `type: library`.
-2. В `common-chart/templates/_helpers.tpl` определить именованные шаблоны:
+**2. В чарте приложения-потребителя:**
+Добавьте библиотеку в зависимости и вызовите шаблон.
 
-    ```go
-    {{/* templates/_helpers.tpl */}}
-    {{- define "common-chart.deployment" -}}
-    apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-      name: {{ .Release.Name }}
-    spec:
-      replicas: {{ .Values.replicaCount | default 1 }}
-      ...
-    {{- end -}}
-    ```
+```yaml
+# my-app/Chart.yaml
+dependencies:
+  - name: common-lib
+    version: "1.x.x"
+    repository: "oci://registry.company.com/charts"
+```
 
-3. Создать Application Chart для конкретного микросервиса (`my-service-a`).
-4. В `my-service-a/Chart.yaml` добавить `common-chart` как зависимость.
-5. В `my-service-a/templates/deployment.yaml` вызвать шаблон из library-чарта:
+```go
+# my-app/templates/deployment.yaml
+{{- include "common.deployment" . -}}
+```
 
-    ```go
-    {{- include "common-chart.deployment" . -}}
-    ```
+### Иерархия приоритетов значений
 
-6. В `my-service-a/values.yaml` определить только уникальные значения микросервиса (образ, порты, ресурсы).
-
-Такой подход позволяет централизованно управлять общей структурой развёртывания и обновлять её для всех микросервисов одновременно через изменения в `common-chart`.
-
-**Важно:** library chart (`type: library`) не устанавливается — он только предоставляет шаблоны для `include`. Если нужно развернуть один и тот же чарт для сотни сервисов с разными values, используется **shared-чарт** (обычный, с `templates/`) в OCI-регистри. Подробнее: [Практические сценарии: shared-чарт для 100 микросервисов](./helm_chart_practical_scenarios.md).
+При объединении значений Helm следует строгому приоритету (от низшего к высшему):
+1.  `values.yaml` дочернего чарта (Default).
+2.  `values.yaml` родительского чарта (Override).
+3.  Значения, переданные через `import-values` (Export).
+4.  Внешние файлы значений (`-f` / `--values`).
+5.  Индивидуальные значения, переданные через `--set`.
 
 ---
 
-## См. также
+## Дополнительная информация
 
-- [Структура Helm-чарта](./helm_chart_structure.md)
-- [Управление версиями релизов](./helm_release_versioning.md)
-- [Практические сценарии Helm-чартов](./helm_chart_practical_scenarios.md)
+### Важные нюансы
+- **Shared Chart против Library Chart:**
+    *   **Library Chart (`type: library`)** — не устанавливается, предоставляет только шаблоны для `include`.
+    *   **Shared Chart** — полноценный чарт-движок в OCI-реестре, который устанавливается с разными `values.yaml` для множества сервисов. Подробнее: [Практические сценарии: shared-чарт](./helm_chart_practical_scenarios.md).
+- **Chart.lock:** Всегда коммитьте этот файл в репозиторий. Он гарантирует, что все участники команды и CI-пайплайны используют идентичные версии зависимостей, предотвращая "дрейф" инфраструктуры.
+
+### См. также
+- [Структура Helm-чарта](./helm_chart_structure.md) — организация файлов и папка `charts/`.
+- [Управление версиями релизов](./helm_release_versioning.md) — SemVer и жизненный цикл пакетов.
+- [Практические сценарии Helm-чартов](./helm_chart_practical_scenarios.md) — Umbrella Charts и Shared Charts.
+- [Встроенные объекты Helm](./templating/objects.md) — детальное описание `.Values` и глобальных объектов.

@@ -1,133 +1,151 @@
-# Настройка Grafana с помощью Docker Compose
+# Настройка Grafana в Docker Compose — Modern Observability Stack
 
 ## Определения
 
-- **Grafana**: Платформа для аналитики и визуализации. См. [Обзор Grafana](../grafana_overview.md).
-- **Docker Compose**: Инструмент для определения и запуска многоконтейнерных Docker-приложений с помощью YAML-файла.
-- **Prometheus**: Система мониторинга. См. [Обзор Prometheus](../../Prometheus/overview.md).
-- **Провиженинг (Provisioning)**: Автоматическая конфигурация Grafana при старте (источники данных, дашборды, плагины). См. [Провиженинг Grafana](../grafana_provisioning.md).
+**Grafana** — платформа для визуализации, анализа и мониторинга данных из различных источников. См. [Обзор Grafana](../grafana_overview.md).
 
-### Параметры `docker-compose.yml`
+**Docker Compose** — инструмент для декларативного описания и управления многоконтейнерными приложениями. В контексте мониторинга позволяет развернуть полный стек (Grafana + Prometheus + Alloy) одной командой.
 
-| Параметр | Описание |
-| :--- | :--- |
-| **`image`** | Образ Docker для запуска контейнера |
-| **`container_name`** | Имя контейнера |
-| **`volumes`** | Монтирование локальных файлов или директорий в контейнер |
-| **`ports`** | Проброс портов (хост:контейнер) |
-| **`restart`** | Политика перезапуска (например, `unless-stopped`) |
-| **`depends_on`** | Определение зависимостей между сервисами для порядка запуска |
-| **`user`** | Запуск процесса от имени конкретного UID/GID (важно для прав на volumes) |
+**Grafana Alloy** — универсальный агент для сбора метрик, логов, трейсов и профилей. В 2026 году является основным стандартом для сбора телеметрии, заменяя связку Promtail, Node Exporter и старые версии Grafana Agent.
 
-### Параметры `datasources.yaml`
-
-| Параметр | Описание |
-| :--- | :--- |
-| **`name`** | Имя источника данных в интерфейсе |
-| **`type`** | Тип источника (prometheus, loki, и др.) |
-| **`url`** | Адрес источника (в Docker Compose — имя сервиса и порт) |
-| **`isDefault`** | Флаг основного источника данных |
-| **`editable`** | Разрешение редактирования через UI |
-
----
+**Провиженинг (Provisioning)** — механизм автоматической настройки ресурсов Grafana (источники данных, дашборды) через конфигурационные файлы при старте контейнера. См. [Провиженинг Grafana (подробно)](../grafana_provisioning.md).
 
 ## Основные концепции
 
-Использование Docker Compose позволяет развернуть полный стек мониторинга в виде изолированных контейнеров. Ключевым преимуществом является возможность декларативного описания всей инфраструктуры и её автоматической настройки через файлы провиженинга.
+Современный подход к развертыванию через Docker Compose (2026+) базируется на концепции **Unified Observability**. Вместо множества разрозненных экспортеров используется единый агент (Alloy), который собирает данные и отправляет их в бэкенды (Prometheus, Loki, Tempo).
 
 ### Структура проекта
 
-Для корректной работы рекомендуется придерживаться следующей структуры директорий:
+Для чистоты конфигурации и поддержки GitOps рекомендуется следующая структура:
 
 ```text
-monitoring/
-├── docker-compose.yml
+monitoring-stack/
+├── compose.yml              # Основной файл стека
 ├── .env                     # Секреты и переменные окружения
+├── alloy/
+│   └── config.alloy         # Конфигурация сбора данных
 ├── prometheus/
-│   └── prometheus.yml       # Конфигурация сбора метрик
+│   └── prometheus.yml       # Конфигурация хранения (минимальная)
 └── grafana/
-    └── provisioning/
+    └── provisioning/        # Автоматизация ресурсов
         ├── datasources/
         │   └── datasources.yaml
         └── dashboards/
-            ├── dashboards.yaml  # Описание путей к дашбордам
-            └── default/         # Папка с JSON-файлами дашбордов
-                └── node-exporter.json
+            ├── dashboards.yaml
+            └── default/     # JSON-файлы дашбордов
 ```
-
----
 
 ## Практические сценарии
 
-### Сценарий 1: Конфигурация Docker Compose
+### Сценарий 1: Конфигурация Modern Stack (Grafana 13 + Prometheus 3)
 
-Файл `docker-compose.yml` описывает сервисы `prometheus` и `grafana`, их связи и параметры хранения данных.
+Ниже представлен файл `compose.yml`, соответствующий спецификациям 2026 года.
 
 ```yaml
-# monitoring/docker-compose.yml
+# monitoring-stack/compose.yml
 
 services:
   prometheus:
     image: prom/prometheus:v3.13.1
-    container_name: ${PROJECT_NAME:-monitoring}-prometheus
+    container_name: monitoring-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-otlp-receiver' # Включаем прием OTLP
     volumes:
-      - ./prometheus:/etc/prometheus
-      - prom_data:/prometheus
-    ports:
-      - "9090:9090"
-    restart: unless-stopped
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 15s
     networks:
-      - monitoring
+      - observer-net
 
-  grafana:
-    image: grafana/grafana:13.1.1
-    container_name: ${PROJECT_NAME:-monitoring}-grafana
-    user: "472:472" # UID/GID по умолчанию для пользователя grafana
+  alloy:
+    image: grafana/alloy:v1.18.1
+    container_name: monitoring-alloy
+    privileged: true # Необходимо для сбора системных метрик хоста
+    pid: host        # Для доступа к процессам хоста
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - grafana_data:/var/lib/grafana
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-      - GF_SERVER_ROOT_URL=http://localhost:3000
-      - GF_INSTALL_PLUGINS=${GRAFANA_PLUGINS:-} # Список плагинов через запятую
-      - GF_LOG_LEVEL=info
-      - GF_LOG_MODE=console file
-    ports:
-      - "3000:3000"
-    restart: unless-stopped
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host/root:ro,rslave
+    command: run --storage.path=/var/lib/alloy /etc/alloy/config.alloy
     depends_on:
       prometheus:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     networks:
-      - monitoring
+      - observer-net
+
+  grafana:
+    image: grafana/grafana:13.1.3
+    container_name: monitoring-grafana
+    user: "472:472"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASS:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - observer-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
 
 volumes:
-  prom_data:
+  prometheus_data:
   grafana_data:
 
 networks:
-  monitoring:
+  observer-net:
     driver: bridge
 ```
 
-### Сценарий 2: Провиженинг источника данных
+### Сценарий 2: Конфигурация Grafana Alloy (config.alloy)
 
-Создайте файл `grafana/provisioning/datasources/datasources.yaml`. При использовании Docker Compose в поле `url` указывается имя сервиса из `docker-compose.yml`.
+Alloy заменяет Node Exporter и самостоятельно собирает метрики хоста и Docker-контейнеров.
+
+```alloy
+// monitoring-stack/alloy/config.alloy
+
+// Сбор метрик хоста (замена Node Exporter)
+prometheus.exporter.unix "node" {
+  rootfs_path = "/host/root"
+}
+
+// Сбор метрик Docker-контейнеров (замена cAdvisor)
+prometheus.exporter.cadvisor "docker" {
+  docker_host = "unix:///var/run/docker.sock"
+}
+
+// Сбор метрик из экспортеров и отправка в Prometheus
+prometheus.scrape "metrics" {
+  targets = concat(
+    prometheus.exporter.unix.node.targets,
+    prometheus.exporter.cadvisor.docker.targets,
+  )
+  forward_to = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+```
+
+### Сценарий 3: Автоматическая настройка источников данных
+
+Файл `grafana/provisioning/datasources/datasources.yaml` гарантирует наличие Prometheus при первом входе.
 
 ```yaml
 apiVersion: 1
@@ -136,109 +154,48 @@ datasources:
     type: prometheus
     url: http://prometheus:9090
     isDefault: true
-    access: proxy
+    jsonData:
+      httpMethod: POST
+      prometheusType: Prometheus
     editable: false
 ```
 
-### Сценарий 3: Провиженинг дашбордов
+### Сценарий 4: Запуск и проверка
 
-Для автоматической загрузки дашбордов необходимо создать описание провайдера в `grafana/provisioning/dashboards/dashboards.yaml`:
-
-```yaml
-apiVersion: 1
-providers:
-  - name: 'Default'
-    orgId: 1
-    folder: ''
-    type: file
-    disableDeletion: false
-    editable: true
-    options:
-      path: /etc/grafana/provisioning/dashboards/default
-```
-
-JSON-файлы дашбордов (например, скачанные с [grafana.com/dashboards](https://grafana.com/grafana/dashboards/)) следует поместить в директорию `grafana/provisioning/dashboards/default/`.
-
-### Сценарий 4: Конфигурация вспомогательных файлов
-
-Для работы сценария 1 необходимы файлы `.env` и `prometheus/prometheus.yml`.
-
-**Пример `.env`:**
-```ini
-PROJECT_NAME=my-stack
-GRAFANA_ADMIN_PASSWORD=secure_password_123
-GRAFANA_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
-```
-
-**Пример `prometheus/prometheus.yml`:**
-```yaml
-global:
-  scrape_interval: 15s
-
-scrape_configs:
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
-
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets: ['node-exporter:9100']
-```
-
-### Сценарий 5: Запуск и проверка работоспособности
-
-1. **Запуск**: Выполните команду в директории проекта:
+1.  **Запуск:**
     ```bash
     docker compose up -d
     ```
 
-2. **Проверка**:
-    - Prometheus: `http://localhost:9090`
-    - Grafana: `http://localhost:3000` (логин/пароль: `admin` / `${GRAFANA_ADMIN_PASSWORD}`).
-    - Проверка плагинов: **Administration -> Plugins**.
-    - Проверка дашбордов: **Dashboards -> Browse**.
+2.  **Проверка компонентов:**
+    - **Alloy UI:** `http://localhost:12345` (граф компонентов и ошибки сбора).
+    - **Prometheus Targets:** `http://localhost:9090/targets`.
+    - **Grafana:** `http://localhost:3000` (логин `admin`, пароль из `.env`).
 
----
-
-## Дополнительная информация
+## Безопасность и эксплуатация
 
 ### Чек-лист безопасности
 
-- **Смена пароля**: Обязательно используйте `${GRAFANA_ADMIN_PASSWORD}` в `.env`, не оставляйте `admin` по умолчанию.
-- **Права доступа**: Флаг `user: "472:472"` гарантирует запуск от имени непривилегированного пользователя.
-- **Сетевая изоляция**: Используйте внутренние сети Docker (`networks`), пробрасывайте на хост только порт Grafana (`3000`).
-- **Секреты**: Никогда не коммитьте `.env` в публичные репозитории. Используйте `.gitignore`.
-- **HTTPS**: В промышленной эксплуатации всегда используйте reverse proxy (Nginx, Traefik, Caddy) для терминации SSL.
+*   **Non-Root User:** В Grafana всегда используйте `user: "472:472"`. Для этого перед запуском выполните `chown -R 472:472 ./grafana/data` (если используете bind mounts).
+*   **Секреты:** Используйте `.env` файл и переменные окружения. Никогда не храните пароли в `compose.yml`.
+*   **Ресурсные лимиты:** Ограничивайте потребление памяти через `deploy.resources.limits`, чтобы Grafana или Prometheus не «уронили» хост при всплеске нагрузки.
+*   **Network Isolation:** Пробрасывайте на хост только порт Grafana (3000). Остальные сервисы должны общаться внутри сети `observer-net`.
 
 ### Устранение неполадок
 
-| Проблема | Решение |
-| :--- | :--- |
-| **Ошибка прав доступа (Permission Denied)** | Выполните `chown -R 472:472 ./grafana` на хосте, чтобы контейнер мог писать в bind mounts. |
-| **Grafana не видит Prometheus** | Проверьте `url` в `datasources.yaml`. Должно быть `http://prometheus:9090` (имя сервиса). |
-| **Плагины не устанавливаются** | Убедитесь, что у контейнера Grafana есть доступ в интернет для скачивания плагинов. |
-| **Дашборды не появляются** | Проверьте путь в `dashboards.yaml`. Он должен указывать на путь *внутри* контейнера. |
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Permission Denied на томах** | Неверный владелец файлов на хосте | `sudo chown -R 472:472 ./grafana` |
+| **Alloy не видит контейнеры** | Нет доступа к `docker.sock` | Проверьте монтирование сокета и права Alloy |
+| **Prometheus не принимает данные** | Не включен Remote Write/OTLP | Проверьте флаги в `command` сервиса prometheus |
+| **Стек не стартует** | Ошибка в `.env` или YAML | `docker compose config` для проверки итогового файла |
 
-### Полезные команды
-
-```bash
-# Просмотр логов в реальном времени
-docker compose logs -f
-
-# Проверка статуса контейнеров и healthcheck
-docker compose ps
-
-# Принудительное пересоздание контейнеров
-docker compose up -d --force-recreate
-
-# Очистка всех данных (осторожно!)
-docker compose down -v
-```
+## Дополнительная информация
 
 **См. также:**
 
-- [Высокая доступность Grafana](../high_availability.md)
-- [Алертинг в Grafana](../alerting/concepts.md)
-- [Loki в Docker Compose](../../Loki/Docker_Compose/loki_docker_compose_setup.md)
-- [Провиженинг Grafana (подробно)](../grafana_provisioning.md)
-- [Полный стек мониторинга (Prometheus + Alertmanager + Exporters)](../../Prometheus/installation/docker_stack/docker-compose_config.md)
+*   [Провиженинг Grafana (подробно)](../grafana_provisioning.md) — декларативное управление дашбордами и плагинами.
+*   [Высокая доступность Grafana](../high_availability.md) — развертывание с внешней БД и Redis.
+*   [Loki в Docker Compose](../../Loki/Docker_Compose/loki_docker_compose_setup.md) — расширение стека сбором логов.
+*   [Полный мониторинг Prometheus (SSoT)](../../Prometheus/installation/docker_stack/docker-compose_config.md) — детальный разбор стека с Alertmanager.
+*   [Grafana Alloy: Обзор](../grafana_alloy_overview.md) — возможности и архитектура нового агента.

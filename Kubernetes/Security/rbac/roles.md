@@ -8,7 +8,7 @@
 
 Подробное описание архитектуры **RBAC (Role-Based Access Control — управление доступом на основе ролей)** приведено в файле **[Обзор RBAC](./rbac_overview.md)**.
 
-### Предупреждения
+### Предупреждения безопасности
 
 - **Безопасность объектов:** использование префикса `system:` зарезервировано для системных компонентов. См. раздел **[Предупреждения безопасности](./rbac_overview.md)**.
 - **Группа `system:masters`:** Членство в этой группе дает неограниченный доступ в обход RBAC. Избегайте добавления пользователей в эту группу.
@@ -29,6 +29,31 @@
 | `resourceNames` | Ограничение по именам | `["my-config"]` — доступ только к конкретному ресурсу. **Внимание:** не работает с глаголом `create`. |
 | `nonResourceURLs` | Нересурсные пути | `/healthz`, `/metrics` (только для ClusterRole) |
 
+#### API-группы (apiGroups)
+
+Для большинства базовых ресурсов (Pods, Services, Secrets, ConfigMaps) `apiGroups` указывается как пустая строка `""`. Для остальных ресурсов необходимо указывать их группу:
+
+- **`apps`**: Deployments, StatefulSets, DaemonSets.
+- **`batch`**: Jobs, CronJobs.
+- **`networking.k8s.io`**: Ingress, NetworkPolicies.
+- **`storage.k8s.io`**: StorageClasses, CSINodes.
+- **`rbac.authorization.k8s.io`**: Roles, ClusterRoles, Bindings.
+- **`autoscaling`**: HorizontalPodAutoscalers.
+
+#### Субресурсы (Subresources)
+
+Субресурсы позволяют предоставлять доступ к специфическим функциям объекта без предоставления полного доступа к самому объекту. Указываются через `/`.
+
+| Субресурс | Назначение | Пример использования |
+|-----------|------------|----------------------|
+| `pods/log` | Чтение логов контейнера | `kubectl logs` |
+| `pods/exec` | Выполнение команд в контейнере | `kubectl exec` |
+| `pods/status` | Чтение или обновление статуса пода | Используется контроллерами |
+| `pods/portforward` | Проброс портов к поду | `kubectl port-forward` |
+| `nodes/proxy` | Доступ к API через узел | Используется для отладки и метрик |
+| `nodes/stats` | Сбор статистики с узла | Используется Kubelet и мониторингом |
+| `services/proxy` | Проксирование запросов через сервис | Доступ к веб-интерфейсам внутри кластера |
+
 ### Глаголы (Verbs)
 
 | Глагол (Verb) | Описание | Риски и особенности |
@@ -37,14 +62,19 @@
 | `list` | Список ресурсов | **Риск:** `list` секретов позволяет увидеть содержимое всех секретов в namespace. |
 | `watch` | Отслеживание изменений | Используется контроллерами. |
 | `create` | Создание нового ресурса | Несовместим с `resourceNames`. |
-| `update` | Полное обновление ресурса | Заменяет существующий объект. |
-| `patch` | Частичное обновление | Рекомендуется для точечных изменений. |
+| `update` | Полное обновление ресурса | Заменяет существующий объект. Требует `resourceVersion`. |
+| `patch` | Частичное обновление | Рекомендуется для точечных изменений и избежания конфликтов. |
 | `delete` | Удаление ресурса | Возможность прерывания работы сервиса. |
 | `deletecollection` | Массовое удаление | **Высокий риск:** удаление всех объектов типа в namespace. |
 | `bind` | Привязка роли к субъекту | **Критический риск:** позволяет пользователю выдать права самому себе. |
 | `escalate` | Повышение прав роли | **Критический риск:** редактирование ролей для добавления прав, которых нет у пользователя. |
 | `impersonate` | Действие от имени другого | **Критический риск:** обход ограничений через привилегированную учётку. |
 | `use` | Использование ресурса | **Устарело:** ранее использовалось для PodSecurityPolicy (удалено в 1.25+). |
+
+#### Сравнение update и patch
+
+- **`update`**: Отправляет полную копию объекта. Если объект в кластере изменился с момента последнего чтения (изменился `resourceVersion`), API-сервер вернет ошибку `409 Conflict`.
+- **`patch`**: Отправляет только измененные поля. Позволяет нескольким контроллерам или пользователям изменять разные части одного объекта без конфликтов версий.
 
 ### Сравнение Role и ClusterRole
 
@@ -87,29 +117,47 @@ rules:
 ```
 
 ```yaml
-# Чтение pods и services в namespace
+# Доступ только к чтению логов подов
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: pod-service-reader
+  name: log-reader
   namespace: production
 rules:
 - apiGroups: [""]
-  resources: ["pods", "services"]
+  resources: ["pods/log"]
   verbs: ["get", "list", "watch"]
 ```
 
 ```yaml
-# Управление deployments в namespace
+# Ограничение доступа конкретным ConfigMap по имени
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: deployment-manager
+  name: config-reader
   namespace: development
 rules:
-- apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "list", "watch", "create", "update", "delete"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["app-config", "shared-config"]
+  verbs: ["get", "update"]
+```
+
+### Работа с Custom Resources (CRD)
+
+Для работы с кастомными ресурсами необходимо точно указывать их API-группу. Ресурсы всегда указываются во множественном числе.
+
+```yaml
+# Доступ к управлению сертификатами cert-manager
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cert-manager-user
+  namespace: apps
+rules:
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates", "certificaterequests"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ```
 
 ### Примеры манифестов ClusterRole
@@ -179,6 +227,9 @@ kubectl auth can-i --list
 
 # Проверка возможности конкретного действия
 kubectl auth can-i create deployments
+
+# Проверка прав в другом namespace
+kubectl auth can-i get secrets -n production
 ```
 
 ### Проверка прав другого субъекта
@@ -204,6 +255,8 @@ Kubernetes предоставляет стандартные ClusterRole для 
 - `edit` — чтение и запись объектов в namespace.
 - `view` — доступ только на чтение (исключая Secrets).
 
+**Внимание:** Встроенные роли защищены контроллером. Если вы вручную измените `ClusterRole/view`, `kube-controller-manager` восстановит её исходное состояние в следующем цикле.
+
 ### Лучшие практики
 
 1. **Принцип наименьших привилегий (PoLP):** Предоставляйте только тот минимум прав, который необходим для работы.
@@ -212,10 +265,11 @@ Kubernetes предоставляет стандартные ClusterRole для 
 4. **Не используйте группу `system:masters`:** Пользователи в этой группе обходят все проверки RBAC. Это "черный ход", который невозможно заблокировать политиками.
 5. **Используйте `resourceNames`:** Где возможно, ограничивайте доступ конкретными экземплярами (например, доступ только к одному `ConfigMap`).
 6. **Аудит и сканирование:** Регулярно проверяйте права инструментами вроде `rakkess` или `kubescape` для обнаружения избыточных привилегий.
-7. **Агрегация:** Для расширения стандартных ролей используйте [aggregationRule](./aggregation_scenarios.md).
+7. **Агрегация:** Для расширения стандартных ролей используйте [aggregationRule](./aggregation_scenarios.md). Помните, что агрегация работает только для ClusterRole.
 
 ### Связанные темы
 
 - **[Общий обзор RBAC](./rbac_overview.md)**
 - **[Привязки ролей (RoleBinding)](./bindings.md)**
 - **[Агрегируемые ClusterRole](./aggregation_scenarios.md)**
+- **[Субъекты доступа (Subjects)](./subjects.md)**

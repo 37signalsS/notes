@@ -1,127 +1,192 @@
-# ArgoCD: Динамические окружения с Crossplane и GitLab CI
+# Argo CD: Динамические окружения с Crossplane и GitLab CI
 
-Организация динамических окружений (Preview / Feature Environments) через GitOps позволяет автоматически разворачивать изолированные копии приложения и необходимой инфраструктуры (баз данных, очередей) для каждой ветки разработчика.
+> **Актуальность (2026):** Динамические окружения (Preview Environments) являются стандартом для зрелых DevOps-команд. Использование связки Argo CD + Crossplane позволяет автоматизировать не только деплой кода, но и создание полноценной облачной инфраструктуры (БД, S3, очереди) для каждой ветки, обеспечивая 100% изоляцию и соответствие состоянию в Git.
 
 ## Определения
 
-- **Динамическое окружение (Review App)** — временный экземпляр приложения и инфраструктуры, создаваемый под конкретную ветку кода или Merge Request.
-- **ApplicationSet** — инструмент ArgoCD для автоматической генерации объектов `Application` на основе шаблонов и внешних источников (генераторов).
-- **scmProvider generator** — генератор в ApplicationSet, который отслеживает репозитории в Git-хостингах (GitLab, GitHub) и создает приложения для каждой найденной ветки или PR.
-- **Crossplane** — Kubernetes-native инструмент для управления облачными ресурсами (IaC) через стандартные манифесты YAML.
+**Динамическое окружение (Review App / Preview Environment)** — временный, полностью изолированный экземпляр приложения и всей необходимой ему инфраструктуры, создаваемый автоматически для конкретной ветки кода или Merge Request (MR).
+
+**ApplicationSet Controller** — компонент Argo CD, автоматизирующий генерацию объектов `Application`. Позволяет использовать генераторы для массового создания приложений на основе внешних источников.
+
+**scmProvider generator** — специализированный генератор в `ApplicationSet`, который отслеживает API Git-хостингов (GitLab, GitHub, Bitbucket) и динамически создает/удаляет приложения при появлении или удалении веток/PR.
+
+**Crossplane** — Kubernetes-native фреймворк для управления внешними облачными ресурсами через стандартный API Kubernetes (IaC). Позволяет описывать базы данных, кластеры и сети как обычные манифесты YAML.
+
+**ExternalDNS** — инструмент для автоматического управления записями в DNS-провайдерах (Cloudflare, AWS Route53, Yandex DNS) на основе Ingress-ресурсов или сервисов Kubernetes.
 
 ## Базовые концепции
 
-### Логика работы пайплайна
+### Архитектура и поток данных (Workflow)
 
-1.  **Триггер:** Разработчик пушит ветку с постфиксом (например, `-dyn`) в репозиторий приложения (`project-backend`).
-2.  **GitLab CI:**
-    - Сборка Docker-образа и пуш в реестр.
-    - Создание ветки в репозитории `manifests` с тем же именем.
-    - Обновление тега образа в Helm-values новой ветки репозитория манифестов.
-3.  **ArgoCD ApplicationSet:**
-    - Обнаруживает новую ветку в репозитории `manifests` через `scmProvider`.
-    - Генерирует объект `Application` для этой ветки.
-    - Начинает синхронизацию: разворачивает Helm-чарт приложения.
-4.  **Инфраструктура (Crossplane):**
-    - Helm-чарт приложения включает ресурсы Crossplane (например, `PostgresqlDatabase`).
-    - Crossplane обнаруживает эти ресурсы и создает реальную БД в облаке (например, в Yandex Cloud).
-5.  **Очистка:** При удалении ветки из Git ArgoCD автоматически удаляет `Application`, что приводит к удалению ресурсов в Kubernetes и связанных ресурсов в облаке через Crossplane.
+1.  **Событие в Git:** Разработчик создает ветку с префиксом `feat/` или пушит в существующий Merge Request.
+2.  **CI-пайплайн (GitLab CI):**
+    - Сборка Docker-образа с тегом, соответствующим Short Commit SHA.
+    - Пуш образа в Container Registry.
+    - (Опционально) Обновление метаданных в репозитории конфигураций (GitOps-репозитории).
+3.  **Argo CD ApplicationSet:**
+    - Постоянно опрашивает GitLab API (через `scmProvider`).
+    - Обнаруживает новую ветку и генерирует объект `Application`.
+    - `Application` ссылается на Helm-чарт, где описаны и само приложение, и его зависимости (Crossplane resources).
+4.  **Инстанцирование инфраструктуры (Crossplane):**
+    - Kubernetes-контроллер Crossplane видит новые ресурсы (например, `PostgreSQLInstance`).
+    - Выполняет вызовы к облачному API для создания реальных ресурсов.
+5.  **Сетевой доступ (DNS):**
+    - Ingress-контроллер создает точку входа.
+    - `ExternalDNS` автоматически регистрирует запись вида `feat-123.preview.example.com`.
+6.  **Жизненный цикл и очистка:**
+    - При закрытии Merge Request ветка удаляется.
+    - Argo CD обнаруживает отсутствие ветки, удаляет `Application` и все связанные ресурсы (включая облачные).
 
 ## Практические сценарии
 
-### 1. Конфигурация ApplicationSet (scmProvider)
+### Сценарий 1: Конфигурация ApplicationSet для GitLab
 
-Этот манифест настраивает ArgoCD на отслеживание веток в GitLab.
+Этот манифест является "точкой входа" для автоматизации.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: project-stack-dyn
+  name: preview-environments
   namespace: argocd
 spec:
   generators:
     - scmProvider:
-        cloneProtocol: ssh
-        filters:
-          - branchMatch: .*PROJECT.*-dyn # Фильтр веток
-            repositoryMatch: manifests
         gitlab:
-          group: "12345678" # ID группы в GitLab
-          allBranches: true
+          group: "my-org/apps" # Группа проектов
+          allBranches: true # Отслеживать все ветки (или фильтровать)
           tokenRef:
-            secretName: gitlab-token
+            secretName: gitlab-access-token
             key: token
+        filters:
+          - branchMatch: ^feat/.* # Только ветки с префиксом feat/
   template:
     metadata:
-      name: "{{branchNormalized}}" # Имя приложения на основе имени ветки
+      name: "app-{{branchNormalized}}" # Нормализованное имя ветки для DNS
     spec:
+      project: preview-apps
       source:
-        path: charts/project-stack
-        repoURL: https://gitlab.com/manifests.git
-        targetRevision: "{{branch}}" # Ветка, из которой берем манифесты
+        repoURL: https://gitlab.com/my-org/manifests.git
+        targetRevision: "{{branch}}"
+        path: charts/standard-app
         helm:
-          valueFiles:
-            - ci/dyn/dyn-values.yaml
           values: |
-            project-backend:
-              envConfig:
-                DATASOURCE_URL: "jdbc:postgresql://db.host:6432/{{branchNormalized}}-db"
-      project: project-dyn
+            ingress:
+              host: "{{branchNormalized}}.preview.example.com"
+            infrastructure:
+              databaseName: "{{branchNormalized}}"
       destination:
-        namespace: 'argo-app-project-dyn'
+        namespace: "preview-{{branchNormalized}}"
         server: https://kubernetes.default.svc
       syncPolicy:
         automated:
-          selfHeal: true
           prune: true
+          selfHeal: true
         syncOptions:
           - CreateNamespace=true
 ```
 
-### 2. Динамическая инфраструктура через Crossplane
+### Сценарий 2: Описание динамической БД (Crossplane + Yandex Cloud)
 
-Пример ресурса для создания базы данных в Yandex Cloud внутри Helm-чарта приложения:
+Ресурс внутри Helm-чарта приложения, который создает изолированную БД.
 
 ```yaml
-apiVersion: mdb.yandex-cloud.jet.crossplane.io/v1alpha1
-kind: PostgresqlDatabase
+apiVersion: postgresql.managed-kubernetes.yandex.cloud/v1alpha1
+kind: Database
 metadata:
-  name: {{ .Release.Name }}-db
+  name: {{ .Values.infrastructure.databaseName }}
 spec:
   forProvider:
-    name: {{ .Release.Name }}-db
-    clusterId: {{ .Values.infra.dbClusterId }}
-    owner: {{ .Release.Name }}-user
+    clusterIdRef:
+      name: shared-preview-cluster # Использование общего кластера для экономии
+    name: {{ .Values.infrastructure.databaseName }}
+    owner: db-admin
     lcCollate: en_US.UTF-8
-    lcType: en_US.UTF-8
   providerConfigRef:
-    name: yc-provider
+    name: yc-config
 ```
 
-### 3. Обработка ограничений (DataTransfer)
+### Сценарий 3: Автоматизация DNS и SSL
 
-Если Crossplane или облачный провайдер имеют ограничения (например, невозможность активации трансфера данных `SNAPSHOT_ONLY` через манифест), используется **init-container** в приложении:
+Для Review Apps критически важен автоматический доступ по HTTPS.
 
-1.  Приложение запускает `init-container` со скриптом.
-2.  Скрипт через облачный API активирует необходимые процессы (например, Yandex DataTransfer для клонирования эталонной БД).
-3.  После завершения трансфера основной контейнер приложения запускается.
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "app.fullname" . }}
+  annotations:
+    # ExternalDNS подхватит этот хост и создаст запись в Cloudflare/Yandex DNS
+    external-dns.alpha.kubernetes.io/hostname: {{ .Values.ingress.host }}
+    # Cert-manager выпустит Wildcard или индивидуальный сертификат
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ include "app.fullname" . }}-tls
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "app.fullname" . }}
+                port: {number: 80}
+```
 
-## Преимущества и недостатки
+### Сценарий 4: Ограничение ресурсов (ResourceQuota)
 
-| Плюсы | Минусы / Ограничения |
+Защита кластера от неконтролируемого роста количества временных сред.
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: preview-quota
+  namespace: {{ .Release.Namespace }}
+spec:
+  hard:
+    requests.cpu: "500m"
+    requests.memory: "1Gi"
+    limits.cpu: "2"
+    limits.memory: "4Gi"
+    count/pods: "10"
+    count/services: "5"
+```
+
+## Управление стоимостью и очисткой
+
+### Стратегии оптимизации затрат (FinOps)
+
+1.  **Общие ресурсы:** Использование одной инстанции БД (Shared Instance) с разными логическими базами/схемами для Review Apps вместо создания отдельных кластеров.
+2.  **TTL (Time To Live):** Автоматическое удаление окружений по истечении времени.
+    - *Реализация:* Скрипт в GitLab CI, который удаляет ветки в GitOps-репозитории, если в оригинальном MR не было активности > 3 дней.
+3.  **HPA (Horizontal Pod Autoscaler):** Установка минимального количества реплик (например, 1) для всех preview-сред.
+
+### Очистка инфраструктуры
+
+Argo CD гарантирует, что при удалении объекта `Application` будут удалены все дочерние ресурсы в Kubernetes. Благодаря `Finalizers` в Crossplane, облачные ресурсы не будут считаться удаленными в Kubernetes, пока облачный провайдер не подтвердит их физическое уничтожение.
+
+## Технические нюансы и ограничения
+
+| Аспект | Описание / Решение |
 | :--- | :--- |
-| **Полная изоляция:** Каждый разработчик имеет свою БД и окружение. | **Стоимость:** Большое количество облачных ресурсов может быть дорогим. |
-| **Автоматизация:** Нет ручных действий по созданию сред. | **Время:** Создание БД и трансфер данных занимают время (от 5 до 15 мин). |
-| **Соответствие Git:** Состояние кластера всегда равно состоянию Git. | **Сложность:** Требуется глубокая настройка ArgoCD, Crossplane и CI. |
+| **Инициализация данных** | Использование `Yandex DataTransfer` или `Job` с `pg_dump` для клонирования эталонной БД при создании новой среды. |
+| **Кеширование образов** | Динамические среды генерируют много уникальных образов. Настройте политику очистки (Registry Cleanup Policy) в GitLab/Harbor. |
+| **Время старта** | Создание облачной БД может занимать 5-10 минут. Используйте `Health Checks` в Argo CD для визуализации готовности. |
+| **Лимиты API** | Слишком частые опросы GitLab API могут привести к Rate Limiting. Настройте `reconcile` интервал в ApplicationSet. |
 
 ## Дополнительная информация
 
-**Связанные документы:**
-- [Обзор ArgoCD](./argocd_overview.md) — базовые концепции и архитектура.
-- [Crossplane: Интеграция с GitOps](../Crossplane/gitops_integration.md) — подробнее об управлении инфраструктурой.
-- [GitLab CI: Review Apps](../../CI-CD/GitLab_CI/Tutorials/kubernetes_review_apps.md) — традиционный подход к динамическим средам.
+### См. также
+- [Обзор Argo CD: Продвинутые шаблоны](./argocd_overview.md)
+- [Crossplane: Управление облачной инфраструктурой](../Crossplane/gitops_integration.md)
+- [GitLab CI: Динамические окружения (Review Apps)](../../CI-CD/GitLab_CI/Tutorials/kubernetes_review_apps.md)
+- [ExternalDNS: Интеграция с провайдерами](../../Networking/ServicesAndTools/external_dns_overview.md)
 
-**Официальные ресурсы:**
-- [ArgoCD ApplicationSet Documentation](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/)
-- [Crossplane Providers](https://marketplace.upbound.io/)
+### Ссылки
+- [Argo CD ApplicationSet Generator: SCM Provider](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-SCM-Provider/)
+- [Crossplane Documentation](https://docs.crossplane.io/)

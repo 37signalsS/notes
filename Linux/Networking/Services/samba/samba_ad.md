@@ -2,55 +2,64 @@
 
 ## Определения
 
-**Samba AD Member** — режим работы Samba как члена домена Active Directory с использованием Kerberos для аутентификации и winbind для маппинга пользователей.
+**Samba AD Member** — роль сервера Samba, при которой он является полноправным членом домена Active Directory (AD). В этом режиме Samba делегирует аутентификацию контроллерам домена (DC) через протокол Kerberos, а для управления идентификаторами (UID/GID) использует подсистему `idmap`.
 
-**winbind** — сервис, обеспечивающий интеграцию между Linux и Windows-доменами: маппинг UID/GID ↔ SID, получение списков пользователей/групп из AD.
+**winbindd** — специализированный демон Samba, выступающий мостом между NT-идентификаторами (SID) и Unix-идентификаторами. Обеспечивает прозрачный маппинг пользователей и групп домена в операционную систему Linux.
 
-**idmap** — подсистема Samba для маппинга идентификаторов безопасности Windows (SID) на Unix-идентификаторы (UID/GID). Централизованное управление UID/GID критично для корректной работы в домене.
+**Kerberos Keytab** — файл (обычно `/etc/krb5.keytab`), содержащий секретные ключи учетной записи компьютера. Позволяет Samba выполнять аутентификацию на DC без интерактивного ввода пароля.
 
-**SSPR (Self-Service Password Reset)** — (Новое в 2026) возможность сброса паролей пользователями через веб-интерфейс (Keycloak/Entra ID), который интегрируется с политиками паролей Samba.
+**idmap (ID Mapping)** — критически важная подсистема, определяющая логику преобразования SID (Windows) в UID/GID (Linux). Ошибки в настройке `idmap` приводят к потере доступа к файлам или дублированию идентификаторов.
+
+**PAC (Privilege Attribute Certificate)** — часть билета Kerberos, содержащая информацию о членстве пользователя в группах. Samba анализирует PAC для принятия решений о доступе.
 
 ## Базовые концепции
 
-### Требования
+### Выбор метода интеграции: Winbind vs SSSD
 
-- Настроенный домен Active Directory (Windows Server 2016+ или Samba AD DC).
-- Синхронизация времени через **Chrony** или **NTP** (расхождение Kerberos ≤5 минут).
-- Пакеты `winbind` и `libnss-winbind`.
-
-### Уровни безопасности и Hardening (Стандарты 2026)
-
-| Параметр | Описание | Рекомендация |
+| Характеристика | Winbind (Native) | SSSD (System Service) |
 | :--- | :--- | :--- |
-| `security = ads` | Член домена Active Directory | Обязательно для AD. |
-| **`kerberos method`** | Метод проверки билетов | `secrets and keytab` |
-| **`kdc require canonicalization`** | Защита от impersonation | `yes` |
-| **`client signing`** | Подпись SMB-трафика клиентом | `required` |
+| **Поддержка ACL** | Полная (рекомендуется для Samba) | Ограниченная |
+| **Производительность** | Оптимизировано для SMB-трафика | Оптимизировано для системного входа (SSH) |
+| **Сложные леса AD** | Отличная поддержка Trust отношений | Зависит от версии и настройки |
+| **Вердикт** | **Обязателен** для высоконагруженных файловых серверов. | Подходит для простых шар на обычных серверах. |
 
-### Бэкенды idmap
+> Для полноценной работы файлового сервера Samba с поддержкой расширенных прав доступа Windows (NTFS ACL) связка **Samba + Winbind** является «золотым стандартом».
 
-| Бэкенд | Описание | Применение |
-| :--- | :--- | :--- |
-| `tdb` | Локальная база данных | Для локальных SID (`*`). |
-| `rid` | Алгоритмический маппинг | Рекомендуется для одиночных доменов. |
-| `ad` | Чтение атрибутов из AD | RFC2307 (uidNumber/gidNumber). |
-| `autorid` | Автоматическое выделение | Для лесов с множеством доменов. |
+### Архитектура подсистемы idmap
+
+Настройка `idmap` всегда состоит из двух частей:
+1.  **Default (`*`)**: для локальных пользователей и доменов, не описанных явно. Должен использовать бэкенд `tdb`.
+2.  **Domain Specific**: для каждого домена AD, с которым работает сервер.
+
+**Рекомендуемые бэкенды 2026:**
+- **`rid`**: (Алгоритмический) UID вычисляется на основе RID пользователя. Не требует записи данных в AD. Идеально для одного домена.
+- **`ad`**: (RFC2307) Считывает `uidNumber` и `gidNumber` напрямую из атрибутов объекта в AD. Требует ручного управления ID в Windows.
+- **`autorid`**: Автоматически выделяет диапазоны для каждого домена в лесу. Удобно для крупных структур.
+
+### Требования к инфраструктуре
+
+- **DNS**: Сервер Linux должен использовать DNS-серверы контроллера домена.
+- **Время**: Синхронизация через [Chrony](../chrony_ntp.md) обязательна. Расхождение > 300с ломает Kerberos.
+- **Порты**: Открытый доступ к DC по портам 88 (Kerberos), 389 (LDAP), 445 (SMB), 135/49152+ (RPC).
 
 ## Практические сценарии
 
-### Установка пакетов (Modern)
+### 1. Подготовка системы и установка
 
 ```bash
-# Debian/Ubuntu 24.04+
+# Установка необходимых компонентов
 sudo apt-get install -y samba winbind libnss-winbind libpam-winbind krb5-user
-
-# RHEL/AlmaLinux 9+
-sudo dnf install -y samba-winbind samba-winbind-clients krb5-workstation
 ```
 
-### Конфигурация члена домена (`/etc/samba/smb.conf`)
+**Конфигурация `/etc/krb5.conf`:**
+```ini
+[libdefaults]
+    default_realm = EXAMPLE.COM
+    dns_lookup_realm = false
+    dns_lookup_kdc = true
+```
 
-Пример с использованием бэкенда `rid` и усиленной безопасностью.
+### 2. Эталонная конфигурация `smb.conf` (Hardened 2026)
 
 ```ini
 [global]
@@ -58,74 +67,108 @@ sudo dnf install -y samba-winbind samba-winbind-clients krb5-workstation
    realm = EXAMPLE.COM
    security = ADS
    
-   # Безопасность Kerberos 2026
+   # Безопасность и аутентификация
    kerberos method = secrets and keytab
-   kdc require canonicalization = yes
-   client signing = required
+   dedicated keytab file = /etc/krb5.keytab
+   winbind sealed pipes = yes
+   require strong auth = yes
    
-   # ID mapping
+   # Запрет небезопасных протоколов
+   client min protocol = SMB3_11
+   server min protocol = SMB3_11
+   client signing = required
+   server signing = required
+
+   # Настройка ID Mapping (Backend: RID)
    idmap config * : backend = tdb
    idmap config * : range = 3000-7999
+   
    idmap config EXAMPLE : backend = rid
    idmap config EXAMPLE : range = 10000-999999
-
+   
+   # Оптимизация Winbind
+   winbind enum users = no
+   winbind enum groups = no
    winbind use default domain = yes
-   winbind offline logon = yes
    winbind refresh tickets = yes
+   winbind multi-domain names = no
 ```
 
-### Присоединение к домену
+### 3. Присоединение к домену и управление Keytab
 
 ```bash
-# Инициализация Kerberos тикета администратора
+# 1. Получение билета администратора
 kinit Administrator@EXAMPLE.COM
 
-# Присоединение (создание учетной записи компьютера и keytab)
+# 2. Ввод в домен с созданием записи в keytab
 sudo net ads join -U Administrator
-# → Joined 'SAMBA-SRV' to dns domain 'example.com'
 
-# Проверка статуса
-net ads testjoin
-# → Join is OK
+# 3. Обновление и проверка keytab (важно для автоматического обновления пароля компьютера)
+sudo net ads keytab create -U Administrator
+sudo klist -k /etc/krb5.keytab
 ```
 
-### Настройка NSS и PAM
+### 4. Настройка системного окружения (NSS/PAM)
 
-**`/etc/nsswitch.conf`** (добавление winbind):
-
-```yaml
-passwd:         compat winbind
-group:          compat winbind
+**`/etc/nsswitch.conf`**:
+Обеспечивает видимость доменных пользователей командами `id`, `ls`, `getent`.
+```text
+passwd:         files winbind
+group:          files winbind
 ```
 
-**PAM (автоматическое создание домашних директорий при входе):**
+**PAM (Автоматическое создание Home-директорий)**:
+Добавьте в `/etc/pam.d/common-session`:
+```text
+session required    pam_mkhomedir.so skel=/etc/skel/ umask=0022
+```
+
+## Мониторинг и диагностика
+
+### Проверка статуса интеграции
 
 ```bash
-# Для Debian/Ubuntu
-sudo pam-auth-update --enable mkhomedir
-```
+# Тест доверительных отношений
+net ads testjoin # → Join is OK
 
-### Диагностика AD интеграции
+# Проверка связи winbind с DC
+wbinfo -t # → checking the trust secret via RPC calls succeeded
 
-```bash
-# Проверка связи с DC и параметров домена
+# Просмотр информации о домене
 net ads info
+```
 
-# Проверка работы winbind (список пользователей домена)
-wbinfo -u
+### Отладка маппинга и разрешений
 
-# Проверка разрешения имен пользователей через ОС
-getent passwd "EXAMPLE\user1"
-# → user1:*:10001:10000:User One:/home/EXAMPLE/user1:/bin/bash
+```bash
+# Проверка преобразования SID -> UID
+wbinfo -n "Domain Users" # Получить SID
+wbinfo -S <SID>          # Получить GID
 
-# Просмотр билетов Kerberos в кеше
-klist
+# Проверка видимости через ОС
+getent passwd "username"
+
+# Сброс кеша winbind (при проблемах с маппингом)
+sudo systemctl stop winbind
+sudo rm -f /var/lib/samba/*.tdb
+sudo systemctl start winbind
+```
+
+### Управление логами в реальном времени
+
+```bash
+# Увеличение уровня логирования без перезагрузки
+sudo smbcontrol winbindd debug 10
+# (Просмотр лога в /var/log/samba/log.winbindd)
+# Сброс уровня обратно
+sudo smbcontrol winbindd debug 1
 ```
 
 ## Дополнительная информация
 
-- [Обзор Samba](./index.md) — архитектура и версии протокола
-- [Настройка сервера](./samba_setup.md) — базовые шаги конфигурации
-- [Интеграция через SSSD](../../../SystemAdministration/Users/LDAP_SSSD/ad_integration.md) — современная альтернатива Winbind
-- [Протокол Kerberos](../../../../Security/Concepts/kerberos.md) — основы сетевой аутентификации
-- [Управление пользователями](../../../SystemAdministration/users_management.md) — общие принципы Linux
+- [Samba: Обзор](./index.md) — архитектура, демоны и порты.
+- [Samba: Настройка сервера](./samba_setup.md) — создание файловых ресурсов.
+- [Samba: Безопасность и VFS](./samba_security.md) — настройка ACL и аудит.
+- [Синхронизация времени (Chrony)](../chrony_ntp.md) — критическое условие работы AD.
+- [Протокол Kerberos](../../../../Security/Concepts/kerberos.md) — глубокое погружение в принципы работы.
+- [Управление пользователями в Linux](../../../SystemAdministration/users_management.md) — базовые концепции NSS/PAM.

@@ -2,54 +2,56 @@
 
 ## Определения
 
-**Grafana Alloy** — флагманский агент Grafana Labs для унифицированного сбора телеметрии (метрики, логи, трейсы, профили). Основан на **OpenTelemetry Collector** (OTel Collector), использует декларативный язык конфигурации River.
+**Grafana Alloy** — универсальный агент для сбора телеметрии (метрики, логи, трассировки, профили), пришедший на смену Grafana Agent. Построен на базе **OpenTelemetry Collector**, но оптимизирован для работы со стеком LGTM (Loki, Grafana, Tempo, Mimir). Ключевой особенностью является использование декларативного языка конфигурации River.
 
-**River** — язык конфигурации на базе HCL (HashiCorp Configuration Language) для описания потоков данных в виде графа компонентов. Позволяет динамически изменять конфигурацию без перезапуска агента.
+**River** — язык конфигурации, вдохновленный HCL, который позволяет описывать конвейеры обработки данных (pipelines) в виде направленного графа компонентов. Поддерживает динамическое обновление конфигурации без полной остановки агента.
 
-**OTLP (OpenTelemetry Protocol)** — стандартный протокол передачи данных телеметрии, который Alloy использует как для приема, так и для отправки данных.
+**OTLP (OpenTelemetry Protocol)** — стандартный протокол, используемый Alloy как основной транспорт для взаимодействия с современными системами наблюдаемости.
 
-### Статус агентов и миграция
+### Статус агентов и миграция (SSoT)
 
 | Агент | Статус | Конец поддержки (EOL) |
 | :--- | :--- | :--- |
 | **Promtail** | Устарело (Deprecated) | Весна 2026 |
-| **Grafana Agent (static mode)** | Устарело (Deprecated) | Ноябрь 2025 |
-| **Grafana Alloy** | **Актуально** | — |
+| **Grafana Agent (static/flow)** | Устарело (Deprecated) | Октябрь 2025 |
+| **Grafana Alloy** | **Актуальный стандарт** | — |
+
+---
 
 ## Основные концепции
 
-### Ключевые особенности Alloy
+### Ключевые возможности Alloy
 
-| Особенность | Описание |
+| Возможность | Техническое описание |
 | :--- | :--- |
-| **Унификация** | Единый агент для всех типов сигналов: метрик, логов, трейсов и профилей. |
-| **Компонентная модель** | Конфигурация в виде направленного графа (DAG), где выход одного компонента — вход для другого. |
-| **Совместимость** | Полная поддержка экосистемы Prometheus, Loki, Tempo, Pyroscope и OpenTelemetry. |
-| **Обработка данных** | Мощные инструменты фильтрации, релейблинга (relabeling) и трансформации данных на лету. |
-| **Отладочный UI** | Встроенный веб-интерфейс (порт 12345 по умолчанию) для визуализации графа и инспекции состояния компонентов. |
-| **Масштабирование** | Поддержка кластерного режима для распределения нагрузки и обеспечения отказоустойчивости. |
+| **Унифицированный сбор** | Заменяет связку `node_exporter`, `promtail` и `otel-collector` одним бинарным файлом. |
+| **Компонентная модель (DAG)** | Каждый блок конфигурации — это компонент с входами (arguments) и выходами (exports). |
+| **Авто-инструментирование (eBPF)**| Сбор сетевых метрик и трейсов на уровне ядра Linux без изменения кода приложений. |
+| **Кластеризация** | Встроенный механизм распределения нагрузки между узлами Alloy для масштабирования сбора данных. |
+| **Native Prometheus** | Прямое использование кода Prometheus для сбора (scraping) и релейблинга (relabeling). |
+| **Debug UI** | Визуальный интерфейс на порту `12345` для анализа состояния графа и поиска ошибок в реальном времени. |
 
 ### Язык конфигурации River
 
-River (диалект HCL) ориентирован на связность компонентов. Это избавляет от дублирования настроек и делает поток данных (pipeline) прозрачным.
+River ориентирован на связность. Вместо глобальных настроек каждый компонент явно указывает, куда передавать данные через аргумент `forward_to`.
 
-**Пример конфигурации River (сбор логов в Loki):**
+**Пример архитектуры пайплайна (сбор логов):**
 
 ```hcl
-// Обнаружение локальных лог-файлов
+// 1. Обнаружение локальных лог-файлов
 discovery.file "local_files" {
   path_targets = [{
     __path__ = "/var/log/*.log",
   }]
 }
 
-// Чтение обнаруженных файлов
+// 2. Чтение обнаруженных файлов
 loki.source.file "local_logs" {
   targets = discovery.file.local_files.targets
   forward_to = [loki.write.to_loki_cloud.receiver]
 }
 
-// Отправка логов в Loki
+// 3. Отправка логов в Loki
 loki.write "to_loki_cloud" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
@@ -60,49 +62,51 @@ loki.write "to_loki_cloud" {
 }
 ```
 
-В этом примере: `discovery.file` находит файлы, `loki.source.file` их читает, а `loki.write` отправляет в Loki. Связь `forward_to` явно определяет конвейер обработки.
+### Высокая доступность и масштабирование
+
+Alloy поддерживает **Clustering** — режим, в котором несколько экземпляров агента объединяются в логический кластер. Это позволяет:
+- **Распределять цели сбора (Scrape Targets)**: каждый узел берет на себя часть нагрузки.
+- **Обеспечивать отказоустойчивость**: при падении одного узла его цели перераспределяются между оставшимися.
+- **Контролировать состояние**: через компонент `cluster.enabled = true` в конфигурации.
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Миграция на Grafana Alloy
+### Сценарий 1: Использование eBPF для сетевой наблюдаемости
 
-Alloy предоставляет инструменты для автоматической конвертации устаревших конфигураций. Команда `alloy convert` позволяет перевести существующие файлы в формат River:
+Компонент `otelcol.receiver.ebpf` позволяет получать данные о задержках и сетевых соединениях без внесения изменений в приложение.
 
-- **Promtail:** конвертация YAML-пайплайнов в компоненты `loki.process`.
-- **Grafana Agent:** миграция со статического режима в компонентную модель.
-- **Prometheus:** преобразование `scrape_configs` в `prometheus.scrape`.
-- **OTel Collector:** адаптация конфигураций OpenTelemetry для работы в среде Alloy.
+```hcl
+otelcol.receiver.ebpf "network_telemetry" {
+  network_interface = "eth0"
+  output {
+    traces  = [otelcol.exporter.otlp.tempo.input]
+    metrics = [otelcol.exporter.prometheus.mimir.input]
+  }
+}
+```
 
 ### Сценарий 2: Full-Stack Observability для PostgreSQL
 
-Комплексный пример сбора всех типов телеметрии от базы данных и приложения, их корреляция через `trace_id` и отправка в стек LGTM (Loki, Grafana, Tempo, Mimir).
-
-**Конфигурация Grafana Alloy (`config.alloy`):**
+Комплексный пример сбора всех сигналов от БД и приложения, их корреляция через `trace_id`.
 
 ```hcl
-// --- 1. Сбор трейсов (Tracing) ---
+// --- 1. Сбор трейсов ---
 otelcol.receiver.otlp "traces_receiver" {
-  grpc {
-    endpoint = "0.0.0.0:4317"
-  }
-  http {
-    endpoint = "0.0.0.0:4318"
-  }
+  grpc { endpoint = "0.0.0.0:4317" }
   output { traces = [otelcol.exporter.otlp.traces_exporter.input] }
 }
 
 otelcol.exporter.otlp "traces_exporter" {
-  client {
-    endpoint = "tempo:4317"
-    tls { insecure = true }
-  }
+  client { endpoint = "tempo:4317"; tls { insecure = true } }
 }
 
-// --- 2. Сбор логов (Logging) ---
+// --- 2. Сбор логов с извлечением trace_id ---
 discovery.file "log_files" {
   path_targets = [{
     __path__ = "/var/lib/postgresql/data/log/postgresql.log",
-    "host" = "postgresql", "job" = "postgres-logs",
+    "job" = "postgres-logs",
   }]
 }
 
@@ -112,10 +116,6 @@ loki.source.file "read_logs" {
 }
 
 loki.process "add_trace_id" {
-  stage.match {
-    selector = `{job="postgres-logs"}`
-    stages = [{ pipeline_name = "extract_trace_id", expression = ".*traceparent.*" }]
-  }
   stage.regex {
     expression = ".*traceparent='00-(?P<trace_id>[a-f0-9]{32})-[a-f0-9]{16}-01'.*"
     source     = "log_line"
@@ -131,53 +131,57 @@ loki.write "loki_writer" {
   endpoint { url = "http://loki:3100/loki/api/v1/push" }
 }
 
-// --- 3. Сбор метрик (Metrics) ---
-prometheus.scrape "postgres_exporter_scrape" {
-  targets = [{
-    "__address__" = "postgres_exporter:9187",
-    "job" = "postgres-metrics",
-  }]
-  forward_to = [prometheus.remote_write.metrics_writer.receiver]
+// --- 3. Сбор метрик ---
+prometheus.scrape "postgres_metrics" {
+  targets = [{ "__address__" = "postgres_exporter:9187", "job" = "postgres" }]
+  forward_to = [prometheus.remote_write.mimir.receiver]
 }
 
-prometheus.remote_write "metrics_writer" {
+prometheus.remote_write "mimir" {
   endpoint { url = "http://mimir:9009/api/v1/push" }
 }
 ```
 
-**Логика работы:**
-1. **Трейсы:** принимаются по протоколу OTLP и экспортируются в Tempo.
-2. **Логи:** читаются с диска, парсятся регулярным выражением для извлечения `trace_id`, после чего отправляются в Loki с прикрепленным ID для сквозной навигации.
-3. **Метрики:** собираются с экспортера и отправляются в Mimir через Remote Write.
+### Сценарий 3: Миграция с помощью встроенного конвертера
+
+Alloy включает инструменты для быстрого перехода с устаревших агентов.
+
+1. **Конвертация:**
+   ```bash
+   alloy convert --source-format=promtail --output=config.alloy promtail-config.yaml
+   ```
+2. **Проверка:** Запустите Alloy с флагом `--dry-run`, чтобы убедиться в валидности графа перед деплоем.
+
+---
 
 ## Дополнительная информация
 
 ### Сравнение Alloy и OpenTelemetry Collector
 
-| Характеристика | Grafana Alloy | OpenTelemetry Collector |
+| Характеристика | Grafana Alloy | OTel Collector (Upstream) |
 | :--- | :--- | :--- |
-| **Язык конфигурации** | River (HCL) — динамический, DAG-ориентированный | YAML — статический |
-| **Библиотеки** | Нативный код Prometheus и Promtail | Сообщество/Contrib репозитории |
-| **Фокус** | Оптимизация под Grafana Cloud и LGTM Stack | Максимальная универсальность |
-| **Интерфейс** | Богатый UI для отладки графа | Ограниченная телеметрия самого коллектора |
+| **Язык** | River (Динамический граф) | YAML (Статический стек) |
+| **Сбор метрик** | Нативный код Prometheus (Scrape/Relabel) | `prometheusreceiver` (Legacy/Contrib) |
+| **Фокус** | Экосистема Grafana + OTel | Универсальный стандарт |
+| **Отладка** | Потоковая визуализация в UI | Текстовые логи и метрики |
 
 ### Преимущества и ограничения
 
 #### Преимущества
-- **Гибкость:** замена классических агентов (Promtail, Agent) одним бинарным файлом.
-- **Прозрачность:** отладочный UI позволяет видеть, на каком этапе «застряли» или отфильтровались данные.
-- **Современность:** нативная поддержка OTLP и профилирования (Pyroscope).
+- **Консолидация:** уменьшение количества агентов на хосте снижает нагрузку на CPU/RAM и упрощает патчинг.
+- **Прозрачность:** Debug UI позволяет мгновенно увидеть, почему метрика не дошла до хранилища (фильтрация или ошибка соединения).
+- **Готовность к будущему:** Alloy является фундаментом для технологий **Adaptive Metrics** и **Profiles-to-Traces**.
 
 #### Ограничения
-- **Кривая обучения:** River требует привыкания после YAML.
-- **Ресурсоемкость:** в сложных конфигурациях с большим количеством компонентов потребление памяти выше, чем у специализированных агентов.
+- **Порог входа:** River требует обучения и понимания принципов экспорта/импорта данных между компонентами.
+- **Потребление ресурсов:** в очень простых сценариях (только сбор логов) Alloy может быть тяжелее, чем Promtail.
 
 ### Актуальность и ссылки
 
-Информация актуальна на **июль 2026 года**. Основные направления развития Alloy: расширение поддержки eBPF для авто-инструментирования и углубленная интеграция с сервисными сетками (Service Mesh).
+Информация актуальна на **август 2026 года**. Основные направления развития: глубокая интеграция с **Grafana Alloy Operator** в Kubernetes и поддержка **OpenTelemetry Profiles**.
 
-- [Официальная документация Grafana Alloy](https://grafana.com/docs/alloy/latest/)
-- [Установка Alloy в Kubernetes](../Loki/loki_stack_setup/alloy_installation.md)
-- [Конвертер конфигураций](https://grafana.com/docs/alloy/latest/tasks/migrate/)
+- [Официальный репозиторий GitHub](https://github.com/grafana/alloy)
+- [Документация по компонентам River](https://grafana.com/docs/alloy/latest/reference/components/)
+- [Установка в Kubernetes](../Loki/loki_stack_setup/alloy_installation.md)
 
 **См. также:** [Обзор Grafana](./grafana_overview.md), [Источники данных](./grafana_datasources.md), [OpenTelemetry Collector](../OpenTelemetry/opentelemetry_overview.md).

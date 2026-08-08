@@ -2,146 +2,150 @@
 
 ## Определения
 
-**Firewalld** — это динамический менеджер межсетевого экрана (файрвола), используемый по умолчанию в дистрибутивах на базе RHEL (Red Hat Enterprise Linux) (CentOS, RHEL, Fedora, AlmaLinux, Rocky Linux). Он представляет собой высокоуровневую абстракцию над подсистемой **nftables** (или `iptables` в устаревших системах).
+**Firewalld** — это динамический менеджер межсетевого экрана, используемый по умолчанию в дистрибутивах на базе RHEL (CentOS Stream, RHEL, Fedora, AlmaLinux, Rocky Linux). Он представляет собой высокоуровневую абстракцию над подсистемой **nftables** (или `iptables` в устаревших системах).
 
-Основное отличие Firewalld от классических инструментов — возможность изменять конфигурацию без разрыва существующих соединений и полная поддержка концепции зон доверия.
+Основное отличие Firewalld от статических инструментов (например, `iptables-services`) — возможность изменять конфигурацию без перезагрузки всей службы и разрыва существующих соединений, а также полная поддержка концепции зон доверия.
 
 ## Основные концепции
 
 ### Зоны (Zones)
 
-Зоны определяют уровень доверия к входящему трафику на основе сетевого интерфейса или IP (Internet Protocol)-адреса источника. Каждый интерфейс может принадлежать только одной зоне.
+Зоны определяют уровень доверия к входящему трафику на основе сетевого интерфейса или IP-адреса источника. Каждый интерфейс может принадлежать только одной зоне.
 
 | Зона | Уровень доверия | Описание |
 | :--- | :--- | :--- |
 | `drop` | Нулевой | Все входящие пакеты отбрасываются без ответа (`DROP`). |
-| `block` | Низкий | Входящий трафик отклоняется с ICMP (Internet Control Message Protocol)-ответом (`REJECT`). |
+| `block` | Низкий | Входящий трафик отклоняется с ICMP-ответом (`REJECT`). |
 | `public` | Низкий | **Зона по умолчанию.** Доверяются только выбранные сервисы. |
 | `external` | Средний | Для внешних сетей с включенным **Masquerading (NAT)**. |
 | `internal` | Высокий | Для внутренних сетей. Доверяются большинство типовых сервисов. |
+| `dmz` | Средний | Для компьютеров в демилитаризованной зоне с ограниченным доступом. |
 | `trusted` | Максимальный | Разрешен весь сетевой трафик. |
 
 ### Сервисы (Services)
 
-Сервисы — это именованные наборы правил (портов и протоколов). Использование сервисов (например, `--add-service=http`) предпочтительнее прямого открытия портов, так как это упрощает аудит и поддержку.
+Сервисы — это XML-файлы с описанием портов и протоколов (хранятся в `/usr/lib/firewalld/services/`). Использование сервисов (например, `--add-service=http`) предпочтительнее прямого открытия портов, так как это упрощает аудит и перенос конфигурации.
 
 ### Объекты политик (Policy Objects)
 
-Новая концепция (введена в версиях 1.0+), позволяющая фильтровать трафик **между** зонами (Forwarding), а не только входящий трафик на хост. Это делает Firewalld полноценным инструментом для управления трафиком в контейнерах и виртуальных сетях.
+Концепция (введена в Firewalld 1.0+), позволяющая фильтровать трафик **между** зонами (Forwarding), а не только входящий трафик на сам хост. Это делает Firewalld эффективным инструментом для управления трафиком виртуальных машин, контейнеров и маршрутизации между интерфейсами.
 
 ### Режимы конфигурации
 
-1.  **Runtime (в процессе работы):** Правила применяются немедленно, но теряются после перезагрузки.
-2.  **Permanent (постоянный):** Правила сохраняются в XML (Extensible Markup Language)-файлах, но вступают в силу только после перезагрузки конфигурации (`--reload`).
+1.  **Runtime:** правила применяются немедленно к текущему состоянию ядра, но теряются после перезагрузки службы.
+2.  **Permanent:** правила сохраняются в конфигурационных файлах в `/etc/firewalld/`, но вступают в силу только после перезагрузки конфигурации (`--reload`) или использования флага `--immediate` вместе с `--permanent`.
 
 ## Практические сценарии
 
-### 1. Начальная настройка ("Безопасный старт")
+### 1. Начальная настройка («Безопасный старт»)
 
-**Задача:** Убедиться, что SSH (Secure Shell) доступен, установить зону по умолчанию и включить файрвол.
+**Задача:** убедиться в доступности SSH, установить зону по умолчанию и активировать защиту.
 
 ```bash
 # 1. Проверка текущего статуса
 firewall-cmd --state
-# → running
+# Результат: running
 
-# 2. Установка зоны по умолчанию (обычно public)
+# 2. Установка зоны по умолчанию
 firewall-cmd --set-default-zone=public
-# → success
+# Результат: success
 
-# 3. Разрешение SSH перед включением (если не разрешено)
+# 3. Разрешение SSH (постоянное правило с немедленным применением)
 firewall-cmd --permanent --add-service=ssh
 firewall-cmd --reload
-# → success
+# Результат: success
 
-# 4. Просмотр активных правил
+# 4. Просмотр активных правил в зоне
 firewall-cmd --list-all
-# → public (active)
-# →   target: default
-# →   services: ssh dhcpv6-client
 ```
 
 ### 2. Управление портами и IPsets
 
-**IPsets** используются для высокопроизводительной фильтрации больших списков адресов (например, черных списков).
+**IPsets** используются для высокопроизводительной фильтрации списков адресов.
 
 ```bash
-# Создание IPset для черного списка
+# Создание IPset для списка блокировки
 firewall-cmd --permanent --new-ipset=blacklist --type=hash:net
-# → success
 
-# Добавление сети в список
+# Добавление подсети в список
 firewall-cmd --permanent --ipset=blacklist --add-entry=192.168.100.0/24
-# → success
 
-# Блокировка всего трафика из этого списка через Rich Rule
+# Применение блокировки через Rich Rule
 firewall-cmd --permanent --zone=public --add-rich-rule='rule source ipset="blacklist" drop'
 firewall-cmd --reload
-# → success
 ```
 
-### 3. Работа с Policy Objects (фильтрация между зонами)
+### 3. Межзонная фильтрация (Policy Objects)
 
-**Задача:** Разрешить трафик из внутренней зоны `internal` в публичную `public` только для HTTP (HyperText Transfer Protocol).
+**Задача:** разрешить трафик из зоны `internal` в зону `public` только для HTTP и HTTPS.
 
 ```bash
-# Создание политики
+# Создание объекта политики
 firewall-cmd --permanent --new-policy internal-to-public
-# → success
 
-# Настройка входа и выхода
+# Настройка направлений (Ingress — вход, Egress — выход)
 firewall-cmd --permanent --policy internal-to-public --add-ingress-zone internal
 firewall-cmd --permanent --policy internal-to-public --add-egress-zone public
 
-# Разрешение сервиса и установка цели
-firewall-cmd --permanent --policy internal-to-public --add-service=http
+# Разрешение трафика и установка цели (ACCEPT/REJECT/DROP)
+firewall-cmd --permanent --policy internal-to-public --add-service={http,https}
 firewall-cmd --permanent --policy internal-to-public --set-target=ACCEPT
 firewall-cmd --reload
-# → success
 ```
 
-### 4. Rich Rules (расширенные правила)
+### 4. Расширенные правила (Rich Rules)
+
+Rich Rules позволяют создавать сложные условия фильтрации в одну команду.
 
 ```bash
-# Ограничение частоты подключений по SSH (защита от брутфорса)
+# Ограничение частоты подключений к SSH (защита от перебора)
 firewall-cmd --permanent --add-rich-rule='rule service name="ssh" limit value="3/m" accept'
-# → success
 
-# Разрешить доступ к порту 8080 только для конкретной подсети
-firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.0.0/24" port port="8080" protocol="tcp" accept'
-# → success
+# Разрешить доступ к порту 8080 только для конкретного IP с логированием
+firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.0.50" port port="8080" protocol="tcp" log prefix="API_ACCESS " level="info" accept'
 ```
 
-### 5. NAT и Port Forwarding
+### 5. Режим блокировки (Lockdown Mode)
+
+Предотвращает изменение правил файрвола локальными приложениями (например, запущенными от имени root), если они не внесены в белый список (`lockdown-whitelist.xml`).
 
 ```bash
-# Включить Masquerading (NAT)
-firewall-cmd --permanent --zone=external --add-masquerade
-# → success
+# Включение режима блокировки
+firewall-cmd --lockdown-on
 
-# Проброс порта (DNAT): 8080 (внешний) → 192.168.1.10:80 (внутренний)
-firewall-cmd --permanent --zone=external --add-forward-port=port=8080:proto=tcp:toport=80:toaddr=192.168.1.10
-firewall-cmd --reload
-# → success
+# Проверка статуса
+firewall-cmd --query-lockdown
 ```
 
-### 6. Режим паники (Panic Mode)
+### 6. Логирование отброшенных пакетов
+
+По умолчанию Firewalld не логирует отброшенные пакеты (Deny/Drop).
 
 ```bash
-# Немедленно заблокировать ВЕСЬ входящий и исходящий трафик
-firewall-cmd --panic-on
+# Включить логирование только для пакетов, соответствующих политике deny
+firewall-cmd --set-log-denied=all
 
-# Отключить режим паники
-firewall-cmd --panic-off
+# Варианты: all, unicast, broadcast, multicast, off
 ```
 
 ## Дополнительная информация
 
-### Файлы конфигурации
+### Конфигурационные файлы
 
-- `/usr/lib/firewalld/` — системные настройки (не редактировать).
-- `/etc/firewalld/` — пользовательские настройки (имеют приоритет).
-- `/etc/firewalld/zones/` — XML-описания пользовательских зон.
+- `/usr/lib/firewalld/`: системные файлы по умолчанию (сервисы, зоны, ICMP-типы). Не редактировать.
+- `/etc/firewalld/`: пользовательские конфигурации. Имеют абсолютный приоритет.
+- `/etc/firewalld/firewalld.conf`: основной файл настроек (выбор бэкенда, логирование).
+
+### Интеграция с Fail2ban
+
+В дистрибутивах RHEL-семейства Fail2ban интегрируется с Firewalld через команду `firewall-cmd`.
+
+Для активации установите пакет `fail2ban-firewalld` и убедитесь, что в `jail.local` выбрано действие:
+`banaction = firewallcmd-ipset` (рекомендуется для производительности).
+
+### Прямой интерфейс (Direct Interface)
+
+Устаревший способ (legacy) вставки чистых правил `iptables`/`nftables`. Используется в исключительных случаях, когда возможностей зон и Rich Rules недостаточно. Рекомендуется избегать в пользу Policy Objects.
 
 ### Сравнение с другими инструментами
 
@@ -149,15 +153,12 @@ firewall-cmd --panic-off
 | :--- | :--- | :--- | :--- |
 | **firewalld** | Высокий (Зоны/Политики) | RHEL / Fedora | nftables |
 | **[ufw](./ufw.md)** | Высокий (Simple) | Ubuntu / Debian | nftables/iptables |
-| **[iptables](./iptables_basics.md)** | Низкий (Цепочки) | Универсальный | Netfilter |
-| **[nftables](./nftables/architecture_and_concepts.md)** | Низкий (Семейства) | Современный Linux | Netfilter |
+| **[iptables основы](./iptables_basics.md)** | Низкий (Цепочки) | Универсальный | Netfilter |
+| **[nftables](./nftables/practical_scenarios.md)** | Низкий (Семейства) | Современный Linux | Netfilter |
 
 ### Связанные темы
 
-- **[Обзор файрволов](./firewall_common.md)** — общие принципы и сравнение.
-- **[Сетевые зоны безопасности](../../../../Networking/Concepts/network_security_zones.md)** — теория зонирования.
-- **[NAT — Практические сценарии](../../../../Networking/Concepts/nat/practical_scenarios.md)** — детально о трансляции адресов.
-- **[Взаимодействие Docker и файрвола](../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)** — решение конфликтов.
-
----
-**Reliability Score: 10** (Подтверждено документацией Firewalld 1.2+ и стандартами RHEL 9)
+- **[Обзор файрволов](./firewall_common.md)** — общие принципы и сравнение инструментов.
+- **[Сетевые зоны безопасности](../../../../Networking/Concepts/network_security_zones.md)** — теория сегментации сетей.
+- **[NAT — Практические сценарии](../../../../Networking/Concepts/nat/practical_scenarios.md)** — глубокое погружение в трансляцию адресов.
+- **[Взаимодействие Docker и файрвола](../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)** — решение конфликтов с контейнеризацией.

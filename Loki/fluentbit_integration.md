@@ -39,6 +39,68 @@ Loki индексирует только метаданные (лейблы), а
 | **Интеграция с Loki** | Через плагин вывода | Нативный компонент `loki.write` |
 | **Рекомендация** | Стандарт для систем, где критично минимальное потребление RAM | Рекомендуемый выбор для современных LGTM-стеков (Loki, Grafana, Tempo, Mimir) |
 
+## Безопасность и права доступа (RBAC)
+
+Для работы Fluent Bit в Kubernetes требуются права на чтение логов и взаимодействие с API-сервером для получения метаданных.
+
+### ClusterRole и ServiceAccount
+
+**Пример манифеста:**
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: logging
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit-read
+rules:
+- apiGroups: [""]
+  resources: ["pods", "namespaces"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit-read
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: logging
+```
+
+## Мониторинг и проверка состояния
+
+Fluent Bit предоставляет встроенные метрики в формате Prometheus для мониторинга производительности и здоровья конвейеров.
+
+### Настройка HTTP-сервера метрик
+
+```ini
+[SERVICE]
+    HTTP_Server  On
+    HTTP_Listen  0.0.0.0
+    HTTP_Port    2020
+    Health_Check On
+```
+
+### Ключевые метрики
+
+| Метрика | Описание |
+| :--- | :--- |
+| `fluentbit_input_records_total` | Общее количество прочитанных записей. |
+| `fluentbit_output_errors_total` | Количество ошибок при отправке в Loki (4xx, 5xx). |
+| `fluentbit_output_retries_total`| Количество повторных попыток отправки. |
+| `fluentbit_storage_layer_chunks`| Количество чанков в хранилище (Backpressure). |
+
 ## Практические сценарии
 
 ### Сценарий 1: Сбор логов Kubernetes с поддержкой Loki 3.x
@@ -83,14 +145,42 @@ Loki индексирует только метаданные (лейблы), а
     Port                   80
     # Лейблы определяют индекс (низкая кардинальность)
     Labels                 job=fluent-bit, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name']
-    # Структурированные метаданные для поиска (не индексируются)
+    # Структурированные метаданные (Loki 3.x) — не индексируются, но доступны для быстрого поиска
     Structured_Metadata    container=$kubernetes['container_name'], node=$kubernetes['host']
     Auto_Kubernetes_Labels On
     Line_Format            json
     LogLevel               info
 ```
 
-### Сценарий 2: Обработка системных журналов (Journald)
+### Сценарий 2: Мультиарендность (Multi-tenancy)
+
+Маршрутизация логов в разные тенанты Loki на основе пространства имен Kubernetes.
+
+```ini
+[FILTER]
+    Name    rewrite_tag
+    Match   kube.*
+    Rule    $kubernetes['namespace_name'] ^(prod)$  tenant.prod.kube.$TAG false
+    Rule    $kubernetes['namespace_name'] ^(dev)$   tenant.dev.kube.$TAG  false
+
+[OUTPUT]
+    Name     loki
+    Match    tenant.prod.*
+    Host     loki-gateway.logging.svc.cluster.local
+    Port     80
+    TenantID team-production
+    Labels   env=prod, namespace=$kubernetes['namespace_name']
+
+[OUTPUT]
+    Name     loki
+    Match    tenant.dev.*
+    Host     loki-gateway.logging.svc.cluster.local
+    Port     80
+    TenantID team-development
+    Labels   env=dev, namespace=$kubernetes['namespace_name']
+```
+
+### Сценарий 3: Обработка системных журналов (Journald)
 
 Сбор логов операционной системы с нод Kubernetes.
 
@@ -109,7 +199,7 @@ Loki индексирует только метаданные (лейблы), а
     Labels job=systemd, unit=$_SYSTEMD_UNIT, hostname=$hostname
 ```
 
-### Сценарий 3: Production-конфигурация для Linux-сервера (без K8s)
+### Сценарий 4: Production-конфигурация для Linux-сервера (без K8s)
 
 Пример конфигурации, собирающей системный журнал и логи Nginx с маскированием чувствительных данных.
 

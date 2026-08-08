@@ -2,152 +2,152 @@
 
 ## Определения
 
-**YAML** — язык сериализации данных, используемый в Kubernetes для описания конфигурации объектов.
+**YAML** — человекочитаемый язык сериализации данных, являющийся стандартом де-факто для описания конфигураций в Kubernetes.
 
-**Манифест** — декларативный файл (обычно в формате YAML), описывающий желаемое состояние объекта Kubernetes. Манифесты являются основой подхода IaC.
+**Манифест** — декларативное описание желаемого состояния объекта. Манифесты позволяют реализовать подход **Infrastructure as Code (IaC)**, обеспечивая версионность и воспроизводимость инфраструктуры.
 
-**Immutable tag** — фиксированная версия образа container в реестре (например, `1.28.0`), которая гарантирует, что при каждом скачивании будет получено идентичное содержимое.
+**Immutable tag** — фиксированная версия образа (например, `1.31.0` или SHA-хеш), которая гарантирует идентичность содержимого при каждом скачивании.
+
+**Graceful Shutdown** — процесс корректного завершения работы приложения, при котором оно успевает обработать текущие запросы и закрыть соединения до принудительной остановки.
 
 ---
 
 ## Базовые концепции
 
-### Декларативный подход и контроль версий
+### Декларативный подход и IaC
 
-Всегда отдавайте предпочтение декларативным манифестам перед императивными командами (например, `kubectl run`).
+Всегда используйте YAML-манифесты вместо императивных команд (`kubectl run`, `kubectl expose`).
 
-| Преимущество | Описание |
-| :--- | :--- |
-| **Воспроизводимость** | Файлы можно хранить в Git, что позволяет отслеживать историю изменений и быстро восстанавливать окружение. |
-| **Проверка (Linting)** | Манифесты можно проверять автоматизированными инструментами на ошибки безопасности и соответствие стандартам до деплоя. |
-| **Командная работа** | YAML файлы служат документацией и позволяют проводить аудит изменений через Merge Requests. |
+*   **Контроль версий:** Храните манифесты в Git для отслеживания изменений и возможности отката.
+*   **Автоматизация:** Используйте CI/CD для применения изменений (`kubectl apply`).
+*   **Валидация:** Проверяйте манифесты инструментами линтинга (например, `kube-linter` или `datree`) перед деплоем.
 
 ### Управление образами
 
-**Избегайте использования тега `:latest`.**
+1.  **Избегайте `:latest`:** Этот тег непредсказуем. Используйте конкретные версии (SemVer) или SHA-хеш образа.
+2.  **ImagePullPolicy:** 
+    *   Используйте `IfNotPresent` для фиксированных тегов в Production (ускоряет запуск и экономит трафик).
+    *   Используйте `Always` для тега `:latest` (только в Dev/Stage).
+3.  **Приватные реестры:** Всегда настраивайте `imagePullSecrets` для доступа к защищенным хранилищам образов.
 
-Тег `:latest` является "плавающим". Если в реестре будет опубликован новый образ с этим же тегом, Pod в кластере могут оказаться с разными версиями кода после перезапуска, что затрудняет отладку и нарушает стабильность.
+### Управление ресурсами и QoS
 
-**Рекомендация:** используйте конкретные версии (семантическое версионирование) или хэш образа (SHA256).
+Явное указание ресурсов критично для стабильности кластера:
 
-```yaml
-# Плохо: непредсказуемое поведение
-image: nginx:latest
+*   **Requests:** Минимальный гарантированный объем ресурсов. Используется планировщиком (Scheduler).
+*   **Limits:** Максимальный порог потребления. Превышение лимита памяти ведет к `OOMKilled`.
+*   **Sidecars:** Всегда указывайте ресурсы для вспомогательных контейнеров (логирование, прокси), чтобы они не вытеснили основное приложение.
 
-# Хорошо: гарантированная версия
-image: nginx:1.28.0
-```
+Подробнее о классах обслуживания см. в [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md).
 
-### Управление ресурсами (Requests и Limits)
+### Проверки состояния (Probes)
 
-Для каждого container необходимо явно указывать запросы (`requests`) и лимиты (`limits`) ресурсов. Это критично для стабильности Node и корректной работы планировщика.
+1.  **livenessProbe:** Перезапускает контейнер при зависании процесса.
+2.  **readinessProbe:** Управляет включением Pod в Service (маршрутизация трафика).
+3.  **startupProbe:** Защищает медленно запускающиеся приложения от преждевременного убийства liveness-пробой.
+4.  **Best Practice:** Используйте разные эндпоинты для разных проб (например, `/healthz` для liveness и `/ready` для readiness).
 
-* **Requests:** минимальный объем ресурсов, гарантируемый Kubernetes. Используется планировщиком для поиска подходящей Node.
-* **Limits:** максимальный объем ресурсов, который container может потребить.
+Детальная настройка в [Пробы в Kubernetes](../probes.md).
 
-Подробное описание и влияние на классы обслуживания см. в [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md).
+### Безопасность (Security Context)
 
-### Пробы состояния (Probes)
+Применяйте принцип наименьших привилегий (Least Privilege) через `securityContext`:
 
-Автоматизация контроля работоспособности приложения через пробы позволяет Kubernetes самостоятельно принимать решения о перезапуске или маршрутизации трафика.
+*   **runAsNonRoot: true:** Запрещает запуск от суперпользователя.
+*   **allowPrivilegeEscalation: false:** Блокирует повышение прав процессами.
+*   **readOnlyRootFilesystem: true:** Делает ФС контейнера неизменяемой (используйте `emptyDir` для `/tmp`).
+*   **capabilities: drop: ["ALL"]:** Отключает все потенциально опасные системные вызовы Linux.
 
-* **livenessProbe:** проверяет, не зависло ли приложение.
-* **readinessProbe:** определяет, готово ли приложение принимать трафик.
-* **startupProbe:** используется для приложений с длительным временем запуска.
+Параметры и профили PSA описаны в [Security Context в Kubernetes](../../Security/pod_security_context.md).
 
-Детальная настройка и параметры приведены в [Пробы в Kubernetes](../probes.md).
+### Метаданные (Labels и Annotations)
 
-### Метаданные и маркировка
+*   **Labels (Метки):** Используйте для поиска и выбора объектов (Selectors). Применяйте стандартные метки (`app.kubernetes.io/name`, `app.kubernetes.io/version`).
+*   **Annotations (Аннотации):** Используйте для хранения метаданных, не участвующих в выборе объектов (контакты, ссылки, конфигурации для Ingress).
+*   **Best Practice:** Используйте аннотации для хранения хеша конфигурации — это позволяет автоматически перезапускать Pod при изменении ConfigMap.
 
-Используйте стандартизированные метки (Labels) для идентификации и группировки объектов.
+См. подробнее: [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
 
-**Рекомендуемые метки (согласно стандартам Kubernetes):**
+### Жизненный цикл и доступность
 
-* `app.kubernetes.io/name`: название приложения.
-* `app.kubernetes.io/instance`: уникальное имя инстанса.
-* `app.kubernetes.io/version`: версия приложения.
-* `app.kubernetes.io/managed-by`: инструмент управления (например, `Helm`).
-
-Полный перечень и правила именования см. в [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
-
-### Безопасность
-
-Ограничивайте права container через `securityContext`. Принципы минимизации привилегий:
-
-* Запрет запуска от пользователя `root` (`runAsNonRoot: true`).
-* Использование только необходимых capabilities (рекомендуется `drop: ["ALL"]`).
-* Запрет повышения привилегий (`allowPrivilegeEscalation: false`).
-* Использование файловой системы только для чтения (`readOnlyRootFilesystem: true`).
-
-Детальное описание всех параметров см. в **[Security Context в Kubernetes](../../Security/pod_security_context.md)**.
+1.  **terminationGracePeriodSeconds:** Настраивайте под время завершения вашего приложения (по умолчанию 30с). Для БД может потребоваться 60-120с.
+2.  **preStop Hook:** Используйте для подготовки к выключению (например, `sleep 5` для завершения обработки сетевых пакетов перед остановкой).
+3.  **Pod Disruption Budget (PDB):** Всегда создавайте PDB для Production-нагрузок, чтобы гарантировать доступность при обслуживании узлов. Подробнее: [PDB в Kubernetes](../../Autoscaling/pod_disruption_budget.md).
+4.  **Native Sidecars (v1.29+):** Оформляйте вспомогательные сервисы (прокси, агенты) как `initContainers` с `restartPolicy: Always`. Это гарантирует их готовность до старта приложения.
 
 ---
 
 ## Практические сценарии
 
-### Пример 1: Манифест Pod с применением лучших практик
-
-Пример описания Pod, готового к использованию в production:
+### Пример 1: Манифест Pod уровня Production
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: web-app-prod
+  name: production-ready-pod
   labels:
-    app.kubernetes.io/name: frontend
-    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/name: web-api
+    app.kubernetes.io/version: "1.31.0"
 spec:
+  # Native Sidecar (v1.29+)
+  initContainers:
+  - name: cloud-sql-proxy
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.12.0
+    restartPolicy: Always
+    resources:
+      requests: { cpu: "50m", memory: "64Mi" }
   containers:
-  - name: nginx
-    image: nginx:1.28.0
-    ports:
-    - containerPort: 80
+  - name: app
+    image: my-company.com/web-api:1.31.0
+    imagePullPolicy: IfNotPresent
     resources:
       requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "250m"
+        memory: "512Mi"
       limits:
-        cpu: "200m"
-        memory: "256Mi"
+        cpu: "500m"
+        memory: "1Gi"
+    ports:
+    - containerPort: 8080
     livenessProbe:
-      httpGet:
-        path: /healthz
-        port: 80
+      httpGet: { path: /healthz, port: 8080 }
       initialDelaySeconds: 15
-      periodSeconds: 20
     readinessProbe:
-      httpGet:
-        path: /ready
-        port: 80
-      initialDelaySeconds: 5
+      httpGet: { path: /ready, port: 8080 }
     securityContext:
-      allowPrivilegeEscalation: false
       runAsNonRoot: true
-      runAsUser: 1000
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+    lifecycle:
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "sleep 10"]
+  terminationGracePeriodSeconds: 45
 ```
 
-### Пример 2: Настройка для приложений с долгим запуском
+### Пример 2: Использование Projected Volumes для конфигураций
 
-Использование `startupProbe` позволяет избежать преждевременного убийства приложения пробой `livenessProbe` во время инициализации.
+Лучшая практика объединения секретов и конфигов без захламления манифеста:
 
 ```yaml
-spec:
-  containers:
-  - name: heavy-app
-    image: my-app:2.1.0
-    startupProbe:
-      httpGet:
-        path: /init
-        port: 8080
-      failureThreshold: 30 # Даем приложению до 5 минут на старт (30 * 10 сек)
-      periodSeconds: 10
-    livenessProbe:
-      httpGet:
-        path: /healthz
-        port: 8080
-      periodSeconds: 10
+volumes:
+- name: all-configs
+  projected:
+    sources:
+    - configMap:
+        name: app-config
+    - secret:
+        name: app-credentials
+    - downwardAPI:
+        items:
+          - path: "pod-info"
+            fieldRef:
+              fieldPath: metadata.name
 ```
+Подробнее: [Projected Volumes](./volume_types/projected_volumes.md).
 
 ---
 
@@ -155,8 +155,9 @@ spec:
 
 **Связанные темы:**
 
-* [Пробы в Kubernetes](../probes.md)
-* [QoS и управление ресурсами в Kubernetes](../../Scheduling/qos_limit_and_requests.md)
-* [Security Context в Kubernetes](../../Security/pod_security_context.md)
-* [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md)
-* [Обзор объектов Deployment](../Deployment/index.md)
+* [Пробы в Kubernetes](../probes.md) — детальный разбор Liveness/Readiness/Startup.
+* [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md) — как лимиты влияют на приоритет Pod.
+* [Security Context в Kubernetes](../../Security/pod_security_context.md) — настройки PSA и изоляции.
+* [Бюджет прерывания подов (PDB)](../../Autoscaling/pod_disruption_budget.md) — управление доступностью.
+* [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md) — стандарты именования.
+* [Жизненный цикл Pod](./pod_lifecycle_and_state.md) — подробности фаз и Graceful Shutdown.

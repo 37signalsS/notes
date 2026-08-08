@@ -1,27 +1,33 @@
 # Kustomize — Структура проекта и синтаксис
 
+В данном разделе рассматриваются правила организации файлов в Kustomize-проектах, синтаксис управляющего манифеста `kustomization.yaml` и внутренняя логика сборки ресурсов.
+
 ## 1. Определения
 
-**База (Base)** — директория с набором стандартных Kubernetes-манифестов и файлом `kustomization.yaml`, которые не зависят от конкретного окружения. Базовый слой представляет собой фундамент конфигурации, который остается неизменным («чистым») для всех оверлеев.
+**База (Base)** — директория, содержащая набор стандартных Kubernetes-манифестов и файл `kustomization.yaml`. База представляет собой «чистый» фундамент конфигурации, который остается неизменным для всех производных оверлеев.
 
-**Наложение (Overlay)** — директория, ссылающаяся на базовый слой (или другой overlay) через блок `resources` и применяющая трансформации посредством патчей, генераторов и метаданных для конкретной среды (Development, Staging, Production).
+**Наложение (Overlay)** — директория, ссылающаяся на базу (или другое наложение) через блок `resources` и применяющая трансформации для конкретной среды (Development, Staging, Production).
 
-**kustomization.yaml** — основной конфигурационный манифест, описывающий все ресурсы, трансформации, генераторы и патчи для данной директории. Если этот файл отсутствует, Kustomize игнорирует директорию. Это «точка сборки», определяющая финальный вид манифеста.
+**kustomization.yaml** — основной конфигурационный манифест, описывающий ресурсы, трансформации, генераторы и патчи. Наличие этого файла в директории является обязательным для признания её Kustomize-проектом.
+
+**Компоненты (Components)** — (v4+) механизм для создания переиспользуемых фрагментов конфигурации, которые могут содержать ресурсы и патчи, позволяющий горизонтальное подмешивание логики.
+
+**Валидаторы (Validators)** — (v5+) механизмы проверки итоговых манифестов на соответствие правилам (например, линтинг или проверка безопасности) перед завершением процесса сборки.
 
 ## 2. Основные концепции
 
 ### Типичная структура проекта
 
-Использование Kustomize предполагает разделение общей логики и специфических настроек. Рекомендуемая структура выглядит следующим образом:
+Для минимизации дублирования YAML-кода рекомендуется использовать иерархическую структуру «Base-Overlay»:
 
-```
+```text
 kubernetes/
-├── base/                   # Базовая конфигурация
+├── base/                   # Базовая конфигурация (общая логика)
 │   ├── deployment.yaml
 │   ├── service.yaml
 │   ├── configmap.yaml
 │   └── kustomization.yaml
-└── overlays/               # Окружения
+└── overlays/               # Специфика окружений
     ├── staging/
     │   ├── kustomization.yaml
     │   ├── replica-patch.yaml
@@ -32,49 +38,46 @@ kubernetes/
         └── resource-limits.yaml
 ```
 
-### Полная структура kustomization.yaml
+### Полная структура kustomization.yaml (v5.x)
 
-Ниже приведен пример файла со всеми ключевыми полями. Обратите внимание на использование унифицированного блока `patches` и механизма `replacements`.
+Пример файла, демонстрирующий современные возможности и поля API `kustomize.config.k8s.io/v1beta1`.
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# --- Ресурсы ---
+# --- 1. Ресурсы (Источники) ---
 resources:
   - deployment.yaml
   - service.yaml
-  - configmap.yaml
-  - ../base                    # Относительная ссылка на базовый слой
-  - https://github.com/org/repo//path?ref=v1.0 # Удаленный ресурс (Kustomize 4.0+)
+  - ../base                    # Локальная директория
+  - https://github.com/org/repo//path?ref=v1.0 # Удаленный ресурс
 
-# --- Трансформации метаданных ---
-namespace: production
-namePrefix: prod-
-nameSuffix: -v1
-commonLabels:
+# --- 2. Трансформации метаданных ---
+namespace: production           # Установка Namespace для всех ресурсов
+namePrefix: prod-               # Префикс к именам
+nameSuffix: -v1                 # Суффикс к именам
+commonLabels:                   # Метки для всех ресурсов и селекторов
   app: myapp
   managed-by: kustomize
-commonAnnotations:
+commonAnnotations:              # Аннотации для всех ресурсов
   description: "Production deployment"
 
-# --- Генераторы (подробнее в Продвинутых возможностях) ---
+# --- 3. Генераторы (Генерация на лету) ---
 configMapGenerator:
   - name: app-config
     literals:
       - KEY=value
-    # files:
-    #   - nginx.conf
-    # envs:
-    #   - config.env
-
+    files:
+      - nginx.conf
 secretGenerator:
   - name: app-secret
-    literals:
-      - username=admin
-      - password=secret
+    type: kubernetes.io/tls
+    files:
+      - tls.crt
+      - tls.key
 
-# --- Патчи (Унифицированный синтаксис) ---
+# --- 4. Модификации (Патчи и Образы) ---
 patches:
   - path: replica-patch.yaml
   - target:
@@ -84,27 +87,13 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 3
-
-# --- Образы (Images) ---
 images:
   - name: myregistry/myapp
     newTag: v1.2.0
-    newName: newregistry/newapp
 
-# --- Опции генераторов ---
-generatorOptions:
-  disableNameSuffixHash: false
-  labels:
-    generated-by: kustomize
-  annotations:
-    managed: "true"
-
-# --- Компоненты ---
+# --- 5. Компоненты и Замены ---
 components:
   - ../components/monitoring
-  - ../components/logging
-
-# --- Замены (Replacements) — современная альтернатива vars ---
 replacements:
   - source:
       kind: ConfigMap
@@ -116,231 +105,120 @@ replacements:
           name: myapp
         fieldPaths:
           - spec.template.metadata.labels.version
+
+# --- 6. Валидация и Опции ---
+validators:
+  - path: security-check.yaml
+generatorOptions:
+  disableNameSuffixHash: false
+  labels:
+    generated-by: kustomize
 ```
 
-### Описание ключевых полей
+### Порядок выполнения трансформаций (Build Pipeline)
 
-| Поле | Назначение | Пример |
-| :--- | :--- | :--- |
-| `resources` | Список YAML-файлов, директорий или URL | `deployment.yaml`, `../base` |
-| `patches` | Список файлов исправлений для применения (унифицированный блок) | См. [Наложения и патчи](./kustomize_overlays_and_patches.md) |
-| `configMapGenerator` | Инструкции по созданию ConfigMaps | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
-| `secretGenerator` | Инструкции по созданию Secret | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
-| `namespace` | Пространство имен для всех ресурсов | `production` |
-| `namePrefix` / `nameSuffix` | Префикс/суффикс к именам всех ресурсов | `prod-`, `-v1` |
-| `commonLabels` | Метки для всех ресурсов и их селекторов | `app: myapp` |
-| `commonAnnotations` | Аннотации для всех ресурсов | `managed-by: kustomize` |
-| `images` | Переопределение имени/тега/хеша образа | `newTag: v1.2.0` |
-| `generatorOptions` | Глобальные настройки генераторов | `disableNameSuffixHash: true` |
-| `components` | Использование переиспользуемых модулей | `../components/monitoring` |
-| `replacements` | Копирование данных между полями ресурсов | Замена устаревших `vars` |
+Kustomize применяет изменения в строго определенном порядке, независимо от последовательности полей в файле:
 
----
+1.  **resources** — чтение и парсинг исходных файлов.
+2.  **generators** — динамическое создание ConfigMap и Secret.
+3.  **transformers (metadata)** — установка `namespace`, `namePrefix`, `nameSuffix`, `commonLabels`.
+4.  **transformers (content)** — применение `patches`, `images`, `replacements`.
+5.  **validators** — финальная проверка ресурсов перед выводом.
 
-### Советы для собеседования
+### Автоматическая сортировка ресурсов
 
-**Вопрос:** Какова основная цель файла `kustomization.yaml` в Kustomize?
-**Ответ:** Файл `kustomization.yaml` — это сердце Kustomize; он определяет, как генерируются финальные манифесты Kubernetes. Его основная цель — выступать в роли декларативного руководства по эксплуатации. Он определяет список базовых файлов ресурсов, патчи, которые к ним применяются, и генераторы для создания ConfigMaps и Secrets. Изменяя этот файл, можно управлять сложными настройками для разных сред, не затрагивая исходные базовые YAML-файлы.
+Kustomize автоматически сортирует ресурсы в итоговом манифесте для обеспечения корректности их создания в Kubernetes (на основе GVK):
 
-### Ресурсы базового слоя (Base)
-
-Поддерживаемые типы источников в блоке `resources`:
-
-| Тип | Пример | Примечание |
-| :--- | :--- | :--- |
-| Локальный файл | `deployment.yaml` | Путь относительно `kustomization.yaml` |
-| Относительный путь | `../base` | Ссылка на локальную директорию с манифестом |
-| Удаленный URL | `https://example.com/k8s/res.yaml` | Прямая ссылка на YAML-файл |
-| Git URL | `github.com/org/repo//path?ref=v1` | Параметр `?ref=` для веток/тегов |
-
-### Практика: base/kustomization.yaml
-
-Базовый слой должен быть самодостаточным и содержать только общие метаданные.
-
-```yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-resources:
-  - deployment.yaml
-  - service.yaml
-  - configmap.yaml
-
-commonLabels:
-  app: myapp
-  managed-by: kustomize
-```
-
-**Важное правило:** Базовый слой не должен содержать директивы `namespace`, `namePrefix` и `nameSuffix`. Эти трансформации предназначены исключительно для уровня overlays, чтобы не ограничивать гибкость использования базы.
+1.  **Namespace** (всегда первый).
+2.  **ResourceQuota, LimitRange**.
+3.  **CustomResourceDefinition (CRD)**.
+4.  **ServiceAccount, RBAC (Roles, Bindings)**.
+5.  **ConfigMap, Secret** (зависимости для подов).
+6.  **Service**.
+7.  **Workloads** (Deployment, StatefulSet, DaemonSet).
+8.  **Ingress, Webhooks**.
 
 ## 3. Практические сценарии
 
-### 3.1. Полный пример базового слоя
+### 3.1. Типы источников в блоке resources
 
-**base/deployment.yaml:**
+| Тип | Синтаксис | Примечание |
+| :--- | :--- | :--- |
+| **Локальный файл** | `service.yaml` | Путь относительно `kustomization.yaml`. |
+| **Директория** | `../base` | Ссылка на папку с `kustomization.yaml`. |
+| **Удаленный URL** | `https://host/res.yaml` | Прямое скачивание YAML-файла. |
+| **Git URL** | `github.com/org/repo//path?ref=v1` | `//` разделяет корень репо и путь к папке. |
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: myapp
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: myapp
-  template:
-    metadata:
-      labels:
-        app: myapp
-    spec:
-      containers:
-      - name: myapp
-        image: myregistry/myapp:latest
-        ports:
-        - containerPort: 8080
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
-            cpu: 200m
-            memory: 256Mi
-```
+### 3.2. Правила оформления базового слоя (Base)
 
-**base/service.yaml:**
+Базовый слой должен быть самодостаточным и максимально гибким:
+- **Никаких Namespace:** Не указывайте `namespace` в базе; это ограничит возможность деплоя базы в разные пространства имен оверлеями.
+- **Отсутствие префиксов:** `namePrefix` и `nameSuffix` предназначены исключительно для уровня overlays.
+- **Самодостаточность:** База должна успешно собираться командой `kustomize build .`.
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: myapp
-spec:
-  selector:
-    app: myapp
-  ports:
-  - port: 80
-    targetPort: 8080
-  type: ClusterIP
-```
-
-**base/kustomization.yaml:**
-
+**Пример base/kustomization.yaml:**
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 resources:
   - deployment.yaml
   - service.yaml
-
 commonLabels:
   app: myapp
-  managed-by: kustomize
 ```
 
-### 3.2. Базовый overlay
+### 3.3. Remote base из Git с версионированием
 
-Минимальный слой наложения (overlay) для наследования конфигурации:
-
-```yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-namespace: staging
-namePrefix: staging-
-
-resources:
-  - ../../base
-
-commonLabels:
-  environment: staging
-```
-
-Более сложные примеры для staging и production с использованием патчей, генераторов и переопределением образов описаны в разделе [Наложения и патчи](./kustomize_overlays_and_patches.md).
-
-### 3.3. Remote base из Git
-
-Использование удаленной базы позволяет централизованно управлять манифестами для множества команд.
+Использование удаленной базы позволяет централизованно управлять манифестами для всей организации.
 
 ```yaml
 # overlays/production/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
 resources:
-  - github.com/org/infrastructure//k8s/base?ref=v2.0.0
-
+  # Фиксация версии через ?ref= критически важна для стабильности CD
+  - github.com/my-org/infra-base//k8s/base?ref=v2.1.0
 namespace: production
 namePrefix: prod-
-
-patches:
-  - path: custom-patch.yaml
 ```
 
 ### 3.4. Использование компонентов (Components)
 
-Компоненты (стабильны в актуальных версиях) позволяют «подмешивать» опциональную функциональность (например, конфигурацию Prometheus или лог-агентов).
+Позволяет «подмешивать» опциональную функциональность (например, конфигурацию мониторинга) горизонтально.
 
 ```yaml
 # kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-resources:
-  - ../../base
-
 components:
   - ../components/prometheus
-  - ../components/monitoring
+  - ../components/logging
 ```
-
-Каждый компонент — это директория с `kustomization.yaml`, где указан `kind: Component`.
 
 ## 4. Дополнительная информация
 
-### Порядок применения трансформаций и автоматическая сортировка
-
-Kustomize применяет изменения в строго определенном порядке, независимо от последовательности полей в файле:
-
-1. **resources** — чтение исходных файлов.
-2. **generators** — создание ConfigMap и Secret.
-3. **transformers (metadata)** — установка `namespace`, `namePrefix/Suffix`, `commonLabels`.
-4. **transformers (resources)** — применение `patches`, `images`, `replacements`.
-5. **generatorOptions** — применение финальных аннотаций/меток к сгенерированным ресурсам.
-
-**Автоматическая сортировка ресурсов:**
-Во время сборки (`kustomize build`) Kustomize автоматически выстраивает ресурсы в итоговом манифесте в логически правильном порядке:
-
-- **Namespace** всегда идет первым.
-- **ResourceQuota** и **LimitRange** следуют за ней.
-- **CustomResourceDefinition (CRD)** помещаются в начало (после неймспейса), чтобы определения типов были в кластере до создания самих объектов.
-- **ConfigMap** и **Secret** идут перед контроллерами (`Deployment`, `StatefulSet`).
-- **Service** и **Ingress** обычно находятся в конце.
-
-### Устаревшие поля (Legacy/Deprecated)
+### Устаревшие поля (Legacy)
 
 | Поле | Статус | Замена |
 | :--- | :--- | :--- |
-| `bases` | Удалено | Блок `resources` |
-| `patchesJson6902` | Deprecated | Блок `patches` с селектором `target` |
-| `patchesStrategicMerge` | Deprecated | Блок `patches` с указанием пути `path` |
-| `vars` | Удалено | Механизм `replacements` |
+| `bases` | Удалено | Блок `resources`. |
+| `patchesJson6902` | Deprecated | Блок `patches` с селектором `target`. |
+| `patchesStrategicMerge` | Deprecated | Блок `patches` с указанием пути `path`. |
+| `vars` | Удалено | Механизм `replacements` (для строгой типизации). |
 
-### Валидация структуры
+### Советы для собеседования
 
+**Вопрос:** Какова основная цель файла `kustomization.yaml` в Kustomize?
+**Ответ:** Это декларативное руководство по эксплуатации. Он определяет состав ресурсов и цепочку трансформаций, необходимых для получения финального состояния кластера, позволяя управлять сложными настройками для разных сред без модификации исходных («золотых») базовых манифестов.
+
+### Валидация и проверка
 ```bash
-# Генерация и проверка синтаксиса
+# 1. Рендеринг итогового манифеста
 kustomize build .
 
-# Валидация против схем API Kubernetes через kubeconform
+# 2. Валидация против схем API Kubernetes через kubeconform
 kustomize build . | kubeconform -strict -summary -
-# → Вывод: Summary: 5 resources found, 0 errors
+# → Результат: Summary: 8 resources found, 0 errors
 ```
 
 ### Связь с другими разделами
-
-- [Обзор и основные концепции](./kustomize_overview.md) — базовые определения и установка.
-- [Наложения и патчи](./kustomize_overlays_and_patches.md) — подробный разбор механизмов модификации.
-- [Продвинутые возможности](./kustomize_advanced_features.md) — генераторы, Helm-интеграция и замены.
-- [Валидация манифестов (kubeconform)](../kubeconform_overview.md) — подробнее о проверке схем.
+- **[Обзор и основные концепции](./kustomize_overview.md)** — введение и установка.
+- **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — подробнее о механизмах модификации.
+- **[Продвинутые возможности](./kustomize_advanced_features.md)** — генераторы, замены и плагины.
+- **[Валидация манифестов (kubeconform)](../kubeconform_overview.md)** — подробнее о проверке схем.
