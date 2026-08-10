@@ -1,13 +1,13 @@
 # Образы ВМ — Практические сценарии
 
-**Reliability Score: 10 (Verified Toolset 2026)**
-
 В данном файле собраны инструкции по манипуляции образами виртуальных машин с использованием утилит `qemu-img` и пакета `libguestfs`. Теоретические основы описаны в [Определениях](./definitions.md) и [Основных концепциях](./basic_concepts.md).
 
 ## Базовые инструменты
 
-*   **qemu-img** — швейцарский нож для работы с форматами, размерами и снапшотами.
-*   **libguestfs (virt-*)** — набор высокоуровневых утилит для безопасной модификации содержимого дисков без запуска ВМ и без использования `mount`/`chroot`.
+*   **qemu-img** — универсальный инструмент для работы с форматами, размерами и снапшотами.
+*   **libguestfs (virt-*)** — набор высокоуровневых утилит для безопасной модификации содержимого дисков без запуска ВМ.
+*   **virt-sparsify** — инструмент для освобождения неиспользуемого места в файле образа («зануление» пустых блоков).
+*   **virt-builder** — утилита для быстрой генерации готовых образов ОС из облачных репозиториев.
 *   **qemu-nbd** — низкоуровневый инструмент для монтирования дисков через сетевое блочное устройство.
 
 ## Практические сценарии
@@ -19,23 +19,31 @@
 # Создание qcow2 с предварительным выделением метаданных (ускоряет запись)
 qemu-img create -f qcow2 -o preallocation=metadata web-server.qcow2 40G
 
-# Проверка реального и виртуального размера
-qemu-img info web-server.qcow2
-# → image: web-server.qcow2
-# → file format: qcow2
-# → virtual size: 40 GiB
-# → disk size: 2.1 MiB (тонкий диск)
+# Получение детальной информации в формате JSON для автоматизации
+qemu-img info --output=json web-server.qcow2
+# → virtual-size: 42949672960 (40 GiB)
+# → actual-size: 2203648 (тонкий диск)
 ```
 
 #### Конвертация и сжатие
-Конвертация в новый файл — лучший способ «схлопнуть» пустое место в `qcow2`.
+Конвертация в новый файл — лучший способ минимизировать размер `qcow2`. В современных системах (QEMU 5.1+) рекомендуется использовать `zstd`.
 ```bash
-# Конвертация из VMDK в QCOW2 с включенным сжатием
-qemu-img convert -f vmdk -O qcow2 -c source.vmdk compressed_target.qcow2
+# Конвертация из VMDK в QCOW2 с использованием сжатия ZSTD (уровень по умолчанию)
+qemu-img convert -f vmdk -O qcow2 -c -o compression_type=zstd source.vmdk compressed_target.qcow2
 
 # Оценка необходимого места перед конвертацией
 qemu-img measure -f raw -O qcow2 raw_disk.img
 # → required size: 10737418240 (размер результирующего файла)
+```
+
+#### Работа с шифрованием
+```bash
+# Создание зашифрованного образа (LUKS)
+qemu-img create -f qcow2 --object secret,id=sec0,data=MyPassword123 \
+  -o encrypt.format=luks,encrypt.key-secret=sec0 encrypted.qcow2 10G
+
+# Проверка информации о зашифрованном образе
+qemu-img info --object secret,id=sec0,data=MyPassword123 encrypted.qcow2
 ```
 
 ### Сценарий 2: Расширение диска (Автоматизированный метод)
@@ -79,13 +87,60 @@ virt-cat -a disk.qcow2 /etc/netplan/01-netcfg.yaml
 virt-edit -a disk.qcow2 /etc/ssh/sshd_config
 ```
 
-### Сценарий 4: Работа с внешними снапшотами
+### Сценарий 4: Оптимизация и очистка места
 
-Внешние снапшоты предпочтительнее для продакшена (лучшая производительность, чем у внутренних).
+Если внутри ВМ было удалено много файлов, физический размер `.qcow2` на хосте не уменьшится сам по себе. `virt-sparsify` позволяет пересоздать файл, исключив пустые блоки.
+
+```bash
+# Очистка места во временный файл (in-place не рекомендуется)
+virt-sparsify --compress old_disk.qcow2 optimized_disk.qcow2
+# → [   0.0] Examining the guest...
+# → [  10.0] Filling free space in /dev/sda1 with zero ...
+# → [  25.0] Copying to optimized_disk.qcow2 ...
+# → Succeeded. Очищает неиспользуемые блоки данных.
+```
+
+### Сценарий 5: Инспекция и анализ состава образа
+
+Утилиты для аудита содержимого диска без его монтирования.
+
+```bash
+# Проверка используемого места разделами внутри образа
+virt-df -h -a disk.qcow2
+
+# Полный технический отчет об ОС (версия ядра, пакеты, ФС) в формате JSON
+virt-inspector -a disk.qcow2 --format=json
+
+# Интерактивная оболочка для работы с ФС образа (guestfish)
+guestfish -a disk.qcow2 -i
+# ><fs> ls /var/log
+# ><fs> download /etc/fstab /tmp/fstab
+```
+
+### Сценарий 6: Автоматизированная сборка образов (virt-builder)
+
+Позволяет собрать настроенный образ за одну команду, используя официальные шаблоны репозитория libguestfs.
+
+```bash
+# Список доступных ОС для сборки
+virt-builder --list
+
+# Сборка Ubuntu 24.04 с установленным nginx и настроенным пользователем
+virt-builder ubuntu-24.04 \
+  --size 20G \
+  --format qcow2 \
+  --install nginx \
+  --root-password password:admin \
+  --output my-web-server.qcow2
+```
+
+### Сценарий 7: Работа с внешними снапшотами
+
+Внешние снапшоты предпочтительнее для высоконагруженных систем (лучшая производительность, чем у внутренних).
 
 ```bash
 # Создание внешнего снапшота (оригинал становится backing file)
-# Обязательно указывайте -F qcow2 для безопасности
+# Обязательно указывайте -F qcow2 для безопасности (защита от backing file проброса)
 qemu-img create -f qcow2 -F qcow2 -b base.qcow2 snapshot1.qcow2
 
 # Слияние изменений (Commit) обратно в базовый образ
@@ -94,6 +149,26 @@ qemu-img commit snapshot1.qcow2
 
 # Перепривязка к новому базовому образу (Rebase)
 qemu-img rebase -b new_base.qcow2 -F qcow2 disk.qcow2
+```
+
+### Сценарий 8: Прямое монтирование через qemu-nbd
+
+Метод для низкоуровневой работы, если инструменты libguestfs недоступны или специфичны. **ВНИМАНИЕ:** Не монтируйте работающие ВМ!
+
+```bash
+# 1. Загрузка модуля ядра (на хосте)
+sudo modprobe nbd max_part=8
+
+# 2. Подключение образа к сетевому блочному устройству
+sudo qemu-nbd --connect=/dev/nbd0 disk.qcow2
+
+# 3. Обнаружение разделов и монтирование
+sudo partprobe /dev/nbd0
+sudo mount /dev/nbd0p1 /mnt
+
+# 4. Отключение после работы
+sudo umount /mnt
+sudo qemu-nbd --disconnect /dev/nbd0
 ```
 
 ## Дополнительная информация

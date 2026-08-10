@@ -2,90 +2,142 @@
 
 ### Определения
 
-- **IOMMU (Input-Output Memory Management Unit)**: Блок управления памятью для операций ввода-вывода. Необходим для изоляции памяти при пробросе устройств (VF) в виртуальные машины.
-- **vfio-pci**: Драйвер ядра Linux, позволяющий безопасно предоставлять доступ к PCI-устройствам приложениям в пространстве пользователя (userspace).
-- **devbind**: Утилита (обычно `dpdk-devbind.py`) для привязки PCI-устройств к различным драйверам (ядерным или userspace).
+- **IOMMU (Input-Output Memory Management Unit)**: Аппаратный блок, транслирующий адреса ввода-вывода устройств в физические адреса памяти. Необходим для изоляции и безопасного проброса PCI-устройств (Virtual Functions) в виртуальные машины или контейнеры.
+- **vfio-pci**: Современный драйвер ядра Linux для прямого доступа к PCI-устройствам из пространства пользователя. В отличие от устаревшего `uio_pci_generic`, поддерживает IOMMU и обеспечивает надежную изоляцию.
+- **devbind**: Вспомогательная утилита DPDK (`dpdk-devbind.py`), используемая для управления привязкой драйверов к PCI-устройствам.
+- **Virtual Function (VF)**: Облегченное PCI-устройство, созданное на базе физической функции (PF), предназначенное для прямой передачи данных.
 
 ---
 
-### Основные концепции: Подготовка
+### Подготовка системы
 
-Перед активацией SR-IOV в 2026 году необходимо убедиться в поддержке технологий:
-1.  **BIOS/UEFI**: Включены `VT-d` (Intel) или `IOMMU/AMD-Vi` (AMD).
-2.  **Параметры ядра**: В `/etc/default/grub` добавлены параметры:
-    *   `intel_iommu=on` или `amd_iommu=on`
-    *   `iommu=pt` (режим Passthrough для повышения производительности)
-3.  **Оборудование**: Сетевая карта и материнская плата поддерживают PCIe Gen5/Gen6 для работы на скоростях 400G+.
+Перед активацией SR-IOV необходимо выполнить предварительную настройку на уровне BIOS и ядра ОС.
+
+#### 1. BIOS/UEFI
+Включите поддержку виртуализации ввода-вывода в настройках процессора:
+- **Intel**: `VT-d` (Virtualization Technology for Directed I/O).
+- **AMD**: `IOMMU` или `AMD-Vi`.
+- Убедитесь, что включена поддержка **SR-IOV Global Enable** (если есть такой пункт).
+
+#### 2. Параметры ядра Linux
+Отредактируйте `/etc/default/grub`, добавив поддержку IOMMU:
+```bash
+# Для Intel
+GRUB_CMDLINE_LINUX_DEFAULT="... intel_iommu=on iommu=pt"
+# Для AMD
+GRUB_CMDLINE_LINUX_DEFAULT="... amd_iommu=on iommu=pt"
+```
+После изменения выполните `update-grub` и перезагрузите хост.
+
+#### 3. Проверка активации
+Убедитесь, что IOMMU успешно инициализирован:
+```bash
+dmesg | grep -e DMAR -e IOMMU
+# → "DMAR: IOMMU enabled"
+```
 
 ---
 
-### Практические сценарии: Пошаговая настройка
+### Практическая настройка
 
-#### Шаг 1: Создание виртуальных функций (VF)
-Активация VF выполняется через файловую систему `/sys`.
+#### Шаг 1: Создание виртуальных функций
+Количество доступных VF зависит от модели сетевой карты (NIC).
 
 ```bash
-# Определяем имя интерфейса
+# Определяем имя физического интерфейса
 ip link show
 
 # Создаем 8 виртуальных функций на интерфейсе enp1s0f0
-echo 8 > /sys/class/net/enp1s0f0/device/sriov_numvfs
+echo 8 | sudo tee /sys/class/net/enp1s0f0/device/sriov_numvfs
 ```
 
-Для сохранения настроек после перезагрузки в 2026 году рекомендуется использовать **systemd-networkd** (`.link` файлы):
+#### Шаг 2: Обеспечение персистентности
+В 2026 году для сохранения настроек после перезагрузки рекомендуется использовать стандартные средства сетевого управления.
+
+**Вариант А: Netplan (Ubuntu/Debian)**
+```yaml
+# /etc/netplan/01-netcfg.yaml
+network:
+  version: 2
+  ethernets:
+    enp1s0f0:
+      virtual-functions:
+        - count: 8
+```
+
+**Вариант Б: systemd-networkd**
 ```ini
 # /etc/systemd/network/10-sriov.link
 [Match]
-MACAddress=00:11:22:33:44:55
+OriginalName=enp1s0f0
 
 [Link]
 VirtualFunctionCount=8
 ```
 
-#### Шаг 2: Настройка параметров VF (MAC, VLAN, Rate)
+#### Шаг 3: Настройка параметров безопасности и QoS
 Настройка выполняется с хоста через `ip link`.
 
+- **Trust Mode**: Разрешает гостевой ОС изменять параметры VF (например, включать Promiscuous mode), что необходимо для некоторых NFV-решений.
+  ```bash
+  sudo ip link set enp1s0f0 vf 0 trust on
+  ```
+- **Spoof Checking**: Защита от подмены MAC-адресов.
+  ```bash
+  sudo ip link set enp1s0f0 vf 0 spoofchk on
+  ```
+- **Ограничение полосы (QoS)**:
+  ```bash
+  sudo ip link set enp1s0f0 vf 0 rate 10000 # Ограничение до 10 Гбит/с
+  ```
+
+#### Шаг 4: Привязка VF к драйверу vfio-pci
+Для использования VF в DPDK или проброса в KVM необходимо освободить устройство от стандартного драйвера ядра.
+
 ```bash
-# Назначение MAC-адреса и VLAN для VF 0
-ip link set enp1s0f0 vf 0 mac 52:54:00:12:34:56 vlan 100
+# Загрузка модуля vfio-pci
+sudo modprobe vfio-pci
 
-# Ограничение скорости (QoS) до 10 Гбит/с
-ip link set enp1s0f0 vf 0 rate 10000
-```
-
-#### Шаг 3: Проброс VF в Userspace (для DPDK/KVM)
-Чтобы ВМ могла использовать VF, его нужно привязать к драйверу `vfio-pci`.
-
-```bash
-# Загрузка модуля
-modprobe vfio-pci
+# Поиск PCI-адреса созданной VF
+lspci | grep -i "Virtual Function"
+# → 0000:01:00.2 Ethernet controller: ...
 
 # Привязка через скрипт DPDK
-dpdk-devbind.py --bind=vfio-pci 0000:01:00.2
+sudo dpdk-devbind.py --bind=vfio-pci 0000:01:00.2
 ```
 
-#### Шаг 4: Использование в Kubernetes (SR-IOV Device Plugin)
-В 2026 году для K8s используется декларативная конфигурация через `NetworkAttachmentDefinition`.
+---
 
-```yaml
-apiVersion: "k8s.cni.cncf.io/v1"
-kind: NetworkAttachmentDefinition
-metadata:
-  name: sriov-conf
-spec:
-  config: '{
-      "type": "sriov",
-      "cniVersion": "1.0.0",
-      "vlan": 100
-    }'
-```
+### Нюансы оборудования
+
+- **NVIDIA/Mellanox (ConnectX)**: Требуют предварительной настройки прошивки через `mstconfig` для включения SR-IOV:
+  ```bash
+  mstconfig -d <pci_addr> set SRIOV_EN=1 NUM_OF_VFS=16
+  ```
+- **Intel (i40e/ice)**: Поддерживают расширенные функции управления VF через утилиту `iproute2`, но требуют актуальных версий драйверов и прошивок для работы с PCIe Gen5/Gen6.
+
+---
+
+### Диагностика и отладка
+
+- **Проверка IOMMU групп**: Все устройства в одной группе должны пробрасываться вместе.
+  ```bash
+  find /sys/kernel/iommu_groups/ -type l
+  ```
+- **Логи ядра**: Ошибки при создании VF или привязке драйвера.
+  ```bash
+  journalctl -k | grep -iE "sriov|vfio|iommu"
+  ```
+- **Статус драйверов**:
+  ```bash
+  dpdk-devbind.py --status
+  ```
 
 ---
 
 ### Дополнительная информация
 
-- **[Обзор SR-IOV](sriov.md)** — теоретические основы и архитектура.
-- **[Практические сценарии DPDK и SR-IOV](scenarios.md)** — комплексные примеры использования.
-- **[Обзор DPDK](dpdk_overview.md)** — высокоскоростная обработка в Userspace.
-
-**Reliability Score: 10 (Внутренняя база + Исследование 2026)**
+- **[Обзор SR-IOV](sriov.md)** — теоретические основы и архитектура аппаратного разделения.
+- **[Практические сценарии DPDK и SR-IOV](scenarios.md)** — примеры интеграции с Kubernetes и AI Fabric.
+- **[Обзор DPDK](dpdk_overview.md)** — принципы работы Userspace сетевого стека.
+- **[Технические детали DPDK](dpdk_technical.md)** — оптимизация производительности на уровне памяти и процессора.

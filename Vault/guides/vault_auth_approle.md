@@ -20,8 +20,8 @@
 
 В современной практике управления секретами выделяют два подхода к доставке `SecretID`:
 
-1.  **Pull-модель (Рекомендуемая):** Доверенный оркестратор (CI/CD, Terraform) генерирует `SecretID` и передает его приложению через защищенный канал (например, через механизм обертывания ответов). Приложение само «забирает» (pull) данные для входа.
-2.  **Push-модель (Legacy):** Внешняя система сама устанавливает (push) значение `SecretID` в Vault. Этот метод считается устаревшим и менее безопасным, так как требует от внешней системы полного контроля над секретными значениями.
+1.  **Pull-модель (Рекомендуемая):** Доверенный оркестратор генерирует `SecretID` через API Vault и передает его приложению через защищенный канал (например, через механизм обертывания ответов). Приложение само «забирает» (pull) данные для входа, при этом само значение `SecretID` не покидает контур Vault до момента передачи конечному клиенту.
+2.  **Push-модель (Audit-only / App-ID):** Внешняя система сама задает (push) произвольное значение `SecretID` в API (эндпоинт `custom-secret-id`). Данный режим доступен для совместимости со старым методом App-ID. Менее безопасен: для создания записи требуется, чтобы внешняя система знала всю пару `RoleID`/`SecretID`, даже если затем они распространяются разными путями. В большинстве случаев Pull-модель предпочтительнее и безопаснее.
 
 ### Безопасная доставка через Response Wrapping
 
@@ -39,6 +39,7 @@
 | Параметр | Описание | Рекомендация |
 | :--- | :--- | :--- |
 | `bind_secret_id` | Требовать ли `SecretID` для входа. | `true` (обязательно для Prod) |
+| `token_type` | Тип выдаваемого токена: `service` или `batch`. | `batch` (рекомендуется официальной документацией для M2M; меньше следов в памяти и в детях) |
 | `secret_id_num_uses` | Сколько раз можно использовать один `SecretID`. | `1` (для максимальной безопасности) |
 | `secret_id_ttl` | Время жизни `SecretID`. | Минимально необходимое (5-10 мин) |
 | `token_num_uses` | Сколько раз можно использовать выданный токен. | `0` (неограниченно до истечения TTL) |
@@ -65,6 +66,7 @@ vault write auth/approle/role/payment-service \
     token_ttl="1h" \
     token_max_ttl="4h" \
     token_policies="payment-policy" \
+    token_type="batch" \
     bind_secret_id=true \
     token_bound_cidrs="10.0.5.0/24"
 ```
@@ -77,6 +79,57 @@ vault read auth/approle/role/payment-service/role-id
 
 # Генерация обернутого SecretID (wrap)
 vault write -wrap-ttl=60s -f auth/approle/role/payment-service/secret-id
+```
+
+### Аутентификация приложения (вход)
+
+Приложение выполняет вход, передавая пару `RoleID`/`SecretID`. Vault проверяет ограничения роли (CIDR, TTL, количество использований) и выдает токен с привязанными [политиками](../authorization.md).
+
+```bash
+# Вход через CLI (показан примерный вывод)
+vault write auth/approle/login \
+    role_id="6b2a5c4a-..." \
+    secret_id="98e4f7b3-..."
+# → Key                Value
+# → token              hvs.CAES...
+# → token_duration     1h
+# → token_renewable    true
+# → token_policies     ["default" "payment-policy"]
+
+# Токен извлекается в переменную для дальнейших команд/скриптов
+TOKEN=$(vault write -field=token auth/approle/login \
+    role_id="6b2a5c4a-..." secret_id="98e4f7b3-...")
+
+# Вход через API (например, внутри контейнера без CLI)
+curl -s --request POST \
+    --data '{"role_id":"...","secret_id":"..."}' \
+    "$VAULT_ADDR/v1/auth/approle/login" | jq -r .auth.client_token
+```
+
+### Ротация и отзыв SecretID
+
+`SecretID` — краткоживущий. Ротация выполняется выдачей нового значения без потери роли, старые `SecretID` можно удалить точечно по `secret_id_accessor`.
+
+```bash
+# Генерация нового SecretID (не аннулирует старые)
+vault write -f auth/approle/role/payment-service/secret-id
+# → Key                   Value
+# → --- secret_id           3e1c...b2
+# → secret_id_accessor      7a6f...c9
+# → secret_id_ttl           10m
+
+# Поиск активных SecretID по роли
+vault list auth/approle/role/payment-service/secret-id
+# → Keys  (и их accessor'ы)
+# → ---
+
+# Вывод данных по конкретному SecretID (по accessor)
+vault write auth/approle/role/payment-service/secret-id/lookup \
+    secret_id_accessor="7a6f...c9"
+
+# Тотальный отзыв SecretID как единственного: уничтожение по accessor
+vault write auth/approle/role/payment-service/secret-id/destroy \
+    secret_id_accessor="7a6f...c9"
 ```
 
 ### Аутентификация через Vault Agent
@@ -104,9 +157,36 @@ auto_auth {
 *   **RoleID:** может быть частью образа контейнера или конфигурационного файла.
 *   **SecretID:** должен доставляться динамически (через оберточный токен) в момент запуска инстанса.
 
+### Защита от перебора (User Lockout)
+
+Начиная с Vault 1.13 в методе `approle` (а также `userpass` и `ldap`) включен механизм **User Lockout**: при нескольких неудачных попытках входа подряд Vault временно прекращает проверку учетных данных для этого `RoleID` и возвращает отказ. Это снижает риск брутфорс-атак на `SecretID`.
+
+*   Порог срабатывания и длительность блокировки настраиваются блоком `user_lockout` в файле конфигурации сервера или через `auth tune`.
+*   Поведение можно отключить глобально (`disable_user_lockout = true`) или для конкретного auth-маунта.
+
+```hcl
+# Фрагмент конфигурации Vault (server.hcl)
+user_lockout {
+  lockout_threshold           = 5   # число неудачных попыток до блокировки
+  lockout_duration            = "15m"
+  lockout_counter_reset_duration = "15m"
+}
+```
+
+### Аптечка реагирования на компрометацию
+
+При признаках утечки `SecretID` или токена действуйте по порядку:
+
+1.  **Отзыв выданных токенов** роли, чтобы прервать активные сессии:
+    ```bash
+    vault token revoke -mode=path auth/approle/login
+    ```
+2.  **Уничтожение** всех активных `SecretID` роли (см. раздел «Ротация и отзыв SecretID»).
+3.  **Генерация нового** `SecretID` и безопасная доставка приложению через оберточный токен.
+4.  **Пересмотр политик**, привязанных к роли, и `token_bound_cidrs`.
+
 ### См. также
 
 *   **[Основные концепции Vault](../concepts.md)** — архитектурные основы.
-*   **[Подход Zero Trust](../zero_trust.md)** — использование AppRole в рамках модели нулевого доверия.
+*   **[Подход Zero Trust](../zero_trust.md)** — AppRole в модели нулевого доверия и альтернативы (WIF).
 *   **[Антипаттерны управления секретами](../common_antipatterns.md)** — почему нельзя хранить `SecretID` в Git.
-*   **[Vault Agent: основы](./vault_agent/basics.md)** — детальное руководство по автоматизации.

@@ -5,9 +5,11 @@
 - **GRUB (Grand Unified Bootloader):** Универсальный загрузчик, работающий до старта операционной системы. Обладает собственными драйверами для доступа к оборудованию и файловым системам, предоставляет меню выбора ОС и ядер.
 - **Блок окружения (GRUB Environment Block):** Файл `grubenv` (обычно 1024 байта), используемый для хранения переменных между перезагрузками (например, `saved_entry`).
 - **Stage 1 (Legacy BIOS):** Начальный код загрузчика в MBR (446 байт). Его единственная задача — указать на местоположение следующего этапа.
+- **Stage 1.5:** Промежуточный этап в Legacy BIOS, содержащий драйверы файловых систем. Располагается в области между MBR и первым разделом.
 - **Stage 2:** Основной код GRUB, загружаемый из `/boot/grub/`. Обрабатывает конфигурацию `grub.cfg` и предоставляет интерфейс пользователю.
 - **initramfs (Initial RAM File System):** Временная корневая файловая система (архив cpio), распаковываемая ядром в память для загрузки драйверов, необходимых для монтирования реального корня (LVM, RAID, шифрование). Подробнее: [Процесс загрузки ядра](../Core/kernel/boot_process.md).
 - **vmlinuz:** Сжатый, самораспаковывающийся образ ядра Linux.
+- **Shim:** Небольшой загрузчик, подписанный ключом Microsoft, который обеспечивает доверенную загрузку GRUB в режиме **Secure Boot**.
 
 ## Базовые концепции
 
@@ -25,6 +27,7 @@
 ### Поддержка технологий хранения
 
 - **LVM и RAID:** GRUB 2 поддерживает загрузку с LVM и программных RAID-массивов (mdraid). Отдельный раздел `/boot` без LVM/RAID рекомендуется для упрощения восстановления в критических ситуациях.
+- **Шифрование (LUKS):** GRUB поддерживает загрузку с зашифрованных разделов `/boot` (LUKS1 поддерживается нативно, LUKS2 — с ограничениями в зависимости от версии). Требует параметра `GRUB_ENABLE_CRYPTODISK=y`.
 - **BIOS и UEFI:** GRUB поддерживает оба режима. В современных UEFI-системах (Fedora 34+, RHEL 9+) конфигурация в `/boot/efi/EFI/distro/grub.cfg` является лишь заглушкой (stub), которая перенаправляет загрузчик на `/boot/grub2/grub.cfg`. Подробнее о различиях: [BIOS и UEFI](../Core/firmware_bios_uefi.md).
 
 ### Командная строка ядра
@@ -48,23 +51,21 @@
 **Постоянное изменение:**
 
 1. Отредактировать `/etc/default/grub`:
-
    ```bash
    GRUB_CMDLINE_LINUX_DEFAULT="quiet splash intel_iommu=on"
+   # Включение поиска других ОС (Windows и т.д.)
+   GRUB_DISABLE_OS_PROBER=false
    ```
 
 2. Обновить конфигурацию:
-
    ```bash
    # Debian / Ubuntu / Arch
    sudo update-grub
+   # → Generating grub configuration file ...
+   # → Found linux image: /boot/vmlinuz-...
 
-   # RHEL / CentOS / Fedora (BIOS)
+   # RHEL / CentOS / Fedora (универсальный способ для современных версий)
    sudo grub2-mkconfig -o /boot/grub2/grub.cfg
-
-   # RHEL / CentOS / Fedora (UEFI) - современные версии
-   sudo grub2-mkconfig -o /boot/grub2/grub.cfg
-   # (Заглушка в /boot/efi/EFI/*/grub.cfg подхватит этот файл)
    ```
 
 ### 2. Работа с блоком окружения (`grubenv`)
@@ -74,6 +75,7 @@
 ```bash
 # Просмотр текущих переменных
 grub-editenv list
+# → saved_entry=0
 
 # Установка загрузки по умолчанию на конкретную запись (по имени или индексу)
 sudo grub-set-default 0
@@ -89,7 +91,6 @@ GRUB_SAVEDEFAULT=true
 Критично для headless-серверов и облачных сред.
 
 1. Отредактировать `/etc/default/grub`:
-
    ```text
    GRUB_TERMINAL="serial console"
    GRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1"
@@ -103,16 +104,15 @@ GRUB_SAVEDEFAULT=true
 При изменении конфигурации LVM/RAID или миграции ВМ необходимо пересобрать initramfs.
 
 **Debian / Ubuntu:**
-
 ```bash
 # Добавить модуль
 echo "lvm2" >> /etc/initramfs-tools/modules
 # Обновить для текущего ядра
 sudo update-initramfs -u
+# → update-initramfs: Generating /boot/initrd.img-...
 ```
 
 **RHEL / CentOS / Fedora (dracut):**
-
 ```bash
 # Просмотр содержимого текущего образа
 lsinitrd /boot/initramfs-$(uname -r).img | less
@@ -126,28 +126,23 @@ sudo dracut --force
 При повреждении загрузчика используется LiveUSB.
 
 **Для систем BIOS:**
-
 1. Загрузиться с LiveUSB.
 2. Смонтировать корень: `mount /dev/sda1 /mnt`.
 3. Установить GRUB на диск: `sudo grub-install --root-directory=/mnt /dev/sda`.
 
 **Для систем UEFI (chroot метод):**
-
 1. Смонтировать корень и ESP:
-
    ```bash
    mount /dev/sda2 /mnt
    mount /dev/sda1 /mnt/boot/efi
    ```
 
 2. Смонтировать системные API:
-
    ```bash
    for i in /dev /dev/pts /proc /sys /run; do mount -B $i /mnt$i; done
    ```
 
 3. Перейти в систему и переустановить:
-
    ```bash
    chroot /mnt
    grub-install --target=x86_64-efi --efi-directory=/boot/efi
@@ -169,12 +164,7 @@ sudo dracut --force
 - `insmod normal` -> `normal` (переход в обычный режим).
 
 #### Оболочка GRUB (`grub>`)
-Позволяет загрузить ядро вручную, если меню повреждено, а также исследовать оборудование и диски. Доступ к оболочке осуществляется нажатием клавиши `C` в главном меню загрузки.
-
-**Основные возможности:**
-- **Автодополнение:** Нажатие `Tab` показывает список доступных команд или путей.
-- **Поиск:** Команда `search` помогает найти разделы по UUID или метке.
-- **Проверка оборудования:** Команды вроде `ls`, `usb`, `lspci` позволяют увидеть доступные устройства до загрузки ОС.
+Позволяет загрузить ядро вручную, если меню повреждено. Доступ через клавишу `C` в меню.
 
 **Пример ручной загрузки:**
 ```bash
@@ -185,25 +175,27 @@ grub> initrd /initrd.img               # Загрузить initramfs
 grub> boot                             # Запуск
 ```
 
+### Решение типичных ошибок
+
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
 | `error: no such partition` | Неверный UUID или индекс раздела | Проверить `ls` в rescue, поправить `prefix` |
 | `error: file not found` | Удалено ядро или конфиг | Переустановка из chroot |
-| `error: invalid signature` | Secure Boot блокирует ядро | Проверить подпись (Shim) или отключить Secure Boot |
+| `error: invalid signature` | Secure Boot блокирует ядро | Использовать `shim`, проверить подпись или отключить Secure Boot |
 | `error: out of disk` | Проблема чтения за пределами BIOS лимитов | Использование отдельного `/boot` в начале диска |
 
 ### Безопасность
 
 **Пароль на редактирование меню:**
-
 1. Сгенерировать хэш: `grub-mkpasswd-pbkdf2`.
 2. Добавить в `/etc/grub.d/40_custom`:
-
    ```text
    set superusers="admin"
    password_pbkdf2 admin grub.pbkdf2.sha512.10000...
    ```
+3. Обновить конфиг.
 
-3. Обновить конфиг. После этого для нажатия `e` потребуется пароль.
+**Secure Boot и Shim:**
+В режиме Secure Boot прошивка проверяет подпись `shim.efi`. Shim, в свою очередь, проверяет подпись `grubx64.efi`. Для работы со сторонними модулями ядра (например, драйверы NVIDIA) используется утилита `mokutil` для импорта ключей в MOK (Machine Owner Key).
 
 Связанные темы: [Этапы загрузки ядра](../Core/kernel/boot_process.md), [Микропрограммы BIOS/UEFI](../Core/firmware_bios_uefi.md), [Диагностика загрузки](../Core/systemd/boot_troubleshooting.md).

@@ -42,10 +42,11 @@
 **Пример Dockerfile:**
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# Монтирование секрета только на время выполнения команды RUN
-RUN --mount=type=secret,id=vault_token \
+# Монтирование секрета только на время выполнения команды RUN.
+# required=true: сборка упадёт, если секрет не передан (предотвращает случайную сборку без токена)
+RUN --mount=type=secret,id=vault_token,required=true \
     VAULT_TOKEN=$(cat /run/secrets/vault_token) && \
     pip install --index-url https://my-private-repo.com/simple/ my-internal-package
 ```
@@ -54,11 +55,14 @@ RUN --mount=type=secret,id=vault_token \
 ```bash
 export VAULT_TOKEN=$(vault login -method=oidc -token-only)
 docker build --secret id=vault_token,env=VAULT_TOKEN -t my-secure-app .
+docker buildx build --secret id=vault_token,env=VAULT_TOKEN -t my-secure-app . # мультиплатформенная сборка
 ```
+
+> Файл `/run/secrets/vault_token` существует **только внутри** процесса сборки (`RUN`) и не попадает ни в слои образа, ни в `docker history`. Параметр `required=true` доступен в BuildKit и поддерживается в современных версиях Docker 24+/Buildx.
 
 ### Использование Vault Agent в Docker Compose (Sidecar паттерн)
 
-В Docker Compose рекомендуется запускать Vault Agent как отдельный сервис, который готовит секреты в общей `tmpfs` области памяти.
+В Docker Compose у приложения нет нативных `initContainer` (в отличие от Kubernetes), поэтому Vault Agent запускается как отдельный сервис, который готовит секреты в общей `tmpfs` области памяти.
 
 **Пример `docker-compose.yml`:**
 ```yaml
@@ -74,15 +78,22 @@ services:
 
   # Агент Vault
   vault-agent:
-    image: hashicorp/vault:latest
+    # Фиксируйте точный тег вместо latest (anti-pattern)
+    image: hashicorp/vault:2.0.0
     cap_add:
       - IPC_LOCK
     volumes:
-      - ./agent-config.hcl:/etc/vault/config.hcl
+      - ./agent-config.hcl:/etc/vault/config.hcl:ro
       - secrets-shared:/app/secrets
     command: agent -config=/etc/vault/config.hcl
     environment:
       - VAULT_ADDR=https://vault.example.com:8200
+    healthcheck:
+      # Проверка, что агент уже отрендерил секрет (иначе app стартует раньше)
+      test: ["CMD-SHELL", "test -f /app/secrets/db_password.txt"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
 volumes:
   secrets-shared:
@@ -90,6 +101,31 @@ volumes:
       type: tmpfs
       device: tmpfs
 ```
+
+**Пример `agent-config.hcl` (AppRole + шаблон в tmpfs):**
+```hcl
+exit_after_auth = false
+
+vault {
+  address = "https://vault.example.com:8200"
+}
+
+auto_auth {
+  method "approle" {
+    config = {
+      role_id_file_path         = "/etc/vault/role-id"
+      secret_id_file_path       = "/etc/vault/secret-id"
+    }
+  }
+}
+
+template {
+  destination = "/app/secrets/db_password.txt"
+  contents    = "{{ with secret \"secret/data/db\" }}{{ .Data.data.password }}{{ end }}"
+}
+```
+
+> Контейнер агента хранит `RoleID`/`SecretID` через монтируемые файлы. Параметр `exit_after_auth = true` (вместо `false`) переводит агент в режим «отрендерить шаблоны и выйти» — полезен при одноразовой подготовке секретов в `tmpfs` перед стартом приложения. При `false` агент продолжает работать в фоне и поддерживает секреты актуальными, реагируя на изменения в Vault.
 
 ### Скрипт инициализации (Entrypoint) для Legacy-приложений
 
@@ -108,6 +144,39 @@ export DB_PASSWORD
 exec "$@"
 ```
 
+### Прямая работа через SDK (Direct API)
+
+Когда приложение использует Vault в коде (сложная динамическая логика, Vault KV v2, динамические credentials БД), применяются официальные клиентские библиотеки. Важное правило — секреты не передаются через `ENV`, а читаются через SDK по требованию с коротким TTL.
+
+**Пример на Python (`hvac`):**
+```python
+import hvac
+import os
+
+client = hvac.Client(
+    url=os.environ["VAULT_ADDR"],
+    token=os.environ["VAULT_TOKEN"],  # токен подставляется через Vault Agent или AppRole
+)
+
+# Чтение KV v2 (mount point secret)
+secret = client.secrets.kv.v2.read_secret_version(path="apps/my-service/db", mount_point="secret")["data"]["data"]
+db_password = secret["password"]
+```
+
+> В продакшене замените жёсткий `token` на [AppRole](./vault_auth_approle.md) или Vault Agent: SDK получит короткоживущий токен только на время выполнения операции, а не на всё время жизни процесса.
+
+### Проверка запуска: Single container режим (docker run)
+
+Для проверки конфигурации без Docker Compose агент можно запустить разово:
+
+```bash
+docker run --rm --cap-add=IPC_LOCK \
+  -e VAULT_ADDR=https://vault.example.com:8200 \
+  -v $PWD/agent-config.hcl:/etc/vault/config.hcl:ro \
+  -v secrets-shared:/app/secrets \
+  hashicorp/vault:2.0.0 agent -config=/etc/vault/config.hcl
+```
+
 ## Дополнительная информация
 
 ### Рекомендации по безопасности
@@ -119,8 +188,6 @@ exec "$@"
 
 ### См. также
 
-*   **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — основной раздел по нативным механизмам Docker.
-*   **[Vault Agent: основы](./vault_agent/basics.md)** — детальная настройка шаблонов.
-*   **[Аутентификация через AppRole](./vault_auth_approle.md)** — детали машинной аутентификации.
-*   **[Подход Zero Trust](../zero_trust.md)** — концепция федерации идентичности (WIF).
-*   **[Антипаттерны управления секретами](../common_antipatterns.md)** — почему нельзя использовать `ARG` и `ENV` для секретов.
+*   **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — основной раздел по нативным механизмам Docker (Compose, Swarm, BuildKit).
+*   **[Vault Agent: основы](./vault_agent/basics.md)** — детальная настройка шаблонов и Auto-Auth.
+*   **[Аутентификация через AppRole](./vault_auth_approle.md)** — детали машинной аутентификации (RoleID/SecretID).

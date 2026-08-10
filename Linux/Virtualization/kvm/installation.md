@@ -1,8 +1,8 @@
 # Установка и настройка KVM
 
-В данном файле приведено пошаговое руководство по подготовке системы, установке программного стека KVM/QEMU и расширенной настройке среды (сети, проброс устройств). Архитектурный обзор доступен в [KVM — Обзор и архитектура](./overview.md).
+В данном файле приведено пошаговое руководство по подготовке системы, установке программного стека KVM/QEMU и расширенной настройке среды (сети, проброс устройств). Архитектурный обзор и теоретические основы доступны в [KVM — Обзор и архитектура](./overview.md).
 
-## Термины и архитектура
+## Определения
 
 Основные определения (KVM, QEMU, libvirt, virtio) и описание архитектуры взаимодействия компонентов представлены в разделе **[KVM — Обзор и архитектура](./overview.md#определения)**.
 
@@ -14,73 +14,116 @@
 
 | Параметр | Описание | Метод проверки |
 | :--- | :--- | :--- |
-| **Виртуализация CPU** | Поддержка инструкций VMX (Intel) или SVM (AMD). | Флаги в `/proc/cpuinfo` |
-| **BIOS/UEFI** | Аппаратная виртуализация должна быть включена в прошивке. | Утилита `kvm-ok` |
-| **IOMMU (VT-d/AMD-Vi)** | Требуется для прямого проброса PCI-устройств в ВМ. | Параметры ядра (GRUB) |
-| **Группы прав** | Доступ пользователя к сокету управления libvirt. | Группа `libvirt` |
+| **Виртуализация CPU** | Поддержка инструкций VMX (Intel) или SVM (AMD). | `grep -Eoc '(vmx|svm)' /proc/cpuinfo` |
+| **BIOS/UEFI** | Аппаратная виртуализация должна быть включена (Intel VT-d / AMD-V). | Утилита `virt-host-validate` |
+| **IOMMU (VT-d/AMD-Vi)** | Требуется для прямого проброса PCI-устройств в ВМ. | `dmesg | grep -i iommu` |
+| **UEFI Support** | Поддержка современной загрузки через GPT/Secure Boot. | Наличие пакета `ovmf` |
+| **Группы прав** | Доступ пользователя к сокету управления libvirt. | Группы `libvirt` и `kvm` |
 
 ### Компоненты программного стека
 
-Рекомендуемый набор пакетов для дистрибутивов Debian/Ubuntu:
+Набор пакетов зависит от используемого дистрибутива, но функционально они идентичны.
 
-- `qemu-system-x86`: Основной эмулятор и виртуализатор для архитектуры x86_64.
-- `libvirt-daemon-system`: Системные службы (демон `libvirtd`) и конфигурационные файлы.
-- `libvirt-clients`: Набор CLI-утилит (`virsh`, `virt-install`, `virt-xml`).
-- `bridge-utils`: Инструменты для создания классических сетевых мостов (L2).
-- `virt-manager`: Графический интерфейс управления (требует X11/Wayland).
+#### Debian / Ubuntu (Apt)
+- `qemu-system-x86`: Основной эмулятор и виртуализатор.
+- `libvirt-daemon-system`: Демон `libvirtd` и системные конфиги.
+- `libvirt-clients`: CLI-утилиты (`virsh`).
+- `virtinst`: Утилита `virt-install`.
+- `bridge-utils`: Устаревшие инструменты для L2 Bridge (заменяются `iproute2`).
+- `ovmf`: UEFI прошивки для ВМ.
+
+#### RHEL / CentOS / Rocky / AlmaLinux (Dnf)
+- `qemu-kvm`: Оптимизированный QEMU для KVM.
+- `libvirt`: Весь стек управления libvirt.
+- `virt-install`: Инструмент создания ВМ.
+- `virt-viewer`: Легковесная консоль для подключения к ВМ.
 
 ## Практические сценарии
 
-### Сценарий 1: Проверка и подготовка оборудования
+### Сценарий 1: Проверка аппаратной готовности
 
-Этот этап выполняется ДО установки пакетов.
+Этот этап выполняется ДО установки пакетов для выявления потенциальных проблем.
 
-**1. Проверка флагов аппаратной виртуализации:**
+**1. Проверка флагов процессора:**
 ```bash
 grep -Eoc '(vmx|svm)' /proc/cpuinfo
-# → результат > 0 означает наличие поддержка
+# → результат > 0 означает наличие аппаратной поддержки.
 ```
 
-**2. Использование cpu-checker:**
+**2. Глубокая валидация (рекомендуется):**
+После установки пакета `libvirt-clients` используйте наиболее полную утилиту:
 ```bash
-sudo apt update && sudo apt install -y cpu-checker
-sudo kvm-ok
-# → Ожидается: "KVM acceleration can be used"
+virt-host-validate qemu
+# → Ожидается "PASS" для большинства критических проверок.
+# → "WARN" по IOMMU допустим, если вы не планируете проброс PCI-устройств.
 ```
 
 **3. Активация IOMMU (для Passthrough):**
-Если планируется проброс видеокарт или сетевых адаптеров, добавьте параметры в `/etc/default/grub` (подробнее: [Настройка GRUB](../../SystemAdministration/grub.md)):
-- Для Intel: `intel_iommu=on iommu=pt`
-- Для AMD: `amd_iommu=on iommu=pt`
-*После изменения выполните `sudo update-grub` и перезагрузитесь.*
+Если планируется проброс видеокарт или сетевых адаптеров, добавьте параметры в `/etc/default/grub`:
+- **Intel:** `intel_iommu=on iommu=pt`
+- **AMD:** `amd_iommu=on iommu=pt`
 
-### Сценарий 2: Установка и базовая настройка
+Обновите конфигурацию и перезагрузитесь:
+- Ubuntu: `sudo update-grub`
+- RHEL: `sudo grub2-mkconfig -o /boot/grub2/grub.cfg`
 
-**1. Установка стека KVM/libvirt:**
+### Сценарий 2: Установка стека виртуализации
+
+#### Вариант А: Debian / Ubuntu 24.04+
 ```bash
-sudo apt install -y qemu-system-x86 libvirt-daemon-system libvirt-clients bridge-utils virt-manager
+sudo apt update
+sudo apt install -y qemu-system-x86 libvirt-daemon-system libvirt-clients virtinst ovmf virt-manager
+```
+
+#### Вариант Б: RHEL 9 / AlmaLinux / Rocky
+```bash
+# Установка группы пакетов для виртуализации
+sudo dnf groupinstall -y "Virtualization Host"
+sudo dnf install -y virt-install virt-viewer
+```
+
+### Сценарий 3: Постустановочная настройка
+
+**1. Активация служб:**
+```bash
+sudo systemctl enable --now libvirtd
+# Проверка сокета
+virsh uri # → Ожидается: qemu:///system
 ```
 
 **2. Настройка прав доступа:**
-Добавьте текущего пользователя в группы, чтобы управлять ВМ без `sudo`:
+Чтобы управлять ВМ без `sudo`, добавьте пользователя в соответствующие группы:
 ```bash
-sudo adduser $USER libvirt
-sudo adduser $USER kvm
-# → Перезайдите в систему для применения групп.
+sudo usermod -aG libvirt $USER
+sudo usermod -aG kvm $USER
+# → Необходимо перевойти в сессию (logout/login).
 ```
 
-**3. Проверка состояния служб:**
+**3. Проверка хранилища (Storage Pool):**
+По умолчанию libvirt использует `/var/lib/libvirt/images`. Убедитесь, что пул активен:
 ```bash
-sudo systemctl enable --now libvirtd
-virsh uri
-# → Ожидается: qemu:///system
+virsh pool-list --all
+# Если default пул не активен:
+virsh pool-start default
+virsh pool-autostart default
 ```
 
-### Сценарий 3: Настройка сетевого моста (L2 Bridge)
+### Сценарий 4: Настройка сетевого моста (L2 Bridge)
 
-Для предоставления ВМ прямого доступа в локальную сеть необходимо создать мост на хосте. В Ubuntu это делается через Netplan (подробнее: [Настройка Netplan](../../Networking/Settings/Persistent_Network/ubuntu_netplan.md)).
+Для предоставления ВМ доступа в физическую сеть хоста.
 
-**Пример `/etc/netplan/01-netcfg.yaml`:**
+#### Способ 1: NetworkManager (nmcli) — универсальный для RHEL и современных Ubuntu
+```bash
+# Создание интерфейса моста
+nmcli con add type bridge ifname br0 con-name br0
+# Привязка физического интерфейса (напр. eth0) к мосту
+nmcli con add type bridge-slave ifname eth0 con-name br0-slave master br0
+# Поднятие моста
+nmcli con up br0
+```
+
+#### Способ 2: Netplan (Ubuntu)
+Пример `/etc/netplan/01-netcfg.yaml`:
 ```yaml
 network:
   version: 2
@@ -94,24 +137,27 @@ network:
       parameters:
         stp: false
 ```
-*После применения (`netplan apply`) используйте `br0` в настройках сети ВМ.*
+Примените изменения: `sudo netplan apply`.
 
-### Сценарий 4: Проверка вложенной виртуализации (Nested)
+### Сценарий 5: Вложенная виртуализация (Nested Virtualization)
 
-Позволяет запускать KVM внутри ВМ. По умолчанию часто выключено.
+Позволяет запускать гипервизор (KVM) внутри виртуальной машины. 
 
+Подробные инструкции по активации на хосте (L0) и настройке ВМ (L1) вынесены в специализированный SSoT-файл:
+**[Вложенная виртуализация: Практические сценарии](../nested_virtualization/practical_scenarios.md)**.
+
+Краткая проверка статуса:
 ```bash
-# Проверка статуса в ядре
+# Для Intel
 cat /sys/module/kvm_intel/parameters/nested
-# → Y означает "включено" (для AMD файл kvm_amd)
-
-# Если выключено (N), активируйте через конфиг модуля:
-echo "options kvm_intel nested=1" | sudo tee /etc/modprobe.d/kvm-nested.conf
+# → Y или 1 означает "включено"
 ```
 
 ## Дополнительная информация
 
-- [KVM — Обзор и архитектура](./overview.md) — SSoT по терминологии и принципам работы.
-- [Управление виртуальными машинами](./management.md) — работа с `virsh` и создание первой ВМ.
-- [Linux Bridge: Концепции](../../Networking/Concepts/linux_bridge.md) — глубокое погружение в работу мостов.
-- [Вложенная виртуализация](../nested_virtualization/practical_scenarios.md) — детальная настройка Nested VT-x.
+- [KVM — Обзор и архитектура](./overview.md) — SSoT по теории и механизмам.
+- [Управление виртуальными машинами](./management.md) — создание ВМ и работа с `virsh`.
+- [Диагностика и решение проблем](./troubleshooting.md) — логи и типичные ошибки.
+- [Вложенная виртуализация (Nested)](../nested_virtualization/practical_scenarios.md) — расширенная настройка.
+- [Linux Bridge: Концепции](../../Networking/Concepts/linux_bridge.md) — архитектура L2-сетей.
+- [Настройка GRUB](../../SystemAdministration/grub.md) — управление параметрами ядра.

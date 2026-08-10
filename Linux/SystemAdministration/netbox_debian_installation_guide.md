@@ -1,204 +1,254 @@
-# NetBox: Установка в Debian
+# NetBox: Установка и настройка в Debian 12
 
 ## Определения
 
-**NetBox** — инструмент для управления IP-адресами (IPAM) и инфраструктурой центров обработки данных (DCIM), предназначенный для документирования и автоматизации сетевой инфраструктуры.
+**NetBox** — специализированный инструмент класса **IPAM (IP Address Management)** и **DCIM (Data Center Infrastructure Management)** с открытым исходным кодом. Он выступает в роли «единого источника правды» (**SSoT — Single Source of Truth**) для сетевой инфраструктуры, позволяя документировать IP-адреса, стойки, устройства, кабели, виртуализацию и логические связи.
 
 ## Базовые концепции
 
-Установка NetBox в Debian включает развертывание нескольких ключевых компонентов:
+NetBox представляет собой веб-приложение на базе фреймворка **Django (Python)**. Для его полноценной работы требуется связка из нескольких системных компонентов:
 
-- **PostgreSQL**: Реляционная база данных для хранения основной информации NetBox.
-- **Redis**: Хранилище данных типа "ключ-значение", используемое для кэширования и организации очередей задач.
-- **Python**: Среда выполнения для приложения NetBox, включая его зависимости.
-- **Gunicorn**: WSGI HTTP-сервер, запускающий Python-приложение NetBox.
-- **Nginx**: Высокопроизводительный веб-сервер, выступающий в роли реверс-прокси для Gunicorn и обслуживающий статические файлы.
-- **`systemd`**: Система инициализации Linux для управления службами NetBox и обеспечения их автозапуска.
+- **PostgreSQL (12+)**: Объектно-реляционная база данных для хранения основной структурированной информации.
+- **Redis (6.0+)**: Высокопроизводительное хранилище «ключ-значение», используемое для кэширования данных и управления очередями задач.
+- **Gunicorn (WSGI)**: Сервер интерфейса шлюза веб-сервера для запуска Python-кода NetBox.
+- **Nginx**: Веб-сервер, работающий в режиме реверс-прокси, обеспечивающий SSL/TLS терминацию и обслуживание статических файлов (CSS, JS, изображения).
+- **RQ (Redis Queue)**: Система обработки фоновых задач (отправка Webhooks, генерация отчетов, выполнение скриптов).
+- **Housekeeping**: Регламентная служба NetBox для очистки устаревших сессий и логов изменений.
+
+### Системные требования (NetBox 4.0)
+
+| Компонент | Минимальная версия | Версия в Debian 12 |
+| :--- | :--- | :--- |
+| **Python** | 3.10 | 3.11 |
+| **PostgreSQL** | 12 | 15 |
+| **Redis** | 6.0 | 7.0 |
 
 ## Практические сценарии
 
-### 1. Подготовка системы
+### 1. Подготовка операционной системы
+
+Обновите пакеты и установите необходимые системные зависимости для сборки Python-пакетов и работы с БД.
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y git sudo vim curl python3-pip
+sudo apt install -y python3 python3-pip python3-venv python3-dev \
+build-essential libxml2-dev libxslt1-dev libffi-dev libpq-dev \
+libssl-dev zlib1g-dev git redis-server postgresql
 ```
 
 ### 2. Настройка базы данных PostgreSQL
 
-1. **Установка PostgreSQL:**
+NetBox требует базу данных с кодировкой `UTF8`.
 
+1. **Запуск и проверка сервиса:**
     ```bash
-    sudo apt install -y postgresql
-    sudo systemctl start postgresql
-    sudo systemctl enable postgresql
+    sudo systemctl enable --now postgresql
     ```
 
-2. **Создание базы данных и пользователя:** Войдите в консоль `psql` от имени `postgres`. Подробнее: [Работа с PostgreSQL из консоли (psql)](../../Databases/PostgreSQL/Operations/console_basics.md).
+2. **Создание пользователя и базы данных:**
+    Войдите в консоль PostgreSQL под системным пользователем `postgres`.
 
     ```bash
     sudo -u postgres psql
     ```
 
-    Затем введите:
+    Выполните следующие команды (обязательно измените пароль):
 
     ```sql
     CREATE DATABASE netbox;
-
-    -- Создаем пользователя netbox с паролем (замените 'YourSecurePassword' на сложный пароль)
-    CREATE USER netbox WITH PASSWORD 'YourSecurePassword';
-
-    -- Предоставляем все права на базу данных netbox пользователю netbox
+    CREATE USER netbox WITH PASSWORD 'Strong_Password_Here';
     GRANT ALL PRIVILEGES ON DATABASE netbox TO netbox;
+    -- Для NetBox 4.0+ рекомендуется также:
+    ALTER DATABASE netbox OWNER TO netbox;
     \q
     ```
 
-3. **Проверка соединения (опционально):**
+### 3. Настройка Redis
 
-    ```bash
-    psql --username netbox --password --host localhost netbox
-    ```
-
-### 3. Установка Redis
+Redis используется для кэширования и очередей задач. По умолчанию он слушает на `localhost:6379`, что достаточно для локальной установки.
 
 ```bash
-sudo apt install -y redis-server
-redis-cli ping # Ожидаемый ответ: PONG
+sudo systemctl enable --now redis-server
+# Проверка связи
+redis-cli ping # → PONG
 ```
 
-### 4. Установка зависимостей Python
+### 4. Развертывание приложения NetBox
 
-```bash
-sudo apt install -y python3-venv libxml2-dev libxslt1-dev libffi-dev libpq-dev libssl-dev zlib1g-dev
-```
-
-### 5. Развертывание NetBox
-
-1. **Клонирование репозитория:** Установите NetBox в `/opt`.
-
-    > **Важно:** Для production используйте стабильный релиз, а не ветку `master`. Список тегов: `git tag --list | grep '^v4\.'`.
-
-    ```bash
-    # Production: стабильный релиз (замените v4.x.x на актуальный)
-    sudo git clone -b v4.x.x https://github.com/netbox-community/netbox.git /opt/netbox
-
-    # Для тестирования: последняя разработка
-    sudo git clone -b master https://github.com/netbox-community/netbox.git /opt/netbox
-    ```
-
-2. **Создание системного пользователя:**
+1. **Создание системного пользователя:**
+    NetBox должен работать от имени непривилегированного пользователя.
 
     ```bash
     sudo adduser --system --group netbox
-    sudo chown --recursive netbox /opt/netbox/netbox/media
     ```
 
-3. **Конфигурация NetBox:** Скопируйте пример конфигурации и сгенерируйте секретный ключ.
+2. **Загрузка исходного кода:**
+    Клонируйте стабильную ветку в директорию `/opt/netbox`.
 
+    ```bash
+    # Проверьте актуальную версию на GitHub (например, v4.0.5)
+    export NETBOX_VER="v4.0.5"
+    sudo git clone -b $NETBOX_VER https://github.com/netbox-community/netbox.git /opt/netbox
+    sudo chown -R netbox:netbox /opt/netbox
+    ```
+
+### 5. Конфигурация приложения
+
+1. **Создание файла настроек:**
     ```bash
     cd /opt/netbox/netbox/netbox/
     sudo cp configuration_example.py configuration.py
-    /opt/netbox/netbox/generate_secret_key.py # Скопируйте ключ
     ```
 
-    Отредактируйте `configuration.py`:
-
+2. **Генерация SECRET_KEY:**
+    Ключ необходим для шифрования сессий и токенов.
     ```bash
-    sudo vim /opt/netbox/netbox/netbox/configuration.py
+    sudo /opt/netbox/netbox/generate_secret_key.py
+    # Скопируйте полученную строку
     ```
 
-    Укажите `ALLOWED_HOSTS` (IP или домен сервера), `DATABASE` (данные PostgreSQL) и вставьте `SECRET_KEY`.
+3. **Редактирование `configuration.py`:**
+    ```bash
+    sudo vim configuration.py
+    ```
 
-### 6. Установка зависимостей и миграция базы данных
+    **Основные параметры:**
+    ```python
+    ALLOWED_HOSTS = ['netbox.example.com', '192.168.1.100']
 
-Используйте скрипт `upgrade.sh` для установки зависимостей, миграции БД и сбора статики.
+    DATABASE = {
+        'NAME': 'netbox',
+        'USER': 'netbox',
+        'PASSWORD': 'Strong_Password_Here',
+        'HOST': 'localhost',
+        'PORT': '',
+    }
+
+    # NetBox 4.0 использует два Redis-инстанса (обычно 0 и 1)
+    REDIS = {
+        'tasks': {
+            'HOST': 'localhost',
+            'PORT': 6379,
+            'DATABASE': 0,
+        },
+        'caching': {
+            'HOST': 'localhost',
+            'PORT': 6379,
+            'DATABASE': 1,
+        }
+    }
+
+    SECRET_KEY = 'Вставьте_сгенерированный_ключ_здесь'
+    ```
+
+### 6. Установка и миграция (upgrade.sh)
+
+NetBox предоставляет скрипт `upgrade.sh`, который автоматически создает виртуальное окружение (`venv`), устанавливает зависимости, выполняет миграции БД и собирает статические файлы.
 
 ```bash
 sudo /opt/netbox/upgrade.sh
 ```
 
-Скрипт создаст виртуальное окружение Python в `/opt/netbox/venv/`.
-
-### 7. Создание суперпользователя
-
-Создайте административную учетную запись для доступа к NetBox.
-
-1. **Активация виртуального окружения и переход в директорию:**
-
-    ```bash
-    source /opt/netbox/venv/bin/activate
-    cd /opt/netbox/netbox/
-    ```
-
-2. **Создание суперпользователя:**
-
-    ```bash
-    python3 manage.py createsuperuser
-    ```
-
-    Следуйте подсказкам для ввода данных.
-
-### 8. Настройка производственной среды (Gunicorn + Nginx)
-
-Настройте Gunicorn и Nginx для полноценной работы NetBox.
-
-1. **Настройка Gunicorn:** Скопируйте пример конфигурации.
-
-    ```bash
-    sudo cp /opt/netbox/contrib/gunicorn_config.py /opt/netbox/
-    ```
-
-2. **Настройка `systemd`:** Скопируйте файлы служб, перезагрузите конфигурацию, запустите и включите автозапуск служб NetBox.
-
-    ```bash
-    sudo cp /opt/netbox/contrib/netbox.service /etc/systemd/system/
-    sudo cp /opt/netbox/contrib/netbox-rq.service /etc/systemd/system/
-    sudo systemctl daemon-reload
-    sudo systemctl start netbox netbox-rq
-    sudo systemctl enable netbox netbox-rq
-    sudo systemctl status netbox netbox-rq # Проверьте статус
-    ```
-
-3. **Настройка Nginx:**
-    Установите Nginx: `sudo apt install -y nginx`.
-    Создайте самоподписанный SSL-сертификат (опционально, для теста):
-
-    ```bash
-    sudo openssl req -newkey rsa:2048 -nodes \
-      -keyout /etc/ssl/private/netbox.key \
-      -x509 -days 365 \
-      -out /etc/ssl/certs/netbox.crt
-    ```
-
-    Скопируйте и отредактируйте конфигурацию Nginx (`nginx.conf`), указав `server_name` и проверив пути к SSL-сертификатам.
-
-    ```bash
-    sudo cp /opt/netbox/contrib/nginx.conf /etc/nginx/sites-available/netbox
-    sudo vim /etc/nginx/sites-available/netbox
-    ```
-
-    Активируйте конфигурацию:
-
-    ```bash
-    sudo ln -s /etc/nginx/sites-available/netbox /etc/nginx/sites-enabled/netbox
-    sudo rm /etc/nginx/sites-enabled/default
-    sudo nginx -t && sudo systemctl restart nginx
-    ```
-
-## Дополнительная информация
-
-### Доступ к NetBox
-
-После выполнения всех шагов NetBox будет доступен по адресу вашего сервера (например, `https://<IP-адрес_сервера>`). При использовании самоподписанного SSL-сертификата браузер может выдать предупреждение о безопасности.
-
-### Тестовый запуск (не для production)
-
-Для быстрой проверки можно запустить NetBox в режиме разработки (не используйте его для производственной среды):
+### 7. Создание администратора
 
 ```bash
 source /opt/netbox/venv/bin/activate
 cd /opt/netbox/netbox/
-python3 manage.py runserver 0.0.0.0:8000 --insecure
+python3 manage.py createsuperuser
 ```
 
-Затем откройте `http://<IP-адрес_сервера>:8000` в браузере.
+### 8. Настройка Gunicorn и Systemd
+
+1. **Конфигурация Gunicorn:**
+    ```bash
+    sudo cp /opt/netbox/contrib/gunicorn_config.py /opt/netbox/gunicorn_config.py
+    ```
+
+2. **Настройка служб systemd:**
+    Скопируйте файлы служб из `contrib` в системную директорию.
+
+    ```bash
+    sudo cp /opt/netbox/contrib/*.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    ```
+
+    Запустите и включите автозапуск:
+    ```bash
+    sudo systemctl enable --now netbox netbox-rq netbox-housekeeping
+    ```
+
+### 9. Настройка веб-сервера Nginx
+
+1. **Установка и SSL:**
+    ```bash
+    sudo apt install -y nginx
+    # Создание сертификата (для production используйте Certbot)
+    sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout /etc/ssl/private/netbox.key \
+      -out /etc/ssl/certs/netbox.crt
+    ```
+
+2. **Конфигурация сайта:**
+    ```bash
+    sudo cp /opt/netbox/contrib/nginx.conf /etc/nginx/sites-available/netbox
+    sudo ln -s /etc/nginx/sites-available/netbox /etc/nginx/sites-enabled/netbox
+    sudo rm /etc/nginx/sites-enabled/default
+    ```
+
+    Отредактируйте `/etc/nginx/sites-available/netbox`, заменив `server_name` на ваш домен/IP.
+
+    ```bash
+    sudo nginx -t && sudo systemctl restart nginx
+    ```
+
+## Обслуживание и эксплуатация
+
+### Обновление NetBox
+
+Процесс обновления NetBox сводится к загрузке новой версии и повторному запуску `upgrade.sh`.
+
+```bash
+cd /opt/netbox
+sudo git fetch origin
+sudo git checkout v4.0.x # Замените на новую версию
+sudo /opt/netbox/upgrade.sh
+sudo systemctl restart netbox netbox-rq
+```
+
+### Резервное копирование
+
+Крайне важно регулярно создавать бэкапы БД и медиа-файлов.
+
+```bash
+# Бэкап базы данных
+sudo -u postgres pg_dump netbox > netbox_db_backup.sql
+
+# Бэкап медиа-файлов (изображения, вложения)
+tar -czvf netbox_media_backup.tar.gz /opt/netbox/netbox/media/
+```
+
+### Типовые проблемы
+
+- **502 Bad Gateway**: Проверьте статус службы `netbox` (`systemctl status netbox`) и логи Gunicorn.
+- **Ошибки статики (битые CSS/JS)**: Убедитесь, что пользователь `nginx` (обычно `www-data`) имеет права на чтение директории `/opt/netbox/netbox/static/`.
+- **Redis Connection Error**: Убедитесь, что `redis-server` запущен и параметры в `configuration.py` верны.
+
+## Дополнительная информация
+
+### Интеграции и плагины
+
+NetBox поддерживает расширение функционала через плагины (например, для топологий или интеграции с BGP). Плагины устанавливаются в `venv` и регистрируются в `PLUGINS` внутри `configuration.py`.
+
+- **[Документация по плагинам](https://docs.netbox.dev/en/stable/plugins/)**
+- **[LDAP Аутентификация](https://docs.netbox.dev/en/stable/administration/authentication/ldap/)**
+- **[NetBox API и Python-клиент (pynetbox)](https://pynetbox.readthedocs.io/)**
+
+### См. также
+
+- [Работа с PostgreSQL из консоли (psql)](../../Databases/PostgreSQL/Operations/console_basics.md)
+- [Оптимизация Nginx](../../WebServers/Nginx/Performance/nginx_performance_tuning.md)
+- [Использование Redis как кэш](../../Databases/Concepts/Caching/redis_caching.md)
+- [Динамический инвентарь Ansible (NetBox)](../../Ansible/dynamic_inventory.md)
+- [Интеграция IPAM в Kubernetes](../../Kubernetes/Networking/Network/CNI/ipam.md)
+- [Мониторинг NetBox через Prometheus](../../OpenTelemetry/Scenarios/netbox_monitoring.md)
+

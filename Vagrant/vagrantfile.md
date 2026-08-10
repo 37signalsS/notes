@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Vagrantfile** — основной конфигурационный файл проекта на языке Ruby, описывающий желаемое состояние виртуальных машин и их окружения. Он является декларативным описанием инфраструктуры и позволяет воспроизводить идентичные окружения на разных машинах разработчиков.
+**Vagrantfile** — основной конфигурационный файл проекта на языке Ruby, описывающий желаемое состояние виртуальных машин (ВМ) и их окружения. Он является декларативным описанием инфраструктуры (Infrastructure as Code) и позволяет воспроизводить идентичные окружения на разных машинах разработчиков.
 
 > **Синтаксис:** Ruby DSL (Domain-Specific Language). Актуальная и единственная поддерживаемая версия синтаксиса — `"2"`.
 
@@ -13,7 +13,7 @@
 При выполнении любой команды (`vagrant up`, `vagrant status` и др.) Vagrant ищет конфигурационные файлы в определённом порядке, объединяя их настройки:
 
 1.  **Box Vagrantfile:** Поставляется вместе с образом (box). Содержит специфические для данного образа настройки (например, имя пользователя по умолчанию).
-2.  **User Vagrantfile:** Расположен в домашней директории пользователя (`~/.vagrant.d/Vagrantfile`). Используется для глобальных настроек (например, прокси или плагинов).
+2.  **User Vagrantfile:** Расположен в домашней директории пользователя (`~/.vagrant.d/Vagrantfile`). Используется для глобальных настроек (например, прокси или плагинов для всех проектов).
 3.  **Project Vagrantfile:** Находится в корневой директории проекта. Это основной файл, который хранится в системе контроля версий.
 
 ### Слияние конфигураций
@@ -30,6 +30,9 @@ Vagrant объединяет настройки из всех найденных
 # vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
+  # Проверка версии Vagrant
+  config.vagrant.require_version ">= 2.4.0"
+
   # Глобальные настройки проекта
   config.vm.box = "bento/ubuntu-24.04"
 
@@ -53,7 +56,7 @@ end
 
 **Пример:**
 ```ruby
-config.vm.define "web" do |web|
+config.vm.define "web", primary: true do |web|
   web.vm.hostname = "web-server"
 end
 ```
@@ -63,8 +66,9 @@ end
 -   `config` — главный объект конфигурации Vagrant.
 -   `vm` — раздел, отвечающий за параметры виртуальных машин.
 -   `define` — метод, создающий логическое описание отдельной ВМ.
--   `"web"` — имя виртуальной машины в контексте Vagrant (используется в командах: `vagrant up web`, `vagrant ssh web`).
--   `do |web| ... end` — блок Ruby, внутри которого `web` ссылается на объект конфигурации этой конкретной ВМ. Все параметры внутри блока (`web.vm.hostname`, `web.vm.network` и т.д.) применяются только к данной машине и переопределяют глобальные настройки `config`.
+-   `"web"` — имя ВМ в контексте Vagrant (используется в командах: `vagrant up web`).
+-   `primary: true` — помечает машину как основную (запускается по умолчанию при `vagrant up` без аргументов).
+-   `do |web| ... end` — блок Ruby, внутри которого `web` ссылается на объект конфигурации этой конкретной ВМ. Параметры внутри блока переопределяют глобальные настройки `config`.
 
 ### Ключевые параметры конфигурации
 
@@ -72,9 +76,11 @@ end
 | :--- | :--- | :--- |
 | **Образ** | `config.vm.box` | Имя базового образа (например, `bento/ubuntu-24.04`). |
 | | `config.vm.box_version` | Фиксация версии образа (`"~> 202501.0"`). |
+| | `config.vm.box_url` | URL для загрузки образа, если его нет в Atlas/Cloud. |
 | | `config.vm.box_check_update` | Проверка обновлений при каждом запуске (`true`/`false`). |
+| | `config.vm.ignore_box_vagrantfile` | Игнорировать Vagrantfile, встроенный в образ. |
 | **ОС** | `config.vm.hostname` | Имя хоста внутри ВМ. |
-| | `config.vm.guest` | Тип гостевой ОС (помогает Vagrant правильно применять настройки). |
+| | `config.vm.guest` | Тип гостевой ОС (например, `:linux`, `:ubuntu`). |
 | **Сеть** | `config.vm.network` | Настройка портов (`forwarded_port`), частных (`private_network`) или публичных сетей. |
 | **SSH** | `config.ssh.username` | Имя пользователя для подключения (по умолчанию `vagrant`). |
 | | `config.ssh.private_key_path` | Путь к приватному ключу SSH. |
@@ -82,29 +88,34 @@ end
 | **Ресурсы** | `config.vm.provider` | Блок настроек гипервизора (память, CPU, специфические флаги). |
 | **Файлы** | `config.vm.synced_folder` | Синхронизация директорий хоста и ВМ. |
 | **Настройка**| `config.vm.provision` | Автоматизация установки ПО (Shell, Ansible, Docker). |
-| **Инфо** | `config.vm.post_up_message` | Сообщение, выводимое пользователю после успешного запуска `vagrant up`. |
+| | `run: "always"` | Параметр провижинера: выполнять при каждом `up` / `reload`. |
+| **Инфо** | `config.vm.post_up_message` | Сообщение, выводимое после успешного запуска. |
 
 ## Практические сценарии
 
-### Сценарий 1: Проверка наличия плагинов
+### Сценарий 1: Проверка наличия плагинов и установка
 
-Хорошей практикой является проверка установленных плагинов перед их использованием, чтобы избежать ошибок у других разработчиков:
+Автоматическая проверка и уведомление об отсутствующих плагинах:
 
 ```ruby
-Vagrant.configure("2") do |config|
-  if Vagrant.has_plugin?("vagrant-proxyconf")
-    config.proxy.http     = "http://proxy.example.com:8080/"
-    config.proxy.https    = "http://proxy.example.com:8080/"
-    config.proxy.no_proxy = "localhost,127.0.0.1"
-  end
+required_plugins = %w(vagrant-proxyconf vagrant-vbguest)
+missing_plugins = required_plugins.select { |plugin| !Vagrant.has_plugin?(plugin) }
 
+unless missing_plugins.empty?
+  puts "Missing plugins: #{missing_plugins.join(', ')}"
+  puts "Install them with: vagrant plugin install #{missing_plugins.join(' ')}"
+  exit 1
+end
+
+Vagrant.configure("2") do |config|
+  config.proxy.http = "http://192.168.1.100:3128" if Vagrant.has_plugin?("vagrant-proxyconf")
   config.vm.box = "bento/ubuntu-24.04"
 end
 ```
 
 ### Сценарий 2: Использование внешнего файла настроек (Vagrantfile.local)
 
-Для локальных правок, которые не должны попадать в Git, можно использовать подгрузку дополнительного файла:
+Для локальных правок, которые не должны попадать в Git (например, изменение объема RAM под конкретную машину разработчика):
 
 ```ruby
 Vagrant.configure("2") do |config|
@@ -117,9 +128,9 @@ Vagrant.configure("2") do |config|
 end
 ```
 
-### Сценарий 3: Динамическая генерация машин
+### Сценарий 3: Динамическая генерация машин из цикла
 
-Ruby позволяет использовать циклы для создания кластеров:
+Создание кластера из нескольких узлов с инкрементальными IP:
 
 ```ruby
 Vagrant.configure("2") do |config|
@@ -138,20 +149,61 @@ Vagrant.configure("2") do |config|
 end
 ```
 
+### Сценарий 4: Загрузка конфигурации из YAML
+
+Лучшая практика для разделения кода (Ruby) и данных (YAML):
+
+```ruby
+require 'yaml'
+servers = YAML.load_file('servers.yml') if File.exist?('servers.yml')
+
+Vagrant.configure("2") do |config|
+  servers.each do |server|
+    config.vm.define server['name'] do |node|
+      node.vm.box = server['box'] || "bento/ubuntu-24.04"
+      node.vm.network "private_network", ip: server['ip']
+    end
+  end
+end
+```
+
 ## Дополнительная информация
 
 ### Использование переменных окружения
 
-Переменные окружения позволяют гибко менять параметры без редактирования файла:
+Для гибкого управления параметрами без редактирования файла:
 
 ```ruby
 Vagrant.configure("2") do |config|
   # Использование переменной или значения по умолчанию
   ram = ENV['VAGRANT_RAM'] || "2048"
   
-  config.vm.provider "libvirt" do |lv|
-    lv.memory = ram.to_i
+  config.vm.provider "virtualbox" do |vb|
+    vb.memory = ram.to_i
   end
+end
+```
+
+### Управление провижинингом
+
+Можно контролировать, когда именно запускаются скрипты настройки:
+
+```ruby
+# Запускать при каждом vagrant up / vagrant reload
+config.vm.provision "shell", inline: "uptime", run: "always"
+
+# Запускать только по явному запросу (vagrant provision)
+config.vm.provision "shell", inline: "apt-get update", run: "never"
+```
+
+### Триггеры (Triggers)
+
+Позволяют выполнять команды на хосте или в ВМ при определенных событиях:
+
+```ruby
+config.trigger.after :up do |trigger|
+  trigger.info = "ВМ запущена. Выполняю локальный скрипт..."
+  trigger.run = { inline: "bash notify_host.sh" }
 end
 ```
 
@@ -170,10 +222,10 @@ VAGRANT_LOG=debug vagrant status
 
 ### Лучшие практики
 
-1.  **Комментарии:** Используйте комментарии для разделения секций (Network, Provisioning, Providers).
-2.  **Безопасность:** Не храните секреты в `Vagrantfile`. Используйте `.env` файлы (через плагин `vagrant-env`) или системные переменные окружения.
-3.  **Идемпотентность:** Пишите скрипты провижининга так, чтобы их можно было запускать многократно без ошибок.
-4.  **Версионирование:** Всегда фиксируйте версию box (`config.vm.box_version`), чтобы гарантировать одинаковый результат у всей команды.
+1.  **Комментарии:** Используйте комментарии для логического разделения секций.
+2.  **Безопасность:** Не храните секреты в `Vagrantfile`. Используйте переменные окружения или плагин `vagrant-env`.
+3.  **Идемпотентность:** Скрипты провижининга должны быть готовы к повторному запуску.
+4.  **Версионирование:** Фиксируйте версию box (`config.vm.box_version`) и версию Vagrant (`config.vagrant.require_version`).
 
 ### См. также
 
@@ -181,4 +233,4 @@ VAGRANT_LOG=debug vagrant status
 - [Vagrant Providers](./vagrant_providers.md) — детальная настройка гипервизоров.
 - [Vagrant Networking](./vagrant_networking.md) — проброс портов и настройка сетей.
 - [Vagrant Provisioning](./vagrant_provisioning.md) — автоматизация настройки гостевой ОС.
-- [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — сложные сценарии, триггеры и мульти-машинные конфигурации.
+- [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — триггеры и мульти-машины.

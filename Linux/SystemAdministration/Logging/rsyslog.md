@@ -4,7 +4,7 @@
 
 **`rsyslog`** (Rocket-fast System for Log Processing) — высокопроизводительная служба для сбора, обработки и пересылки системных журналов. В современных дистрибутивах Linux (RHEL/CentOS 7+, Debian 8+, Ubuntu 14.04+) является стандартным демоном логирования. Основная роль — получение логов от `systemd-journald`, их фильтрация, модификация и перенаправление в различные места назначения (файлы, базы данных, удаленные серверы, брокеры сообщений).
 
-**Ключевое применение:** построение систем [централизованного логирования](../../../Concepts/Observability_and_Monitoring/observability_definitions.md). Взаимодействие с [journald](./journald.md) и [journalctl](../../Diagnostics/journalctl/journalctl_overview.md) описано в соответствующих файлах. Общий обзор — в [обзоре логирования](./logging_overview.md).
+**Ключевое применение:** построение систем [централизованного логирования](../../../Concepts/Observability_and_Monitoring/observability_definitions.md). Взаимодействие с [journald](./journald.md) и [journalctl](../../Diagnostics/journalctl/journalctl_overview.md) обеспечивает полную видимость состояния системы.
 
 ## Основные концепции
 
@@ -23,19 +23,17 @@ Rsyslog имеет модульную архитектуру. Модули за�
 | Тип модуля | Префикс | Назначение | Примеры |
 | :--- | :--- | :--- | :--- |
 | **Input** | `im` | Сбор логов из источников | `imjournal` (systemd), `imudp`, `imtcp`, `imfile` (чтение текстовых файлов), `imklog` (ядро) |
-| **Output** | `om` | Отправка логов | `omfile` (в файл), `omfwd` (по сети), `omelasticsearch`, `omkafka`, `ommysql` |
-| **Filter** | `fm` | Фильтрация и модификация | `fmhash`, `fmlookup` |
+| **Output** | `om` | Отправка логов | `omfile` (в файл), `omfwd` (по сети), `omelasticsearch`, `omkafka`, `ommysql`, `ommongodb` |
+| **Modification** | `mm` | Фильтрация и модификация | `mmjsonparse` (парсинг JSON), `mmnormalize` (структурирование), `mmutf8fix` |
 | **Parser** | `pm` | Разбор специфичных форматов | `pmrfc5424`, `pmrfc3164`, `pmlastmsg` |
 
 ### Конфигурация и фильтрация
 
 **Файлы конфигурации:**
-
 - Главный: `/etc/rsyslog.conf`
 - Дополнительные: `/etc/rsyslog.d/*.conf` (загружаются через `include(file="/etc/rsyslog.d/*.conf")`)
 
 #### Традиционная фильтрация
-
 **Структура правила:** `источник.приоритет   действие`
 
 | Компонент | Описание | Примеры |
@@ -53,15 +51,20 @@ auth,authpriv.*                 /var/log/auth.log
 daemon,mail.info;cron.none      -/var/log/syslog
 ```
 
-#### Современная фильтрация (Property-based)
+#### Современная фильтрация (Property-based и RainierScript)
 
 Позволяет фильтровать по любому свойству сообщения (текст, имя программы, хост).
 
-**Синтаксис:** `:свойство, [оператор], "значение" действие`
-
+**Синтаксис (Property-based):** `:свойство, [оператор], "значение" действие`
 - `:msg, contains, "error" /var/log/errors.log` — поиск текста в сообщении.
 - `:programname, isequal, "nginx" /var/log/nginx-system.log` — фильтрация по имени приложения.
-- `if $programname == 'app' then /var/log/app.log` — формат RainierScript.
+
+**Синтаксис (RainierScript):**
+```conf
+if $programname == 'app' or $msg contains 'critical' then {
+    action(type="omfile" file="/var/log/app_critical.log")
+}
+```
 
 ### Уровни приоритета (RFC 5424)
 
@@ -81,7 +84,6 @@ daemon,mail.info;cron.none      -/var/log/syslog
 ### Настройка удаленного логирования (RainierScript)
 
 #### Сервер (получатель логов)
-
 1.  **Настроить прием логов** (`/etc/rsyslog.d/50-remote.conf`):
     ```conf
     # Загрузка модуля для TCP
@@ -99,16 +101,8 @@ daemon,mail.info;cron.none      -/var/log/syslog
     }
     ```
 
-2.  **Перезапуск и открытие порта:**
-    ```bash
-    sudo systemctl restart rsyslog
-    sudo firewall-cmd --add-port=514/tcp --permanent && sudo firewall-cmd --reload
-    # → success
-    ```
-
-#### Клиент (отправитель логов) с очередью (`Action Queue`)
-
-Для обеспечения надежности (например, соответствие регуляторным требованиям в FinTech) необходимо использовать очереди. Это предотвращает потерю данных при сбоях сети или индексатора (Loki/Elasticsearch).
+#### Клиент (отправитель логов) с отказоустойчивой очередью
+Для обеспечения надежности в нагруженных средах необходимо использовать очереди (`Action Queue`).
 
 `/etc/rsyslog.d/99-forward.conf`:
 ```conf
@@ -117,59 +111,20 @@ daemon,mail.info;cron.none      -/var/log/syslog
     port="514"
     protocol="tcp"
     queue.type="LinkedList"       # Динамическая очередь в памяти
-    queue.size="10000"            # Максимальное количество сообщений в очереди
-    queue.dequeueBatchSize="100"  # Размер пачки для обработки
+    queue.size="50000"            # Максимальное количество сообщений
+    queue.dequeueBatchSize="1024" # Размер пачки для обработки
     queue.filename="fwdRule"      # Включает "disk-assisted" режим (сброс на диск при переполнении RAM)
-    queue.maxDiskSpace="1g"       # Лимит места на диске
+    queue.maxDiskSpace="2g"       # Лимит места на диске
     queue.saveOnShutdown="on"     # Сохранять очередь при перезагрузке rsyslog
     action.resumeRetryCount="-1"  # Бесконечные попытки переподключения
 )
 ```
 
 **UDP против TCP для пересылки логов:**
-- **UDP (один `@`):** Низкие задержки, но сообщения могут теряться при нагрузке.
-- **TCP (двойной `@@`):** Гарантированная доставка (буферизация и повторная передача). Обязательно для аудита и комплаенса.
-
-### Сравнение: rsyslog vs syslog-ng
-
-| Параметр | **rsyslog** | **syslog-ng** |
-| :--- | :--- | :--- |
-| **Философия** | Гибридная (традиционный + RainierScript) | Чисто декларативная (Source -> Filter -> Dest) |
-| **Производительность** | Очень высокая на одном узле | Высокая, отличная работа с парсингом |
-| **Парсинг** | Поддерживает, но синтаксис сложнее | Активное использование парсеров (CSV, JSON, XML) |
-| **Стандарт** | Дефолт в RHEL, Ubuntu, Debian | Часто используется как центральный агрегатор |
-
-**Когда выбирать rsyslog:** если нужен надежный, стандартный для дистрибутива демон с минимальным потреблением ресурсов.
-**Когда выбирать syslog-ng:** если требуется сложная корреляция логов, глубокое переписывание сообщений или важна читаемость конфигурации.
-
-### Безопасная передача через TLS
-
-Для шифрования трафика между клиентом и сервером.
-
-1.  **Установить пакет:** `sudo apt install rsyslog-gnutls` (или `rsyslog-openssl`).
-2.  **Настройка сервера:**
-    ```conf
-    module(load="imtcp" StreamDriver.Name="gtls" StreamDriver.Mode="1")
-    $DefaultNetstreamDriverCAFile /etc/ssl/certs/ca.pem
-    $DefaultNetstreamDriverCertFile /etc/ssl/certs/server-cert.pem
-    $DefaultNetstreamDriverKeyFile /etc/ssl/private/server-key.pem
-    input(type="imtcp" port="6514")
-    ```
-3.  **Настройка клиента:**
-    ```conf
-    action(type="omfwd"
-           target="remote-log-server"
-           port="6514"
-           protocol="tcp"
-           StreamDriver="gtls"
-           StreamDriverMode="1"
-           StreamDriverAuthMode="x509/name"
-           StreamDriverPermittedPeers="remote-log-server"
-    )
-    ```
+- **UDP (один `@`):** Низкие задержки, риск потери данных при нагрузке.
+- **TCP (двойной `@@`):** Гарантированная доставка. Обязательно для аудита и комплаенса.
 
 ### Форматирование в JSON (для ELK/Loki)
-
 Современные системы анализа предпочитают структурированный формат.
 
 ```conf
@@ -188,74 +143,95 @@ template(name="json-template" type="list") {
 *.* action(type="omfile" file="/var/log/syslog.json" template="json-template")
 ```
 
-### Интеграция с systemd-journald
+### Нормализация данных (mmnormalize)
+Используется для преобразования неструктурированного текста в JSON-объекты на лету (на базе `liblognorm`).
 
-По умолчанию `rsyslog` забирает сообщения из сокета `journald`.
-
-1.  **Загрузить модуль `imjournal`** (`/etc/rsyslog.conf`):
-    ```conf
-    module(load="imjournal" 
-           PersistStateInterval="100" 
-           StateFile="/var/lib/rsyslog/imjournal.state")
+1.  **Создать файл правил** (`/etc/rsyslog.d/app.rulebase`):
+    ```text
+    rule=:%date:date-rfc3164% %host:word% %tag:word%[%pid:number%]: %message:rest%
     ```
-2.  **Отключить дублирование** (необязательно): Если `rsyslog` пишет в `/var/log/syslog`, можно отключить аналогичный вывод в `journald.conf` (`ForwardToSyslog=no`), чтобы снизить нагрузку.
+2.  **Применение в конфигурации:**
+    ```conf
+    module(load="mmnormalize")
+    if $programname == 'my_app' then {
+        action(type="mmnormalize" ruleBase="/etc/rsyslog.d/app.rulebase")
+    }
+    ```
 
-### Тестирование и диагностика
+### Безопасная передача через TLS
+Шифрование и аутентификация клиента и сервера. Требуется пакет `rsyslog-gnutls`.
 
+```conf
+# Пример конфигурации клиента
+action(type="omfwd"
+       target="remote-log-server"
+       port="6514"
+       protocol="tcp"
+       StreamDriver="gtls"
+       StreamDriverMode="1"
+       StreamDriverAuthMode="x509/name"
+       StreamDriverPermittedPeers="remote-log-server"
+)
+```
+
+## Настройка и оптимизация
+
+### Тюнинг производительности (High Load)
+На высоконагруженных системах стандартные настройки могут привести к потере логов или зависанию приложений.
+
+- **Асинхронная запись:** Использование больших буферов для записи на диск.
+  `action(type="omfile" ioBufferSize="128k" flushOnTXEnd="off" asyncWriting="on")`
+- **Многопоточность:** Распараллеливание обработки очередей.
+  `main_queue(queue.workerthreads="4" queue.dequeueBatchSize="2048")`
+- **Размер сообщения:** Увеличение лимита для JSON-логов или длинных стектрейсов.
+  `$MaxMessageSize 64k`
+
+### Интеграция с systemd-journald
+По умолчанию `rsyslog` забирает сообщения из сокета `journald`.
+```conf
+module(load="imjournal" 
+       PersistStateInterval="1000" 
+       StateFile="/var/lib/rsyslog/imjournal.state")
+```
+*Для снижения нагрузки можно установить `ForwardToSyslog=no` в `journald.conf`.*
+
+## Диагностика и устранение неполадок
+
+### Тестирование и проверка
 ```bash
-# Проверка синтаксиса конфигурации (критично перед перезапуском)
+# Проверка синтаксиса конфигурации (КРИТИЧНО перед перезапуском)
 sudo rsyslogd -N1
-# → rsyslogd: version 8.x, config validation run (N1)
 # → rsyslogd: End of config validation run.
 
-# Отправить тестовое сообщение с тегом
-logger -t test_script "Тестовое сообщение"
+# Отправить тестовое сообщение
+logger -t test_tag "Test message for rsyslog"
 
-# Проверить попадание в лог в реальном времени
-tail -f /var/log/syslog | grep test_script
-
-# Проверка очереди (если настроена)
-ls -lh /var/lib/rsyslog/fwd_queue*
-```
-
-### Отладка проблем
-
-```bash
-# Включить отладочный режим (временная остановка службы)
-sudo systemctl stop rsyslog
-sudo rsyslogd -dn > /tmp/rsyslog_debug.log 2>&1
-
-# Проверить открытые порты (TCP/UDP)
-ss -tulpn | grep rsyslog
-
-# Просмотр ошибок самой службы rsyslog
+# Просмотр ошибок самой службы
 journalctl -u rsyslog -f
 ```
-
-## Дополнительная информация
-
-### Оптимизация производительности
-
-Для систем с высокой нагрузкой (High Load):
-- **Batch Size:** Увеличение количества сообщений, обрабатываемых за один раз.
-  `action(type="omfile" ... action.reportsstats="on" queue.checkpointinterval="100")`
-- **Threads:** Использование нескольких потоков для записи или пересылки.
-  `action(type="omfwd" ... queue.workerthreads="4")`
-- **Асинхронная запись:** Использование `-` перед путем к файлу (legacy) или `ioBufferSize` в RainierScript.
 
 ### Типичные проблемы и решения
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Логи не записываются** | Неправильные права или владелец | `chown syslog:adm /var/log/*.log` (Debian) или `root:root` (RHEL) |
-| **Порт 514 закрыт** | SELinux или AppArmor блокируют порт | `semanage port -a -t syslogd_port_t -p tcp 514` |
-| **Дублирование логов** | `journald` и `rsyslog` пишут одно и то же | Установить `ForwardToSyslog=no` в `/etc/systemd/journald.conf` |
-| **Потеря логов по UDP** | Переполнение буфера сокета UDP | Увеличить `net.core.rmem_max` через `sysctl` или перейти на TCP |
-| **Файлы не ротируются** | Конфликт с `logrotate` | Убедиться, что `logrotate` посылает `SIGHUP` в `rsyslog` после ротации |
+| **Логи не записываются** | Ошибки прав доступа | `chown syslog:adm /var/log/*.log` (на Debian/Ubuntu) |
+| **Дублирование логов** | Активна пересылка из journald | Установить `ForwardToSyslog=no` в `/etc/systemd/journald.conf` |
+| **Потеря логов по UDP** | Переполнение буфера ядра | Увеличить `net.core.rmem_max` через sysctl |
+| **Файлы не ротируются** | Ошибка в `logrotate` | Убедиться, что `logrotate` посылает `SIGHUP` в `rsyslog` |
+| **Высокая нагрузка на CPU** | Слишком сложная фильтрация | Оптимизировать правила, использовать `stop` для исключения лишних проверок |
 
-### Связанные темы
+## Дополнительная информация
 
+### Сравнение: rsyslog vs syslog-ng
+
+| Параметр | **rsyslog** | **syslog-ng** |
+| :--- | :--- | :--- |
+| **Философия** | Гибридная (legacy + RainierScript) | Чисто декларативная |
+| **Производительность** | Лидер в простых сценариях | Стабильнее при глубоком парсинге |
+| **Стандарт** | Дефолт в RHEL, Ubuntu, Debian | Часто используется как центральный агрегатор |
+
+### См. также
 - [Обзор логирования в Linux](./logging_overview.md)
 - [systemd-journald: Сбор и хранение](./journald.md)
 - [journalctl: Диагностика и чтение](../../Diagnostics/journalctl/journalctl_overview.md)
-- [Централизованное логирование Docker](../../../Docker/Docker_logs/docker_centralized_logging.md)
+- [Vector: современная альтернатива](../../../Vector/vector_overview.md)

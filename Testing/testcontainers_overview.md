@@ -11,8 +11,10 @@
 ### Механизм работы и очистки (Ryuk)
 
 Одной из ключевых особенностей Testcontainers является наличие **Ryuk (Resource Reaper)**. Это вспомогательный "контейнер-сторож", который запускается первым.
-* **Задача:** Ryuk следит за сессией тестирования и гарантирует, что все созданные контейнеры, сети и тома будут удалены, даже если процесс тестирования завершился аварийно (например, при падении JVM или остановке CI-раннера).
-* **Безопасность (2025+):** В современных версиях образ Ryuk базируется на `scratch`, что минимизирует риски безопасности в корпоративных контурах.
+* **Задача:** Ryuk следит за сессией тестирования и гарантирует, что все созданные контейнеры, сети и тома будут удалены, даже если процесс тестирования завершился аварийно (например, при падении JVM или остановке CI-раннера). Ryuk является отдельным Go-приложением (`testcontainers/moby-ryuk`) и использует Docker-подключение без привилегированного режима.
+* **Безопасность (2025+):** Начиная с версии 0.13.0 (сентябрь 2025) образ Ryuk базируется на `scratch`, что минимизирует риски безопасности в корпоративных контурах. Актуальная версия образа на начало 2026 года — 0.14.0, она используется в Testcontainers Java начиная с релиза февраля 2026 года.
+* **Конфигурация:** Образ можно переопределить через `ryuk.container.image`, а в средах, где запрещён запуск привилегированных контейнеров, — включить `ryuk.container.privileged=true`. Если очистка уже реализована самой средой (например, CI), Ryuk можно отключить переменной окружения `TESTCONTAINERS_RYUK_DISABLED=true` или свойством `ryuk.disabled`.
+* **Rootless Docker / Podman:** В rootless-окружениях и Podman Ryuk может работать некорректно; для таких рантаймов применяется отключение Ryuk либо использование Podman с поддержкой привилегированного режима.
 
 ### Стратегии ожидания (Wait Strategies)
 
@@ -20,7 +22,7 @@ Testcontainers не просто запускает контейнер, но и 
 * **Wait.forListeningPort():** Ожидание открытия TCP-порта.
 * **Wait.forHttp(path):** Ожидание успешного HTTP-ответа (код 200).
 * **Wait.forLogMessage(regex):** Ожидание появления определенной строки в логах (например, "Database is ready").
-* **Wait.forHealthcheck():** Использование встроенной команды `HEALTHCHECK` из Dockerfile (рекомендуется по умолчанию для современных образов).
+* **Wait.forHealthcheck():** Использование встроенной команды `HEALTHCHECK` из Dockerfile. Рекомендуется для образов, в которых она определена; в новых версиях SDK (например, `testcontainers-node` v12+) она стала стратегией по умолчанию при наличии `HEALTHCHECK`, с переходом на `Wait.forListeningPorts()` в противном случае.
 
 ### Сетевое взаимодействие (Networking)
 
@@ -58,12 +60,46 @@ def teardown_module():
     redis.stop()
 ```
 
+**Пример (Java / JUnit 5):** В Java используется встроенная интеграция с JUnit Jupiter через аннотации `@Testcontainers` и `@Container`:
+
+```java
+@Testcontainers
+class OrderRepositoryTest {
+
+    @Container
+    static PostgreSQLContainer<?> postgres =
+        new PostgreSQLContainer<>("postgres:16")
+            .withDatabaseName("orders")
+            .withUsername("test")
+            .withPassword("test");
+
+    @BeforeAll
+    static void initConnection() {
+        orderRepository = new OrderRepository(postgres.getJdbcUrl(),
+                                              postgres.getUsername(),
+                                              postgres.getPassword());
+    }
+
+    @Test
+    void shouldPersistOrder() {
+        // тест использует реальный контейнер PostgreSQL
+    }
+}
+```
+
+`@Container` — инструкция жизненным циклом контейнера управляет Testcontainers; `@Testcontainers` — включает расширение JUnit Jupiter (автозапуск контейнеров до тестов и автоматическую очистку после).
+
 ### Ускорение разработки через Reusable Mode
 
 Режим **Reusable Mode** (переиспользование) позволяет не перезапускать контейнеры при каждом локальном запуске теста, если их конфигурация не изменилась.
 1. В коде включается флаг `.withReuse(true)`.
 2. В файле `~/.testcontainers.properties` на машине разработчика добавляется `testcontainers.reuse.enable=true`.
 3. **Результат:** Время обратной связи сокращается с десятков секунд до миллисекунд, так как тесты подключаются к уже запущенному контейнеру.
+
+**Ограничения:**
+* Режим является **экспериментальным** и ориентирован на локальную разработку, а не на CI: в пайплайнах он противоречит принципу эфемерных окружений.
+* Контейнер переиспользуется только при полном совпадении параметров запуска (образ, конфигурация, имя); любые изменения приводят к пересозданию.
+* Testcontainers Desktop включает `testcontainers.reuse.enable=true` по умолчанию для локальных прогонов.
 
 ## 4. Роль в DevOps и CI/CD
 
@@ -79,23 +115,32 @@ def teardown_module():
 
 ### Особенности запуска в CI
 
-При запуске внутри контейнеризированных пайплайнов (например, в GitLab CI или GitHub Actions) требуется настройка вложенности Docker. Подробный разбор подходов DinD (Docker-in-Docker) и DooD (Socket Mounting), их рисков и оптимизации см. в SSoT-файле: **[Docker-in-Docker: Запуск в контейнере](../Docker/docker-in-docker.md)**.
+При запуске внутри контейнеризированных пайплайнов (например, в GitLab CI или GitHub Actions) требуется настройка вложенности Docker. Подробный разбор подходов DinD (Docker-in-Docker) и DooD (Socket Mounting), их рисков и оптимизации см. в файле: **[Docker-in-Docker: Запуск в контейнере](../Docker/docker-in-docker.md)**.
+
+### Testcontainers Desktop и Testcontainers Cloud
+
+Экосистема вокруг библиотек постоянно расширяется коммерческими и бесплатными компонентами:
+
+* **Testcontainers Desktop** — бесплатное GUI-приложение для локальной разработки. Позволяет запускать тесты без локального Docker-демона (встроенный runtime на macOS), переключать рантаймы (Docker Desktop, Podman, Rancher), фиксировать порты сервисов, «замораживать» контейнеры для отладки.
+* **Testcontainers Cloud** — SaaS-сервис, выполняющий контейнеры на удалённых воркерах (Linux x86). Устраняет проблемы ресурсов и архитектурных различий (например, на Arm MacBook). Для индивидуальных разработчиков доступен бесплатный тариф (около 300 минут облачного рантайма в месяц), рабочие воркеры выделяются динамически через SSH-агент.
+* **Облачный запуск в CI:** Testcontainers Cloud Agent можно использовать в пайплайнах для консистентности результатов между локальной машиной и CI, при этом локальный Docker-демон не требуется.
 
 ## 5. Дополнительная информация
 
 ### Модульная экосистема (2025–2026)
 
-Библиотека предоставляет готовые модули-обертки, упрощающие настройку специфичных инструментов:
-* **Базы данных:** PostgreSQL, MySQL, MariaDB, Oracle, MSSQL, ClickHouse, TiDB.
-* **Брокеры и очереди:** Kafka, Redpanda, RabbitMQ, Pulsar.
-* **NoSQL и Кэш:** Redis, Valkey, MongoDB (Atlas Local), Cassandra, Elasticsearch.
-* **AI/ML (новое):** OllamaContainer (для локальных LLM), Milvus, Qdrant, Weaviate.
-* **Cloud-Native:** LocalStack (AWS), Azurite (Azure), GCP Emulators.
+Библиотека предоставляет готовые модули-обертки, упрощающие настройку специфичных инструментов. Список модулей постоянно растёт, официальный каталог — [testcontainers.com/modules](https://testcontainers.com/modules/):
+* **Базы данных:** PostgreSQL, MySQL, MariaDB, Oracle, MSSQL, ClickHouse, TiDB, YugabyteDB, Neon, PlanetScale.
+* **Брокеры и очереди:** Kafka (включая Apache Kafka нативно, без ZooKeeper), Redpanda, RabbitMQ, Pulsar, NATS.
+* **NoSQL и Кэш:** Redis, Valkey, MongoDB (Atlas Local), Cassandra, Elasticsearch, OpenSearch, DynamoDB Local.
+* **AI/ML (новое):** OllamaContainer (для локальных LLM), Milvus, Qdrant, Weaviate, Chroma.
+* **Cloud-Native:** LocalStack (AWS), Azurite (Azure), GCP Emulators, BigQuery Emulator.
+* **Браузеры (E2E):** Selenium (Chrome и Firefox) через `BrowserWebDriverContainer`.
 
 ### Поддерживаемые языки
 
-* **Java/JVM:** Версия 2.0+ (стандарт индустрии, отказ от JUnit 4).
-* **Node.js:** Версия v12+ (требует Node.js >= 22).
+* **Java/JVM:** Версия 2.0+ (стандарт индустрии). В ветке 2.x удалена поддержка JUnit 4 (только JUnit Jupiter), классы контейнеров переехали в пакет `org.testcontainers.*`, все артефакты имеют префикс `testcontainers-` (например, `org.testcontainers:testcontainers-mysql`).
+* **Node.js:** `testcontainers-node` v12+ (требует Node.js >= 22.22).
 * **Go:** `testcontainers-go`.
 * **Python:** `testcontainers-python`.
 * **.NET:** `testcontainers-dotnet`.
@@ -109,13 +154,12 @@ def teardown_module():
 | **Docker Compose** | Оркестрация через YAML | Статичные окружения, простые стеки без сложной логики в коде |
 | **In-memory БД** | Эмуляция (H2, SQLite) | Быстрые unit-тесты, когда поведение 100% идентично реальной БД |
 | **LocalStack** | Эмуляция AWS | Специализированные тесты для облачных сервисов |
+| **Testcontainers Cloud** | Масштабируемые контейнеры в облаке | Тяжелые интеграционные наборы, архитектура Linux/x86, изоляция CI |
 
 ---
-**Надёжность:** 10 (SSoT + Web Search 2026)
 
 ### Связанные документы
 
 * **[Виды тестов: Unit, Integration, E2E](./testing_types_unit_integration_e2e.md)** — основы стратегии тестирования.
 * **[Интеграция тестов в CI/CD](./testing_cicd_integration.md)** — использование эфемерных окружений.
-* **[Обзор Docker](../Docker/docker_overview.md)** — база для работы Testcontainers.
 * **[Docker Compose CI/CD Testing](../Docker/Docker_compose/docker_compose_ci_cd_testing.md)** — альтернативный подход к управлению контейнерами.

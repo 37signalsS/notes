@@ -74,6 +74,7 @@
 
 * [Обзор производительности веб-приложений](./overview.md) — фундаментальные аспекты.
 * [Ключевые метрики Web Vitals](./web_vitals.md) — детали LCP, INP, CLS.
+* [Оптимизация протоколов HTTP](../../../Networking/Protocols/HTTP/http_protocols_optimization.md) — детали на уровне транспорта.
 * [Протоколы HTTP/2 и HTTP/3](./http2_http3.md) — транспортный уровень.
 * [Принципы тестирования](./testing_principles.md) — методология замеров.
 * [Инструменты: Chrome DevTools](./chrome_devtools.md) и [WebPageTest](./webpagetest.md).

@@ -1,15 +1,12 @@
 # Диагностика и анализ трафика DHCP
 
-> **Надёжность: 10/10** (SSoT + Web Verification)
-> **Актуальность: 2026-07** (Статус: Актуально)
-
 ## Определения
 
 **Анализ трафика DHCP (Dynamic Host Configuration Protocol)** — процесс перехвата и декодирования пакетов протокола для выявления ошибок в конфигурации, сетевых задержек или несанкционированных действий (Rogue DHCP).
 
-**Диагностика (troubleshooting) DHCP** — систематический процесс поиска причин отказа в выдаче IP-адресов, от физического уровня до прикладного.
+**Диагностика (troubleshooting) DHCP** — систематический процесс поиска причин отказа в выдаче IP-адресов, охватывающий уровни от L2 (связность) до L7 (логика сервера).
 
-**APIPA (Automatic Private IP Addressing)** — механизм самоназначения адреса из сети `169.254.0.0/16` (IPv4) или `fe80::/10` (IPv6 Link-Local), когда DHCP-сервер недоступен.
+**APIPA (Automatic Private IP Addressing)** — механизм самоназначения адреса из сети `169.254.0.0/16` (IPv4), когда DHCP-сервер недоступен. В IPv6 аналогичную роль играют **Link-Local** адреса (`fe80::/10`), назначаемые всегда.
 
 ## Сравнение процессов DORA (v4) и SARR (v6)
 
@@ -22,24 +19,24 @@
 | **3. Запрос** | **R**equest (Broadcast) | **R**equest (Multicast) | - |
 | **4. Финал** | **A**cknowledge (Unicast) | **R**eply (Unicast) | - |
 
-> **Примечание:** В IPv6 шлюз по умолчанию не передаётся через DHCP, а получается через **Router Advertisements (RA)**.
+**Нюанс IPv6:** DHCPv6 часто не передаёт шлюз по умолчанию. Клиент получает его через **Router Advertisements (RA)**. Если IPv6-адрес получен, но интернета нет — проверяйте флаги RA (M/O) и наличие маршрутов.
 
 ## Практические сценарии диагностики
 
 ### Анализ на стороне клиента
 
-#### Генерация трафика (Force Renew)
+#### Принудительное обновление (Force Renew)
 | ОС | Команда |
 | :--- | :--- |
 | **Windows** | `ipconfig /release` && `ipconfig /renew` |
 | **Linux (dhclient)** | `sudo dhclient -r` && `sudo dhclient -v eth0` |
 | **Linux (NetworkManager)** | `nmcli con up <con_name>` |
 
-#### Проверка Multicast (IPv6)
-Если клиент IPv6 не получает адрес, проверьте подписку на группы:
+#### Проверка IPv6 и DAD
+Если адрес помечен как `tentative`, возможно, механизм **DAD (Duplicate Address Detection)** обнаружил конфликт.
 ```bash
-ip -6 maddr show eth0
-# Должен присутствовать ff02::1:2
+ip -6 addr show eth0
+# Ищем флаг "tentative" или "dadfailed"
 ```
 
 ### Анализ на стороне сервера и Relay Agent
@@ -48,66 +45,58 @@ ip -6 maddr show eth0
 Наиболее частая ошибка — **Pool Exhaustion** (исчерпание пула).
 ```bash
 # Просмотр логов в реальном времени
-journalctl -u isc-dhcp-server -f | grep "no free leases"
+journalctl -u isc-dhcp-server -f | grep -E "no free leases|abandoning"
 ```
+- **Abandoned Leases:** Если сервер помечает адрес как `abandoning`, значит он получил `DHCPDECLINE` (клиент обнаружил, что адрес занят).
 
 #### Проверка базы данных аренды
 ```bash
-# IPv4
-cat /var/lib/dhcp/dhcpd.leases
-# IPv6
-cat /var/lib/dhcp/dhcpd6.leases
+# Просмотр текущих активных аренд
+grep "lease" /var/lib/dhcp/dhcpd.leases -A 10
 ```
 
-### Анализ трафика (tcpdump & Wireshark)
+### Анализ трафика (tcpdump и Wireshark)
 
 #### Рекомендуемые фильтры tcpdump
 ```bash
-# Захват IPv4 DHCP (порты 67, 68)
+# Захват IPv4 DHCP с детализацией (включая giaddr и опции)
 sudo tcpdump -i eth0 -n udp port 67 or port 68 -vv
 
-# Захват IPv6 DHCP (порты 546, 547)
+# Захват IPv6 DHCP
 sudo tcpdump -i eth0 -n udp port 546 or port 547 -vv
 
-# Фильтрация по конкретному MAC (chaddr) в IPv4
-sudo tcpdump -i eth0 -vv -n "udp port 67 and ether host aa:bb:cc:dd:ee:ff"
+# Проверка прохождения через Relay (фильтрация по giaddr)
+sudo tcpdump -i any -n "udp port 67 and ip[24:4] != 0"
 ```
 
 #### Поля для анализа в Wireshark
-- **`giaddr` (Relay Agent IP):** Если пакет пришёл через ретранслятор, это поле должно содержать IP интерфейса ретранслятора. Если оно пустое (`0.0.0.0`), сервер будет искать пул в своей локальной сети.
-- **`Option 53` (Message Type):** Тип сообщения (Discover, Request и т.д.).
-- **`Option 82` (Relay Agent Information):** Проверьте наличие `Circuit-ID` и `Remote-ID`, если используется сегрегация портов.
+- **`dhcp.ip.client` (`ciaddr`):** Текущий IP клиента (при продлении).
+- **`dhcp.ip.gateway` (`giaddr`):** IP ретранслятора. Если он неверен, сервер не сможет сопоставить запрос с нужным пулом (subnet).
+- **`dhcp.option.dhcp_server_id`:** IP сервера, чьё предложение выбрал клиент. Помогает найти **Rogue DHCP**.
+- **`ipv6.dhcpv6.option.ia_na`:** Параметры назначения адреса в IPv6.
 
-## Продвинутые инструменты диагностики
+## Диагностика DHCPv6 и взаимодействие с RA
 
-### Nmap DHCP Discover
-Позволяет проверить наличие серверов в сети без смены IP-адреса системы.
-```bash
-# Поиск IPv4 серверов (broadcast)
-sudo nmap --script broadcast-dhcp-discover
+В IPv6 DHCP работает в связке с Router Advertisements. Проверьте флаги в пакетах RA (ICMPv6 Type 134):
+- **Managed Address Config (M-flag):** Если `1`, клиент должен запрашивать IP у DHCPv6 (Stateful).
+- **Other Config (O-flag):** Если `1`, клиент запрашивает только опции (DNS, NTP) у DHCPv6 (Stateless).
 
-# Поиск IPv6 серверов (multicast)
-sudo nmap --script broadcast-dhcp6-discover
-```
-
-### dhcpcd (Test Mode)
-Позволяет выполнить запрос и вывести полученные опции без применения настроек к интерфейсу.
-```bash
-dhcpcd -T eth0
-```
+Если флаги установлены неверно на маршрутизаторе, клиент никогда не отправит `Solicit`.
 
 ## Типичные проблемы и методы решения
 
-| Проблема | Причина | Диагностика | Решение |
+| Проблема | Вероятная причина | Метод диагностики | Решение |
 | :--- | :--- | :--- | :--- |
-| **APIPA (169.254.x.x)** | Нет ответа от сервера | `tcpdump` на сервере: приходят ли запросы? | Проверить L2-связность, Firewall (UDP 67/547). |
-| **No Free Leases** | Пул исчерпан | `grep "no free leases" /var/log/syslog` | Увеличить `range` или уменьшить `lease-time`. |
-| **Конфликт IP** | Статический IP в пуле | `DHCPDECLINE` в трафике клиента | Включить `ping-check` на сервере перед выдачей. |
-| **Неверный шлюз (v6)** | Проблема в RA | `tcpdump icmp6` (тип 134) | Проверить конфигурацию `radvd` или маршрутизатора. |
+| **APIPA (169.254.x.x)** | Нет L2-связности или DHCP Snooping блокирует сервер | `tcpdump` на сервере: приходят ли запросы? | Проверить VLAN, порты коммутатора (Trusted/Untrusted). |
+| **No Free Leases** | Исчерпание пула адресов | Лог: `no free leases` | Увеличить `range` или сократить `default-lease-time`. |
+| **DHCP Relay Failure** | Неверный `giaddr` или отсутствие маршрута к нему | `tcpdump` на сервере: поле `giaddr` равно `0.0.0.0`? | Проверить конфиг ретранслятора (`ip helper-address`). |
+| **Конфликт IP (NAK)** | Наличие статических IP внутри пула DHCP | `tcpdump`: пакет `DHCPNAK` или `DHCPDECLINE` | Исключить статику через `reserved-range` или `ping-check`. |
+| **DNS не обновляется** | Ошибки DDNS или отсутствие прав в BIND | Лог сервера: `unable to add forward map` | Проверить `tsig` ключи и права доступа к зонам DNS. |
 
 ## Дополнительная информация
 
-- [DHCP — Обзор протокола](./dhcp_overview.md) — базовые концепции и хендшейки.
+- [Обзор DHCP](./dhcp_overview.md) — базовые принципы и процессы DORA/SARR.
 - [Время аренды и типы сообщений](./dhcp_lease_time.md) — детальный разбор таймеров и типов пакетов.
 - [Безопасность DHCP](./dhcp_security.md) — защита от Rogue DHCP и атак истощения.
 - [Настройка ISC DHCP Relay](../../../Linux/Networking/Services/DHCP/isc_dhcp_server_relay.md) — практическая диагностика ретрансляции.
+- **Спецификации:** [RFC 2131](https://datatracker.ietf.org/doc/html/rfc2131) (Troubleshooting section), [RFC 8415](https://datatracker.ietf.org/doc/html/rfc8415) (v6).

@@ -1,8 +1,3 @@
----
-Надёжность: 10 (SSoT + Проектный контекст 2026)
-Свежесть: Актуально на июль 2026
----
-
 # Proxmox Virtual Environment (PVE) — Обзор и базовые концепции
 
 ## Определения
@@ -28,7 +23,7 @@
 
 ### Системные контейнеры (LXC)
 
-Легковесная виртуализация на базе ядра хоста.
+Легковесная виртуализация на базе ядра хоста. Подробнее об архитектуре и CLI: **[LXC — системные контейнеры](../Linux/Virtualization/lxc_overview.md)**.
 - **Unprivileged Containers**: Используют маппинг UID/GID для безопасности. Включены по умолчанию в PVE 8.x.
 - **Nesting**: Опция для запуска Docker или вложенных LXC внутри контейнера.
 - **Device Passthrough**: Возможность проброса GPU или USB-устройств в контейнер.
@@ -101,6 +96,7 @@ qm set 102 --bios ovmf --efidisk0 local-lvm:0,pre-enrolled-keys=1 --tpmstate0 lo
 
 ### Связанные темы
 
+- [LXC (Linux Containers) — системные контейнеры](../Linux/Virtualization/lxc_overview.md)
 - [Кластеризация и High Availability в Proxmox](./proxmox_cluster.md)
 - [Хранилища и Ceph в Proxmox](./proxmox_storage.md)
 - [Сетевые технологии Proxmox](./proxmox_networking.md)

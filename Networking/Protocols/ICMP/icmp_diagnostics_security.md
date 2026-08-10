@@ -1,7 +1,5 @@
 # ICMP: Диагностика и безопасность
 
-**Reliability Score: 10/10** (SSoT + Проверено по RFC 792/4443 и стандартам Netfilter 2026)
-
 ## Определения
 
 **Диагностика ICMP** — использование служебных сообщений протокола ICMP для анализа топологии сети, выявления узких мест, измерения задержек и отладки проблем MTU.
@@ -16,7 +14,7 @@
 
 Полная блокировка ICMP-трафика ("Security through obscurity") — одна из самых частых ошибок системного администрирования.
 
-*   **Проблема PMTUD:** При блокировке `Destination Unreachable` (Type 3 Code 4) отправитель не узнает, что пакет слишком велик для канала. В результате TCP-сессия устанавливается (маленькие пакеты проходят), но передача данных (большие пакеты) "зависает".
+*   **Проблема PMTUD:** При блокировке `Destination Unreachable` (Type 3 Code 4 в IPv4 или Type 2 в IPv6) отправитель не узнает, что пакет слишком велик для канала. В результате TCP-сессия устанавливается (маленькие пакеты проходят), но передача данных (большие пакеты) "зависает".
 *   **Слепая трассировка:** Запрет `Time Exceeded` (Type 11) делает невозможной работу `traceroute` и `mtr`, что критично при поиске места разрыва связи.
 *   **Ложные срабатывания мониторинга:** Блокировка `Echo` лишает возможности быстрого контроля доступности узла (L3-check).
 
@@ -44,12 +42,14 @@ table inet filter {
     chain input {
         type filter hook input priority 0; policy drop;
 
-        # 1. Разрешить установленные соединения
+        # 1. Разрешить установленные соединения и отбросить некорректные
         ct state established,related accept
+        ct state invalid drop
 
         # 2. Разрешить критический ICMPv4
         icmp type { destination-unreachable, time-exceeded } accept
-        icmp type echo-request limit rate 5/second accept
+        # Лимит для защиты от Ping Flood
+        icmp type echo-request limit rate 5/second burst 10 packets accept
 
         # 3. Разрешить критический ICMPv6 (SLAAC, NDP, PMTUD)
         icmpv6 type { 
@@ -58,13 +58,16 @@ table inet filter {
             echo-request, nd-router-advert, 
             nd-neighbor-solicit, nd-neighbor-advert 
         } accept
+        
+        # Ограничение для Echo Request v6
+        icmpv6 type echo-request limit rate 5/second burst 10 packets accept
     }
 }
 ```
 
 ### Защита от специфических атак
 
-1.  **ICMP Redirect Attack:** Защита на уровне ядра Linux (`sysctl`).
+1.  **ICMP Redirect Attack:** Защита на уровне ядра Linux (`sysctl`). Предотвращает несанкционированное изменение таблицы маршрутизации.
     ```bash
     sysctl -w net.ipv4.conf.all.accept_redirects=0
     sysctl -w net.ipv6.conf.all.accept_redirects=0
@@ -73,17 +76,19 @@ table inet filter {
     ```bash
     sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
     ```
-3.  **ICMP Tunneling:** Трафик инкапсулируется в поле `Data` эхо-пакетов. Защита: ограничение размера пакета (MTU) и глубокая инспекция (DPI).
+3.  **ICMP Exfiltration & Tunneling:** Трафик инкапсулируется в поле `Data` эхо-пакетов для обхода брандмауэров.
+    *   **Защита:** Ограничение размера пакета на уровне файрвола (например, блокировка `echo-request` с размером более 128 байт).
+    *   **DPI (Deep Packet Inspection):** Проверка структуры поля данных на наличие нестандартных паттернов.
 
-### Диагностика "Зависших" сессий
+### Диагностика "Зависших" сессий и MTU
 
-Если `ping` проходит, а `curl` или `ssh` виснет — проверяем MTU:
+Если `ping` проходит, а `curl` или `ssh` виснет — проверяем MTU (проблема PMTUD):
 ```bash
-# Поиск узкого места в MTU без прав root
+# Поиск узкого места в MTU (Path MTU Discovery)
 tracepath -n google.com
 
 # Ручная проверка с запретом фрагментации (DF-бит)
-# -s 1472 (data) + 8 (icmp) + 20 (ip) = 1500 байт
+# 1472 байта данных + 8 байт ICMP + 20 байт IP = 1500 байт (стандарт Ethernet)
 ping -s 1472 -M do 8.8.8.8
 ```
 
@@ -93,3 +98,4 @@ ping -s 1472 -M do 8.8.8.8
 *   **[RFC 4890](https://tools.ietf.org/html/rfc4890)** — рекомендации по фильтрации ICMPv6 в межсетевых экранах.
 *   **[MTU и диагностика PMTUD](../../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — подробнее о "черных дырах" в сети.
 *   **[Сетевая диагностика Linux](../../../Linux/Diagnostics/Networking/ping.md)** — использование `ping` и `mtr`.
+*   **[Безопасность IPv6](../../../Linux/Networking/Settings/ipv6_configuration/firewall.md)** — глубокая настройка фильтрации для IPv6.

@@ -6,6 +6,8 @@
 
 **Integrated Storage (Raft)** — встроенное хранилище на базе протокола консенсуса Raft, являющееся стандартом для продуктивных сред Vault. Оно исключает внешние зависимости (такие как Consul) и обеспечивает высокую доступность данных.
 
+**Хранилище на базе Raft** — набор узлов, составляющих кластер из нечётного числа участников (3, 5, …), который хранит зашифрованный барьер шифрования вместе с открытыми данными. В любой момент времени работает одна лидер-реплика, остальные — следящие; записи, подтверждённые лидером до ответа, считаются durable-коммитами. Нарушение кворума (потеря более половины узлов) переводит Vault в состояние Sealed даже при активном Auto-unseal.
+
 ## Основные концепции
 
 ### Подготовка операционной системы
@@ -28,7 +30,7 @@
 
 ### Безопасная конфигурация (vault.hcl)
 
-Современная установка (2024–2025) предполагает использование Raft и TLS для всех коммуникаций.
+Современная установка (на актуальной линейке Vault 2.x, преемника серии 1.x) предполагает использование Raft и TLS для всех коммуникаций. С 2023 года в apt-репозитории HashiCorp действует единый GPG-ключ с отпечатком `798A EC65 4E5C 1542 8C8E 42EE AA16 FCBC A621 E701`.
 
 ```hcl
 ui = true
@@ -88,7 +90,7 @@ NoNewPrivileges=yes
 MemoryDenyWriteExecute=yes
 LimitMEMLOCK=infinity
 LimitCORE=0
-ExecStart=/usr/local/bin/vault server -config=/etc/vault.d/vault.hcl
+ExecStart=/usr/bin/vault server -config=/etc/vault.d/vault.hcl
 ExecReload=/bin/kill --signal HUP $MAINPID
 KillMode=process
 Restart=on-failure
@@ -112,7 +114,30 @@ sudo apt update && sudo apt install vault
 sudo setcap cap_ipc_lock=+eip /usr/bin/vault
 ```
 
-### Шаг 2: Инициализация с Auto-unseal
+### Шаг 2: Запуск службы и проверка статуса
+
+После установки пакет регистрирует сервис `vault`, но не запускает его. Включите автозапуск и запустите службу:
+
+> При ручной (бинарной) установке бинарник кладется в `/usr/local/bin/vault`; тогда в unit-файле задаётся `ExecStart=/usr/local/bin/vault`, а `setcap cap_ipc_lock=+eip` применяется к тому же пути. В примерах этого руководства используется стандартный путь из пакета `/usr/bin/vault`.
+
+```bash
+# Перечитать unit-файлы systemd
+sudo systemctl daemon-reload
+
+# Включить автозапуск и запустить
+sudo systemctl enable --now vault
+
+# Проверить состояние службы
+systemctl status vault
+
+# Статус Vault (ожидается Sealed, т.к. инициализация ещё не выполнена)
+VAULT_ADDR='https://127.0.0.1:8200' vault status
+# → Sealed        true
+# → Seal Type     shamir | awskms | ...
+# → Initialized   false
+```
+
+### Шаг 3: Инициализация с Auto-unseal
 
 При использовании механизма Auto-unseal (KMS/HSM) Vault не генерирует ключи распечатывания, а создает **Recovery Keys** (ключи восстановления).
 
@@ -125,7 +150,33 @@ vault operator init -recovery-shares=5 -recovery-threshold=3
 
 **Важно:** Ключи восстановления необходимы для выполнения критических операций (rekeying, генерация нового root-токена), если механизм Auto-unseal станет недоступен.
 
-### Шаг 3: Настройка устройств аудита
+### Шаг 4: Инициализация без Auto-unseal (Shamir)
+
+Если внешний KMS/HSM не используется, Vault запускается с конфигурацией, где отсутствует блок `seal`, и применяется классический алгоритм Шамира: **Unseal Keys** делятся по схеме `k-of-n` (по умолчанию 3 из 5).
+
+```bash
+export VAULT_ADDR='https://127.0.0.1:8200'
+
+# Инициализация с генерацией 5 Unseal Keys (порог — 3)
+vault operator init -key-shares=5 -key-threshold=3
+# → Unseal Key 1: <base64_код>
+# → Unseal Key 2: <base64_код>
+# → ...
+# → Initial Root Token: <root_токен>
+
+# Первичное распечатывание — подать ключи по очереди (3 из 5)
+vault operator unseal
+# → Unseal Progress: 1/3
+vault operator unseal
+# → Unseal Progress: 2/3
+vault operator unseal
+# → Sealed         false (Vault распечатан)
+# → Unseal Progress    3/3
+```
+
+**Важно:** Unseal Keys и Root Token выводятся однократно. Их нужно сразу распределить по разным ответственным лицам (кворум) и хранить в защищённом хранилище. Подробнее — [процесс Seal/Unseal](../concepts.md#процесс-запечатывания-seal-и-распечатывания-unseal).
+
+### Шаг 5: Настройка устройств аудита
 
 После входа в Vault (`vault login`) первым шагом необходимо включить журналирование:
 
@@ -135,6 +186,22 @@ vault audit enable file file_path=/var/log/vault/audit.log
 
 # Отправка в Syslog
 vault audit enable syslog
+```
+
+### Шаг 6: Проверка кластера (Raft)
+
+Для кластерной конфигурации (несколько узлов с `retry_join`) проверьте формирование кворума и статус реплик:
+
+```bash
+# Список участников кластера (лидер и followers)
+vault operator raft list-peers
+# → Node       Address                        State       Voter
+# → vault-node-1  10.0.0.1:8201                 leader      true
+# → vault-node-2  10.0.0.2:8201                 follower    true
+# → vault-node-3  10.0.0.3:8201                 follower    true
+
+# Текущее состояние Raft (записи, применяемые коммиты)
+vault operator raft info
 ```
 
 ## Дополнительная информация
@@ -149,8 +216,6 @@ vault audit enable syslog
 
 ### Связанные документы
 
-*   **[Обзор HashiCorp Vault](../overview.md)** — архитектура SLM и ключевые преимущества.
-*   **[Основные концепции](../concepts.md)** — детали алгоритма Шамира и работы хранилищ.
-*   **[Подход Zero Trust](../zero_trust.md)** — реализация архитектуры нулевого доверия.
-*   **[Vault с Consul в качестве бэкенда](./vault_with_consul_backend.md)** — устаревший (legacy) метод для старых инсталляций.
-*   **[Интеграция с Kubernetes](./vault_kubernetes_integration.md)** — установка Vault через Helm-чарты.
+*   **[Обзор HashiCorp Vault](../overview.md)** — архитектура и ключевые преимущества.
+*   **[Основные концепции](../concepts.md)** — детали Seal/Unseal, хранилища и HA.
+*   **[Vault с Consul в качестве бэкенда](./vault_with_consul_backend.md)** — альтернативный (Legacy) метод для сложных распределённых топологий.

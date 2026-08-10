@@ -25,7 +25,6 @@
 Позволяет перенаправлять TCP/UDP трафик. По умолчанию Vagrant создает правило для SSH (порт 22), остальные порты описываются явно.
 
 **Расширенные параметры:**
-
 - `guest`: Порт внутри ВМ (обязателен).
 - `host`: Порт на хост-машине (обязателен).
 - `guest_ip`: Привязка к конкретному IP внутри ВМ.
@@ -39,61 +38,67 @@
 Используется для создания защищенных каналов связи между машинами.
 
 **Параметры и возможности:**
-
 - **Статический IP:** `ip: "192.168.56.10"`.
 - **DHCP:** `type: "dhcp"`.
 - **IPv6:** Поддерживается через параметр `ip: "fde4:8dba:82e1:ffff::c0"`.
 - **Внутренние сети (VirtualBox):** `virtualbox__intnet: "my-internal-net"` создает сеть, к которой хост не имеет доступа (только ВМ).
+- **Управление именами:** `hostname: true` — автоматическое обновление `/etc/hosts` (требует плагин).
 
 ### 3. Публичная сеть (Public Network)
 
 ВМ подключается к физическому интерфейсу хоста.
 
 **Параметры:**
-
-- `bridge`: Имя интерфейса хоста (например, `eth0`, `enp0s3`, `wlan0`). Если не указано, Vagrant предложит выбор при запуске.
+- `bridge`: Имя интерфейса хоста (например, `eth0`, `wlan0`). Если не указано, Vagrant предложит выбор при запуске.
 - `use_dhcp_assigned_default_route`: Если `true`, ВМ будет использовать шлюз, полученный по DHCP в этой сети, как основной.
 
 ## Практические сценарии
 
-### Сценарий 1: Безопасный доступ к веб-приложению
+### Сценарий 1: Безопасный доступ и оптимизация Virtio
 
-Проброс портов с ограничением доступа только локальным хостом и автоматическим разрешением конфликтов.
+Проброс портов с ограничением доступа только локальным хостом и использованием паравиртуализированного драйвера для производительности.
 
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
   
   config.vm.network "forwarded_port", 
-    guest: 80, 
-    host: 8080, 
+    guest: 80, host: 8080, 
     host_ip: "127.0.0.1",
     auto_correct: true,
     id: "web-server"
+
+  # Оптимизация сетевого драйвера
+  config.vm.provider "virtualbox" do |vb|
+    vb.customize ["modifyvm", :id, "--nictype1", "virtio"]
+  end
 end
 ```
 
-### Сценарий 2: Мульти-стек сеть (IPv4 + IPv6)
+### Сценарий 2: Мульти-стек сеть (IPv4 + IPv6) и кастомный MAC
 
-Настройка приватной сети с поддержкой обоих протоколов для тестирования современных приложений.
+Настройка приватной сети с поддержкой обоих протоколов и фиксированным MAC-адресом для Libvirt.
 
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.define "node" do |node|
     node.vm.box = "bento/ubuntu-24.04"
     
-    # IPv4 Private Network
+    # IPv4 + IPv6
     node.vm.network "private_network", ip: "192.168.56.10"
-    
-    # IPv6 Private Network (ULA адрес)
     node.vm.network "private_network", ip: "fde4:8dba:82e1:ffff::10"
+    
+    # Специфично для Libvirt
+    node.vm.network "private_network", 
+      ip: "192.168.121.10",
+      libvirt__mac: "52:54:00:12:34:56"
   end
 end
 ```
 
-### Сценарий 3: Выбор сетевого моста для разных ОС
+### Сценарий 3: Динамический выбор моста и UDP-туннели
 
-Использование условий Ruby для автоматического выбора интерфейса в зависимости от хост-системы.
+Автоматический выбор интерфейса в зависимости от ОС хоста и настройка туннеля между разными физическими хостами в Libvirt.
 
 ```ruby
 Vagrant.configure("2") do |config|
@@ -106,6 +111,13 @@ Vagrant.configure("2") do |config|
   end
 
   config.vm.network "public_network", bridge: bridge_if
+
+  # UDP туннель для связи между разными ПК (Libvirt)
+  config.vm.network "private_network",
+    libvirt__tunnel_type: "udp",
+    libvirt__tunnel_local_port: 11111,
+    libvirt__tunnel_remote_host: "10.0.0.2",
+    libvirt__tunnel_remote_port: 11111
 end
 ```
 
@@ -113,44 +125,41 @@ end
 
 ### Провайдер-специфичные настройки
 
-Для **VirtualBox** можно управлять типом адаптера:
-```ruby
-config.vm.provider "virtualbox" do |vb|
-  vb.customize ["modifyvm", :id, "--nictype1", "virtio"]
-end
-```
+**VirtualBox:**
+- Изменение типа адаптера: `vb.customize ["modifyvm", :id, "--nictype1", "virtio"]`.
+- Внутренняя сеть (без хоста): `virtualbox__intnet: "cluster-internal"`.
 
-Для **Libvirt** можно указать имя виртуальной сети:
-```ruby
-config.vm.network "private_network", 
-  libvirt__network_name: "vagrant-private-net",
-  ip: "192.168.121.10"
-```
+**Libvirt:**
+- Имя сети: `libvirt__network_name: "vagrant-private-net"`.
+- Адрес управляющей сети: `lv.management_network_address = "10.10.10.0/24"`.
 
 ### Диагностика сетевых соединений
 
-Команды для выполнения внутри ВМ через `vagrant ssh`:
-
+Команды внутри ВМ:
 ```bash
-# Список всех интерфейсов и их статусов
+# Список интерфейсов и маршрутов
 ip -brief addr show
+ip route show
 
-# Проверка прохождения трафика через конкретный интерфейс
+# Проверка MTU (критично для VPN/туннелей)
+ip link show eth1 | grep mtu
+
+# Проверка трафика и портов
 sudo tcpdump -i eth1 -n icmp
-
-# Проверка открытых портов (в 2026 рекомендуется использовать ss)
-ss -tuln
+ss -tulnp
 ```
 
 ### Решение типичных проблем
 
-1.  **Смена порядка интерфейсов:** По умолчанию `eth0` всегда является NAT-интерфейсом для управления (SSH). Дополнительные сети начинаются с `eth1`.
-2.  **Конфликт подсетей:** Если `private_network` не работает, проверьте, не пересекается ли её адресное пространство с VPN или Docker-сетями (`docker network ls`).
-3.  **Медленный резолв DNS:** Часто вызван попытками ВМ использовать IPv6 DNS-серверы при отсутствии связности. Попробуйте явно указать Google DNS в настройках провайдера или через `resolv.conf`.
+1.  **Порядок интерфейсов:** `eth0` всегда NAT для SSH. Дополнительные сети — `eth1`, `eth2` и т.д.
+2.  **Конфликты с VPN:** Если VPN перекрывает управляющую подсеть (`10.0.2.0/24` или `192.168.121.0/24`), SSH-соединение зависнет.
+3.  **Медленный DNS:** Попробуйте включить нативный резолвер хоста:
+    `vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]`.
+4.  **Конфликт подсетей:** Проверьте `docker network ls` на предмет пересечения IP-диапазонов с `private_network`.
 
 ### См. также
 
-- [Vagrantfile: Справочник параметров](./vagrantfile.md) — полная структура конфигурации.
-- [Vagrant Providers: VirtualBox и Libvirt](./vagrant_providers.md) — специфические настройки сетевых адаптеров.
-- [Vagrant Advanced Usage: Триггеры](./vagrant_advanced_usage.md) — автоматизация действий при изменении состояния сети.
-- [Linux Networking: Команды и инструменты](../Linux/Networking/Tools/iproute2/overview.md) — глубокое погружение в сетевой стек Linux.
+- [Vagrantfile: Справочник параметров](./vagrantfile.md) — структура конфигурации.
+- [Vagrant Providers](./vagrant_providers.md) — специфические настройки адаптеров.
+- [Linux Networking: Команды и инструменты](../Linux/Networking/Tools/iproute2/overview.md) — глубокое погружение.
+- [Проблемы MTU и фрагментация](../Networking/OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md) — диагностика сложных сетей.

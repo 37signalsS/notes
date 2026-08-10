@@ -2,11 +2,12 @@
 
 ## Определения и типы сценариев
 
-В практической деятельности GRE используется в трех основных режимах, каждый из которых предназначен для решения специфических задач сетевой связности:
+В практической деятельности GRE используется в нескольких основных режимах, каждый из которых предназначен для решения специфических задач сетевой связности:
 
-*   **Point-to-Point GRE (Точка-точка):** классический L3-туннель между двумя узлами со статическими адресами. Используется для объединения офисов или подключения к провайдерам защиты от DDoS.
-*   **Multipoint GRE (mGRE):** позволяет одному интерфейсу терминировать множество туннелей. Является фундаментом для построения **DMVPN** (Dynamic Multipoint VPN).
-*   **GRETAP (L2 GRE):** инкапсулирует Ethernet-кадры вместо IP-пакетов. Позволяет "растягивать" L2-сегменты (VLAN) между удаленными площадками.
+*   **Point-to-Point GRE (Точка-точка):** Классический L3-туннель между двумя узлами со статическими адресами. Используется для объединения офисов или подключения к провайдерам защиты от DDoS.
+*   **Multipoint GRE (mGRE):** Позволяет одному интерфейсу терминировать множество туннелей. Является фундаментом для построения **DMVPN** (Dynamic Multipoint VPN).
+*   **GRETAP (L2 GRE):** Инкапсулирует Ethernet-кадры вместо IP-пакетов. Позволяет "растягивать" L2-сегменты (VLAN) между удаленными площадками.
+*   **ERSPAN (Encapsulated Remote SPAN):** Специализированная версия GRE для зеркалирования трафика L2 через маршрутизируемые IP-сети.
 
 **Сводная таблица режимов:**
 
@@ -14,19 +15,21 @@
 |-------|-------------|------------|-------------|
 | **Point-to-Point** | L3 | Site-to-Site VPN | Требует статических эндпоинтов |
 | **mGRE** | L3 | Hub-and-Spoke / Mesh | Требует протоколов разрешения (NHRP) |
-| **GRETAP** | L2 | Растягивание VLAN | Высокий overhead (~42 байта) |
+| **GRETAP** | L2 | Растягивание VLAN | Высокий оверхед (~42 байта) |
+| **ERSPAN** | L2 | Мониторинг трафика | Зависит от аппаратной поддержки |
 
 ---
 
 ## Настройка в Linux (iproute2)
 
-Все временные настройки выполняются через утилиту `ip` из пакета `iproute2`. В современных системах рекомендуется использовать `ip link` вместо устаревшего `ip tunnel`.
+Все настройки выполняются через утилиту `ip`. В современных системах рекомендуется использовать `ip link` вместо устаревшего `ip tunnel`.
 
 ### Базовая настройка Point-to-Point
 
 ```bash
 # Создание интерфейса туннеля
-# key 100 — идентификатор, позволяющий различать туннели между одними и теми же IP
+# local/remote — внешние IP-адреса узлов
+# key 100 — идентификатор туннеля (должен совпадать на обоих концах)
 sudo ip link add gre0 type gre remote 203.0.113.2 local 198.51.100.1 ttl inherit key 100
 
 # Активация интерфейса
@@ -38,35 +41,59 @@ sudo ip address add 10.0.0.1/30 dev gre0
 
 ### Настройка GRETAP (L2 туннель)
 
-Сценарий объединения двух площадок в один мост (Bridge):
+Используется для объединения двух удаленных сегментов в один программный мост (Bridge):
 
 ```bash
 # Создание туннеля GRETAP
 sudo ip link add tap0 type gretap remote 203.0.113.2 local 198.51.100.1
 
-# Добавление в существующий мост br0
+# Добавление интерфейса в существующий мост br0
 sudo ip link set tap0 master br0
 sudo ip link set tap0 up
+```
+
+### Настройка ERSPAN
+
+Зеркалирование трафика с удаленного коммутатора на сервер анализа:
+
+```bash
+# erspan_ver 1 (для Cisco) или 2 (Modern Linux/стандарт)
+# erspan 10 — идентификатор сессии
+sudo ip link add dev erspan0 type erspan \
+    local 198.51.100.1 remote 203.0.113.2 \
+    erspan_ver 1 erspan 10
+sudo ip link set erspan0 up
+```
+
+---
+
+## Настройка на сетевом оборудовании
+
+### Cisco IOS/XE (Point-to-Point)
+
+```cisco
+interface Tunnel0
+ ip address 10.0.0.1 255.255.255.252
+ tunnel source 198.51.100.1
+ tunnel destination 203.0.113.2
+ tunnel key 100
+ ! Рекомендуется для stateless туннелей
+ keepalive 10 3
+```
+
+### MikroTik (RouterOS)
+
+```routeros
+/interface gre
+add local-address=198.51.100.1 remote-address=203.0.113.2 name=gre-tunnel1 \
+    dscp=inherit mtu=1476 tunnel-id=100
+/ip address
+add address=10.0.0.1/30 interface=gre-tunnel1
 ```
 
 ---
 
 ## Постоянная конфигурация (Persistence)
-
-Команды `ip link` не сохраняются после перезагрузки. Для промышленной эксплуатации используйте системные менеджеры сети.
-
-### NetworkManager (nmcli)
-
-```bash
-# Создание туннеля
-sudo nmcli connection add type ip-tunnel ifname gre0 con-name gre0-tunnel \
-    mode gre remote 203.0.113.2 local 198.51.100.1
-
-# Настройка адресации и маршрутов
-sudo nmcli connection modify gre0-tunnel ipv4.addresses 10.0.0.1/30 ipv4.method manual
-sudo nmcli connection modify gre0-tunnel +ipv4.routes "172.16.0.0/24 10.0.0.2"
-sudo nmcli connection up gre0-tunnel
-```
 
 ### Netplan (Ubuntu/Debian)
 
@@ -82,6 +109,9 @@ network:
       remote: 203.0.113.2
       addresses:
         - 10.0.0.1/30
+      keys:
+        input: 100
+        output: 100
       routes:
         - to: 172.16.0.0/24
           via: 10.0.0.2
@@ -101,15 +131,42 @@ Remote=203.0.113.2
 Key=100
 ```
 
+Файл `/etc/systemd/network/25-gre.network`:
+```ini
+[Match]
+Name=gre0
+
+[Network]
+Address=10.0.0.1/30
+
+[Route]
+Destination=172.16.0.0/24
+Gateway=10.0.0.2
+```
+
+### NetworkManager (nmcli)
+
+```bash
+# Создание туннеля с ключом
+sudo nmcli connection add type ip-tunnel ifname gre0 con-name gre0-tunnel \
+    mode gre remote 203.0.113.2 local 198.51.100.1 \
+    ip-tunnel.input-key 100 ip-tunnel.output-key 100
+
+# Настройка адресации
+sudo nmcli connection modify gre0-tunnel ipv4.addresses 10.0.0.1/30 ipv4.method manual
+sudo nmcli connection modify gre0-tunnel +ipv4.routes "172.16.0.0/24 10.0.0.2"
+sudo nmcli connection up gre0-tunnel
+```
+
 ---
 
 ## Решение проблем MTU и MSS
 
-Самая частая причина проблем в GRE — превышение размера пакета.
+Самая частая причина проблем в GRE — превышение размера пакета, так как заголовок GRE (4-12 байт) + внешний IP (20 байт) уменьшают полезную нагрузку.
 
 ### MSS Clamping (iptables/nftables)
 
-Если вы не можете контролировать MTU на всем пути следования пакета, принудительно ограничивайте TCP MSS.
+Применяется на шлюзах для предотвращения зависания сессий (PMTUD Black Hole).
 
 **Через iptables:**
 ```bash
@@ -128,25 +185,26 @@ nft add rule inet filter forward oifname "gre0" tcp flags syn tcp option maxseg 
 
 ### mGRE и DMVPN
 
-Для работы mGRE без явного указания `remote` требуется протокол **NHRP**. В современном Linux для этого используется **FRRouting (FRR)**.
+В режиме mGRE интерфейс не имеет фиксированного `remote`. Для работы требуется протокол **NHRP** (Next Hop Resolution Protocol). В Linux это реализуется через **FRRouting (FRR)**.
 
-**Конфигурация интерфейса:**
+**Конфигурация интерфейса (Hub):**
 ```bash
+# Создание mGRE интерфейса
 sudo ip link add dev mgre0 type gre local 198.51.100.1 key 1 ttl 64
 sudo ip addr add 10.255.255.1/24 dev mgre0
 sudo ip link set mgre0 up
 ```
-*Дальнейшая настройка (NHRP/BGP) выполняется внутри демона FRR.*
+*Настройка NHRP выполняется в `/etc/frr/frr.conf` внутри демона nhrpd.*
 
 ### GRE через UDP (FOU — Foo Over UDP)
 
-Используется для обхода ограничений NAT и брандмауэров, которые плохо работают с чистым протоколом 47 (IP).
+Используется для обхода проблемных NAT и брандмауэров, а также для балансировки трафика (ECMP) на основе UDP-портов.
 
 ```bash
-# Создание UDP-слушателя для GRE (порт 6666)
+# 1. Создание UDP-слушателя для GRE (порт 6666)
 sudo ip fou add port 6666 ipproto 47
 
-# Создание туннеля с инкапсуляцией в UDP
+# 2. Создание туннеля, упакованного в UDP
 sudo ip link add name gre_fou type gre \
     remote 203.0.113.2 local 198.51.100.1 \
     encap fou encap-sport auto encap-dport 6666
@@ -156,21 +214,29 @@ sudo ip link add name gre_fou type gre \
 
 ## Диагностика и отладка
 
-### Основные команды
+### Чек-лист при неисправности
+
+1.  **Связанность Endpoint:** Пингуется ли `remote` IP с хоста? Если нет — проблема в маршрутизации Underlay.
+2.  **Firewall:** Разрешен ли протокол **IP 47 (GRE)** или UDP-порт (для FOU) в правилах `INPUT`?
+3.  **Key mismatch:** Совпадают ли `key` (идентификаторы туннеля) на обоих концах?
+4.  **MTU/MSS:** Проходит ли `ping -M do -s 1472 <remote_tunnel_ip>`? Если нет — уменьшайте MSS.
+
+### Инструментарий
 
 | Задача | Команда |
 |--------|---------|
-| Просмотр параметров и Key | `ip -d link show gre0` |
-| Проверка счетчиков (дропы) | `ip -s link show gre0` |
-| Проверка MTU в реальном времени | `ping -M do -s 1472 10.0.0.2` |
-| Перехват трафика | `tcpdump -i any proto 47 -nn` |
+| Просмотр параметров и счетчиков | `ip -d -s link show gre0` |
+| Анализ прохождения протокола 47 | `tcpdump -i any proto 47 -nn` |
+| Проверка маршрута к эндпоинту | `ip route get 203.0.113.2` |
+| Просмотр NHRP кеша (для mGRE) | `vtysh -c "show ip nhrp"` |
 
-### Чек-лист при неисправности
+### Таблица устранения неисправностей
 
-1.  **Связанность эндпоинтов:** Пингуется ли `remote` IP с `local` IP?
-2.  **Firewall:** Разрешен ли входящий протокол 47 (GRE) или UDP-порт (для FOU)?
-3.  **Маршрутизация:** Есть ли маршрут в целевую сеть через туннельный интерфейс?
-4.  **MTU:** Проходят ли мелкие пакеты (ping) при зависании крупных (SSH/HTTP)? Если да — проверьте MSS Clamping.
+| Симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| **Интерфейс UP, пинга нет** | Firewall блокирует ICMP внутри туннеля или сам GRE снаружи | Проверить правила `iptables/nftables`. |
+| **Мелкие пакеты проходят, крупные — нет** | Проблема MTU/MSS | Настроить MSS Clamping до 1360-1400 байт. |
+| **Трафик идет только в одну сторону** | NAT/PAT без поддержки GRE | Использовать FOU (GRE-over-UDP). |
 
 ---
 
@@ -178,7 +244,7 @@ sudo ip link add name gre_fou type gre \
 
 ### Связанные документы
 
-*   [GRE: базовый обзор](./gre.md) — теория, форматы заголовков и накладные расходы.
-*   [Интеграция с IPsec](./gre_ipsec_integration.md) — построение защищенных каналов.
-*   [Обзор туннелирования](../tunneling_overview.md) — сравнение GRE, IPIP, VXLAN и WireGuard.
-*   [iproute2: ip link](../../../Linux/Networking/Tools/iproute2/ip_link.md) — детальное описание параметров интерфейсов.
+*   [Протокол GRE](./gre.md) — фундаментальный обзор архитектуры и заголовков.
+*   [Интеграция с IPsec](./gre_ipsec_integration.md) — настройка защищенных каналов (GRE-over-IPsec).
+*   [ip tunnel vs ip link](../../../Linux/Networking/Tools/iproute2/ip_tunnel.md) — детальное сравнение методов управления в Linux.
+*   [MTU и VPN](../../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md) — глубокая теория фрагментации и диагностики.

@@ -90,6 +90,7 @@ server {
 
 ### Связанные разделы
 
+- [Оптимизация протоколов HTTP](../../../Networking/Protocols/HTTP/http_protocols_optimization.md) — детальный разбор на уровне транспорта.
 - [Оптимизация TLS для производительности](./tls_optimization.md)
 - [Сжатие контента: Brotli и Zstd](./server_compression.md)
 - [Кэширование и Web Vitals](./caching.md)

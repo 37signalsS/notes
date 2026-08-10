@@ -84,6 +84,7 @@ modprobe tls
 
 ### См. также
 * **[ethtool: справочник](../Tools/ethtool.md)** — команды управления сетевым адаптером.
+* **[Обзор SR-IOV](../../../Networking/Concepts/dpdk/sriov.md)** — аппаратная виртуализация I/O.
 * **[RSS, RPS, RFS](./rss_rps_rfs.md)** — распределение сетевой нагрузки по ядрам CPU.
 * **[Оптимизация сетевых задержек](./network_latency_optimization.md)** — когда оффлоуды стоит отключать (Low Latency).
 * **[Диагностика tcpdump](../../Diagnostics/Networking/tcpdump.md)** — особенности анализа трафика с оффлоудами.
