@@ -2,63 +2,61 @@
 
 ## Определения
 
-**Экспортеры в kube-prometheus-stack** — компоненты Helm-чарта, развёртывающие экспортеры метрик как Kubernetes-объекты (DaemonSet, Deployment). Чарт включает три основных экспортера:
+**Экспортеры в kube-prometheus-stack** — встроенные компоненты Helm-чарта (субчарты), развёртывающие агенты сбора метрик как нативные Kubernetes-объекты. Чарт из коробки управляет тремя основными экспортерами:
 
-1. **Node Exporter** (DaemonSet) — метрики хостов (CPU, память, диск, сеть). Разворачивается на каждой ноде кластера.
-2. **kube-state-metrics** (Deployment) — метрики объектов Kubernetes (Pod, Deployment, Service, Job и др.).
-3. **Blackbox Exporter** (Deployment) — blackbox-мониторинг доступности HTTP/TCP/ICMP/DNS эндпоинтов.
+1. **Node Exporter** (DaemonSet) — сбор аппаратных и ОС-метрик (CPU, память, диск, сеть). Разворачивается на каждой ноде кластера.
+2. **kube-state-metrics** (Deployment) — генерация метрик на основе состояния объектов Kubernetes API (Pod, Deployment, Service, StatefulSet и др.).
+3. **Blackbox Exporter** (Deployment) — проактивный blackbox-мониторинг доступности внешних и внутренних эндпоинтов (HTTP/TCP/ICMP/DNS).
 
 > **См. также:** [Экспортеры — общая информация](../../Exporters/overview.md), [Node Exporter](../../Exporters/node_exporter.md).
 
 ## Основные концепции
 
-### Node Exporter
+### Конфигурация Node Exporter
 
-| Параметр | Описание | Значение по умолчанию |
+Управляется через секцию `nodeExporter.*` (и пробрасывается в субчарт `prometheus-node-exporter.*`).
+
+| Параметр | Назначение | Значение по умолчанию |
 | :--- | :--- | :--- |
 | `nodeExporter.enabled` | Включение компонента | `true` |
-| `nodeExporter.hostNetwork` | `hostNetwork: true` для корректных сетевых метрик | `true` |
-| `nodeExporter.hostPID` | `hostPID: true` для метрик процессов | `true` |
-| `nodeExporter.resources` | Requests/limits CPU/memory | `{}` |
-| `nodeExporter.tolerations` | Толерации для размещения на tainted-нодах | `[]` |
-| `nodeExporter.priorityClassName` | Приоритет пода | `""` |
-| `prometheus-node-exporter.*` | Параметры вложенного чарта (subchart) | См. [subchart values](https://artifacthub.io/packages/helm/prometheus-community/prometheus-node-exporter) |
+| `nodeExporter.hostNetwork` | Использование сети хоста для сетевых метрик | `true` |
+| `nodeExporter.hostPID` | Доступ к PID namespace хоста для метрик процессов | `true` |
+| `nodeExporter.tolerations` | Толерации для размещения на tainted-нодах (master) | `[]` |
+| `prometheus-node-exporter.extraArgs` | Отключение/включение конкретных коллекторов | `[]` |
 
-**Ключевые особенности:**
+**Ключевые особенности в KPS:**
+- Работает как `DaemonSet` — строго по одному Pod на каждую ноду.
+- Монтирует директории хоста (`/proc`, `/sys`, `/rootfs`) через `hostPath` для безопасного доступа к метрикам ядра в изолированной среде контейнера.
+- Скрейпинг настраивается автоматически через встроенный `ServiceMonitor` или `PodMonitor`.
 
-- Работает как DaemonSet — по одному Pod на каждую ноду
-- Монтирует `/proc`, `/sys`, `/` с хоста через `hostPath` для доступа к метрикам ядра
-- При `hostNetwork: true` Pod использует сеть хоста, что даёт корректные метрики сетевого стека
+### Конфигурация kube-state-metrics (KSM)
 
-### kube-state-metrics
+Управляется через секцию `kubeStateMetrics.*` (пробрасывается в субчарт `kube-state-metrics.*`).
 
-| Параметр | Описание | Значение по умолчанию |
+| Параметр | Назначение | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `kube-state-metrics.enabled` | Включение компонента | `true` |
-| `kube-state-metrics.resources` | Requests/limits CPU/memory | `{}` |
-| `kube-state-metrics.nodeSelector` | Селектор нод для размещения | `{}` |
-| `kube-state-metrics.tolerations` | Толерации | `[]` |
-| `prometheusOperator.kubeStateMetrics.enabled` | Управление через Operator | `true` |
+| `kubeStateMetrics.enabled` | Включение компонента | `true` |
+| `kube-state-metrics.replicas` | Количество реплик (для HA) | `1` |
+| `kube-state-metrics.autosharding.enabled` | Включение автоматического шардирования | `false` |
+| `kube-state-metrics.collectors` | Выбор отслеживаемых CRD/объектов | (Все базовые ресурсы) |
 
-**Ключевые особенности:**
+**Ключевые особенности в KPS:**
+- Работает как `Deployment`. В кластерах >500 узлов требуется включение **автошардирования** (`autosharding.enabled: true`), чтобы KSM не исчерпал лимиты API-сервера.
+- Не путать с `metrics-server`: KSM отдаёт детальные метрики состояния в Prometheus (для алертов/дашбордов), а `metrics-server` — агрегированные метрики ресурсов в kubelet (для HPA/VPA).
 
-- Работает как Deployment — один экземпляр (или 2 для HA)
-- Опрос Kubernetes API для генерации метрик о состоянии объектов
-- Не путать с metrics-server — ksm отдаёт метрики в Prometheus, а metrics-server — в kubelet (HPA)
+### Конфигурация Blackbox Exporter
 
-### Blackbox Exporter
+Управляется через секцию `prometheus-blackbox-exporter.*`.
 
-| Параметр | Описание | Значение по умолчанию |
+| Параметр | Назначение | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `prometheus-blackbox-exporter.enabled` | Включение компонента | `false` |
-| `prometheus-blackbox-exporter.config` | Конфигурация модулей (http_2xx, tcp_connect и др.) | `{}` |
-| `prometheus-blackbox-exporter.resources` | Requests/limits CPU/memory | `{}` |
+| `prometheus-blackbox-exporter.enabled` | Включение компонента | `false` (по умолчанию выключен) |
+| `prometheus-blackbox-exporter.config` | Глобальная конфигурация модулей проверок | `{}` |
+| `prometheus-blackbox-exporter.serviceMonitor.enabled` | Создание ServiceMonitor для метрик самого экспортера | `false` |
 
-**Ключевые особенности:**
-
-- Не включён по умолчанию — опциональный компонент
-- Конфигурация модулей задаётся в `config` (см. [Blackbox Exporter modules](../../Exporters/blackbox/blackbox_exporter_modules_configuration.md))
-- Для скрейпинга используются Probe CRD (Prometheus Operator)
+**Ключевые особенности в KPS:**
+- Является опциональным. Конфигурация модулей (`http_2xx`, `tcp_connect`) задаётся централизованно в `config`.
+- Для настройки самих целей скрейпинга (что проверять) используется CRD `Probe` от Prometheus Operator, а не статические конфиги.
 
 ## Практические сценарии
 

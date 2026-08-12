@@ -1,32 +1,33 @@
-# Утилиты и диагностика двухбазового CA
+# Утилиты и диагностика двухуровневого CA
 
 ## Определения
 
-Базовые понятия PKI (Public Key Infrastructure, Инфраструктура открытых ключей), такие как **CSR (Certificate Signing Request, Запрос на подпись сертификата)**, **CRL (Certificate Revocation List, Список отзыва сертификатов)** и **Цепочка доверия (Chain of Trust)**, подробно описаны в **[обзоре PKI](../../../Concepts/pki_overview.md)**.
+Базовые понятия PKI (Public Key Infrastructure, Инфраструктура открытых ключей), такие как **CSR (Certificate Signing Request)**, **CRL (Certificate Revocation List)** и **Цепочка доверия (Chain of Trust)**, подробно описаны в **[обзоре PKI](../../../../Concepts/pki_overview.md)**.
 
-В двухуровневой архитектуре цепочка доверия включает промежуточное звено: `конечный сертификат → Intermediate CA → Root CA`. Для верификации такой цепочки используется файл `ca-chain.crt`, объединяющий сертификаты промежуточного и корневого центров сертификации (CA, Certificate Authority).
+**OpenSSL 3.0+** — актуальная версия инструментария с поддержкой провайдеров и улучшенной безопасностью. В двухуровневых схемах OpenSSL 3.x требует строгого соблюдения иерархии при верификации.
+
+**ca-chain.crt (Bundle)** — PEM-файл, содержащий сертификат Intermediate CA и Root CA. Необходим для корректной верификации цепочки `сервис → Intermediate → Root`.
 
 ## Базовые концепции
 
 ### Категории диагностических команд
 
-Все команды OpenSSL для работы с сертификатами можно разделить на три функциональные группы:
+Все команды OpenSSL для работы с сертификатами разделяются на:
 
-- **Просмотр** — чтение содержимого и метаданных сертификатов, запросов CSR и списков CRL (команды `x509`, `req`, `crl`).
-- **Верификация** — проверка криптографических подписей и соответствия пар «ключ — сертификат» (команды `verify`, `-modulus`).
-- **Подключение** — имитация клиента для проверки TLS-серверов (Transport Layer Security) в реальном времени (команда `s_client`).
+- **Просмотр** — извлечение метаданных (команды `x509`, `req`, `crl`).
+- **Верификация** — проверка криптографического соответствия и подписей (команды `verify`, `-modulus`, `pubkey`).
+- **Подключение** — имитация клиента для тестирования TLS-конфигураций (команда `s_client`).
 
 ### Контекст двухуровневого CA
 
-Ключевое отличие от **[одноуровневого CA](../../single_tier/common_utilities.md)** заключается в необходимости использования полной цепочки `ca-chain.crt` при выполнении операций верификации.
+Ключевое отличие от **[одноуровневого CA](../../single_tier/common_utilities.md)** заключается в необходимости использования полной цепочки `ca-chain.crt`.
 
 | Операция | Одноуровневый CA | Двухуровневый CA |
 |:---|:---|:---|
-| Верификация | `-CAfile ca/ca.crt` | `-CAfile intermediate-ca/ca-chain.crt` |
-| Путь к CRL | `ca/crl.pem` | `intermediate-ca/crl/crl.pem` |
-| Цепочка сервиса | `service.crt` | `service.fullchain.crt` (сервис + Intermediate) |
-
-Корневой CA хранится в изолированной среде (air-gapped) и не участвует в повседневной диагностике.
+| Доверенный корень | `ca.crt` | `ca-chain.crt` (Intermediate + Root) |
+| Верификация сервиса | `-CAfile ca.crt` | `-CAfile ca-chain.crt` |
+| Путь к CRL | `ca/crl.pem` | `intermediate-ca/db/crl.pem` |
+| Проверка SNI | Рекомендуется | **Обязательна** (для TLS 1.3) |
 
 ## Практические сценарии
 
@@ -36,7 +37,7 @@
 openssl x509 -in my-service.crt -noout -text
 ```
 
-Команда отображает все поля сертификата, включая расширения SAN (Subject Alternative Name, Альтернативное имя субъекта) и идентификаторы ключей.
+Обратите внимание на поле `Authority Key Identifier (AKI)` — оно должно совпадать с `Subject Key Identifier (SKI)` промежуточного CA.
 
 ### Просмотр содержимого запроса CSR
 
@@ -44,52 +45,67 @@ openssl x509 -in my-service.crt -noout -text
 openssl req -in my-service.csr -noout -text
 ```
 
-Используется для проверки DN-информации (Distinguished Name, Отличительное имя) перед отправкой запроса на подпись в Intermediate CA.
+Используется для проверки расширений SAN и корректности DN перед отправкой запроса на подпись в Intermediate CA.
 
 ### Проверка соответствия ключа и сертификата
 
-Для проверки того, что приватный ключ соответствует публичному ключу в сертификате, сравниваются хеши модулей (modulus):
+Для предотвращения ошибок при запуске TLS-серверов необходимо убедиться, что файлы составляют рабочую пару.
+
+#### Сценарий А: RSA-ключи
+Сравниваются хеши модулей.
 
 ```bash
-openssl rsa -noout -modulus -in my-service.key | openssl md5
-openssl x509 -noout -modulus -in my-service.crt | openssl md5
+openssl rsa -noout -modulus -in service.key | openssl sha256
+openssl x509 -noout -modulus -in service.crt | openssl sha256
 ```
 
-**Хеши должны полностью совпадать.** Если они различаются, TLS-сервер не сможет использовать данную пару файлов.
+#### Сценарий Б: ECDSA/Ed25519 (2026)
+Сравниваются хеши публичных ключей (DER-формат).
+
+```bash
+# Извлечение из приватного ключа
+openssl pkey -in service.key -pubout -outform DER | openssl sha256
+# Извлечение из сертификата
+openssl x509 -in service.crt -pubkey -noout -outform DER | openssl sha256
+```
 
 ### Просмотр списка отозванных сертификатов CRL
 
 ```bash
-openssl crl -in intermediate-ca/crl/crl.pem -noout -text
+openssl crl -in intermediate-ca/db/crl.pem -noout -text
 ```
 
-В двухуровневой архитектуре список отзыва генерируется промежуточным CA. Подробнее об отзыве — в **[управлении сертификатами](./service_certificate_management.md#отзыв-скомпрометированного-сертификата)**.
+В двухуровневой схеме вы всегда проверяете CRL, выпущенный **промежуточным** CA, так как именно он подписывал конечные сертификаты.
 
-### Диагностика TLS-сервера
+### Диагностика TLS-сервера (s_client)
 
 ```bash
-openssl s_client -connect my-service.local:443 -showcerts </dev/null
+openssl s_client -connect my-service.local:443 -servername my-service.local -showcerts </dev/null
 ```
 
-Команда позволяет проверить, какую цепочку сертификатов отдает сервер. В двухуровневой схеме сервер **обязан** отдавать полную цепочку (`fullchain.crt`), включающую сертификат сервиса и промежуточный сертификат CA.
-
-**Параметры отладки:**
-
-- `-servername my-service.local` — использование расширения SNI (Server Name Indication).
-- `-CAfile intermediate-ca/ca-chain.crt` — проверка доверия через локальную цепочку CA.
+**Анализ вывода:**
+- `Verification: OK` — цепочка доверена.
+- `Verification error: unable to get local issuer certificate` — сервер не отдает промежуточный сертификат (нужно использовать `fullchain.crt`).
 
 ### Верификация цепочки доверия
 
+Проверка конечного сертификата относительно полной цепочки CA:
+
 ```bash
-openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.fullchain.crt
+openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.crt
 ```
 
-Проверяет всю иерархию: от сервисного сертификата через промежуточный до корневого. Использование только `root-ca/ca.crt` приведет к ошибке верификации из-за отсутствия промежуточного звена.
+Проверка самого промежуточного CA относительно корня:
+
+```bash
+openssl verify -CAfile root-ca/ca.crt intermediate-ca/intermediate.crt
+```
 
 ## Дополнительная информация
 
 ### Связанные темы
 
-- **[Управление сертификатами сервисов](./service_certificate_management.md)** — жизненный цикл сертификатов в двухуровневой схеме.
-- **[Диагностика SSL/TLS сертификатов](../../ssl_certificate_diagnostics.md)** — общие методы поиска и устранения ошибок.
-- **[Обзор PKI](../../../Concepts/pki_overview.md)** — теоретические основы иерархии доверия и отзывов.
+- **[Управление сертификатами сервисов](./service_certificate_management.md)** — жизненный цикл и отзыв.
+- **[Диагностика SSL/TLS сертификатов](../../ssl_certificate_diagnostics.md)** — решение проблем с цепочками.
+- **[Обзор PKI](../../../../Concepts/pki_overview.md)** — теория и стандарты.
+- **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — формирование файла `ca-chain.crt`.

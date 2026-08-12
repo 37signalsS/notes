@@ -2,31 +2,32 @@
 
 ## Определения
 
-**CA (Certificate Authority, Центр сертификации)** — доверенная сущность, выпускающая цифровые сертификаты.
+**CA (Certificate Authority, Центр сертификации)** — доверенная сущность, выпускающая цифровые сертификаты для подтверждения подлинности открытых ключей.
 
-**Intermediate CA (Промежуточный центр сертификации)** — подчиненный удостоверяющий центр, подписанный корневым CA. Используется для повседневного выпуска конечных сертификатов (серверов, пользователей), что позволяет держать корневой ключ в безопасности.
+**Intermediate CA (Промежуточный центр сертификации)** — подчиненный удостоверяющий центр, сертификат которого подписан корневым CA. В двухуровневой архитектуре он является единственным узлом, выпускающим конечные сертификаты.
 
-**ca-chain.crt (Цепочка сертификатов)** — комбинированный файл, содержащий сертификат промежуточного CA и корневой сертификат. Необходим для корректной проверки цепочки доверия клиентами.
+**ca-chain.crt (Цепочка сертификатов, Bundle)** — PEM-файл, содержащий сертификаты всех уровней от Intermediate до Root (в порядке убывания иерархии). Необходим для того, чтобы клиенты могли построить путь доверия до корневого якоря.
 
-**pathlen (Path Length Constraint, Ограничение длины пути)** — параметр расширения Basic Constraints стандарта X.509, определяющий количество уровней подчиненных CA.
+**pathlen (Path Length Constraint)** — параметр расширения Basic Constraints стандарта X.509. Значение `0` в сертификате Intermediate CA означает, что он может выпускать только конечные сертификаты (leaf), но не может подписывать другие CA.
 
-> Базовые понятия PKI (Public Key Infrastructure, Инфраструктура открытых ключей), такие как **CSR (Certificate Signing Request, Запрос на подпись сертификата)**, **CRL (Certificate Revocation List, Список отзыва сертификатов)** и **OCSP (Online Certificate Status Protocol, Протокол онлайн-проверки статуса сертификата)**, подробно описаны в **[обзоре PKI](../../../../Concepts/pki_overview.md)**.
+**OpenSSL 3.0+** — версия тулсета, в которой депрецирован параметр `RANDFILE` и введена система провайдеров.
+
+> Базовые понятия PKI (CSR, CRL, OCSP) подробно описаны в **[обзоре PKI](../../../../Concepts/pki_overview.md)**.
 
 ## Базовые концепции
 
 ### Роль в двухуровневой архитектуре
 
-Промежуточный CA является основным операционным узлом инфраструктуры. В то время как Root CA (Корневой CA) хранится в изолированной среде (air-gapped), промежуточный узел доступен для автоматизированных процессов выпуска сертификатов.
+Промежуточный CA выполняет роль «операционного офиса» PKI. В то время как Root CA (Корневой CA) хранится в изолированной среде (air-gapped), промежуточный узел доступен для автоматизированных процессов.
 
-Подробное сравнение уровней и архитектурные схемы приведены в **[обзоре двухуровневого CA](./overview.md)**.
+**Преимущества использования Intermediate CA:**
+- **Безопасность корня:** Корневой ключ остается офлайн. В случае компрометации промежуточного ключа, отзывается только он, а корневое доверие сохраняется.
+- **Масштабируемость:** Можно создать несколько Intermediate CA для разных департаментов или регионов с разными политиками.
+- **Автоматизация:** Промежуточный CA можно интегрировать с HashiCorp Vault или Kubernetes (cert-manager).
 
 ### Файл цепочки доверия
 
-Современные TLS-клиенты (браузеры, API-клиенты) требуют предоставления полной цепочки сертификатов от сервера. Файл `ca-chain.crt` объединяет промежуточный и корневой сертификаты в одном PEM-контейнере. Это критично для:
-
-- Настройки веб-серверов (например, Nginx).
-- Реализации **mTLS (Mutual TLS, Взаимный TLS)** для аутентификации клиентов.
-- Проведения диагностики утилитами OpenSSL.
+Современные браузеры и TLS-клиенты требуют предоставления полной цепочки. Без файла `ca-chain.crt` сервер отправит только свой сертификат, и клиент выдаст ошибку `Incomplete Chain` или `Unknown CA`, так как он не знает о промежуточном звене.
 
 ## Практические сценарии
 
@@ -39,11 +40,9 @@ echo "1000" > intermediate-ca/db/serial
 echo "1000" > intermediate-ca/db/crlnumber
 ```
 
-Назначение ключевых файлов базы данных (`index.txt`, `serial`) описано в **[обзоре одноуровневого CA](../single_tier/overview.md#формальный-метод-создание-структуры-ca)**.
-
 ### 2. Создание конфигурационного файла openssl.cnf
 
-Файл `intermediate-ca/openssl.cnf` определяет политики и расширения для работы промежуточного CA.
+Файл `intermediate-ca/openssl.cnf` определяет правила работы операционного узла.
 
 ```ini
 [ ca ]
@@ -53,19 +52,17 @@ default_ca = CA_default
 dir             = .
 database        = $dir/db/index.txt
 new_certs_dir   = $dir/certs
-crl_dir         = $dir/crl
-
-certificate     = $dir/intermediate.crt
 serial          = $dir/db/serial
 crlnumber       = $dir/db/crlnumber
-crl             = $dir/crl/crl.pem
+certificate     = $dir/intermediate.crt
 private_key     = $dir/intermediate.key
+RANDFILE        = $dir/db/.rand             # Игнорируется в OpenSSL 3.0+
 
 default_md      = sha512
 default_days    = 365
 policy          = policy_loose
 
-# Мягкая политика: требует только наличия Common Name (CN)
+# Мягкая политика для конечных сервисов
 [ policy_loose ]
 countryName             = optional
 stateOrProvinceName     = optional
@@ -85,79 +82,83 @@ prompt              = no
 C  = RU
 ST = Moscow
 O  = My Private Corp
-CN = My Private Corp Intermediate CA
+CN = My Private Intermediate CA
 
-# Расширения для самого Intermediate CA
+# Расширения для самого Intermediate CA (при подписи корнем)
 [ v3_intermediate_ca ]
 subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid:always,issuer
 basicConstraints       = critical, CA:true, pathlen:0
-keyUsage               = critical, keyCertSign, cRLSign
+keyUsage               = critical, digitalSignature, keyCertSign, cRLSign
 
-# Расширения для сертификатов сервисов
+# Расширения для сертификатов сервисов (serverAuth)
 [ v3_server_cert ]
 basicConstraints       = CA:FALSE
-keyUsage               = digitalSignature, keyEncipherment
+keyUsage               = critical, digitalSignature, keyEncipherment
 extendedKeyUsage       = serverAuth, clientAuth
 subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid,issuer
 subjectAltName         = @alt_names
 ```
 
-**Особенности конфигурации:**
+### 3. Генерация ключа и запроса (CSR)
 
-- `pathlen:0`: запрещает промежуточному CA подписывать другие CA (только leaf-сертификаты).
-- `policy_loose`: позволяет выпускать сертификаты с произвольными данными в полях организации.
-
-### 3. Генерация ключа и запроса CSR
-
+#### Вариант А: RSA-4096
 ```bash
-cd intermediate-ca
-
-# Создание ключа и запроса
-openssl req -new \
-    -config openssl.cnf \
+openssl req -new -config intermediate-ca/openssl.cnf \
     -newkey rsa:4096 -sha512 -nodes \
-    -keyout intermediate.key \
-    -out csr/intermediate.csr
-
-cd ..
+    -keyout intermediate-ca/intermediate.key \
+    -out intermediate-ca/csr/intermediate.csr
 ```
 
-### 4. Подпись промежуточного CA корневым ключом
+#### Вариант Б: ECDSA P-384 (Рекомендуется в 2026)
+```bash
+openssl req -new -config intermediate-ca/openssl.cnf \
+    -newkey ec:<(openssl ecparam -name secp384r1) -sha512 -nodes \
+    -keyout intermediate-ca/intermediate.key \
+    -out intermediate-ca/csr/intermediate.csr
+```
 
-Операция выполняется на стороне **[Root CA](./root_ca_setup.md)**, обычно в изолированной среде.
+### 4. Подпись промежуточного CA в Root-узле
+
+Операция выполняется на стороне **[Root CA](./root_ca_setup.md)** (офлайн-система):
 
 ```bash
 cd root-ca
 
-# Подпись с использованием расширения v3_intermediate_ca из конфига Root CA
 openssl ca -config openssl.cnf \
+    -extensions v3_intermediate_ca \
+    -days 3650 -notext -md sha512 \
     -in ../intermediate-ca/csr/intermediate.csr \
-    -out ../intermediate-ca/intermediate.crt \
-    -extensions v3_intermediate_ca
+    -out ../intermediate-ca/intermediate.crt
 
 cd ..
 ```
 
-### 5. Формирование ca-chain.crt
+### 5. Формирование цепочки и верификация
+
+После получения подписанного сертификата необходимо создать Bundle и проверить его.
 
 ```bash
+# Создание цепочки (Intermediate + Root)
 cat intermediate-ca/intermediate.crt root-ca/ca.crt > intermediate-ca/ca-chain.crt
+
+# Верификация промежуточного сертификата относительно корня
+openssl verify -CAfile root-ca/ca.crt intermediate-ca/intermediate.crt
+# → intermediate.crt: OK
 ```
 
 ## Дополнительная информация
 
-### Безопасность
+### Безопасность операционного узла
 
-Несмотря на то что ключ Intermediate CA хранится онлайн, он должен быть защищен:
-
-- Использованием **HSM (Hardware Security Module, Аппаратный модуль безопасности)** или HashiCorp Vault.
-- Ограничением доступа на уровне ОС и сетевых политик.
-- Применением **MFA (Multi-Factor Authentication, Многофакторная аутентификация)** для административного доступа.
+Так как ключ Intermediate CA доступен онлайн, он требует повышенных мер защиты:
+- **HashiCorp Vault:** использование движка PKI для хранения ключа и динамического выпуска.
+- **Сетевая изоляция:** доступ к порту управления CA только через VPN или внутренние Jump-хосты.
+- **Мониторинг `index.txt`:** аудит всех выпущенных сертификатов через системы логирования.
 
 ### Связанные темы
 
-- **[Настройка Root CA](./root_ca_setup.md)** — подготовка корневого узла доверия.
-- **[Управление сертификатами сервисов](./service_certificate_management.md)** — выпуск и отзыв сертификатов через Intermediate CA.
-- **[Утилиты и диагностика](./common_utilities.md)** — проверка цепочек доверия и верификация.
+- **[Настройка Root CA](./root_ca_setup.md)** — подготовка фундамента доверия.
+- **[Управление сертификатами сервисов](./service_certificate_management.md)** — выпуск конечных сертификатов через Intermediate CA.
+- **[Утилиты и диагностика](./common_utilities.md)** — проверка цепочек `ca-chain.crt`.

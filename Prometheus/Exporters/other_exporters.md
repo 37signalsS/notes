@@ -2,20 +2,24 @@
 
 ## Определения
 
-**Другие экспортеры** — систематизированный перечень агентов и встроенных механизмов мониторинга для различных технологических стеков. Экспортеры преобразуют метрики целевых систем в формат Prometheus.
+**Другие экспортеры** — систематизированный перечень агентов и встроенных механизмов мониторинга для различных технологических стеков. Они преобразуют метрики целевых систем (баз данных, веб-серверов, очередей) в формат Prometheus.
 
 В современных реалиях 2026 года подходы к сбору метрик делятся на три типа:
-1.  **Внешние экспортеры (Exporters):** Отдельные процессы для систем без встроенной поддержки (MySQL, PostgreSQL).
-2.  **Нативный экспорт (Native Support):** Встроенные эндпоинты `/metrics` в самом ПО (RabbitMQ, Angie, Triton).
-3.  **Универсальные коллекторы:** Использование [OpenTelemetry Collector](../../OpenTelemetry/opentelemetry_overview.md) как единого шлюза.
+1.  **Внешние экспортеры (Standalone/Sidecar):** Отдельные процессы для систем без встроенной поддержки (MySQL, PostgreSQL, Linux).
+2.  **Нативный экспорт (Native Support):** Встроенные эндпоинты `/metrics` в самом ПО. Это предпочтительный метод, не требующий дополнительных агентов (RabbitMQ, Angie, Traefik).
+3.  **Универсальные коллекторы:** Использование [OpenTelemetry Collector](../../OpenTelemetry/opentelemetry_overview.md) как единого шлюза для трансляции логов и метрик.
+
+**См. также:** [Обзор экспортеров](./overview.md), [Принципы работы экспортера](./overview.md#принцип-работы-экспортера).
 
 ## Основные концепции
 
 ### Категоризация
 
-Экспортеры сгруппированы по типам наблюдаемых систем. Каждый раздел содержит информацию о портах, репозиториях и ссылки на детальные руководства в базе знаний.
-
-**Связанные темы:** [Обзор экспортеров](./overview.md), [Принцип работы экспортера](./overview.md#принцип-работы-экспортера).
+Каталог разбит по типам целевых систем. Для каждой системы указаны:
+*   Рекомендуемый инструмент скрапинга.
+*   Тип (нативный или внешний).
+*   Стандартный порт (важно для настройки `scrape_configs` и Service Discovery).
+*   Ссылка на профильную SSoT-статью в базе знаний (если применимо).
 
 ---
 
@@ -23,95 +27,81 @@
 
 ### 1. Базы данных (Databases)
 
-| Экспортер | Описание | Репозиторий | Порт | Ссылка на SSoT |
+| Экспортер | Описание | Тип | Порт | Ссылка на SSoT |
 | :--- | :--- | :--- | :--- | :--- |
-| **mysqld_exporter** | Мониторинг MySQL/MariaDB | [GitHub](https://github.com/prometheus/mysqld_exporter) | 9104 | **[MySQL](../../Databases/MySQL/overview.md)** |
-| **postgres_exporter** | Мониторинг PostgreSQL | [GitHub](https://github.com/prometheus-community/postgres_exporter) | 9187 | **[PostgreSQL](../../Databases/PostgreSQL/overview.md)** |
-| **redis_exporter** | Мониторинг Redis (Кэш и очереди) | [GitHub](https://github.com/oliver006/redis_exporter) | 9121 | **[Redis](../../Databases/redis_overview.md)** |
-| **mongodb_exporter** | Мониторинг MongoDB | [GitHub](https://github.com/percona/mongodb_exporter) | 9216 | **[MongoDB](../../Databases/MongoDB/mongodb.md)** |
-| **elasticsearch_exporter** | Мониторинг Elasticsearch | [GitHub](https://github.com/prometheus-community/elasticsearch_exporter) | 9114 | **[Elasticsearch](../../ELK_Stack/Elasticsearch/elasticsearch_overview.md)** |
-| **consul_exporter** | Мониторинг KV и Health Checks Consul | [GitHub](https://github.com/prometheus/consul_exporter) | 9107 | **[Consul](../../Consul/consul_overview.md)** |
-| **memcached_exporter** | Мониторинг Memcached | [GitHub](https://github.com/prometheus/memcached_exporter) | 9150 | **[Memcached](../../Databases/memcached_overview.md)** |
-| **cassandra_exporter** | Мониторинг Apache Cassandra | [GitHub](https://github.com/criteo/cassandra_exporter) | 9116 | — |
-| **clickhouse_exporter** | Мониторинг ClickHouse | [GitHub](https://github.com/ClickHouse/clickhouse_exporter) | 9116 | **[ClickHouse](../../Databases/ClickHouse/overview.md)** |
+| **mysqld_exporter** | MySQL/MariaDB. Требует юзера с GRANT PROCESS. | Внешний | 9104 | **[MySQL](../../Databases/MySQL/overview.md)** |
+| **postgres_exporter** | PostgreSQL. Анализ таблиц `pg_stat_*`. | Внешний | 9187 | **[PostgreSQL](../../Databases/PostgreSQL/overview.md)** |
+| **redis_exporter** | Redis. Поддерживает сбор по нескольким URI. | Внешний | 9121 | **[Redis](../../Databases/redis_overview.md)** |
+| **mongodb_exporter** | MongoDB. Настройка через Percona PMM. | Внешний | 9216 | **[MongoDB](../../Databases/MongoDB/mongodb.md)** |
+| **elasticsearch_exporter** | Elasticsearch. Состояние кластера и индексов. | Внешний | 9114 | **[Elasticsearch](../../ELK_Stack/Elasticsearch/elasticsearch_overview.md)** |
+| **consul_exporter** | Consul. Health Checks, лидерство, KV. | Внешний | 9107 | **[Consul](../../Consul/consul_overview.md)** |
+| **clickhouse_exporter** | ClickHouse. (В CH также есть нативный эндпоинт). | Внешний | 9116 | **[ClickHouse](../../Databases/ClickHouse/overview.md)** |
 
 ### 2. Веб-серверы и L7 Прокси
 
-| Экспортер | Описание | Репозиторий | Порт | Ссылка на SSoT |
+| Экспортер | Описание | Тип | Порт | Ссылка на SSoT |
 | :--- | :--- | :--- | :--- | :--- |
-| **nginx-prometheus-exporter** | Мониторинг Nginx (через stub_status) | [GitHub](https://github.com/nginxinc/nginx-prometheus-exporter) | 9113 | **[Nginx](../../WebServers/Nginx/Core/nginx_overview.md)** |
-| **angie (native)** | Нативный экспорт метрик Angie | — | 80/443 | **[Angie](../../WebServers/Angie/angie_overview.md)** |
-| **apache_exporter** | Мониторинг Apache HTTPD | [GitHub](https://github.com/Lusitaniae/apache_exporter) | 9117 | **[Apache](../../WebServers/Apache/apache_overview.md)** |
-| **haproxy_exporter** | Мониторинг HAProxy (v2.0+ нативно) | [GitHub](https://github.com/prometheus/haproxy_exporter) | 9101 | **[HAProxy](../../WebServers/haproxy_overview.md)** |
-| **traefik (native)** | Встроенный мониторинг Traefik | — | 8080 | **[Traefik](../../WebServers/Traefik/traefik_overview.md)** |
-| **envoy-exporter** | Мониторинг Envoy Proxy | [GitHub](https://github.com/prometheus/envoy_exporter) | 9102 | **[Envoy](../../Service_Mesh/service_mesh_concepts.md)** |
+| **Angie (нативно)** | Встроенный модуль `prometheus_zone`. | Нативный | 80/443 | **[Angie](../../WebServers/Angie/angie_overview.md)** |
+| **Traefik (нативно)** | Мониторинг Gateway API, Ingress. | Нативный | 8080 | **[Traefik](../../WebServers/Traefik/traefik_overview.md)** |
+| **nginx-prometheus-exporter** | Nginx OSS. Парсит страницу `stub_status`. | Внешний | 9113 | **[Nginx](../../WebServers/Nginx/Core/nginx_overview.md)** |
+| **apache_exporter** | Apache HTTPD. Парсит `/server-status`. | Внешний | 9117 | **[Apache](../../WebServers/Apache/apache_overview.md)** |
+| **haproxy_exporter** | HAProxy. (В v2.0+ есть нативный экспорт). | Внешний | 9101 | **[HAProxy](../../WebServers/haproxy_overview.md)** |
+| **envoy-exporter** | Envoy Proxy (Service Mesh). | Внешний | 9102 | **[Envoy](../../Service_Mesh/service_mesh_concepts.md)** |
 
 ### 3. Брокеры сообщений (Message Brokers)
 
-| Экспортер | Описание | Репозиторий | Порт | Ссылка на SSoT |
+| Экспортер | Описание | Тип | Порт | Ссылка на SSoT |
 | :--- | :--- | :--- | :--- | :--- |
-| **rabbitmq_exporter** | Мониторинг RabbitMQ (нативно в v3.8+) | [GitHub](https://github.com/kbudde/rabbitmq_exporter) | 9419 | **[RabbitMQ](../../Kafka/rabbitmq_vs_kafka.md)** |
-| **kafka_exporter** | Мониторинг Kafka (очереди, консьюмеры) | [GitHub](https://github.com/danielqsj/kafka_exporter) | 9308 | **[Kafka](../../Kafka/kafka_for_monitoring.md)** |
-| **nats_exporter** | Мониторинг NATS брокера | [GitHub](https://github.com/nats-io/prometheus-nats-exporter) | 7777 | — |
+| **RabbitMQ (нативно)** | Плагин `rabbitmq_prometheus` (включен в v3.8+). | Нативный | 15692 | **[RabbitMQ](../../Kafka/rabbitmq_vs_kafka.md)** |
+| **kafka_exporter** | Kafka. Задержки консьюмеров (lag), партиции. | Внешний | 9308 | **[Kafka](../../Kafka/kafka_for_monitoring.md)** |
 
-### 4. Искусственный интеллект и GPU (AI/ML) — Новое в 2026
+### 4. Искусственный интеллект и GPU (AI/ML)
 
-| Экспортер | Описание | Репозиторий | Порт |
+Мониторинг инфраструктуры машинного обучения стал критичным в 2025-2026 годах.
+
+| Экспортер | Описание | Репозиторий / Тип | Порт |
 | :--- | :--- | :--- | :--- |
-| **NVIDIA DCGM Exporter** | Метрики GPU: утилизация, VRAM, NVLink | [GitHub](https://github.com/NVIDIA/dcgm-exporter) | 9400 |
-| **Triton (native)** | Метрики инференса NVIDIA Triton Server | — | 8002 |
-| **AMD ROCm Exporter** | Мониторинг ускорителей AMD | [GitHub](https://github.com/ROCm/prometheus-exporter) | 9000 |
+| **NVIDIA DCGM Exporter** | Метрики GPU: утилизация, VRAM, энергопотребление. | Внешний (NVIDIA) | 9400 |
+| **Triton (нативно)** | Метрики инференса NVIDIA Triton Inference Server. | Нативный | 8002 |
+| **AMD ROCm Exporter** | Мониторинг ускорителей AMD (MI250/MI300). | Внешний | 9000 |
 
 ### 5. Облачные платформы и Виртуализация
 
-| Экспортер | Описание | Репозиторий | Порт |
+| Экспортер | Описание | Порт | Ссылка |
 | :--- | :--- | :--- | :--- |
-| **yandex_exporter** | Мониторинг Yandex Cloud | [GitHub](https://github.com/yandex-cloud/prometheus-exporter) | 9100 |
-| **openstack_exporter** | Мониторинг инфраструктуры OpenStack | [GitHub](https://github.com/openstack/exporter) | 9119 |
-| **vmware_exporter** | Мониторинг vSphere/ESXi | [GitHub](https://github.com/pryorda/vmware_exporter) | 9271 |
-| **cloudwatch_exporter** | Сбор метрик из AWS CloudWatch | [GitHub](https://github.com/prometheus/cloudwatch_exporter) | 9106 |
+| **yandex_exporter** | Сбор метрик Yandex Cloud (Compute, MDB) API. | 9100 | [GitHub](https://github.com/yandex-cloud/prometheus-exporter) |
+| **vmware_exporter** | Мониторинг vSphere/ESXi. | 9271 | [GitHub](https://github.com/pryorda/vmware_exporter) |
+| **cloudwatch_exporter** | Мост к метрикам AWS CloudWatch. | 9106 | [GitHub](https://github.com/prometheus/cloudwatch_exporter) |
 
-### 6. Системы хранения и Сеть
-
-| Экспортер | Описание | Репозиторий | Порт |
-| :--- | :--- | :--- | :--- |
-| **ceph_exporter** | Мониторинг Ceph кластера | [GitHub](https://github.com/digitalocean/ceph_exporter) | 9128 |
-| **snmp_exporter** | Мониторинг сетевых устройств (SNMP) | [GitHub](https://github.com/prometheus/snmp_exporter) | 9116 |
-| **bind_exporter** | Мониторинг DNS сервиса BIND | [GitHub](https://github.com/prometheus-community/bind_exporter) | 9119 |
-| **ipmi_exporter** | Мониторинг "железа" через IPMI | [GitHub](https://github.com/prometheus-community/ipmi_exporter) | 9290 |
-
-### 7. Операционные системы и Контейнеры
+### 6. Системы хранения и Аппаратное обеспечение
 
 | Экспортер | Описание | Ссылка на SSoT | Порт |
 | :--- | :--- | :--- | :--- |
-| **node_exporter** | Мониторинг Linux систем | **[Node Exporter](./node_exporter.md)** | 9100 |
-| **windows_exporter** | Мониторинг Windows Server | [GitHub](https://github.com/prometheus-community/windows_exporter) | 9182 |
-| **cAdvisor** | Метрики Docker-контейнеров | **[cAdvisor](./cadvisor.md)** | 8080 |
-| **kube-state-metrics** | Статус объектов Kubernetes | [GitHub](https://github.com/kubernetes/kube-state-metrics) | 8080 |
+| **node_exporter** | Мониторинг Linux (CPU, RAM, Disks). | **[Node Exporter](./node_exporter.md)** | 9100 |
+| **cAdvisor** | Мониторинг контейнеров (Docker/K8s). | **[cAdvisor](./cadvisor.md)** | 8080 |
+| **ceph_exporter** | Мониторинг Ceph кластера и OSD. | — | 9128 |
+| **ipmi_exporter** | Мониторинг BMC, кулеров, питания серверов. | — | 9290 |
+| **snmp_exporter** | Опрос коммутаторов, ИБП (Multi-Target паттерн). | — | 9116 |
 
-### 8. Специализированные инструменты
+### 7. Специализированные и "Blackbox" инструменты
 
-| Экспортер | Описание | Репозиторий | Порт |
+| Экспортер | Описание | Ссылка на SSoT | Порт |
 | :--- | :--- | :--- | :--- |
-| **blackbox_exporter** | Мониторинг доступности HTTP/TCP | **[Blackbox Exporter](./blackbox/blackbox_exporter_overview.md)** | 9115 |
-| **process_exporter** | Детальный мониторинг групп процессов | [GitHub](https://github.com/ncabatoff/process-exporter) | 9256 |
-| **json_exporter** | Парсинг произвольных JSON API | [GitHub](https://github.com/prometheus-community/json_exporter) | 9117 |
-| **sql_exporter** | Выполнение SQL-запросов для метрик | [GitHub](https://github.com/prometheus-community/sql_exporter) | 9116 |
-| **php-fpm_exporter** | Мониторинг PHP-FPM статуса | [GitHub](https://github.com/hipages/php-fpm_exporter) | 9253 |
-
----
+| **blackbox_exporter** | Проверка доступности (HTTP, TCP, DNS, ICMP). | **[Blackbox Exporter](./blackbox/blackbox_exporter_overview.md)** | 9115 |
+| **process_exporter** | Детальный мониторинг по конкретным именам процессов. | — | 9256 |
+| **json_exporter** | Парсинг произвольных JSON API ответов в метрики. | — | 9117 |
+| **sql_exporter** | Периодическое выполнение кастомных SQL-запросов. | — | 9116 |
 
 ## Дополнительная информация
 
-### Reliability Score: 10
-Каталог актуализирован на июль 2026 года. Включены современные AI-инструменты и подтверждена нативная поддержка в RabbitMQ, Angie и HAProxy.
-
 ### Поиск и расширяемость
-*   **Textfile Collector:** Для простых bash-скриптов используйте [Textfile Collector](./extensibility/textfile_collector.md).
-*   **Свой экспортер:** Для разработки на Go см. [написание кастомных экспортеров](./extensibility/custom_exporters.md).
-*   **Реестр сообщества:** Полный список доступен на [Prometheus.io](https://prometheus.io/docs/instrumenting/exporters/).
 
-### Связанные темы
-*   [Обзор экспортеров](./overview.md) — принцип работы и архитектура.
-*   [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — автоматизация сбора.
-*   [Безопасность экспортеров](./overview.md#безопасность-экспортеров) — TLS и аутентификация.
+Если требуемой системы нет в каталоге:
+1.  **Реестр сообщества:** Проверьте официальный список поддерживаемых портов и экспортеров на [Prometheus.io](https://prometheus.io/docs/instrumenting/exporters/).
+2.  **Скрипты:** Для простых разовых проверок используйте bash-скрипты в связке с [Textfile Collector](./extensibility/textfile_collector.md).
+3.  **Собственная разработка:** Архитектурные паттерны создания агентов на Go описаны в статье [Создание собственных экспортеров](./extensibility/custom_exporters.md).
+
+### См. также
+
+*   [Обзор экспортеров](./overview.md) — принцип работы и безопасность (TLS/Auth).
+*   [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — автоматизация сбора метрик с большого количества агентов.

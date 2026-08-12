@@ -4,7 +4,7 @@
 
 **Безопасность Prometheus** — совокупность архитектурных решений, настроек и технических средств, направленных на обеспечение конфиденциальности, целостности и доступности метрик, а также защиту инфраструктуры мониторинга от несанкционированного вмешательства.
 
-Исторически Prometheus проектировался для работы в изолированных доверенных сетях без встроенных механизмов защиты. Однако, начиная с версии **2.24.0**, в сервер была добавлена нативная поддержка TLS и базовой аутентификации для веб-интерфейса и API. Для полноценной защиты в промышленной эксплуатации требуется комбинирование встроенных средств с внешними инструментами (VPN, Firewall, Reverse Proxy).
+Начиная с версии **Prometheus v3.0 (2024–2026)**, архитектура безопасности включает нативную поддержку TLS/Auth для всех эндпоинтов, включая новый приемник данных **OTLP (OpenTelemetry Line Protocol)**. Современный Prometheus спроектирован для работы в Zero Trust средах, где каждый поток данных (Pull или Push) должен быть авторизован и зашифрован.
 
 > **См. также:** [DevSecOps](../CI-CD/DevSecOps/devsecops_overview.md) — общие принципы безопасности; [Безопасность Prometheus Operator](./kubernetes/operator/Security/index.md) — защита в Kubernetes; [HTTP-аутентификация](../Networking/Protocols/HTTP/http_authentication.md) — теоретические основы.
 
@@ -14,56 +14,62 @@
 
 | Фактор риска | Описание | Последствия |
 | :--- | :--- | :--- |
-| **Открытый HTTP API** | Доступ к эндпоинтам `/api/v1/*` без аутентификации. | Утечка топологии сети, данных о нагрузке и метаданных сервисов. |
-| **DoS-атаки через PromQL** | Выполнение сложных запросов с большой глубиной поиска. | Исчерпание оперативной памяти и падение сервера Prometheus. |
-| **Отсутствие шифрования** | Передача метрик по HTTP в открытом виде. | Перехват данных (Man-in-the-Middle) в незащищенных сетях. |
-| **Сбор с недоверенных целей** | Получение метрик от скомпрометированных экспортеров. | Подделка данных (Data Spoofing) и внедрение ложных алертов. |
+| **Открытый OTLP Receiver** | Доступ к `/api/v1/otlp/*` без авторизации. | Инъекция ложных метрик, отравление TSDB (Data Poisoning). |
+| **DoS-атаки через PromQL** | Выполнение сложных запросов с большой глубиной поиска. | Исчерпание RAM и падение сервера. |
+| **UTF-8 Rendering (v3.0)** | Недостаточная фильтрация имен метрик в сторонних UI. | Риск XSS-атак при отображении «сырых» UTF-8 имен в браузере. |
+| **Секреты в конфигурации** | Утечка токенов через эндпоинт `/-/config`. | Компрометация ключей доступа к облачным провайдерам. |
 
-### Многоуровневая стратегия защиты
+### Многоуровневая стратегия защиты (Zero Trust)
 
 Безопасность системы мониторинга строится по принципу эшелонированной обороны:
 
-1.  **Защита входящего трафика (Ingress):** Ограничение доступа к веб-интерфейсу Prometheus и Alertmanager через TLS и аутентификацию.
-2.  **Защита исходящего трафика (Scrape):** Настройка безопасного взаимодействия с экспортерами (Basic Auth, mTLS).
-3.  **Сетевая сегментация:** Использование Firewall и Network Policies для ограничения доступа к портам 9090 (Prometheus), 9093 (Alertmanager) и 9100+ (Exporters).
-4.  **Безопасность данных (At Rest):** Prometheus не предоставляет встроенного шифрования данных на диске. Защита обеспечивается на уровне разрешений файловой системы (chmod/chown) или шифрования томов ОС (LUKS, облачные KMS).
+1.  **Защита входящего трафика (Ingress):**
+    *   **Web Auth:** Basic Auth или OAuth2 для доступа к UI и API.
+    *   **mTLS для OTLP:** Обязательная проверка клиентских сертификатов для всех приложений, отправляющих метрики по OTLP.
+2.  **Защита исходящего трафика (Scrape):** Настройка безопасного взаимодействия с экспортерами (Basic Auth, OAuth2, mTLS).
+3.  **Сетевая сегментация:** Использование Network Policies и mTLS внутри Service Mesh (Istio/Linkerd) для изоляции порта 9090.
+4.  **Безопасность данных (At Rest):** Использование разрешений файловой системы и шифрования томов. В v3.0 рекомендуется использовать **Remote Write 2.0** с OIDC для безопасной передачи данных в долгосрочные хранилища.
+
 
 ## Практические сценарии
 
 ### Встроенная защита Prometheus (web-config.yml)
 
-Для активации нативного TLS и Basic Auth создайте файл конфигурации (например, `web-config.yml`).
+Для активации нативного TLS и Basic Auth создайте файл конфигурации (например, `web-config.yml`). В v3.0 рекомендуется использовать **mTLS** для защиты эндпоинта OTLP.
 
 ```yaml
-# Настройка TLS сервера
+# /etc/prometheus/web-config.yml
 tls_server_config:
   cert_file: /etc/prometheus/certs/server.crt
   key_file: /etc/prometheus/certs/server.key
-  min_version: TLS12
+  # Включение mTLS: требовать сертификат от клиента (приложения или Alloy)
+  client_auth_type: RequireAndVerifyClientCert
+  client_ca_file: /etc/prometheus/certs/client-ca.crt
 
-# Настройка базовой аутентификации
 basic_auth_users:
-  admin: "$2y$12$hNf2lSsxfm0.i4a.1kVpSOVyBCfIB51VRjgBUyv6kdnyTlgWj81Ay" # Хеш bcrypt
+  admin: "$2y$12$hNf2lSsxfm0.i4a.1kVpSOVyBCfIB51VRjgBUyv6kdnyTlgWj81Ay"
 ```
 
-Запуск сервера с указанием файла защиты:
+Запуск сервера:
 ```bash
-./prometheus --config.file=prometheus.yml --web.config.file=web-config.yml
+prometheus --config.file=prometheus.yml --web.config.file=web-config.yml --web.enable-otlp-receiver
 ```
-*Примечание: Хеш пароля можно сгенерировать командой `htpasswd -nB user_name`.*
 
 ### Аутентификация при сборе метрик (Scraping)
 
-Настройка Prometheus для передачи токенов или паролей при опросе защищенных целей в `prometheus.yml`.
+**OAuth2 с JWT Bearer Grant (RFC 7523):**
+Появилась в v3.0 для безопасной интеграции с современными Identity Providers.
 
-**Bearer Token:**
 ```yaml
 scrape_configs:
-  - job_name: 'api-service'
-    scheme: https
-    authorization:
-      type: Bearer
-      credentials: "YOUR_SECRET_TOKEN"
+  - job_name: 'secure-app'
+    oauth2:
+      client_id: 'prom-client'
+      client_secret_file: '/etc/prometheus/secrets/oauth-secret'
+      token_url: 'https://auth.example.com/token'
+      # Новое в v3: использование JWT вместо обычных секретов
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer'
+      scopes: ['metrics.read']
 ```
 
 **Mutual TLS (mTLS):**
@@ -77,42 +83,46 @@ scrape_configs:
       key_file: /etc/prometheus/client.key
 ```
 
-### Безопасность Alertmanager и Pushgateway
+### Безопасность Remote Write 2.0
 
-Эти компоненты поддерживают аналогичный механизм `--web.config.file` для защиты своих интерфейсов. Рекомендуется использовать идентичную структуру конфигурации для унификации доступа ко всему стеку мониторинга.
+При отправке данных в облачные хранилища (Mimir, VictoriaMetrics) используйте OIDC для исключения долгоживущих секретов.
 
-### Сетевая фильтрация через UFW
-
-Ограничение доступа к Prometheus только для доверенных хостов (например, Grafana или Jump-хост).
-
-```bash
-# Разрешить доступ к API только с сервера Grafana
-ufw allow from 10.10.5.20 to any port 9090 proto tcp
-# Запретить все остальные подключения к порту мониторинга
-ufw deny 9090/tcp
+```yaml
+remote_write:
+  - url: "https://mimir.example.com/api/v1/push"
+    headers:
+      X-Prometheus-Remote-Write-Version: "2.0"
+    oauth2:
+      client_id: "prom-exporter"
+      client_secret_file: "/var/run/secrets/remote-write-secret"
+      token_url: "https://keycloak.example.com/token"
 ```
-Подробнее см. в разделе **[UFW — Настройка файрвола](../Linux/Networking/Settings/tools/ufw.md)**.
 
 ## Дополнительная информация
 
 ### Лучшие практики (Best Practices)
 
-1.  **Не запускать от root:** Всегда используйте выделенного пользователя `prometheus` с минимальными правами в ОС.
-2.  **Ограничение ресурсов запросов:** Используйте флаги `--query.max-concurrency` и `--query.max-samples` для предотвращения DoS-атак через тяжелые PromQL-выражения.
-3.  **Использование Read-Only API:** Если Prometheus используется только как источник данных для Grafana, настройте доступ к API в режиме "только чтение".
-4.  **Скрытие административных эндпоинтов:** По умолчанию эндпоинты `/--lifecycle` и `/--admin-api` отключены. Включайте их только при реальной необходимости и под строгим контролем доступа.
-5.  **Валидация экспортеров:** Регулярно сканируйте образы экспортеров на уязвимости (CVE).
+1.  **Принцип минимальных привилегий:** Запуск через `user: prometheus`. В K8s используйте `securityContext` с `runAsNonRoot: true`.
+2.  **Защита UTF-8 (v3.0):** Будьте осторожны при визуализации меток с произвольным текстом. Убедитесь, что используемая версия Grafana (v11+) корректно экранирует UTF-8 символы для предотвращения XSS.
+3.  **Скрытие секретов:** Эндпоинт `/-/metrics` в v3.0 автоматически маскирует чувствительные данные, но эндпоинт `/-/config` может их отображать. Ограничивайте доступ к административному API.
+4.  **Ограничение ресурсов запросов:**
     ```bash
-    trivy image prom/node-exporter:v1.8.0
+    --query.max-concurrency=20
+    --query.max-samples=50000000
+    --query.timeout=2m
     ```
 
 ### Мониторинг безопасности
 
-Отслеживание попыток подбора пароля и несанкционированного доступа через метрики Prometheus:
+Отслеживание аномалий и попыток взлома через внутренние метрики:
 
 ```promql
-# Процент неуспешных попыток аутентификации (401 Unauthorized)
-sum(rate(prometheus_http_requests_total{code="401"}[5m])) / sum(rate(prometheus_http_requests_total[5m])) * 100
+# Рост числа ошибок 403 (попытки доступа к запрещенным эндпоинтам)
+rate(prometheus_http_requests_total{code="403"}[5m]) > 0.5
+
+# Мониторинг использования ресурсов тяжелыми запросами
+prometheus_engine_query_duration_seconds{quantile="0.99"} > 10
 ```
 
 Для анализа структуры инфраструктуры и прав доступа в Kubernetes см. раздел **[RBAC и политики доступа](./kubernetes/operator/Security/access_control.md)**.
+

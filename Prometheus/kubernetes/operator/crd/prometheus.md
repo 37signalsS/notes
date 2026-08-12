@@ -14,12 +14,12 @@
 
 ### Принцип работы и жизненный цикл
 
-1.  **Watch:** Оператор отслеживает изменения объекта `Prometheus`.
+1.  **Watch:** Оператор отслеживает изменения объекта `Prometheus` и связанных с ним ресурсов через Kubernetes API.
 2.  **Discovery:** Собираются ссылки на все связанные ресурсы через селекторы (`serviceMonitorSelector`, `podMonitorSelector`, `ruleSelector` и т.д.).
 3.  **Generation:** Генерируется итоговый `prometheus.yaml`. В современных версиях (v0.80+) поддерживается автоматическая настройка UTF-8 для Prometheus 3.0.
 4.  **Storage Config:** Формируется описание `TSDB` (хранилища). Для Prometheus 3.9+ реализована оптимизация координации с Thanos, позволяющая не отключать локальную компакцию.
 5.  **Deployment:** Создается или обновляется `StatefulSet`.
-6.  **Reload:** Sidecar-контейнер `config-reloader` инициирует обновление конфигурации без перезагрузки подов.
+6.  **Reload:** Sidecar-контейнер `config-reloader` (работает в том же поде) обнаруживает изменения в ConfigMap/Secret и инициирует обновление конфигурации через сигнал `/-/reload` без перезагрузки подов.
 
 ### Селекторы целей и правил
 
@@ -42,9 +42,9 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Производственная конфигурация (HA + Storage)
+### Сценарий 1: Производственная конфигурация (HA + Storage + Security)
 
-Конфигурация с двумя репликами, персистентным хранилищем и лимитами ресурсов.
+Конфигурация с двумя репликами, персистентным хранилищем и настройками безопасности.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -56,6 +56,13 @@ spec:
   replicas: 2
   version: v3.12.0
   serviceAccountName: prometheus
+  securityContext:
+    fsGroup: 2000
+    runAsNonRoot: true
+    runAsUser: 1000
+  podMetadata:
+    annotations:
+      container.apparmor.security.beta.kubernetes.io/prometheus: runtime/default
   serviceMonitorSelector:
     matchLabels:
       release: monitoring
@@ -92,7 +99,9 @@ spec:
   # если используется координация через shipper meta file.
 ```
 
-### Сценарий 3: Настройка Prometheus 3.0 и OTLP
+### Сценарий 3: Кастомный скрейпинг и OTLP
+
+Использование `additionalScrapeConfigs` для целей, которые нельзя описать через CRD.
 
 ```yaml
 spec:
@@ -100,12 +109,12 @@ spec:
   enableFeatures:
     - otlp-write-receiver
     - native-histograms
+  additionalScrapeConfigs:
+    name: extra-scrape-configs
+    key: prometheus-additional.yaml
   remoteWrite:
     - url: "http://remote-storage:8428/api/v1/write"
       remoteTimeout: 30s
-      metadataConfig:
-        send: true
-        sendInterval: 1m
   otlp:
     promoteResourceAttributes:
       - service.name
@@ -118,20 +127,19 @@ spec:
 
 | Параметр | Описание | Особенности (2026) |
 | :--- | :--- | :--- |
-| **`shards`** | Количество шардов для горизонтального масштабирования. | По умолчанию `1`. |
-| **`externalLabels`** | Глобальные метки экземпляра. | Используются для дедупликации в Thanos. |
-| **`scrapeProtocols`** | Приоритет протоколов (OpenMetrics, PrometheusProto). | Требует Prometheus >= v2.49. |
-| **`dnsConfig` / `dnsPolicy`** | Настройка DNS для подов Prometheus. | Добавлено в v0.80. |
-| **`goGC`** | Настройка Go Garbage Collector. | Позволяет оптимизировать потребление RAM. |
-| **`ruleQueryOffset`** | Смещение выполнения правил. | Предотвращает пропуски данных при задержках. |
-
-### Связанные ресурсы
-
-*   **[High Availability](../high_availability.md)** — глубокое погружение в репликацию и шардирование.
-*   **[Thanos Overview](../../../scaling/thanos_overview.md)** — архитектура долгосрочного хранения.
-*   **[Alertmanager CRD](./alertmanager.md)** — интеграция с системой оповещений.
-*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
+| **`shards`** | Количество шардов для масштабирования. | Позволяет горизонтально масштабировать скрейпинг. |
+| **`externalLabels`** | Глобальные метки экземпляра. | Используются для дедупликации в Thanos/VictoriaMetrics. |
+| **`scrapeProtocols`** | Приоритет протоколов (OpenMetrics и др.). | Требует Prometheus >= v2.49. |
+| **`additionalScrapeConfigs`** | Ссылка на Secret с классическим конфигом. | Позволяет настраивать сложные SD, не поддерживаемые CRD. |
+| **`enforcedSampleLimit`** | Глобальный лимит сэмплов на скрейп. | Защита от OOM при взрывном росте количества метрик. |
+| **`securityContext`** | Настройки безопасности Pod/Container. | Управление правами пользователя, групп и Linux capabilities. |
+| **`podMetadata`** | Лейблы и аннотации для создаваемых подов. | Критично для интеграции с системами сбора логов и mesh. |
+| **`web`** | Настройка веб-интерфейса (TLS, Auth). | Позволяет защитить UI через встроенные механизмы. |
+| **`dnsConfig` / `dnsPolicy`** | Настройка DNS для подов Prometheus. | Управление разрешением имен внутри кластера. |
+| **`goGC`** | Настройка Go Garbage Collector. | Оптимизация потребления RAM и пауз GC. |
 
 ### См. также
-* [Prometheus Operator API Documentation](https://prometheus-operator.dev/docs/operator/api/)
-* [Prometheus 3.0 Release Notes](https://prometheus.io/blog/2024/11/14/prometheus-3-0-release/)
+
+*   [High Availability](../high_availability.md) — детальное описание механизмов репликации и шардирования в Prometheus Operator.
+*   [Thanos Overview](../../../scaling/thanos_overview.md) — архитектура долгосрочного хранения и глобального представления данных.
+*   [Prometheus Operator API](https://prometheus-operator.dev/docs/operator/api/) — официальная справочная документация по всем полям CRD.

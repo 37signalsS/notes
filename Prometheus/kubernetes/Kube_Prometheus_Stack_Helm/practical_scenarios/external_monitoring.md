@@ -1,185 +1,163 @@
-# External Monitoring via static_configs (kube-prometheus-stack)
+# Мониторинг внешних целей в kube-prometheus-stack
 
-> [Назад к оглавлению](../practical_scenarios.md)
+> [Назад к оглавлению](../overview.md)
 
-> **SSoT для темы:** мониторинг внешних (не-Kubernetes) целей через `static_configs` и `additionalScrapeConfigs`.  
-> **Смежные темы:** [Service Discovery и Relabeling](../../../service_discovery_and_relabeling.md) — общие концепции SD; [Мониторинг удалённых хостов (Docker)](../../../installation/docker_stack/remote_hosts_monitoring.md) — bare-metal/Docker контекст; [Blackbox Exporter](../../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md) — blackbox-подход.
+## Определения
 
-## Definitions
+**Внешние цели (External Targets)** — ресурсы, находящиеся вне кластера Kubernetes (виртуальные машины, bare-metal серверы, облачные сервисы), метрики которых необходимо собирать централизованным экземпляром Prometheus.
 
-**`static_configs`** — простейший механизм service discovery в Prometheus, при котором цели перечисляются вручную в конфигурации. Подходит для неизменной инфраструктуры (виртуальные машины, физические серверы, внешние сервисы).
+**`static_configs`** — механизм статического перечисления адресов целей в конфигурации Prometheus. Является базовым способом мониторинга объектов с неизменными сетевыми реквизитами.
 
-**`additionalScrapeConfigs`** — поле в `values.yaml` Helm-чарта `kube-prometheus-stack`, позволяющее добавить произвольные `scrape_configs` в конфигурацию Prometheus, генерируемую чартом. Основной способ интегрировать внешние цели в Kubernetes-развёртывание Prometheus.
+**`additionalScrapeConfigs`** — параметр в `values.yaml` Helm-чарта `kube-prometheus-stack`, позволяющий добавить произвольные секции `scrape_config` напрямую в конфигурационный файл Prometheus.
 
-**Whitebox-мониторинг** — сбор метрик через экспортеры (node_exporter, windows_exporter), установленные на целевой системе. Даёт детальную видимость внутренних метрик (CPU, память, диски).
+**`ScrapeConfig` CRD** — современный (v0.65+) ресурс Prometheus Operator, позволяющий декларативно описывать конфигурации сбора метрик для внешних целей без редактирования глобальных секретов или `values.yaml`.
 
-**Blackbox-мониторинг** — проверка доступности сервисов снаружи (HTTP, TCP, ICMP, DNS) через [Blackbox Exporter](../../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md). Не требует установки ПО на целевую систему.
+> **См. также:** [Service Discovery и Relabeling](../../../service_discovery_and_relabeling.md), [Blackbox Exporter](../../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md).
 
-## Basic Concepts
+## Основные концепции
 
-### Архитектура
+### Архитектура взаимодействия
+
+Prometheus, запущенный внутри Kubernetes, инициирует исходящие соединения (Scrape) к внешним IP-адресам.
 
 ```
-┌─────────────────────────────┐      scrape       ┌──────────────────────┐
-│  kube-prometheus-stack      │ ─────────────────► │  Внешний хост       │
-│  (Prometheus в Kubernetes)  │    :9100/metrics   │  node_exporter      │
+┌─────────────────────────────┐      HTTP GET      ┌──────────────────────┐
+│  Kubernetes Cluster         │ ─────────────────► │  Внешний сервер      │
+│  (kube-prometheus-stack)    │    :9100/metrics   │  (Node Exporter)     │
 └─────────────────────────────┘                    └──────────────────────┘
-                                                   ┌──────────────────────┐
-                          ───────────────────────► │  Внешний хост       │
-                               :9100/metrics       │  node_exporter      │
-                                                   └──────────────────────┘
 ```
 
 ### Ключевые требования
 
-1. **Сетевая доступность** — Pods Prometheus должны иметь сетевой доступ к внешним целевым IP (`__address__`) на порту экспортера.
-2. **Firewall rules** — порт экспортера (например, `9100/tcp` для node_exporter) должен быть открыт для входящих соединений с pod-сети Kubernetes.
-3. **Стабильные IP/hostname** — `static_configs` не обновляется автоматически; при изменении IP целей требуется обновление `values.yaml` и apply.
-4. **Лейблы** — каждый `static_configs`-блок поддерживает произвольные лейблы (`env`, `team`, `location`), которые добавляются ко всем метrikaм цели.
+1.  **Сетевая связность:** Поды Prometheus должны иметь маршрут к внешним сетям. Если внешние хосты находятся в приватной сети, может потребоваться VPN, Peering или Transit Gateway.
+2.  **Firewall:** На внешних хостах должен быть разрешён входящий трафик на порты экспортеров (например, 9100 для Node Exporter) с IP-адресов нод кластера или конкретного диапазона Pod CIDR.
+3.  **Разрешение имен:** Если в качестве целей используются DNS-имена, CoreDNS в кластере должен уметь их разрешать (через `forward` или `stubDomains`).
 
-### Relabeling для внешних целей
+### Выбор метода конфигурации
 
-Для обогащения внешних целей метаданными используются `relabel_configs`:
+| Метод | Плюсы | Минусы |
+| :--- | :--- | :--- |
+| **additionalScrapeConfigs** | Поддерживает любые виды Service Discovery (Consul, EC2, OpenStack). | Требует обновления Helm-релиза и перезагрузки конфига через секрет. |
+| **ScrapeConfig CRD** | Полностью декларативен, поддерживает проверку схемы (Validation), модульность. | Поддерживается в новых версиях Оператора (v0.65+). |
 
-```yaml
-prometheus:
-  prometheusSpec:
-    additionalScrapeConfigs:
-      - job_name: 'external-nodes'
-        static_configs:
-          - targets: ['192.168.1.100:9100', '192.168.1.101:9100']
-            labels:
-              env: 'production'
-              team: 'infra'
-        # Пример: добавить лейбл из имени хоста
-        relabel_configs:
-          - source_labels: [__address__]
-            target_label: instance_ip
-```
+## Практические сценарии
 
-> **Подробнее:** [relabel_configs и metric_relabel_configs](../../../service_discovery_and_relabeling.md).
+### Сценарий 1: Мониторинг внешних серверов через additionalScrapeConfigs
 
-## Practical Scenarios
-
-### Сценарий 1: Whitebox — мониторинг внешних серверов с node_exporter
-
-**Контекст:** Виртуальные машины или физические серверы вне Kubernetes с установленным node_exporter.
+Классический способ добавления группы статических хостов через `values.yaml`.
 
 ```yaml
 # values.yaml
 prometheus:
   prometheusSpec:
     additionalScrapeConfigs:
-      - job_name: 'external-nodes'
+      - job_name: 'external-linux-servers'
         scrape_interval: 30s
         static_configs:
           - targets:
-              - '192.168.1.100:9100'
-              - '192.168.1.101:9100'
+              - '192.168.10.50:9100'
+              - '192.168.10.51:9100'
             labels:
               env: 'production'
-              role: 'app-server'
-          - targets:
-              - '192.168.1.200:9100'
-            labels:
-              env: 'staging'
-              role: 'db-server'
+              datacenter: 'dc-1'
+        relabel_configs:
+          - source_labels: [__address__]
+            regex: '(.*):9100'
+            target_label: 'instance'
+            replacement: '$1'
 ```
 
-**Проверка:**
+### Сценарий 2: Использование ScrapeConfig CRD (современный подход)
 
-```bash
-# Port-forward к Prometheus
-kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
+Создание отдельного ресурса для мониторинга внешней базы данных.
 
-# Открыть http://localhost:9090/targets — внешние цели должны быть в статусе UP
+```yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: external-postgres
+  namespace: monitoring
+spec:
+  staticConfigs:
+    - targets:
+        - 'db-prod.internal:9187'
+      labels:
+        service: 'postgresql'
+  relabelings:
+    - targetLabel: 'cluster'
+      replacement: 'main'
 ```
 
-### Сценарий 2: Whitebox — мониторинг Docker-хостов с cadvisor
+### Сценарий 3: Защищенный мониторинг с Basic Auth
 
-**Контекст:** Удалённые хосты с Docker, где cadvisor отдаёт метрики контейнеров.
+Если экспортер на внешнем хосте защищен паролем.
 
 ```yaml
 # values.yaml
 prometheus:
   prometheusSpec:
     additionalScrapeConfigs:
-      - job_name: 'remote-cadvisor'
-        scrape_interval: 15s
+      - job_name: 'secure-external-app'
         static_configs:
-          - targets:
-              - '192.168.1.100:8080'
-              - '192.168.1.101:8080'
+          - targets: ['app.external.com:443']
+        scheme: https
+        basic_auth:
+          username: 'prometheus-user'
+          password: 'secret-password' # Рекомендуется использовать секрет
+```
+
+### Сценарий 4: Мониторинг внешних Docker-контейнеров (cAdvisor)
+
+```yaml
+prometheus:
+  prometheusSpec:
+    additionalScrapeConfigs:
+      - job_name: 'external-docker-hosts'
+        static_configs:
+          - targets: ['10.0.5.10:8080']
             labels:
-              env: 'production'
+              provider: 'hetzner'
 ```
 
-> **Подготовка хоста:** На каждом удалённом хосте запускается cadvisor с binding на внешний IP. [Подробнее](../../../installation/docker_stack/remote_hosts_monitoring.md).
+## Диагностика и отладка
 
-### Сценарий 3: Blackbox — проверка доступности внешних эндпоинтов
+### Проверка конфигурации в Prometheus
 
-**Контекст:** Мониторинг доступности HTTP/TCP/ICMP без установки ПО на цель. Используется Blackbox Exporter, развёрнутый внутри Kubernetes.
+После применения конфигурации необходимо убедиться, что цели (Targets) появились в UI Prometheus.
 
-```yaml
-# Создание Probe CRD
-apiVersion: monitoring.coreos.com/v1
-kind: Probe
-metadata:
-  name: external-websites
-  namespace: monitoring
-spec:
-  prober:
-    url: prometheus-blackbox-exporter.monitoring.svc.cluster.local:9115
-  module: http_2xx
-  targets:
-    staticConfig:
-      static:
-        - https://example.com
-        - https://api.example.com
-```
+1.  Выполните port-forward: `kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090`.
+2.  Перейдите в раздел **Status -> Targets**.
+3.  Найдите `job_name`, указанный в конфигурации.
 
-> **Подробнее:** [Blackbox Exporter installation](../../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md), [Probe CRD](../../operator/crd/probe.md).
+### Типичные ошибки
 
-### Сценарий 4: Отключение встроенных экспортеров при внешнем мониторинге
-
-**Контекст:** Если мониторинг хостов уже ведётся внешними системами, встроенный node-exporter можно отключить.
-
-```yaml
-# values.yaml
-nodeExporter:
-  enabled: false  # если используется внешний мониторинг хостов
-```
-
-> **Важно:** Отключение приведёт к потере метрик с Kubernetes-нод. Убедитесь, что альтернативный источник метрик настроен.  
-> **См.:** [Конфигурация экспортеров](../exporters_config.md).
-
-## Additional Information
-
-### Troubleshooting
-
-| Симптом | Причина | Решение |
+| Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| Target в статусе DOWN | Firewall блокирует порт | Проверить `telnet <IP> <port>` из pod Prometheus |
-| Target не найден | Опечатка в `values.yaml` | Сверить YAML-синтаксис, выполнить `helm diff` |
-| Метрики без ожидаемых лейблов | Лейблы не в том `static_configs` блоке | Каждый блок `static_configs` имеет свой набор лейблов |
-| Дубликаты метрик | Внешний target совпадает с internal | Проверить `targets` на пересечение с pod CIDR кластера |
+| `context deadline exceeded` | Проблема сетевой доступности или Firewall. | Проверьте `ping` и `telnet` с ноды кластера до цели. |
+| `connection refused` | Экспортер не запущен или слушает только `127.0.0.1`. | Проверьте статус сервиса на внешнем хосте и его `listen-address`. |
+| `server returned HTTP status 403 Forbidden` | Неверные учетные данные или ограничения на стороне экспортера. | Проверьте настройки `basic_auth` или IP-фильтры экспортера. |
 
-### Диагностика из pod Prometheus
+### Полезные команды
 
 ```bash
-# Exec в pod Prometheus
-kubectl exec -it -n monitoring $(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}') -- sh
+# Проверка сформированного конфига внутри пода Prometheus
+kubectl exec -it -n monitoring prometheus-kps-prometheus-0 -- cat /etc/prometheus/config_out/prometheus.env.yaml | grep -A 20 "job_name: external"
 
-# Проверка доступности внешней цели
-wget -qO- http://192.168.1.100:9100/metrics | head
-
-# Проверка конфигурации
-cat /etc/prometheus/config_out/prometheus.env.yaml | grep -A 20 'external-nodes'
+# Проверка доступности метрик изнутри кластера (используя временный под)
+kubectl run debug --image=curlimages/curl -it --rm -- curl -v http://192.168.10.50:9100/metrics
 ```
 
-### Best Practices
+## Дополнительная информация
 
-1. **Группировка по среде** — разделяйте `static_configs` блоки по `env` (production/staging) для удобства фильтрации в PromQL.
-2. **Helm values в Git** — храните `values.yaml` с `additionalScrapeConfigs` в Git; изменения внешних целей = commit + `helm upgrade`.
-3. **Альтернатива для динамических целей** — при большом количестве внешних систем используйте `file_sd_configs` или [Consul SD](../../../../Consul/consul_overview.md) вместо ручного перечисления.
-4. **Security** — node_exporter не имеет built-in аутентификации; защищайте канал через firewall rules и mTLS (sidecar-proxy).
+### Рекомендации (Best Practices)
+
+1.  **Интервалы сбора:** Для внешних целей через нестабильные каналы (Internet/VPN) рекомендуется увеличивать `scrape_interval` до 30–60 секунд и `scrape_timeout` до 10–20 секунд.
+2.  **Безопасность:** Никогда не оставляйте экспортеры на внешних хостах открытыми в мир. Используйте VPN, IP-ограничения или TLS + Basic Auth.
+3.  **Relabeling:** Используйте `relabel_configs` для приведения имен инстансов к читаемому виду (например, удаление портов из метки `instance`).
+4.  **Модульность:** Предпочитайте `ScrapeConfig` CRD вместо гигантского `values.yaml`, если ваша версия Оператора это позволяет.
+
+### Связанные ресурсы
+
+*   [ServiceMonitor CRD](../operator/crd/servicemonitor.md)
+*   [Экспортеры: общая информация](../../../Exporters/overview.md)
+*   [Blackbox Exporter в Kubernetes](../../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md)

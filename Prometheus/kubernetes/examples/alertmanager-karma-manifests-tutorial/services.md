@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Kubernetes Service** — абстракция, определяющая логический набор подов и политику доступа к ним. В данном руководстве используются сервисы типа `ClusterIP` для обеспечения внутренней связности между компонентами (Prometheus → Alertmanager, Karma → Alertmanager).
+**Kubernetes Service** — абстракция, определяющая логический набор подов и политику доступа к ним. В данном руководстве используются сервисы типа `ClusterIP` для внутренней связности и `Headless Service` для обеспечения работы кластеризации Alertmanager.
 
-**Ingress** — API-объект, управляющий внешним доступом к сервисам в кластере, обычно по протоколу HTTP/HTTPS. Ingress обеспечивает L7 маршрутизацию по именам хостов.
+**Ingress** — ресурс Kubernetes, предоставляющий HTTP/HTTPS маршрутизацию от внешних источников к внутренним сервисам. В современных кластерах (1.30+) является стандартом для публикации интерфейсов мониторинга с использованием TLS и внешней аутентификации.
 
 ---
 
@@ -13,31 +13,36 @@
 ### Схема сетевых потоков
 
 ```text
-Внешний трафик
+Внешний трафик (HTTPS)
        │
        ▼
 ┌──────────────┐
-│   Ingress    │  Маршрутизация по именам хостов
+│   Ingress    │  L7-терминация, SSL, Auth
 │  Controller  │
 └──────┬───────┘
        │
-   ┌───┴──────────────────┐
-   │                      │
-   ▼                      ▼
-alertmanager.local      karma.local
-   │                      │
-   ▼                      ▼
-┌──────────────┐    ┌──────────┐
-│   Service    │    │ Service  │
-│ alertmanager │    │  karma   │
-│ (Port 9093)  │    │ (Port 80)│
-└──────┬───────┘    └────┬─────┘
-       │                 │
-       ▼                 ▼
-  ┌─────────┐      ┌─────────┐
-  │   Pods  │      │  Pods   │
-  │alertmgr │      │  karma  │
-  └─────────┘      └─────────┘
+   ┌───┴──────────────────────┐
+   │                          │
+   ▼ (Port 9093)              ▼ (Port 8080)
+alertmanager.example.com    karma.example.com
+   │                          │
+   ▼                          ▼
+┌──────────────────┐    ┌─────────────┐
+│ Service (Cluster)│    │ Service     │
+│  alertmanager    │    │    karma    │
+└──────┬───────────┘    └──────┬──────┘
+       │                       │
+       ▼                       ▼
+┌──────────────────┐    ┌─────────────┐
+│  StatefulSet Pod │    │ Deployment  │
+│  alertmanager-0  │    │    karma    │
+└──────┬───────────┘    └─────────────┘
+       │
+       ▼ (Port 9094)
+┌──────────────────┐
+│ Service (Headless)◀─── Cluster Mesh (Gossip)
+│ alertmgr-mesh    │
+└──────────────────┘
 ```
 
 ---
@@ -45,6 +50,8 @@ alertmanager.local      karma.local
 ## Практические сценарии
 
 ### Настройка внутренних сервисов
+
+Для Alertmanager создается два сервиса: обычный (для API) и Headless (для Gossip-протокола кластеризации).
 
 **`alertmanager-services.yaml`**
 
@@ -62,6 +69,21 @@ spec:
       port: 9093
       targetPort: 9093
 ---
+# Headless Service для Mesh-кластеризации
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-mesh
+  namespace: monitoring
+spec:
+  clusterIP: None
+  selector:
+    app: alertmanager
+  ports:
+    - name: mesh
+      port: 9094
+      targetPort: 9094
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -76,7 +98,11 @@ spec:
       targetPort: 8080
 ```
 
-### Маршрутизация через Ingress
+### Публикация через Ingress с аутентификацией
+
+Поскольку Alertmanager не имеет встроенной аутентификации, ее необходимо настроить на уровне Ingress.
+
+**`monitoring-ingress.yaml`**
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -84,9 +110,19 @@ kind: Ingress
 metadata:
   name: monitoring-ingress
   namespace: monitoring
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: alertmanager-auth
+    nginx.ingress.kubernetes.io/auth-realm: "Authentication Required"
 spec:
+  tls:
+    - hosts:
+        - alertmanager.example.com
+        - karma.example.com
+      secretName: monitoring-tls-cert
   rules:
-    - host: alertmanager.local
+    - host: alertmanager.example.com
       http:
         paths:
           - path: /
@@ -94,8 +130,9 @@ spec:
             backend:
               service:
                 name: alertmanager
-                port: { number: 9093 }
-    - host: karma.local
+                port:
+                  number: 9093
+    - host: karma.example.com
       http:
         paths:
           - path: /
@@ -103,14 +140,15 @@ spec:
             backend:
               service:
                 name: karma
-                port: { number: 80 }
+                port:
+                  number: 80
 ```
 
 ---
 
 ## Дополнительная информация
 
-- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — описание подов Alertmanager.
-- **[Развёртывание Karma](./karma-deployment.md)** — описание подов дашборда.
-- **[Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md)** — SSoT по сетевой маршрутизации.
-- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
+- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — использование `alertmanager-mesh` в параметрах `--cluster.peer`.
+- **[Секреты Kubernetes](./secrets.md)** — создание `alertmanager-auth` для Ingress Basic Auth.
+- **[Обзор Ingress](../../../../Kubernetes/Networking/Ingress/overview.md)** — SSoT по сетевой маршрутизации и контроллерам.
+- **[Дашборд Karma — Безопасность](../../../Prometheus/karma_dashboard.md#безопасность-и-ingress)** — рекомендации по OIDC и защите UI.

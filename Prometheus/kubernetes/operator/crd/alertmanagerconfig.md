@@ -1,8 +1,8 @@
-# AlertmanagerConfig — Концепции
+# AlertmanagerConfig — Концепции (CRD)
 
 ## Определения
 
-**`kind: AlertmanagerConfig`** — Custom Resource Definition в Prometheus Operator для декларативного описания маршрутизации и получателей алертов. Позволяет управлять подмножествами конфигурации Alertmanager (receivers, routes, inhibit rules, time intervals) через отдельные Kubernetes-объекты, без редактирования основного файла `alertmanager.yml`.
+**`kind: AlertmanagerConfig`** — Custom Resource Definition в Prometheus Operator для декларативного описания маршрутизации и получателей алертов. Позволяет управлять подмножествами конфигурации Alertmanager (receivers, routes, inhibit rules, time intervals) через отдельные Kubernetes-объекты, без редактирования основного файла `alertmanager.yml` или Secret.
 
 > **Концепции Alertmanager:** [Alertmanager](../../../alertmanager.md) — архитектура, конвейер обработки, ключи запуска.
 
@@ -16,22 +16,24 @@ AlertmanagerConfig решает задачу **разделенного упра
 
 | Версия | Статус | С версии Prometheus Operator | Примечание |
 | :--- | :--- | :--- | :--- |
-| **`v1beta1`** | **Stable** | `v0.57.0+` | Рекомендуемая. Поддерживает **CEL-валидацию** и **UTF-8 matchers** (Prometheus 3.0). |
+| **`v1beta1`** | **Stable** | `v0.57.0+` | Рекомендуемая. Поддерживает **CEL-валидацию** (`x-kubernetes-validations`), **UTF-8 matchers** (Prometheus 3.0) и подресурс **status**. |
 | **`v1alpha1`** | Legacy | `v0.40.0+` | Поддерживается для обратной совместимости. Использует `muteTimeIntervals`. |
 
-**Ключевые отличия `v1beta1` от `v1alpha1`:**
+**Ключевые особенности v1beta1 (2025–2026):**
 
-- `spec.muteTimeIntervals` переименовано в `spec.timeIntervals`.
-- Поле `regex` удалено из типа `Matcher` (вместо этого используется `matchType`: `=`, `!=`, `=~`, `!~`).
-- `SecretKeySelector`: поля `name` и `key` стали обязательными, `optional` удалено.
-- Поддержка современных методов авторизации (`authorization`, `oauth2`) и кастомных HTTP-заголовков.
+- **CEL-валидация:** Проверка ресурсов на стороне API-сервера Kubernetes. Позволяет немедленно отклонять некорректные конфигурации (например, при указании нескольких типов авторизации одновременно).
+- **Строгая типизация:** Переход от `uint` к `int` с CEL-валидаторами для блокировки отрицательных значений интервалов.
+- **Подресурс status:** Позволяет отслеживать `ObservedGeneration` и `Conditions` (успешность применения конфигурации).
+- **MatchTypes:** Поле `regex` удалено. Используются явные операторы: `=`, `!=`, `=~`, `!~`.
+- **SecretKeySelector:** Поля `name` и `key` строго обязательны.
 
-### Глобальная конфигурация (SSoT Pattern)
+### Глобальная конфигурация
 
-Начиная с 2025–2026 годов, установился стандарт использования `AlertmanagerConfig` как основного способа настройки Alertmanager, вытесняя ручное редактирование Secret `alertmanager-main`.
+Начиная с 2025 года, `AlertmanagerConfig` стал основным способом задания **корневой конфигурации** инстанса Alertmanager.
 
-1.  **Глобальный режим:** Один объект `AlertmanagerConfig` может быть назначен "глобальным" в ресурсе `Alertmanager` (`spec.alertmanagerConfiguration`). В этом режиме отключается автоматическая привязка неймспейса к меткам, позволяя настраивать кластерные маршруты.
-2.  **Локальный режим:** Команды создают свои ресурсы в своих Namespace. Оператор агрегирует их, автоматически добавляя матчер неймспейса (`namespace="my-team"`) ко всем маршрутам для изоляции.
+1.  **Назначение:** Ресурс `Alertmanager` ссылается на `AlertmanagerConfig` через `spec.alertmanagerConfiguration.name`.
+2.  **Отмена принудительных меток:** В глобальном режиме Оператор **не добавляет** автоматический матчер по namespace, что позволяет создавать общекластерные маршруты.
+3.  **Глобальные параметры:** Параметры вроде `smtp_smarthost` или `slack_api_url` теперь можно задавать в блоке `global` самого ресурса `Alertmanager`, который интегрируется с выбранным конфигом.
 
 ### Взаимосвязь с Alertmanager CRD
 
@@ -58,15 +60,14 @@ spec:
       - monitoring
 ```
 
-### Структура spec
+### Структура спецификации (spec)
 
 | Блок | Описание |
 | :--- | :--- |
 | **`route`** | Дерево маршрутов (обязательный) — определяет группировку и направление алертов |
 | **`receivers`** | Именованные получатели (Slack, Email, PagerDuty, Webhook, Telegram и др.) |
-| **`inhibitRules`** | Правила подавления алертов (на уровне CRD) |
-| **`timeIntervals`** | Временные интервалы для периодов заглушения (ранее `muteTimeIntervals`) |
-| **`muteTimeIntervals`** | Устарело (v1alpha1) — используйте `timeIntervals` |
+| **`inhibitRules`** | Правила подавления алертов (взаимное глушение) |
+| **`timeIntervals`** | Временные интервалы (ранее `muteTimeIntervals`) |
 
 ## Практические сценарии
 
@@ -105,23 +106,23 @@ spec:
             key: url
 ```
 
-### Параметры route
+### Параметры маршрута (route)
 
 | Параметр | Описание | Пример |
 | :--- | :--- | :--- |
-| **`groupBy`** | Метки для группировки алертов в одно уведомление | `['alertname', 'job']` |
-| **`groupWait`** | Задержка перед первой отправкой группы | `30s` |
-| **`groupInterval`** | Интервал между уведомлениями одной группы | `5m` |
+| **`groupBy`** | Метки для группировки алертов | `['alertname', 'job']` |
+| **`groupWait`** | Задержка перед первой отправкой | `30s` |
+| **`groupInterval`** | Интервал между уведомлениями группы | `5m` |
 | **`repeatInterval`** | Интервал повторных уведомлений | `12h` |
-| **`receiver`** | Получатель по умолчанию (обязательный) | `slack` |
+| **`receiver`** | Получатель по умолчанию | `slack` |
 | **`routes`** | Дочерние маршруты | Массив вложенных route |
 | **`matchers`** | Условия для маршрута | Массив matchers (v1beta1) |
-| **`continue`** | Продолжать обработку после совпадения | `true` / `false` |
-| **`muteTimeIntervals`** | Имена timeIntervals для заглушения | `['maintenance-window']` |
+| **`continue`** | Продолжать обработку после совпадения | `true` |
+| **`muteTimeIntervals`** | Имена timeIntervals для заглушения | `['maintenance']` |
 
-### Matchers (v1beta1)
+### Матчеры (Matchers v1beta1)
 
-В версии `v1beta1` поле `regex` удалено. Вместо него используется семантика по типу значения:
+В версии `v1beta1` вместо флага `regex` используется поле `matchType`:
 
 ```yaml
 matchers:
@@ -144,13 +145,14 @@ matchers:
 
 ### Получатели (Receivers)
 
-#### Slack
+#### Slack (с обновлением сообщений)
 
 ```yaml
 receivers:
   - name: 'slack'
     slackConfigs:
       - channel: '#monitoring'
+        updateMessage: true # Обновлять сообщение вместо отправки нового
         apiURL:
           name: slack-webhook
           key: url
@@ -188,7 +190,7 @@ receivers:
         description: '{{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}'
 ```
 
-#### Webhook
+#### Webhook (с кастомными заголовками)
 
 ```yaml
 receivers:
@@ -208,11 +210,35 @@ receivers:
             credentials:
               name: webhook-secret
               key: token
-          tlsConfig:
-            ca:
-              secret:
-                name: trusted-ca
-                key: ca.crt
+```
+
+#### Telegram (нативная поддержка)
+
+```yaml
+receivers:
+  - name: 'telegram'
+    telegramConfigs:
+      - botToken:
+          name: telegram-secret
+          key: token
+        chatID: 123456789
+        apiURL: 'https://api.telegram.org'
+        message: '{{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+```
+
+#### Jira (нативная интеграция 2026)
+
+```yaml
+receivers:
+  - name: 'jira'
+    jiraConfigs:
+      - apiURL: 'https://jira.corp.local'
+        project: 'MON'
+        issueType: 'Incident'
+        auth:
+          password:
+            name: jira-auth
+            key: api-token
 ```
 
 #### OpsGenie
@@ -226,20 +252,6 @@ receivers:
           key: api-key
         apiURL: 'https://api.opsgenie.com/v2/alerts'
         priority: 'P1'
-        message: '{{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}'
-```
-
-#### Telegram
-
-```yaml
-receivers:
-  - name: 'telegram'
-    telegramConfigs:
-      - botToken:
-          name: telegram-secret
-          key: token
-        chatID: '123456789'
-        apiURL: 'https://api.telegram.org'
         message: '{{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}'
 ```
 
@@ -261,13 +273,6 @@ spec:
         receiver: 'pagerduty'
         groupWait: 10s
         repeatInterval: 1h
-
-      # Предупреждения → Slack
-      - matchers:
-          - name: severity
-            value: warning
-        receiver: 'slack-warning'
-        repeatInterval: 6h
 
       # Алерты от базы данных → DBA team
       - matchers:
@@ -301,12 +306,6 @@ spec:
         - namespace
 ```
 
-| Параметр | Описание |
-| :--- | :--- |
-| **`sourceMatchers`** | Условия алерта-источника (подавляющего) |
-| **`targetMatchers`** | Условия подавляемого алерта |
-| **`equal`** | Метки, которые должны совпадать в обоих алертах |
-
 ### Временные интервалы (timeIntervals)
 
 Определение периодов, в которые уведомления заглушены (окна обслуживания):
@@ -323,7 +322,7 @@ spec:
           location: 'Europe/Moscow'
 ```
 
-Использование в route:
+Использование в маршруте:
 
 ```yaml
 route:
@@ -332,28 +331,14 @@ route:
     - maintenance-window
 ```
 
-| Параметр | Описание | Пример |
-| :--- | :--- | :--- |
-| **`times`** | Диапазон времени (UTC или location) | `startTime: '02:00', endTime: '06:00'` |
-| **`weekdays`** | Дни недели (диапазоны допустимы) | `['monday:friday']` |
-| **`days_of_month`** | Дни месяца | `['1:5', '15:20']` |
-| **`months`** | Месяцы | `['january:march']` |
-| **`years`** | Годы | `['2025:2026']` |
-| **`location`** | Часовой пояс | `'Europe/Moscow'` |
-
 ### Секреты для получателей
 
 Все чувствительные данные должны храниться в Kubernetes Secrets:
 
 ```bash
 # Создание секрета для Slack
-kubectl create secret generic slack-webhook \
-  --from-literal=url='https://hooks.slack.com/services/xxx/yyy/zzz' \
-  -n monitoring
-
-# Создание секрета для PagerDuty
-kubectl create secret generic pagerduty-secret \
-  --from-literal=routing-key='your-routing-key' \
+kubectl create secret generic slack-auth \
+  --from-literal=webhook-url='https://hooks.slack.com/services/xxx/yyy/zzz' \
   -n monitoring
 ```
 
@@ -361,31 +346,28 @@ kubectl create secret generic pagerduty-secret \
 
 ```yaml
 apiURL:
-  name: slack-webhook    # имя Secret
-  key: url               # ключ в Secret
+  name: slack-auth    # имя Secret
+  key: webhook-url    # ключ в Secret
 ```
 
 ## Дополнительная информация
 
 ### Диагностика
 
-| Действие | Команда |
-| :--- | :--- |
-| Список AlertmanagerConfig | `kubectl get alertmanagerconfig -n monitoring` |
-| Детали объекта | `kubectl describe alertmanagerconfig slack-config -n monitoring` |
-| Проверка генерации конфига | `kubectl get secret <am-secret> -n monitoring -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d` |
+1.  **Список ресурсов:** `kubectl get alertmanagerconfig -n monitoring`
+2.  **Детали объекта и статус:** `kubectl get alertmanagerconfig slack-config -o yaml` — ищите секцию `status`.
+3.  **Проверка генерации конфига:**
+    `kubectl get secret alertmanager-main-generated -n monitoring -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d`
 
-### Ограничения и особенности
+### Особенности агрегации
 
-- AlertmanagerConfig **агрегируется** Prometheus Operator — при конфликтах имён receivers поведение не определено.
-- Каждый AlertmanagerConfig должен иметь **уникальные имена receivers** в рамках одного Alertmanager.
-- Имя AlertmanagerConfig должно быть **уникальным в namespace**.
-- Изменения в AlertmanagerConfig применяются автоматически (реконсиляция ~5-10с).
+- **Уникальность имен:** Имена `receivers` и `timeIntervals` должны быть уникальны в рамках одного Alertmanager.
+- **Изоляция Namespace:** В обычном режиме оператор принудительно добавляет матчер по namespace к каждому маршруту.
+- **Порядок:** Маршруты из разных ресурсов добавляются в дерево в алфавитном порядке имен ресурсов.
 
 ### Связанные темы
 
-- [Alertmanager CRD](./alertmanager.md) — развёртывание инстансов Alertmanager.
-- [Alertmanager — концепция](../../../alertmanager.md) — архитектура и дедупликация.
+- [Alertmanager CRD](./alertmanager.md) — развёртывание инстансов.
+- [Alertmanager — концепция](../../../alertmanager.md) — архитектура обработки данных.
 - [PrometheusRule CRD](./prometheusrule.md) — генерация алертов.
 - [Secrets best practices](../Security/secrets_best_practices.md) — защита учетных данных.
-- **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).

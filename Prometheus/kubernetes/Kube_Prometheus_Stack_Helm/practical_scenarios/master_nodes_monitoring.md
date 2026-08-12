@@ -1,50 +1,52 @@
-# Master Nodes Monitoring (kube-prometheus-stack)
+# Мониторинг master-нод (kube-prometheus-stack)
 
 > [Назад к оглавлению](../overview.md)
 
 > **SSoT для темы:** сбор метрик с master/control-plane нод Kubernetes через kube-prometheus-stack.  
-> **Смежные темы:** [Taints and Tolerations](../../../../Kubernetes/Scheduling/taints_and_tolerations.md) — теория taints/tolerations; [Конфигурация экспортеров](../exporters_config.md) — общие параметры Node Exporter.
+> **Смежные темы:** [Taints and Tolerations](../../../../Kubernetes/Scheduling/taints_and_tolerations.md) — теория ограничений размещения; [Конфигурация экспортеров](../exporters_config.md) — общие параметры Node Exporter.
 
-## Definitions
+## Определения
 
-**Master-ноды (Control Plane)** — узлы Kubernetes, на которых работают компоненты управляющей плоскости: `kube-apiserver`, `etcd`, `kube-controller-manager`, `kube-scheduler`. По умолчанию имеют `taint` `node-role.kubernetes.io/control-plane:NoSchedule`, запрещающий размещение рабочих подов.
+**Master-ноды (Control Plane)** — узлы Kubernetes, на которых работают компоненты управляющей плоскости: `kube-apiserver`, `etcd`, `kube-controller-manager`, `kube-scheduler`. По умолчанию имеют `taint` (запрет) `node-role.kubernetes.io/control-plane:NoSchedule`, препятствующий размещению обычных рабочих нагрузок.
 
-**Taint** — механизм Kubernetes, ограничивающий размещение подов на узле. DaemonSet Node Exporter по умолчанию **не** имеет tolerations для master-нод и не запускается на них.
+**Taint (Запрет)** — механизм Kubernetes, ограничивающий размещение подов на узле. DaemonSet Node Exporter по умолчанию не имеет исключений (tolerations) для master-нод и не запускается на них.
 
-**Toleration** — разрешение поду работать на узле с определённым taint. Для сбора метрик со **всех** нод кластера (включая master) Node Exporter должен запускаться как DaemonSet с соответствующим toleration.
+**Toleration (Допуск)** — разрешение поду работать на узле с определённым запретом. Для сбора метрик со всех узлов кластера (включая управляющие) Node Exporter должен запускаться с соответствующим допуском.
 
-## Basic Concepts
+## Основные концепции
 
-### Почему master-ноды не мониторятся по умолчанию
+### Причины отсутствия метрик по умолчанию
+
+Стандартная конфигурация Helm-чарта ориентирована на безопасность и экономию ресурсов, поэтому Node Exporter запускается только на worker-нодах:
 
 ```
-kube-prometheus-stack (values.yaml по умолчанию)
+kube-prometheus-stack (values.yaml)
   └── nodeExporter
         └── DaemonSet (без tolerations для control-plane)
-              ├── Запускается на worker-нодах ✓
-              └── НЕ запускается на master-нодах ✗ (taint NoSchedule)
+              ├── Запускается на worker-нодах: OK
+              └── НЕ запускается на master-нодах: Пропуск (taint NoSchedule)
 ```
 
-Без явного указания tolerations Node Exporter собирает метрики только с worker-нод. Метрики master-нод (CPU, память, диски, сеть) **отсутствуют** в Prometheus.
+Без явной настройки в `values.yaml` метрики уровня ОС (CPU, RAM, диски) для master-нод не будут поступать в Prometheus.
 
-### Контрольная плоскость vs метрики хоста
+### Разделение метрик хоста и компонентов Control Plane
 
-Важно различать два типа мониторинга master-нод:
+Критически важно разделять сбор данных о «железе» (ОС) и сбор данных о работе сервисов Kubernetes:
 
 | Тип | Что мониторится | Механизм | Метрики |
-|---|---|---|---|
-| **Метрики хоста** | CPU, память, диски, сеть узла | Node Exporter DaemonSet с tolerations | `node_*` |
-| **Метрики Control Plane** | API Server, etcd, scheduler, controller-manager | ServiceMonitor (встроены в kube-prometheus-stack) | `apiserver_*`, `etcd_*`, `scheduler_*` |
+|:---|:---|:---|:---|
+| **Метрики хоста** | CPU, RAM, диски, сеть узла | Node Exporter (DaemonSet + Tolerations) | `node_*` |
+| **Метрики Control Plane** | Состояние API Server, etcd, scheduler | ServiceMonitor (встроены в чарт) | `apiserver_*`, `etcd_*` |
 
-kube-prometheus-stack **уже** собирает метрики Control Plane через встроенные ServiceMonitor'ы. Данный файл покрывает только **метрики хоста** master-нод через Node Exporter.
+Данный документ фокусируется на обеспечении работы **Node Exporter** на master-нодах.
 
-> **См. также:** [Мониторинг Control Plane (API Server, etcd)](../other_components_config.md).
+> **Подробнее о компонентах:** [Конфигурация прочих компонентов](../other_components_config.md).
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий 1: Включение Node Exporter на master-нодах
+### Сценарий 1: Включение Node Exporter на master-нодах (Production-стандарт)
 
-**Задача:** Собирать метрики хоста (CPU, память, диски) со всех нод кластера, включая master.
+**Задача:** Обеспечить сбор системных метрик со всех узлов кластера, включая управляющие.
 
 ```yaml
 # values.yaml
@@ -52,33 +54,23 @@ nodeExporter:
   tolerations:
     - operator: "Exists"
       effect: "NoSchedule"
+  # Рекомендуемые ресурсы для Node Exporter в Prod
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 ```
 
-**Что происходит:**
+**Результат:**
+- `operator: "Exists"` обеспечивает допуск к любому запрету с эффектом `NoSchedule` (универсальный способ для master-нод и специализированных групп узлов).
+- Node Exporter запускается на всех доступных узлах.
 
-- `operator: "Exists"` — toleration срабатывает для **любого** taint с эффектом `NoSchedule` (включая `control-plane`, `master`, и любые пользовательские).
-- DaemonSet Node Exporter запускается на **всех** нодах: и worker, и master.
-- Метрики `node_*` появляются в Prometheus для master-нод.
+### Сценарий 2: Строгая толерантность только для Control Plane
 
-**Применение:**
-
-```bash
-# Обновление через Helm
-helm upgrade monitoring prometheus-community/kube-prometheus-stack \
-  -n monitoring \
-  -f values.yaml
-
-# Проверка: Node Exporter должен работать на master-нодах
-kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus-node-exporter -o wide
-
-# Проверка targets: все master-ноды должны быть в статусе UP
-kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
-# Открыть http://localhost:9090/targets
-```
-
-### Сценарий 2: Толерантность только к control-plane taint (строго)
-
-**Задача:** Запускать Node Exporter только на control-plane нодах, игнорируя пользовательские taints.
+**Задача:** Разрешить запуск только на управляющих узлах, не затрагивая другие узлы с пользовательскими taints (например, GPU-узлы).
 
 ```yaml
 # values.yaml
@@ -89,14 +81,12 @@ nodeExporter:
       effect: "NoSchedule"
 ```
 
-**Когда использовать:** Если нужно явно ограничить scope только control-plane taint'ом, не затрагивая другие `NoSchedule` taints (например, `PreferNoSchedule` для GPU-нод).
+### Сценарий 3: Обеспечение совместимости с устаревшими версиями Kubernetes
 
-### Сценарий 3: Verbose tolerations (совместимость со старыми версиями)
-
-**Задача:** Поддержка кластеров с устаревшим taint `node-role.kubernetes.io/master` (Kubernetes < 1.24).
+**Задача:** Поддержка кластеров (Kubernetes < 1.24), где использовался лейбл `node-role.kubernetes.io/master`.
 
 ```yaml
-# values.yaml — совместимость с Kubernetes 1.20–1.23
+# values.yaml
 nodeExporter:
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
@@ -107,70 +97,73 @@ nodeExporter:
       effect: "NoSchedule"
 ```
 
-> **Примечание:** В Kubernetes 1.24+ taint `master` удалён; достаточно только `control-plane`.
+### Сценарий 4: Настройка сетевых политик для мониторинга master-нод
 
-### Сценарий 4: Проверка метрик master-нод через PromQL
+В кластерах с жесткими правилами сетевой изоляции необходимо разрешить трафик от подов Prometheus к порту 9100 на master-нодах.
 
-**Задача:** Убедиться, что метрики с master-нод собираются.
-
-```promql
-# Все master-ноды с их метриками CPU
-node_cpu_seconds_total{job="node-exporter", instance=~"master.*"}
-
-# Сравнение worker vs master нод по памяти
-node_memory_MemTotal_bytes{job="node-exporter"}
-  / on(instance) group_left(label_node_role)
-  node_meta_node_role{role="master"}
-
-# Метрики etcd (control-plane компоненты, собираются через ServiceMonitor)
-etcd_server_has_leader
+```yaml
+# values.yaml
+prometheus:
+  networkPolicy:
+    enabled: true
+# Дополнительно убедитесь, что Firewall на самих нодах разрешает 9100/tcp
 ```
 
-## Additional Information
+### Сценарий 5: Проверка и валидация сбора метрик
 
-### Troubleshooting
+После применения конфигурации (`helm upgrade`) выполните проверку:
 
-| Симптом | Причина | Решение |
-| :--- | :--- | :--- |
-| Node Exporter pod на master-ноде в статусе `Pending` | Нет tolerations для `NoSchedule` | Добавить tolerations в `values.yaml` |
-| Pod в `Pending` с событием `FailedScheduling` | Nodeselector/affinity не совпадают | Проверить `nodeExporter.affinity` и `nodeSelector` |
-| Target DOWN в Prometheus | Firewall блокирует порт Node Exporter | Открыть порт `9100/tcp` между pod Prometheus и master-нодой |
-| Метрики `node_*` есть, но `apiserver_*` нет | ServiceMonitor API Server отключён | Проверить `kubeApiServer.enabled: true` в `values.yaml` |
+```bash
+# 1. Проверка запуска подов на master-нодах
+kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus-node-exporter -o wide | grep master
+
+# 2. Проверка статуса Target в Prometheus
+# Порт-форвард к Prometheus UI
+kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
+# Перейдите в Status -> Targets, найдите job="node-exporter"
+```
+
+**Запрос в Prometheus (PromQL):**
+```promql
+# Проверка наличия метрик CPU для master-нод
+node_cpu_seconds_total{instance=~"master.*|control-plane.*"}
+```
+
+## Дополнительная информация
+
+### Устранение неисправностей (Troubleshooting)
+
+| Проблема | Причина | Решение |
+|:---|:---|:---|
+| Pod Node Exporter в статусе `Pending` | Отсутствует допуск (toleration) | Проверьте секцию `nodeExporter.tolerations` в `values.yaml`. |
+| Ошибка `FailedScheduling` | Несоответствие `nodeSelector` или `affinity` | Проверьте, не заданы ли в чарте ограничивающие правила размещения. |
+| Метрики хоста есть, но компоненты DOWN | Компоненты (etcd, scheduler) слушают 127.0.0.1 | Измените `--address=0.0.0.0` в манифестах `/etc/kubernetes/manifests/`. |
+| Target в статусе UNKNOWN/DOWN | Сетевая недоступность порта 9100 | Проверьте Security Groups (облако) или iptables (on-prem). |
 
 ### Диагностика
 
 ```bash
-# Проверить, работает ли Node Exporter на master-ноде
-kubectl get pods -n monitoring \
-  -l app.kubernetes.io/name=prometheus-node-exporter \
-  -o wide | grep master
+# Получение списка taints на master-ноде
+kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.taints}{"\n"}{end}'
 
-# Проверить tolerations пода Node Exporter
-kubectl get pod -n monitoring <node-exporter-pod-name> -o jsonpath='{.spec.tolerations}'
-
-# Проверить taint master-ноды
-kubectl get node <master-node-name> -o jsonpath='{.spec.taints}'
-
-# Проверить, собираются ли метрики
-kubectl exec -it -n monitoring $(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}') -- \
-  wget -qO- http://<master-node-ip>:9100/metrics | head -5
+# Проверка tolerations у конкретного пода Node Exporter
+kubectl get pod -n monitoring <pod-name> -o jsonpath='{.spec.tolerations}'
 ```
 
-### Best Practices
+### Рекомендации (Best Practices)
 
-1. **`operator: "Exists"` для production** — покрывает все текущие и будущие `NoSchedule` taints без явного перечисления ключей.
-2. **Мониторинг Control Plane ≠ мониторинг хоста** — ServiceMonitor'ы для API Server/etcd работают независимо от Node Exporter tolerations.
-3. **Не отключайте Node Exporter на master** — метрики хоста (`node_cpu`, `node_memory`) критичны для диагностики проблем Control Plane.
-4. **DaemonSet автоматически масштабируется** — при добавлении новых master-нод в кластер Node Exporter запустится на них автоматически (при наличии tolerations).
+1. **Используйте `operator: "Exists"`** — это наиболее надежный способ в динамических средах, где ключи taints могут меняться.
+2. **Лимиты ресурсов** — Node Exporter на master-нодах не должен конкурировать за ресурсы с API Server. Всегда задавайте `requests` и `limits`.
+3. **Мониторинг kubelet** — убедитесь, что `kubelet.enabled: true`. Это даст данные о состоянии контейнеров на master-нодах (не путать с метриками хоста).
+4. **Безопасность** — используйте `hostNetwork: true` для Node Exporter, чтобы он имел доступ к сетевым метрикам самого узла.
 
-### Связанные компоненты kube-prometheus-stack
+### Связанные компоненты
 
-| Компонент | Мониторит | Механизм | Включён по умолчанию |
-|---|---|---|---|
-| **Node Exporter** | Метрики хоста (все ноды) | DaemonSet + ServiceMonitor | Да (только worker) |
-| **kubeApiServer** | API Server метрики | ServiceMonitor | Да |
-| **kubeControllerManager** | Controller Manager | ServiceMonitor | Да |
-| **kubeScheduler** | Scheduler метрики | ServiceMonitor | Да |
-| **kubeEtcd** | etcd метрики | ServiceMonitor/Endpoint | Да |
+| Компонент | Зона ответственности | Механизм |
+|:---|:---|:---|
+| **Node Exporter** | Железо и ОС master-ноды | DaemonSet |
+| **Kubelet** | Состояние подов на master-ноде | ServiceMonitor (порт 10250) |
+| **Kube Proxy** | Сетевые правила (iptables/ipvs) | ServiceMonitor (порт 10249) |
+| **Static Pods** | Компоненты Control Plane | ServiceMonitor (через эндпоинты) |
 
-> **См. также:** [Мониторинг Control Plane](../other_components_config.md), [Конфигурация экспортеров](../exporters_config.md).
+> **См. также:** [Конфигурация etcd](./etcd-monitoring.md), [Конфигурация экспортеров](../exporters_config.md).

@@ -2,158 +2,163 @@
 
 ## Определения
 
-**Конфигурация Prometheus в Docker Stack** — файл `prometheus.yml`, монтируемый через bind mount в контейнер Prometheus. Содержит scrape-цели, rule_files и alerting-секцию, адаптированные для Docker Compose (DNS-имена сервисов, контейнерные порты).
+**Конфигурация Prometheus в Docker Stack** — это совокупность файлов (`prometheus.yml`, `web-config.yml`, файлы правил), монтируемых в контейнер для управления сбором, обработкой и безопасностью метрик. В среде Docker Compose конфигурация адаптируется для работы с внутренним DNS, монтируемыми томами и переменными окружения.
 
 > **См. также:** [Конфигурация Prometheus](../../configuration.md) — общая структура `prometheus.yml`, CLI-флаги, retention, remote read/write.
 
 ## Основные концепции
 
-### Путь конфигурации в контейнере
+### Пути и монтирование конфигурации
 
-Для работы в Docker конфигурационный файл и правила должны быть доступны внутри контейнера через механизмы монтирования (volumes).
+Для корректной работы Prometheus v3 в Docker рекомендуется использовать раздельное монтирование для конфигурации и данных.
 
-| Параметр | Значение | Описание |
-|---|---|---|
-| Хост-путь | `./prometheus/prometheus.yml` | Путь на хост-машине относительно `docker-compose.yml` |
-| Контейнер-путь | `/etc/prometheus/prometheus.yml` | Путь внутри контейнера (дефолтный или через `--config.file`) |
-| Bind mount | `./prometheus:/etc/prometheus` | Монтирование всей директории с конфигами и правилами |
+| Ресурс | Хост-путь | Контейнер-путь | Описание |
+|---|---|---|---|
+| Основной конфиг | `./prometheus/prometheus.yml` | `/etc/prometheus/prometheus.yml` | Основные scrape-цели и глобальные настройки |
+| Файлы правил | `./prometheus/rules/*.yml` | `/etc/prometheus/rules/` | Recording и Alerting rules |
+| Безопасность | `./prometheus/web-config.yml` | `/etc/prometheus/web-config.yml` | TLS и Basic Auth (опционально) |
+| Хранилище (TSDB) | `prometheus_data` (volume) | `/prometheus` | База данных метрик |
 
 ### Docker DNS и scrape-цели
 
-В Docker Compose сервисы, находящиеся в одной сети, доступны друг другу по именам, объявленным в `docker-compose.yml`. Prometheus разрешает эти имена через встроенный Docker DNS.
+В Docker Compose сервисы, находящиеся в одной сети, доступны друг другу по именам, объявленным в `compose.yml`. Prometheus разрешает эти имена через встроенный Docker DNS.
 
 | Сервис | Имя в scrape_config | Порт |
 |---|---|---|
 | Prometheus (self) | `localhost` | 9090 |
 | Node Exporter | `node-exporter` | 9100 |
-| cAdvisor | `cadvisor` | 8080 |
 | Alertmanager | `alertmanager` | 9093 |
 
-**Важные нюансы:**
-*   **`localhost`** в `scrape_config` Prometheus всегда ссылается на сам контейнер Prometheus, а не на хост-машину.
-*   Для мониторинга хоста всегда используйте Node Exporter, запущенный в отдельном контейнере с `pid: host`.
-*   Если необходимо обратиться к сервису на хосте из контейнера (вне Docker-сети), используйте `host.docker.internal` (требуется `extra_hosts` в `docker-compose.yml`).
+**Особенности работы с сетью:**
+*   **`localhost`**: Всегда указывает на сам контейнер Prometheus.
+*   **`host.docker.internal`**: Используется для обращения к сервисам, запущенным напрямую на хост-машине (требует `extra_hosts` в `compose.yml`).
+*   **Изоляция**: Если экспортер (например, cAdvisor) находится в другой сети Docker, он будет недоступен без явного добавления Prometheus в эту сеть.
 
-### Связь с Alertmanager (Prometheus v3)
+### Динамическое обнаружение (Docker SD)
 
-Начиная с Prometheus v3, поддержка API v1 для Alertmanager удалена. В секции `alerting` обязательно указывать `api_version: v2`.
+Вместо статического перечисления `targets` можно использовать `docker_sd_config`. Это позволяет Prometheus автоматически находить все запущенные контейнеры.
 
+**Требование:** Контейнер Prometheus должен иметь доступ к Docker Socket:
 ```yaml
-alerting:
-  alertmanagers:
-    - api_version: v2
-      static_configs:
-        - targets:
-            - 'alertmanager:9093'
+# compose.yml
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock:ro
 ```
 
-### Файлы правил (Rules)
-
-Пути в `rule_files` должны соответствовать внутренней структуре контейнера. Рекомендуется монтировать директорию `./prometheus/` в `/etc/prometheus/` целиком.
-
+**Конфигурация в `prometheus.yml`:**
 ```yaml
-rule_files:
-  - "/etc/prometheus/rules/*.yml"
+scrape_configs:
+  - job_name: 'docker-containers'
+    docker_sd_config:
+      - host: unix:///var/run/docker.sock
+    relabel_configs:
+      # Собирать метрики только с контейнеров с меткой 'prometheus_scrape=true'
+      - source_labels: [__meta_docker_container_label_prometheus_scrape]
+        regex: true
+        action: keep
+      # Использовать имя сервиса Compose как инстанс
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: container_service
 ```
 
 ## Практические сценарии
 
-### Базовая конфигурация (v3)
-
-Пример `prometheus.yml`, оптимизированный для Docker Stack.
+### Базовая конфигурация (Prometheus v3)
 
 ```yaml
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  external_labels:
+    origin: 'docker-stack'
 
 rule_files:
-  - "/etc/prometheus/rules.yml"
+  - "/etc/prometheus/rules/*.yml"
 
 alerting:
   alertmanagers:
     - api_version: v2
       static_configs:
-        - targets:
-            - 'alertmanager:9093'
+        - targets: ['alertmanager:9093']
 
 scrape_configs:
   - job_name: 'prometheus'
-    scrape_native_histograms: true # Включение эффективного сбора гистограмм (v3)
+    scrape_native_histograms: true
     static_configs:
       - targets: ['localhost:9090']
 
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']
-
-  - job_name: 'cadvisor'
-    static_configs:
-      - targets: ['cadvisor:8080']
 ```
 
-### Прием метрик OpenTelemetry (OTLP)
+### Настройка Remote Write (Экспорт данных)
 
-В Prometheus v3 можно включить прием OTLP метрик напрямую. В Docker это позволяет другим контейнерам отправлять данные в Prometheus без установки дополнительных экспортеров.
-
-1.  **В `docker-compose.yml` добавьте флаг запуска:**
-    ```yaml
-    command:
-      - '--web.enable-otlp-receiver'
-    ```
-2.  **В приложениях укажите эндпоинт:** `http://prometheus:9090/api/v1/otlp/v1/metrics`.
-
-### Продвинутый Relabeling для Docker
-
-Улучшение читаемости имен и фильтрация лишних данных.
+Для долгосрочного хранения метрик в VictoriaMetrics, Grafana Mimir или ClickHouse используйте секцию `remote_write`.
 
 ```yaml
-scrape_configs:
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets: ['node-exporter:9100']
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-        regex: '([^:]+):.*'
-        replacement: '${1}' # Убирает порт из имени инстанса
-
-  - job_name: 'cadvisor'
-    static_configs:
-      - targets: ['cadvisor:8080']
-    metric_relabel_configs:
-      # Оставляем только метрики с заполненным именем контейнера (из Docker Compose)
-      - source_labels: [container_label_com_docker_compose_service]
-        regex: '^$'
-        action: drop
+remote_write:
+  - url: "http://remote-storage:8428/api/v1/write"
+    queue_config:
+      max_samples_per_send: 1000
+      batch_send_deadline: 5s
+    # Базовая аутентификация для удаленного хранилища
+    basic_auth:
+      username: "prometheus"
+      password: "${REMOTE_PASSWORD}" # Поддерживается в v3
 ```
 
-### Проверка и перезагрузка
+### Безопасность Web UI (Basic Auth)
 
-| Действие | Команда |
-|---|---|
-| Валидация конфига | `docker exec prometheus promtool check config /etc/prometheus/prometheus.yml` |
-| Валидация правил | `docker exec prometheus promtool check rules /etc/prometheus/rules.yml` |
-| Hot reload | `docker exec prometheus wget -q --post-data '' http://localhost:9090/-/reload` |
+Чтобы закрыть интерфейс Prometheus паролем в Docker, создайте файл `web-config.yml`.
 
-> **Примечание:** Для работы Hot reload через HTTP API Prometheus должен быть запущен с флагом `--web.enable-lifecycle`.
+1.  **Создайте хэш пароля** (используйте `htpasswd` или онлайн-генераторы bcrypt).
+2.  **Файл `prometheus/web-config.yml`**:
+    ```yaml
+    basic_auth_users:
+      admin: "$2y$10$h.p.V..." # bcrypt хэш
+    ```
+3.  **В `compose.yml` добавьте флаг запуска**:
+    ```yaml
+    command:
+      - '--web.config.file=/etc/prometheus/web-config.yml'
+    ```
+
+### Управление хранением (Retention)
+
+В Docker Compose параметры хранения передаются через аргументы командной строки в `compose.yml`, а не через `prometheus.yml`.
+
+```yaml
+services:
+  prometheus:
+    command:
+      - '--storage.tsdb.retention.time=30d'      # Хранить 30 дней
+      - '--storage.tsdb.retention.size=50GB'     # Или пока не достигнет 50 ГБ
+      - '--storage.tsdb.wal-compression'        # Сжатие лога упреждающей записи
+```
 
 ## Дополнительная информация
 
-### Оптимизация для контейнеров (v3)
+### Проверка и обслуживание в Docker
 
-В Prometheus v3 появились флаги, критически важные для работы в Docker-контейнерах с лимитами ресурсов:
+| Задача | Команда |
+|---|---|
+| **Валидация** | `docker exec prometheus promtool check config /etc/prometheus/prometheus.yml` |
+| **Hot Reload** | `curl -X POST http://localhost:9090/-/reload` (требует `--web.enable-lifecycle`) |
+| **Просмотр целей** | `curl -u admin:pass http://localhost:9090/api/v1/targets` |
 
-*   **`--auto-gomemlimit`**: Автоматически устанавливает `GOMEMLIMIT` на основе лимита памяти контейнера (`deploy.resources.limits.memory`). Это предотвращает OOM Killer, заставляя сборщик мусора (GC) работать активнее при приближении к лимиту.
-*   **`--auto-gomaxprocs`**: Настраивает `GOMAXPROCS` в соответствии с CPU-лимитами контейнера, оптимизируя планировщик Go для работы с выделенным количеством ядер.
+### Оптимизация ресурсов (v3)
+
+Флаги для предотвращения OOM Killer в контейнерах с жесткими лимитами:
+*   **`--auto-gomemlimit`**: Автоматическая настройка предела памяти Go на основе лимитов контейнера.
+*   **`--auto-gomaxprocs`**: Синхронизация количества потоков Go с выделенными CPU-ресурсами.
 
 ### Связанные темы
 
-* [Конфигурация Prometheus](../../configuration.md) — структура `prometheus.yml`, CLI-флаги, retention, remote read/write
-* [Rules и алертинг](../../rules.md) — alerting rules, recording rules, состояния алертов
-* [Alertmanager для Docker Compose](./docker_compose_alertmanager_config.md) — маршрутизация алертов
-* [Docker Compose конфигурация](./docker-compose_config.md) — полный YAML стека
-* [Мониторинг удалённых хостов](./remote_hosts_monitoring.md) — Node Exporter на внешних серверах
+* [Конфигурация Prometheus](../../configuration.md) — детальный разбор всех секций `prometheus.yml`.
+* [Rules и алертинг](../../rules.md) — синтаксис правил и алертов.
+* [Alertmanager для Docker Compose](./docker_compose_alertmanager_config.md) — настройка уведомлений.
+* [Docker Compose конфигурация](./docker-compose_config.md) — пример полного `compose.yml`.
 
 ---
-**Reliability Score: 10** (Соответствует спецификациям Prometheus v3.x и стандартам Docker Compose 2025 года).
+**Reliability Score: 10** (Соответствует спецификациям Prometheus v3.13 и стандартам 2026 года).

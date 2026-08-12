@@ -1,10 +1,5 @@
 # Настройка мониторинга Nginx с VTS-модулем, Prometheus и Grafana
 
----
-**Надёжность:** 10 (SSoT + Проверено на Nginx 1.26 + VTS v0.2.2)
-**Свежесть:** Июль 2026 (Актуально для классических сборок Nginx)
----
-
 ## Определения
 
 **nginx-module-vts (Virtual Host Traffic Status)** — сторонний модуль для **Nginx**, предоставляющий расширенную статистику о трафике в реальном времени. В отличие от стандартного модуля `stub_status`, VTS позволяет собирать метрики в разрезе виртуальных хостов (**server zones**), групп апстримов (**upstream groups**), фильтров и конкретных кэш-зон.
@@ -23,23 +18,23 @@
 
 Типовая схема мониторинга высоконагруженного балансировщика включает следующие компоненты:
 
-1. **Load Balancer (Nginx)**: Центральный узел, принимающий трафик. На нем установлен VTS-модуль для агрегации данных о каждом запросе в разделяемую память (**Shared Memory**).
-2. **Backends**: Целевые серверы приложений. Для тестирования используются эмуляторы, имитирующие задержки ответа.
-3. **Prometheus**: Регулярно опрашивает (**scrape**) эндпоинт Nginx (например, `/metrics`) и сохраняет полученные значения.
-4. **Grafana**: Запрашивает данные из Prometheus и отображает их на графиках.
+1.  **Load Balancer (Nginx)**: Центральный узел, принимающий трафик. На нем установлен VTS-модуль для агрегации данных о каждом запросе в разделяемую память (**Shared Memory**).
+2.  **Backends**: Целевые серверы приложений. Для тестирования используются эмуляторы, имитирующие задержки ответа.
+3.  **Prometheus**: Регулярно опрашивает (**scrape**) эндпоинт Nginx (например, `/metrics`) и сохраняет полученные значения.
+4.  **Grafana**: Запрашивает данные из Prometheus и отображает их на графиках.
 
 ### Преимущества VTS перед stub_status
 
 Стандартный модуль `ngx_http_stub_status_module` предоставляет лишь 7 базовых метрик (активные соединения, принятые/обработанные запросы) для всего сервера без детализации по сайтам.
 
 **nginx-module-vts** значительно расширяет возможности, фиксируя:
-- Статус-коды ответов (1xx, 2xx, 3xx, 4xx, 5xx) для каждого домена (**Server Zone**).
-- Время ответа апстримов (среднее и гистограммы задержек).
-- Объем переданного и полученного трафика (**Bandwidth**).
-- Статистику использования кэша (**Cache Hit Ratio**).
-- Фильтрацию по произвольным переменным (например, по странам через GeoIP).
+-   Статус-коды ответов (1xx, 2xx, 3xx, 4xx, 5xx) для каждого домена (**Server Zone**).
+-   Время ответа апстримов (среднее и гистограммы задержек).
+-   Объем переданного и полученного трафика (**Bandwidth**).
+-   Статистику использования кэша (**Cache Hit Ratio**).
+-   Фильтрацию по произвольным переменным (например, по странам через GeoIP).
 
-> **Важно:** Модуль VTS не обновлялся активно с 2021 года. Для новых проектов рекомендуется рассматривать **[Angie](../../Angie/angie_overview.md)**, где расширенный мониторинг является нативной частью ядра.
+> **Важно:** Модуль VTS не обновлялся активно с 2021 года. Для новых проектов рекомендуется рассматривать **[Angie](../../Angie/angie_overview.md)**, где расширенный мониторинг является нативной частью ядра и поддерживает экспорт в формате Prometheus без сторонних модулей.
 
 ## Практические сценарии
 
@@ -76,29 +71,41 @@ func main() {
 }
 ```
 
-### Сборка Nginx с поддержкой VTS
+### Способы установки Nginx с поддержкой VTS
 
-Модуль VTS требует компиляции Nginx из исходного кода или использования динамических модулей.
+#### Вариант 1: Сборка из исходного кода (Debian/Ubuntu)
 
-#### Сборка в Debian/Ubuntu
-
-1. **Загрузка исходников и модуля**:
+1.  **Загрузка исходников и модуля**:
     ```bash
     mkdir ~/nginx-build && cd ~/nginx-build
     sudo apt-get update && sudo apt-get source nginx
     git clone https://github.com/vozlt/nginx-module-vts.git
     ```
 
-2. **Добавление модуля в сборку**:
+2.  **Добавление модуля в сборку**:
     В файле `debian/rules` добавьте параметр в секцию `common_configure_flags`:
     `--add-module=../nginx-module-vts`
 
-3. **Компиляция и установка**:
+3.  **Компиляция и установка**:
     ```bash
     sudo apt-get build-dep nginx
     dpkg-buildpackage -b -uc -us
     sudo dpkg -i ../nginx-common_*.deb ../nginx_*.deb
     ```
+
+#### Вариант 2: Использование Docker (быстрый старт)
+
+Для быстрого развертывания можно использовать готовые образы или собрать свой на базе официального.
+
+**Dockerfile:**
+```dockerfile
+FROM nginx:1.26 AS builder
+# Установка инструментов сборки и зависимостей модуля
+RUN apt-get update && apt-get install -y git build-essential libpcre3-dev zlib1g-dev
+RUN git clone https://github.com/vozlt/nginx-module-vts.git /usr/src/nginx-module-vts
+# ... (логика сборки динамического модуля)
+```
+*Примечание: в production рекомендуется использовать проверенные образы, например `bitnami/nginx`, или поддерживать собственную инфраструктуру сборки.*
 
 ### Конфигурация Nginx
 
@@ -119,6 +126,12 @@ http {
 }
 ```
 
+**Расширенная фильтрация (`set_key`):**
+Позволяет собирать статистику по произвольным критериям, например по User-Agent или типу контента.
+```nginx
+vhost_traffic_status_filter_by_set_key $status $server_name;
+```
+
 **В блоке `server` вашего сайта:**
 
 ```nginx
@@ -128,6 +141,8 @@ server {
 
     location / {
         proxy_pass http://backend_upstream;
+        # Исключение определенных запросов из статистики (например, от систем мониторинга)
+        vhost_traffic_status_bypass $is_bot;
     }
 
     # Эндпоинт для сбора метрик Prometheus
@@ -162,47 +177,73 @@ scrape_configs:
     metrics_path: '/metrics'
 ```
 
+### Настройка правил оповещения (Alerting)
+
+Пример базовых алертов для `alert_rules.yml`:
+
+```yaml
+groups:
+- name: nginx_alerts
+  rules:
+  - alert: NginxHighErrorRate
+    expr: sum(rate(nginx_vts_server_requests_total{code="5xx"}[5m])) / sum(rate(nginx_vts_server_requests_total[5m])) > 0.05
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High error rate on Nginx"
+      description: "More than 5% of requests result in 5xx errors on {{ $labels.instance }}"
+
+  - alert: NginxHighLatency
+    expr: histogram_quantile(0.95, sum(rate(nginx_vts_server_response_duration_seconds_bucket[5m])) by (le)) > 2
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High Nginx latency"
+      description: "P95 latency is over 2s for more than 5 minutes"
+```
+
 ### Визуализация в Grafana
 
-1. Подключите Prometheus как **Data Source**.
-2. Импортируйте дашборд. Рекомендуемые ID:
-    - **2949** — классический дашборд для VTS.
-    - **9614** — современная версия с поддержкой гистограмм.
+1.  Подключите Prometheus как **Data Source**.
+2.  Импортируйте дашборд. Рекомендуемые ID:
+    -   **2949** — классический дашборд для VTS.
+    -   **9614** — современная версия с поддержкой гистограмм.
 
 ## Дополнительная информация
 
 ### Примеры PromQL запросов
 
-- **Средний RPS по всем хостам**:
+-   **Средний RPS по всем хостам**:
     ```promql
     sum(rate(nginx_vts_server_requests_total[1m]))
     ```
 
-- **Доля ошибок 5xx (Error Rate)**:
+-   **Доля ошибок 5xx (Error Rate)**:
     ```promql
     sum(rate(nginx_vts_server_requests_total{code="5xx"}[5m])) / sum(rate(nginx_vts_server_requests_total[5m]))
     ```
 
-- **95-й перцентиль задержки ответов (Latency)**:
+-   **95-й перцентиль задержки ответов (Latency)**:
     ```promql
     histogram_quantile(0.95, sum(rate(nginx_vts_server_response_duration_seconds_bucket[5m])) by (le))
     ```
 
 ### Решение проблем (Troubleshooting)
 
-1. **Ошибка `shared memory zone "vhost_traffic_status" is too small`**: Увеличьте размер зоны в `vhost_traffic_status_zone` до 64m или 128m.
-2. **Метрики не появляются в Prometheus**: Проверьте `allow/deny` в блоке `location /metrics`. Убедитесь, что Prometheus может достучаться до порта Nginx.
-3. **Отсутствие гистограмм**: Проверьте наличие директивы `vhost_traffic_status_histogram_buckets` в контексте `http`.
+1.  **Ошибка `shared memory zone "vhost_traffic_status" is too small`**: Увеличьте размер зоны в `vhost_traffic_status_zone` до 64m или 128m. Это критично при большом количестве виртуальных хостов или использовании фильтров.
+2.  **Метрики не появляются в Prometheus**: Проверьте `allow/deny` в блоке `location /metrics`. Убедитесь, что Prometheus может достучаться до порта Nginx. Проверьте логи Nginx на наличие ошибок доступа (403).
+3.  **Отсутствие гистограмм**: Проверьте наличие директивы `vhost_traffic_status_histogram_buckets` в контексте `http`. Изменения требуют полного перезапуска или `reload` Nginx.
 
 ### Альтернативы
 
-- **[Angie](../../Angie/angie_overview.md)**: Нативный экспорт метрик, поддержка `prometheus` модуля «из коробки», активная разработка.
-- **nginx-prometheus-exporter**: Официальное решение от Nginx Inc. Не требует пересборки, но работает через `stub_status` (мало метрик) или Nginx Plus (платно).
+-   **[Angie](../../Angie/angie_overview.md)**: Нативный экспорт метрик, поддержка `prometheus` модуля «из коробки», активная разработка, поддержка HTTP/3 и расширенной статистики без сторонних зависимостей.
+-   **nginx-prometheus-exporter**: Официальное решение от Nginx Inc. Не требует пересборки, но работает через `stub_status` (ограниченный набор метрик) или Nginx Plus (платная версия).
 
 ## См. также
 
-- **[Обзор Nginx](../Core/nginx_overview.md)** — архитектура и базовые принципы.
-- **[Мониторинг кэша Nginx](../Performance/Caching/monitoring.md)** — использование VTS для анализа эффективности кэширования.
-- **[Обзор Prometheus](../../../Prometheus/overview.md)** — основы работы с системой мониторинга.
-- **[Обзор Grafana](../../../Grafana/grafana_overview.md)** — принципы визуализации данных.
-
+-   **[Обзор Nginx](../Core/nginx_overview.md)** — архитектура и базовые принципы.
+-   **[Мониторинг кэша Nginx](../Performance/Caching/monitoring.md)** — использование VTS для анализа эффективности кэширования.
+-   **[Обзор Prometheus](../../../Prometheus/overview.md)** — основы работы с системой мониторинга.
+-   **[Обзор Grafana](../../../Grafana/grafana_overview.md)** — принципы визуализации данных.

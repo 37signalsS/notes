@@ -1,12 +1,20 @@
 # Nginx location: примеры интеграции
 
-> **Надежность: 10** (Подтверждено актуальной документацией Nginx на июль 2026)
+> **Надежность: 10** (Подтверждено актуальной документацией Nginx на август 2026)
 
 ## Определения
 
 **Примеры интеграции** — это проверенные конфигурации блоков `location`, предназначенные для корректного взаимодействия Nginx с различными бэкенд-технологиями и приложениями.
 
 **Бэкенд-сервис** — приложение или процесс (PHP-FPM, Node.js, Python, Go), который выполняет динамическую обработку запросов, переданных от Nginx.
+
+**FastCGI (Fast Common Gateway Interface)** — протокол для взаимодействия веб-сервера с исполняемыми программами (преимущественно PHP).
+
+**uWSGI (Universal Web Server Gateway Interface)** — высокопроизводительный протокол и сервер приложений для Python.
+
+**SCGI (Simple Common Gateway Interface)** — упрощенный протокол, аналогичный FastCGI, используемый в некоторых специализированных приложениях.
+
+**gRPC (Google Remote Procedure Call)** — современный высокопроизводительный протокол на базе HTTP/2 и Protocol Buffers.
 
 ---
 
@@ -16,152 +24,174 @@
 
 Nginx поддерживает несколько протоколов для передачи запросов бэкендам:
 
-1. **FastCGI (Fast Common Gateway Interface — быстрый общий шлюзовой интерфейс):** используется преимущественно для PHP-приложений. Обеспечивает высокую производительность за счёт постоянных соединений с процессами обработки.
-2. **HTTP (Hypertext Transfer Protocol — протокол передачи гипертекста):** стандартный способ проксирования для Node.js, Python (через Gunicorn), Go и других современных приложений.
-3. **uWSGI (Universal Web Server Gateway Interface — универсальный интерфейс шлюза веб-сервера):** специализированный протокол для Python-приложений, обеспечивающий глубокую интеграцию с сервером uWSGI.
+1. **FastCGI:** используется для PHP. Требует передачи параметров окружения через `fastcgi_param`.
+2. **HTTP:** универсальный способ для Node.js, Python, Go, Java. Использует `proxy_pass`.
+3. **uWSGI:** нативный протокол для Python-стека.
+4. **gRPC:** требует HTTP/2 на стороне клиента и бэкенда. Использует `grpc_pass`.
+5. **SCGI:** используется в таких приложениях, как rTorrent или некоторые C++ бэкенды.
 
-### Протоколы передачи данных
+### Выбор типа сокета
 
-* **Unix Domain Sockets:** используются для взаимодействия процессов внутри одного сервера. Работают быстрее, чем сетевые сокеты, так как не задействуют сетевой стек TCP/IP (Transmission Control Protocol / Internet Protocol — протокол управления передачей / межсетевой протокол).
-* **TCP (Transmission Control Protocol — протокол управления передачей) Sockets:** применяются для взаимодействия с бэкендами на других серверах или при использовании контейнеризации (например, Docker).
+* **Unix Domain Sockets (`unix:/path/to/socket`):** Оптимально для локальных бэкендов на том же сервере. Минимальные задержки, отсутствие накладных расходов на сетевой стек.
+* **TCP Sockets (`127.0.0.1:port` или `ip:port`):** Необходимы для распределенных систем и Docker-контейнеров без общих томов.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: PHP-приложение (PHP-FPM)
+### Сценарий 1: PHP-приложение (PHP-FPM 8.3+)
 
-Классическая настройка для обработки динамического контента на языке PHP (Hypertext Preprocessor — препроцессор гипертекста).
+Конфигурация для современных PHP-приложений (Laravel, Symfony).
 
 ```nginx
 location ~ \.php$ {
-    root           /var/www/html;
-    # Путь к сокету PHP-FPM (PHP FastCGI Process Manager — менеджер процессов FastCGI для PHP)
+    root           /var/www/html/public;
+    # Сокет PHP-FPM (версия 8.3+)
     fastcgi_pass   unix:/var/run/php/php8.3-fpm.sock; 
     fastcgi_index  index.php;
     
-    # Включает стандартные параметры FastCGI
     include        fastcgi_params; 
     
-    # Передаёт полный путь к исполняемому скрипту
+    # Критически важный параметр для работы скриптов
     fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    
+    # Защита от передачи пустых путей в PHP
+    fastcgi_split_path_info ^(.+\.php)(/.+)$;
 }
 ```
 
-* Используется регулярное выражение `~ \.php$` для перехвата всех запросов к файлам с расширением `.php`.
-* Подробный алгоритм приоритетов описан в [Основы и приоритеты location](./basics.md).
+### Сценарий 2: WordPress (Защищенная конфигурация)
 
-### Сценарий 2: WordPress
-
-Конфигурация для самой популярной CMS (Content Management System — система управления контентом), включающая защиту и обработку статики.
+Включает оптимизацию статики и блокировку уязвимых путей.
 
 ```nginx
 server {
-    listen 80;
-    server_name example.com;
-    # Принудительный редирект на HTTPS (Hypertext Transfer Protocol Secure — защищенный протокол передачи гипертекста)
-    return 301 https://$host$request_uri;
-}
-
-server {
     listen 443 ssl;
+    http2 on; # Для Nginx 1.25.1+
     server_name example.com;
     root /var/www/wordpress;
-    index index.php index.html;
+    index index.php;
 
-    # Защита скрытых файлов (начинаются с точки)
-    location ~ /\. {
-        deny all;
-        access_log off;
-        log_not_found off;
-    }
-
-    # Защита критических файлов WordPress
-    location ~ /(wp-config\.php|wp-trackback\.php|xmlrpc\.php) {
+    # Блокировка скрытых файлов и .git
+    location ~ /\.(?!well-known) {
         deny all;
     }
 
-    # Единая точка входа для ЧПУ (человекопонятных URL)
+    # Единая точка входа
     location / {
         try_files $uri $uri/ /index.php?$args;
     }
 
-    # Обработка PHP
+    # Обработка PHP через сокет
     location ~ \.php$ {
         include fastcgi_params;
-        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+        fastcgi_pass unix:/var/run/php/php-fpm.sock;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     }
 
-    # Оптимизация отдачи статики
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-        expires max;
+    # Кэширование статики на стороне клиента
+    location ~* \.(webp|avif|jxl|css|js|png|jpg|jpeg|gif|ico|svg|woff2)$ {
+        expires 365d;
+        add_header Cache-Control "public, no-transform";
         log_not_found off;
     }
 }
 ```
 
-### Сценарий 3: Node.js-приложение (Проксирование HTTP)
+### Сценарий 3: Node.js и WebSocket
 
-Настройка Nginx в качестве обратного прокси (Reverse Proxy) для приложения на Node.js с поддержкой WebSocket (веб-сокеты).
+Использование Nginx как терминатора SSL и балансировщика для Node.js.
 
 ```nginx
 location / {
-    proxy_pass         http://127.0.0.1:3000; # Адрес и порт Node.js
+    proxy_pass         http://127.0.0.1:3000;
     proxy_http_version 1.1;
     
-    # Поддержка веб-сокетов
+    # Проброс заголовков для Upgrade (WebSocket)
     proxy_set_header   Upgrade $http_upgrade;
-    proxy_set_header   Connection 'upgrade';
+    proxy_set_header   Connection "upgrade";
     
-    # Передача информации о клиенте бэкенду
+    # Стандартный блок заголовков проксирования
     proxy_set_header   Host $host;
     proxy_set_header   X-Real-IP $remote_addr;
     proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header   X-Forwarded-Proto $scheme;
     
-    # Перехват ошибок бэкенда для обработки в Nginx
-    proxy_intercept_errors on;
+    # Таймауты для долгоживущих соединений
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
 }
 ```
 
-### Сценарий 4: Python-приложение (Gunicorn или uWSGI)
+### Сценарий 4: Python (Gunicorn / uWSGI)
 
-Интеграция с Python-приложениями через специализированные шлюзы.
-
-**Gunicorn (протокол HTTP):**
+**Gunicorn (HTTP):**
 
 ```nginx
 location / {
-    proxy_pass http://127.0.0.1:8000; # Адрес Gunicorn (WSGI-сервер — Web Server Gateway Interface)
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-```
-
-**uWSGI (протокол uwsgi):**
-
-```nginx
-location / {
-    include uwsgi_params;
-    # Путь к сокету uWSGI (Universal Web Server Gateway Interface)
-    uwsgi_pass unix:/var/run/uwsgi/app.sock;
-}
-```
-
-### Сценарий 5: Go или Rust-приложение (Бинарные сервисы)
-
-Современные приложения на Go или Rust обычно слушают порт и принимают HTTP-трафик.
-
-```nginx
-location /api/ {
-    proxy_pass http://127.0.0.1:8080;
-    proxy_http_version 1.1;
-    proxy_set_header Connection ""; # Использование Keep-alive для производительности
+    proxy_pass http://unix:/tmp/gunicorn.sock; # Проксирование через сокет
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $remote_addr;
+}
+```
+
+**uWSGI (Native uwsgi):**
+
+```nginx
+location /app/ {
+    include uwsgi_params;
+    uwsgi_pass unix:/var/run/uwsgi/app.sock;
+    uwsgi_modifier1 30; # Специфично для некоторых Python-конфигураций
+}
+```
+
+### Сценарий 5: gRPC Интеграция
+
+Требует установленного модуля `ngx_http_grpc_module` (входит в стандартную сборку).
+
+```nginx
+location /api.v1.OrderService/ {
+    grpc_pass grpc://127.0.0.1:50051;
+    
+    # Для защищенного gRPC
+    # grpc_pass grpcs://backend_grpc;
+    
+    error_page 502 = /error502grpc;
+}
+```
+
+---
+
+## Продвинутые настройки проксирования
+
+### Буферизация и таймауты
+
+Для стабильной работы под нагрузкой необходимо настраивать буферы:
+
+```nginx
+location / {
+    proxy_pass http://backend;
+
+    # Буферизация ответа от бэкенда (on по умолчанию)
+    proxy_buffers 8 16k;
+    proxy_buffer_size 32k;
+    proxy_busy_buffers_size 64k;
+
+    # Таймауты (default 60s)
+    proxy_connect_timeout 5s;  # Время на установку соединения
+    proxy_send_timeout 60s;    # Время на передачу запроса бэкенду
+    proxy_read_timeout 60s;    # Время на ожидание ответа от бэкенда
+}
+```
+
+### Использование SCGI
+
+Пример для приложений, использующих протокол SCGI (например, rTorrent).
+
+```nginx
+location /RPC2 {
+    include scgi_params;
+    scgi_pass 127.0.0.1:5000;
 }
 ```
 
@@ -169,9 +199,7 @@ location /api/ {
 
 ## Дополнительная информация
 
-### Тестирование и применение
-
-После изменения конфигурации проверьте синтаксис и перезапустите сервис:
+### Валидация конфигурации
 
 ```bash
 nginx -t
@@ -182,6 +210,7 @@ nginx -s reload
 
 ### См. также
 
-* **[Основы и приоритеты location](./basics.md)** — алгоритм выбора и типы модификаторов.
-* **[Nginx: Rewrite, Redirect и try_files](../nginx_rewrite_rules_and_try_files.md)** — манипуляции с URI.
-* **[Лучшие практики Nginx location](./best_practices.md)** — рекомендации по безопасности.
+* **[Основы и приоритеты location](./basics.md)** — детальный разбор алгоритма выбора.
+* **[Rewrite правила и try_files](../nginx_rewrite_rules_and_try_files.md)** — управление URI.
+* **[Лучшие практики Nginx location](./best_practices.md)** — безопасность и оптимизация.
+* **[Балансировка нагрузки L7](../Proxy/Load_Balancing/practical_configuration.md)** — настройка `upstream` групп.

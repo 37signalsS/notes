@@ -27,6 +27,12 @@ global:
 rule_files:
   - 'rules/*.rules.yml'
 
+# Настройка встроенного OTLP-приемника (v3)
+otlp:
+  promote_resource_attributes:
+    - service.name
+    - k8s.namespace.name
+
 scrape_configs:
   - job_name: 'prometheus'
     scrape_native_histograms: true # Включение сбора нативных гистограмм (v3)
@@ -49,6 +55,7 @@ remote_write:
 | Блок | Назначение |
 |---|---|
 | `global` | Глобальные параметры: `scrape_interval`, `evaluation_interval`. В v3 поддерживается автоматический эскейпинг `external_labels` |
+| `otlp` | (v3+) Управление маппингом атрибутов OpenTelemetry в лейблы Prometheus. |
 | `rule_files` | Пути к файлам с [правилами записи и алертинга](./rules.md). Поддерживаются glob-шаблоны |
 | `scrape_configs` | Конфигурация заданий (jobs). В v3 добавлена поддержка `fallback_scrape_protocol` и `scrape_native_histograms` |
 | `alerting` | Настройки [Alertmanager](./alertmanager.md). **Важно:** в v3 требуется `api_version: v2` |
@@ -72,9 +79,9 @@ remote_write:
 
 ### Управление функциями (Feature Flags)
 
-В v3 поддержка UTF-8 в именах метрик и расширенные модификаторы PromQL включены по умолчанию. Оставшиеся экспериментальные функции включаются через `--enable-feature=`:
-- `native-histograms` — расширенная поддержка нативных гистограмм.
-- `out-of-order-window` — поддержка приема данных с нарушением временного порядка.
+Развитие Prometheus v3.x направлено на стабилизацию функций.
+*   **Включено по умолчанию:** Поддержка UTF-8 в именах метрик и меток.
+*   **Стабилизировано (больше не требует `--enable-feature` в новых релизах v3.x):** `native-histograms` (включается через конфиг скрейпинга) и `out-of-order-window` (настраивается в блоке `tsdb`).
 
 ## Практические сценарии
 
@@ -98,7 +105,14 @@ Prometheus v3 может принимать метрики напрямую от
 
 **Настройка:**
 1. Запустите Prometheus с флагом `--web.enable-otlp-receiver`.
-2. Направьте OTLP экспортёр на эндпоинт `http://<prometheus-ip>:9090/api/v1/otlp/v1/metrics`.
+2. Настройте блок `otlp` в `prometheus.yml` для извлечения нужных метаданных в метки:
+   ```yaml
+   otlp:
+     promote_resource_attributes:
+       - service.name
+       - service.version
+   ```
+3. Направьте OTLP экспортёр на эндпоинт `http://<prometheus-ip>:9090/api/v1/otlp/v1/metrics`.
 
 ### Управление хранением данных (Retention)
 
@@ -112,7 +126,7 @@ Prometheus v3 может принимать метрики напрямую от
 
 ### Лимиты сбора (Scrape Limits)
 
-Лимиты защищают сервер от «взрыва кардинальности» (high cardinality).
+Лимиты защищают сервер от «взрыва кардинальности» (high cardinality) и исчерпания памяти при опросе слишком тяжелых экспортеров.
 
 ```yaml
 scrape_configs:
@@ -120,12 +134,14 @@ scrape_configs:
     sample_limit: 10000        # Максимум метрик с одного таргета
     target_limit: 50           # Максимум таргетов в задании
     label_limit: 40            # Лимит лейблов на одну метрику
+    body_size_limit: 15MB      # Максимальный размер HTTP-ответа от таргета
     scrape_native_histograms: true
 ```
 
 **Рекомендации v3:**
 - Используйте `scrape_native_histograms` для перехода на более эффективный формат хранения гистограмм.
 - При превышении `sample_limit` таргет переходит в статус `DOWN` с ошибкой `sample limit exceeded`. Состояние можно отследить по метрике `prometheus_target_scrapes_exceeded_sample_limit_total`.
+- `body_size_limit` критичен для защиты от неконтролируемого роста ответов от `/metrics` (по умолчанию 0, т.е. без ограничений).
 
 ## Дополнительная информация
 
@@ -134,8 +150,11 @@ scrape_configs:
 Используйте `promtool` для проверки синтаксиса перед перезагрузкой. В v3 `promtool` также проверяет соответствие UTF-8 стандартам.
 
 ```bash
-# Проверка конфигурации
+# Проверка конфигурации (Server Mode)
 promtool check config /etc/prometheus/prometheus.yml
+
+# Проверка конфигурации (Agent Mode)
+promtool check config --agent /etc/prometheus/agent.yml
 
 # Проверка нативных гистограмм в TSDB
 promtool tsdb analyze /var/lib/prometheus

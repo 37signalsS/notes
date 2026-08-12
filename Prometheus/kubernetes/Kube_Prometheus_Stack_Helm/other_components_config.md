@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Прочие компоненты kube-prometheus-stack** — дополнительные компоненты Helm-чарта, обеспечивающие работу стека мониторинга: RBAC, автоматическая перезагрузка конфигурации, правила алертов по умолчанию, Push Gateway, Thanos Ruler.
+**Прочие компоненты kube-prometheus-stack** — вспомогательные элементы Helm-чарта, обеспечивающие работу стека мониторинга: управление доступом (RBAC), автоматическая перезагрузка конфигураций, стандартные правила алертов, агрегация алертов через Thanos Ruler, сбор метрик через Pushgateway и мониторинг системных компонентов Kubernetes.
 
 > **См. также:** [Pushgateway — общая информация](../../pushgateway.md), [Prometheus Operator CRD](../operator/concepts.md).
 
@@ -10,95 +10,126 @@
 
 ### RBAC и Service Account
 
-| Параметр | Описание | Значение по умолчанию |
-| :--- | :--- | :--- |
-| `rbac.create` | Создание ClusterRole, ClusterRoleBinding для Prometheus Operator | `true` |
-| `serviceAccount.create` | Создание ServiceAccount для каждого компонента | `true` |
-| `serviceAccount.name` | Имя существующего ServiceAccount (если `create: false`) | `""` |
-| `global.rbac.create` | Глобальный RBAC для всех компонентов | `true` |
-
-**Рекомендация:** Оставить `true`. При использовании существующих ServiceAccount — указать `name` и `create: false`.
-
-### ConfigMap Reload
+Управление правами доступа критично для работы Оператора, так как ему необходим доступ к API Kubernetes для обнаружения целей (Service Discovery).
 
 | Параметр | Описание | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `configmapReload.prometheus.enabled` | Sidecar для автоперезагрузки Prometheus при изменении ConfigMap | `true` |
-| `configmapReload.alertmanager.enabled` | Sidecar для автоперезагрузки Alertmanager при изменении ConfigMap | `true` |
-| `configmapReload.container.image` | Образ контейнера reload | `ghcr.io/prometheus-operator/prometheus-config-reloader` |
-| `configmapReload.resources` | Requests/limits для reload-контейнера | `{}` |
+| `rbac.create` | Создание ClusterRole и ClusterRoleBinding для Prometheus Operator. | `true` |
+| `serviceAccount.create` | Создание ServiceAccount для каждого компонента. | `true` |
+| `serviceAccount.name` | Имя существующего ServiceAccount (если `create: false`). | `""` |
+| `global.rbac.create` | Глобальный переключатель RBAC для всех компонентов чарта. | `true` |
 
-**Принцип работы:** Sidecar отслеживает изменения ConfigMap и отправляет сигнал HUP основному контейнеру для перечитки конфигурации без перезапуска Pod.
+**Рекомендация:** Оставляйте `true`. При использовании существующих ServiceAccount (например, созданных через Terraform) укажите `name` и установите `create: false`.
+
+### ConfigMap Reload (Sidecar)
+
+Механизм автоматической перезагрузки конфигурации без перезапуска Pod.
+
+| Параметр | Описание | Значение по умолчанию |
+| :--- | :--- | :--- |
+| `configmapReload.prometheus.enabled` | Sidecar для автоперезагрузки Prometheus. | `true` |
+| `configmapReload.alertmanager.enabled` | Sidecar для автоперезагрузки Alertmanager. | `true` |
+| `configmapReload.container.image` | Образ `ghcr.io/prometheus-operator/prometheus-config-reloader`. | Актуальная версия |
+| `configmapReload.resources` | Requests/limits для reload-контейнера. | `{}` |
+
+**Принцип работы:** Sidecar отслеживает изменения ConfigMap/Secret и отправляет HTTP POST запрос на `//-/reload` основному контейнеру. С версии Оператора v0.70+ многие функции релоадера встроены в основной бинарный файл Оператора, но sidecar всё ещё используется для обеспечения совместимости.
 
 ### Правила алертов по умолчанию (defaultRules)
 
+Это набор преднастроенных `PrometheusRule`. В версиях 2024–2025 группы правил стали более гранулярными, разделившись на **Alerting** и **Recording**.
+
 | Параметр | Описание | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `defaultRules.create` | Создание стандартных правил алертов (K8s, node, Prometheus) | `true` |
-| `defaultRules.rules.*` | Включение/отключение отдельных групп правил | См. ниже |
-| `defaultRules.additionalRuleLabels` | Добавление лейблов ко всем правилам | `{}` |
-| `defaultRules.additionalRuleAnnotations` | Добавление аннотаций ко всем правилам | `{}` |
+| `defaultRules.create` | Создание стандартных правил алертов. | `true` |
+| `defaultRules.rules.*` | Включение/отключение отдельных групп правил. | `true` |
+| `defaultRules.additionalRuleLabels` | Добавление лейблов ко всем правилам. | `{}` |
+| `defaultRules.additionalRuleAnnotations` | Добавление аннотаций ко всем правилам. | `{}` |
 
-**Группы правил:**
+**Группы правил (Актуальный список 2024-2025):**
 
 | Группа | Описание | Когда отключать |
 | :--- | :--- | :--- |
-| `defaultRules.rules.alertmanager` | Алерты для Alertmanager | При использовании кастомных правил |
-| `defaultRules.rules.etcd` | Алерты для ETCD | При отсутствии ETCD в кластере |
-| `defaultRules.rules.general` | Общие алерты (HighCPU, HighMemory, DiskSpace) | При использовании внешних систем алертов |
-| `defaultRules.rules.k8s` | Алерты для Kubernetes (PodCrashLooping, NodeNotReady) | Редко — полезно для всех |
-| `defaultRules.rules.kubeApiserver` | Алерты для API Server | При внешнем API Server |
-| `defaultRules.rules.kubelet` | Алерты для kubelet | При внешнем мониторинге |
-| `defaultRules.rules.node` | Алерты для Node (Disk, Memory, CPU) | При использовании node-exporter правил |
-| `defaultRules.rules.prometheus` | Алерты для Prometheus (ConfigReload, TargetDown) | Редко — полезно для всех |
+| `alertmanager` | Состояние Alertmanager. | При использовании кастомных правил. |
+| `etcd` | Мониторинг etcd. | Если etcd не управляется вами (облачные кластеры). |
+| `general` | Общие алерты (TargetDown, Watchdog). | Редко. |
+| `k8s` | Базовые правила Kubernetes. | Редко — полезно для всех. |
+| `kubeApiserverAvailability` | Доступность API-сервера. | В облачных кластерах (EKS/GKE). |
+| `kubeApiserverBurnrate` | Error Burnrate для API-сервера. | При использовании кастомных SLO. |
+| `kubelet` | Алерты для kubelet. | При внешнем мониторинге узлов. |
+| `nodeExporterAlerting` | Алерты Node Exporter (CPU, Disk, Mem). | При использовании своих порогов. |
+| `nodeExporterRecording` | Правила записи (агрегаты для дашбордов). | Для экономии ресурсов (редко). |
+| `prometheus` | Мониторинг самого Prometheus. | Редко. |
+| `windows` | Алерты для Windows-узлов. | Если в кластере нет Windows-нод. |
 
 ### Thanos Ruler
 
 | Параметр | Описание | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `thanosRuler.enabled` | Включение Thanos Ruler для агрегации алертов | `false` |
-| `thanosRuler.replicas` | Количество реплик Thanos Ruler | `1` |
-| `thanosRuler.resources` | Requests/limits CPU/memory | `{}` |
+| `thanosRuler.enabled` | Включение Thanos Ruler для агрегации алертов. | `false` |
+| `thanosRuler.replicas` | Количество реплик (рекомендуется 2 для HA). | `1` |
+| `thanosRuler.resources` | Requests/limits CPU/memory. | `{}` |
+| `thanosRuler.thanosRulerSpec.ruleSelector` | Селектор для PrometheusRule. | `{}` |
 
-**Когда использовать:** Thanos Ruler позволяет выполнять правила алертов поверх нескольких Prometheus-инстансов (федерация, мульти-кластер).
+**Когда использовать:** Позволяет вычислять правила алертов над данными из нескольких Prometheus (например, в мульти-кластерной архитектуре с Thanos Querier).
 
 ### Push Gateway
 
 | Параметр | Описание | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `pushgateway.enabled` | Включение Push Gateway | `false` |
-| `pushgateway.replicaCount` | Количество реплик | `1` |
-| `pushgateway.resources` | Requests/limits CPU/memory | `{}` |
-| `pushgateway.persistentVolume.enabled` | PersistentVolume для метрик | `false` |
+| `pushgateway.enabled` | Включение Push Gateway. | `false` |
+| `pushgateway.replicaCount` | Количество реплик. | `1` |
+| `pushgateway.resources` | Requests/limits CPU/memory. | `{}` |
+| `pushgateway.persistentVolume.enabled` | Сохранение метрик между перезапусками. | `false` |
 
-**Когда использовать:** Только для short-lived/batch задач, которые не могут быть опрошены Prometheus напрямую.
-
-> **См. также:** [Pushgateway — общая информация](../../pushgateway.md).
+**Важно:** Используйте только для задач, которые нельзя опросить по pull-модели (batch jobs). Не используйте для обычных сервисов.
 
 ### Мониторинг Control Plane
 
-Компоненты Kubernetes Control Plane (API Server, Controller Manager, Scheduler, etcd) могут быть опрошены через встроенные ServiceMonitor'ы чарта.
-
-| Параметр | Описание | Значение по умолчанию |
-| :--- | :--- | :--- |
-| `kubeApiServer.enabled` | Включение ServiceMonitor для API Server | `true` |
-| `kubeApiServer.tlsConfig.insecureSkipVerify` | Пропуск проверки TLS для API Server | `false` |
-| `kubeControllerManager.enabled` | Включение ServiceMonitor для Controller Manager | `true` |
-| `kubeControllerManager.endpoints` | Список endpoints Controller Manager (если не на стандартном порту) | `[]` |
-| `kubeScheduler.enabled` | Включение ServiceMonitor для Scheduler | `true` |
-| `kubeScheduler.endpoints` | Список endpoints Scheduler | `[]` |
-| `kubeEtcd.enabled` | Включение ServiceMonitor для etcd | `true` |
-| `kubeEtcd.service.https` | Использовать HTTPS для etcd | `true` |
-| `kubeEtcd.service.targetPort` | Порт etcd | `2381` |
-| `kubeProxy.enabled` | Включение ServiceMonitor для kube-proxy | `true` |
+| Параметр | Описание | Cloud (EKS/GKE/AKS) | On-prem (kubeadm) |
+| :--- | :--- | :--- | :--- |
+| `kubeApiServer.enabled` | Мониторинг API Server. | Включен (через внутренний IP). | Требует настройки. |
+| `kubeControllerManager.enabled` | Мониторинг Controller Manager. | **Недоступен** | Требует `--address=0.0.0.0`. |
+| `kubeScheduler.enabled` | Мониторинг Scheduler. | **Недоступен** | Требует `--address=0.0.0.0`. |
+| `kubeEtcd.enabled` | Мониторинг etcd. | **Недоступен** | Требует TLS сертификаты. |
+| `kubeProxy.enabled` | Мониторинг kube-proxy. | Зависит от провайдера. | Обычно включен. |
 
 **Важные нюансы:**
 
-- **kube-controller-manager** и **kube-scheduler** по умолчанию привязаны к `127.0.0.1`. Для скрейпинга из Pod требуется изменить флаг `--address=0.0.0.0` в манифестах static Pod на каждой master-ноде.
-- **etcd** требует TLS-сертификаты. Указываются через `kubeEtcd.serviceMonitor.scheme` и `kubeEtcd.serviceMonitor.caFile`/`certFile`/`keyFile` либо через `secret`.
-- **kube-apiserver** доступен по умолчанию через внутренний Kubernetes Service `kubernetes.default.svc`.
+- **kube-controller-manager / kube-scheduler:** По умолчанию слушают `127.0.0.1`. Нужно изменить на `0.0.0.0` в `/etc/kubernetes/manifests/` на мастер-нодах.
+- **etcd:** Требует доступа к сертификатам. Можно прокинуть секрет с сертификатами в под Prometheus или использовать `insecureSkipVerify: true` (не рекомендуется).
 
-**Пример конфигурации для kubeadm-кластера с TLS для etcd:**
+## Практические сценарии
+
+### Production-конфигурация (Пример)
+
+```yaml
+rbac:
+  create: true
+
+configmapReload:
+  prometheus:
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 50m, memory: 64Mi }
+
+defaultRules:
+  create: true
+  rules:
+    etcd: false # Отключено для EKS
+    kubeApiserverAvailability: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+  additionalRuleLabels:
+    cluster: "prod-main"
+
+pushgateway:
+  enabled: true
+  persistentVolume:
+    enabled: true
+    size: 2Gi
+```
+
+### Настройка etcd (On-prem кластер)
 
 ```yaml
 kubeEtcd:
@@ -107,178 +138,65 @@ kubeEtcd:
     enabled: true
     port: 2381
     targetPort: 2381
+  serviceMonitor:
     scheme: https
-    caFile: /etc/kubernetes/pki/etcd/ca.crt
-    certFile: /etc/kubernetes/pki/etcd/server.crt
-    keyFile: /etc/kubernetes/pki/etcd/server.key
-```
-
-## Практические сценарии
-
-### Production-конфигурация
-
-```yaml
-# RBAC — оставить включенным
-rbac:
-  create: true
-serviceAccount:
-  create: true
-
-# ConfigMap Reload — автоматическая перезагрузка при изменениях
-configmapReload:
-  prometheus:
-    enabled: true
-    resources:
-      requests:
-        cpu: 10m
-        memory: 16Mi
-      limits:
-        cpu: 50m
-        memory: 64Mi
-  alertmanager:
-    enabled: true
-    resources:
-      requests:
-        cpu: 10m
-        memory: 16Mi
-      limits:
-        cpu: 50m
-        memory: 64Mi
-
-# Правила алертов — включить основные, отключить неиспользуемые
-defaultRules:
-  create: true
-  rules:
-    alertmanager: true
-    etcd: false          # ETCD не в кластере
-    general: true
-    k8s: true
-    kubeApiserver: true
-    kubelet: true
-    node: true
-    prometheus: true
-  additionalRuleLabels:
-    cluster: "production"
-
-# Push Gateway — включить для batch-задач
-pushgateway:
-  enabled: true
-  replicaCount: 1
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 100m
-      memory: 128Mi
-  persistentVolume:
-    enabled: true
-    storageClassName: longhorn
-    size: 2Gi
-```
-
-### Минимальная конфигурация для тестовой среды
-
-```yaml
-# Отключить неиспользуемые компоненты
-defaultRules:
-  create: true
-  rules:
-    etcd: false
-    kubeApiserver: false
-    kubelet: false
-
-pushgateway:
-  enabled: false
-
-thanosRuler:
-  enabled: false
+    caFile: /etc/prometheus/secrets/etcd-certs/ca.crt
+    certFile: /etc/prometheus/secrets/etcd-certs/client.crt
+    keyFile: /etc/prometheus/secrets/etcd-certs/client.key
 ```
 
 ### Проверка работы ConfigMap Reload
 
 ```bash
-# Проверка sidecar-контейнеров
+# Список контейнеров в поде Prometheus
 kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[*].spec.containers[*].name}'
+# → prometheus configmap-reload (или prometheus-config-reloader)
 
-# Ожидаемый вывод: prometheus configmap-reload
-
-# Проверка логов reload-контейнера
+# Логи релоадера
 kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus -c configmap-reload
 
-# Тестирование: изменить ConfigMap и проверить перезагрузку
-kubectl edit configmap -n monitoring monitoring-kube-prometheus-stack-alertmanager
-# В логах configmap-reload должно появиться: "Reloading configuration..."
+# Тест: измените любой PrometheusRule и проверьте логи
+kubectl patch prometheusrule <name> --type merge -p '{"metadata":{"labels":{"test":"reload"}}}'
 ```
 
-### Настройка Push Gateway для batch-задач
-
-После включения `pushgateway.enabled: true`, Prometheus автоматически начнёт скрейпить Push Gateway. Отправка метрик из cron-задачи:
+### Использование Push Gateway в CI/CD (Bash)
 
 ```bash
 #!/bin/bash
-# Пример cron-задачи с отправкой метрик в Push Gateway
+JOB_NAME="backup-db"
+START=$(date +%s)
 
-START_TIME=$(date +%s)
+# Команда бэкапа
+./backup.sh
+STATUS=$?
 
-# Выполнение задачи
-backup_result=0
-mysqldump -u root mydb > /backup/mydb.sql || backup_result=1
+END=$(date +%s)
+DURATION=$((END - START))
 
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
-
-# Отправка метрик в Push Gateway
-cat <<EOF | curl --data-binary @- http://pushgateway.monitoring.svc:9091/metrics/job/mysql-backup/instance/db-primary
-# HELP mysql_backup_duration_seconds Duration of MySQL backup
-# TYPE mysql_backup_duration_seconds gauge
-mysql_backup_duration_seconds ${DURATION}
-# HELP mysql_backup_status Status of MySQL backup (1=success, 0=failure)
-# TYPE mysql_backup_status gauge
-mysql_backup_status ${backup_result}
+# Отправка в Pushgateway
+cat <<EOF | curl --data-binary @- http://pushgateway.monitoring.svc:9091/metrics/job/$JOB_NAME
+# HELP backup_duration_seconds Время выполнения бэкапа
+# TYPE backup_duration_seconds gauge
+backup_duration_seconds $DURATION
+# HELP backup_status Статус бэкапа (0 - успех)
+# TYPE backup_status gauge
+backup_status $STATUS
 EOF
 ```
 
-> **Важно:** Push Gateway не удаляет метрики автоматически. Удаление группы метрик:
-
-```bash
-curl -X DELETE http://pushgateway.monitoring.svc:9091/metrics/job/mysql-backup/instance/db-primary
-```
-
-### Отключение правил алертов по умолчанию
-
-```yaml
-defaultRules:
-  create: true
-  rules:
-    general: false       # Отключить все общие алерты
-    k8s: false           # Отключить K8s-алерты
-    node: false          # Отключить node-алерты
-    prometheus: false    # Отключить prometheus-алерты
-```
-
-> **Примечание:** При отключении `defaultRules` необходимо предоставить собственные правила через PrometheusRule CRD.
-
-### Thanos Ruler для мульти-кластерного мониторинга
+### Thanos Ruler для мульти-кластера
 
 ```yaml
 thanosRuler:
   enabled: true
   replicas: 2
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 250m
-      memory: 256Mi
   thanosRulerSpec:
     ruleSelector:
       matchLabels:
         thanos-ruler: "true"
     alertmanagersConfig:
       secret:
-        name: alertmanager-config
+        name: alertmanager-main-db # Секрет с конфигом Alertmanager
         key: alertmanager.yaml
 ```
 
@@ -286,10 +204,16 @@ thanosRuler:
 
 ### Подбираемые параметры (эмпирически)
 
-| Компонент | Параметр | Начальное значение | Метрика для наблюдения |
+| Компонент | Параметр | Значение (базовое) | Метрика |
 | :--- | :--- | :--- | :--- |
 | configmapReload | `requests.memory` | `16Mi` | `container_memory_usage_bytes` |
-| configmapReload | `requests.cpu` | `10m` | `rate(container_cpu_usage_seconds_total[5m])` |
+| configmapReload | `requests.cpu` | `10m` | `rate(container_cpu_usage_seconds_total)` |
 | pushgateway | `requests.memory` | `64Mi` | `container_memory_usage_bytes` |
-| pushgateway | `requests.cpu` | `50m` | `rate(container_cpu_usage_seconds_total[5m])` |
-| pushgateway | `storage` | `2Gi` | `kubelet_volume_stats_capacity_bytes` |
+| pushgateway | `retention` | `15d` | Размер PVC |
+
+### Связанные темы
+
+* [Prometheus Operator — архитектура](../operator/concepts.md)
+* [Конфигурация Alertmanager](./alertmanager_config.md)
+* [Thanos — общее описание](../../scaling/thanos_overview.md)
+* [Экспортеры — настройка](./exporters_config.md)

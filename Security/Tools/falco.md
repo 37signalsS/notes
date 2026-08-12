@@ -1,97 +1,115 @@
-# Falco: Runtime Security Monitoring
+# Falco: Безопасность среды выполнения (Runtime Security)
 
-## Definitions
+## Определения
 
-**Falco** ([falco.org](https://falco.org/)) — open-source решение для мониторинга безопасности во время выполнения (runtime) на хостах, в контейнерах, Kubernetes и системах Linux. Falco отслеживает поведение процессов на уровне ядра Linux, выявляя подозрительную активность и потенциальные угрозы в реальном времени.
+**Falco** ([falco.org](https://falco.org/)) — опенсорсный стандарт для обнаружения угроз в среде выполнения (Runtime Security) на хостах Linux, в контейнерах и кластерах Kubernetes. Инструмент анализирует поток системных вызовов (syscalls) на уровне ядра и сопоставляет их с библиотекой правил для выявления аномалий и подозрительной активности.
 
-Проект поддерживается Cloud Native Computing Foundation (CNCF) и является де-факто стандартом для обнаружения угроз безопасности в runtime.
+Проект является частью Cloud Native Computing Foundation (CNCF) на стадии Graduated и обеспечивает критический слой защиты «глубокой обороны» (Defense-in-Depth), обнаруживая угрозы, которые пропустили статические сканеры и политики Admission Control.
 
-## Basic Concepts
+## Основные концепции
 
-Falco перехватывает системные вызовы ядра Linux через eBPF или модуль ядра и сравнивает их с правилами для выявления аномалий. Он может быть развернут как **DaemonSet** в Kubernetes для мониторинга всех узлов кластера.
+### Архитектура и механизм работы
 
-### Установка (Helm)
+Falco работает в пространстве пользователя (userspace), но получает данные непосредственно из ядра Linux через драйверы сбора событий:
 
-Для установки Falco в кластер Kubernetes рекомендуется использовать Helm:
+1.  **Сбор событий (Drivers):** Перехват системных вызовов (open, exec, connect, etc.).
+2.  **Движок правил (Engine):** Фильтрация и сопоставление событий с YAML-правилами.
+3.  **Вывод (Outputs):** Отправка алертов в логи, stdout, gRPC или внешние системы через Falcosidekick.
+
+### Типы драйверов инструментовки
+
+В современных инфраструктурах (2025–2026) выбор драйвера критичен для стабильности нод:
+
+| Драйвер | Метод | Особенности |
+| :--- | :--- | :--- |
+| **Modern eBPF** | eBPF (CO-RE) | Рекомендуемый стандарт. Не требует `kernel-devel`, минимальный оверхед, максимальная безопасность. |
+| **eBPF Probe** | Классический eBPF | Для старых ядер (4.14+). Требует компиляции или загрузки прекомпилированных модулей. |
+| **Kernel Module** | LKM | Устаревший метод. Требует сборки под конкретное ядро, потенциально может вызвать Kernel Panic. |
+
+### Управление правилами через falcoctl
+
+`falcoctl` — это CLI-инструмент для управления жизненным циклом Falco, включая установку драйверов и обновление наборов правил как OCI-артефактов:
 
 ```bash
-# 1. Добавление репозитория
+# Проверка и обновление правил
+falcoctl artifact follow falco-rules
+```
+
+## Установка и базовая настройка
+
+В Kubernetes Falco развертывается как **DaemonSet** для покрытия всех узлов.
+
+### Установка через Helm
+
+```bash
 helm repo add falcosecurity https://falcosecurity.github.io/falcosecurity
 helm repo update
 
-# 2. Установка Falco
-helm install falco falcosecurity/falco
+# Установка с использованием Modern eBPF и Sidekick
+helm install falco falcosecurity/falco \
+  --set driver.kind=modern-ebpf \
+  --set falcosidekick.enabled=true
 ```
 
-### Возможности
+## Практические сценарии
 
-- **Мониторинг в реальном времени:** обнаружение неожиданного поведения в контейнерах и кластерах.
-- **Движок правил:** использование YAML-правил для определения подозрительной активности.
-- **Оповещения:** отправка уведомлений при возникновении инцидентов безопасности.
+### Синтаксис правил: Macros и Lists
 
-### Преимущества
+Правила Falco строятся на переиспользуемых блоках:
+-   **Lists:** Списки значений (порты, пути, имена процессов).
+-   **Macros:** Логические условия (например, `is_container`).
+-   **Rules:** Финальная логика алертинга.
 
-Runtime-мониторинг Falco дополняет статический анализ и аудит конфигураций, обеспечивая критически важный слой защиты для облачных и контейнерных сред.
-
-## Practical Scenarios
-
-### Обнаружение shell в контейнере
-
-Правило срабатывает при запуске интерактивной оболочки внутри контейнера — типичный первый шаг злоумышленника:
+Пример обнаружения записи в системные директории:
 
 ```yaml
-- rule: Terminal shell in container
-  desc: A shell was spawned in a container with an attached terminal.
-  condition: >
-    spawned_process and container and shell_procs and proc.tty != 0
+- list: system_binary_dirs
+  items: [/bin, /sbin, /usr/bin, /usr/sbin]
+
+- macro: open_write_action
+  condition: (evt.type = open or evt.type = openat) and fd.directory in (system_binary_dirs)
+
+- rule: Write to System Binary Directory
+  desc: Обнаружена попытка записи в системную директорию бинарных файлов.
+  condition: open_write_action and not proc.name in (apt, yum, dnf, dpkg)
   output: >
-    Terminal shell in container (user=%user.name user_loginuid=%user.loginuid container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
-  priority: NOTICE
+    Критическое событие: Попытка записи в системную директорию 
+    (user=%user.name command=%proc.cmdline file=%fd.name container=%container.id)
+  priority: CRITICAL
 ```
 
-### Модификация бинарных директорий
+### Мониторинг чувствительных файлов Kubernetes
 
-Обнаружение записи в `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin` — возможная установка руткита:
-
-```yaml
-- rule: Write below binary dir
-  desc: an attempt to write to any file below a set of binary directories
-  condition: >
-    (open_write) and
-    (fd.directory in (/bin, /sbin, /usr/bin, /usr/sbin)) and
-    (not package_mgmt_procs)
-  output: >
-    File created/modified in binary directory (user=%user.name command=%proc.cmdline file=%fd.name)
-  priority: ERROR
-```
-
-### Чтение Kubernetes Secrets
-
-Обнаружение попыток чтения Secrets в Kubernetes:
+Обнаружение доступа к токенам сервисных аккаунтов со стороны подозрительных процессов:
 
 ```yaml
-- rule: Read K8s Secret
-  desc: Detect any attempt to read a K8s secret.
+- rule: Unauthorized access to K8s service account tokens
+  desc: Detect access to service account tokens by non-authorized processes.
   condition: >
-    k8s_secret_read and not trusted_containers
-  output: >
-    K8s secret read (user=%user.name command=%proc.cmdline secret=%k8s.secret.name)
+    fd.name startswith "/var/run/secrets/kubernetes.io/serviceaccount/"
+    and not proc.name in (kube-proxy, node-exporter, calico-node)
+  output: "Подозрительный доступ к K8s токену (user=%user.name proc=%proc.name file=%fd.name)"
   priority: WARNING
 ```
 
-### Интеграция с Falcosidekick
+### Автоматизированное реагирование с Falcosidekick
 
-[Falcosidekick](https://github.com/falcosecurity/falcosidekick) маршрутизирует события Falco:
+Falcosidekick расширяет возможности Falco, позволяя реализовать **Active Response**:
 
-- Мессенджеры: Slack, Telegram
-- SIEM: Elasticsearch, Splunk
-- Алертинг: Prometheus Alertmanager
-- Serverless: AWS Lambda, Google Cloud Functions (для автоматического реагирования — изоляция пода)
+1.  **Уведомления:** Отправка в Slack, Telegram, MS Teams.
+2.  **Хранение:** Экспорт в Elasticsearch, Loki, InfluxDB.
+3.  **Реагирование:** Вызов AWS Lambda или Google Cloud Functions для удаления скомпрометированного пода (Pod Isolation).
+4.  **Визуализация:** Использование **Falcosidekick UI** для анализа трендов безопасности.
 
-## Additional Information
+## Дополнительная информация
 
-### Сравнение с инструментами безопасности
+### Сравнение с другими инструментами
 
-- **[Kubesec](../../Kubernetes/Security/kubesec.md) / [Kyverno](../../Kubernetes/Security/kyverno/policies/practical_scenarios.md):** Проверка манифестов и политики до/во время деплоя (Admission Control). Falco работает после деплоя — runtime-мониторинг.
-- **[kube-bench](../../Kubernetes/Security/kube-bench.md):** Аудит статической конфигурации на CIS Benchmark. Falco обнаруживает динамические угрозы в работающем кластере.
-- **[Sigstore](./sigstore.md):** Безопасность supply chain (подпись/верификация артефактов). Falco обеспечивает безопасность артефактов во время выполнения.
+- **[Tetragon](../../Docker/Docker_security/runtime_monitoring.md):** Также использует eBPF, но фокусируется на **Enforcement** (блокировка вызовов внутри ядра), тогда как Falco сильнее в **Detection** (сложная логика и контекст событий).
+- **[Kyverno](../../Kubernetes/Security/kyverno/policies/practical_scenarios.md):** Работает на этапе Admission Control (предотвращение создания плохих ресурсов). Falco дополняет его, отслеживая поведение уже запущенных ресурсов.
+- **[kube-bench](../../Kubernetes/Security/kube-bench.md):** Проводит статический аудит конфигураций (CIS Benchmark), Falco обеспечивает динамический аудит событий.
+
+### См. также
+- [Мониторинг безопасности в Runtime](../../Docker/Docker_security/runtime_monitoring.md)
+- [Безопасность eBPF в Kubernetes](../../Kubernetes/Networking/Network/CNI/ebpf.md)
+- [Аудит событий в Kubernetes](../../Kubernetes/Security/audit.md)

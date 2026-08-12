@@ -2,85 +2,153 @@
 
 ## Определения
 
-**Настройка TLS в Angie** — процесс конфигурации протокола TLS (Transport Layer Security) для обеспечения конфиденциальности, целостности и подлинности данных между сервером и клиентом. 
+**Настройка TLS в Angie** — процесс конфигурации протоколов TLS (Transport Layer Security) и QUIC для обеспечения безопасности передачи данных (конфиденциальность, целостность и аутентификация). 
 
-Angie, являясь форком Nginx, поддерживает все классические механизмы шифрования, но предлагает расширенные возможности «из коробки», такие как встроенный HTTP/3, автоматизация сертификатов (ACME) и упрощенное управление двухстековыми конфигурациями.
+Angie, являясь современным форком Nginx, не только поддерживает стандартные механизмы шифрования, но и предоставляет встроенные инструменты для упрощения эксплуатации: нативный HTTP/3, автоматизацию сертификатов (модуль ACME) и динамическое управление параметрами SSL без перезагрузки сервера.
 
 ## Базовые концепции
 
-### Связь с экосистемой Nginx
-
-Angie полностью совместим с TLS-директивами Nginx. Общие принципы настройки OCSP Stapling, HSTS и базовых параметров безопасности описаны в SSoT-документе:
+### Совместимость и SSoT
+Angie сохраняет полную обратную совместимость с директивами Nginx. Общие рекомендации по выбору шифров (ciphers), настройке HSTS и OCSP Stapling являются общими для обоих серверов:
 > **[Обзор TLS/SSL в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)**
 
-### Ключевые отличия и преимущества Angie
+### Ключевые преимущества Angie в TLS
 
-*   **Нативный HTTP/3:** Поддержка QUIC встроена в ядро (не требует отдельной сборки модуля).
-*   **Встроенный ACME:** Управление сертификатами (Let's Encrypt и др.) без использования внешних утилит типа Certbot.
-*   **Автоматизация тикетов:** Автоматическая генерация и ротация ключей `ssl_session_tickets` между всеми рабочими процессами.
-*   **Двухстековые сертификаты:** Упрощенная настройка одновременного использования RSA и ECDSA.
+*   **Встроенный ACME:** Автоматическое получение и продление сертификатов (Let's Encrypt и др.) средствами самого сервера (модуль `acme`).
+*   **Динамическая загрузка:** Поддержка переменных в директивах `ssl_certificate` и `ssl_certificate_key` (Angie 1.3.0+), что позволяет загружать сертификаты «на лету» на основе имени хоста.
+*   **Кэширование сертификатов:** Директива `ssl_certificate_cache` (Angie 1.4.0+) ускоряет работу при использовании переменных в путях к сертификатам.
+*   **Нативный HTTP/3 (QUIC):** Реализация встроена в ядро и не требует сборки внешних модулей или использования экспериментальных веток.
+*   **Автоматизация тикетов сессий:** Ротация ключей `ssl_session_tickets` происходит автоматически между всеми рабочими процессами без необходимости внешних скриптов.
+*   **Переменные в SSL-директивах:** Директивы `ssl_crl` и `ssl_ocsp` поддерживают переменные, позволяя менять списки отзыва и параметры проверки без `reload`.
 
 ## Практические сценарии
+
 ### Сценарий 1: Настройка HTTP/3 (QUIC)
 
-Angie обеспечивает нативную поддержку HTTP/3 "из коробки" (не требует сборки сторонних модулей). Для активации необходимо открыть UDP-порт 443 и анонсировать поддержку через заголовок `Alt-Svc`.
+Для работы HTTP/3 необходимо открыть порт по протоколу UDP и анонсировать поддержку через заголовок `Alt-Svc`.
 
-Подробные примеры конфигурации, включая оптимизацию eBPF и 0-RTT, приведены в основном руководстве:
+```nginx
+server {
+    # Порт 443 для TCP (HTTP/1.1, HTTP/2) и UDP (HTTP/3)
+    listen 443 ssl;
+    listen 443 quic reuseport;
 
-→ **[Конфигурация HTTP/2 и HTTP/3 в Nginx/Angie](../Nginx/Performance/nginx_http_versions.md)**
+    server_name example.com;
 
----
-### Сценарий 2: Двухстековые сертификаты (RSA + ECDSA)
+    ssl_certificate     /etc/angie/ssl/cert.crt;
+    ssl_certificate_key /etc/angie/ssl/cert.key;
 
-Для обеспечения максимальной скорости (ECDSA) при сохранении совместимости со старыми клиентами (RSA) используйте обе директивы одновременно. Angie выберет оптимальный вариант автоматически.
+    # Анонс поддержки HTTP/3 для клиентов
+    add_header Alt-Svc 'h3=":443"; ma=86400';
+
+    # Оптимизация: использование GSO (Generic Segmentation Offload) для QUIC
+    quic_gso on;
+}
+```
+→ Подробнее: **[Конфигурация HTTP/2 и HTTP/3 в Nginx/Angie](../Nginx/Performance/nginx_http_versions.md)**
+
+### Сценарий 2: Динамические сертификаты и кэширование
+
+Используется в инфраструктурах с тысячами доменов, чтобы не описывать каждый `server` блок отдельно.
+
+```nginx
+http {
+    # Настройка кэша для динамических сертификатов (Angie 1.4.0+)
+    # Хранит до 1000 сертификатов в памяти, очистка через 10 минут простоя
+    ssl_certificate_cache max=1000 inactive=10m;
+
+    server {
+        listen 443 ssl;
+        server_name *.example.com;
+
+        # Загрузка сертификата по имени хоста (Angie 1.3.0+)
+        ssl_certificate     /etc/angie/ssl/$ssl_server_name.crt;
+        ssl_certificate_key /etc/angie/ssl/$ssl_server_name.key;
+    }
+}
+```
+
+### Сценарий 3: Автоматизация через ACME (Quick Start)
+
+Встроенный клиент для Let's Encrypt. Исключает необходимость в Certbot.
+
+```nginx
+http {
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+
+    acme_client letsencrypt {
+        directory "https://acme-v02.api.letsencrypt.org/directory";
+    }
+
+    server {
+        listen 443 ssl;
+        server_name app.example.com;
+
+        # Использование ACME-сертификатов
+        acme letsencrypt;
+        ssl_certificate     $acme_cert_letsencrypt;
+        ssl_certificate_key $acme_cert_key_letsencrypt;
+    }
+}
+```
+→ Подробнее: **[Модуль ACME в Angie: полная конфигурация](./angie_acme_module.md)**
+
+### Сценарий 4: Двухстековые сертификаты (RSA + ECDSA)
+
+Обеспечивает совместимость со старыми клиентами (RSA) и высокую скорость для новых (ECDSA).
 
 ```nginx
 server {
     listen 443 ssl;
     server_name example.com;
 
-    # RSA сертификат (для старых систем)
+    # RSA
     ssl_certificate     /etc/angie/ssl/example.com.rsa.crt;
     ssl_certificate_key /etc/angie/ssl/example.com.rsa.key;
 
-    # ECDSA сертификат (для современных систем - приоритет)
+    # ECDSA (приоритет в современных браузерах)
     ssl_certificate     /etc/angie/ssl/example.com.ecdsa.crt;
     ssl_certificate_key /etc/angie/ssl/example.com.ecdsa.key;
 
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers off;
 }
 ```
 
-### Сценарий 3: Возобновление сессий (Session Caching)
+### Сценарий 5: Оптимизация через Kernel TLS (kTLS)
 
-Для снижения нагрузки на CPU при повторных рукопожатиях настройте разделяемый кэш.
+Снижает нагрузку на CPU за счет переноса операций шифрования в ядро ОС. Требует OpenSSL 3.0+ и поддержки в ядре (`modprobe tls`).
 
 ```nginx
 http {
-    # 10 МБ кэша вмещают ~40 000 сессий
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
+    # Включение kTLS через конфигурацию OpenSSL
+    ssl_conf_command Options +KTLS;
 
-    # Тикеты включены по умолчанию, ключи ротируются автоматически
-    ssl_session_tickets on;
+    server {
+        listen 443 ssl;
+        sendfile on; # kTLS работает в связке с sendfile
+        
+        ssl_certificate     /etc/angie/ssl/cert.crt;
+        ssl_certificate_key /etc/angie/ssl/cert.key;
+    }
 }
 ```
 
 ## Дополнительная информация
 
-### Автоматизация через ACME
+### Мониторинг TLS
+Angie предоставляет расширенные переменные для мониторинга состояния соединений, которые можно использовать в `log_format`:
+*   `$ssl_protocol` — используемый протокол (например, TLSv1.3).
+*   `$ssl_cipher` — используемый шифр.
+*   `$ssl_curve` — выбранная эллиптическая кривая.
+*   `$ssl_session_reused` — статус повторного использования сессии (`r` — reused, `.` — new).
+*   `$ssl_server_name` — имя сервера, запрошенное через SNI.
 
-Вместо внешней настройки Certbot, используйте встроенный функционал:
-*   [Автоматические TLS-сертификаты в Angie: модуль ACME](./angie_acme_module.md)
-
-### Оптимизация производительности
-
-Для высоконагруженных систем рекомендуется использовать Kernel TLS (kTLS) для ускорения `sendfile` через HTTPS.
-*   [Оптимизация производительности Nginx — Kernel TLS](../Nginx/Performance/nginx_performance_tuning.md#kernel-tls-ktls)
+### Рекомендации по безопасности
+Для проверки качества настройки TLS рекомендуется использовать внешние сканеры (SSL Labs) или утилиту `testssl.sh`. На 2026 год стандартом является отказ от TLS 1.0/1.1 и использование только TLS 1.2 и 1.3.
 
 ## См. также
 
-*   [Обзор TLS/SSL в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)
-*   [Взаимная аутентификация (mTLS) в Angie](./angie_client_cert_auth.md)
-*   [Конфигурация HTTP/2 и HTTP/3 в Nginx](../Nginx/Performance/nginx_http_versions.md)
+*   **[Обзор TLS/SSL в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)** — SSoT по общим настройкам.
+*   **[Взаимная аутентификация (mTLS) в Angie](./angie_client_cert_auth.md)**
+*   **[Конфигурация HTTP/2 и HTTP/3 в Nginx](../Nginx/Performance/nginx_http_versions.md)**
+*   **[Модуль ACME в Angie](./angie_acme_module.md)**

@@ -1,14 +1,16 @@
-# Service Discovery в Kubernetes
+# Обнаружение сервисов в Kubernetes (Service Discovery)
 
 > Эта заметка описывает специфику обнаружения сервисов в Kubernetes через нативную конфигурацию Prometheus. Для понимания общих принципов скрейпинга и механизмов `relabel_configs` сначала ознакомьтесь с разделом: **[Service Discovery и Relabeling](../service_discovery_and_relabeling.md)**.
 
 ## Определения
 
-**Service Discovery (Обнаружение сервисов) в Kubernetes** — динамический процесс автоматического поиска целей (targets) для сбора метрик путем опроса Kubernetes API. Prometheus запрашивает список объектов кластера и использует их метаданные для формирования конфигурации скрейпинга.
+**Service Discovery (Обнаружение сервисов) в Kubernetes** — динамический процесс автоматического поиска целей (targets) для сбора метрик путем периодического опроса Kubernetes API. Prometheus запрашивает актуальный список объектов и использует их метаданные (лейблы, аннотации, IP) для формирования конфигурации скрейпинга.
 
-**kubernetes_sd_configs** — основной блок в конфигурационном файле Prometheus, определяющий параметры взаимодействия с Kubernetes API и роли обнаруживаемых объектов.
+**kubernetes_sd_configs** — специализированный блок в конфигурации Prometheus, определяющий параметры взаимодействия с Kubernetes API-сервером. Позволяет фильтровать цели на стороне API, снижая нагрузку на Control Plane.
 
-**Relabeling** — механизм фильтрации и модификации меток (labels) на этапе обнаружения целей, позволяющий динамически изменять параметры скрейпинга (адрес, путь, протокол) на основе метаданных Kubernetes.
+**Relabeling (Переименование метрик)** — конвейер обработки метаданных на этапе обнаружения. Позволяет отфильтровывать цели (`keep`/`drop`) и динамически изменять параметры подключения (`__address__`, `__scheme__`) до того, как данные попадут в TSDB.
+
+**EndpointSlice** — современный (v1.21+) и масштабируемый ресурс Kubernetes для хранения информации о сетевых эндпоинтах. Является заменой устаревшего ресурса `Endpoints`, устраняя проблемы производительности в кластерах с тысячами подов.
 
 > **См. также:** [Prometheus Operator](./operator/concepts.md), [Обзор мониторинга Kubernetes](./overview.md), [Конфигурация Prometheus](../configuration.md).
 
@@ -16,17 +18,20 @@
 
 ### Конфигурация kubernetes_sd_configs
 
-Блок `kubernetes_sd_configs` позволяет Prometheus подключаться к API-серверу и подписываться на изменения объектов. Настройка фильтрации на уровне API снижает нагрузку на API-сервер и уменьшает потребление памяти Prometheus, так как он не хранит информацию о ненужных целях.
+Блок `kubernetes_sd_configs` позволяет Prometheus устанавливать Watch-соединение с API-сервером. В версиях Prometheus 3.x оптимизирована обработка неизменных объектов, что существенно снижает потребление RAM при скрейпинге больших сред.
 
 ```yaml
 scrape_configs:
   - job_name: 'kubernetes-pods'
     kubernetes_sd_configs:
       - role: pod
-        # Фильтрация по пространствам имен (опционально)
+        # Использование метаданных для обогащения (Prometheus 2.35+)
+        attach_metadata:
+          node: true
+        # Фильтрация по пространствам имен
         namespaces:
           names: ['production', 'staging']
-        # Фильтрация на уровне API через селекторы (опционально)
+        # Селекторы на стороне API (Field/Label selectors)
         selectors:
           - role: pod
             label: "monitor=true"
@@ -35,14 +40,14 @@ scrape_configs:
 
 #### Роли обнаружения
 
-| Роль | Описание | Типичное применение |
+| Роль | Описание | Рекомендация и применение |
 | :--- | :--- | :--- |
-| **node** | Обнаруживает один эндпоинт на каждый узел кластера. | Метрики Kubelet, cAdvisor, Node Exporter. |
-| **pod** | Обнаруживает все поды и выставляет их IP как цели. | Sidecar-контейнеры, приложения без Service. |
-| **service** | Обнаруживает каждый сервис и его порты. | Blackbox-мониторинг эндпоинта сервиса. |
-| **endpoints** | Обнаруживает эндпоинты, связанные с сервисом. | Стандартный мониторинг приложений (наиболее часто). |
-| **endpointslice** | Обнаруживает объекты EndpointSlice (масштабируемая замена Endpoints). | Рекомендуется для кластеров с >1000 подов. |
-| **ingress** | Обнаруживает каждый путь в объектах Ingress. | Проверка доступности внешних маршрутов через Blackbox. |
+| **node** | Один эндпоинт на каждый узел кластера. | Метрики Kubelet, cAdvisor, Node Exporter. |
+| **pod** | Все поды и их IP-адреса. | Для sidecar-контейнеров или приложений без Service. |
+| **service** | Обнаруживает порты самого Service (ClusterIP). | Blackbox-мониторинг балансировщика. |
+| **endpoints** | Старый метод обнаружения подов через Service. | **Legacy:** вызывает нагрузку на API в больших кластерах. |
+| **endpointslice** | Современный метод обнаружения через EndpointSlice. | **Standard:** использовать для всех приложений (K8s v1.21+). |
+| **ingress** | Каждый путь (path) в объектах Ingress. | Проверка доступности внешних маршрутов. |
 
 ### Метаданные обнаружения (Meta Labels)
 
@@ -56,32 +61,37 @@ scrape_configs:
 | `__meta_kubernetes_pod_ip` | Pod, Endpoints | Внутренний IP-адрес пода. |
 | `__meta_kubernetes_pod_label_<name>` | Pod, Endpoints | Значение лейбла пода с именем `<name>`. |
 | `__meta_kubernetes_pod_annotation_<name>` | Pod, Endpoints | Значение аннотации пода. |
-| `__meta_kubernetes_pod_container_name` | Pod | Имя конкретного контейнера в поде. |
-| `__meta_kubernetes_pod_container_port_name`| Pod | Имя порта контейнера. |
+| `__meta_kubernetes_pod_container_name` | Pod, Endpoints | Имя конкретного контейнера в поде. |
+| `__meta_kubernetes_pod_container_port_name`| Pod, Endpoints | Имя порта контейнера. |
+| `__meta_kubernetes_pod_container_port_number`| Pod, Endpoints | Номер порта контейнера. |
 | `__meta_kubernetes_service_name` | Service, Endpoints | Имя сервиса. |
 | `__meta_kubernetes_service_label_<name>` | Service, Endpoints | Значение лейбла сервиса. |
 | `__meta_kubernetes_service_annotation_<name>`| Service, Endpoints | Значение аннотации сервиса. |
 | `__meta_kubernetes_endpoint_address_target_name`| Endpoints | Имя целевого объекта эндпоинта (обычно под). |
 | `__meta_kubernetes_endpoint_port_name` | Endpoints | Имя порта в эндпоинте. |
 | `__meta_kubernetes_endpointslice_address_type` | EndpointSlice | Тип адреса (IPv4, IPv6, FQDN). |
+| `__meta_kubernetes_ingress_name` | Ingress | Имя объекта Ingress. |
+| `__meta_kubernetes_ingress_scheme` | Ingress | Протокол (http/https) из правил Ingress. |
 | `__address__` | Все | IP-адрес и порт цели (по умолчанию). |
 
 ## Практические сценарии
 
 ### 1. Мониторинг API-сервера (Control Plane)
 
-Kubernetes API-сервер представлен сервисом `kubernetes` в namespace `default`. Мы используем роль `endpoints` для его нахождения.
+Kubernetes API-сервер представлен сервисом `kubernetes` в namespace `default`. Мы используем роль `endpointslice` (или `endpoints`) для его нахождения.
 
 ```yaml
 - job_name: 'kubernetes-apiservers'
   kubernetes_sd_configs:
-    - role: endpoints
+    - role: endpointslice
   scheme: https
   tls_config:
     ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    # Проверка имени сервера (в K8s API сертификат выписан на это имя)
+    server_name: kubernetes
   bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
   relabel_configs:
-    # Фильтруем только сервис kubernetes в default namespace и порт https
+    # Оставляем только сервис kubernetes в default namespace и порт https
     - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
       action: keep
       regex: default;kubernetes;https
@@ -89,7 +99,7 @@ Kubernetes API-сервер представлен сервисом `kubernetes`
 
 ### 2. Сбор метрик с Kubelet и cAdvisor
 
-Kubelet предоставляет метрики самого себя (`/metrics`) и контейнеров (`/metrics/cadvisor`). Доступ к ним часто осуществляется через проксирование API-сервера для упрощения аутентификации.
+Kubelet предоставляет системные метрики (`/metrics`) и метрики контейнеров (`/metrics/cadvisor`). Доступ через прокси API-сервера безопаснее, но требует прав RBAC.
 
 ```yaml
 - job_name: 'kubernetes-nodes'
@@ -99,62 +109,62 @@ Kubelet предоставляет метрики самого себя (`/metri
   bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
   kubernetes_sd_configs:
     - role: node
+      attach_metadata:
+        node: true
   relabel_configs:
-    # Копируем лейблы узла в метрики
+    # Маппинг лейблов узла в метрики
     - action: labelmap
       regex: __meta_kubernetes_node_label_(.+)
-    # Перенаправляем запрос на API-сервер
+    # Перенаправление на API-сервер для проксирования
     - target_label: __address__
       replacement: kubernetes.default.svc:443
-    # Формируем путь для проксирования к конкретной ноде
     - source_labels: [__meta_kubernetes_node_name]
       regex: (.+)
       target_label: __metrics_path__
-      replacement: /api/v1/nodes/${1}/proxy/metrics
+      replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
 ```
 
-### 3. Сбор метрик по аннотациям (Standard Discovery)
+### 3. Обнаружение по аннотациям (Standard Discovery)
 
-Классический подход, при котором Prometheus автоматически скрейпит любые сервисы, имеющие определенные аннотации.
+Универсальный паттерн для автоматического сбора метрик с любых приложений без правки конфига Prometheus.
 
 ```yaml
 - job_name: 'kubernetes-service-endpoints'
   kubernetes_sd_configs:
-    - role: endpoints
+    - role: endpointslice
   relabel_configs:
-    # Скрейпим только если prometheus.io/scrape: "true"
+    # 1. Фильтрация: скрейпим только если аннотация prometheus.io/scrape == "true"
     - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
       action: keep
       regex: true
-    # Переопределяем схему (http/https) из аннотации
+    # 2. Динамическая схема (http/https)
     - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
       action: replace
       target_label: __scheme__
       regex: (https?)
-    # Переопределяем путь метрик
+    # 3. Динамический путь (/metrics, /prometheus)
     - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
       action: replace
       target_label: __metrics_path__
       regex: (.+)
-    # Переопределяем порт (важно, если сервис имеет несколько портов)
+    # 4. Переопределение порта
     - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
       action: replace
       target_label: __address__
       regex: ([^:]+)(?::\d+)?;(\d+)
       replacement: $1:$2
-    # Пробрасываем лейблы сервиса в метрики
+    # 5. Обогащение лейблами
     - action: labelmap
       regex: __meta_kubernetes_service_label_(.+)
-    # Добавляем namespace и имя сервиса как постоянные метки
     - source_labels: [__meta_kubernetes_namespace]
-      target_label: kubernetes_namespace
+      target_label: namespace
     - source_labels: [__meta_kubernetes_service_name]
-      target_label: kubernetes_name
+      target_label: service
 ```
 
-### 4. Blackbox-мониторинг сервисов
+### 4. Внешний мониторинг через Blackbox Exporter
 
-Проверка доступности HTTP эндпоинтов сервисов через внешний Blackbox Exporter.
+Проверка доступности HTTP/TCP эндпоинтов сервисов "снаружи".
 
 ```yaml
 - job_name: 'kubernetes-services-blackbox'
@@ -164,93 +174,104 @@ Kubelet предоставляет метрики самого себя (`/metri
   kubernetes_sd_configs:
     - role: service
   relabel_configs:
-    # Скрейпим только если есть аннотация prometheus.io/probe: "true"
     - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_probe]
       action: keep
       regex: true
-    # Передаем адрес сервиса в параметр target для Blackbox Exporter
     - source_labels: [__address__]
       target_label: __param_target
-    # Указываем адрес самого Blackbox Exporter как адрес скрейпинга
     - target_label: __address__
       replacement: blackbox-exporter.monitoring.svc.cluster.local:9115
-    # Сохраняем исходный адрес в метку instance
     - source_labels: [__param_target]
       target_label: instance
-    # Добавляем метаданные сервиса
-    - action: labelmap
-      regex: __meta_kubernetes_service_label_(.+)
 ```
 
-### 5. Обнаружение через ServiceMonitor и PodMonitor
+### 5. Использование ServiceMonitor и ScrapeConfig (Operator)
 
-В инфраструктуре с Prometheus Operator нативная конфигурация `kubernetes_sd_configs` скрыта за абстракциями CRD.
+Для сред с Prometheus Operator нативная конфигурация заменяется декларативными ресурсами.
 
-**Пример ServiceMonitor:**
+**ScrapeConfig (v0.65+):** Позволяет использовать нативный синтаксис `kubernetes_sd_configs` внутри ресурсов Оператора для сложных случаев.
 
 ```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
 metadata:
-  name: my-app
-  namespace: monitoring
-  labels:
-    release: prometheus-stack # Метка для выбора Прометеусом
+  name: external-sd-example
 spec:
-  selector:
-    matchLabels:
-      app: my-app # Селектор для поиска Service
-  endpoints:
-  - port: metrics # Имя порта в Service
-    interval: 30s
-    path: /metrics
+  kubernetesSDConfigs:
+    - role: Pod
+  relabelConfigs:
+    - action: keep
+      sourceLabels: [__meta_kubernetes_pod_label_app]
+      regex: custom-app
 ```
 
-**Преимущества ServiceMonitor:**
-*   **Декларативность:** Описание мониторинга рядом с кодом приложения.
-*   **Безопасность:** Operator сам управляет RBAC и секретами для скрейпинга.
-*   **Автоматизация:** Не нужно вручную писать сложные `relabel_configs`.
-*   **Масштабируемость:** Упрощенное управление сотнями приложений через GitOps.
-
-> **См. также:** [ServiceMonitor CRD — детальное руководство](./operator/crd/servicemonitor.md).
+> **См. также:** [ServiceMonitor CRD — детали](./operator/crd/servicemonitor.md), [PodMonitor CRD](./operator/crd/podmonitor.md).
 
 ## Дополнительная информация
 
 ### Детальная настройка Relabeling
 
-`relabel_configs` — это мощный конвейер обработки. Понимание порядка действий критично.
+`relabel_configs` — это мощный конвейер обработки. Понимание порядка действий критично для эффективной фильтрации.
 
 | Действие (Action) | Описание | Типичный случай |
 | :--- | :--- | :--- |
 | `keep` | Оставляет только цели, соответствующие regex. | Фильтрация по аннотации `scrape: true`. |
-| `drop` | Отбрасывает цели, соответствующие regex. | Игнорирование подов в `kube-system`. |
-| `replace` | Заменяет значение метки или создает новую. | Изменение `__address__` или `__metrics_path__`. |
-| `labelmap` | Копирует все метки, подходящие под regex, в новые метки. | Массовый проброс лейблов Kubernetes в Prometheus. |
-| `labeldrop` | Удаляет метки, подходящие под regex. | Очистка отладочных или служебных меток. |
-| `hashmod` | Вычисляет хэш и применяет остаток от деления. | **Шардирование:** распределение целей между несколькими серверами Prometheus. |
+| `drop` | Отбрасывает цели, соответствующие regex. | Игнорирование системных неймспейсов. |
+| `replace` | Заменяет значение метки или создает новую. | Изменение `__address__` или схемы. |
+| `labelmap` | Копирует все метки, подходящие под regex, в новые метки. | Проброс лейблов K8s в метрики. |
+| `labeldrop` | Удаляет метки, подходящие под regex. | Очистка служебных меток перед записью в TSDB. |
+| `hashmod` | Вычисляет хэш и применяет остаток от деления. | **Шардирование:** распределение нагрузки. |
 
-### Сравнение подходов к обнаружению
+### Безопасность и RBAC
 
-| Характеристика | Native SD (YAML) | ServiceMonitor (CRD) | Static Configs |
-| :--- | :--- | :--- | :--- |
-| **Сложность** | Высокая (нужен опыт с regex) | Низкая (декларативный YAML) | Минимальная |
-| **Гибкость** | Максимальная (любые манипуляции) | Ограничена схемой CRD | Отсутствует |
-| **Удобство для команд** | Низкое (одна большая конфиг-мапа) | Высокое (каждая команда владеет своим CRD) | Нулевое |
-| **Производительность** | Высокая (при тонкой настройке) | Зависит от Operator | Максимальная |
-| **Рекомендация** | Для Edge-кейсов и legacy | **Рекомендуемый стандарт** | Только для внешних систем |
+Для работы SD Prometheus должен иметь права на чтение объектов API. Пример ClusterRole для корректной работы всех ролей обнаружения:
 
-### Нюансы масштабирования и безопасности
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-sd
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+```
 
-1.  **EndpointSlice:** В кластерах с тысячами подов стандартные `Endpoints` вызывают огромную нагрузку на API-сервер, так как при изменении одного пода пересылается список всех IP. `EndpointSlice` решает эту проблему, разбивая список на части. В Prometheus используйте `role: endpointslice`.
-2.  **RBAC:** Для работы SD Prometheus должен иметь ClusterRole с правами `get`, `list`, `watch` на ресурсы `nodes`, `pods`, `services`, `endpoints`, `endpointslices`, `ingresses`.
-3.  **Шардирование:** При достижении лимитов по CPU/RAM на одном сервере Prometheus, используйте действие `hashmod` в `relabel_configs` совместно с `kubernetes_sd_configs` для распределения скрейпинга подов между N инстансами Prometheus.
-4.  **Field Selectors:** Используйте `selectors` в `kubernetes_sd_configs` для фильтрации полей на стороне API (например, `status.phase=Running`), чтобы Prometheus не тратил ресурсы на обработку упавших подов.
+### Масштабирование и шардирование
+
+При достижении лимитов по CPU/RAM на одном сервере Prometheus используется **шардирование** — распределение целей между несколькими инстансами.
+
+**Пример конфигурации для шардирования (Шард №1 из 2):**
+```yaml
+relabel_configs:
+  - source_labels: [__address__]
+    modulus: 2    # Общее количество шардов
+    target_label: __tmp_hash
+    action: hashmod
+  - source_labels: [__tmp_hash]
+    regex: 0      # Индекс текущего шарда (0 для первого, 1 для второго)
+    action: keep
+```
+
+### Нюансы эксплуатации
+
+1.  **EndpointSlice:** В кластерах с >500 узлами использование роли `endpoints` может приводить к лагам API из-за огромного размера объектов Endpoints. Всегда предпочитайте `endpointslice`.
+2.  **Field Selectors:** Для снижения нагрузки на Prometheus используйте фильтрацию на стороне API через `selectors` в `kubernetes_sd_configs` (например, не скрейпить поды в статусе `Pending`).
+3.  **Кардинальность:** Ограничивайте использование `labelmap`. Массовый проброс лейблов из Kubernetes (особенно динамических, вроде `pod-template-hash`) может привести к взрывному росту временных рядов.
 
 ### Рекомендации
 
-*   **Всегда используйте namespaces/selectors**, если мониторинг ограничен частью кластера.
-*   **Не пробрасывайте все лейблы K8s** в метрики через `labelmap` без разбора — это может привести к взрывному росту кардинальности (high cardinality).
-*   **Используйте ServiceMonitor** как основной инструмент, оставляя нативный SD для инфраструктурных задач (мониторинг самого K8s).
-*   **Валидируйте TLS:** При мониторинге API-сервера или Kubelet всегда используйте `ca_file` и `bearer_token_file`.
+*   **Используйте namespaces/selectors**, чтобы ограничить область видимости Prometheus только нужными сегментами.
+*   **Используйте ServiceMonitor** как стандарт де-факто для приложений, оставляя нативный SD для инфраструктурного мониторинга.
+*   **Валидируйте TLS:** При мониторинге API-сервера или Kubelet всегда используйте `ca_file` и `server_name` для предотвращения MITM.
+*   **EndpointSlice:** Это единственный путь для масштабирования в 2026 году.
 
-> **См. также:** [Масштабирование Prometheus](../scaling/overview.md), [RBAC в Kubernetes](../../Security/rbac/rbac_overview.md).
+> **См. также:** [Масштабирование Prometheus](../scaling/overview.md), [RBAC в Kubernetes](../../Kubernetes/Security/rbac/rbac_overview.md).

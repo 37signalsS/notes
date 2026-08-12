@@ -2,68 +2,63 @@
 
 ## Определения
 
-**Grafana в kube-prometheus-stack** — компонент Helm-чарта, развёртывающий Grafana как Deployment с Sidecar-контейнером для автоматической загрузки дашбордов и источников данных из ConfigMap. Конфигурация управляется через `values.yaml` в секции `grafana.*`.
+**Grafana в kube-prometheus-stack** — основной интерфейс визуализации стека мониторинга. В рамках Helm-чарта развёртывается как `Deployment` с набором вспомогательных контейнеров (sidecars) для реализации подхода **Monitoring as Code**.
 
-> **См. также:** [Обзор Grafana](../../../Grafana/grafana_overview.md), [Установка Grafana через Helm](../../../Grafana/Installation/grafana_helm_installation.md).
+**Grafana Sidecar (k8s-sidecar)** — специализированный контейнер (`kiwigrid/k8s-sidecar`), работающий в том же Pod, что и Grafana. Он отслеживает объекты ConfigMap и Secret в Kubernetes API и автоматически провижинит их содержимое (дашборды, источники данных, алерты) в Grafana без перезагрузки сервиса.
+
+**Unified Alerting** — современная система оповещений (введена в Grafana 8+, стандарт в 12.x), объединяющая алертинг по метрикам, логам и внешним источникам в едином интерфейсе и API.
+
+> **См. также:** [Обзор Grafana](../../../Grafana/grafana_overview.md), [Установка Grafana через Helm](../../../Grafana/Installation/grafana_helm_installation.md), [Интеграция с Prometheus Operator](../operator/grafana_integration.md).
 
 ## Основные концепции
 
-### Структура Helm-параметров
+### Ключевые Helm-параметры (values.yaml)
 
-| Параметр | Описание | Значение по умолчанию |
+| Параметр | Назначение | Особенности (v12.x) |
 | :--- | :--- | :--- |
-| `grafana.enabled` | Включение компонента | `true` |
-| `grafana.adminUser` | Имя администратора | `admin` |
-| `grafana.adminPassword` | Пароль администратора | Автогенерация (из Secret) |
-| `grafana.grafana.ini` | Конфигурация `grafana.ini` (server, auth, smtp) | `{}` |
-| `grafana.sidecar.dashboards` | Sidecar для автоматической загрузки дашбордов | `enabled: true` |
-| `grafana.sidecar.datasources` | Sidecar для автоматической настройки источников данных | `enabled: true` |
-| `grafana.persistence` | PersistentVolume для хранения данных Grafana | `enabled: false` |
-| `grafana.additionalGrafanaPlugins` | Дополнительные плагины | `[]` |
-| `grafana.ingress` | Ingress для внешнего доступа | `enabled: false` |
-| `grafana.replicas` | Количество реплик | `1` |
+| `grafana.enabled` | Включение компонента | Обязателен для работы UI. |
+| `grafana.adminPassword` | Пароль администратора | Рекомендуется `existingSecret`. |
+| `grafana.grafana.ini` | Глобальные настройки сервера | Секции `[security]`, `[auth]`, `[unified_alerting]`. |
+| `grafana.sidecar.dashboards` | Автозагрузка дашбордов | Поддерживает фильтрацию по лейблам и namespaces. |
+| `grafana.sidecar.datasources` | Настройка источников | Автоматически подключает Prometheus и Loki. |
+| `grafana.persistence` | PersistentVolume | Требуется для сохранения настроек пользователей. |
+| `grafana.replicas` | Масштабирование | **Критично:** требует внешней БД (PostgreSQL/MySQL). |
 
-### Sidecar-механизм
+### Механизм Sidecar и провижининг
 
-Sidecar — контейнер в том же Pod, что и Grafana, который отслеживает изменения Kubernetes-ресурсов и загружает их в Grafana.
+Sidecar-контейнер обеспечивает динамическую синхронизацию ресурсов Kubernetes с внутренним хранилищем Grafana.
 
-| Sidecar | Метка ConfigMap | Назначение |
+| Тип ресурса | Метка (Label) | Путь монтирования |
 | :--- | :--- | :--- |
-| **Dashboards** | `grafana_dashboard: "1"` | Автозагрузка JSON-дашбордов |
-| **Datasources** | `grafana_datasource: "1"` | Автонастройка источников данных |
+| **Dashboards** | `grafana_dashboard: "1"` | `/tmp/dashboards` |
+| **Datasources** | `grafana_datasource: "1"` | `/etc/grafana/provisioning/datasources` |
+| **Alerts** | `grafana_alert: "1"` | `/etc/grafana/provisioning/alerting` |
 
-**Ключевые параметры sidecar:**
+**Особенности эксплуатации:**
+1.  **Лимиты ConfigMap:** Общий размер данных в ConfigMap не должен превышать 1 МБ. Для больших дашбордов используйте сжатие (параметр `sidecar.dashboards.GZIP`).
+2.  **Namespaces:** Параметр `sidecar.dashboards.searchNamespace: ALL` позволяет собирать дашборды со всего кластера. Требует соответствующих прав RBAC для ServiceAccount.
+3.  **Hot Reload:** Grafana автоматически подхватывает файлы из директорий провижининга. Интервал сканирования настраивается в `sidecar.dashboards.watchInterval`.
 
-| Параметр | Описание |
-| :--- | :--- |
-| `sidecar.dashboards.enabled` | Включение sidecar для дашбордов |
-| `sidecar.dashboards.label` | Метка для поиска ConfigMap |
-| `sidecar.dashboards.labelValue` | Значение метки (по умолчанию `"1"`) |
-| `sidecar.dashboards.searchNamespace` | Namespace для поиска (`ALL` — все namespaces) |
-| `sidecar.datasources.enabled` | Включение sidecar для datasources |
-| `sidecar.datasources.label` | Метка для поиска ConfigMap |
+### Высокая доступность (High Availability)
 
-### PersistentVolume
+Увеличение количества реплик (`replicas > 1`) недостаточно для полноценного HA. Grafana требует централизованного хранилища состояния.
 
-Grafana хранит в PVC: дашборды, созданные через UI, настройки пользователей, плагины, сессии. Без PVC данные теряются при перезапуске Pod.
-
-| Режим | Когда использовать |
-| :--- | :--- |
-| `persistence.enabled: true` | Production — сохранение кастомных дашбордов |
-| `persistence.enabled: false` (default) | Тестовые среды, все дашборды через ConfigMap |
+**Требования для HA:**
+*   **Внешняя БД:** `grafana.database.*` (PostgreSQL версии 12+ или MySQL). SQLite не поддерживает конкурентный доступ.
+*   **Shared Storage:** Для кастомных плагинов и аватаров (через PVC с `accessModes: [ReadWriteMany]`).
+*   **Session Management:** Настройка Redis или базы данных для хранения сессий пользователей (`grafana.grafana.ini.sessions`).
+*   **Sticky Sessions:** Рекомендуется на уровне Ingress для стабильной работы UI.
 
 ### Безопасность и аутентификация
 
-| Параметр | Описание |
-| :--- | :--- |
-| `grafana.admin.existingSecret` | Использование существующего Secret для пароля |
-| `grafana.grafana.ini.server.root_url` | Публичный URL для корректных ссылок в алертах |
-| `grafana.grafana.ini.auth` | Настройки OAuth/LDAP/GitHub аутентификации |
-| `grafana.grafana.ini.security` | Настройки безопасности (admin-only org creation, etc.) |
+В 2026 году стандарт безопасности включает:
+*   **CSRF Protection:** Строгая проверка `cookie_samesite` в `grafana.ini`.
+*   **OAuth/OIDC:** Интеграция с Keycloak, Authentik или GitHub через секции `[auth.generic_oauth]`.
+*   **Secret Management:** Использование `existingSecret` для всех чувствительных данных (пароли БД, токены OAuth, SMTP).
 
 ## Практические сценарии
 
-### Production-конфигурация с HA и PersistentVolume
+### Production-конфигурация с HA, внешней БД и OIDC
 
 ```yaml
 grafana:
@@ -76,66 +71,66 @@ grafana:
     adminUserKey: "username"
     adminPasswordKey: "password"
 
-  # Конфигурация grafana.ini
+  # Конфигурация grafana.ini (v12.x)
   grafana.ini:
     server:
       root_url: "https://grafana.example.com"
-    auth:
-      disable_login_form: false
-    security:
-      admin_only_org_create: true
-    smtp:
+    database:
+      type: postgres
+      host: "postgres.db.svc.cluster.local:5432"
+      name: "grafana"
+      user: "grafana"
+      password: "${DB_PASSWORD}" # Берется из env
+    auth.generic_oauth:
       enabled: true
-      host: "smtp.yandex.ru:465"
-      user: "alerts@example.com"
-      password: "${SMTP_PASSWORD}"
-      from_address: "grafana@example.com"
+      name: "Keycloak"
+      client_id: "${OAUTH_CLIENT_ID}"
+      client_secret: "${OAUTH_CLIENT_SECRET}"
+      scopes: "openid profile email roles"
+      auth_url: "https://auth.example.com/realms/master/protocol/openid-connect/auth"
+      token_url: "https://auth.example.com/realms/master/protocol/openid-connect/token"
+      api_url: "https://auth.example.com/realms/master/protocol/openid-connect/userinfo"
+      role_attribute_path: "contains(roles[*], 'admin') && 'Admin' || contains(roles[*], 'editor') && 'Editor' || 'Viewer'"
+    security:
+      cookie_samesite: "strict"
+      admin_only_org_create: true
+    unified_alerting:
+      enabled: true
 
-  # PersistentVolume
+  # Передача секретов в переменные окружения
+  envFromSecret: "grafana-env-secret"
+
+  # PersistentVolume (для плагинов)
   persistence:
     enabled: true
     type: pvc
-    storageClassName: longhorn
+    storageClassName: ceph-fs # Должен быть ReadWriteMany для HA
     accessModes:
-      - ReadWriteOnce
-    size: 10Gi
+      - ReadWriteMany
+    size: 5Gi
 
   # Ресурсы
   resources:
     requests:
-      cpu: 100m
+      cpu: 200m
       memory: 256Mi
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 1Gi
 
-  # Sidecar для дашбордов
+  # Sidecar-механизмы
   sidecar:
     dashboards:
       enabled: true
       label: grafana_dashboard
       labelValue: "1"
       searchNamespace: ALL
+      folderAnnotation: "grafana_folder" # Поддержка папок
     datasources:
       enabled: true
       label: grafana_datasource
       labelValue: "1"
       searchNamespace: ALL
-```
-
-### Минимальная конфигурация для тестовой среды
-
-```yaml
-grafana:
-  enabled: true
-  adminPassword: "admin"
-  persistence:
-    enabled: false
-  sidecar:
-    dashboards:
-      enabled: true
-    datasources:
-      enabled: true
 ```
 
 ### Доступ через Ingress
@@ -155,119 +150,82 @@ grafana:
           - grafana.example.com
 ```
 
-### Провиженинг кастомных дашбордов через ConfigMap
+### Провижининг кастомных дашбордов через ConfigMap
 
-Создайте ConfigMap с меткой `grafana_dashboard: "1"`:
+Создайте ConfigMap с меткой `grafana_dashboard: "1"` и укажите папку через аннотацию:
 
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: my-app-dashboard
-  namespace: my-app
+  namespace: monitoring
   labels:
     grafana_dashboard: "1"
+  annotations:
+    grafana_folder: "Application Metrics"
 data:
   my-app-dashboard.json: |
     {
       "uid": "my-app-dashboard",
       "title": "My Application Dashboard",
       "panels": [],
-      "schemaVersion": 30
+      "schemaVersion": 39
     }
 ```
 
-> **См. также:** [Провиженинг дашбордов через ConfigMap](../../../Grafana/grafana_provisioning.md).
+> **См. также:** [Провижининг дашбордов через ConfigMap](../../../Grafana/grafana_provisioning.md).
 
-### Установка дополнительных плагинов
-
-```yaml
-grafana:
-  additionalGrafanaPlugins:
-    - grafana-piechart-panel
-    - grafana-worldmap-panel
-    - yesoreyeram-boomtable-panel
-```
-
-> **См. также:** [Плагины Grafana](../../../Grafana/grafana_plugins.md).
-
-### Отключение Grafana
-
-```yaml
-grafana:
-  enabled: false
-```
-
-> **Важно:** При отключении Grafana дашборды остаются доступны через прямой доступ к Prometheus UI (`/graph`). Однако визуализация и алертинг через Grafana будут недоступны.
-
-### Проверка работы Grafana
+### Проверка работы и диагностика
 
 ```bash
-# Проверка Pod Grafana
-kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana
+# Проверка основного контейнера
+kubectl logs -n monitoring -l app.kubernetes.io/name=grafana -c grafana
 
-# Проверка PVC
-kubectl get pvc -n monitoring -l app.kubernetes.io/name=grafana
+# Проверка Sidecar-контейнера (критично при ошибках загрузки дашбордов)
+kubectl logs -n monitoring -l app.kubernetes.io/name=grafana -c grafana-sc-dashboard
 
-# Получение пароля администратора (автогенерация)
+# Доступ через port-forward (если Ingress недоступен)
+kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80
+
+# Извлечение пароля (при автогенерации)
 kubectl get secret monitoring-grafana -n monitoring \
   -o jsonpath="{.data.admin-password}" | base64 -d
-
-# Доступ через port-forward
-kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80
-```
-
-### Создание Secret для пароля администратора
-
-```bash
-kubectl create secret generic grafana-admin-secret \
-  --from-literal=username=admin \
-  --from-literal=password="MySecurePassword123!" \
-  -n monitoring
-```
-
-```yaml
-grafana:
-  admin:
-    existingSecret: "grafana-admin-secret"
-    adminUserKey: "username"
-    adminPasswordKey: "password"
 ```
 
 ## Дополнительная информация
 
 ### Встроенные дашборды kube-prometheus-stack
 
-Helm-чарт включает набор стандартных дашбордов, которые автоматически загружаются при `grafana.defaultDashboardsEnabled: true`.
+Helm-чарт включает набор стандартных дашбордов (включается через `defaultDashboardsEnabled: true`).
 
-**Основные категории:**
-*   **Kubernetes / Compute Resources:**
-    *   `Cluster` — обзор ресурсов всего кластера.
-    *   `Namespace (Pods / Workloads)` — детализация по неймспейсам.
-    *   `Node (Pods)` — использование ресурсов конкретными узлами.
-*   **Prometheus:**
-    *   `Prometheus / Overview` — состояние инстансов Prometheus, скрейпинг, TSDB.
-*   **Alertmanager:**
-    *   `Alertmanager / Overview` — активные алерты и состояние уведомлений.
-*   **Core DNS / Node Exporter:**
-    *   Дашборды для мониторинга сетевых служб и базовых метрик ОС.
+**Ключевые категории (2026):**
+*   **Kubernetes / Compute Resources:** Детализация по кластеру, узлам, неймспейсам и подам. Базируется на метриках `kube-state-metrics` и `cAdvisor`.
+*   **Prometheus:** Состояние TSDB, загрузка CPU, ошибки Remote Write.
+*   **Alertmanager:** Активные инциденты и статусы маршрутизации.
+*   **CoreDNS / Node Exporter:** Производительность инфраструктурных компонентов.
 
-> **Настройка:** Вы можете отключить отдельные группы дашбордов через `grafana.sidecar.dashboards.enabled: false` или отфильтровать их по аннотациям.
+> **Оптимизация:** При большом количестве неймспейсов генерация ConfigMap со встроенными дашбордами может превысить лимиты Kubernetes (1MB). В таких случаях рекомендуется включать только необходимые группы дашбордов через `coreDns.dashboards.enabled` и аналогичные параметры.
 
-### Подбираемые параметры (эмпирически)
+### Подбираемые параметры ресурсов (эмпирически)
 
-| Параметр | Начальное значение | Метрика для наблюдения |
+| Параметр | Базовое значение | Метрика для мониторинга OOM/Троттлинга |
 | :--- | :--- | :--- |
-| `requests.memory` | `256Mi` | `container_memory_usage_bytes` |
-| `requests.cpu` | `100m` | `rate(container_cpu_usage_seconds_total[5m])` |
-| `persistence.size` | `10Gi` | `kubelet_volume_stats_capacity_bytes` |
+| `requests.memory` | `256Mi` | `container_memory_working_set_bytes` |
+| `requests.cpu` | `100m` | `rate(container_cpu_cfs_throttled_seconds_total[5m])` |
+| `persistence.size` | `10Gi` | `kubelet_volume_stats_available_bytes` |
 | `replicas` | `2` (HA) | `up{job="grafana"}` |
+
+### Интеграция с Unified Alerting
+
+В Grafana 12.x система Unified Alerting включена по умолчанию. При интеграции с `kube-prometheus-stack` вы можете выбрать один из сценариев:
+1.  Управлять алертами через CRD `PrometheusRule` (рекомендуется для K8s-нативного подхода).
+2.  Настроить Alertmanager как Datasource в Grafana, чтобы отправлять оповещения из Grafana Alerting в единый Alertmanager кластера.
 
 ### Связанные темы
 
-* [Обзор Grafana](../../../Grafana/grafana_overview.md) — общая информация о платформе
-* [Установка Grafana через Helm](../../../Grafana/Installation/grafana_helm_installation.md) — standalone установка
-* [Провиженинг](../../../Grafana/grafana_provisioning.md) — управление конфигурацией как код
-* [Провиженинг дашбордов через ConfigMap](../../../Grafana/grafana_provisioning.md) — sidecar-механизм
-* [Источники данных](../../../Grafana/grafana_datasources.md) — подключение Prometheus, Loki и др.
-* [Плагины](../../../Grafana/grafana_plugins.md) — расширение функциональности
+* [Обзор Grafana](../../../Grafana/grafana_overview.md) — архитектура платформы.
+* [Установка Grafana через Helm](../../../Grafana/Installation/grafana_helm_installation.md) — standalone сценарий.
+* [Провижининг конфигурации](../../../Grafana/grafana_provisioning.md) — подход Config as Code.
+* [Источники данных](../../../Grafana/grafana_datasources.md) — настройка датасорсов.
+* [Аутентификация и RBAC](../../../Grafana/grafana_user_management_and_authentication.md) — управление пользователями.

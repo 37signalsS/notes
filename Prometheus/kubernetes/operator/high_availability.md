@@ -2,51 +2,54 @@
 
 ## Определения
 
-**High Availability (HA) в Prometheus Operator** — обеспечение отказоустойчивости стека мониторинга через запуск нескольких реплик Prometheus и Alertmanager с автоматической синхронизацией состояния и распределением по узлам кластера.
+**High Availability (HA) в Prometheus Operator** — архитектурный подход, обеспечивающий непрерывность мониторинга и алертинга при отказе отдельных компонентов (подов, узлов или целых зон доступности). Реализуется через избыточность (репликацию), автоматическую дедупликацию и топологическое распределение нагрузки.
 
-> **См. также:** [Scaling Overview](../../scaling/overview.md) — базовая HA без Operator, [Alertmanager HA](../../alertmanager.md#высокая-доступность-ha) — gossip-протокол.
+**Топологическое шардирование (Topology Sharding)** — механизм распределения целей сбора (targets) между группами Prometheus на основе их физического расположения (например, по зонам доступности), что минимизирует межзональный трафик и повышает устойчивость к сетевым задержкам.
+
+---
 
 ## Основные концепции
 
-### HA Prometheus
+### Высокая доступность Prometheus
 
-Prometheus Operator управляет репликами Prometheus через StatefulSet. Каждая реплика собирает **одни и те же метрики** независимо.
+Оператор управляет репликами Prometheus через `StatefulSet`. В режиме HA (минимум 2 реплики) каждый экземпляр работает независимо, собирая одни и те же метрики с одних и тех же целей.
 
 **Ключевые принципы:**
 
-- **Минимум 2 реплики** для отказоустойчивости.
-- **Одинаковая конфигурация** на всех репликах (управляется Operator).
-- **Внешние метки (External Labels):** Каждая реплика получает уникальную метку (например, `prometheus_replica`), что критично для дедупликации в Thanos или Alertmanager.
-- **StatefulSet** сохраняет идентичность pod'ов и привязку к хранилищу при перезапусках.
-- **Локальная TSDB:** Каждый экземпляр хранит собственные данные; синхронизация данных между репликами средствами Prometheus не предусмотрена.
+- **Идентичность конфигурации:** Все реплики получают идентичный `prometheus.yml`.
+- **Внешние метки (External Labels):** Каждая реплика автоматически получает уникальную метку (например, `prometheus_replica`), которая используется Alertmanager или Thanos для дедупликации данных "на лету".
+- **TSDB Изоляция:** Реплики не синхронизируют данные между собой. Если одна реплика была недоступна, данные за этот период будут только во второй реплике.
+- **Prometheus 3.0 (OTLP HA):** Новая версия поддерживает нативный прием OTLP-данных. В HA-режиме рекомендуется использовать балансировщик перед Prometheus для равномерного распределения входящих потоков OTLP/Remote Write.
 
-### HA Alertmanager
+### Высокая доступность Alertmanager
 
-Alertmanager использует **gossip-протокол** (порт 9094) для кластеризации:
+Alertmanager использует протокол **Gossip (Mesh)** для синхронизации состояний между узлами.
 
-- **Минимум 3 реплики** для обеспечения кворума и корректной работы в случае сбоя одного узла.
-- **Дедупликация алертов:** При получении идентичных оповещений от нескольких Prometheus, Alertmanager отправляет уведомление только один раз.
-- **Синхронизация состояний:** Silences и информация о подавлениях (inhibitions) синхронизируются между репликами через Mesh-сеть.
-- **Автоматизация:** Prometheus Operator автоматически настраивает `--cluster.peer` для всех pod'ов, используя DNS-имена StatefulSet.
+- **Кластеризация:** Оператор автоматически настраивает параметры `--cluster.peer` для всех реплик, используя сервис headless.
+- **Кворум:** Рекомендуется запускать минимум 3 реплики. Это позволяет кластеру сохранять работоспособность и консистентность при выходе из строя одного узла.
+- **Дедупликация уведомлений:** Alertmanager идентифицирует дубликаты алертов от HA-пары Prometheus и отправляет только одно уведомление конечному получателю.
+- **Синхронизация Silences:** Информация о подавленных алертах (silences) и подтверждениях (inhibitions) мгновенно распространяется по Gossip-сети.
 
-### Шардирование (Sharding)
+### Масштабирование и топологическое шардирование
 
-Для распределения нагрузки (CPU/Memory/Scrape targets) цели скрейпинга разделяются между несколькими StatefulSet:
+Для крупных кластеров простого увеличения реплик недостаточно. Используется комбинация шардирования (горизонтальный рост) и репликации (HA).
 
-| Параметр | Описание |
-|---|---|
-| `replicas` | Количество реплик внутри каждого шарда (для HA) |
-| `shards` | Количество независимых StatefulSet (для горизонтального масштабирования) |
+| Параметр | Описание | Рекомендация |
+| :--- | :--- | :--- |
+| `replicas` | Количество копий для каждого шарда. | 2 для Production. |
+| `shards` | Количество независимых групп (StatefulSet). | Зависит от объема метрик (обычно 1 шард на 1-2 млн серий). |
+| `shardingStrategy` | Режим распределения целей. | `Topology` (v0.92+) для мультизональных кластеров. |
 
-**Механизм:** Prometheus Operator использует хэширование целей. С версии Operator v0.93.0 рекомендуется использовать `PrometheusTopologySharding` (Beta), который учитывает топологию кластера при распределении шардов.
+**PrometheusTopologySharding (Beta, v0.92+):**
+В режиме `shardingStrategy.mode: Topology` Оператор автоматически настраивает Prometheus так, чтобы он собирал метрики только с подов, находящихся в той же зоне доступности (label `topology.kubernetes.io/zone`). Это радикально снижает затраты на трафик и повышает надежность системы.
 
-### Отказоустойчивость на уровне узлов (Anti-Affinity)
-
-Для реальной высокой доступности реплики одного компонента должны находиться на **разных физических узлах**. Это достигается через `podAntiAffinity` в спецификации ресурсов.
+---
 
 ## Практические сценарии
 
-### Конфигурация HA Prometheus с Anti-Affinity и PDB
+### Конфигурация HA Prometheus с Topology Sharding
+
+Использование `topologySpreadConstraints` предпочтительнее старого `podAntiAffinity`, так как оно позволяет более гибко распределять поды по зонам и хостам.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -56,30 +59,31 @@ metadata:
   namespace: monitoring
 spec:
   replicas: 2
-  version: v3.13.2
-  serviceAccountName: prometheus
-  podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-    - labelSelector:
+  shards: 3
+  shardingStrategy:
+    mode: Topology
+  version: v3.0.1
+  # Распределение подов по зонам доступности
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: "topology.kubernetes.io/zone"
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
         matchLabels:
           app.kubernetes.io/name: prometheus
-      topologyKey: "kubernetes.io/hostname"
-  # Поддержка Pod Disruption Budget через Operator
   podDisruptionBudget:
     minAvailable: 1
-  externalLabels:
-    cluster: production
   storage:
     volumeClaimTemplate:
       spec:
-        storageClassName: standard
+        storageClassName: fast-ssd
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 50Gi
+            storage: 100Gi
 ```
 
-### Конфигурация HA Alertmanager
+### Конфигурация HA Alertmanager (Gossip Mesh)
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -89,94 +93,55 @@ metadata:
   namespace: monitoring
 spec:
   replicas: 3
-  version: v0.33.1
-  podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-    - weight: 100
-      podAffinityTerm:
-        labelSelector:
-          matchLabels:
-            app.kubernetes.io/name: alertmanager
-        topologyKey: "kubernetes.io/hostname"
-  storage:
-    volumeClaimTemplate:
-      spec:
-        storageClassName: standard
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 10Gi
+  version: v0.27.0
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: "kubernetes.io/hostname"
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: alertmanager
 ```
 
-### Проверка статуса высокой доступности
+---
 
+## Инструментарий диагностики
+
+### Проверка статуса Gossip-кластера Alertmanager
 ```bash
-# Проверка реплик Prometheus
-kubectl get prometheus -n monitoring
-# → NAME   VERSION   REPLICAS   READY   RECONCILED   AVAILABLE
-# → main   v3.13.2   2          2       True         True
-
-# Проверка распределения по узлам
-kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o wide
-# → prometheus-main-0   1/1   Running   node-1
-# → prometheus-main-1   1/1   Running   node-2
-
-# Проверка кластера Alertmanager через логи (поиск gossip-сообщений)
-kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager | grep "memberlist: Adding member"
-# → level=info ts=... component=cluster msg="memberlist: Adding member alertmanager-main-1..."
-
-# Проверка gossip-соединений API
-kubectl exec -it alertmanager-main-0 -n monitoring -- \
-  wget -qO- http://localhost:9093/api/v2/status | jq '.cluster'
-# → { "peers": [ { "name": "...", "address": "..." }, ... ], "status": "ready" }
+# Просмотр списка участников кластера
+kubectl exec -it alertmanager-main-0 -n monitoring -- amtool cluster show
 ```
 
-### Интеграция Thanos Sidecar для глобального HA
-
-Thanos позволяет объединять данные из разных HA-реплик, выполняя дедупликацию на лету.
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: Prometheus
-metadata:
-  name: main
-  namespace: monitoring
-spec:
-  replicas: 2
-  thanos:
-    version: v0.42.0
-    image: quay.io/thanos/thanos:v0.42.0
-  # Внешняя метка обязательна для дедупликации в Thanos Query
-  externalLabels:
-    prometheus_group: main-ha
+### Проверка распределения шардов по зонам
+```bash
+# Список подов с указанием зоны и ноды
+kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus \
+  -L topology.kubernetes.io/zone -o wide
 ```
+
+### Ключевые метрики HA-статуса
+
+| Метрика | Назначение |
+| :--- | :--- |
+| `alertmanager_cluster_members` | Количество активных узлов в Gossip-сети. |
+| `prometheus_operator_shard_reconciliation_errors_total` | Ошибки при создании шардов StatefulSet. |
+| `prometheus_remote_storage_shards` | Количество шардов для Remote Write (HA-нагрузка на удаленное хранилище). |
+| `prometheus_sd_kubernetes_cache_list_duration_seconds` | Задержка Service Discovery (влияет на скорость подхвата HA-целей). |
+
+---
 
 ## Дополнительная информация
 
-### Метрики мониторинга HA-стека
-
-| Метрика | Описание | Критическое значение |
-|---|---|---|
-| `prometheus_operator_spec_replicas` | Ожидаемое количество реплик | `!= actual_replicas` |
-| `alertmanager_cluster_members` | Общее количество узлов в gossip-кластере | `< 3` |
-| `alertmanager_cluster_health_score` | Индикатор здоровья кластера (0 — ок) | `> 0` |
-| `up{job="prometheus"}` | Доступность конкретного инстанса | `0` (потеря реплики) |
-| `prometheus_operator_reconcile_errors_total` | Ошибки конфигурации оператором | `rate > 0` |
-
 ### Рекомендации по обеспечению надежности
 
-1.  **Pod Disruption Budget (PDB):** Всегда настраивайте PDB для Prometheus и Alertmanager, чтобы предотвратить одновременный вывод всех реплик из строя при обслуживании узлов.
-2.  **Resources:** Устанавливайте `requests` равными `limits` для памяти (Guaranteed QoS), чтобы избежать OOMKill при всплесках нагрузки.
-3.  **Storage:** Используйте `VolumeClaimTemplate` для обеспечения независимых дисков каждой реплике. Не используйте общие тома (RWX).
-4.  **Сетевые политики:** Убедитесь, что порт `9094` (TCP/UDP) открыт между подами Alertmanager для работы gossip.
+1.  **Resources (QoS):** Всегда устанавливайте `requests` равными `limits` для памяти. Это переводит поды в класс `Guaranteed` и минимизирует риск OOMKill при перегрузках.
+2.  **Shard Retention Policy:** В v0.92+ включена политика `PrometheusShardRetentionPolicy` (Beta), которая предотвращает потерю данных при динамическом изменении количества шардов.
+3.  **Сетевые доступы:** Для Alertmanager Gossip требуется открытие порта `9094` по протоколам **TCP** и **UDP**. Убедитесь, что NetworkPolicy не блокируют этот трафик внутри пространства имен.
+4.  **External Labels:** Никогда не используйте одинаковые `externalLabels` для разных HA-групп (шардов). Это приведет к некорректной дедупликации и потере данных в Thanos/Mimir.
 
-### Сравнение подходов к масштабированию
+### Связанные ресурсы
 
-| Ограничение | Решение через HA | Решение через Thanos/Mimir |
-|---|---|---|
-| **Отказ узла** | Да (через реплики) | Да |
-| **Дублирование данных** | Нет (каждая TSDB уникальна) | Да (дедупликация при чтении) |
-| **Глобальный вид** | Нет | Да (Querier объединяет данные) |
-| **Хранение годами** | Нет (локальный диск ограничен) | Да (S3/GCS/Azure Storage) |
-
-> **См. также:** [Prometheus CRD](./crd/prometheus.md), [Alertmanager CRD](./crd/alertmanager.md), [Security](./Security/index.md), [Troubleshooting](./troubleshooting.md).
+- **[Scaling Overview](../../scaling/overview.md)** — общие подходы к масштабированию вне контекста Оператора.
+- **[Prometheus CRD](./crd/prometheus.md)** — полная спецификация полей для настройки HA и шардинга.
+- **[Troubleshooting](./troubleshooting.md)** — диагностика проблем скрейпинга и вебхуков.

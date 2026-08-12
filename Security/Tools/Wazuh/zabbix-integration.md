@@ -2,88 +2,109 @@
 
 ## Определения
 
-**Интеграция SIEM и мониторинга** — процесс передачи критических событий безопасности из системы анализа логов (Wazuh) в централизованную систему мониторинга инфраструктуры (Zabbix) для оперативного реагирования дежурными сменами.
+**Интеграция SIEM и мониторинга** — процесс автоматизированной передачи алертов безопасности из Wazuh в Zabbix. Это позволяет объединить экспертизу ИБ-отдела с отлаженными процессами реагирования ИТ-департамента (дежурные смены, эскалации, Telegram-оповещения).
 
-**`history.push`** — метод Zabbix API (введен в версии 7.0), позволяющий внешним системам отправлять данные напрямую в элементы мониторинга без использования промежуточных утилит.
+**`history.push`** — метод Zabbix API (доступен с версии 7.0+), предназначенный для высокопроизводительной отправки данных во внутренние элементы (Trapper, HTTP Agent) напрямую через JSON-RPC, минуя утилиту `zabbix_sender`.
 
-**`zabbix_sender`** — утилита командной строки для отправки данных о производительности и безопасности на сервер Zabbix. Использует протокол траппера.
+**`wazuh-integratord`** — фоновый процесс (демон) менеджера Wazuh, отвечающий за выполнение внешних скриптов интеграции при срабатывании правил определенного уровня или группы.
 
 ## Основные концепции
 
-Интеграция позволяет ИБ-специалистам использовать отлаженные механизмы оповещения ИТ-отдела (дежурства, Telegram-боты, эскалации) для реагирования на инциденты безопасности. 
+### Методы передачи данных
 
-Существует два основных подхода к реализации:
-1.  **API-метод (Zabbix 7.0+):** Прямая отправка через Webhook и метод `history.push`. Не требует установки дополнительных утилит на сервере Wazuh.
-2.  **Скриптовый метод (Legacy):** Использование кастомных скриптов интеграции Wazuh и утилиты `zabbix_sender`. Подходит для старых версий Zabbix.
+В современной инфраструктуре (актуальность 2026 г.) выделяют три подхода:
+
+1.  **API Push (Рекомендуемый):** Использование метода `history.push`. Преимущества: поддержка современных API-токенов, передача нескольких метрик в одном HTTP-запросе, отсутствие зависимости от бинарных файлов на хосте.
+2.  **Zabbix Sender (Legacy):** Использование одноименной утилиты. Подходит для систем, где использование API ограничено политиками или используются версии Zabbix ниже 7.0.
+3.  **Buffered Ingestion (High Load):** Использование промежуточного звена (Fluentd/Logstash) для буферизации алертов при потоке более 10 событий в секунду, чтобы избежать блокировок `integratord`.
+
+### Маппинг сущностей
+Для корректной работы интеграции имя агента в Wazuh должно точно соответствовать **Host Name** в Zabbix. Это позволяет динамически распределять алерты по соответствующим узлам сети в мониторинге.
 
 ## Практические сценарии
 
-### Метод 1: Взаимодействие через API (Zabbix 7.0+)
+### 1. Настройка Zabbix (7.0+)
 
-Оптимальный способ для современных систем, минимизирующий количество промежуточных звеньев.
+1.  **API Токен:** Создайте выделенного пользователя (Service Account) и сгенерируйте API-токен с неограниченным сроком действия.
+2.  **Шаблон:** Создайте шаблон `Template Security Wazuh` с элементами данных типа **Zabbix trapper**:
+    *   Имя: `Wazuh Alert Level` | Ключ: `wazuh.level` | Тип: Числовой.
+    *   Имя: `Wazuh Description` | Ключ: `wazuh.description` | Тип: Текст.
+3.  **Безопасность:** В настройках Trapper-элементов укажите IP менеджера Wazuh в поле **Allowed hosts**.
 
-#### Шаг 1: Настройка Zabbix
-1.  **Создайте узел сети** (например, `wazuh_server`) и привяжите к нему шаблон с элементом данных типа **Zabbix траппер** (Тип информации: Текст).
-2.  **Получите ID элемента данных** (itemid) из URL или базы данных.
-3.  **Создайте API-токен** для пользователя с правами на запись в этот элемент данных.
+### 2. Реализация через API history.push (Python)
 
-#### Шаг 2: Настройка Wazuh (Notifications)
-1.  В интерфейсе Wazuh (Notifications -> Channels) создайте новый канал `channel_zabbix`.
-2.  **Method:** `POST`.
-3.  **Webhook:** `http://<zabbix-ip>/zabbix/api_jsonrpc.php`.
-4.  Настройте **Monitor** и **Action**, который будет отправлять JSON-запрос:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "history.push",
-  "params": {
-    "itemid": 47608,
-    "value": "{{ctx.trigger.name}} агент {{ctx.results.0.hits.hits.0._source.agent.name}}"
-  },
-  "id": 1,
-  "auth": "<your_api_token>"
-}
-```
-
-### Метод 2: Использование zabbix_sender (Legacy)
-
-Используется, если Zabbix версии ниже 7.0 или требуется сложная предварительная обработка события на языке Python.
-
-#### Шаг 1: Настройка Wazuh Manager
-Добавьте блок интеграции в конфигурацию менеджера (`ossec.conf`):
-
-```xml
-<integration>
-  <name>custom-zabbix</name>
-  <group>log_clearing,logs_cleared</group>
-  <alert_format>json</alert_format>
-</integration>
-```
-
-#### Шаг 2: Скрипт интеграции
-Создайте исполняемый Python-скрипт в `/var/ossec/integrations/custom-zabbix`. Скрипт должен парсить JSON события и вызывать `zabbix_sender`:
+Создайте скрипт `/var/ossec/integrations/custom-zabbix.py`:
 
 ```python
-import subprocess
+#!/usr/bin/env python3
+import sys
 import json
+import requests
 
-def send_msg(alert):
-    # Формирование сообщения для Zabbix
-    event_id = alert['data']['win']['system']['eventID']
-    if event_id in ["104", "1102"]:
-        msg = f"Alert.WAZUH.IB: Очистка логов на {alert['agent']['name']}"
-        cmd = f'/usr/bin/zabbix_sender -z <zabbix_ip> -k trap -s "wazuh_server" -o "{msg}"'
-        subprocess.run(cmd, shell=True)
+# Захват аргументов от Wazuh
+alert_file = sys.argv[1]
+api_token = sys.argv[2]
+hook_url = sys.argv[3]
+
+# Чтение алерта
+with open(alert_file, 'r') as f:
+    alert = json.load(f)
+
+# Маппинг данных
+zabbix_host = alert.get('agent', {}).get('name', 'WazuhManager')
+level = alert.get('rule', {}).get('level')
+description = alert.get('rule', {}).get('description')
+rule_id = alert.get('rule', {}).get('id')
+
+# Формирование JSON-RPC запроса
+payload = {
+    "jsonrpc": "2.0",
+    "method": "history.push",
+    "params": [
+        {"host": zabbix_host, "key": "wazuh.level", "value": level},
+        {"host": zabbix_host, "key": "wazuh.description", "value": f"ID:{rule_id} - {description}"}
+    ],
+    "auth": api_token,
+    "id": 1
+}
+
+# Отправка в Zabbix
+try:
+    r = requests.post(hook_url, json=payload, timeout=5)
+    r.raise_for_status()
+except Exception as e:
+    print(f"Error sending to Zabbix: {e}")
+    sys.exit(1)
+```
+
+**Права доступа:** `chown root:wazuh /var/ossec/integrations/custom-zabbix.py && chmod 750 /var/ossec/integrations/custom-zabbix.py`.
+
+### 3. Конфигурация Wazuh Manager (`ossec.conf`)
+
+Активируйте интеграцию, ограничив ее критическими алертами для снижения нагрузки.
+
+```xml
+<ossec_config>
+  <integration>
+    <name>custom-zabbix.py</name>
+    <hook_url>https://zabbix.example.com/api_jsonrpc.php</hook_url>
+    <api_key>your_service_token_here</api_key>
+    <level>10</level>
+    <group>authentication_failed,virus,pci_dss_10.2.4</group>
+    <alert_format>json</alert_format>
+  </integration>
+</ossec_config>
 ```
 
 ## Дополнительная информация
 
-### Рекомендации по безопасности
-- Используйте выделенного пользователя в Zabbix с минимально необходимыми правами (только доступ к API и конкретным траппер-элементам).
-- При использовании метода API (`history.push`) убедитесь, что трафик между Wazuh и Zabbix защищен (HTTPS).
+### Оптимизация и безопасность
+*   **Rate Limiting:** Демон `integratord` работает в один поток. Если количество алертов превышает 5-7 в секунду, используйте `Fluentd` на стороне менеджера для батчинга событий перед отправкой в Zabbix API.
+*   **Audit Log:** В Zabbix 7.0+ все действия `history.push` фиксируются в **Reports -> Audit Log**. Это основной инструмент для отладки прав доступа токена.
+*   **HTTPS:** Всегда используйте TLS для взаимодействия с API, так как в теле запроса передается API-токен.
 
 ### См. также
 - [Wazuh: обзор SIEM](../wazuh.md)
 - [Zabbix: трапперы и push-модель](../../../Zabbix/definitions_and_concepts.md#модели-сбора-данных)
-- [Zabbix: Browser Items и синтетический мониторинг](../../../Zabbix/zabbix_website_monitoring.md)
+- [Zabbix: установка и настройка](../../../Zabbix/installation.md) — детали развертывания Server и Proxy.
+- [Интеграция Authentik и Wazuh](./authentik-sso-integration.md) — аудит событий доступа.

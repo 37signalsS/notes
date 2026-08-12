@@ -2,151 +2,149 @@
 
 ## Определения
 
-**Wazuh File Integrity Monitoring (FIM)** — это компонент платформы Wazuh, предназначенный для отслеживания изменений в файловой системе в режиме реального времени. В отличие от инструментов статического анализа (например, AIDE), FIM обеспечивает непрерывный мониторинг и позволяет идентифицировать не только факт изменения, но и пользователя или процесс, инициировавший событие.
+**Wazuh File Integrity Monitoring (FIM)** — компонент платформы Wazuh, предназначенный для непрерывного отслеживания изменений в файловой системе. В отличие от инструментов статического анализа (например, AIDE), FIM обеспечивает мониторинг в реальном времени и позволяет идентифицировать не только факт изменения, но и контекст события: какой пользователь и какой процесс инициировали правку.
 
-**Syscheck** — внутренний модуль агента Wazuh, отвечающий за сканирование файлов, вычисление контрольных сумм (MD5, SHA-1, SHA-256) и мониторинг атрибутов (права доступа, владелец).
+**Syscheck** — внутренний модуль агента Wazuh, выполняющий сканирование файлов, вычисление контрольных сумм (MD5, SHA-1, SHA-256) и мониторинг метаданных (права доступа, владелец, размер).
 
-## Базовые концепции
+## Основные концепции
 
 ### Режимы мониторинга
 
-1.  **Периодическое сканирование (Scheduled):** Агент сканирует выбранные директории через определенные интервалы времени.
-2.  **Реальное время (Real-time):** Использование механизмов ядра (inotify в Linux) для мгновенного обнаружения изменений.
-3.  **Аудит данных (Whodata):** Самый продвинутый режим, использующий подсистему `auditd` для получения информации о том, **кто** (пользователь) и **каким процессом** изменил файл.
+1.  **Периодическое сканирование (Scheduled):** Агент сканирует выбранные директории через заданные интервалы времени (`frequency`). Используется для больших статических библиотек и системных файлов, где изменения редки.
+2.  **Реальное время (Real-time):** Использование механизмов ядра (inotify в Linux, ReadDirectoryChangesW в Windows) для мгновенного обнаружения изменений.
+3.  **Аудит данных (Whodata):** Наиболее детализированный режим, предоставляющий информацию о пользователе (UID/User) и процессе (PID, имя), внесшем изменения.
+
+### Механизмы Whodata по платформам
+
+| Платформа | Механизм (Provider) | Особенности |
+| :--- | :--- | :--- |
+| **Linux (Kernel 4.14+)** | **eBPF** | Оптимизированная производительность, низкая нагрузка на CPU, не требует auditd. |
+| **Linux (Legacy)** | **Auditd** | Использует подсистему аудита ядра. Может вызывать задержки на высоконагруженных системах. |
+| **Windows** | **Windows Audit** | Использует SACL (System Access Control Lists). Требует включения политики "Audit File System". |
 
 ### Архитектура FIM
 
-| Компонент | Роль |
+| Компонент | Роль в FIM |
 | :--- | :--- |
-| **Wazuh Agent** | Наблюдает за файлами, вычисляет хеши и отправляет события на сервер. |
-| **auditd** | (Опционально) Поставляет данные о пользователях для режима `whodata`. |
-| **Wazuh Manager** | Сравнивает полученные данные с эталонной базой (baseline) и генерирует алерты. |
-| **Wazuh Indexer** | Хранит историю изменений и результаты diff. |
+| **Wazuh Agent** | Наблюдает за файлами, вычисляет хеши, собирает данные о процессах и отправляет события. |
+| **Модули ядра** | (eBPF, inotify, Audit) перехватывают системные вызовы обращения к файлам. |
+| **Wazuh Manager** | Сравнивает данные с эталонной базой (baseline), хранящейся в SQLite, и генерирует алерты. |
+| **Wazuh Indexer** | Индексирует события для визуализации в Dashboard и поиска по истории изменений. |
 
 ## Практические сценарии
 
 ### 1. Подготовка инфраструктуры
 
-Для работы режима `whodata` на Linux-агентах должна быть установлена и запущена подсистема аудита.
-
-**Установка auditd:**
+#### Для Linux (режим Audit)
+Если планируется использовать стандартный Audit-провайдер, необходимо установить зависимости:
 
 ```bash
-# Для Debian/Ubuntu
+# Debian/Ubuntu
 sudo apt install auditd audispd-plugins -y
 sudo systemctl enable --now auditd
 
-# Для RHEL/CentOS/Rocky
+# RHEL/CentOS/Rocky
 sudo dnf install audit audispd-plugins -y
 sudo systemctl enable --now auditd
 ```
 
-**Проверка работы:**
-```bash
-sudo auditctl -l
-# → result: (список правил или сообщение о том, что правил нет)
+#### Для Windows
+Необходимо убедиться, что включен аудит файловой системы:
+1. Откройте `secpol.msc`.
+2. Перейдите в **Local Policies -> Audit Policy**.
+3. Включите **Audit object access** (Success, Failure).
+4. Или через PowerShell:
+```powershell
+auditpol /set /subcategory:"File System" /success:enable /failure:enable
 ```
 
-### 2. Централизованная конфигурация группы
+### 2. Централизованная конфигурация
 
-Рекомендуется настраивать мониторинг через группы агентов на стороне менеджера (`/var/ossec/etc/shared/linux/agent.conf`).
+Конфигурация задается в `ossec.conf` агента или централизованно в `agent.conf` на менеджере.
 
 ```xml
-<agent_config>
-  <syscheck>
-    <!-- Интервал полного сканирования (300 секунд) -->
-    <frequency>300</frequency>
-    
-    <!-- Включение режима whodata и отображение diff -->
-    <whodata>yes</whodata>
-    <diff>yes</diff>
-    
-    <!-- Мониторинг критических файлов -->
-    <directories check_all="yes" whodata="yes" report_changes="yes">/etc/passwd</directories>
-    <directories check_all="yes" whodata="yes" report_changes="yes">/etc/shadow</directories>
-    <directories check_all="yes" whodata="yes" report_changes="yes">/etc/sudoers</directories>
-    <directories check_all="yes" whodata="yes" report_changes="yes">/etc/ssh/sshd_config</directories>
-    
-    <!-- Игнорирование временных файлов -->
-    <ignore>/etc/passwd-</ignore>
-    <ignore>/etc/shadow-</ignore>
-    <ignore>/etc/sudoers.tmp</ignore>
-    <ignore>/etc/.pwd.lock</ignore>
-    
-    <!-- Дополнительные параметры -->
-    <alert_new_files>yes</alert_new_files>
-    <scan_on_start>yes</scan_on_start>
-    <auto_ignore>no</auto_ignore>
-  </syscheck>
-</agent_config>
+<syscheck>
+  <!-- Частота полного сканирования для синхронизации базы (раз в 12 часов) -->
+  <frequency>43200</frequency>
+  
+  <!-- Глобальные настройки Whodata -->
+  <whodata>
+    <provider>ebpf</provider> <!-- Рекомендуется для современных Linux ядер -->
+  </whodata>
+
+  <!-- Критические системные файлы с Whodata и Diff -->
+  <directories check_all="yes" whodata="yes" report_changes="yes">/etc,/usr/bin,/usr/sbin</directories>
+  
+  <!-- Защита конфиденциальных данных: мониторинг без сохранения diff (запрет отправки содержимого на менеджер) -->
+  <directories check_all="yes" whodata="yes" report_changes="no">/etc/shadow,/etc/sudoers</directories>
+  
+  <!-- Игнорирование часто меняющихся или временных файлов (снижение шума) -->
+  <ignore>/etc/mtab</ignore>
+  <ignore>/etc/hosts.deny</ignore>
+  <ignore>/etc/passwd-</ignore>
+  <ignore type="sregex">.tmp$|.swp$</ignore>
+  
+  <!-- Дополнительные параметры -->
+  <alert_new_files>yes</alert_new_files>
+  <scan_on_start>yes</scan_on_start>
+  <auto_ignore frequency="10" timeframe="3600">no</auto_ignore>
+</syscheck>
 ```
 
 ### 3. Настройка правил алертинга
 
-Для критических файлов рекомендуется повысить уровень важности событий до **12**. Отредактируйте `/var/ossec/etc/rules/local_rules.xml` на менеджере:
+В файле `/var/ossec/etc/rules/local_rules.xml` можно переопределить стандартные уровни важности.
 
 ```xml
 <group name="syscheck,">
-  <!-- Изменение /etc/passwd -->
-  <rule id="100100" level="12">
-    <if_sid>550</if_sid>
-    <field name="file">/etc/passwd</field>
-    <description>КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Изменен файл /etc/passwd</description>
-    <mitre>
-      <id>T1078</id>
-      <id>T1136</id>
-    </mitre>
-  </rule>
-
-  <!-- Изменение /etc/shadow -->
-  <rule id="100101" level="12">
+  <!-- Повышение уровня важности для изменений в /etc/shadow -->
+  <rule id="100201" level="13">
     <if_sid>550</if_sid>
     <field name="file">/etc/shadow</field>
-    <description>КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Изменен файл /etc/shadow (пароли)</description>
+    <description>КРИТИЧЕСКОЕ СОБЫТИЕ: Попытка изменения хешей паролей в /etc/shadow</description>
     <mitre>
-      <id>T1003</id>
-      <id>T1078</id>
+      <id>T1003.008</id>
     </mitre>
   </rule>
 
-  <!-- Изменение /etc/sudoers -->
-  <rule id="100102" level="12">
-    <if_sid>550</if_sid>
-    <field name="file">/etc/sudoers</field>
-    <description>КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Изменен файл /etc/sudoers</description>
-    <mitre>
-      <id>T1078</id>
-      <id>T1548</id>
-    </mitre>
-  </rule>
-
-  <!-- Дополнительное правило для whodata: КТО изменил -->
-  <rule id="100103" level="10">
+  <!-- Отслеживание конкретного пользователя в whodata -->
+  <rule id="100202" level="10">
     <if_sid>554</if_sid>
-    <field name="file">/etc/passwd</field>
-    <field name="file">/etc/shadow</field>
-    <field name="file">/etc/sudoers</field>
-    <description>Обнаружен пользователь, изменивший критический файл: $(file) - $(audit.user.name)</description>
-    <mitre>
-      <id>T1078</id>
-    </mitre>
+    <field name="audit.user.name">root</field>
+    <description>Файловая система изменена пользователем root (Whodata)</description>
   </rule>
 </group>
 ```
 
+### 4. Оптимизация и борьба с "Event Floods"
+
+При мониторинге директорий с высокой интенсивностью записи (логи, базы данных) FIM может перегрузить агент.
+
+*   **Использование eBPF:** Снижает нагрузку на CPU по сравнению с `auditd` за счет более эффективной фильтрации событий на уровне ядра.
+*   **Исключение путей:** Не включайте `whodata` для директорий `/var/log`, `/var/lib/mysql` или путей с временными файлами приложений.
+*   **Параметр `auto_ignore`:** Позволяет автоматически игнорировать файлы, которые меняются слишком часто (по умолчанию выключен для безопасности).
+*   **Синхронизация базы:** Используйте `<frequency>` с большими интервалами, полагаясь на Real-time/Whodata для оперативного обнаружения, чтобы не нагружать диск частыми полными сканированиями.
+
 ## Дополнительная информация
 
-### Сравнение с другими инструментами
-| Особенность | Wazuh FIM | AIDE / Tripwire |
-| :--- | :--- | :--- |
-| **Режим** | В реальном времени | По расписанию (cron) |
-| **Централизация** | Да (Wazuh Manager) | Нет (локальные БД) |
-| **Аудит (Кто?)** | Да (через auditd) | Нет |
-| **Реагирование** | Active Response | Нет |
+### Сравнение с аналогичными инструментами
+
+| Особенность | Wazuh FIM | AIDE | Auditd (Standalone) |
+| :--- | :--- | :--- | :--- |
+| **Реакция** | В реальном времени | По расписанию | В реальном времени |
+| **Атрибуция (Кто?)** | Да (Whodata) | Нет | Да |
+| **Хранение хешей** | Централизованно (Manager) | Локально | Нет (только логи) |
+| **Active Response** | Да (блокировка IP/пользователя) | Нет | Нет |
+
+### Ограничения и нюансы
+*   **Сетевые ФС:** Мониторинг NFS/CIFS в режиме Real-time/Whodata не поддерживается большинством механизмов ядра на стороне клиента (требуется установка агента на сервер хранения).
+*   **Объем данных:** Включение `report_changes="yes"` (diff) для больших файлов может быстро переполнить хранилище менеджера.
+*   **Количество файлов:** По умолчанию лимит мониторинга — 100 000 файлов на агента (регулируется в `internal_options.conf`).
 
 ### См. также
 - [auditd: аудит системных вызовов](../../../Linux/SystemAdministration/Logging/auditd.md)
 - [Мониторинг ядра через Wazuh](./kernel_monitoring.md)
 - [Wazuh: обзор SIEM](../wazuh.md)
 - [Проверка целостности файлов в Linux](../../../Linux/Security/Concepts/file-integrity-checking.md)
-- [Автоматизация Wazuh через Ansible](./ansible-automation-per-agent.md) — управление конфигурациями и правилами в больших средах.
+- [Автоматизация Wazuh через Ansible](./ansible-automation-per-agent.md)
+

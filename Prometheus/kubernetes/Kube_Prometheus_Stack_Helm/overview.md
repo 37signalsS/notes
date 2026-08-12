@@ -2,72 +2,72 @@
 
 ## Определения
 
-**kube-prometheus-stack** — Helm-чарт для развёртывания полного стека мониторинга в Kubernetes. Управляет Prometheus, Alertmanager, Grafana, экспортерами и Prometheus Operator через декларативную конфигурацию `values.yaml`.
+**kube-prometheus-stack (KPS)** — основной Helm-чарт сообщества для развёртывания полной экосистемы наблюдаемости (Observability) в Kubernetes. Управляет жизненным циклом Prometheus, Alertmanager, Grafana и набора экспортеров через декларативную конфигурацию в `values.yaml`.
 
-**Промежуточный чарт (umbrella chart)** — Helm-чарт, включающий зависимые subchart'ы (prometheus-node-exporter, kube-state-metrics, grafana).
+**Промежуточный чарт (Umbrella Chart)** — архитектурный паттерн Helm, при котором один чарт объединяет несколько независимых субчартов (`grafana`, `kube-state-metrics`, `prometheus-node-exporter`) для упрощения управления зависимостями и общей конфигурацией.
+
+**Prometheus Operator** — ядро стека, обеспечивающее работу Kubernetes-native мониторинга через Custom Resource Definitions (CRD).
 
 > **См. также:** [Мониторинг Kubernetes — общий обзор](../overview.md), [Prometheus Operator](../operator/concepts.md), [Helm](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md).
 
 ## Основные концепции
 
-### Актуальные версии
+### Актуальные версии (на август 2026 г.)
 
-| Параметр | Значение | Дата проверки |
-|---|---|---|
-| **Версия чарта** | 82.x | Апрель 2026 |
-| **Prometheus** | 3.10.x | Апрель 2026 |
-| **Alertmanager** | 0.31.x | Апрель 2026 |
-| **Grafana** | 12.x | Апрель 2026 |
-| **Prometheus Operator** | 0.89.x | Апрель 2026 |
-| **Минимальный Kubernetes** | 1.27+ | — |
+| Компонент | Версия | Статус |
+| :--- | :--- | :--- |
+| **Helm-чарт** | 88.1.x+ | Текущий стабильный релиз |
+| **Prometheus Server** | 3.12.x+ | Поддержка Remote Write 2.0, Native Histograms |
+| **Alertmanager** | 0.32.x+ | Улучшенная кластеризация |
+| **Grafana** | 12.4.x+ | Интеграция с Unified Alerting и Alloy |
+| **Prometheus Operator** | 0.92.x+ | Поддержка ScrapeConfig и OTLP |
+| **Kubernetes** | 1.28 - 1.34 | Рекомендуемый диапазон версий |
 
-> **Важно:** Проверяйте актуальные версии на [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack).
+> **Важно:** Актуальные спецификации чарта доступны на [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack).
 
 ### Архитектура стека
 
 | Компонент | Тип объекта | Назначение |
-|---|---|---|
-| **Prometheus Server** | StatefulSet | Сбор и хранение метрик |
-| **Alertmanager** | StatefulSet | Обработка и маршрутизация оповещений |
-| **Grafana** | Deployment | Визуализация, дашборды, Unified Alerting |
-| **Prometheus Operator** | Deployment | Управление стеком через CRD |
-| **Node Exporter** | DaemonSet | Метрики хостов (CPU, память, диск, сеть) |
-| **Kube-State-Metrics** | Deployment | Метрики объектов Kubernetes |
-| **Blackbox Exporter** | Deployment | Blackbox-мониторинг (HTTP/TCP/ICMP) |
-| **Configmap Reload** | Sidecar | Автоперезагрузка при изменении ConfigMap |
+| :--- | :--- | :--- |
+| **Prometheus Server** | StatefulSet | Сбор, хранение (TSDB) и обработка метрик. |
+| **Alertmanager** | StatefulSet | Дедупликация и маршрутизация оповещений. |
+| **Grafana** | Deployment | Визуализация, дашборды, мониторинг алертов. |
+| **Prometheus Operator** | Deployment | Автоматизация конфигурации через CRD. |
+| **Node Exporter** | DaemonSet | Системные метрики ОС с каждого узла. |
+| **Kube-State-Metrics** | Deployment | Генерация метрик на основе объектов API K8s. |
+| **Blackbox Exporter** | Deployment | Проверки доступности эндпоинтов (HTTP, TCP). |
+| **OTLP Ingest** | Service | (v3.0+) Прием данных напрямую по протоколу OpenTelemetry. |
 
 ### Зависимости чарта
 
-Чарт включает следующие subchart'ы:
+Чарт интегрирует следующие субчарты, управление которыми происходит через соответствующие секции в `values.yaml`:
 
-| Subchart | Источник | Управление |
-|---|---|---|
-| `prometheus-node-exporter` | `prometheus-community/prometheus-node-exporter` | Через `nodeExporter.*` |
-| `kube-state-metrics` | `prometheus-community/kube-state-metrics` | Через `kube-state-metrics.*` |
-| `grafana` | `grafana-community/grafana` (субчарт) | Через `grafana.*` |
-| `prometheus-windows-exporter` | `prometheus-community/prometheus-windows-exporter` | Через `windowsMonitoring.*` |
+*   `prometheus-node-exporter` (секция `nodeExporter.*`)
+*   `kube-state-metrics` (секция `kubeStateMetrics.*`)
+*   `grafana` (секция `grafana.*`)
+*   `prometheus-windows-exporter` (секция `windowsMonitoring.*`)
 
-### Ключевые CRD
+### Ключевые ресурсы (CRD)
 
-| CRD | Назначение | Файл |
-|---|---|---|
-| **ServiceMonitor** | Описание целей скрейпинга через Service | [Prometheus Operator CRD](../operator/crd/servicemonitor.md) |
-| **PodMonitor** | Описание целей скрейпинга через Pod | [PodMonitor CRD](../operator/crd/podmonitor.md) |
-| **PrometheusRule** | Правила алертинга и записи | [PrometheusRule CRD](../operator/crd/prometheusrule.md) |
-| **Probe** | Blackbox-мониторинг | [Probe CRD](../operator/crd/probe.md) |
-| **AlertmanagerConfig** | Маршрутизация алертов | [AlertmanagerConfig CRD](../operator/crd/alertmanagerconfig.md) |
-| **Prometheus** | Описание экземпляра Prometheus | [Prometheus CRD](../operator/crd/prometheus.md) |
-| **Alertmanager** | Описание экземпляра Alertmanager | [Alertmanager CRD](../operator/crd/alertmanager.md) |
+| Ресурс | Назначение | Подробности |
+| :--- | :--- | :--- |
+| **ServiceMonitor** | Сбор метрик с Kubernetes Services. | [ServiceMonitor CRD](../operator/crd/servicemonitor.md) |
+| **PodMonitor** | Прямой скрейпинг подов (sidecars). | [PodMonitor CRD](../operator/crd/podmonitor.md) |
+| **ScrapeConfig** | Произвольные конфигурации скрейпинга (OTLP, внешние цели). | [ScrapeConfig CRD](../operator/crd/scrapeconfig.md) |
+| **PrometheusRule** | Описание правил алертинга и агрегации. | [PrometheusRule CRD](../operator/crd/prometheusrule.md) |
+| **Probe** | Настройка статических проверок Blackbox Exporter. | [Probe CRD](../operator/crd/probe.md) |
+| **AlertmanagerConfig** | Управление маршрутами и получателями алертов. | [AlertmanagerConfig CRD](../operator/crd/alertmanagerconfig.md) |
+| **Prometheus** | Декларативное описание инстанса Prometheus Server. | [Prometheus CRD](../operator/crd/prometheus.md) |
 
 ## Практические сценарии
 
 ### Быстрый старт
 
 ```bash
-# Создание namespace
+# Создание выделенного пространства имен
 kubectl create namespace monitoring
 
-# Добавление репозитория
+# Добавление репозитория сообщества
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 
@@ -77,52 +77,43 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
   --create-namespace
 ```
 
-### Работа с локальной копией
+### Рекомендуемый рабочий процесс (GitOps/Local Copy)
 
-**Рекомендация:** Используйте локальную копию чарта для версионирования конфигурации в Git.
+Использование локальной копии чарта и плагина `helm-diff` является промышленным стандартом.
 
 ```bash
-# Скачивание чарта
+# 1. Скачивание и распаковка чарта
 helm pull prometheus-community/kube-prometheus-stack --untar
-cd kube-prometheus-stack
 
-# Копирование values.yaml в отдельный файл
-cp values.yaml my-values.yaml
+# 2. Создание файла переопределений
+cp kube-prometheus-stack/values.yaml my-values.yaml
 
-# Редактирование
-vim my-values.yaml
-
-# Установка с локальными значениями
-helm install monitoring . \
+# 3. Просмотр планируемых изменений
+helm diff upgrade monitoring ./kube-prometheus-stack \
   --namespace monitoring \
-  --create-namespace \
+  -f my-values.yaml
+
+# 4. Применение изменений
+helm upgrade monitoring ./kube-prometheus-stack \
+  --namespace monitoring \
   -f my-values.yaml
 ```
 
-### Проверка установки
+### Диагностика после установки
 
 ```bash
-# Проверка подов
-kubectl get pods -n monitoring
+# Проверка статуса всех компонентов
+kubectl get all -n monitoring -l release=monitoring
 
-# Проверка ServiceMonitor
-kubectl get servicemonitor -n monitoring
+# Просмотр логов Prometheus Operator (критично при проблемах с CRD)
+kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator
 
-# Проверка CRD
-kubectl get crd | grep monitoring.coreos.com
-
-# Доступ к Prometheus
+# Проверка активных целей (Targets) в Prometheus
 kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
-
-# Доступ к Grafana
-kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80
-
-# Пароль Grafana (из Secret)
-kubectl get secret monitoring-grafana -n monitoring \
-  -o jsonpath="{.data.admin-password}" | base64 -d
+# → Открыть http://localhost:9090/targets
 ```
 
-### Обновление
+### Обновление и откат
 
 ```bash
 # Обновление репозитория
@@ -131,13 +122,10 @@ helm repo update
 # Обновление релиза
 helm upgrade monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
-  -f values.yaml
+  -f my-values.yaml
 
 # Откат к предыдущей версии
 helm rollback monitoring -n monitoring
-
-# Проверка истории
-helm history monitoring -n monitoring
 ```
 
 ### Удаление
@@ -156,136 +144,83 @@ kubectl delete crd probes.monitoring.coreos.com
 kubectl delete crd alertmanagerconfigs.monitoring.coreos.com
 ```
 
-> **Важно:** Удаление CRD приведёт к потере всех Custom Resources — ServiceMonitor, PrometheusRule, Probe и др.
+> **Важно:** Удаление CRD приведёт к потере всех созданных ресурсов мониторинга в кластере.
 
 ## Дополнительная информация
 
-### Структура values.yaml
+### Структура values.yaml (Ключевые секции)
 
-Основные секции `values.yaml`:
+В 2026 году чарт предоставляет расширенные механизмы управления скрейпингом:
 
 ```yaml
+# Глобальные настройки
+global:
+  imageRegistry: quay.io # Переопределение для закрытых контуров
+
 # Prometheus Server
 prometheus:
   prometheusSpec:
-    retention: 15d
-    resources:
-      requests:
-        memory: 400Mi
-        cpu: 200m
-      limits:
-        memory: 2Gi
-        cpu: 1000m
+    retention: 30d
+    enableFeatures:
+      - native-histograms
+      - remote-write-receiver
+    # Механизм scrapeClasses для переиспользования конфигураций
+    scrapeClasses:
+      - name: default
+        relabelings:
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: longhorn
+          storageClassName: premium-rwo
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: 50Gi
+              storage: 100Gi
 
-# Alertmanager
-alertmanager:
-  alertmanagerSpec:
-    replicas: 3
-    storage:
-      volumeClaimTemplate:
-        spec:
-          storageClassName: longhorn
-          resources:
-            requests:
-              storage: 10Gi
-
-# Grafana
+# Grafana (интеграция субчарта)
 grafana:
-  adminPassword: "admin"
-  persistence:
-    enabled: true
-    size: 10Gi
+  enabled: true
+  adminPassword: "измените_меня"
   sidecar:
     dashboards:
       enabled: true
       label: grafana_dashboard
+      searchNamespace: ALL
 
-# Экспортеры
-nodeExporter:
+# Автоматический мониторинг компонентов K8s
+kubeApiServer:
   enabled: true
-
-kubeStateMetrics:
+kubeEtcd:
   enabled: true
 ```
 
-> **См. также:** [Prometheus config](./prometheus_config.md), [Alertmanager config](./alertmanager_config.md), [Grafana config](./grafana_config.md), [Exporters config](./exporters_config.md).
+### Рекомендуемые ресурсы (Medium Cluster)
 
-### Рекомендуемые ресурсы для small/medium кластеров
+Данные актуальны для Prometheus 3.x с учетом использования Native Histograms.
 
-| Компонент | CPU request | Memory request | CPU limit | Memory limit |
-|---|---|---|---|---|
-| Prometheus | 200m | 400Mi | 1000m | 2Gi |
-| Alertmanager | 100m | 128Mi | 200m | 256Mi |
-| Grafana | 100m | 256Mi | 500m | 512Mi |
-| Node Exporter | 50m | 64Mi | 150m | 128Mi |
-| Kube-State-Metrics | 100m | 128Mi | 250m | 256Mi |
+| Компонент | CPU Request | Memory Request | CPU Limit | Memory Limit |
+| :--- | :--- | :--- | :--- | :--- |
+| **Prometheus** | 500m | 2Gi | 2000m | 8Gi |
+| **Alertmanager** | 100m | 256Mi | 500m | 512Mi |
+| **Grafana** | 200m | 512Mi | 1000m | 1Gi |
+| **Operator** | 100m | 128Mi | 200m | 256Mi |
 
 ### Рекомендации по безопасности
 
-**1. Пароль Grafana через Secret:**
-
-```yaml
-grafana:
-  admin:
-    existingSecret: "grafana-admin-secret"
-    adminUserKey: "username"
-    adminPasswordKey: "password"
-```
-
-**2. Network Policies:**
-
-```yaml
-prometheus:
-  networkPolicy:
-    enabled: true
-    ingress:
-      - from:
-          - namespaceSelector:
-              matchLabels:
-                name: monitoring
-          - podSelector:
-              matchLabels:
-                app: grafana
-```
-
-**3. TLS для Ingress:**
-
-```yaml
-prometheus:
-  ingress:
-    enabled: true
-    ingressClassName: nginx
-    hosts:
-      - prometheus.example.com
-    tls:
-      - secretName: prometheus-tls
-        hosts:
-          - prometheus.example.com
-```
-
-### Файлы конфигурации компонентов
-
-| Компонент | Файл | Описание |
-|---|---|---|
-| Prometheus Server | [prometheus_config.md](./prometheus_config.md) | Ретенция, ресурсы, storage |
-| Alertmanager | [alertmanager_config.md](./alertmanager_config.md) | Реплики, routing, PV |
-| Grafana | [grafana_config.md](./grafana_config.md) | Sidecar, PV, плагины |
-| Экспортеры | [exporters_config.md](./exporters_config.md) | Node Exporter, KSM, Blackbox |
-| Прочие | [other_components_config.md](./other_components_config.md) | RBAC, defaultRules, Push Gateway |
+1.  **High Availability (HA):** Всегда устанавливайте `prometheus.prometheusSpec.replicas: 2` и `alertmanager.alertmanagerSpec.replicas: 3` для production-сред.
+2.  **RBAC:** Используйте `serviceAccounts` с ограниченными правами для экспортеров.
+3.  **Network Policies:** Включайте изоляцию трафика мониторинга:
+    ```yaml
+    prometheus:
+      networkPolicy:
+        enabled: true
+    ```
 
 ### Связанные темы
 
-* [Мониторинг Kubernetes — общий обзор](../overview.md) — концепции мониторинга в K8s
-* [Prometheus Operator](../operator/concepts.md) — управление через CRD
-* [Service Discovery](../service_discovery.md) — обнаружение целей
-* [Практические сценарии](./practical_scenarios.md) — онлайн/оффлайн установка
-* [Установка Prometheus на хост](../../installation/overview.md) — не-Kubernetes установка
-* [Масштабирование](../../scaling/overview.md) — федерация, Thanos
+* [Файлы конфигурации компонентов](./other_components_config.md) — детализация разделов `values.yaml`
+* [Практические сценарии](./practical_scenarios.md) — специфические кейсы установки
+* [Масштабирование](../../scaling/overview.md) — федерация и Remote Write
+* [Безопасность оператора](../operator/Security/index.md) — защита в Kubernetes

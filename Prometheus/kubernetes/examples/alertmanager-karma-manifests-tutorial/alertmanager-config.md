@@ -2,9 +2,9 @@
 
 ## Определения
 
-**ConfigMap конфигурации Alertmanager** — ресурс Kubernetes, хранящий файл `alertmanager.yml`. Начиная с версии 0.27+, Alertmanager поддерживает прямое использование переменных окружения в конфигурационном файле, что позволяет избежать хранения чувствительных данных (паролей, токенов) в ConfigMap.
+**ConfigMap конфигурации Alertmanager** — ресурс Kubernetes, хранящий файл `alertmanager.yml`. Начиная с версии 0.27+, Alertmanager поддерживает прямое использование переменных окружения в конфигурационном файле, что позволяет избежать хранения чувствительных данных (паролей, токенов) в ConfigMap и обеспечивает безопасность при использовании GitOps.
 
-> **См. также:** [Полная конфигурация Alertmanager](../../alertmanager.md#конфигурация-alertmanageryml).
+> **См. также:** [Полная конфигурация Alertmanager](../../../alertmanager.md#конфигурация-alertmanageryml).
 
 ---
 
@@ -24,8 +24,9 @@
 
 1.  **Global:** Глобальные настройки (SMTP-серверы, интервалы).
 2.  **Route:** Дерево маршрутизации, определяющее, куда отправлять конкретные алерты.
-3.  **Receivers:** Описание способов доставки (Telegram, Email, Webhooks).
-4.  **Templates:** Пути к файлам визуального оформления уведомлений.
+3.  **Inhibit Rules:** Правила подавления, позволяющие отключать уведомления при наличии связанных критических алертов.
+4.  **Receivers:** Описание способов доставки (Telegram, Email, Webhooks).
+5.  **Templates:** Пути к файлам визуального оформления уведомлений.
 
 ---
 
@@ -33,7 +34,7 @@
 
 ### Манифест ConfigMap
 
-Пример конфигурации с нативной поддержкой переменных окружения.
+Пример конфигурации с нативной поддержкой переменных окружения и современной нотацией матчеров.
 
 **`alertmanager-config.yaml`**
 
@@ -52,7 +53,7 @@ data:
       smtp_auth_password: '${SMTP_PASSWORD}'
 
     route:
-      group_by: ['job']
+      group_by: ['alertname', 'job']
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 12h
@@ -64,7 +65,13 @@ data:
           continue: true
         - receiver: 'email-receiver'
           matchers:
-            - severity =~ "critical|warning"
+            - severity = "critical"
+
+    # Правила подавления (например, не слать алерты о подах, если нода лежит)
+    inhibit_rules:
+      - source_matchers: [severity="critical", alertname="NodeDown"]
+        target_matchers: [severity="warning"]
+        equal: ['node', 'instance']
 
     receivers:
       - name: 'default-receiver'
@@ -89,16 +96,19 @@ data:
       - '/etc/alertmanager/templates/*.tmpl'
 ```
 
-### Логика маршрутизации
+### Валидация конфигурации
 
--   **Severity Match:** Алерты с уровнем `critical` или `warning` отправляются одновременно в Telegram и Email благодаря параметру `continue: true`.
--   **Fallback:** Все остальные алерты попадают в `default-receiver` (blackhole), что предотвращает спам неклассифицированными уведомлениями.
+После применения ConfigMap рекомендуется проверить синтаксис внутри пода:
+
+```bash
+kubectl exec -n monitoring alertmanager-0 -c alertmanager -- \
+  amtool check-config /etc/alertmanager/alertmanager.yml
+```
 
 ---
 
 ## Дополнительная информация
 
 - **[Шаблоны сообщений](./alertmanager-templates.md)** — Go-шаблоны для форматирования.
-- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — настройка запуска Alertmanager.
-- **[Секреты Kubernetes](./secrets.md)** — подготовка учетных данных.
-- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
+- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — настройка запуска Alertmanager с флагами расширения переменных.
+- **[Секреты Kubernetes](./secrets.md)** — подготовка учетных данных для ENV-подстановки.

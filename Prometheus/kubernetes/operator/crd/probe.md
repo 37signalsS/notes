@@ -160,8 +160,12 @@ spec:
 | **`module`** | Имя модуля в конфиге экспортера. | Должно совпадать с `blackbox.yml`. |
 | **`targets.staticConfig`** | Список фиксированных целей. | Поддерживает кастомные `labels`. |
 | **`targets.ingress`** | Динамический поиск целей через Ingress. | Использует `host` из правил Ingress. |
-| **`oauth2`** | Конфигурация OAuth2. | **Mutual Exclusion:** нельзя с `basicAuth`. |
+| **`interval`** | Периодичность выполнения проверок. | По умолчанию берется из глобальных настроек Prometheus. |
+| **`scrapeTimeout`** | Максимальное время ожидания ответа. | **Важно:** должен быть больше таймаута в модуле Blackbox Exporter. |
+| **`jobName`** | Переопределение имени задания. | Задает значение метки `job` в метриках. |
+| **`oauth2`** | Конфигурация OAuth2. | **Mutual Exclusion:** нельзя использовать вместе с `basicAuth`. |
 | **`authorization`** | Настройка Bearer-токена. | Поддерживает `credentials` из Secret. |
+| **`tlsConfig`** | TLS для соединения с пробером. | Влияет на канал `Prometheus -> Prober`, а не на валидацию цели. |
 | **`scrapeProtocols`** | Приоритет протоколов сбора. | OpenMetrics, PrometheusText. |
 | **`scrapeNativeHistograms`** | Включение нативных гистограмм. | Требует Prometheus >= 3.0. |
 
@@ -174,13 +178,8 @@ spec:
     ```
 3.  **Логи Оператора:** Если таргеты не появились, проверьте логи `prometheus-operator` на наличие ошибок валидации CRD.
 
-### Связанные темы
-
-*   **[Blackbox Exporter — настройка](../../../Exporters/blackbox/blackbox_exporter_overview.md)** — подготовка модулей.
-*   **[Prometheus Operator — Концепции](../concepts.md)** — как работают CRD в стеке.
-*   **[Service Discovery и Relabeling](../../../service_discovery_and_relabeling.md)** — механизмы подмены адресов.
-*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
-
 ### См. также
-* [Официальная документация Prometheus Operator Probe](https://prometheus-operator.dev/docs/operator/design/#probe)
-* [Репозиторий Blackbox Exporter](https://github.com/prometheus/blackbox_exporter)
+
+*   [Blackbox Exporter — настройка модулей](../../../Exporters/blackbox/blackbox_exporter_modules_configuration.md) — подготовка модулей и параметров проверки.
+*   [Prometheus Operator — Концепции](../concepts.md) — архитектура и роль CRD в мониторинге Kubernetes.
+*   [Официальная документация Probe CRD](https://prometheus-operator.dev/docs/operator/design/#probe) — описание параметров и примеров от разработчиков.

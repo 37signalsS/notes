@@ -2,14 +2,16 @@
 
 ## Определения
 
-**Метрики Blackbox Exporter** — временные ряды, генерируемые экспортером при выполнении сетевых проверок (probes). Результаты доступны по пути `/probe`, внутренние метрики самого экспортера — по `/metrics`.
+**Метрики Blackbox Exporter** — временные ряды, генерируемые экспортером в процессе выполнения сетевых проверок (probes). В отличие от внутренних метрик приложения, они отражают состояние сервиса с точки зрения внешнего клиента.
 
-**gRPC (gRPC Remote Procedure Calls)** — современный протокол удаленного вызова процедур с открытым исходным кодом.
-**HTTP/3 (QUIC)** — третья версия протокола HTTP, работающая поверх UDP через протокол QUIC.
-**CEL (Common Expression Language)** — язык выражений для сложной валидации ответов (JSON, заголовки).
-**SSL/TLS (Secure Sockets Layer / Transport Layer Security)** — криптографические протоколы для обеспечения защищенной связи.
+*   **Эндпоинт `/probe`** — возвращает результаты проверки конкретной цели.
+*   **Эндпоинт `/metrics`** — возвращает метрики состояния самого процесса экспортера.
+*   **CEL (Common Expression Language)** — язык выражений, используемый в новых версиях экспортера для сложной валидации HTTP-ответов (например, проверки полей JSON или специфических заголовков).
 
-**См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
+**Связанные документы:**
+*   [Обзор и концепции](./blackbox_exporter_overview.md)
+*   [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
+*   [Установка и настройка](./blackbox_exporter_installation_and_setup.md)
 
 ## Основные концепции
 
@@ -17,121 +19,128 @@
 
 | Метрика | Тип | Описание |
 | :--- | :--- | :--- |
-| `probe_success` | gauge | `1` если проверка успешна, `0` если нет |
-| `probe_duration_seconds` | gauge | Общее время выполнения проверки |
-| `probe_http_version` | gauge | Версия HTTP протокола (`1.1`, `2.0`, `3.0`) |
-| `probe_http_status_code` | gauge | HTTP статус-код ответа |
-| `probe_http_duration_seconds` | gauge | Время HTTP-запроса по фазам (labels: `phase`) |
-| `probe_grpc_status_code` | gauge | Код статуса gRPC (0 — OK, 14 — Unavailable и т.д.) |
-| `probe_grpc_health_status` | gauge | Статус gRPC Health Check (1 — SERVING) |
-| `probe_ssl_earliest_cert_expiry` | gauge | Время истечения самого раннего сертификата (epoch) |
-| `probe_tls_version_info` | info | Информация о версии TLS (label `version`) |
-| `probe_tls_cipher_suite` | info | Используемый шифр (label `cipher`) |
-| `probe_failed_due_to_regex` | gauge | `1` если проверка `fail_if_matches_regexp` сработала |
-| `probe_failed_due_to_cel` | gauge | `1` если CEL-валидация не прошла |
-| `probe_ip_protocol` | gauge | Используемый протокол IP (`4`/`6`) |
-| `probe_icmp_duration_seconds` | gauge | Время ICMP-проверки |
-| `up` | gauge | Доступность самого экспортера для скрейпинга |
+| `probe_success` | gauge | Основной индикатор: `1` — успех, `0` — сбой. |
+| `probe_duration_seconds` | gauge | Полное время выполнения проверки. |
+| `probe_http_version` | gauge | Версия протокола, использованная при ответе (`1.1`, `2`, `3`). |
+| `probe_http_status_code` | gauge | HTTP-код состояния ответа. |
+| `probe_http_duration_seconds` | gauge | Время HTTP-запроса, разбитое по фазам (лейбл `phase`). |
+| `probe_http_redirects` | gauge | Количество выполненных редиректов. |
+| `probe_grpc_status_code` | gauge | Код статуса gRPC (0 — OK, 14 — Unavailable и т.д.). |
+| `probe_grpc_health_status` | gauge | Статус gRPC Health Check (1 — SERVING). |
+| `probe_ssl_earliest_cert_expiry` | gauge | Unix-время (epoch) истечения ближайшего сертификата в цепочке. |
+| `probe_tls_version_info` | info | Информация о версии TLS (лейбл `version`). |
+| `probe_failed_due_to_cel` | gauge | `1`, если валидация через CEL-выражение не прошла. |
+| `probe_dns_lookup_time_seconds` | gauge | Время, затраченное на DNS-резолвинг. |
+| `probe_icmp_duration_seconds` | gauge | Время отклика ICMP (Ping). |
+| `up` | gauge | Статус доступности самого Blackbox Exporter для Prometheus. |
+
+### Детализация фаз HTTP (Лейбл phase)
+
+Метрика `probe_http_duration_seconds` позволяет диагностировать, на каком этапе возникают задержки:
+*   `resolve`: Время на DNS-резолвинг.
+*   `connect`: Время установки TCP-соединения.
+*   `tls`: Время выполнения TLS-handshake.
+*   `processing`: Время от отправки запроса до получения первого байта ответа (**TTFB**).
+*   `transfer`: Время передачи тела ответа.
 
 ### Лейблы метрик
 
 | Лейбл | Описание | Пример |
 | :--- | :--- | :--- |
-| `instance` | Адрес Blackbox Exporter (в Prometheus) | `blackbox:9115` |
-| `target` | Целевой эндпоинт (после релейблинга) | `https://api.example.com` |
-| `module` | Имя использованного модуля | `http_v3_tls13`, `grpc_health` |
-| `phase` | Фаза проверки (для `probe_http_duration_seconds`) | `resolve`, `connect`, `tls`, `processing` |
+| `instance` | Адрес Blackbox Exporter. | `127.0.0.1:9115` |
+| `target` | Проверяемый URL или хост (после relabeling). | `https://api.myapp.com` |
+| `module` | Имя модуля из `blackbox.yml`. | `http_v3_tls13` |
 
 ## Практические сценарии
 
-### Алерт: эндпоинт недоступен (общий)
+### Настройка алертов (Prometheus Rules)
 
+#### Общий сбой проверки (Availability)
 ```yaml
 - alert: BlackboxProbeFailed
   expr: probe_success == 0
-  for: 3m
-  labels:
-    severity: critical
-  annotations:
-    summary: "Проверка {{ $labels.instance }} не удалась"
-    description: "Цель {{ $labels.target }} (модуль {{ $labels.module }}) недоступна более 3 минут."
-```
-
-### Алерт: критическое истечение SSL (менее 7 дней)
-
-```yaml
-- alert: BlackboxSSLCertExpiringSoon
-  expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 7
-  for: 1h
-  labels:
-    severity: critical
-  annotations:
-    summary: "SSL-сертификат истекает через {{ $value | humanizeDuration }}"
-    description: "Сертификат на {{ $labels.target }} требует немедленного обновления."
-```
-
-### Алерт: устаревший TLS или слабый шифр
-
-```yaml
-- alert: BlackboxInsecureTLSVersion
-  expr: probe_tls_version_info{version=~"TLSv1\\.[01]"} == 1
-  for: 15m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Устаревший TLS на {{ $labels.target }}"
-    description: "Обнаружено использование {{ $labels.version }}. Рекомендуется TLS 1.2+."
-```
-
-### Алерт: сбой gRPC сервиса
-
-```yaml
-- alert: BlackboxGRPCStatusError
-  expr: probe_grpc_status_code > 0
   for: 2m
   labels:
     severity: critical
   annotations:
-    summary: "gRPC статус ошибка на {{ $labels.target }}"
-    description: "gRPC вернул код {{ $value }} (ожидался 0/OK)."
+    summary: "Сбой проверки эндпоинта {{ $labels.target }}"
+    description: "Сервис {{ $labels.target }} недоступен более 2 минут (модуль {{ $labels.module }})."
 ```
 
-### Алерт: медленный TTFB (Time To First Byte)
-
+#### Истечение SSL-сертификата (Многоуровневый)
 ```yaml
-- alert: BlackboxSlowTTFB
-  expr: probe_http_duration_seconds{phase="processing"} > 1
+# Предупреждение за 30 дней
+- alert: SSLCertExpiringSoon
+  expr: (probe_ssl_earliest_cert_expiry - time()) < 86400 * 30
+  for: 1h
+  labels:
+    severity: warning
+  annotations:
+    summary: "Срок действия SSL истекает через 30 дней"
+    description: "Сертификат для {{ $labels.target }} истечет {{ $value | humanizeTimestamp }}."
+
+# Критическая ошибка за 7 дней
+- alert: SSLCertExpiringCritical
+  expr: (probe_ssl_earliest_cert_expiry - time()) < 86400 * 7
+  for: 15m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Критическое истечение SSL для {{ $labels.target }}"
+    description: "Сертификат истекает менее чем через неделю!"
+```
+
+#### Деградация производительности (Latency)
+```yaml
+- alert: BlackboxSlowResponse
+  expr: probe_duration_seconds > 5
   for: 5m
   labels:
     severity: warning
   annotations:
-    summary: "Высокий TTFB на {{ $labels.target }}"
-    description: "Время обработки запроса сервером превышает 1с (текущее: {{ $value }}s)."
+    summary: "Медленный ответ от {{ $labels.target }}"
+    description: "Время ответа превышает 5 секунд (текущее: {{ $value | printf \"%.2f\" }}s)."
 ```
 
-### Recording rules для анализа SLO
+#### Ошибка DNS-резолвинга
+```yaml
+- alert: BlackboxDNSFailure
+  expr: probe_dns_lookup_time_seconds == 0
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Ошибка DNS для {{ $labels.target }}"
+    description: "Не удалось разрешить имя хоста для цели {{ $labels.target }}."
+```
 
-Поскольку метрики времени в Blackbox Exporter являются `gauge`, для агрегации перцентилей по времени используется `quantile_over_time` или агрегация по окну.
+### Анализ SLO и SLI (Recording Rules)
+
+Для расчета доступности и производительности на длительных интервалах рекомендуется использовать Recording Rules.
 
 ```yaml
 groups:
-  - name: blackbox-slo-metrics
+  - name: blackbox_slo_rules
     rules:
-      # Средняя доступность за последние 30 дней
+      # SLI: Доступность (Availability) за 5 минут
+      - record: job:probe_success:ratio_rate5m
+        expr: avg_over_time(probe_success[5m])
+
+      # SLI: 95-й перцентиль времени ответа за 1 час
+      - record: job:probe_duration_seconds:p95_1h
+        expr: quantile_over_time(0.95, probe_duration_seconds[1h])
+
+      # SLO: Агрегированная доступность за 30 дней
       - record: job:probe_success:avg30d
         expr: avg_over_time(probe_success[30d])
-
-      # 95-й перцентиль общего времени ответа за 1 час
-      - record: job:probe_duration:p95_1h
-        expr: quantile_over_time(0.95, probe_duration_seconds[1h])
 ```
 
 ## Дополнительная информация
 
-**См. также:**
-- [Конфигурация модулей](./blackbox_exporter_modules_configuration.md) — примеры настройки gRPC и HTTP/3.
-- [Alertmanager](../../alertmanager.md) — маршрутизация уведомлений.
-- [Prometheus Rules](../../rules.md) — основы синтаксиса правил.
+*   **Таймауты:** Убедитесь, что `scrape_timeout` в Prometheus больше, чем `timeout` в модуле Blackbox Exporter, чтобы избежать некорректных нулей в метриках.
+*   **Безопасность:** При проверке внутренних ресурсов через публичный экспортер используйте TLS и Basic Auth на стороне экспортера (настраивается в `web-config.yml`).
 
----
-**Reliability Score: 10/10** (Актуализировано для Blackbox Exporter v0.28.0+, включая HTTP/3 и gRPC, проверено на соответствие спецификациям 2026 года)
+**См. также:**
+*   [Предотвращение истечения SSL](../../../Kubernetes/Operations/ssl_expiration_prevention.md)
+*   [Prometheus: Recording и Alerting Rules](../../rules.md)
+*   [Настройка Alertmanager](../../alertmanager.md)

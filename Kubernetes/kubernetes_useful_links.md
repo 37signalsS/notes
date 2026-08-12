@@ -1,9 +1,49 @@
-* **[Kubernetes Basics (Official Tutorials)](https://kubernetes.io/docs/tutorials/)**: Официальные интерактивные материалы от проекта Kubernetes, пошагово вводят в базовые концепции и терминологию. Подходит для старта и выравнивания базы перед практикой.
-* **[Play with Kubernetes](https://training.play-with-kubernetes.com/kubernetes-workshop/)**: Браузерная среда для экспериментов с Kubernetes без локальной установки. Позволяет получить временный доступ к кластеру и выполнять команды в терминале. Удобно для быстрых проверок и самостоятельной практики.
-* **[Killercoda Kubernetes Scenarios](https://killercoda.com/playgrounds/scenario/kubernetes)**: Платформа с практическими сценариями и встроенным терминалом. Задания построены вокруг типовых задач: поды, деплойменты, сервисы, сеть, диагностика и устранение проблем. Подходит для закрепления навыков на прикладных кейсах.
-* **[KodeKloud Kubernetes Labs](https://kodekloud.com/studio/labs/kubernetes?ref=kodekloud.com)**: Обучающая платформа с лабораторными работами и тренажёрами. Даёт структурированную практику по Kubernetes с постепенным усложнением тем. Подходит для системного обучения и подготовки к рабочим задачам.
-* **[Play with Kubernetes](https://labs.play-with-k8s.com/):** Бесплатная онлайн-песочница, предоставляющая временный доступ к кластеру Kubernetes прямо в браузере.
-* **[Kubelab](https://github.com/natrontech/kubelab):** Набор интерактивных лабораторных работ для изучения основ Kubernetes.
-* **[CK-X](https://github.com/sailor-sh/CK-X):** Проект с практическими заданиями для подготовки к экзаменам Certified Kubernetes Administrator (CKA), Developer (CKAD) и Specialist (CKS).
-* **K8sQuest:** Локальная, практическая игра для обучения поиску и устранению неисправностей в Kubernetes.
-* **[Packt Library](https://www.packtpub.com/):** Цифровая библиотека с доступом к тысячам книг и видео по Kubernetes и DevOps. Позволяет составлять индивидуальные планы развития и использовать инструменты поиска по техническому контенту.
+# Полезные ссылки и ресурсы по Kubernetes
+
+- **Kubernetes Documentation**
+  Первоисточник знаний. Рекомендуется следить за разделами "Concepts" и "Tasks".
+  - [https://kubernetes.io/docs/](https://kubernetes.io/docs/)
+
+- **Kubernetes Basics (Official Tutorials)**
+  Интерактивные материалы, пошагово вводящие в базовые концепции и терминологию.
+  - [https://kubernetes.io/docs/tutorials/](https://kubernetes.io/docs/tutorials/)
+
+- **Kube by Example**
+  Бесплатные интерактивные курсы от Red Hat по различным аспектам K8s.
+  - [https://kubebyexample.com/](https://kubebyexample.com/)
+
+- **KubeWeekly**
+  Еженедельный дайджест новостей экосистемы Cloud Native от CNCF.
+  - [https://www.cncf.io/kubeweekly/](https://www.cncf.io/kubeweekly/)
+
+## Интерактивные лаборатории
+
+- **Killercoda Kubernetes Scenarios**
+  Платформа с практическими сценариями и встроенным терминалом. Идеально для подготовки к экзаменам и закрепления навыков.
+  - [https://killercoda.com/kubernetes](https://killercoda.com/kubernetes)
+
+- **iximiuz Labs**
+  Глубокие технические лабораторные работы по внутреннему устройству контейнеров, CNI и рантаймов.
+  - [https://labs.iximiuz.com/challenges](https://labs.iximiuz.com/challenges)
+
+- **Play with Kubernetes**
+  Браузерная песочница для быстрого развертывания временного кластера без локальной установки.
+  - [https://labs.play-with-k8s.com/](https://labs.play-with-k8s.com/)
+
+- **KodeKloud Kubernetes Labs**
+  Структурированные лабораторные работы с постепенным усложнением тем.
+  - [https://kodekloud.com/studio/labs/kubernetes](https://kodekloud.com/studio/labs/kubernetes)
+
+## Сертификация
+
+- **Certified Kubernetes Administrator (CKA / CKAD / CKS)**
+  Официальные сертификации от Linux Foundation/CNCF.
+  - [Linux Foundation Training](https://training.linuxfoundation.org/certification/certified-kubernetes-administrator-cka/)
+
+- **Killer.sh**
+  Официальный симулятор экзаменов CKA/CKAD/CKS.
+  - [https://killer.sh/](https://killer.sh/)
+
+- **CK-X**
+  Проект с практическими заданиями для подготовки к экзаменам.
+  - [https://github.com/sailor-sh/CK-X](https://github.com/sailor-sh/CK-X)

@@ -2,241 +2,219 @@
 
 ## Определения
 
-**Alertmanager в kube-prometheus-stack** — компонент Helm-чарта, развёртывающий Alertmanager как StatefulSet с декларативным управлением через `values.yaml`. Конфигурация делится на два уровня:
+**Alertmanager в kube-prometheus-stack** — компонент Helm-чарта, развёртывающий Alertmanager как управляемое через Prometheus Operator приложение (обычно StatefulSet). В рамках чарта конфигурация реализуется на трёх уровнях:
 
-1. **Helm-параметры** (`alertmanager.*`) — управление инфраструктурой (реплики, ресурсы, хранилище, ingress).
-2. **Конфигурация Alertmanager** (`alertmanager.config`) — маршрутизация, получатели, правила подавления (генерирует `alertmanager.yaml` в Secret).
+1.  **Инфраструктурный уровень (`alertmanager.alertmanagerSpec`)** — описание параметров пода (ресурсы, реплики, хранилище, аффинити).
+2.  **Глобальный конфигурационный уровень (`alertmanager.config`)** — формирование основного файла `alertmanager.yaml` (глобальные настройки, корневой маршрут).
+3.  **Декларативный уровень (`AlertmanagerConfig` CRD)** — создание модульных конфигураций (маршрутов и получателей) через отдельные Kubernetes-ресурсы.
 
 > **См. также:** [Alertmanager — общая конфигурация](../../alertmanager.md), [Alertmanager CRD](../operator/crd/alertmanager.md).
 
 ## Основные концепции
 
-### Структура Helm-параметров
+### Структура параметров в values.yaml
 
 | Параметр | Описание | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `alertmanager.enabled` | Включение компонента | `true` |
-| `alertmanager.replicaCount` | Количество реплик | `1` |
-| `alertmanager.alertmanagerSpec` | Спецификация Pod (ресурсы, tolerations, affinity) | `{}` |
-| `alertmanager.config` | Конфигурация `alertmanager.yml` (глобальные параметры, маршруты, получатели) | `{}` |
-| `alertmanager.ingress.enabled` | Создание Ingress-ресурса | `false` |
-| `alertmanager.persistentVolume.enabled` | PersistentVolume для silences и данных | `false` |
+| `alertmanager.enabled` | Включение/выключение компонента. | `true` |
+| `alertmanager.apiVersion` | Версия API Alertmanager (рекомендуется `v2`). | `v2` |
+| `alertmanager.alertmanagerSpec` | Спецификация для Prometheus Operator (ресурсы, хранилище). | `{}` |
+| `alertmanager.config` | Тело конфигурации `alertmanager.yaml`. | `{}` |
+| `alertmanager.ingress.enabled` | Создание Ingress-ресурса для доступа к UI. | `false` |
+| `alertmanager.tplConfig` | Позволяет использовать шаблонизацию Helm внутри конфига. | `false` |
 
-### Реплики и высокая доступность
+### Высокая доступность (HA)
 
-| Реплики | Поведение |
-| :--- | :--- |
-| `1` | Одиночный экземпёр, без HA |
-| `3` | Минимум для кворума — дедупликация алертов через gossip-протокол |
-| `>3` | Нечётное число (5, 7) для устойчивости к отказам |
+Alertmanager поддерживает кластеризацию для предотвращения потери уведомлений при сбое узла.
 
-> **Важно:** При `replicaCount > 1` Alertmanager автоматически настраивает кластеризацию через `--cluster.peer`.
+*   **Репликация:** Настраивается через `alertmanager.alertmanagerSpec.replicas`. Для промышленной среды рекомендуется `3` реплики.
+*   **Синхронизация:** Поды обмениваются данными (состоянием силенсов и уведомлений) через gossip-протокол. Оператор автоматически добавляет флаги `--cluster.peer` при `replicas > 1`.
+*   **Дедупликация:** Выполняется на стороне Alertmanager. Если несколько реплик получают один и тот же алерт, пользователю уйдёт только одно уведомление.
 
-### Хранилище
+### Хранилище и сохранение состояния
 
-Alertmanager хранит silences и данные кластера. Без PersistentVolume данные теряются при перезапуске Pod.
+По умолчанию Alertmanager использует `emptyDir`, что приводит к потере силенсов (silences) и данных о доставке уведомлений при перезапуске подов.
 
-| Режим | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| `persistentVolume.enabled: true` | Dynamic provisioning через StorageClass | Production, кластеры с CSI |
-| `volumeClaimTemplate` (через `alertmanagerSpec`) | Явный PVC | Тонкий контроль параметров хранилища |
-| `emptyDir` (по умолчанию без PV) | Эфемерное хранилище | Тестовые среды |
-
-### Конфигурация через `alertmanager.config`
-
-Блок `alertmanager.config` в `values.yaml` генерирует Kubernetes Secret с `alertmanager.yaml`. Поддерживает полный синтаксис Alertmanager:
+Для сохранения состояния необходимо настроить Persistent Volume:
 
 ```yaml
 alertmanager:
-  config:
-    global:
-      resolve_timeout: 5m
-      smtp_smarthost: 'smtp.example.com:587'
-      smtp_from: 'alerts@example.com'
-    route:
-      receiver: 'default-receiver'
-      group_by: ['alertname', 'cluster']
-      group_wait: 30s
-      group_interval: 5m
-      repeat_interval: 4h
-      routes:
-        - match:
-            severity: critical
-          receiver: 'pagerduty'
-    receivers:
-      - name: 'default-receiver'
-        email_configs:
-          - to: 'ops-team@example.com'
-            send_resolved: true
-    inhibit_rules:
-      - source_match:
-          severity: 'critical'
-        target_match:
-          severity: 'warning'
-        equal: ['alertname', 'instance']
-```
-
-> **См. также:** [Полная конфигурация Alertmanager](../../alertmanager.md#конфигурация-alertmanageryml).
-
-## Практические сценарии
-
-### Production-конфигурация с HA и PersistentVolume
-
-```yaml
-alertmanager:
-  enabled: true
-  replicaCount: 3
-
   alertmanagerSpec:
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 250m
-        memory: 256Mi
     storage:
       volumeClaimTemplate:
         spec:
-          storageClassName: longhorn
+          storageClassName: "standard" # Ваш StorageClass
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: 2Gi
-
-  config:
-    global:
-      resolve_timeout: 5m
-      smtp_smarthost: 'smtp.yandex.ru:465'
-      smtp_from: 'alerts@edu-prom.example.com'
-      smtp_auth_username: 'alerts@edu-prom.example.com'
-      smtp_auth_password: '<Password>'
-    route:
-      group_by: ['alertname', 'service']
-      group_wait: 30s
-      group_interval: 5m
-      repeat_interval: 1h
-      receiver: 'team-monitoring'
-      routes:
-        - match:
-            service: prom
-          receiver: 'team-ops'
-        - match:
-            severity: critical
-          receiver: 'pagerduty-critical'
-    receivers:
-      - name: 'team-ops'
-        email_configs:
-          - to: 'ops-team@example.com'
-            send_resolved: true
-      - name: 'team-monitoring'
-        email_configs:
-          - to: 'monitoring-team@example.com'
-            send_resolved: true
-      - name: 'pagerduty-critical'
-        pagerdutyConfigs:
-          - routingKey: '<PAGERDUTY_KEY>'
-            severity: critical
-    inhibit_rules:
-      - source_match:
-          alertname: 'DatacenterDown'
-        target_match:
-          alertname: 'ServerDown'
-        equal: ['cluster']
+              storage: 10Gi
 ```
 
-### Минимальная конфигурация для тестовой среды
+### Интеграция с AlertmanagerConfig (CRD)
+
+Это современный подход к управлению уведомлениями, позволяющий командам настраивать свои алерты самостоятельно.
+
+*   **Селекторы:** Чтобы Alertmanager подхватывал CRD, в `values.yaml` должен быть настроен селектор:
+    ```yaml
+    alertmanager:
+      alertmanagerSpec:
+        alertmanagerConfigSelector:
+          matchLabels:
+            alertmanagerConfig: "enabled"
+    ```
+*   **Область видимости:** По умолчанию Alertmanager ищет CRD только в своём namespace. Для поиска по всему кластеру используйте `alertmanagerConfigNamespaceSelector: {}`.
+
+### Безопасное управление секретами
+
+Хранение паролей (SMTP, Webhook tokens) напрямую в `values.yaml` (`alertmanager.config`) не рекомендуется. Существует два способа безопасной настройки:
+
+1.  **Использование `configSecret`:** Вы заранее создаёте Secret с файлом `alertmanager.yaml` и указываете его имя.
+    ```yaml
+    alertmanager:
+      alertmanagerSpec:
+        configSecret: "custom-alertmanager-config"
+    ```
+2.  **Шаблонизация и внешние секреты:** Использование операторов вроде External Secrets или Helm-шаблонизации (`tplConfig: true`) для подстановки значений из Kubernetes Secrets.
+
+## Практические сценарии
+
+### Глобальная конфигурация (Production)
+
+Пример настройки через `values.yaml` с интеграцией Slack и PagerDuty.
 
 ```yaml
 alertmanager:
   enabled: true
-  replicaCount: 1
+  apiVersion: v2
+  
+  alertmanagerSpec:
+    replicas: 3
+    externalUrl: "https://alertmanager.example.com"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 200m
+        memory: 512Mi
 
   config:
     global:
       resolve_timeout: 5m
+      slack_api_url: "https://hooks.slack.com/services/TXXX/BXXX/XXXX"
+
     route:
-      receiver: 'null'
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: 'slack-default'
+      routes:
+        - matchers:
+            - severity="critical"
+          receiver: 'pagerduty-urgent'
+
     receivers:
-      - name: 'null'
+      - name: 'slack-default'
+        slack_configs:
+          - channel: '#monitoring-alerts'
+            send_resolved: true
+            title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
+            text: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+
+      - name: 'pagerduty-urgent'
+        pagerduty_configs:
+          - service_key: "YOUR-PAGERDUTY-KEY"
 ```
 
-> **Примечание:** Receiver `null` отбрасывает все алерты — полезно для тестов без уведомлений.
+### Использование AlertmanagerConfig для команд
 
-### Отключение Alertmanager
+Пример манифеста для отдельного приложения, который будет автоматически включен в общую конфигурацию.
 
 ```yaml
-alertmanager:
-  enabled: false
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: team-alpha-config
+  namespace: team-alpha
+  labels:
+    alertmanagerConfig: "enabled"
+spec:
+  route:
+    receiver: 'alpha-telegram'
+    group_by: ['job']
+    matchers:
+      - name: team
+        value: alpha
+  receivers:
+    - name: 'alpha-telegram'
+      webhook_configs:
+        - url: 'http://telegram-bot-proxy.monitoring.svc:8080/send'
 ```
 
-> **Важно:** При отключении Alertmanager Prometheus не сможет отправлять оповещения. Алерты будут видны в UI Prometheus, но уведомления не доставляются.
-
-### Доступ через Ingress
+### Настройка Ingress и TLS
 
 ```yaml
 alertmanager:
   ingress:
     enabled: true
     ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
     hosts:
       - alertmanager.example.com
     paths:
       - /
     tls:
-      - secretName: alertmanager-tls
+      - secretName: alertmanager-general-tls
         hosts:
           - alertmanager.example.com
 ```
 
-### Проверка конфигурации
+## Диагностика и отладка
+
+### Проверка текущего конфига
+
+Оператор генерирует итоговый конфиг в Secret. Его можно просмотреть командой:
 
 ```bash
-# Проверка Pod Alertmanager
-kubectl get pods -n monitoring -l app.kubernetes.io/name=alertmanager
-
-# Проверка Secret с конфигурацией
-kubectl get secret alertmonitoring-kube-prometheus-stack-alertmanager -n monitoring -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d
-
-# Валидация через amtool (внутри Pod)
-kubectl exec -n monitoring alertmonitoring-kube-prometheus-stack-alertmanager-0 -- \
-  amtool check-config /etc/alertmanager/config/alertmanager.yaml
+kubectl get secret -n monitoring alertmanager-monitoring-kube-prometheus-alertmanager -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d
 ```
+*Примечание: Имя секрета зависит от названия вашего Helm-релиза.*
 
-### Установка и обновление
+### Использование amtool
+
+Внутри пода Alertmanager доступна утилита `amtool` для проверки конфигурации и управления алертами.
 
 ```bash
-# Установка с файлом значений
-helm install monitoring prometheus-community/kube-prometheus-stack \
-  --namespace monitoring --create-namespace \
-  -f values.yaml
+# Проверка синтаксиса текущего файла в поде
+kubectl exec -it -n monitoring alertmanager-monitoring-kube-prometheus-alertmanager-0 -- amtool check-config /etc/alertmanager/config/alertmanager.yaml
 
-# Обновление конфигурации Alertmanager
-helm upgrade monitoring prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  -f values.yaml
-
-# Проверка истории
-helm history monitoring -n monitoring
+# Просмотр активных алертов
+kubectl exec -it -n monitoring alertmanager-monitoring-kube-prometheus-alertmanager-0 -- amtool alert
 ```
 
-> **Подробные инструкции:** [Онлайн установка](./practical_scenarios/online_installation.md), [Оффлайн установка](./practical_scenarios/offline_airgapped_installation.md).
+### Обновление CRD при апгрейде
+
+Helm не обновляет Custom Resource Definitions (CRDs) автоматически при обновлении чарта. Если вы обновляете `kube-prometheus-stack` на новую мажорную версию, необходимо вручную применить актуальные CRDs:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagerconfigs.yaml
+```
 
 ## Дополнительная информация
 
-### Подбираемые параметры (эмпирически)
+### Рекомендации по ресурсам
 
-| Параметр | Начальное значение | Метрика для наблюдения |
-| :--- | :--- | :--- |
-| `requests.memory` | `128Mi` | `container_memory_usage_bytes` |
-| `requests.cpu` | `100m` | `rate(container_cpu_usage_seconds_total[5m])` |
-| `storage` | `2Gi` | `alertmanager_notifications_failed_total` |
-| `retention` silences | `120h` (default) | Размер PVC |
+| Нагрузка | Поды | CPU (Req/Limit) | RAM (Req/Limit) |
+| :--- | :--- | :--- | :--- |
+| Малая (<100 алертов/день) | 1-2 | 50m / 100m | 128Mi / 256Mi |
+| Средняя (100-1000 алертов/день) | 3 | 100m / 200m | 256Mi / 512Mi |
+| Высокая (>1000 алертов/день) | 3-5 | 200m / 500m | 512Mi / 1Gi |
 
 ### Связанные темы
 
-* [Alertmanager — общая конфигурация](../../alertmanager.md) — маршрутизация, HA, CLI
-* [Alertmanager CRD](../operator/crd/alertmanager.md) — декларативное управление
-* [AlertmanagerConfig CRD](../operator/crd/alertmanagerconfig.md) — маршруты и получатели через CRD
-* [Практические сценарии установки](./practical_scenarios.md) — онлайн/оффлайн установка
-* [Karma Dashboard](../../karma_dashboard.md) — расширенный UI для Alertmanager
+* [Alertmanager — общая конфигурация](../../alertmanager.md) — логика маршрутизации и шаблоны.
+* [Alertmanager CRD](../operator/crd/alertmanager.md) — глубокое погружение в параметры оператора.
+* [AlertmanagerConfig CRD](../operator/crd/alertmanagerconfig.md) — детальное описание ресурсов для команд.
+* [Karma Dashboard](../../karma_dashboard.md) — визуализация алертов для больших инсталляций.

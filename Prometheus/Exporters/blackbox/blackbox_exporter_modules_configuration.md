@@ -2,17 +2,20 @@
 
 ## Определения
 
-**Конфигурационный файл** `blackbox.yml` — основной файл настроек Blackbox Exporter, содержащий секцию `modules`. Актуальная версия экспортера: `0.28.0`.
+**Конфигурационный файл** `blackbox.yml` — основной файл настроек Blackbox Exporter, содержащий секцию `modules`. В ней определяются параметры сетевых проверок и критерии их успешности.
 
-**Модуль** — именованный набор параметров, описывающий конкретный тип проверки (**prober**) и её ожидаемое поведение.
+*   **Модуль** — именованный набор настроек, описывающий конкретный тип проверки (**prober**) и её ожидаемое поведение.
+*   **Prober** — исполнитель проверки (HTTP, TCP, ICMP, DNS, gRPC, Unix).
+*   **CEL (Common Expression Language)** — язык выражений для сложной валидации данных (v0.25.0+).
+*   **Актуальная версия:** `v0.28.0` (2025/2026).
 
-**См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md).
+**См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md), [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md).
 
 ## Основные концепции
 
 ### Общая структура модуля
 
-Каждый модуль определяет используемый пробер, таймаут и стратегию выбора протокола IP.
+Каждый модуль определяет используемый пробер, таймаут и стратегию выбора IP-протокола.
 
 ```yaml
 modules:
@@ -22,37 +25,34 @@ modules:
     http:
       valid_status_codes: [200]
       preferred_ip_protocol: "ip4"
-      ip_protocol_fallback: true # Откат на ip6 при недоступности ip4
+      ip_protocol_fallback: true # Откат на IPv6 при недоступности IPv4
 ```
 
-**Доступные типы проверок (probers):**
+### Доступные типы проверок (Probers)
 
-- **http** — проверка эндпоинтов по протоколам HTTP/HTTPS и HTTP/3 (QUIC).
-- **tcp** — проверка доступности портов и сложный обмен данными («запрос-ответ»).
-- **icmp** — сетевая проверка доступности (ping) через ICMP.
-- **dns** — проверка разрешения имен через DNS и DNS over TLS (DoT).
-- **grpc** — проверка работоспособности сервисов gRPC Health Check.
+1.  **http** — опрос по протоколам HTTP/1.1, HTTP/2 и HTTP/3 (QUIC).
+2.  **tcp** — проверка доступности портов и сложные сценарии обмена данными («запрос-ответ»).
+3.  **icmp** — сетевая проверка доступности (Ping) на уровне L3.
+4.  **dns** — проверка разрешения имен, включая DNS over TLS (DoT).
+5.  **grpc** — проверка работоспособности сервисов gRPC Health Check.
+6.  **unix** — проверка сервисов через локальные Unix Domain Sockets (v0.28.0+).
 
 ## Практические сценарии
 
 ### Проверки HTTP/HTTPS
 
 **Базовая проверка на статус-код 200 OK:**
-
 ```yaml
 modules:
   http_2xx:
     prober: http
-    timeout: 5s
     http:
       valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
       valid_status_codes: [200]
       method: GET
-      preferred_ip_protocol: "ip4"
 ```
 
-**Аутентификация (Basic Auth, Bearer и OAuth2):**
-
+**Аутентификация и OAuth2 (v0.25.0+):**
 ```yaml
 modules:
   http_auth_complex:
@@ -62,47 +62,29 @@ modules:
       basic_auth:
         username: "admin"
         password: "password123"
-      # OAuth2 (v0.25.0+)
+      # OAuth2
       oauth2:
         client_id: "blackbox-client"
         client_secret: "secret-key"
         token_url: "https://auth.example.com/token"
         scopes: ["read", "write"]
-      valid_status_codes: [200, 201]
 ```
 
-**Проверка наличия текста и заголовков в ответе:**
-
-```yaml
-modules:
-  http_content_check:
-    prober: http
-    http:
-      valid_status_codes: [200]
-      fail_if_body_not_matches_regexp:
-        - "Prometheus"
-        - "Time Series Database"
-      fail_if_header_not_matches_regexp:
-        Content-Type: "application/json.*"
-```
-
-**Валидация JSON через CEL (v0.25.0+):**
-
-**CEL (Common Expression Language)** — высокопроизводительный язык выражений для безопасной валидации данных.
-
+**Валидация JSON через CEL (v0.28.0+):**
+CEL позволяет выполнять логические проверки структуры ответа без использования регулярных выражений.
 ```yaml
 modules:
   http_json_cel:
     prober: http
     http:
       method: GET
+      fail_if_body_json_matches_cel: 
+        - "obj.status == 'MAINTENANCE'" # Ошибка, если статус "обслуживание"
       fail_if_body_json_not_matches_cel:
-        - "json.status == 'ok'"
-        - "json.results.size() >= 1"
+        - "obj.version.startsWith('v2') && obj.active == true"
 ```
 
-**Проверка SSL/TLS сертификата и срока действия:**
-
+**Проверка SSL/TLS сертификата и SNI:**
 ```yaml
 modules:
   https_ssl_expiry:
@@ -110,53 +92,34 @@ modules:
     http:
       tls_config:
         insecure_skip_verify: false
-        server_name: "example.com" # SNI
+        server_name: "example.com" # Передача SNI для виртуальных хостов
       fail_if_not_ssl: true
-      fail_if_cert_not_expiry_after: 2592000s # 30 дней
-```
-
-**Использование прокси-сервера:**
-
-```yaml
-modules:
-  http_via_proxy:
-    prober: http
-    http:
-      proxy_url: "http://proxy.internal:3128"
-      skip_resolve_phase_with_proxy: true # DNS-резолвинг на стороне прокси
+      fail_if_cert_not_expiry_after: 2592000s # 30 дней в секундах
 ```
 
 **HTTP/3 (QUIC) — v0.28.0+:**
-
 ```yaml
 modules:
   http3_check:
     prober: http
     http:
-      http3: true
+      enable_http3: true # Активация поддержки QUIC
       preferred_ip_protocol: "ip4"
 ```
 
 ### Проверки TCP
 
 **Проверка SSH баннера:**
-
-**SSH (Secure Shell)** — протокол защищенного удаленного доступа.
-
 ```yaml
 modules:
   tcp_ssh:
     prober: tcp
     tcp:
       query_response:
-        - expect: "^SSH-2.0-"
-      preferred_ip_protocol: "ip4"
+        - expect: "^SSH-2.0-" # Проверка версии протокола в баннере
 ```
 
-**Проверка SMTP (сценарий «Запрос-Ответ»):**
-
-**SMTP (Simple Mail Transfer Protocol)** — протокол передачи почты.
-
+**Проверка SMTP (Сценарий «Запрос-Ответ»):**
 ```yaml
 modules:
   tcp_smtp:
@@ -170,7 +133,6 @@ modules:
 ```
 
 **Проверка с использованием байтовых последовательностей (v0.25.0+):**
-
 ```yaml
 modules:
   tcp_binary:
@@ -178,10 +140,10 @@ modules:
     tcp:
       query_response:
         - send: "PING"
-        - expect_bytes: [0x50, 0x4f, 0x4e, 0x47] # "PONG" в hex
+        - expect_bytes: [0x50, 0x4f, 0x4e, 0x47] # "PONG" в hex формате
 ```
 
-### Проверки ICMP (ping)
+### Проверки ICMP (Ping)
 
 ```yaml
 modules:
@@ -189,14 +151,13 @@ modules:
     prober: icmp
     icmp:
       preferred_ip_protocol: "ip4"
-      dont_fragment: true # Запрет фрагментации (проверка MTU)
-      payload_size: 56
+      dont_fragment: true # Запрет фрагментации для проверки MTU канала
+      payload_size: 56    # Размер полезной нагрузки
 ```
 
 ### Проверки DNS
 
 **DNS over TLS (DoT):**
-
 ```yaml
 modules:
   dns_over_tls:
@@ -211,7 +172,6 @@ modules:
 ```
 
 **Проверка MX-записей и валидация ответа:**
-
 ```yaml
 modules:
   dns_mx_check:
@@ -225,82 +185,75 @@ modules:
 
 ### Проверки gRPC
 
+**gRPC Health Check с метаданными (v0.28.0+):**
 ```yaml
 modules:
-  grpc_health:
+  grpc_health_auth:
     prober: grpc
     grpc:
-      service: "grpc.health.v1.Health" # Стандартный сервис Health Check
-      tls: true
+      service: "grpc.health.v1.Health" # Стандартный сервис проверки здоровья
       metadata:
-        x-api-key: "my-secret-token"
+        authorization: "Bearer secret-token"
+        x-client-id: "blackbox-exporter"
+      tls: true
 ```
+
+### Проверки Unix Domain Sockets (v0.28.0+)
+
+```yaml
+modules:
+  unix_socket:
+    prober: unix
+    unix:
+      protocol: unix # варианты: unix, unixgram, unixpacket
+      query_response:
+        - send: "PING"
+        - expect: "PONG"
+```
+*Примечание: В качестве target в Prometheus указывается абсолютный путь к сокету: `target: "/var/run/docker.sock"`.*
 
 ## Дополнительная информация
 
-### Сводная таблица параметров
+### Справочник параметров
 
 #### Параметры HTTP
-
 | Параметр | Тип | Описание |
 | :--- | :--- | :--- |
-| `method` | string | HTTP-метод (`GET`, `POST`, `HEAD`, `PUT`, `DELETE`) |
-| `headers` | map | Статические заголовки запроса |
-| `http_headers` | object | Заголовки с поддержкой `secrets` и `files` |
-| `valid_status_codes` | list[int] | Допустимые статус-коды (по умолчанию `[2xx]`) |
-| `valid_http_versions` | list[string] | Допустимые версии HTTP |
-| `follow_redirects` | bool | Следовать перенаправлениям (по умолчанию `true`) |
-| `fail_if_ssl` / `fail_if_not_ssl` | bool | Проверка наличия/отсутствия SSL |
-| `fail_if_body_matches_regexp` | list[string] | Ошибка при совпадении тела с регулярным выражением |
-| `fail_if_body_not_matches_regexp` | list[string] | Ошибка при отсутствии совпадения тела с регулярным выражением |
-| `fail_if_body_json_matches_cel` | list[string] | Валидация JSON через CEL-выражения |
-| `tls_config` | object | Настройки TLS (ca_file, cert_file, key_file, server_name) |
-| `oauth2` | object | Конфигурация OAuth2 (client_id, client_secret, token_url) |
-| `proxy_url` | string | URL прокси-сервера |
-| `http3` | bool | Использовать HTTP/3 (QUIC) |
-| `compression` | string | Алгоритм сжатия (`gzip`, `br`, `deflate`) |
+| `method` | string | HTTP-метод (`GET`, `POST`, `HEAD`, `PUT`, `DELETE`). |
+| `headers` | map | Статические заголовки запроса. |
+| `valid_status_codes` | list[int] | Список допустимых статус-кодов (по умолчанию `[2xx]`). |
+| `follow_redirects` | bool | Следовать перенаправлениям (по умолчанию `true`). |
+| `fail_if_body_matches_regexp` | list[string] | Ошибка при совпадении тела с регулярным выражением. |
+| `fail_if_body_json_matches_cel` | list[string] | Валидация JSON через CEL (v0.28.0+). |
+| `tls_config` | object | Настройки TLS (ca_file, cert_file, key_file, server_name). |
+| `enable_http3` | bool | Использовать HTTP/3 (QUIC). |
+| `compression` | string | Алгоритм сжатия (`gzip`, `br`, `deflate`). |
 
 #### Параметры TCP
-
 | Параметр | Тип | Описание |
 | :--- | :--- | :--- |
-| `query_response` | list[obj] | Сценарий обмена данными |
-| `query_response[].expect` | string | Ожидаемое регулярное выражение |
-| `query_response[].expect_bytes` | list[byte] | Ожидаемая последовательность байт (в hex) |
-| `query_response[].send` | string | Данные для отправки |
-| `query_response[].starttls` | bool | Инициировать процедуру STARTTLS |
-| `tls` | bool | Использовать TLS после установления соединения |
-| `source_ip_address` | string | Исходящий IP-адрес источника |
+| `query_response` | list[obj] | Сценарий обмена данными (`send`, `expect`, `expect_bytes`). |
+| `tls` | bool | Использовать TLS после установления соединения. |
+| `starttls` | bool | Инициировать процедуру STARTTLS (например, для SMTP/IMAP). |
+| `source_ip_address` | string | Исходящий IP-адрес источника проверки. |
 
 #### Параметры DNS
-
 | Параметр | Тип | Описание |
 | :--- | :--- | :--- |
-| `query_name` | string | Доменное имя для проверки (обязательно) |
-| `query_type` | string | Тип записи (`A`, `AAAA`, `MX`, `ANY`, `TXT`, `SRV`) |
-| `transport_protocol` | string | Протокол (`udp` или `tcp`) |
-| `dns_over_tls` | bool | Использовать DoT (требует `transport_protocol: tcp`) |
-| `validate_answer_rrs` | object | Регулярные выражения для проверки секции Answer |
-| `valid_rcodes` | list[string] | Допустимые коды ответа (по умолчанию `[NOERROR]`) |
-
-#### Параметры gRPC
-
-| Параметр | Тип | Описание |
-| :--- | :--- | :--- |
-| `service` | string | Имя сервиса (обычно `grpc.health.v1`) |
-| `tls` | bool | Использовать TLS для gRPC-запроса |
-| `tls_config` | object | Настройки TLS для gRPC |
-| `metadata` | map | Дополнительные метаданные (заголовки) gRPC |
+| `query_name` | string | Доменное имя для проверки (обязательно). |
+| `query_type` | string | Тип записи (`A`, `MX`, `TXT`, `SRV`, `AAAA`, `ANY`). |
+| `transport_protocol` | string | Протокол (`udp` или `tcp`). |
+| `dns_over_tls` | bool | Использовать DoT (требует `transport_protocol: tcp`). |
 
 ### Устранение типичных ошибок
 
-1. **Несоответствие таймаутов:** Таймаут в модуле (`timeout`) должен быть меньше `scrape_timeout` в Prometheus. Рекомендуемая разница — минимум 500мс.
-2. **Права на ICMP:** Для ICMP-проверок без root используйте capability: `setcap cap_net_raw+ep /usr/local/bin/blackbox_exporter`.
-3. **Ошибки TLS (SNI):** При проверке нескольких доменов на одном IP обязательно указывайте `server_name` в `tls_config` модуля для корректной передачи SNI.
-4. **Валидация JSON:** CEL-выражения чувствительны к типам данных. Используйте `json.results.size()` вместо `.length`.
+1.  **Несоответствие таймаутов:** Таймаут в модуле (`timeout`) ДОЛЖЕН быть меньше `scrape_timeout` в Prometheus. Рекомендуемая разница — 500мс-1с.
+2.  **Права на ICMP:** Для работы пробера `icmp` без root используйте: `setcap cap_net_raw+ep /usr/local/bin/blackbox_exporter`.
+3.  **SNI в виртуальных хостах:** При мониторинге HTTPS-сайтов на серверах с общим IP всегда указывайте `server_name` в `tls_config` для передачи корректного SNI.
+4.  **CEL vs Regex:** Для проверки API предпочтительнее использовать CEL-выражения, так как они работают со структурой JSON, снижая риск ложноположительных срабатываний на текстовом уровне.
 
 **См. также:**
-
-- [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
-- [Relabeling в Prometheus](../../service_discovery_and_relabeling.md)
-- [Prometheus Operator — Probe CRD](../../kubernetes/operator/crd/probe.md)
+*   [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
+*   [Relabeling в Prometheus](../../service_discovery_and_relabeling.md)
+*   [Probe CRD (Prometheus Operator)](../../kubernetes/operator/crd/probe.md)
+*   [Предотвращение истечения SSL](../../../Kubernetes/Operations/ssl_expiration_prevention.md)

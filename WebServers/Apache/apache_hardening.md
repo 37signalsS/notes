@@ -2,14 +2,9 @@
 
 ---
 
-**Reliability Score: 10** (Верифицированные данные + Современные стандарты 2026 года)
-**Freshness: Актуально на июль 2026**
-
----
-
 ## Определения
 
-**Укрепление безопасности Apache (Apache hardening)** — это процесс настройки веб-сервера с целью уменьшения его поверхности атаки и защиты от распространенных уязвимостей. Основная задача — минимизировать риски путем отключения ненужных функций, ограничения доступа и контроля над ресурсами.
+**Укрепление безопасности Apache (Apache hardening)** — это процесс настройки веб-сервера с целью уменьшения его поверхности атаки и защиты от распространенных уязвимостей. Основная задача — минимизировать риски путем отключения ненужных функций, ограничения доступа и контроля над системными ресурсами.
 
 ## Основные концепции
 
@@ -32,13 +27,13 @@
 
 ### MPM и безопасность
 
-Выбор модуля обработки запросов (MPM) напрямую влияет на поверхность атаки, изоляцию процессов и устойчивость сервера к DoS-атакам. Детальное сравнение архитектур `prefork`, `worker` и `event` приведено в **[Обзор Apache](./apache_overview.md)**.
+Выбор модуля обработки запросов (MPM) напрямую влияет на поверхность атаки, изоляцию процессов и устойчивость сервера к DoS-атакам. Рекомендуется использовать `event` MPM для лучшей обработки большого количества соединений. Детальное сравнение приведено в **[Обзор Apache](./apache_overview.md)**.
 
 ## Практические сценарии
 
 ### Безопасность файловой системы
 
-**Проблема:** Неправильные права доступа позволяют злоумышленнику, захватившему веб-процесс, изменять код сайта или читать конфиденциальные файлы конфигурации.
+**Проблема:** Неправильные права доступа позволяют злоумышленнику, захватившему веб-процесс, изменять код сайта или читать конфиденциальные файлы.
 
 **Решение:** Следовать принципу наименьших привилегий. Веб-сервер должен иметь права только на чтение контента.
 
@@ -56,13 +51,13 @@ sudo chown -R www-data:www-data /var/www/html/uploads
 
 ### Защита от Slowloris (Тайм-ауты)
 
-**Проблема:** Атаки типа Slowloris удерживают соединения открытыми, отправляя данные крайне медленно, что быстро исчерпывает лимит доступных процессов/потоков (`MaxRequestWorkers`).
+**Проблема:** Атаки типа Slowloris удерживают соединения открытыми, отправляя данные крайне медленно.
 
-**Решение:** Использовать модуль `mod_reqtimeout` для установки жестких таймаутов на чтение заголовков и тела запроса.
+**Решение:** Использовать модуль `mod_reqtimeout`.
 
 ```apacheconf
 <IfModule mod_reqtimeout.c>
-    # Ждать заголовки 20 секунд, минимальная скорость 500 байт/с
+    # Ждать заголовки 20-40 секунд, минимальная скорость 500 байт/с
     RequestReadTimeout header=20-40,MinRate=500
     # Ждать тело запроса 20 секунд, минимальная скорость 500 байт/с
     RequestReadTimeout body=20,MinRate=500
@@ -71,15 +66,15 @@ sudo chown -R www-data:www-data /var/www/html/uploads
 
 ### Дополнительные заголовки безопасности
 
-**Проблема:** Отсутствие специальных заголовков делает пользователей уязвимыми для кликджекинга, XSS и перехвата трафика (SSL Stripping).
+**Проблема:** Отсутствие специальных заголовков делает пользователей уязвимыми для кликджекинга и XSS.
 
-**Решение:** Использование `mod_headers` для принудительной активации механизмов защиты в браузере.
+**Решение:** Использование `mod_headers`.
 
 ```apacheconf
 # 1. HSTS — принудительный HTTPS на 2 года
 Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 
-# 2. Защита от кликджекинга (запрет вставки в iframe)
+# 2. Защита от кликджекинга
 Header always set X-Frame-Options "SAMEORIGIN"
 
 # 3. Запрет MIME-sniffing
@@ -87,13 +82,14 @@ Header always set X-Content-Type-Options "nosniff"
 
 # 4. Referrer Policy
 Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+# 5. Content Security Policy (CSP)
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; object-src 'none'"
 ```
 
 ### Защита от атак через символические ссылки
 
-**Проблема:** Если включена опция `FollowSymLinks`, злоумышленник может создать ссылку на чувствительный файл (например, `/etc/passwd`) внутри веб-каталога и прочитать его через сервер.
-
-**Решение:** Заменить `FollowSymLinks` на `SymLinksIfOwnerMatch` или полностью отключить переход по ссылкам.
+**Решение:** Заменить `FollowSymLinks` на `SymLinksIfOwnerMatch`.
 
 ```apacheconf
 <Directory /var/www/html>
@@ -103,9 +99,7 @@ Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
 ### Отключение листинга каталогов
 
-**Проблема:** По умолчанию Apache выводит содержимое директорий, если в них отсутствуют индексные файлы. Это раскрывает структуру проекта.
-
-**Решение:** Отключить листинг каталогов с помощью директивы `Options -Indexes`.
+**Решение:** Директива `Options -Indexes`.
 
 ```apacheconf
 <Directory /var/www/html>
@@ -115,9 +109,7 @@ Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
 ### Защита конфиденциальных каталогов
 
-**Проблема:** Служебные страницы (`/server-status`, `/server-info`) предоставляют детали о работе сервера.
-
-**Решение:** Ограничить доступ по IP и добавить базовую аутентификацию.
+**Решение:** Ограничить доступ по IP и добавить аутентификацию для служебных страниц.
 
 ```apacheconf
 <Location "/server-status">
@@ -141,8 +133,6 @@ Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
 ### Ограничение размера запроса
 
-**Проблема:** Чрезмерно большие запросы могут привести к DoS или переполнению буфера.
-
 **Решение:** Использовать `LimitRequestBody`.
 
 ```apacheconf
@@ -158,7 +148,7 @@ Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
 ### Использование пользовательских страниц ошибок
 
-**Решение:** Скрыть версию сервера и пути через `ErrorDocument`.
+**Решение:** Скрыть пути и версии через `ErrorDocument`.
 
 ```apacheconf
 ErrorDocument 404 /custom404.html
@@ -167,7 +157,7 @@ ErrorDocument 500 /custom500.html
 
 ### Настройка и анализ журналов
 
-**Решение:** Настроить структурированные логи и их отправку в [syslog](../../Linux/SystemAdministration/Logging/rsyslog.md) для последующего анализа в [SIEM](../../Security/Tools/wazuh.md). Подробнее: **[Обзор логирования](../../Linux/SystemAdministration/Logging/logging_overview.md)**.
+**Решение:** Настройка структурированных логов для SIEM.
 
 ```apacheconf
 LogFormat "%h \"%{X-Forwarded-For}i\" %A %p %u %f %t %m %V %U \"%q\" %H %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" tosiem
@@ -178,7 +168,7 @@ CustomLog "|/usr/bin/logger -p local4.info -t apache" tosiem
 
 ### Скрытие информации о сервере
 
-**Решение:** Минимизировать заголовки `Server` и отключить подписи.
+**Решение:** Минимизировать заголовки.
 
 ```apacheconf
 ServerTokens Prod
@@ -186,17 +176,9 @@ ServerSignature Off
 TraceEnable Off
 ```
 
-### Реализация политики безопасности контента (CSP)
-
-```apacheconf
-<Directory "/var/www/html/admin">
-    Header set Content-Security-Policy "default-src 'self'; script-src 'self'; object-src 'none'"
-</Directory>
-```
-
 ### Настройка SSL/TLS
 
-**Решение:** Разрешить только TLS 1.2 и 1.3 с надежными шифрами.
+**Решение:** Разрешить только современные протоколы.
 
 ```apacheconf
 SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1
@@ -206,6 +188,8 @@ SSLHonorCipherOrder on
 
 ### Отключение ненужных HTTP-методов
 
+**Решение:** Ограничить методы через `<LimitExcept>`.
+
 ```apacheconf
 <Directory "/var/www/html">
     <LimitExcept GET POST HEAD>
@@ -214,7 +198,47 @@ SSLHonorCipherOrder on
 </Directory>
 ```
 
+### Укрепление через systemd (Новое)
+
+**Решение:** Ограничить возможности процесса Apache на уровне ядра через unit-файл (`/etc/systemd/system/httpd.service.d/override.conf`).
+
+```ini
+[Service]
+# Запрет доступа к /home, /root и /run/user
+ProtectHome=true
+# Доступ к /usr, /boot и /etc только на чтение
+ProtectSystem=full
+# Изолированный /tmp
+PrivateTmp=true
+# Запрет получения новых привилегий (suid и т.д.)
+NoNewPrivileges=true
+# Ограничение системных вызовов
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+```
+
+### Интеграция с Fail2Ban (Новое)
+
+**Решение:** Автоматическая блокировка IP при попытках подбора пароля или сканировании.
+
+```ini
+# /etc/fail2ban/jail.local
+[apache-auth]
+enabled = true
+port    = http,https
+filter  = apache-auth
+logpath = /var/log/apache2/error.log
+maxretry = 3
+```
+
 ## Дополнительная информация
 
+### Изоляция на уровне ОС
+
+*   **SELinux**: В RHEL-системах необходимо проверять контексты файлов (`httpd_sys_content_t`). Подробнее: **[SELinux](../../Linux/Security/Mechanisms/SELinux.md)**.
+*   **AppArmor**: В Ubuntu/Debian используются профили для ограничения доступа процесса к файловой системе.
+
+### См. также
+
+*   **[Обзор Apache](./apache_overview.md)** — архитектура и MPM.
 *   **[Укрепление безопасности Nginx](../Nginx/Security/nginx_security_guide.md)** — сравнение подходов.
 *   **[Обзор WAF](../../Security/ApplicationSecurity/waf.md)** — глубокая инспекция L7.

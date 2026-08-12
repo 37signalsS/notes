@@ -2,194 +2,192 @@
 
 ## Определения
 
-**Цепочка доверия (Chain of Trust)** — путь от серверного сертификата к корневому CA через промежуточные сертификаты. Клиент проверяет подпись на каждом уровне цепочки.
+**Цепочка доверия (Chain of Trust)** — последовательность сертификатов от конечного (серверного) узла до доверенного корневого центра (Root CA). Клиент проверяет подпись на каждом уровне; если хотя бы одно звено невалидно, доверие ко всей цепочке теряется.
 
-**Incomplete chain** — ситуация, когда сервер не отдаёт промежуточные сертификаты, из-за чего клиент не может построить цепочку до доверенного корневого CA.
+**Incomplete chain** — ситуация, когда сервер не передаёт промежуточные сертификаты (Intermediate CA). Это приводит к ошибкам верификации у клиентов, чьё локальное хранилище не содержит этих промежуточных звеньев.
 
-**CA-хранилище** — набор доверенных корневых и промежуточных сертификатов в ОС. Обновляется пакетом `ca-certificates`.
+**Server Name Indication (SNI)** — расширение TLS, позволяющее клиенту передавать имя хоста (домен) в начале рукопожатия. Это необходимо для корректного выбора сертификата на серверах с несколькими виртуальными хостами на одном IP.
+
+**OCSP Stapling** — механизм, при котором сервер сам запрашивает статус валидности своего сертификата у CA и «прикрепляет» подписанный ответ к handshake. Это ускоряет проверку для клиента и повышает его приватность.
+
+**CA-хранилище (Trust Store)** — системный набор доверенных корневых и промежуточных сертификатов (например, `/etc/ssl/certs` в Linux).
 
 ## Основные концепции
 
-### Проверка даты окончания сертификата
+### Проверка срока действия сертификата
+
+При проверке удаленного сервера обязательно используйте флаг `-servername`, чтобы избежать получения дефолтного сертификата сервера вместо целевого.
 
 ```bash
-# Проверить дату окончания сертификата удалённого сервера
-echo | openssl s_client -connect example.com:443 \
-  -servername example.com 2>/dev/null | \
+# Проверка удалённого сервера
+echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | \
   openssl x509 -noout -enddate
 # notAfter=May 14 18:57:50 2026 GMT
+
+# Проверка локального файла
+openssl x509 -in server.crt -noout -enddate
 ```
 
-**Важно:** Сравните полученную дату с системным временем. Неверное время на сервере может приводить к ложным ошибкам «Certificate Expired».
+**Важно:** Неверное системное время (рассинхронизация NTP) на стороне клиента или сервера часто является причиной ложных ошибок «Certificate Expired».
 
-### Проверка сертификата на ошибки верификации
+### Верификация цепочки и типичные ошибки
+
+Команда для быстрой проверки статуса верификации:
 
 ```bash
-openssl s_client -connect example.com:443 \
-  </dev/null | \
-  grep Verification
+openssl s_client -connect example.com:443 -servername example.com </dev/null | grep Verification
 ```
 
-**Результат без ошибки:**
-
-```
-Verification: OK
-```
-
-**Результат с ошибкой:**
-
-```
-Verification error: unable to verify the first certificate
-```
-
-### Типичные ошибки и причины
-
-| Ошибка | Причина | Решение |
+| Ошибка | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| `unable to verify the first certificate` | Сервер не отдаёт промежуточные сертификаты | Настроить `ssl_certificate fullchain.crt` на сервере |
-| `unable to get local issuer certificate` | На клиенте нет нужного CA в хранилище | Обновить `ca-certificates` или установить промежуточный/корневой вручную |
-| `Certificate expired` | Истёк срок действия | Перевыпустить сертификат |
-| `Hostname mismatch` | CN/SAN не совпадает с доменом | Выпустить сертификат с правильным SAN |
+| `Verification: OK` | Ошибок не обнаружено. | Действие не требуется. |
+| `unable to verify the first certificate` | Сервер не отдает промежуточные сертификаты. | Настроить `fullchain.crt` на сервере. |
+| `unable to get local issuer certificate` | В хранилище клиента нет корневого CA. | Обновить `ca-certificates` или добавить CA вручную. |
+| `Certificate expired` | Срок действия сертификата истек. | Перевыпустить сертификат. |
+| `Self-signed certificate` | Сертификат подписан самим собой. | Использовать публичный CA или добавить его в доверенные. |
+| `Hostname mismatch` | CN или SAN не совпадают с доменом. | Выпустить сертификат с корректным SAN. |
+
+### Проверка соответствия ключа и сертификата
+
+Перед установкой необходимо убедиться, что приватный ключ соответствует публичному ключу в сертификате.
+
+**Для RSA (сравнение хешей модулей):**
+```bash
+openssl rsa -noout -modulus -in server.key | openssl sha256
+openssl x509 -noout -modulus -in server.crt | openssl sha256
+```
+
+**Для ECDSA/Ed25519 (сравнение публичных ключей):**
+```bash
+# Извлечение из ключа
+openssl pkey -in server.key -pubout -outform DER | openssl sha256
+# Извлечение из сертификата
+openssl x509 -in server.crt -pubkey -noout -outform DER | openssl sha256
+```
+
+### Анализ CSR и отпечатков
+
+```bash
+# Проверка содержимого запроса перед отправкой в CA
+openssl req -in server.csr -noout -text
+
+# Получение отпечатка (Fingerprint) для сверки (например, в логах CT)
+openssl x509 -in server.crt -noout -fingerprint -sha256
+```
 
 ## Практические сценарии
 
-### Сценарий 1: «unable to verify the first certificate» — неправильная конфигурация сервера
+### Сценарий 1: Исправление «Incomplete chain» в Nginx
 
-Ошибка означает, что нет доверия ко всей цепочке сертификатов. Самая частая причина — сервер настроен отдавать только сертификат домена, без промежуточных.
+Ошибка означает, что клиент не может построить путь к корню. Чаще всего в `ssl_certificate` указан только файл самого сертификата без Intermediate CA.
 
-**Неправильно (Nginx):**
-
+**Неправильно:**
 ```nginx
-ssl_certificate     /path/example.com.cer;      # только сертификат домена
-ssl_certificate_key /path/example.com.key;
+ssl_certificate /path/example.com.crt; # Только Leaf-сертификат
 ```
 
-**Правильно (Nginx):**
-
+**Правильно:**
 ```nginx
-ssl_certificate     /path/fullchain.cer;         # домен + промежуточные CA
-ssl_certificate_key /path/example.com.key;
+ssl_certificate /path/fullchain.pem;   # Leaf + Intermediate(s)
 ```
+Подробнее о форматах цепочек см. в **[PKI Overview](../../Concepts/pki_overview.md#форматы-файлов-и-стандарты)**.
 
-Файл `fullchain` должен содержать сертификат сервера и все промежуточные CA. Подробнее о форматах цепочки: [PKI Overview](../../Concepts/pki_overview.md#форматы-файлов-цепочки).
+### Сценарий 2: Ручная установка промежуточного и корневого сертификатов
 
-### Сценарий 2: Устаревшее CA-хранилище на клиенте
+Если системное CA-хранилище слишком старое, цепочку нужно восстановить вручную.
 
-Если сервер настроен корректно, но клиент всё равно выдаёт ошибку верификации — проблема в устаревшем CA-хранилище.
-
-**Пример:** Ubuntu 18.04 не может проверить сертификат сайта, выпущенный промежуточным CA 2020 года.
-
+**Шаг 1: Получение ссылки на Intermediate CA из AIA:**
 ```bash
-openssl s_client -connect npchk.nalog.ru:443 </dev/null | grep Verification
-# Verification error: unable to verify the first certificate
-```
-
-**Решение — обновить CA-хранилище:**
-
-```bash
-apt install ca-certificates
-```
-
-Если система слишком старая и обновление не помогает — необходимо вручную скачать промежуточный и корневой сертификаты.
-
-### Сценарий 3: Ручная установка промежуточного и корневого сертификатов
-
-Когда CA-хранилище не содержит нужный корневой CA, его нужно добавить вручную.
-
-#### Шаг 1: Получить ссылку на промежуточный сертификат
-
-Ссылка находится в расширении **Authority Information Access (AIA)** сертификата:
-
-```bash
-openssl s_client -connect npchk.nalog.ru:443 </dev/null | \
-  openssl x509 -noout -text | \
-  grep "CA Issuers"
+openssl s_client -connect target-site.ru:443 -servername target-site.ru </dev/null | \
+  openssl x509 -noout -text | grep "CA Issuers"
 # CA Issuers - URI:http://secure.globalsign.com/cacert/gsgccr3dvtlsca2020.crt
 ```
 
-#### Шаг 2: Скачать и преобразовать промежуточный сертификат
-
+**Шаг 2: Скачивание и конвертация (если формат DER):**
 ```bash
-# Скачать (может быть в формате DER)
-wget http://secure.globalsign.com/cacert/gsgccr3dvtlsca2020.crt \
-  -O globalsign-intermediate.crt
-
-# Преобразовать DER → PEM (если нужно)
-openssl x509 -inform DER -in globalsign-intermediate.crt \
-  -out globalsign-intermediate.pem
+wget http://secure.globalsign.com/cacert/gsgccr3dvtlsca2020.crt -O intermediate.crt
+openssl x509 -inform DER -in intermediate.crt -out intermediate.pem
 ```
 
-#### Шаг 3: Определить издателя промежуточного сертификата
-
+**Шаг 3: Определение издателя для поиска корневого CA:**
 ```bash
-openssl x509 -in globalsign-intermediate.pem -noout -issuer
+openssl x509 -in intermediate.pem -noout -issuer
 # issuer=OU = GlobalSign Root CA - R3, O = GlobalSign, CN = GlobalSign
 ```
 
-#### Шаг 4: Скачать корневой сертификат
-
-Для известных CA (GlobalSign, DigiCert, Let's Encrypt) корневые сертификаты доступны на официальных сайтах:
-
+**Шаг 4: Скачивание корня (с официального сайта CA):**
 ```bash
-wget https://secure.globalsign.net/cacert/Root-R3.crt \
-  -O globalsign-root.crt
-openssl x509 -inform DER -in globalsign-root.crt \
-  -out globalsign-root.pem
+wget https://secure.globalsign.net/cacert/Root-R3.crt -O root.crt
+openssl x509 -inform DER -in root.crt -out root.pem
 ```
 
-#### Шаг 5: Проверить цепочку
-
+**Шаг 5: Проверка связки:**
 ```bash
-openssl verify -CAfile globalsign-root.pem globalsign-intermediate.pem
-# globalsign-intermediate.pem: OK
+openssl verify -CAfile root.pem intermediate.pem
+# intermediate.pem: OK
 ```
 
-#### Шаг 6: Установить в CA-хранилище
-
+**Шаг 6: Установка в систему (Debian/Ubuntu):**
 ```bash
-# Скопировать в директорию доверенных сертификатов
-# Формат файла должен быть PEM, расширение — обязательно .crt
-cp globalsign-root.pem /usr/local/share/ca-certificates/globalsign-root.crt
-cp globalsign-intermediate.pem /usr/local/share/ca-certificates/globalsign-intermediate.crt
-
-# Обновить хранилище
-update-ca-certificates --fresh
+sudo cp root.pem /usr/local/share/ca-certificates/custom-root.crt
+sudo cp intermediate.pem /usr/local/share/ca-certificates/custom-inter.crt
+sudo update-ca-certificates --fresh
 ```
 
-#### Шаг 7: Проверить результат
-
+**Шаг 7: Финальная проверка:**
 ```bash
-openssl s_client -connect npchk.nalog.ru:443 </dev/null | grep Verification
-# depth=2 OU = GlobalSign Root CA - R3, O = GlobalSign, CN = GlobalSign
-# verify return:1
-# depth=1 C = BE, O = GlobalSign nv-sa, CN = GlobalSign GCC R3 DV TLS CA 2020
-# verify return:1
-# depth=0 CN = *.nalog.ru
-# verify return:1
+openssl s_client -connect target-site.ru:443 -servername target-site.ru </dev/null | grep Verification
 # Verification: OK
+```
+
+### Сценарий 3: Диагностика OCSP Stapling
+
+Чтобы проверить, передает ли сервер статус отзыва в процессе рукопожатия:
+
+```bash
+openssl s_client -connect example.com:443 -servername example.com -status 2>/dev/null | grep -A 5 "OCSP response"
+# OCSP response: 
+# ======================================
+# OCSP Response Data:
+#     OCSP Response Status: successful (0x0)
+#     Response Type: Basic OCSP Response
+```
+
+### Сценарий 4: Проверка поддержки версий TLS
+
+В 2026 году рекомендуется использовать TLS 1.3.
+
+```bash
+# Проверка поддержки TLS 1.3
+openssl s_client -connect example.com:443 -servername example.com -tls1_3
+
+# Проверка TLS 1.2 (для совместимости)
+openssl s_client -connect example.com:443 -servername example.com -tls1_2
+```
+
+### Сценарий 5: Проверка HSTS и заголовков безопасности
+
+```bash
+curl -I https://example.com | grep -i "Strict-Transport-Security"
+# Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 ```
 
 ## Дополнительная информация
 
+### Полезные команды OpenSSL
+
+- `openssl x509 -in cert.pem -noout -text` — полный просмотр метаданных (SAN, AKI/SKI, Key Usage).
+- `openssl s_client -connect host:port -showcerts` — вывод всех сертификатов, передаваемых сервером (анализ бандла).
+- `openssl verify -CAfile ca-bundle.crt -untrusted intermediate.crt server.crt` — верификация локальных файлов цепочки.
+
+### Сторонние инструменты
+
+- **[SSL Labs Server Test](https://www.ssllabs.com/ssltest/)** — глубокий онлайн-анализ (оценка A+, проверка Chain Issues).
+- **[testssl.sh](https://testssl.sh/)** — CLI-утилита для проверки любых портов на уязвимости и настройки TLS.
+- **[Certigo](https://github.com/square/certigo)** — современный инструмент на Go для дампа и валидации сертификатов.
+
 ### Связанные темы
 
-- **[PKI Overview](../../Concepts/pki_overview.md)** — иерархия CA, цепочка доверия, форматы файлов
-- **[TLS Protocol](../../../Networking/Protocols/tls.md)** — протокол TLS, рукопожатие, шифры
-- **[Nginx TLS Trouleshooting](../../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md)** — диагностика TLS в Nginx
-- **[Let's Encrypt / acme.sh](../../../WebServers/Concepts/acme_sh.md)** — автоматический выпуск сертификатов
-
-### Полезные команды
-
-```bash
-# Проверить дату окончания локального файла сертификата
-openssl x509 -in server.crt -noout -enddate
-
-# Просмотреть содержимое сертификата
-openssl x509 -in server.crt -noout -text
-
-# Показать все сертификаты сервера (включая промежуточные)
-openssl s_client -connect example.com:443 -showcerts </dev/null
-
-# Проверить цепочку локальных файлов
-openssl verify -CAfile ca-bundle.crt server.crt
-```
+- **[PKI Overview](../../Concepts/pki_overview.md)** — иерархия доверия и стандарты.
+- **[TLS Protocol](../../../Networking/Protocols/tls.md)** — теория рукопожатия и шифрования.
+- **[Nginx TLS Troubleshooting](../../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md)** — специфика отладки в Nginx.

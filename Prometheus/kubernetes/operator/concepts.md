@@ -4,9 +4,9 @@
 
 **Prometheus Operator** — специализированный Kubernetes-контроллер, автоматизирующий жизненный цикл и управление конфигурацией стека мониторинга. Он реализует паттерн «Оператор», расширяя стандартное API Kubernetes через Custom Resource Definitions (CRD) для декларативного описания желаемого состояния систем мониторинга, алертинга и визуализации.
 
-**Reconciliation Loop (Цикл согласования)** — непрерывный процесс, в котором Оператор сравнивает декларативное описание (Desired State) из CRD с реальным состоянием ресурсов в кластере (Actual State) и вносит корректировки (создание Pods, обновление Secrets, перезагрузка конфигов).
+**Reconciliation Loop (Цикл согласования)** — непрерывный процесс, в котором Оператор сравнивает декларативное описание (Desired State) из ресурсов CRD с реальным состоянием объектов в кластере (Actual State). При обнаружении расхождений Оператор вносит корректировки: создает или обновляет StatefulSets, генерирует секреты с конфигурацией и инициирует перезагрузку компонентов.
 
-> **См. также:** [Kubernetes Operators](../../../Kubernetes/Concepts/kubernetes_operators.md), [kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md), [Ручная установка](./installation.md).
+> **Смотрите также:** [Kubernetes-операторы](../../../Kubernetes/Concepts/kubernetes_operators.md) — общие принципы паттерна; [kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md) — основной Helm-чарт; [Ручная установка](./installation.md).
 
 ## Базовые концепции
 
@@ -14,74 +14,79 @@
 
 Prometheus Operator работает в бесконечном цикле, обеспечивая соответствие инфраструктуры заданным правилам.
 
-1.  **Watch (Наблюдение):** Оператор использует Kubernetes API для отслеживания событий создания, удаления и изменения объектов `Prometheus`, `Alertmanager`, `ServiceMonitor`, `PodMonitor`, `ScrapeConfig`, `PrometheusRule`, а также связанных с ними `Secret` и `ConfigMap`.
-2.  **Generate (Генерация):** При обнаружении изменений Оператор анализирует селекторы (label selectors) и генерирует итоговый конфигурационный файл (например, `prometheus.yaml`).
-3.  **Apply (Применение):**
-    *   Обновляет `StatefulSet` для инстансов Prometheus/Alertmanager.
-    *   Записывает новую конфигурацию в `Secret` (для Prometheus) или `ConfigMap`.
-    *   Создает `Service` и `Endpoints` для обеспечения связности.
-4.  **Reload (Перезагрузка):** Использование **`prometheus-config-reloader`**. Это sidecar-контейнер, который запускается в каждом поде Prometheus/Alertmanager. Он отслеживает изменения в смонтированном томе с конфигурацией и инициирует HTTP-запрос на эндпоинт `/-/reload`. Это исключает необходимость перезапуска подов при каждом изменении `ServiceMonitor`.
+1.  **Watch (Наблюдение):** Оператор использует Kubernetes API для отслеживания событий в ресурсах `Prometheus`, `Alertmanager`, `ServiceMonitor`, `PodMonitor`, `ScrapeConfig`, `PrometheusRule`, а также связанных с ними `Secret` и `ConfigMap`.
+2.  **Валидация (Validation):** С 2025–2026 годов активно используется **CEL-валидация** (`x-kubernetes-validations`) на уровне API-сервера, что позволяет отклонять некорректные CRD еще на этапе `kubectl apply`. Дополнительно работают Admission Webhooks для проверки синтаксиса PromQL.
+3.  **Generate (Генерация):** Оператор анализирует селекторы (label selectors) и агрегирует разрозненные ресурсы в единый конфигурационный файл `prometheus.yaml`.
+4.  **Apply (Применение):**
+    *   Управление жизненным циклом `StatefulSet` (масштабирование, обновление версий, настройка PVC).
+    *   Запись конфигурации в Kubernetes `Secret` (для Prometheus) или `ConfigMap`.
+    *   Настройка `Service` и **`EndpointSlice`** для сетевой связности.
+5.  **Reload (Перезагрузка):** Контейнер **`config-reloader`** (sidecar) отслеживает изменения в смонтированном секрете и отправляет сигнал `/-/reload` в API Prometheus/Alertmanager, исключая простой системы.
 
 ### Пользовательские ресурсы (CRD)
 
-Оператор расширяет Kubernetes API следующими ресурсами:
+Оператор расширяет Kubernetes API следующими ключевыми ресурсами:
 
-| CRD | Назначение | Особенности | Подробнее |
+| CRD | Назначение | Особенности (2026) | Подробнее |
 | :--- | :--- | :--- | :--- |
-| **Prometheus** | Полнофункциональный сервер с TSDB. | Управляет StatefulSet, хранилищем, HA. | [Prometheus CRD](./crd/prometheus.md) |
-| **PrometheusAgent** | Prometheus в режиме сбора (Agent Mode). | Только скрейпинг и Remote Write, без TSDB. | [Prometheus Agent Mode](../overview.md) |
-| **Alertmanager** | Экземпляр Alertmanager. | Управляет кластеризацией (gossip) и хранилищем. | [Alertmanager CRD](./crd/alertmanager.md) |
-| **ServiceMonitor** | Сбор метрик через Kubernetes Service. | Стандартный способ мониторинга приложений. | [ServiceMonitor](./crd/servicemonitor.md) |
-| **PodMonitor** | Прямой сбор метрик с подов. | Используется при отсутствии Service или для Sidecars. | [PodMonitor](./crd/podmonitor.md) |
-| **ScrapeConfig** | Нативная конфигурация скрейпинга. | Заменяет `additionalScrapeConfigs` для внешних целей. | [Native SD](../service_discovery.md) |
-| **PrometheusRule** | Правила алертинга и агрегации. | Генерирует ConfigMap с группами правил. | [PrometheusRule](./crd/prometheusrule.md) |
-| **Probe** | Blackbox-мониторинг. | Управляет скрейпингом через Blackbox Exporter. | [Probe](./crd/probe.md) |
-| **AlertmanagerConfig** | Маршрутизация и получатели. | Позволяет декларативно описывать Routes/Receivers. | [AlertmanagerConfig](./crd/alertmanagerconfig.md) |
+| **Prometheus** | Сервер мониторинга. | Управляет TSDB, HA, шардированием и OTLP-ресивером. | [Prometheus CRD](./crd/prometheus.md) |
+| **PrometheusAgent** | Агент сбора (Agent Mode). | Только скрейпинг и Remote Write. Стабилен в v0.92+. | [Агентский режим](../overview.md) |
+| **Alertmanager** | Система уведомлений. | Управляет кластеризацией (gossip) и Silences. | [Alertmanager CRD](./crd/alertmanager.md) |
+| **ServiceMonitor** | Скрейпинг через Service. | Стандарт для приложений за балансировщиком. | [ServiceMonitor](./crd/servicemonitor.md) |
+| **PodMonitor** | Скрейпинг подов напрямую. | Для sidecars и систем без Service. | [PodMonitor](./crd/podmonitor.md) |
+| **ScrapeConfig** | Низкоуровневый скрейпинг. | Заменяет `additionalScrapeConfigs` для внешних целей. | [ScrapeConfig CRD](./crd/servicemonitor.md) |
+| **PrometheusRule** | Правила и алерты. | Декларативное описание логики мониторинга. | [PrometheusRule](./crd/prometheusrule.md) |
+| **Probe** | Blackbox-мониторинг. | Проверки доступности по ICMP/HTTP/TCP. | [Probe](./crd/probe.md) |
+| **AlertmanagerConfig** | Маршрутизация алертов. | Управление Routes и Receivers на уровне v1beta1. | [AlertmanagerConfig](./crd/alertmanagerconfig.md) |
 
 ### Принцип работы Service Discovery
 
-Operator автоматически обнаруживает цели через Kubernetes API, используя селекторы в ресурсе `Prometheus`:
+Оператор автоматически формирует список целей для скрейпинга, используя механизмы выбора в ресурсе `Prometheus`:
 
-*   **`serviceMonitorSelector`**: Выбирает объекты `ServiceMonitor`. Далее Оператор находит соответствующие `Service` по их селекторам и извлекает IP эндпоинтов.
-*   **`podMonitorSelector`**: Выбирает объекты `PodMonitor` и напрямую формирует список IP подов для скрейпинга.
-*   **`ruleSelector`**: Выбирает `PrometheusRule`. Оператор объединяет их в файлы и монтирует как тома.
-*   **`scrapeConfigSelector`**: Выбирает `ScrapeConfig` для добавления произвольных конфигураций сбора.
+*   **`serviceMonitorSelector`**: Ищет объекты `ServiceMonitor`. Оператор находит соответствующие `Service` и извлекает IP-адреса из **`EndpointSlice`** (использование устаревшего `Endpoints` минимизировано для снижения нагрузки на API).
+*   **`podMonitorSelector`**: Выбирает `PodMonitor` для прямого сбора метрик с IP-адресов подов.
+*   **`ruleSelector`**: Агрегирует `PrometheusRule` из разных пространств имен в единый набор правил.
+*   **`scrapeConfigSelector`**: Подключает нативные конфигурации `ScrapeConfig` (v1alpha1) для мониторинга ресурсов вне Kubernetes (статические IP, HTTP SD и др.).
 
-### RBAC и права доступа
+### Безопасность и RBAC
 
-Для корректной работы требуются следующие уровни доступа:
-*   **Контроллер (Operator):** Должен иметь права на управление `StatefulSets`, `Services`, `Secrets`, `ConfigMaps` во всех target-namespaces.
-*   **Экземпляр Prometheus:** Должен иметь `ClusterRole` с правами `get`, `list`, `watch` для `nodes`, `pods`, `services`, `endpoints`, `endpointslices`, `ingresses` для работы Service Discovery.
+Функционирование стека требует строго разграниченных прав доступа:
+*   **Operator RBAC:** Права на управление инфраструктурными объектами (`StatefulSets`, `Secrets`, `Services`, `ConfigMaps`) во всех обслуживаемых пространствах имен.
+*   **Prometheus RBAC:** Права `get`, `list`, `watch` для `nodes`, `pods`, `services` и `endpointslices`. С 2025 года доступ к `endpointslices` является приоритетным для Service Discovery.
 
-> **См. также:** [Access Control](./Security/access_control.md), [Secrets Best Practices](./Security/secrets_best_practices.md).
+> **Смотрите также:** [Контроль доступа (RBAC)](./Security/access_control.md), [Управление секретами](./Security/secrets_best_practices.md).
 
 ## Практические сценарии
 
 ### Высокая доступность и масштабирование
 
-1.  **High Availability (HA):** Настраивается через `spec.replicas: 2` в ресурсе `Prometheus`. Оператор автоматически настраивает внешние лейблы (например, `prometheus_replica`), позволяя Alertmanager дедуплицировать алерты.
-2.  **Шардирование (Sharding):** Параметр `spec.shards: N` позволяет распределить нагрузку по сбору метрик между несколькими инстансами. Оператор использует хэширование подов для распределения целей между шардами.
-3.  **Thanos Sidecar:** Интегрируется через `spec.thanos`. Оператор добавляет контейнер `thanos sidecar`, настраивает gRPC порты и пробрасывает секреты для подключения к объектному хранилищу.
+1.  **Высокая доступность (HA):** Реализуется через `spec.replicas: 2`. Оператор автоматически настраивает внешние лейблы (например, `prometheus_replica`), позволяя Alertmanager дедуплицировать алерты.
+2.  **Шардирование (Sharding):** Распределение нагрузки по скрейпингу тысяч целей между несколькими инстансами (`spec.shards`). Оператор использует консистентное хэширование для распределения целей между шардами.
+3.  **Интеграция с Thanos:** Настройка через `spec.thanos`. Оператор добавляет sidecar для долгосрочного хранения данных в S3/GCS и обеспечения глобального представления (Global View) через gRPC.
 
 ### Выбор между Prometheus и PrometheusAgent
 
-*   **Prometheus:** Используйте, когда требуется локальное хранение данных (TSDB), выполнение сложных PromQL запросов и алертинг внутри кластера.
-*   **PrometheusAgent:** Идеален для Edge-кластеров, мультикластерных сред (отправка в центральный Mimir/VictoriaMetrics) и сценариев, где RAM/Disk на узлах ограничены.
+*   **Prometheus Server:** Необходим, если требуется локальная TSDB, выполнение PromQL-запросов (например, для Grafana) и обработка алертов (`PrometheusRule`) внутри кластера.
+*   **Prometheus Agent:** Рекомендуется для Edge-кластеров, IoT-устройств и сценариев, где данные пересылаются в централизованное хранилище (Thanos, VictoriaMetrics, Mimir). Экономит до 40% ресурсов (RAM/CPU) за счет отсутствия TSDB и Query Engine.
 
-### Установка стека
+### Установка стека (Helm)
+
+Стандартный метод развертывания для Production-сред:
 
 ```bash
 # Добавление репозитория
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 
-# Установка с настройками по умолчанию (рекомендуется для Production)
+# Установка с созданием namespace
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
   --create-namespace
 ```
 
 ### Проверка работоспособности кластера
+
+Команды для быстрой верификации состояния стека:
 
 ```bash
 # 1. Проверка установки CRD (должно быть 10+)
@@ -101,48 +106,37 @@ kubectl get podmonitor -A
 
 ### Диагностика (Troubleshooting)
 
-При возникновении проблем следуйте по цепочке reconciliation:
+При возникновении проблем в работе Оператора или сборе метрик используйте специализированное руководство:
 
-1.  **Логи Оператора:** Проверка ошибок генерации конфигов или нехватки прав RBAC.
-    `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator`
-2.  **Логи config-reloader:** Проверка успешности запросов `/-/reload`.
-    `kubectl logs -n monitoring -c config-reloader <prometheus-pod-name>`
-3.  **Статус в UI Prometheus:** Проверка `/targets` и `/config` для подтверждения, что Operator применил изменения.
+*   **[Prometheus Operator: Диагностика и устранение неисправностей](./troubleshooting.md)** — полный алгоритм отладки, разбор практических сценариев (OOM, Secret limit, Remote Write) и перечень диагностических запросов.
 
 ## Дополнительная информация
 
-### Ключевые метрики мониторинга Operator
+### Ключевые метрики мониторинга Оператора
 
-| Метка | Описание | Критичность |
+| Метрика | Описание | Критичность |
 | :--- | :--- | :--- |
-| `prometheus_operator_reconcile_errors_total` | Общее количество ошибок цикла сверки. | **High** |
-| `prometheus_operator_reconcile_duration_seconds` | Время выполнения одной итерации цикла. | Medium |
-| `prometheus_operator_node_sync_duration_seconds` | Время синхронизации списка узлов. | Medium |
-| `prometheus_operator_config_size_bytes` | Размер сгенерированного файла конфигурации. | Low (лимит 1MB) |
+| `prometheus_operator_reconcile_errors_total` | Количество ошибок в цикле согласования. | **High** |
+| `prometheus_operator_reconcile_duration_seconds` | Длительность одной итерации сверки. | Medium |
+| `prometheus_operator_config_size_bytes` | Размер сгенерированного файла конфигурации (лимит Secret — 1MB). | Medium |
 
-### Актуальные версии и жизненный цикл
+### Актуальные версии и жизненный цикл (2026)
 
-| Параметр | Значение | Дата проверки |
-| :--- | :--- | :--- |
-| **Последняя версия Operator** | `v0.92.0` | Июль 2026 |
-| **Репозиторий** | [github.com/prometheus-operator](https://github.com/prometheus-operator/prometheus-operator) |
-| **Минимальный Kubernetes** | 1.29+ |
-| **Release Schedule** | [Официальный график](https://prometheus-operator.dev/docs/community/release/) |
+*   **Последняя стабильная версия:** `v0.92.0` (Июль 2026).
+*   **Минимальный Kubernetes:** 1.29+.
+*   **Поддержка Prometheus 3.0:** Полная интеграция функций UTF-8 для имен метрик, нативного OTLP-ресивера и Remote Write 2.0.
+*   **Gateway API:** Поддержка интеграции с Kubernetes Gateway API для обеспечения внешнего доступа к UI без классических Ingress.
 
 ### Эволюция версий
 
-*   **v0.81–v0.85** (март–август 2025): Нативная поддержка Prometheus 2.x, улучшение интеграции с Thanos Sidecar.
-*   **v0.86–v0.89** (октябрь 2025 – февраль 2026): Внедрение поддержки Prometheus 3.0, расширение функционала `AlertmanagerConfig`.
-*   **v0.90–v0.91** (март–май 2026): Внедрение `ScrapeConfig` CRD для отказа от `additionalScrapeConfigs` в Secret-ах. Оптимизация работы с `EndpointSlice`.
-*   **v0.92+** (июнь 2026 – настоящее время): Стабилизация API `PrometheusAgent`, нативная поддержка OTLP, интеграция с Kubernetes Gateway API.
+*   **v0.81–v0.85** (2025): Нативная поддержка Prometheus 2.x, оптимизация работы с Thanos Sidecar, переход на `EndpointSlice`.
+*   **v0.86–v0.89** (2025–2026): Внедрение поддержки Prometheus 3.0 (Alpha/Beta), расширение `AlertmanagerConfig` до v1beta1.
+*   **v0.90–v0.91** (2026): Стабилизация `ScrapeConfig` CRD, отказ от `additionalScrapeConfigs` в секретах. Полная поддержка CEL-валидации.
+*   **v0.92+** (Текущая): Стабильный `PrometheusAgent`, нативная поддержка OTLP-инжеста, интеграция с Gateway API и улучшенная производительность в кластерах с 10k+ сервисами.
 
-### Связанные компоненты и ресурсы
+### Связанные ресурсы
 
-| Компонент | Описание | Ссылка |
-| :--- | :--- | :--- |
-| **High Availability** | Конфигурация отказоустойчивости. | [High Availability](./high_availability.md) |
-| **Security** | TLS, RBAC и Network Policies. | [Security Overview](./Security/index.md) |
-| **Grafana Integration** | Дашборды и источники данных. | [Grafana Integration](./grafana_integration.md) |
-| **TSDB Management** | Управление хранилищем и Retention. | [Prometheus CRD — Storage](./crd/prometheus.md#storage) |
-
-> **См. также:** [Troubleshooting](./troubleshooting.md), [Prometheus CRD](./crd/prometheus.md), [Alertmanager CRD](./crd/alertmanager.md).
+*   **[Высокая доступность](./high_availability.md)** — архитектура репликации и шардирования.
+*   **[Безопасность](./Security/index.md)** — TLS, RBAC и сетевые политики.
+*   **[Диагностика и Troubleshooting](./troubleshooting.md)** — глубокий анализ сбоев.
+*   **[Интеграция с Grafana](./grafana_integration.md)** — дашборды и provisioning.

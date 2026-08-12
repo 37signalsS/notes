@@ -41,43 +41,77 @@ location /static/ {
 
 В Angie директива `error_log` значительно расширена по сравнению с классическим Nginx. Помимо уровня детализации, она поддерживает форматирование в JSON, фильтрацию сообщений и ограничение скорости записи.
 
+#### Базовая настройка и уровни детализации
+
+**Уровни детализации** (от самого критичного к самому подробному): `emerg`, `alert`, `crit`, `error`, `warn`, `notice`, `info`, `debug`. 
+
 ```nginx
 # Глобальный лог ошибок с уровнем детализации 'warn'
 error_log /var/log/angie/error.log warn;
-
-# Использование JSON-формата для лога ошибок (Angie-specific)
-error_log /var/log/angie/error.log warn format=json;
-
-# Ограничение скорости записи (rate-limiting)
-# rate=100 означает не более 100 сообщений в секунду (по умолчанию 1000)
-error_log /var/log/angie/error.log warn rate=100;
 ```
 
-**Уровни детализации** (от самого критичного к самому подробному): `emerg`, `alert`, `crit`, `error`, `warn`, `notice`, `info`, `debug`. 
 * Для промышленной эксплуатации рекомендуется `warn` или `error`. 
 * Уровень `notice` полезен для отладки модулей (например, **ACME (Automated Certificate Management Environment)**).
 * Уровень `debug` требует сборки с флагом `--with-debug` и предназначен для глубокой диагностики.
 
-**Параметр `filter` (Angie-specific):** позволяет записывать в лог только сообщения, соответствующие определенному условию.
+#### Ограничение скорости (rate)
 
-* **Типы фильтров:**
-    * `logline`: Фильтрация по всей строке лога.
-    * `message`: Фильтрация только по тексту сообщения об ошибке.
-    * `sourcefile`: Фильтрация по имени исходного файла кода, сгенерировавшего ошибку.
-* **Шаблоны:**
-    * Подстрока (по умолчанию).
-    * `=` (точное совпадение).
-    * `~` (регулярное выражение).
+Параметр `rate` (Angie-specific) позволяет ограничить частоту записи сообщений в лог, что критично для предотвращения "зафлуживания" диска при массовых ошибках или атаках.
+
+```nginx
+# Ограничение скорости записи: не более 100 сообщений в секунду (по умолчанию 1000)
+error_log /var/log/angie/error.log warn rate=100;
+```
+
+#### Фильтрация сообщений (filter)
+
+Параметр `filter` (Angie-specific) позволяет записывать в лог только те сообщения, которые соответствуют заданному условию.
+
+* **Объекты фильтрации:**
+    * `logline`: Поиск по всей строке лога.
+    * `message`: Поиск только по тексту сообщения об ошибке.
+    * `tag`: Поиск по пользовательскому тегу (см. `error_log_user_tag`).
+    * `sourcefile`: Поиск по имени исходного файла кода (требует debug-версии).
+* **Типы сопоставления:**
+    * Подстрока (например, `filter=message:timeout`).
+    * Точное совпадение (`=`, например, `filter=tag:=api_error`).
+    * Регулярное выражение (`~`, например, `filter=message:~H[23]`).
 
 ```nginx
 # Логировать только ошибки, связанные с протоколами HTTP/2 или HTTP/3
 error_log /var/log/angie/http2_3_errors.log warn filter=message:~H[23];
 ```
 
-**Тегирование (tags):**
-При использовании `format=json` в лог добавляется поле `tags`, содержащее метки, присвоенные сообщению. Это позволяет гибко классифицировать ошибки в системах сбора логов.
+#### Формат JSON для лога ошибок
 
+Angie поддерживает нативный вывод лога ошибок в формате JSON, что радикально упрощает интеграцию с системами сбора логов.
 
+```nginx
+# Использование JSON-формата (Angie-specific)
+error_log /var/log/angie/error.json warn format=json;
+```
+
+**Поля в JSON-логе:**
+* `timestamp`: Время события в формате ISO 8601.
+* `level`: Уровень ошибки.
+* `pid`/`tid`: ID процесса и потока.
+* `message`: Текст сообщения.
+* `tags`: Массив тегов, присвоенных сообщению.
+* `client`/`server`/`request`: Контекстная информация о запросе (если доступна).
+
+### Тегирование ошибок (`error_log_user_tag`)
+
+Директива `error_log_user_tag` (Angie-specific) позволяет присвоить текущему запросу произвольный тег. Этот тег будет добавлен в поле `tags` (в JSON) или `tag:` (в тексте) лога ошибок, что позволяет связывать ошибки с конкретными логическими частями приложения или типами клиентов.
+
+```nginx
+location /api/v2/ {
+    # Присваиваем тег всем запросам в этом location
+    error_log_user_tag "api_v2_backend";
+    
+    # Можно использовать этот тег для фильтрации в отдельный файл
+    error_log /var/log/angie/api_errors.log info filter=tag:api_v2_backend;
+}
+```
 
 ### Логирование в модуле Stream (L4)
 
@@ -182,63 +216,81 @@ http {
 
 ### Логирование в формате JSON
 
-Для упрощения парсинга логов в автоматизированных системах (**ELK (Elasticsearch, Logstash, Kibana)**, [Loki](../../Loki/loki_overview.md)) удобно использовать формат **JSON (JavaScript Object Notation)**. В Angie рекомендуется добавлять идентификаторы запросов для сквозной трассировки.
+Для упрощения парсинга логов в автоматизированных системах (**ELK (Elasticsearch, Logstash, Kibana)**, [Loki](../../Loki/loki_overview.md), [Vector](../../Vector/vector_overview.md)) удобно использовать формат **JSON (JavaScript Object Notation)**. В Angie рекомендуется использовать параметр `escape=json` для корректной обработки спецсимволов и добавлять идентификаторы запросов для сквозной трассировки.
 
 ```nginx
 http {
-    log_format json_logs escape=json
+    log_format json_combined escape=json
       '{'
         '"timestamp":"$time_iso8601",'
-        '"request_id":"$request_id",'        # Уникальный ID запроса для трассировки
-        '"client_ip":"$remote_addr",'
-        '"request":"$request",'
+        '"request_id":"$request_id",'         # Уникальный ID для трассировки
+        '"remote_addr":"$remote_addr",'
+        '"remote_user":"$remote_user",'
+        '"request_method":"$request_method",'
+        '"request_uri":"$request_uri",'
         '"status":$status,'
-        '"body_bytes":$body_bytes_sent,'
-        '"path":"$uri",'
+        '"body_bytes_sent":$body_bytes_sent,'
+        '"request_time":$request_time,'       # Время обработки (в секундах с миллисекундами)
+        '"http_referrer":"$http_referer",'
+        '"http_user_agent":"$http_user_agent",'
         '"upstream_addr":"$upstream_addr",'
         '"upstream_status":"$upstream_status",'
-        '"upstream_time":"$upstream_response_time",'
-        '"request_time":"$request_time"'
+        '"upstream_response_time":"$upstream_response_time",'
+        '"upstream_cache_status":"$upstream_cache_status"'
       '}';
 
-    access_log /var/log/angie/json_access.log json_logs;
+    access_log /var/log/angie/access.json json_combined;
 }
 ```
 
 ### Настройка формата времени (`time_format`)
 
-Angie позволяет переопределять формат времени в логах с помощью директивы `time_format` (Angie-specific), что избавляет от необходимости использовать сложные конструкции с `map`.
+Директива `time_format` (Angie-specific) позволяет определять пользовательские переменные с нужным форматом времени, используя стандартные спецификаторы `strftime` и расширение `%L` для миллисекунд.
 
 ```nginx
 http {
-    # Определение собственного формата времени с миллисекундами
-    time_format custom_time "%Y-%m-%dT%H:%M:%S.%L%z";
+    # 1. Определяем переменную с форматом времени
+    # Пример: ISO 8601 с миллисекундами
+    time_format $iso_ms "%Y-%m-%dT%H:%M:%S.%L%z";
+    
+    # Пример: компактный формат для внутреннего аудита
+    time_format $audit_time "%d/%m/%y %H:%M:%S";
 
-    log_format timed '$remote_addr [$custom_time] "$request" $status';
+    # 2. Используем переменные в log_format
+    log_format timed '$remote_addr [$iso_ms] "$request" $status';
     access_log /var/log/angie/access.log timed;
 }
 ```
 
 ### Условное логирование
 
-Иногда требуется логировать не все запросы. Это можно сделать с помощью директивы `map`.
+Иногда требуется исключить из логов "шум" (например, запросы мониторинга или статику) или, наоборот, логировать только подозрительные запросы.
 
-**Пример: Логировать только редиректы (3xx ответы)**
+**Пример: Логировать только медленные запросы (более 1 секунды)**
 
 ```nginx
 http {
-    # 1. Создаем переменную $loggable, равную 1 для 3xx статусов
-    map $status $loggable {
-        ~^3  1;
-        default 0;
+    map $request_time $slow_request {
+        ~^0\.  0; # Быстрее 1с
+        default 1; # 1с и более
     }
 }
 
 server {
-    # 2. Используем переменную для условного логирования
-    access_log /var/log/angie/redirects.log combined if=$loggable;
+    # Лог только для "тяжелых" запросов
+    access_log /var/log/angie/slow.log json_combined if=$slow_request;
 }
 ```
+
+### Интеграция с современными инструментами сбора логов
+
+Хотя Angie может писать напрямую в Syslog, предпочтительным методом является запись в JSON-файлы с последующим сбором легковесными агентами.
+
+*   **Vector**: Идеален для трансформации логов Angie перед отправкой в ClickHouse или Elasticsearch.
+*   **Fluent Bit**: Минимальное потребление ресурсов, нативная поддержка парсинга JSON.
+*   **Promtail**: Если используется стек Grafana Loki.
+
+**Рекомендация:** При использовании JSON-логов в высоконагруженных системах всегда включайте буферизацию (см. раздел "Оптимизация производительности").
 
 ### Анализ логов инструментами Linux
 

@@ -2,109 +2,80 @@
 
 ## Определения
 
-**Контроль доступа (Access Control)** — механизмы управления правами доступа пользователей и систем к ресурсам веб-сервера (сайтам, каталогам, API-эндпоинтам).
+**Контроль доступа (Access Control)** — комплекс механизмов и политик для управления правами доступа пользователей и автоматизированных систем к ресурсам веб-сервера. Angie предоставляет гибкие инструменты для идентификации клиентов на основе сетевых атрибутов (IP), учетных данных (пароли, LDAP, PAM) или криптографических доказательств (JWT, mTLS).
 
-**ngx_http_access_module** — модуль для ограничения доступа на основе IP-адресов или подсетей клиента.
+**Ключевые модули Angie для контроля доступа:**
+*   **ngx_http_access_module:** базовая фильтрация по IP-адресам и подсетям.
+*   **ngx_http_auth_basic_module:** аутентификация через заголовок `Authorization: Basic` (RFC 7617).
+*   **ngx_http_auth_request_module:** авторизация через внешние HTTP-подзапросы (Auth Sidecar/Gateway).
+*   **ngx_http_auth_jwt_module:** проверка подлинности через JSON Web Tokens (JWT) с поддержкой верификации подписей и Claims.
+*   **ngx_http_auth_ldap_module:** интеграция с корпоративными каталогами (Active Directory, OpenLDAP).
+*   **ngx_http_auth_pam_module:** использование системной аутентификации Linux через Pluggable Authentication Modules.
 
-**ngx_http_auth_basic_module** — модуль, реализующий базовую HTTP-аутентификацию (Basic Access Authentication) с проверкой логина и пароля.
+## Базовые концепции
 
-**ngx_http_auth_request_module** — модуль для авторизации запросов на основе ответа внешнего подзапроса. Позволяет реализовать сложную логику аутентификации (например, через OAuth2 или кастомные сервисы).
+### Иерархия и наследование
+Правила контроля доступа могут быть определены на уровнях `http`, `server` или `location`. Важно учитывать, что указание любой директивы модуля контроля доступа в дочернем контексте полностью заменяет (не дополняет) набор правил родительского контекста для этого модуля.
 
-**ngx_http_auth_pam_module** — модуль для интеграции с системными механизмами аутентификации Linux через **PAM (Pluggable Authentication Modules)**.
+### Порядок обработки правил (Allow/Deny)
+Директивы модуля `access` проверяются в порядке их появления в конфигурации до первого совпадения:
+1.  Если IP совпадает с `allow`, доступ разрешается.
+2.  Если IP совпадает с `deny`, возвращается ошибка `403 Forbidden`.
+3.  Если совпадений нет, применяется поведение родительского контекста или разрешается доступ по умолчанию.
+**Рекомендация:** Всегда завершайте списки директивой `deny all;`.
 
-**ngx_http_auth_jwt_module** — официальный динамический модуль Angie для проверки JSON Web Tokens (JWT). В отличие от Nginx OSS, доступен в официальных репозиториях Angie.
-
-**ngx_http_auth_ldap_module** — официальный динамический модуль для аутентификации пользователей через протокол LDAP (Active Directory, OpenLDAP).
-
-**JWT (JSON Web Token)** — компактный формат токенов для безопасной передачи информации между сторонами, часто используемый для аутентификации в API.
-
-## Основные концепции
-
-### Иерархия и наследование правил
-
-Правила контроля доступа могут быть определены на уровнях `http`, `server` или `location`. Правила, определенные на более глубоком уровне, переопределяют или дополняют правила родительских контекстов в зависимости от конкретного модуля.
-
-### Порядок обработки allow и deny
-
-Директивы модуля `ngx_http_access_module` проверяются последовательно до первого совпадения. Если совпадение найдено, поиск прекращается, и доступ либо разрешается (`allow`), либо запрещается (`deny`).
-
-### Принцип работы auth_request
-
-Модуль отправляет внутренний подзапрос (subrequest) на указанный URI.
-
-- Если подзапрос возвращает код `2xx`, доступ разрешен.
-- Если `401` или `403`, доступ запрещен с соответствующим кодом.
-- Другие коды интерпретируются как ошибка сервера.
+### Механизм auth_request
+Модуль выполняет внутренний подзапрос (subrequest) перед обработкой основного запроса.
+*   **2xx:** доступ разрешен.
+*   **401:** доступ запрещен (`Unauthorized`), клиенту передается заголовок `WWW-Authenticate` от авторизатора.
+*   **403:** доступ запрещен (`Forbidden`).
+*   **Передача данных:** директива `auth_request_set` позволяет копировать переменные из ответа авторизатора (например, `$upstream_http_...`) в переменные основного запроса для последующей передачи в бэкенд.
 
 ### Комбинирование методов (директива satisfy)
-
-Директива `satisfy` определяет логику взаимодействия между модулями контроля доступа (например, IP-фильтр и пароль):
-
-- `satisfy all` (по умолчанию) — должны быть выполнены все условия.
-- `satisfy any` — достаточно выполнения любого одного условия.
+Директива `satisfy` определяет логику взаимодействия между модулями (например, IP-фильтр и пароль):
+*   `satisfy all` (дефолт): клиент должен успешно пройти проверки всех модулей.
+*   `satisfy any`: доступ разрешается, если выполнено условие хотя бы одного модуля.
 
 ## Практические сценарии
 
-### 1. Ограничение доступа по IP-адресу
+### Сценарий 1: Ограничение доступа по IP
 
-Позволяет разрешить доступ только доверенным сетям (например, офисным IP или VPN).
+Используется для защиты административных интерфейсов и внутренних API.
 
 ```nginx
 location /admin/ {
-    # Разрешаем доступ из локальной сети
+    # Разрешаем конкретные хосты и подсети
     allow 192.168.1.0/24;
-    # Разрешаем конкретный IP
     allow 203.0.113.5;
-    # Запрещаем всем остальным (обязательно в конце)
+    allow 127.0.0.1;
+    
+    # Запрещаем всем остальным
     deny all;
 }
 ```
 
-### 2. Базовая аутентификация (auth_basic)
+### Сценарий 2: Базовая аутентификация (auth_basic)
 
-Классическая защита паролем. Обязательно используйте совместно с **[TLS/HTTPS](./angie_tls_setup.md)**, так как учетные данные передаются в открытом виде (Base64).
+Классическая защита паролем. **Важно:** Данные передаются в кодировке Base64, поэтому использование **[TLS/HTTPS](./angie_tls_setup.md)** является обязательным.
 
-**Шаг 1: Создание файла паролей**
-Используйте утилиту `htpasswd` (пакет `apache2-utils`):
-
+**1. Генерация файла паролей:**
 ```bash
-# Создать файл и добавить первого пользователя
-sudo htpasswd -c /etc/angie/htpasswd admin
-# Добавить пользователя в существующий файл
-sudo htpasswd /etc/angie/htpasswd guest
+sudo htpasswd -c /etc/angie/.htpasswd admin
+# Добавление без перезаписи файла:
+sudo htpasswd /etc/angie/.htpasswd developer
 ```
 
-**Шаг 2: Настройка Angie**
-
+**2. Настройка в Angie:**
 ```nginx
 location /protected/ {
     auth_basic "Restricted Area";
-    auth_basic_user_file /etc/angie/htpasswd;
+    auth_basic_user_file /etc/angie/.htpasswd;
 }
 ```
 
-### 3. Комбинирование IP-фильтра и пароля (satisfy any)
+### Сценарий 3: Авторизация через подзапрос (njs и API)
 
-Сценарий: сотрудники в офисе заходят без пароля, остальные — по паролю.
-
-```nginx
-location /internal/ {
-    satisfy any;
-
-    allow 10.0.0.0/8;
-    deny all;
-
-    auth_basic "Internal Portal";
-    auth_basic_user_file /etc/angie/htpasswd;
-}
-```
-
-### 4. Авторизация через подзапрос (auth_request)
-
-#### Вариант А: Простая проверка API-ключа
-
-Реализация логики проверки внутри конфигурации.
-
+#### Вариант А: Проверка API-ключа в конфигурации
 ```nginx
 location /api/ {
     auth_request /_validate_key;
@@ -113,19 +84,29 @@ location /api/ {
 
 location = /_validate_key {
     internal;
-    if ($http_x_api_key != "top-secret-token") {
+    if ($http_x_api_key != "secret-token-2026") {
         return 403;
     }
     return 204;
 }
 ```
 
-#### Вариант Б: Сложная логика на JavaScript (njs)
-
-Позволяет проверять токены, время или делать запросы к внешним БД.
-
+#### Вариант Б: Использование JavaScript (njs)
+Позволяет реализовать сложную логику проверки (например, проверка срока действия или обращение к Redis).
+```javascript
+// auth.js
+function check_access(r) {
+    if (r.headersIn['Authorization'] === 'Bearer security-token') {
+        r.return(204);
+    } else {
+        r.return(401);
+    }
+}
+export default { check_access };
+```
+**Настройка:**
 ```nginx
-# В блоке http: js_import /etc/angie/scripts/auth.js;
+js_import /etc/angie/scripts/auth.js;
 
 location /secure/ {
     auth_request /_js_auth;
@@ -138,86 +119,53 @@ location = /_js_auth {
 }
 ```
 
-Пример `auth.js`:
+### Сценарий 4: Валидация JWT (JSON Web Token)
 
-```javascript
-function check_access(r) {
-    if (r.headersIn['Authorization'] === 'Bearer valid-token') {
-        r.return(204);
-    } else {
-        r.return(401);
-    }
-}
-export default { check_access };
-```
-
-### 5. Аутентификация через системных пользователей (PAM)
-
-Интеграция с пользователями ОС Linux. Требует модуль `ngx_http_auth_pam_module`.
-
-**Шаг 1: Настройка PAM-сервиса**
-Создайте файл `/etc/pam.d/angie`:
-
-```text
-auth    required    pam_unix.so
-account required    pam_unix.so
-```
-
-**Шаг 2: Настройка Angie**
+Позволяет проверять подлинность токенов и права пользователя (Claims) без обращения к внешним сервисам.
 
 ```nginx
-location /system-admin/ {
-    auth_pam "System Authentication";
-    auth_pam_service_name "angie";
-}
-```
-
-### 6. Валидация JWT (JSON Web Token)
-
-Позволяет проверять токены без обращения к внешним сервисам. Требует установки пакета `angie-module-auth-jwt`.
-
-**Настройка Angie:**
-
-```nginx
-# В основном контексте (angie.conf)
-load_module modules/ngx_http_auth_jwt_module.so;
+# В angie.conf: load_module modules/ngx_http_auth_jwt_module.so;
 
 http {
-    server {
-        location /api/ {
-            auth_jwt "Closed API";
-            # Путь к публичному ключу для проверки подписи
-            auth_jwt_key_file /etc/angie/keys/public_key.jwk;
-            
-            # (Опционально) Проверка конкретного поля (claim) в токене
-            # auth_jwt_require $jwt_payload_sub "admin";
+    # Путь к набору публичных ключей (JWKS)
+    auth_jwt_key_file /etc/angie/keys/idp_public.jwk;
 
-            proxy_pass http://backend;
+    server {
+        location /v2/api/ {
+            auth_jwt "API Access";
+            auth_jwt_key_file /etc/angie/keys/idp_public.jwk;
+            
+            # Проверка конкретного поля в payload (например, роль)
+            auth_jwt_require $jwt_payload_role "admin" "editor";
+
+            proxy_pass http://api_backend;
         }
     }
 }
 ```
 
-### 7. Аутентификация через LDAP / Active Directory
+### Сценарий 5: Интеграция с LDAP / Active Directory
 
-Используется для интеграции с корпоративными каталогами. Требует пакета `angie-module-auth-ldap`.
+Используется для обеспечения Single Sign-On (SSO) в корпоративной среде.
 
 ```nginx
-# В основном контексте (angie.conf)
-load_module modules/ngx_http_auth_ldap_module.so;
+# В angie.conf: load_module modules/ngx_http_auth_ldap_module.so;
 
 http {
-    # Определение параметров сервера LDAP
     ldap_server ad_srv {
         url ldap://ad.example.com:389/dc=example,dc=com?sAMAccountName?sub?(objectClass=person);
         binddn "cn=svc_angie,ou=services,dc=example,dc=com";
-        binddn_passwd "service_password";
+        binddn_passwd "StrongPassword123";
+        
+        # Кэширование для снижения нагрузки на контроллер домена
+        cache max=1000 inactive=10m;
+        
         require valid_user;
     }
 
     server {
-        location /corporate/ {
-            auth_ldap "Domain Authentication";
+        location /internal/ {
+            auth_ldap "Domain Auth Required";
             auth_ldap_servers ad_srv;
             proxy_pass http://internal_app;
         }
@@ -225,17 +173,40 @@ http {
 }
 ```
 
+### Сценарий 6: Системная аутентификация (PAM)
+
+Интеграция с локальными пользователями ОС через `/etc/shadow`.
+
+**1. Настройка сервиса PAM (`/etc/pam.d/angie`):**
+```text
+auth    required    pam_unix.so
+account required    pam_unix.so
+```
+
+**2. Настройка в Angie:**
+```nginx
+location /system-admin/ {
+    auth_pam "System Login";
+    auth_pam_service_name "angie";
+}
+```
+
 ## Дополнительная информация
 
-### Продвинутые модули
+### Мониторинг и аудит
+Для отслеживания попыток доступа используйте расширенные переменные в `log_format`:
+*   `$remote_user` — имя пользователя, прошедшего аутентификацию (Basic, LDAP, PAM).
+*   `$jwt_header_alg` / `$jwt_payload_sub` — данные из JWT токена.
+*   `$auth_request_status` — результат работы `auth_request`.
 
-- **JWT**: Детальное описание формата и безопасности: **[JWT Overview](../../Security/Concepts/jwt_overview.md)**.
-- **LDAP**: Интеграция на уровне ОС: **[LDAP и SSSD](../../Linux/SystemAdministration/Users/LDAP_SSSD/operations.md)**.
-- **mTLS**: Аутентификация по клиентским сертификатам: **[mTLS в Angie](./angie_client_cert_auth.md)**.
+### Рекомендации по безопасности
+1.  **Satisfy Any для офиса:** Часто используется паттерн, разрешающий доступ без пароля из офисной сети (`allow office_ip`), но требующий `auth_basic` для всех остальных.
+2.  **Защита от перебора (Brute-force):** Рекомендуется комбинировать методы аутентификации с модулем `ngx_http_limit_req_module` для ограничения частоты запросов к эндпоинтам входа.
+3.  **Безопасность JWT:** При использовании `auth_jwt` всегда проверяйте алгоритм подписи (`alg`) и срок действия (`exp`).
 
 ## См. также
 
-- **[Логирование в Angie](./angie_logging.md)** — для аудита попыток доступа.
-- **[Взаимная аутентификация (mTLS) в Angie](./angie_client_cert_auth.md)**
-- **[Общий обзор безопасности Nginx](../Nginx/Security/nginx_security_guide.md)**
-
+*   **[Логирование в Angie](./angie_logging.md)** — аудит событий доступа.
+*   **[Взаимная аутентификация (mTLS) в Angie](./angie_client_cert_auth.md)** — альтернативный метод на основе сертификатов.
+*   **[Настройка TLS в Angie](./angie_tls_setup.md)** — обязательная база для защищенной аутентификации.
+*   **[Руководство по безопасности Nginx](../Nginx/Security/nginx_security_guide.md)** — общие принципы.

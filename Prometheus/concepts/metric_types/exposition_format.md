@@ -5,115 +5,118 @@
 **Формат экспозиции (Exposition Format)** — это стандарт представления метрик, предназначенный для передачи данных от экспортёров и приложений к серверу [Prometheus](../../overview.md) по протоколу HTTP. 
 
 В современной экосистеме (v3.0+) сосуществуют три спецификации:
-1.  **Prometheus Text Format (v0.0.4):** Классический текстовый формат, стандарт де-факто для Pull-модели.
-2.  **OpenMetrics:** Расширение текстового формата, добавляющее поддержку единиц измерения (UNIT), экземпляров (Exemplars) и нативных гистограмм.
-3.  **OTLP (OpenTelemetry Line Protocol):** Бинарный формат на базе Protobuf, который в Prometheus v3.0 стал нативным протоколом для приема метрик (Push и Pull).
+1.  **Prometheus Text Format (v0.0.4/1.0):** Классический текстовый формат. В версии 1.0 (Prometheus v3.0+) добавлена поддержка UTF-8 через согласование параметров.
+2.  **OpenMetrics (v1.0/v2.0):** Расширение текстового формата. Версия 2.0 (стандарт в Prometheus v3.0+) вводит текстовое представление нативных гистограмм и упрощенную передачу времени начала (Start Timestamps).
+3.  **OTLP (OpenTelemetry Line Protocol):** Бинарный формат на базе Protobuf. В Prometheus v3.0 стал нативным протоколом для высокоэффективного приема данных (Push и Pull).
 
 ## Основные концепции
 
-### Структура текстового формата
+### Структура текстового формата (OpenMetrics)
 
-Каждая метрика в потоке данных должна быть описана метаданными перед выводом точек данных.
+Каждая метрика должна быть описана метаданными перед выводом точек данных.
 
 | Директива / Строка | Обязательность | Описание |
 |:---|:---|:---|
-| `# HELP <имя> <текст>` | Рекомендуется | Поясняет смысл метрики. |
-| `# TYPE <имя> <тип>` | **Обязательно** | Тип данных: `counter`, `gauge`, `histogram`, `summary`. |
-| `# UNIT <имя> <единица>` | Опционально | Единицы измерения (только в OpenMetrics). |
-| `<имя>{<метки>} <значение> [<timestamp>]` | **Обязательно** | Конкретный временной ряд и его текущее значение. |
+| `# HELP <имя> <текст>` | Рекомендуется | Поясняет смысл метрики. Должно быть уникальным для имени метрики. |
+| `# TYPE <имя> <тип>` | **Обязательно** | Типы: `counter`, `gauge`, `histogram`, `summary`, `info`, `stateset`. |
+| `# UNIT <имя> <единица>` | Опционально | Единицы измерения (например, `seconds`, `bytes`). |
+| `<имя>{<метки>} <значение> [<timestamp>] [st@<start_timestamp>]` | **Обязательно** | Конкретный временной ряд. `st@` — время начала (только в OM 2.0). |
 
-### Синтаксис и UTF-8 (Prometheus v3.0)
+### UTF-8 и экранирование (Prometheus v3.0)
 
-До версии 3.0 имена метрик были ограничены ASCII. Начиная с v3.0, Prometheus поддерживает **полный UTF-8**:
-- Метрики могут содержать любые символы (точки, пробелы, эмодзи, кириллицу), если они передаются через OTLP или закодированы в кавычках (в OpenMetrics).
-- **Пример классического имени:** `http_requests_total` (соответствует `[a-zA-Z_:][a-zA-Z0-9_:]*`).
-- **Значения:** Только `float64`. Поддерживаются `NaN`, `+Inf`, `-Inf`.
+Начиная с версии 3.0, Prometheus поддерживает **полный UTF-8** для имен метрик и меток. Это управляется через заголовок `Accept` при скрейпинге:
 
-### Экземпляры (Exemplars)
+- **`escaping=allow-utf-8`**: Позволяет использовать любые символы (кириллица, эмодзи, точки).
+- **Экранирование:** Внутри кавычек (значения меток) символы `\`, `\n` и `"` должны экранироваться (`\\`, `\n`, `\"`).
+- **Legacy-режим:** Если клиент не поддерживает UTF-8, Prometheus автоматически заменяет недопустимые символы на подчеркивания (`_`).
 
-OpenMetrics позволяет прикреплять к метрикам (обычно Histogram или Counter) ссылки на конкретные события, например `trace_id`. Это обеспечивает бесшовную корреляцию метрик и трейсов ([OpenTelemetry](../../../OpenTelemetry/architecture_signals.md)).
+### Нативные гистограммы в текстовом формате (OM 2.0)
+
+В OpenMetrics 2.0 (Prometheus v3.0+) гистограммы больше не требуют множества строк `_bucket`. Они передаются одной строкой с использованием **CompositeValue**.
 
 **Синтаксис:**
 ```text
+http_request_duration_seconds {count:50, sum:12.5, schema:1, zero_threshold:0.001, zero_count:2, positive_spans:[0:2], positive_buckets:[15,28]} st@1723380000.000
+```
+- **`schema`**: Определяет ширину экспоненциальных корзин.
+- **`spans` и `buckets`**: Компактное описание заполненных корзин без перечисления пустых.
+
+### Экземпляры (Exemplars)
+
+Позволяют прикрепить к метрике ссылку на конкретное событие (например, `trace_id`), что обеспечивает корреляцию с трассировкой ([OpenTelemetry](../../../OpenTelemetry/architecture_signals.md)).
+
+**Пример:**
+```text
 http_request_duration_seconds_bucket{le="0.5"} 12 # {trace_id="a1b2c3d4"} 0.452
 ```
-Здесь `0.452` — это конкретное значение задержки, которое попало в эту корзину и связано с указанным трейсом.
 
 ## Практические сценарии
 
-### Сценарий 1: Пример в коде (Go)
+### Сценарий 1: UTF-8 в именах метрик (v3.0)
 
-Как создать метрики, которые будут генерировать правильный формат экспозиции через `client_golang`.
-
-```go
-import (
-    "github.com/prometheus/client_golang/prometheus"
-    "github.com/prometheus/client_golang/prometheus/promhttp"
-)
-
-var (
-    // Обязательно указываем суффикс _total для Counter
-    opsProcessed = prometheus.NewCounter(prometheus.CounterOpts{
-        Name: "myapp_processed_ops_total", 
-        Help: "Общее количество обработанных операций.",
-    })
-)
-
-// При GET-запросе на /metrics библиотека выдаст:
-// # HELP myapp_processed_ops_total Общее количество обработанных операций.
-// # TYPE myapp_processed_ops_total counter
-// myapp_processed_ops_total 1024
-```
-
-### Сценарий 2: Гистограмма в текстовом формате
-
-Гистограмма всегда порождает группу взаимосвязанных рядов.
+При использовании `escaping=allow-utf-8` экспортер может выдавать метрики с именами, содержащими произвольные символы.
 
 ```text
-# HELP http_request_duration_seconds Latency in seconds.
-# TYPE http_request_duration_seconds histogram
-http_request_duration_seconds_bucket{le="0.1"} 15
-http_request_duration_seconds_bucket{le="0.5"} 42
-http_request_duration_seconds_bucket{le="1.0"} 50
-http_request_duration_seconds_bucket{le="+Inf"} 52
-http_request_duration_seconds_sum 12.5
-http_request_duration_seconds_count 52
+# TYPE "запросы_общие_total" counter
+"запросы_общие_total"{метод="GET"} 1024
 ```
+*Примечание: В классическом формате имена с кириллицей должны быть заключены в кавычки в директивах `# TYPE` и `# HELP`.*
 
-**Важное напоминание:** Составляющие `_bucket`, `_sum` и `_count` являются **счётчиками (Counters)**. При их анализе в PromQL всегда используйте `rate()` перед любой агрегацией (например, `sum`), чтобы корректно обрабатывать рестарты приложения.
+### Сценарий 2: Передача времени начала (Start Timestamps)
 
-### Сценарий 3: Информационные метрики (Info-pattern)
-
-Для передачи метаданных, которые не меняются (версия, ветка git), используется Gauge со значением 1.
+В OpenMetrics 1.0 время начала передавалось через отдельную метрику `_created`. В OM 2.0 это делается суффиксом `st@` на той же строке.
 
 ```text
-# HELP myapp_build_info Build information.
-# TYPE myapp_build_info gauge
-myapp_build_info{version="1.5.0",revision="af23c",go_version="1.22"} 1
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 45.67 st@1723370000.500
+```
+Это критически важно для корректного вычисления `rate()` после рестартов приложения без потери точности на первом интервале.
+
+### Сценарий 3: Гистограмма (Classic vs Native)
+
+**Классическая гистограмма (совместимость):**
+```text
+http_duration_seconds_bucket{le="0.1"} 5
+http_duration_seconds_sum 0.45
+http_duration_seconds_count 5
+```
+
+**Нативная гистограмма (эффективность):**
+```text
+http_duration_seconds {count:5, sum:0.45, schema:1, positive_spans:[0:1], positive_buckets:[5]}
 ```
 
 ## Дополнительная информация
 
 ### Согласование контента (Content Negotiation)
 
-Prometheus запрашивает данные с определенными заголовками `Accept`. Экспортёр должен отдавать предпочтение наиболее современному формату:
-1.  `application/openmetrics-text` (если нужны Exemplars).
-2.  `application/vnd.google.protobuf` (OTLP, самый эффективный).
-3.  `text/plain` (обратная совместимость).
+Сервер Prometheus отправляет заголовок `Accept`. Экспортер должен выбрать наиболее приоритетный формат из списка:
+
+1.  `application/openmetrics-text; version=2.0.0` — лучший для Pull v3.0.
+2.  `application/vnd.google.protobuf` — для OTLP или классического Protobuf.
+3.  `application/openmetrics-text; version=1.0.0` — стандарт для v2.x.
+4.  `text/plain; version=0.0.4` — самый простой вариант.
+
+### Производительность и OTLP
+
+Для высоконагруженных систем (миллионы метрик) рекомендуется использовать **OTLP (OpenTelemetry Protocol)**:
+- **Бинарное сжатие:** OTLP/gRPC или OTLP/HTTP снижают нагрузку на сеть в 5-10 раз по сравнению с текстом.
+- **OTLP/Arrow:** Использование Apache Arrow для передачи метрик позволяет еще сильнее оптимизировать сериализацию.
 
 ### Валидация
 
-Всегда проверяйте корректность формата вашего экспортёра с помощью утилиты `promtool`:
+Проверка корректности формата с помощью `promtool`:
 ```bash
+# Проверка локального вывода
 curl -s http://localhost:8080/metrics | promtool check metrics
+
+# Проверка с учетом UTF-8
+curl -H "Accept: text/plain; version=1.0.0; escaping=allow-utf-8" http://localhost:8080/metrics | promtool check metrics
 ```
 
 ### См. также
 
 - [Типы метрик: обзор](./overview.md) — семантика Counter, Gauge, Histogram.
-- [Инструментация приложений](../../Exporters/extensibility/client_libraries.md) — выбор библиотеки для генерации формата.
+- [Инструментация приложений](../../Exporters/extensibility/client_libraries.md) — библиотеки для генерации формата.
 - [Протокол OTLP](../../../OpenTelemetry/otlp_protocol.md) — бинарная альтернатива тексту.
 - [VictoriaMetrics](../../../VictoriaMetrics/overview.md) — поддержка форматов в высоконагруженных средах.
-
----
-**Reliability Score: 10** (Соответствует спецификациям Prometheus v3.0, OpenMetrics и OTLP 2026 года)

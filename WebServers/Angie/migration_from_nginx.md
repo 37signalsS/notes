@@ -25,7 +25,7 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Миграция на bare-metal или виртуальные машины (VM)
+### Сценарий 1: Миграция на физические серверы или виртуальные машины (VM)
 
 #### Этап 1: Установка и подготовка
 
@@ -134,7 +134,7 @@
     - Выполните замену путей в файлах: `sed -i 's|/etc/nginx|/etc/angie|g'`.
 
 2. **Обновление Docker Compose:**
-    Используйте официальный образ `docker.angie.software/angie:latest`.
+    Используйте официальный образ `docker.angie.software/angie:latest`. В Angie 1.12+ рекомендуется использовать `upstream_discovery` для автоматического обнаружения контейнеров.
 
     ```yaml
     services:
@@ -146,6 +146,9 @@
         ports:
           - "80:80"
           - "443:443"
+        # Для автоматического обнаружения бэкендов в Docker
+        networks:
+          - web_net
     ```
 
 3. **Перезапуск:**
@@ -153,6 +156,70 @@
     ```bash
     docker-compose up -d
     ```
+
+### Сценарий 3: Оптимизация и переход на возможности Angie 1.12+ (2026)
+
+После успешной базовой миграции рекомендуется заменить устаревшие внешние инструменты нативными функциями Angie.
+
+#### 1. Встроенный модуль ACME (замена Certbot)
+
+Вместо использования внешних скриптов (Certbot, acme.sh), настройте автоматическое получение сертификатов в `angie.conf`:
+
+```nginx
+acme_client my_client {
+    server https://acme-v02.api.letsencrypt.org/directory;
+    contact mailto:admin@example.com;
+}
+
+server {
+    listen 443 ssl;
+    server_name example.com;
+
+    # Автоматическое управление сертификатом
+    ssl_certificate acme:my_client;
+    ...
+}
+```
+
+#### 2. Нативный экспорт метрик Prometheus
+
+Замените `nginx-prometheus-exporter` на встроенный модуль `prometheus`:
+
+```nginx
+location /metrics {
+    # Экспорт всех собранных метрик (shared zones, streams, etc.)
+    prometheus all;
+}
+```
+
+#### 3. Поддержка HTTP/3 (QUIC)
+
+В Angie поддержка HTTP/3 является стабильной и рекомендуется к включению для повышения производительности:
+
+```nginx
+server {
+    listen 443 quic reuseport;
+    listen 443 ssl;
+    
+    # Рекомендация клиенту перейти на HTTP/3
+    add_header Alt-Svc 'h3=":443"; ma=86400';
+    ...
+}
+```
+
+#### 4. Использование директивы `goto`
+
+Для очистки конфигурации замените "хаки" с `error_page` на прямые внутренние перенаправления в именованные location:
+
+```nginx
+location / {
+    try_files $uri @fallback;
+}
+
+location @fallback {
+    goto @backend_processing;
+}
+```
 
 ## Дополнительная информация
 

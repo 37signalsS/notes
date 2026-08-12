@@ -1,99 +1,99 @@
-# Capa
+# Capa: Автоматизированный анализ возможностей исполняемых файлов
 
-## Definitions
+## Определения
 
-**Capa** — open-source инструмент от Mandiant FLARE team для анализа возможностей исполняемых файлов. Определяет, что программа может делать (сетевое взаимодействие, работа с реестром, обфускация и т.д.), помогая аналитикам malware и reverse engineers быстро понимать поведение неизвестных бинарных файлов.
+**Capa** — open-source инструмент от команды Mandiant FLARE (в составе Google Cloud), предназначенный для автоматической идентификации функциональных возможностей (capabilities) в исполняемых файлах. Инструмент реализует статический анализ для ответа на вопрос: «Что эта программа может делать?», сопоставляя признаки внутри бинарного файла с базой экспертных правил.
 
 - **Репозиторий:** [mandiant/capa](https://github.com/mandiant/capa)
+- **База правил:** [mandiant/capa-rules](https://github.com/mandiant/capa-rules)
 - **Лицензия:** Apache 2.0
-- **Язык реализации:** Python
+- **Язык реализации:** Python (с поддержкой нативных бинарных сборок)
 
-## Basic Concepts
+## Основные концепции
 
 ### Идентификация возможностей
 
-Capa определяет функциональные возможности программы через статический анализ бинарных файлов:
+Capa определяет функционал программы через статический анализ без её фактического запуска. Основные выявляемые категории:
+- **Сетевое взаимодействие:** HTTP, DNS, TCP/UDP, работа с WinHTTP/WinInet.
+- **Взаимодействие с хостом:** Работа с файловой системой, реестром Windows, службами.
+- **Управление процессами:** Инъекции кода, создание потоков, перечисление процессов.
+- **Анти-анализ:** Обнаружение песочниц, виртуальных сред (VM-detection) и отладчиков.
+- **Вредоносная активность:** Признаки бэкдоров, кейлоггеров, кражи учетных данных (включая Cloud-credentials AWS/Cloudflare).
 
-- Сетевое взаимодействие (HTTP, DNS, TCP/UDP)
-- Работа с файловой системой и реестром
-- Создание процессов и потоков
-- Техники уклонения от обнаружения
-- Признаки бэкдоров и кейлоггеров
+### Поддерживаемые форматы и архитектуры
 
-### Форматы файлов и режимы анализа
+- **Форматы:** PE (Windows EXE/DLL), ELF (Linux), .NET сборки (C#, VB.NET).
+- **Архитектуры:** x86, x64, ARM64 (нативная поддержка с 2025 года).
+- **Режимы анализа:**
+    - **Статический:** Анализ бинарного файла через бэкенды дизассемблирования.
+    - **Динамический:** Обработка отчетов из песочниц (DRAKVUF, VirusTotal, Cape Sandbox).
 
-- **Поддерживаемые форматы:** PE (Windows), ELF (Linux), .NET сборки
-- **Статический анализ:** Анализ бинарных файлов без запуска
-- **Динамический анализ:** Обработка отчетов из песочниц (VirusTotal, DRAKVU)
+### Аналитические бэкенды (Engines)
 
-### Интеграция с MITRE ATT&CK
+Capa использует различные движки для извлечения признаков:
+- **Vivisect:** Дефолтный бэкенд для PE-файлов, обеспечивающий глубокий анализ потока управления.
+- **SMDA:** Быстрый бэкенд для восстановления функций, часто применяемый в автоматизированных пайплайнах.
+- **PyGhidra (v9.4+):** Современная интеграция с Ghidra для высококачественного анализа и декомпиляции.
+- **dnfile / Net-Inspect:** Специализированные инструменты для глубокого разбора .NET метаданных и байт-кода.
 
-Все обнаруженные возможности автоматически сопоставляются с тактиками и техниками матрицы MITRE ATT&CK, что позволяет:
+### Интеграция с MITRE ATT&CK и MBC
 
-- Классифицировать поведение по стандартной таксономии
-- Сравнивать образцы с известными семействами malware
-- Генерировать отчеты для threat intelligence
+Результаты сопоставляются с глобальными базами знаний:
+- **MITRE ATT&CK:** Классификация по тактикам (Execution, Persistence и др.) и техникам.
+- **Malware Behavior Catalog (MBC):** Детальное описание специфических техник вредоносного ПО.
 
-### Интеграции с reverse engineering инструментами
+### Правила Capa (Rules Engine)
 
-- **IDA Pro:** Плагин capa Explorer (доступен через репозиторий плагинов IDA)
-- **Ghidra:** Плагин для интеграции результатов анализа в интерфейс Ghidra
-- **CLI:** Автономное использование через командную строку
+Анализ основан на YAML-правилах. Логика строится на операторах `and`, `or`, `not`, `some`, `range`, `optional`.
+**Типы признаков (Features):**
+- `api`: Вызовы функций (например, `kernel32.CreateProcessA`).
+- `string`: Текстовые строки (поддерживаются регулярные выражения).
+- `number`: Числовые константы (например, магические числа криптоалгоритмов).
+- `bytes`: Байтовые последовательности (сигнатуры).
+- `import` / `export`: Функции в таблицах импорта/экспорта.
+- `characteristic`: Свойства (например, наличие манифеста или секций).
+- `match`: Рекурсивная ссылка на результаты выполнения других правил.
 
-### Правила Capa
-
-Анализ основан на правилах из репозитория [mandiant/capa-rules](https://github.com/mandiant/capa-rules):
-
-- **Формат правил:** YAML-подобный синтаксис с логическими операторами (`and`, `or`, `not`, `some`, `range`)
-- **Типы признаков:**
-  - API вызовы: `api: kernel32.CreateProcessA`
-  - Строки: `string: "cmd.exe"`
-  - Числовые константы: `number: 0x1000`
-  - Байтовые последовательности: `bytes: 55 8B EC`
-  - Импорт/экспорт: `import: msvcrt.system`
-  - Ссылки на другие правила: `match: create process`
-- **Namespace:** Правила организованы по категориям (`host-interaction/process`, `anti-analysis/sandbox`, `data-manipulation/obfuscation`)
-
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка
 
 ```bash
-# Установка через pip
-pip install capa
+# Установка через pip (рекомендуется Python 3.10+)
+pip install flare-capa
 
-# Или скачать готовый бинарник с GitHub Releases
+# Загрузка нативных бинарных файлов (Windows/Linux/macOS)
 # https://github.com/mandiant/capa/releases
 ```
 
-### Базовый анализ исполняемого файла
+### Базовое использование CLI
 
 ```bash
-# Анализ PE файла (Windows)
+# Стандартный анализ PE-файла
 capa malware.exe
 
-# Анализ ELF файла (Linux)
-capa suspicious_binary.elf
+# Анализ ELF-файла с использованием бэкенда SMDA
+capa -b smda suspicious_binary.elf
 
-# Анализ .NET сборки
+# Анализ .NET приложения (автоопределение)
 capa dotnet_app.exe
 
-# Вывод в JSON формате (для автоматизации)
+# Вывод детальной информации (verbose) с указанием адресов срабатывания
+capa -vv malware.exe
+
+# Сохранение результатов в JSON для автоматизации
 capa malware.exe -j > results.json
-
-# Вывод в verbose режиме (детальная информация)
-capa malware.exe -v
 ```
 
-### Пример вывода
+### Пример интерпретации вывода
 
-```
+```text
 +------------------------+-------------------------------------------------------------
 | ATT&CK Tactic          | ATT&CK Technique
 |------------------------+-------------------------------------------------------------
 | DEFENSE EVASION        | Obfuscated Files or Information [T1027]
 | DISCOVERY              | Query Registry [T1012]
-| EXECUTION              | Command and Scripting Interpreter: Windows Command Shell [T1059.003]
+| EXECUTION              | Command and Scripting Interpreter [T1059]
 +------------------------+-------------------------------------------------------------
 
 +------------------------+-------------------------------------------------------------
@@ -107,43 +107,61 @@ capa malware.exe -v
 +------------------------+-------------------------------------------------------------
 ```
 
-**Интерпретация:** Файл умеет выполнять команды, работать с реестром, создавать процессы, содержит обфусцированные данные и пытается обнаружить песочницу.
+### Использование кастомных правил
 
-### Анализ с кастомными правилами
+Вы можете использовать собственные наборы правил для поиска специфических угроз:
 
 ```bash
-# Использовать собственный набор правил
-capa malware.exe --rules /path/to/custom-rules/
+# Запуск со своим набором правил (отключает стандартные)
+capa malware.exe --rules /path/to/my-rules/
 
-# Объединить стандартные и кастомные правила
-capa malware.exe --rules /opt/capa-rules/ --rules /home/user/my-rules/
+# Добавление кастомных правил к стандартным
+capa malware.exe --rules ./standard-rules/ --rules ./my-private-rules/
 ```
 
-### Интеграция в CI/CD pipeline для malware triage
+### Анализ динамических отчетов
 
 ```bash
-#!/bin/bash
-# Автоматический анализ новых образцов
-for file in /samples/new/*.exe; do
-    capa "$file" -j | jq '.attack[]' >> threat_intel_report.json
-done
-```
-
-### Динамический анализ через отчеты песочниц
-
-```bash
-# Анализ отчета DRAKVU sandbox
+# Анализ отчета DRAKVUF (агентный анализ гипервизора)
 capa --format drakvuv-report sandbox_report.json
 
-# Анализ отчета VirusTotal
+# Анализ JSON-отчета VirusTotal
 capa --format vtcap-report vt_report.json
 ```
 
-## Additional Information
+### Интеграция в пайплайны (Python API)
+
+Пример скрипта для триажа:
+
+```python
+import capa.main
+import capa.rules
+
+# Инициализация правил
+rules = capa.rules.RuleSet(capa.main.get_default_rules())
+# Выбор экстрактора (автоопределение бэкенда)
+extractor = capa.main.get_extractor("./malware.exe", "vivisect", "auto")
+
+# Поиск возможностей
+capabilities, counts = capa.main.find_capabilities(rules, extractor)
+
+for rule_name, matches in capabilities.items():
+    if rules[rule_name].meta.get("att&ck"):
+        print(f"[!] Обнаружена техника ATT&CK: {rule_name}")
+```
+
+## Дополнительная информация
+
+### Интеграция с инструментами RE
+
+- **IDA Pro:** Плагин Capa Explorer (Qt-интерфейс, поддержка через репозиторий плагинов).
+- **Ghidra:** Интеграция через PyGhidra, позволяющая использовать движок Ghidra для CLI-анализа.
+- **Binary Ninja:** Плагин для визуализации результатов непосредственно в графе управления.
+- **Capa Explorer Web:** Веб-интерфейс для визуализации JSON-отчетов без установки тяжелого ПО.
 
 ### Создание собственных правил
 
-Аналитики могут создавать кастомные правила для обнаружения специфических техник или семейств вредоносного ПО:
+Пример правила для обнаружения инъекции в удаленный поток:
 
 ```yaml
 rule:
@@ -155,12 +173,10 @@ rule:
     scopes:
       static: function
       dynamic: process
-    mbc:
-      - Execution::Remote Thread Creation [F0018]
     att&ck:
       - Execution::Command and Scripting Interpreter [T1059]
-    references:
-      - https://example.com/technique
+    mbc:
+      - Execution::Remote Thread Creation [F0018]
     examples:
       - suspicious_sample.exe:0x401000
   features:
@@ -169,44 +185,26 @@ rule:
       - api: ntdll.NtCreateThreadEx
 ```
 
-**Документация по созданию правил:** [capa-rules documentation](https://github.com/mandiant/capa-rules/blob/master/doc/format.md)
+### Оптимизация и Troubleshooting
 
-### Troubleshooting
+#### Низкая скорость анализа
+- **Byte Pre-filtering:** В версиях 2025+ включено по умолчанию, пропускает нерелевантные функции.
+- **Кэширование:** Vivisect сохраняет `.viv` файлы для ускорения повторного анализа.
+- **Ограничение функций:** Используйте `--function 0xADDR` для точечного анализа.
 
-#### Капсуляция "No capabilities found"
+#### Ошибка "No capabilities found"
+1. **Упаковка:** Проверьте наличие упаковщиков (UPX, Themida). Используйте `-vv` для поиска правила "file is packed". Распакуйте перед анализом.
+2. **Тип файла:** Убедитесь, что файл является поддерживаемым бинарным форматом, а не текстовым скриптом или ресурсом.
+3. **Обновление:** Синхронизируйте версии инструмента и правил: `pip install --upgrade flare-capa`.
 
-**Причина:** Файл не распознан или не содержит анализируемых признаков.
+### См. также
 
-**Решение:**
-
-- Проверьте формат файла (поддерживаются PE, ELF, .NET)
-- Убедитесь, что файл не упакован (upx, themida и т.д.) — распакуйте перед анализом
-- Используйте флаг `-v` для детальной диагностики
-
-#### Медленный анализ больших файлов
-
-**Решение:**
-
-- Ограничьте анализ конкретными функциями: `capa file.exe --function 0x401000`
-- Используйте кэширование результатов
-
-#### Конфликт версий правил
-
-**Причина:** Версия capa не соответствует версии набора правил.
-
-**Решение:**
-
-- Убедитесь, что версии capa и capa-rules синхронизированы
-- Обновите оба компонента: `pip install --upgrade capa && git pull` в capa-rules
-
-### Связанные инструменты
-
-- **[DRAKVUF](https://github.com/tklengyel/drakvuf)** — Hypervisor-based agentless malware analysis
-- **[YARA](https://github.com/VirusTotal/yara)** — Pattern matching для malware analysis
-- **[FLOSS](https://github.com/mandiant/flare-floss)** — Извлечение обфусцированных строк из бинарных файлов
+- **[FLOSS](https://github.com/mandiant/flare-floss)** — Извлечение обфусцированных строк.
+- **[YARA](https://github.com/VirusTotal/yara)** — Сигнатурный поиск по паттернам.
+- **[MITRE ATT&CK](https://attack.mitre.org/)** — Справочник техник атак.
+- [Инструменты безопасности](./security_tools.md) — Общий индекс.
 
 ### Ресурсы
 
-- **Официальная документация:** [capa documentation](https://github.com/mandiant/capa/wiki)
-- **База правил:** [mandiant/capa-rules](https://github.com/mandiant/capa-rules)
-- **MITRE ATT&CK:** [attack.mitre.org](https://attack.mitre.org/)
+- **Rules Browser:** [mandiant.github.io/capa/rules](https://mandiant.github.io/capa/rules)
+- **Документация по формату правил:** [capa-rules spec](https://github.com/mandiant/capa-rules/blob/master/doc/format.md)

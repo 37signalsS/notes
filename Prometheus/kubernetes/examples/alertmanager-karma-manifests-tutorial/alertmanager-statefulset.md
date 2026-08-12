@@ -2,40 +2,42 @@
 
 ## Определения
 
-**Alertmanager StatefulSet** — основной ресурс Kubernetes для развёртывания Alertmanager. Использование StatefulSet вместо Deployment обеспечивает стабильные сетевые идентификаторы (важно для кластеризации) и гарантирует привязку PersistentVolume для сохранения состояния (silences, нотификации).
+**Alertmanager StatefulSet** — основной ресурс Kubernetes для развёртывания Alertmanager. Использование StatefulSet вместо Deployment обеспечивает стабильные сетевые идентификаторы (например, `alertmanager-0`), что критически важно для работы Gossip-протокола кластеризации, и гарантирует привязку PersistentVolume для сохранения состояния (silences, журнал уведомлений).
 
-**Расширение переменных окружения (External Variable Expansion)** — функция Alertmanager (v0.27+), позволяющая подставлять значения из переменных окружения напрямую в файл `alertmanager.yml` через синтаксис `${VAR_NAME}`.
+**Расширение переменных окружения (External Variable Expansion)** — функция Alertmanager (v0.27+), позволяющая динамически подставлять значения из ENV напрямую в `alertmanager.yml` через синтаксис `${VAR_NAME}`, что исключает хранение секретов в ConfigMap.
 
-> **См. также:** [Развёртывание Alertmanager в Kubernetes](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты).
+> **См. также:** [Развёртывание Alertmanager в Kubernetes](../../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты).
 
 ---
 
 ## Основные концепции
 
-### Структура пода
+### Структура пода и безопасность
 
-В современных инсталляциях (2025–2026) рекомендуется использовать встроенную поддержку переменных окружения, что упрощает манифест и избавляет от необходимости в `init-container`.
+В современных инсталляциях (2025–2026) акцент делается на безопасности и нативной интеграции с секретами Kubernetes.
 
 | Компонент | Назначение |
 | :--- | :--- |
-| **Alertmanager** | Образ `prom/alertmanager:v0.27.0`. Флаг `--config.expand-external-variables` активирует подстановку секретов. |
-| **Volumes** | Монтирование ConfigMap с шаблоном конфига и PVC для данных. |
+| **Alertmanager** | Образ `prom/alertmanager:v0.27.0`. Флаг `--config.expand-external-variables` активирует подстановку ENV. |
+| **SecurityContext** | Запуск от non-root пользователя (`uid: 65534`) для минимизации привилегий контейнера. |
+| **Кластеризация** | Использование флага `--cluster.peer` для связи реплик через Headless Service. |
+| **Пробы (Probes)** | Проверки `/health` для управления трафиком и автоматического перезапуска при сбоях. |
 
 ### Схема томов (Volumes)
 
 | Том | Источник | Точка монтирования | Описание |
 | :--- | :--- | :--- | :--- |
-| `config` | ConfigMap | `/etc/alertmanager` | Содержит `alertmanager.yml` с плейсхолдерами `${VAR}`. |
-| `templates` | ConfigMap | `/etc/alertmanager/templates` | Дополнительные Go-шаблоны оформления. |
-| `data` | PVC | `/alertmanager` | Хранение состояния (1Gi, ReadWriteOnce). |
+| `config` | ConfigMap | `/etc/alertmanager` | Содержит основной файл конфигурации с плейсхолдерами. |
+| `templates` | ConfigMap | `/etc/alertmanager/templates` | Кастомные Go-шаблоны оформления уведомлений. |
+| `data` | PVC | `/alertmanager` | Персистентное хранилище (1Gi, ReadWriteOnce). |
 
 ---
 
 ## Практические сценарии
 
-### Манифест StatefulSet
+### Манифест StatefulSet (Production-ready)
 
-Пример современной конфигурации с использованием нативного расширения переменных из Secret.
+Пример конфигурации с пробами, ресурсами и безопасным контекстом.
 
 **`alertmanager-statefulset.yaml`**
 
@@ -46,8 +48,8 @@ metadata:
   name: alertmanager
   namespace: monitoring
 spec:
-  serviceName: alertmanager
-  replicas: 1
+  serviceName: alertmanager-mesh
+  replicas: 3
   selector:
     matchLabels:
       app: alertmanager
@@ -56,23 +58,42 @@ spec:
       labels:
         app: alertmanager
     spec:
+      securityContext:
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
       containers:
         - name: alertmanager
           image: prom/alertmanager:v0.27.0
           args:
             - "--config.file=/etc/alertmanager/alertmanager.yml"
             - "--storage.path=/alertmanager"
-            # Важно: включаем поддержку переменных в конфиге
             - "--config.expand-external-variables"
+            - "--cluster.listen-address=0.0.0.0:9094"
+            - "--cluster.peer=alertmanager-mesh.monitoring.svc.cluster.local:9094"
           ports:
             - name: web
               containerPort: 9093
+            - name: mesh
+              containerPort: 9094
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: web }
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /-/ready, port: web }
+            initialDelaySeconds: 15
+            timeoutSeconds: 5
           env:
-            # Извлекаем секреты напрямую в переменные окружения
             - name: SMTP_PASSWORD
               valueFrom: { secretKeyRef: { name: alertmanager-secret, key: smtp.password } }
             - name: TELEGRAM_TOKEN
               valueFrom: { secretKeyRef: { name: alertmanager-secret, key: telegram.token } }
+            - name: TELEGRAM_CHAT_ID
+              valueFrom: { secretKeyRef: { name: alertmanager-secret, key: telegram.chat_id } }
           volumeMounts:
             - name: config
               mountPath: /etc/alertmanager
@@ -94,15 +115,11 @@ spec:
         resources: { requests: { storage: 1Gi } }
 ```
 
-### Альтернатива: Использование Init Container
-
-В учебных целях или для систем, не поддерживающих расширение переменных, может использоваться паттерн с `busybox` и `sed` (описан в полной версии руководства). Он позволяет подготовить конфиг до запуска основного процесса.
-
 ---
 
 ## Дополнительная информация
 
-- **[Секреты Kubernetes](./secrets.md)** — описание ключей в Secret.
-- **[Конфигурация (ConfigMap)](./alertmanager-config.md)** — синтаксис `${}` в конфиге.
-- **[Шаблоны сообщений](./alertmanager-templates.md)** — оформление уведомлений.
-- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
+- **[Сетевой доступ: Сервисы и Ingress](./services.md)** — описание Headless Service для кластеризации.
+- **[Конфигурация (ConfigMap)](./alertmanager-config.md)** — синтаксис маршрутов и `${}` в конфиге.
+- **[Шаблоны сообщений](./alertmanager-templates.md)** — подключение и использование Go Templates.
+- **[Секреты Kubernetes](./secrets.md)** — подготовка ключей в Secret для ENV-подстановки.

@@ -2,58 +2,53 @@
 
 ## Определения
 
-**Container Inventory (Инвентаризация контейнеров)** — процесс автоматического сбора данных о запущенных контейнерах (образы, дайджесты, реестры, привилегии) для контроля соответствия политикам безопасности.
+**Container Inventory (Инвентаризация контейнеров)** — процесс автоматического сбора метаданных о запущенных контейнерах (образы, дайджесты, открытые порты, переменные окружения) для контроля соответствия корпоративным политикам безопасности.
 
-**Docker Listener** — встроенный модуль (wodle) агента Wazuh, который взаимодействует с Docker API для мониторинга событий в реальном времени (создание, запуск, выполнение команд в контейнере) и сбора статистики ресурсов.
+**Docker Listener** — встроенный модуль (`wodle`) агента Wazuh, который взаимодействует с Docker API для мониторинга событий в реальном времени (создание, запуск, выполнение команд в контейнере) и сбора статистики ресурсов.
 
-**Wodle Command** — модуль агента для выполнения пользовательских сценариев по расписанию и передачи их вывода (stdout) на сервер для анализа.
+**Kubernetes Audit Monitoring** — механизм интеграции Wazuh с журналом аудита Kubernetes для отслеживания действий в кластере (кто создал под, кто получил доступ к секретам).
 
-## Базовые концепции
+**Runtime Security (eBPF)** — использование программ eBPF для глубокого мониторинга системных вызовов и сетевой активности контейнеров без внедрения агента внутрь каждого контейнера.
 
-### Уровни мониторинга
-1.  **Инвентаризация (Inventory)**: Глубокий аудит конфигураций (раз в несколько часов).
-2.  **Событийный мониторинг (Runtime)**: Мгновенное обнаружение действий (exec, stop, start).
-3.  **Мониторинг ресурсов**: Статистика CPU, памяти и сети.
+## Основные концепции
 
-### Отслеживаемые параметры риска
+### Уровни мониторинга и обеспечения безопасности
 
-| Параметр | Риск | Рекомендация |
+| Уровень | Описание | Метод в Wazuh |
+| :--- | :--- | :--- |
+| **Хост (Host)** | Проверка конфигурации Docker демона и ОС. | Модуль SCA (CIS Benchmark). |
+| **Инвентарь (Inventory)** | Глубокий аудит параметров запуска контейнеров. | Wodle Command + Скрипты. |
+| **События (Runtime)** | Реакция на запуск, остановку и команды `exec`. | Docker Listener. |
+| **Контроль ядра** | Обнаружение попыток побега и аномальных syscalls. | eBPF / Auditd. |
+
+### Отслеживаемые параметры риска (KPI Безопасности)
+
+| Параметр | Угроза | Рекомендация |
 | :--- | :--- | :--- |
 | `privileged: true` | Полный доступ к ресурсам хоста. | Заменить на конкретные capabilities. |
-| `user: root` | Эскалация при побеге из контейнера. | Использовать директиву `USER` в Dockerfile. |
-| `tag: latest` | Непредсказуемость обновлений, сложность аудита. | Использовать фиксированные теги или digest. |
-| `registry: local` | Образ без подтвержденного источника. | Использовать только доверенные реестры. |
-| `cap_add: [...]` | Расширенные системные привилегии. | Использовать `cap_drop: ALL` + Whitelist. |
+| `user: root` | Облегчение эскалации при взломе приложения. | Использовать `USER` в Dockerfile (UID > 1000). |
+| `readonly: false` | Возможность модификации бинарных файлов внутри. | Включать `--read-only` для неизменяемых слоев. |
+| `mount: docker.sock` | Полный контроль над Docker-демоном хоста. | Использовать Docker Socket Proxy (RO). |
+| `env: SECRET=...` | Утечка паролей через метаданные образа. | Использовать Secrets Management (Vault, K8s). |
 
 ## Практические сценарии
 
-### 1. Глубокая инвентаризация через кастомный скрипт
+### 1. Расширенная инвентаризация через кастомный скрипт
 
-#### Шаг 1: Скрипт инвентаризации (`container_inventory.sh`)
-Разместите скрипт в `/var/ossec/custom-scripts/container_inventory.sh`:
+Этот метод позволяет получить более детальные данные, чем стандартный модуль.
 
+#### Шаг 1: Скрипт инвентаризации (`/var/ossec/custom-scripts/container_inventory.sh`)
 ```bash
 #!/bin/sh
 # Проверка доступности Docker
 command -v docker >/dev/null 2>&1 || exit 0
 docker info >/dev/null 2>&1 || exit 0
 
-docker ps --format "{{.Names}}|{{.ID}}" | while IFS="|" read -r name cid; do
-  image=$(docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null)
-  [ -z "$image" ] && continue
-
-  # Извлечение подробных метаданных
-  info=$(docker inspect --format \
-    "{{.HostConfig.Privileged}}|{{.Config.User}}|{{json .HostConfig.CapAdd}}|{{json .HostConfig.CapDrop}}" \
-    "$cid" 2>/dev/null)
-  
-  privileged="${info%%|*}"
-  rest="${info#*|}"
-  user="${rest%%|*}"
-  
-  # Вывод в JSON для Wazuh
-  printf '{"type":"container_inventory","name":"%s","image":"%s","privileged":%s,"user":"%s"}\n' \
-    "$name" "$image" "${privileged:-false}" "${user:-root}"
+docker ps --format "{{.ID}}" | while read -r cid; do
+  # Извлечение метаданных в формате JSON для автоматического декодирования в Wazuh
+  docker inspect --format \
+    '{"type":"container_inventory","name":"{{.Name}}","image":"{{.Config.Image}}","user":"{{.Config.User}}","privileged":{{.HostConfig.Privileged}},"readonly":{{.HostConfig.ReadonlyRootfs}},"ports":{{json .NetworkSettings.Ports}},"mounts":{{json .Mounts}},"env":{{json .Config.Env}}}' \
+    "$cid" 2>/dev/null
 done
 ```
 
@@ -74,7 +69,7 @@ done
   <rule id="100200" level="0">
     <decoded_as>json</decoded_as>
     <field name="type">^container_inventory$</field>
-    <description>Container inventory event</description>
+    <description>Событие инвентаризации контейнеров</description>
   </rule>
 
   <rule id="100201" level="12">
@@ -83,59 +78,63 @@ done
     <description>КРИТИЧЕСКИЙ РИСК: Обнаружен привилегированный контейнер $(name)</description>
   </rule>
 
-  <rule id="100204" level="7">
+  <rule id="100202" level="7">
     <if_sid>100200</if_sid>
-    <field name="user">^root$</field>
-    <description>Процесс в контейнере запущен от root: $(name)</description>
+    <field name="user">^root$|^$</field>
+    <description>Процесс в контейнере запущен от пользователя root: $(name)</description>
   </rule>
 </group>
 ```
 
 ### 2. Настройка Docker Listener (Real-time события)
 
+Модуль обеспечивает видимость действий внутри контейнеров (например, кто запустил `sh` внутри `nginx`).
+
 #### Шаг 1: Подготовка Python-окружения
-Требуется Python 3.8–3.12. Установите зависимости:
+Установите зависимости, совместимые с Wazuh 4.9+ (Python 3.8–3.12):
 
 ```bash
-pip3 install --upgrade pip
-pip3 install docker==7.1.0 urllib3==1.26.20 requests==2.32.2 --break-system-packages
+# Для систем с менеджером пакетов pip
+pip3 install docker==7.1.0 urllib3==1.26.20 requests==2.32.3 --break-system-packages
 ```
 
-#### Шаг 2: Настройка интерпретатора
-В файле `/var/ossec/wodles/docker/DockerListener` проверьте Shebang:
-`#!<path_to_your_python>/bin/python3`
+#### Шаг 2: Настройка и включение
+В файле `/var/ossec/wodles/docker/DockerListener` проверьте Shebang: `#!<path_to_your_python>/bin/python3`.
+Затем активируйте в `ossec.conf`:
 
-#### Шаг 3: Включение модуля в `ossec.conf`
 ```xml
 <wodle name="docker-listener">
   <disabled>no</disabled>
   <run_on_start>yes</run_on_start>
-  <interval>10m</interval> <!-- Ожидание перед перезапуском при сбое -->
-  <attempts>5</attempts>    <!-- Кол-во попыток запуска -->
+  <attempts>5</attempts>
 </wodle>
 ```
 
-### 3. Проверка и верификация
+### 3. Мониторинг Kubernetes Audit Logs
 
-Выполните команды на агенте:
-```bash
-sudo docker run -d --name security_test_nginx nginx
-sudo docker exec -it security_test_nginx cat /etc/passwd
+Для интеграции с K8s рекомендуется настроить Webhook или чтение логов `kube-apiserver`.
+
+**Пример конфигурации `<localfile>` на мастер-ноде:**
+```xml
+<localfile>
+  <location>/var/log/kubernetes/audit.log</location>
+  <log_format>json</log_format>
+  <label key="source">k8s-audit</label>
+</localfile>
 ```
-Проверьте появление событий в Wazuh Dashboard (модуль Docker или Security Events).
 
 ## Дополнительная информация
 
-### Расширение мониторинга
-- **Сеть**: Сбор проброшенных портов (`.NetworkSettings.Ports`).
-- **Volumes**: Анализ монтирования чувствительных путей хоста.
-- **Env**: Сбор переменных окружения (внимание к секретам!).
+### Оптимизация и борьба с шумом
+*   **Фильтрация событий**: При высокой динамике (много кратковременных контейнеров) Docker Listener может генерировать тысячи событий. Используйте `<ignore>` в правилах для событий `top` и `stats`.
+*   **eBPF Драйвер**: В Wazuh 4.9+ рекомендуется переключать провайдер Whodata на `ebpf` в настройках Syscheck для мониторинга файлов внутри контейнеров с минимальным оверхедом.
 
 ### Типовые проблемы
-- **Python Path**: Самая частая причина — агент не видит библиотеки `docker` в системном Python. Рекомендуется использовать venv.
-- **Docker Socket**: Агент должен иметь права на чтение `/var/run/docker.sock`.
+*   **Docker Socket**: Агент должен иметь права на чтение `/var/run/docker.sock`. Проверьте членство пользователя `wazuh` в группе `docker`: `sudo usermod -aG docker wazuh`.
+*   **Python Path**: Если модуль не запускается, проверьте логи `/var/ossec/logs/ossec.log`. Часто проблема в отсутствии библиотеки `docker` в системном пути, используемом демоном.
 
 ### См. также
 - [Wazuh: обзор SIEM](../wazuh.md)
 - [Мониторинг безопасности контейнеров](../../../Docker/Docker_security/runtime_monitoring.md)
 - [Интеграция Docker с Prometheus](../../../Docker/Docker_metrics/docker_prometheus_integration.md)
+- [Мониторинг ядра через Wazuh](./kernel_monitoring.md) — детали eBPF и системных вызовов.

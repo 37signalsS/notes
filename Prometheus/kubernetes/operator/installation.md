@@ -4,13 +4,15 @@
 
 **Ручная установка Prometheus Operator** — метод развертывания компонентов мониторинга с использованием «голых» манифестов Kubernetes (`kubectl apply`), без применения Helm. Данный подход обеспечивает максимальный контроль над каждым ресурсом, но требует самостоятельного управления RBAC, секретами и Admission Webhooks.
 
-**Bundle (Бандл)** — консолидированный YAML-файл, содержащий описание Deployment оператора, ServiceAccount, ClusterRole и ClusterRoleBinding. Это основной файл для запуска логики контроллера.
+**Bundle (Бандл)** — консолидированный YAML-файл (обычно `bundle.yaml`), содержащий описание Deployment оператора, ServiceAccount, ClusterRole и ClusterRoleBinding. Это основной артефакт для запуска логики контроллера.
 
-**Admission Webhooks** — механизмы Kubernetes API (Validating/Mutating), используемые Оператором для проверки корректности CRD (например, синтаксиса правил в `PrometheusRule`) перед их фиксацией в `etcd`.
+**CEL-валидация (Common Expression Language)** — механизм проверки ресурсов на стороне API-сервера Kubernetes (`x-kubernetes-validations`), внедренный в CRD оператора с версии v0.84+. Позволяет отклонять некорректные конфигурации (например, неверный формат URL или конфликтующие типы авторизации) мгновенно, до их обработки оператором.
+
+**Admission Webhooks** — вспомогательные механизмы Kubernetes API (Validating/Mutating), используемые для глубокой проверки PromQL-выражений и структурной целостности правил алертинга.
 
 > **Рекомендация:** Используйте ручную установку при необходимости жесткого контроля версий, в Air-gapped средах или при интеграции с кастомными GitOps-платформами. В остальных случаях предпочтителен [Helm-чарт kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md).
 
-> **См. также:** [Концепции Prometheus Operator](./concepts.md), [ServiceMonitor CRD](./crd/servicemonitor.md), [RBAC в Kubernetes](../../Security/rbac/rbac_overview.md).
+> **Смотрите также:** [Концепции Prometheus Operator](./concepts.md), [ServiceMonitor CRD](./crd/servicemonitor.md), [RBAC в Kubernetes](../../Kubernetes/Security/rbac/rbac_overview.md).
 
 ## Базовые концепции
 
@@ -24,24 +26,24 @@
 | **Operator** | `bundle.yaml` | Ядро системы (контроллер + RBAC). |
 | **Webhooks** | `admission-webhooks.yaml` | Валидация правил и конфигураций. |
 | **Prometheus** | [Prometheus CRD](./crd/prometheus.md) | Сервер мониторинга с хранилищем TSDB. |
-| **Prometheus Agent** | `PrometheusAgent` CRD | Легковесный сборщик метрик без TSDB. |
-| **ScrapeConfig** | `ScrapeConfig` CRD | Современная замена `additionalScrapeConfigs`. |
+| **Prometheus Agent** | `PrometheusAgent` CRD (v1alpha1) | Легковесный сборщик метрик без TSDB. |
+| **ScrapeConfig** | `ScrapeConfig` CRD (v1alpha1) | Современная замена `additionalScrapeConfigs`. |
 | **Grafana** | [Grafana Integration](./grafana_integration.md) | Визуализация данных. |
 
 ### Источники манифестов
 
 Официальные манифесты поддерживаются в репозитории [prometheus-operator/prometheus-operator](https://github.com/prometheus-operator/prometheus-operator). Основные пути в репозитории:
 *   `/example/prometheus-operator-crd/` — папка со всеми определениями ресурсов.
-*   `/bundle.yaml` — единый файл для быстрого запуска контроллера.
+*   `/bundle.yaml` — единый файл для быстрого запуска контроллера в namespace `default`.
 *   `/example/admission-webhook/` — примеры конфигурации вебхуков.
 
 ### Актуальные версии (Июль 2026)
 
-| Параметр | Значение |
-| :--- | :--- |
-| **Версия Operator** | `v0.92.0` |
-| **Минимальный Kubernetes** | `1.29+` |
-| **API Version** | `monitoring.coreos.com/v1` |
+| Параметр | Значение | Примечание |
+| :--- | :--- | :--- |
+| **Версия Operator** | `v0.92.0` | Стабильный релиз 2026 года. |
+| **Минимальный Kubernetes** | `1.29+` | Рекомендуется для полной поддержки CEL. |
+| **API Version** | `monitoring.coreos.com/v1` | Актуальная версия API. |
 
 ## Практические сценарии
 
@@ -60,7 +62,7 @@ kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheu
 
 ### 2. Развертывание Оператора и RBAC
 
-Файл `bundle.yaml` по умолчанию использует namespace `default`. Для установки в `monitoring` требуется коррекция манифеста на лету.
+Файл `bundle.yaml` по умолчанию использует namespace `default`. Для установки в `monitoring` требуется коррекция манифеста (особенно `ClusterRoleBinding`) через Kustomize или `sed`.
 
 ```bash
 # Создание namespace
@@ -74,31 +76,16 @@ kubectl apply -f -
 
 ### 3. Настройка Admission Webhooks
 
-Вебхуки необходимы для предотвращения применения «битых» правил алертинга, которые могут уронить Prometheus.
+Вебхуки необходимы для предотвращения применения «битых» правил алертинга. С 2026 года часть проверок перенесена в CEL, но структурная валидация PromQL все еще требует вебхука.
 
 **Требования к TLS:**
-Вебхук работает по HTTPS. У вас есть два пути:
-1.  **cert-manager:** Автоматическая генерация и инъекция CA в `ValidatingWebhookConfiguration`.
+Вебхук работает по HTTPS. Рекомендуемые способы управления сертификатами:
+1.  **cert-manager:** Автоматическая генерация и инъекция CA в `ValidatingWebhookConfiguration` через аннотацию `cert-manager.io/inject-ca-from`.
 2.  **Ручной TLS:** Создание секрета `prometheus-operator-admission-webhook-certs` с полями `tls.crt` и `tls.key`.
 
-**Пример манифеста вебхука (фрагмент):**
-```yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: prometheus-operator-rules-validation
-webhooks:
-  - name: prometheusrulev1.monitoring.coreos.com
-    clientConfig:
-      service:
-        name: prometheus-operator
-        namespace: monitoring
-        path: /admit-rules
-```
+### 4. Создание инстансов различных типов
 
-### 4. Создание различных типов инстансов
-
-#### Сценарий A: Стандартный Prometheus (Server)
+#### Сценарий A: Стандартный Prometheus Server (v3.x)
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: Prometheus
@@ -112,11 +99,13 @@ spec:
   serviceMonitorSelector:
     matchLabels:
       release: monitoring
+  # Включение нативного OTLP ресивера (Prometheus 3.0+)
+  enableOTLPReceiver: true
 ```
 
 #### Сценарий B: Prometheus Agent Mode
 ```yaml
-apiVersion: monitoring.coreos.com/v1
+apiVersion: monitoring.coreos.com/v1alpha1
 kind: PrometheusAgent
 metadata:
   name: edge-collector
@@ -124,38 +113,23 @@ metadata:
 spec:
   replicas: 1
   remoteWrite:
-    - url: http://central-vm-insert:8428/api/v1/write
+    - url: http://central-storage:8428/api/v1/write
   serviceMonitorSelector:
     matchLabels:
       app: collector
 ```
 
-#### Сценарий C: Кастомный скрейпинг через ScrapeConfig
-```yaml
-apiVersion: monitoring.coreos.com/v1alpha1
-kind: ScrapeConfig
-metadata:
-  name: external-api
-  namespace: monitoring
-spec:
-  staticConfigs:
-    - targets: ['api.external-service.com:443']
-      labels:
-        env: production
-  scheme: https
-```
-
 ### 5. Проверка состояния и верификация
 
 ```bash
-# Проверка регистрации типов объектов
-kubectl get crd | grep monitoring.coreos.com
+# 1. Ожидание готовности пода оператора
+kubectl wait --for=condition=Ready pods -n monitoring -l app.kubernetes.io/name=prometheus-operator
 
-# Проверка работоспособности пода оператора
-kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus-operator
-
-# Проверка логов на предмет ошибок reconciliation
+# 2. Проверка логов на предмет ошибок reconciliation
 kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator
+
+# 3. Проверка статуса CEL-валидации (ошибки вернутся сразу в kubectl apply)
+# Пример: попытка создать ScrapeConfig с отрицательным интервалом
 ```
 
 ### 6. Полное удаление компонентов
@@ -164,7 +138,7 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator
 # Удаление бандла (Оператор + RBAC)
 kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.92.0/bundle.yaml
 
-# Удаление CRD (ВНИМАНИЕ: удалит ВСЕ ресурсы Prometheus, правила и т.д.)
+# Удаление CRD (ВНИМАНИЕ: удалит ВСЕ ресурсы Prometheus, правила и данные!)
 kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.92.0/example/prometheus-operator-crd/
 ```
 
@@ -177,7 +151,7 @@ kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/promethe
 | Ресурс | Группа API | Глаголы (Verbs) | Зачем |
 | :--- | :--- | :--- | :--- |
 | `nodes`, `pods`, `services` | "" (core) | `get, list, watch` | Service Discovery целей |
-| `endpoints`, `endpointslices`| "" / `discovery.k8s.io` | `get, list, watch` | Актуальные IP целей |
+| `endpoints`, `endpointslices`| "" / `discovery.k8s.io` | `get, list, watch` | Актуальные IP целей (преимущественно EndpointSlice) |
 | `ingresses` | `networking.k8s.io` | `get, list, watch` | Discovery для Ingress-мониторинга |
 | `configmaps`, `secrets` | "" (core) | `*` | Хранение конфигов и правил |
 | `statefulsets` | `apps` | `*` | Управление инстансами Prometheus |
@@ -188,14 +162,13 @@ kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/promethe
 1.  **Зеркалирование образов:** Загрузите в локальный Registry:
     *   `quay.io/prometheus-operator/prometheus-operator:v0.92.0`
     *   `quay.io/prometheus-operator/prometheus-config-reloader:v0.92.0`
-    *   Образы Prometheus и Alertmanager из манифестов.
-2.  **Подготовка манифестов:** Скачайте `bundle.yaml` и `crd/`. Замените в `bundle.yaml` значения `image:` на ваши внутренние адреса (например, `harbor.internal/monitoring/...`).
+2.  **Подготовка манифестов:** Скачайте `bundle.yaml` и `crd/`. Замените в `bundle.yaml` значения `image:` на внутренние адреса (например, `harbor.corp.local/monitoring/...`).
 3.  **Локальный Apply:** Скопируйте файлы на bastion-хост и выполните `kubectl apply -f .`.
 
 ### Типичные ошибки установки
 
-*   **CRD mismatch:** Установка Оператора `v0.92` на CRD `v0.85`. Симптом: ошибки `unknown field` в логах.
-*   **Webhook Timeout:** Порт 9443 (стандартный для вебхука Оператора) закрыт NetworkPolicy. Симптом: таймауты при создании `PrometheusRule`.
-*   **RBAC для Prometheus:** Забыли создать `ClusterRole` для самого пода Prometheus. Симптом: 0 targets в UI при наличии `ServiceMonitor`.
+*   **CRD mismatch:** Установка Оператора `v0.92` на CRD `v0.85`. Симптом: ошибки `unknown field` в логах из-за новых полей CEL-валидации.
+*   **Webhook Timeout:** Порт 9443 закрыт NetworkPolicy. Симптом: таймауты при создании `PrometheusRule`.
+*   **RBAC для Prometheus:** Если забыли создать `ClusterRole` для инстанса Prometheus, в UI будет 0 targets при наличии ресурсов мониторинга.
 
-> **См. также:** [Troubleshooting](./troubleshooting.md), [High Availability](./high_availability.md), [Grafana Integration](./grafana_integration.md).
+> **Смотрите также:** [Troubleshooting](./troubleshooting.md), [High Availability](./high_availability.md), [Grafana Integration](./grafana_integration.md).

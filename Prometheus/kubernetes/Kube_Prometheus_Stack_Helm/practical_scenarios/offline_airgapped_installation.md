@@ -1,82 +1,96 @@
-# Offline Air-gapped Installation (kube-prometheus-stack)
+# Установка в закрытом контуре (Air-gapped)
 
 > [Назад к оглавлению](../overview.md)
 
 > **SSoT для темы:** установка kube-prometheus-stack в изолированной среде без доступа к интернету.  
-> **Смежные темы:** [Kubespray Offline Installation](../../../../Kubernetes/Installation/Kubespray/offline_installation/offline_definitions.md) — развёртывание самого Kubernetes в закрытом контуре; [Harbor Overview](../../../../Docker/Docker_registries/Harbor/overview.md) — приватный репозиторий; [Air-gapped Troubleshooting](../../../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md) — диагностика проблем pull образов.
+> **Смежные темы:** [Kubespray: Offline установка](../../../../Kubernetes/Installation/Kubespray/offline_installation/offline_definitions.md) — развёртывание базовой инфраструктуры кластера; [Обзор Harbor](../../../../Docker/Docker_registries/Harbor/overview.md) — использование приватного реестра; [Диагностика загрузки образов](../../../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md) — решение типичных проблем в изоляции.
 
-## Definitions
+## Определения
 
-**Air-gapped кластер (Offline, закрытый контур)** — кластер Kubernetes, развёртываемый в изолированной среде без доступа к интернету. Все артефакты (образы контейнеров, Helm-чарты, бинарники) предварительно загружаются через съёмные носители или одноразовый канал передачи.
+**Air-gapped кластер (Закрытый контур)** — среда Kubernetes, полностью изолированная от публичных сетей. Все артефакты (Docker-образы, Helm-чарты, бинарные файлы) должны быть доставлены на физических носителях или через защищённые шлюзы.
 
-**Приватный репозиторий (Harbor)** — локальный Docker-registry, развёрнутый внутри закрытого контура. Служит источником образов для всех компонентов кластера. kube-prometheus-stack поддерживает настройку `global.imageRegistry` для перенаправления pull всех образов.
+**Приватный реестр (Harbor/Nexus)** — внутренний сервис хранения и дистрибуции образов. В оффлайн-установке он становится единственным источником данных для кластера.
 
-**Helm OCI registry** — механизм хранения Helm-чартов в OCI-совместимом репозитории (Harbor, Nexus). Позволяет выполнять `helm install` и `helm upgrade` из приватного источника без доступа к public репозиториям.
+**OCI (Open Container Initiative)** — стандарт, позволяющий использовать Docker-реестры для хранения не только образов, но и Helm-чартов. Это основной метод дистрибуции чартов в современных закрытых контурах.
 
-## Basic Concepts
+## Основные концепции
 
-### Архитектура air-gapped развёртывания
+### Архитектура оффлайн-развёртывания
 
 ```
-┌───────────────────────┐         Съёмный носитель        ┌──────────────────────────┐
+┌───────────────────────┐         Перенос данных          ┌──────────────────────────┐
 │  Хост с интернетом    │  ──────────────────────────►    │  Хост в закрытом контуре  │
-│  (download zone)      │    • prom-images.tar            │  (air-gapped zone)        │
-│                       │    • kube-prometheus-stack.tgz  │                           │
-│  1. pull образов      │                                 │  1. load образов           │
-│  2. helm pull chart   │                                 │  2. push в Harbor          │
-│  3. docker save       │                                 │  3. helm push chart (OCI)  │
+│  (Download Zone)      │    • prom-images.tar            │  (Air-gapped Zone)        │
+│                       │    • kps-chart.oci.tar          │                           │
+│  1. Загрузка чарта    │                                 │  1. Импорт образов        │
+│  2. Сбор списка image │                                 │  2. Push в локальный OCI  │
+│  3. Docker pull/save  │                                 │  3. Helm install          │
 └───────────────────────┘                                 └─────────────┬────────────┘
                                                                        │
                                                         ┌──────────────▼────────────┐
-                                                        │  Kubernetes cluster       │
-                                                        │  (air-gapped)             │
+                                                        │  Kubernetes Cluster       │
+                                                        │  (Offline)                │
                                                         │                           │
-                                                        │  Harbor ← pull образов     │
-                                                        │  Helm install из OCI      │
+                                                        │  Harbor: Pull образов      │
+                                                        │  Helm: Deploy из OCI      │
                                                         └───────────────────────────┘
 ```
 
-### Три этапа развёртывания
+### Этапы процесса
 
-| Этап | Где | Что |
-|---|---|---|
-| **1. Подготовка артефактов** | Хост с доступом к интернету | Скачивание чарта, извлечение списка образов, `docker pull`, `docker save` |
-| **2. Загрузка в приватный репозиторий** | Хост в закрытом контуре | `docker load`, `docker tag` → Harbor, `docker push`, `helm push` (OCI) |
-| **3. Установка в кластер** | Хост в закрытом контуре (kubect) | `helm install` из OCI, `values.yaml` с `global.imageRegistry` |
+| Этап | Локация | Описание |
+|:---|:---|:---|
+| **1. Подготовка** | С интернетом | Скачивание чарта, извлечение списка всех образов (включая зависимости и sidecars), экспорт архивов. |
+| **2. Транспортировка** | Физическая | Перенос архивов во внутренний контур согласно регламентам безопасности (съемные носители). |
+| **3. Наполнение** | Внутренняя сеть | Загрузка образов и чартов в локальный Harbor, тегирование согласно внутренней структуре. |
+| **4. Развёртывание** | Кластер | Установка через Helm с переопределением путей ко всем компонентам. |
 
-### Ключевые отличия от online-установки
+### Ключевые отличия от онлайн-установки
 
-| Параметр | Online | Air-gapped |
-|---|---|---|
+| Параметр | Онлайн | Оффлайн |
+|:---|:---|:---|
 | Источник чарта | `https://prometheus-community.github.io/helm-charts` | `oci://harbor.domain.local/helm/` |
-| Источник образов | docker.io, quay.io, ghcr.io | `harbor.domain.local` |
-| `global.imageRegistry` | Не требуется | Обязателен |
-| `imagePullSecrets` | Не требуется | Обязателен (auth в Harbor) |
-| CRD | `crds.enabled: true` (авто-создание) | `crds.enabled: false` (созданы заранее) или `true` при первом развёртывании |
+| Источник образов | Публичные Registry (docker.io, quay.io) | Приватный Harbor/Nexus |
+| Глобальный реестр | Не требуется | Обязательный `global.imageRegistry` |
+| Секреты (Pull) | Не требуются (для public) | Обязательный `imagePullSecrets` для Harbor |
+| Управление CRD | `crds.enabled: true` | Рекомендуется ручной `kubectl apply -f crds/` |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Этап 1: Подготовка образов (на хосте с интернетом)
+### Шаг 1: Подготовка артефактов (машина с интернетом)
 
-#### 1.1 Скачивание чарта
+#### 1.1 Скачивание и распаковка чарта
 
 ```bash
+export CHART_VERSION="88.1.x"
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
-helm pull prometheus-community/kube-prometheus-stack --untar
+helm pull prometheus-community/kube-prometheus-stack --version $CHART_VERSION --untar
 cd kube-prometheus-stack
 ```
 
-#### 1.2 Извлечение списка образов
+#### 1.2 Извлечение полного списка образов
+
+Метод через `helm template` является самым надежным, так как он учитывает включенные компоненты и их зависимости.
 
 ```bash
-helm template prometheus ../kube-prometheus-stack -f values.yaml > rendered.yaml
+# Генерация манифестов для анализа (включите все нужные компоненты)
+helm template kps . \
+  --set grafana.enabled=true \
+  --set prometheus-node-exporter.enabled=true \
+  --set kube-state-metrics.enabled=true \
+  > rendered.yaml
+
+# Извлечение списка уникальных образов
 grep -oE 'image:\s*"?[^"]+' rendered.yaml | sed -E 's/^image:\s*"?//; s/"$//' | sort -u > prom-images.txt
+
+# ВАЖНО: Добавление системных образов, которые могут не попасть в шаблон (например, config-reloader)
+echo "quay.io/prometheus-operator/prometheus-config-reloader:v0.92.0" >> prom-images.txt
+echo "docker.io/library/busybox:1.37.0" >> prom-images.txt
+sort -u prom-images.txt -o prom-images.txt
 ```
 
-> **Примечание:** `grep` может не захватить образы из subcharts (grafana-sidecar, busybox). Проверьте результат вручную.
-
-#### 1.3 Загрузка и сохранение образов
+#### 1.3 Сохранение образов в архив
 
 ```bash
 # Pull всех образов
@@ -84,77 +98,74 @@ for img in $(cat prom-images.txt); do
   docker pull $img
 done
 
-# Дополнительные образы (могут отсутствовать в rendered.yaml)
-docker pull quay.io/prometheus-operator/prometheus-config-reloader:v0.89.0
-docker pull docker.io/library/busybox:1.37.0
-
-# Сохранение в единый архив
+# Сохранение в единый бандл
 docker save -o prom-images.tar $(cat prom-images.txt)
+
+# Упаковка самого чарта
+cd ..
+tar -cvzf kube-prometheus-stack-bundle.tar.gz kube-prometheus-stack/ prom-images.tar prom-images.txt
 ```
 
-#### 1.4 Упаковка чарта
+### Шаг 2: Загрузка в приватный репозиторий (Harbor)
+
+#### 2.1 Импорт образов
+
+На машине внутри закрытого контура, имеющей доступ к Harbor:
 
 ```bash
-cd ~
-tar -cvf kube-prometheus-stack.tgz kube-prometheus-stack
+tar -xvzf kube-prometheus-stack-bundle.tar.gz
+docker load -i prom-images.tar
 ```
 
-### Этап 2: Загрузка в приватный репозиторий (Harbor)
+#### 2.2 Тегирование и Push в Harbor
 
-#### 2.1 Загрузка образов на air-gapped хост
-
-```bash
-# На хосте в закрытом контуре
-tar -xvf /home/admin/kube-prometheus-stack.tgz
-mv kube-prometheus-stack/prom-images.tar ./
-sudo docker load -i prom-images.tar
-```
-
-#### 2.2 Push образов в Harbor
+Рекомендуется сохранять структуру оригинальных имен для избежания конфликтов.
 
 ```bash
-# Переменные
 export HARBOR="harbor.domain.local"
 export PROJECT="monitoring"
 docker login ${HARBOR}
 
-# Tag + Push
 while read -r img; do
-  new="${HARBOR}/${PROJECT}/${img}"
-  docker tag "${img}" "$new"
-  docker push "$new"
+  # Создаем новый тег: harbor.domain.local/monitoring/оригинальный_путь_образа
+  # Пример: quay.io/prometheus/prometheus -> harbor.domain.local/monitoring/quay.io/prometheus/prometheus
+  new_tag="${HARBOR}/${PROJECT}/${img}"
+  docker tag "${img}" "${new_tag}"
+  docker push "${new_tag}"
 done < prom-images.txt
 ```
 
-#### 2.3 Push Helm-чарта в OCI registry
+#### 2.3 Пуш чарта в OCI-хранилище
 
 ```bash
-rm kube-prometheus-stack/rendered.yaml
-helm package ./kube-prometheus-stack -d .
-helm push kube-prometheus-stack*.tgz oci://harbor.domain.local/helm
+helm package ./kube-prometheus-stack
+helm push kube-prometheus-stack-*.tgz oci://${HARBOR}/helm
 ```
 
-### Этап 3: Установка в закрытом контуре
+### Шаг 3: Установка в закрытом контуре
 
-#### 3.1 Создание imagePullSecret
+#### 3.1 Создание секрета для Pull образов
 
 ```bash
-# Secret для аутентификации в Harbor
+kubectl create namespace monitoring
 kubectl create secret docker-registry harbor-pull-secret \
   -n monitoring \
-  --docker-server=harbor.domain.local \
+  --docker-server=${HARBOR} \
   --docker-username=<user> \
   --docker-password=<password>
 ```
 
-#### 3.2 Файл values.yaml для air-gapped
+#### 3.2 Подготовка values.yaml (Максимальная детализация)
+
+Не все компоненты корректно подхватывают `global.imageRegistry`, поэтому требуется точечное переопределение.
 
 ```yaml
+# offline-values.yaml
 crds:
-  enabled: true  # false если CRD созданы заранее
+  enabled: true # Если устанавливаете впервые
 
 global:
-  imageRegistry: "harbor.domain.local"
+  imageRegistry: "harbor.domain.local/monitoring"
   imagePullSecrets:
     - name: harbor-pull-secret
 
@@ -162,12 +173,6 @@ prometheusOperator:
   image:
     registry: harbor.domain.local
     repository: monitoring/quay.io/prometheus-operator/prometheus-operator
-  admissionWebhooks:
-    patch:
-      enabled: true
-      image:
-        registry: harbor.domain.local
-        repository: monitoring/ghcr.io/jkroepke/kube-webhook-certgen
   prometheusConfigReloader:
     image:
       registry: harbor.domain.local
@@ -178,24 +183,10 @@ prometheus:
     image:
       registry: harbor.domain.local
       repository: monitoring/quay.io/prometheus/prometheus
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          storageClassName: longhorn
-          accessModes: ["ReadWriteOnce"]
-          resources:
-            requests:
-              storage: 10Gi
-  ingress:
-    enabled: true
-    ingressClassName: nginx
-    annotations:
-      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    hosts:
-      - prometheus.k8s.domain.local
-    paths:
-      - /
-    pathType: Prefix
+    # Важно для sidecars внутри пода Prometheus
+    containers:
+      - name: config-reloader
+        image: harbor.domain.local/monitoring/quay.io/prometheus-operator/prometheus-config-reloader:v0.92.0
 
 alertmanager:
   alertmanagerSpec:
@@ -206,31 +197,17 @@ alertmanager:
 kube-state-metrics:
   image:
     registry: harbor.domain.local
-    repository: "monitoring/registry.k8s.io/kube-state-metrics/kube-state-metrics"
+    repository: monitoring/registry.k8s.io/kube-state-metrics/kube-state-metrics
 
 prometheus-node-exporter:
   image:
     registry: harbor.domain.local
-    repository: "monitoring/quay.io/prometheus/node-exporter"
+    repository: monitoring/quay.io/prometheus/node-exporter
 
 grafana:
   image:
-    repository: monitoring/docker.io/grafana/grafana
-  ingress:
-    enabled: true
-    ingressClassName: nginx
-    annotations:
-      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    hosts:
-      - grafana.k8s.domain.local
-    path: /
-    pathType: Prefix
-  persistence:
-    enabled: true
-    storageClassName: longhorn
-    size: 5Gi
+    repository: harbor.domain.local/monitoring/docker.io/grafana/grafana
   initChownData:
-    enabled: true
     image:
       registry: harbor.domain.local
       repository: monitoring/docker.io/library/busybox
@@ -240,63 +217,52 @@ grafana:
       repository: monitoring/quay.io/kiwigrid/k8s-sidecar
 ```
 
-> **Важно:** Пути `repository` включают префикс исходного registry (`quay.io/`, `docker.io/`) как часть имени проекта в Harbor. Это сохраняет совместимость с оригинальными путями образов.
-
-#### 3.3 Установка
+#### 3.3 Выполнение установки
 
 ```bash
-helm install kube-prometheus-stack \
-  oci://harbor.domain.local/helm/kube-prometheus-stack \
-  -n monitoring --create-namespace -f values.yaml
+helm install kps oci://${HARBOR}/helm/kube-prometheus-stack \
+  -n monitoring \
+  -f offline-values.yaml
 ```
 
-## Additional Information
+## Дополнительная информация
 
-### Troubleshooting
+### Устранение неисправностей
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
-| `ImagePullBackOff` на поде | Образ отсутствует в Harbor или неверный путь | Проверить `kubectl describe pod` → exact image path; сверить с Harbor |
-| `ErrImagePull` — unauthorized | imagePullSecret не настроен или неверен | Проверить `kubectl get secret harbor-pull-secret -n monitoring`; `kubectl describe pod` |
-| `helm install` — chart not found | OCI chart не запушен или неверный URL | `helm search repo` для локальных; проверить `helm push` в Harbor UI |
-| CRD не созданы | `crds.enabled: false`, но CRD отсутствуют | Создать CRD вручную из `crds/` директории чарта или установить `crds.enabled: true` |
-| Подвисание pod'ов | DNS недоступен для внешних registry | Убедиться, что все образы в Harbor; проверить `/etc/resolv.conf` в подах |
-| Grafana sidecar не загружает дашборды | `k8s-sidecar` образ не в Harbor | Проверить `grafana.sidecar.image.registry` и `repository` в values.yaml |
+| `ImagePullBackOff` | Образ не найден по указанному пути в Harbor | Проверьте вкладку Repositories в Harbor UI. Путь должен быть `monitoring/quay.io/...` |
+| `x509: unknown authority` | Кластер не доверяет сертификату Harbor | Добавьте CA Harbor в `/etc/docker/certs.d/` или системное хранилище всех нод. |
+| `Pending` поды (Webhook) | Проблема с `kube-webhook-certgen` | Убедитесь, что образ `ghcr.io/jkroepke/kube-webhook-certgen` зеркалирован. |
+| Ошибка при `helm install` | Harbor OCI не авторизован в Helm | Выполните `helm login harbor.domain.local`. |
+| Grafana не видит дашборды | Sidecar образ не загружен | Проверьте `grafana.sidecar.image` в `values.yaml`. |
 
 ### Диагностика
 
 ```bash
-# Проверка, что все образы указывают на Harbor
-helm template kps ../kube-prometheus-stack -f values.yaml | grep -i 'image:' | sort -u
+# Проверка итоговой конфигурации всех образов в рендере
+helm template kps oci://${HARBOR}/helm/kube-prometheus-stack -f offline-values.yaml | grep "image:" | sort -u
 
-# Проверка pulling образов из кластера
-kubectl get pods -n monitoring -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].image}{"\n"}{end}'
+# Проверка статуса подов и причин ошибок загрузки
+kubectl describe pod -n monitoring <pod-name> | grep -A 5 Events
 
-# Проверка ImagePullSecrets
-kubectl get serviceaccount -n monitoring default -o jsonpath='{.imagePullSecrets}'
-
-# Удаление при ошибке
-helm uninstall kube-prometheus-stack -n monitoring
-kubectl delete namespace monitoring
-
-# Проверка доступности Harbor из кластера
-kubectl run test-pull --image=harbor.domain.local/monitoring/quay.io/prometheus/prometheus --rm -it --restart=Never -- sh
+# Проверка доступности реестра с узла (containerd/docker)
+crictl pull harbor.domain.local/monitoring/quay.io/prometheus/prometheus:v3.12.0
 ```
 
-### Best Practices
+### Рекомендации (Best Practices)
 
-1. **Автоматизируйте извлечение образов** — `helm template | grep image` может пропустить субчарты. Сравнивайте результат с полным списком из `values.yaml` чарта.
-2. **Версионирование артефактов** — сохраняйте `prom-images.txt` и `kube-prometheus-stack.tgz` с версией чарта в Git/архив для воспроизводимости.
-3. **Harbor project = monitoring** — выделяйте отдельный проект в Harbor для мониторинга; это упрощает управление правами и rotation credentials.
-4. **CRD создавайте отдельно** — для production рекомендуется `crds.enabled: false` и отдельный pipeline для обновления CRD (чтобы `helm upgrade` не удалял кастомные ресурсы).
-5. **Тестируйте на staging до air-gapped** — развёртывание с `global.imageRegistry` можно протестировать в online-среде, указав `imageRegistry` на Harbor с доступом из интернета.
-6. **Обновление версий** — при обновлении kube-prometheus-stack повторяйте все 3 этапа; проверяйте changelist образов (новые/удалённые образы в новой версии чарта).
+1. **Автоматизируйте извлечение:** Используйте скрипты для генерации `prom-images.txt`, чтобы не пропустить скрытые зависимости субчартов.
+2. **Версионируйте бандлы:** Храните архивы `prom-images.tar` вместе с версией чарта для возможности быстрого отката в оффлайн-среде.
+3. **Используйте Robot Accounts:** В Harbor создавайте Robot Accounts с правами `pull` для использования в `imagePullSecrets`.
+4. **Управление CRD:** В больших кластерах устанавливайте CRD отдельно (`kubectl apply -f crds/`), так как Helm может превысить лимит размера Secret при хранении релизов.
+5. **Проверка DNS:** Убедитесь, что имя Harbor резолвится внутри подов кластера (настройка CoreDNS).
 
 ### Связанные ресурсы
 
 | Ресурс | Описание |
 |---|---|
-| [Kubespray Offline Installation](../../../../Kubernetes/Installation/Kubespray/offline_installation/offline_definitions.md) — развёртывание самого Kubernetes в закрытом контуре |
-| [Harbor Overview](../../../../Docker/Docker_registries/Harbor/overview.md) — приватный Docker registry |
-| [Air-gapped Image Pull Troubleshooting](../../../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md) — диагностика `ImagePullBackOff` |
-| [Online Installation](./online_installation.md) — стандартная установка с доступом к интернету |
+| [Kubespray: Offline установка](../../../../Kubernetes/Installation/Kubespray/offline_installation/offline_definitions.md) | Подготовка базового кластера в изоляции. |
+| [Harbor: Использование](../../../../Docker/Docker_registries/Harbor/usage.md) | Детальная настройка приватного реестра. |
+| [Troubleshooting Image Pull](../../../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md) | Отладка ошибок загрузки в оффлайн-средах. |
+| [Online Installation](./online_installation.md) | Стандартная процедура для сравнения. |

@@ -2,13 +2,15 @@
 
 ## Определения
 
-**Сертификат сервиса (service certificate)** — цифровой документ стандарта X.509, выдаваемый для идентификации узла (веб-сервера, базы данных) и шифрования трафика. В двухуровневой иерархии подписывается исключительно промежуточным центром сертификации.
+**Сертификат сервиса (Service Certificate)** — цифровой документ стандарта X.509, используемый для идентификации узлов (веб-серверов, API, БД) и шифрования трафика. В двухуровневой иерархии подписывается исключительно **Intermediate CA**.
 
-**CA (Certificate Authority, Центр сертификации)** — доверенная сторона, выпускающая и подтверждающая сертификаты.
+**CA (Certificate Authority)** — доверенная сторона в PKI. В данной модели корень (Root) изолирован, а промежуточный узел (Intermediate) является «выпускающим».
 
-**PKI (Public Key Infrastructure, Инфраструктура открытых ключей)** — система управления ключами и сертификатами.
+**OpenSSL 3.0+** — современная версия криптографического инструментария. В 2026 году рекомендуется использовать его архитектуру провайдеров для обеспечения соответствия стандартам безопасности.
 
-> Базовые понятия, такие как **CSR (Certificate Signing Request, Запрос на подпись сертификата)**, **SAN (Subject Alternative Name, Альтернативное имя субъекта)**, механизмы отзыва (**CRL**, **OCSP**) и теория иерархии доверия подробно описаны в **[обзоре PKI](../../../../Concepts/pki_overview.md)**.
+**mTLS (Mutual TLS)** — стандарт безопасности, требующий наличия сертификатов у обеих сторон соединения.
+
+> Базовые понятия (CSR, SAN, CRL, Цепочка доверия) подробно описаны в **[обзоре PKI](../../../../Concepts/pki_overview.md)**.
 
 ## Базовые концепции
 
@@ -18,114 +20,93 @@
 
 | Этап | Ответственный | Локация |
 | :--- | :--- | :--- |
-| Генерация ключа и CSR | Владелец сервиса | Целевой сервер |
+| Генерация ключа и CSR | Владелец сервиса | Целевой сервер / HSM |
 | Валидация данных и SAN | Администратор Intermediate CA | Узел Intermediate CA |
 | Подпись и выдача | Intermediate CA | Узел Intermediate CA |
 | Установка и настройка | Владелец сервиса | Целевой сервер |
 
 ### Ключевые принципы безопасности
 
-1. **Разделение ролей:** Приватный ключ сервиса генерируется и хранится только на целевом сервере. Он никогда не передается по сети и не попадает к администратору CA.
-2. **Цепочка доверия:** Для работы TLS (Transport Layer Security) сервер должен предоставлять клиенту не только свой сертификат, но и промежуточный сертификат CA. Эти файлы объединяются в цепочку `ca-chain.crt`.
-3. **Корневое доверие:** На клиентские устройства (рабочие станции, мобильные устройства) устанавливается только сертификат Root CA. Доверие к промежуточному CA и конечным сервисам выстраивается автоматически через проверку подписей.
+1. **Изоляция приватного ключа:** Ключ сервиса генерируется локально и **никогда** не передается администратору CA. Передается только публичный запрос (CSR).
+2. **Обязательность SAN:** Поле `Common Name (CN)` считается устаревшим. Все современные системы (Go, Rust, браузеры 2026+) требуют наличия расширения `Subject Alternative Name`.
+3. **Цепочка доверия (Bundle):** Сервер обязан отдавать клиенту «бандл», состоящий из собственного сертификата и сертификата Intermediate CA. Клиент доверяет корню (Root CA), который подписывал Intermediate.
 
 ## Практические сценарии
 
 ### 1. Генерация ключа и CSR на стороне сервиса
 
-Владелец сервиса готовит запрос, указывая **DN (Distinguished Name, Отличительное имя)**.
-
+#### Вариант А: Классический RSA-4096
 ```bash
-# Генерация ключа RSA 4096 бит
-openssl genrsa -out my-service.key 4096
-
-# Создание запроса на подпись
-openssl req -new -key my-service.key -out my-service.csr \
-    -subj "/C=RU/ST=Moscow/O=My Private Corp/OU=WebApp/CN=my-service.local"
+openssl genrsa -out service.key 4096
+openssl req -new -key service.key -out service.csr \
+    -subj "/C=RU/ST=Moscow/O=Org/OU=IT/CN=service.local"
 ```
 
-Файл `my-service.csr` передается администратору Intermediate CA.
+#### Вариант Б: Современный ECDSA P-384 (Рекомендуется)
+```bash
+openssl req -new -newkey ec:<(openssl ecparam -name secp384r1) -nodes \
+    -keyout service.key -out service.csr \
+    -subj "/C=RU/ST=Moscow/O=Org/OU=IT/CN=service.local"
+```
 
-### 2. Подготовка расширений SAN
+### 2. Подпись и выдача сертификата
 
-Администратор CA вносит доменные имена и IP-адреса в секцию `[alt_names]` файла `intermediate-ca/openssl.cnf`:
+Администратор Intermediate CA проверяет CSR и вносит SAN в `openssl.cnf` (секция `[alt_names]`):
 
 ```ini
 [alt_names]
-DNS.1 = my-service.local
-DNS.2 = api.my-service.local
-IP.1  = 192.168.10.20
+DNS.1 = service.local
+DNS.2 = *.service.local
+IP.1  = 10.0.5.10
 ```
 
-Используется секция расширений `[v3_server_cert]`, настроенная при **[создании Intermediate CA](./intermediate_ca_setup.md)**.
+Выполнение подписи:
+```bash
+cd intermediate-ca
+openssl ca -config openssl.cnf -in ../service.csr -out ../service.crt \
+    -extensions v3_server_cert -notext
+```
 
-### 3. Подпись и выдача сертификата
+### 3. Установка доверия (Root CA)
+
+Чтобы приложения доверяли иерархии, необходимо установить сертификат **Root CA** в системные хранилища.
+
+#### Операционные системы
+- **Debian/Ubuntu/Angie:** `sudo cp root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`
+- **RHEL/CentOS/Fedora:** `sudo cp root.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust`
+
+#### Docker и Java
+- **Docker:** Используйте `COPY` и `RUN update-ca-certificates` в Dockerfile.
+- **Java:** `keytool -import -alias root-ca -file root.crt -keystore $JAVA_HOME/lib/security/cacerts`
+
+### 4. Верификация перед запуском
+
+Всегда проверяйте соответствие ключа сертификату и целостность цепочки:
+
+```bash
+# Проверка пары (хеши должны совпасть)
+openssl x509 -noout -modulus -in service.crt | openssl sha256
+openssl rsa -noout -modulus -in service.key | openssl sha256
+
+# Проверка цепочки доверия (через Bundle)
+openssl verify -CAfile intermediate-ca/ca-chain.crt service.crt
+```
+
+### 5. Отзыв скомпрометированного сертификата
 
 ```bash
 cd intermediate-ca
-
-# Подпись CSR с использованием расширений сервера
-openssl ca -config openssl.cnf \
-    -in ../my-service.csr \
-    -out ../my-service.crt \
-    -extensions v3_server_cert \
-    -notext
-
-cd ..
-```
-
-После выполнения администратор возвращает владельцу сервиса файл `my-service.crt` и файл цепочки `intermediate-ca/ca-chain.crt`.
-
-### 4. Верификация цепочки
-
-```bash
-openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.crt
-```
-
-Ожидаемый результат: `OK`. Это подтверждает, что сертификат корректно подписан промежуточным CA, который, в свою очередь, подписан корнем.
-
-### 5. Установка доверия в операционной системе
-
-Чтобы системные утилиты доверяли новой PKI, необходимо добавить сертификат Root CA в доверенные хранилища.
-
-**Для Debian/Ubuntu:**
-
-```bash
-sudo cp root-ca/ca.crt /usr/local/share/ca-certificates/my-root.crt
-sudo update-ca-certificates
-```
-
-**Для RHEL/CentOS/Fedora:**
-
-```bash
-sudo cp root-ca/ca.crt /etc/pki/ca-trust/source/anchors/
-sudo update-ca-trust
-```
-
-### 6. Отзыв скомпрометированного сертификата
-
-Если ключ сервиса утерян, сертификат должен быть аннулирован.
-
-```bash
-cd intermediate-ca
-
-# Отзыв в базе данных CA
-openssl ca -config openssl.cnf -revoke ../my-service.crt
-
-# Перегенерация списка отзыва (CRL)
+openssl ca -config openssl.cnf -revoke ../service.crt
 openssl ca -config openssl.cnf -gencrl -out crl/crl.pem
-
-cd ..
 ```
 
 ## Дополнительная информация
 
-### Быстрый метод для тестов
-
-Для ситуаций, когда не требуется создание полноценной иерархии Intermediate CA (например, разовые локальные тесты), можно использовать упрощенный подход, описанный в **[быстром методе выпуска](../single_tier/quick_method.md)**.
+### Автоматизация (2026)
+Для масштабируемых систем рекомендуется интеграция с **HashiCorp Vault** (движок PKI) или **cert-manager** в Kubernetes, которые используют Intermediate CA для автоматической ротации.
 
 ### Связанные темы
-
-- **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — подготовка рабочего узла и конфигураций.
-- **[Утилиты и диагностика](./common_utilities.md)** — команды для проверки сертификатов и отладки TLS.
-- **[Обзор двухуровневого CA](./overview.md)** — архитектурные принципы и структура директорий.
+- **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — подготовка выпускающего узла.
+- **[Утилиты и диагностика](./common_utilities.md)** — команды проверки и TLS-тесты.
+- **[Обзор двухуровневого CA](./overview.md)** — архитектурные принципы.
+- **[Обзор PKI](../../../../Concepts/pki_overview.md)** — теория X.509 и отзывов.

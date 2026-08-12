@@ -17,8 +17,8 @@
 CRD `Alertmanager` автоматизирует следующие задачи:
 - **Масштабирование:** Управление количеством реплик (минимум 3 для обеспечения кворума в HA-режиме).
 - **Хранилище:** Настройка PersistentVolume для сохранения Silences и состояния уведомлений.
-- **Сетевая конфигурация:** Настройка параметров веб-интерфейса, TLS и протокола Gossip (кластеризация).
-- **Интеграция конфигураций:** Агрегация глобальных настроек и локальных маршрутов из `AlertmanagerConfig`.
+- **Сетевая конфигурация:** Настройка параметров веб-интерфейса, TLS, поддержка `hostNetwork` и протокола Gossip (кластеризация).
+- **Интеграция конфигураций:** Агрегация глобальных настроек и локальных маршрутов через `AlertmanagerConfig` или прямое описание в `alertmanagerConfiguration`.
 
 ### Взаимосвязь ресурсов
 
@@ -31,10 +31,12 @@ CRD `Alertmanager` автоматизирует следующие задачи:
 
 ### Новые возможности (2025–2026)
 
-*   **Нативный HTTPS (`spec.web`):** Возможность настройки TLS для веб-интерфейса напрямую через CRD, включая mTLS и выбор криптографических кривых.
-*   **Безопасный Gossip (`spec.clusterTLS`):** Шифрование трафика между узлами кластера Alertmanager по протоколу Gossip.
-*   **Глобальный HTTP Config:** Управление настройками прокси, таймаутов и TLS для всех исходящих уведомлений через `spec.alertmanagerConfiguration.global.httpConfig`.
-*   **Stricter API:** Переход на знаковые целые числа (`int`) с валидаторами для предотвращения ошибок конфигурации в GitOps-инструментах.
+*   **Нативная конфигурация (`spec.alertmanagerConfiguration`):** Экспериментальная возможность описывать настройки Alertmanager напрямую в CRD, минуя создание внешних секретов (`configSecret`). Имеет приоритет при заполнении обоих полей.
+*   **Имена пиров (v0.30.0+):** Оператор использует имена подов в качестве имен пиров в кластере Gossip, что повышает стабильность кластеризации и упрощает диагностику по сравнению с ID-based подходом.
+*   **Нативный HTTPS (`spec.web`):** Настройка TLS для веб-интерфейса напрямую через CRD, включая mTLS и выбор криптографических кривых.
+*   **Безопасный Gossip (`spec.clusterTLS`):** Шифрование трафика между узлами кластера Alertmanager по протоколу Gossip (порт 9094).
+*   **Topology Aware Routing:** Интеграция с Kubernetes Topology (>= 1.35) для зонального шардирования и минимизации межзонального трафика.
+*   **Подресурс Status:** Поддержка условий (`Conditions`), таких как `Reconciled`, для GitOps-инструментов, позволяющая отслеживать завершение применения конфигурации.
 
 ## Практические сценарии
 
@@ -73,39 +75,39 @@ spec:
       release: monitoring
 ```
 
-### Сценарий 2: Защита трафика кластеризации (Gossip TLS)
+### Сценарий 2: Прямая конфигурация через CRD (Experimental)
 
-Обеспечение безопасности внутреннего взаимодействия между репликами Alertmanager.
+Использование поля `alertmanagerConfiguration` для задания глобальных настроек без использования Secret.
 
 ```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Alertmanager
+metadata:
+  name: direct-config
 spec:
-  clusterTLS:
-    cert:
-      secret:
-        name: alertmanager-cluster-tls
-        key: tls.crt
-    keySecret:
-      name: alertmanager-cluster-tls
-      key: tls.key
-    ca:
-      configMap:
-        name: root-ca
-        key: ca.crt
+  replicas: 3
+  alertmanagerConfiguration:
+    name: main-config
+    global:
+      resolveTimeout: 5m
+      httpConfig:
+        followRedirects: true
+    templates:
+      - name: custom-templates
+        key: alert.tmpl
 ```
 
-### Сценарий 3: Глобальные настройки прокси для уведомлений
+### Сценарий 3: Запуск в Host Network
 
-Настройка единого прокси-сервера для всех исходящих запросов к Slack, PagerDuty и т.д.
+Использование сетевого пространства хоста для обхода ограничений CNI или минимизации задержек.
 
 ```yaml
 spec:
-  alertmanagerConfiguration:
-    name: global-alert-config
-    global:
-      httpConfig:
-        proxyUrl: "http://squid.corp.internal:3128"
-        tlsConfig:
-          insecureSkipVerify: false
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
 ```
 
 ## Дополнительная информация
@@ -115,29 +117,36 @@ spec:
 | Параметр | Описание | Значение / Особенности |
 | :--- | :--- | :--- |
 | **`replicas`** | Количество подов. | Рекомендуется 3 для HA. |
-| **`version`** | Версия Alertmanager. | Поддержка v0.27+ в последних релизах Operator. |
-| **`alertmanagerConfigSelector`** | Поиск маршрутов. | Фильтрует объекты `AlertmanagerConfig`. |
+| **`version`** | Версия Alertmanager. | Рекомендуется v0.30+ для стабильного пиринга. |
+| **`alertmanagerConfiguration`** | Встроенная конфигурация. | Экспериментально; заменяет `configSecret`. |
+| **`hostNetwork`** | Использование сети хоста. | Добавлено в 2025 году. |
 | **`web.tlsConfig`** | Настройка HTTPS UI. | Заменяет ручное создание `web-config.yaml`. |
 | **`clusterTLS`** | TLS для Gossip (порт 9094). | Требует Alertmanager v0.24+. |
 | **`paused`** | Остановка reconciliation. | Используется при ручных правках StatefulSet. |
 | **`retention`** | Время хранения данных. | По умолчанию 120h (5 дней). |
+
+### Статус реконсиляции (Reconciliation Status)
+
+С версии Operator v0.80+ объект `Alertmanager` предоставляет детальный статус:
+- **`Reconciled`**: `True` означает, что текущая конфигурация успешно применена ко всем подам.
+- **`Available`**: Сигнализирует о готовности минимального количества реплик.
+- **`Warning`**: Содержит сообщения о депрекации полей или ошибках в `AlertmanagerConfig`.
 
 ### Диагностика и мониторинг
 
 1.  **Проверка статуса кластера:**
     Метрика `alertmanager_cluster_members` должна быть равна `replicas`.
 2.  **Проверка конфигурации:**
-    Фактическая конфигурация генерируется в Secret `alertmanager-<name>-generated`.
+    Фактическая конфигурация генерируется в Secret `alertmanager-<name>-generated` (если используется `alertmanagerConfigSelector`).
 3.  **Логи оператора:**
-    `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator` — ищите ошибки валидации `AlertmanagerConfig`.
+    `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator` — ищите ошибки валидации и конфликты селекторов.
 
 ### Связанные темы
 
 *   **[AlertmanagerConfig CRD](./alertmanagerconfig.md)** — детальная настройка маршрутов.
 *   **[High Availability](../high_availability.md)** — общие принципы отказоустойчивости стека.
 *   **[Безопасность в Prometheus Operator](../Security/index.md)** — RBAC и TLS.
-*   **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
 
 ### См. также
-* [Prometheus Operator API Specification](https://prometheus-operator.dev/docs/operator/api/)
+* [Prometheus Operator API Specification (v1)](https://prometheus-operator.dev/docs/operator/api/)
 * [Alertmanager Configuration Guide](https://prometheus.io/docs/alerting/latest/configuration/)

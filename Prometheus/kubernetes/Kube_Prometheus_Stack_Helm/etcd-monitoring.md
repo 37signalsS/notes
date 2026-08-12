@@ -1,43 +1,35 @@
-# Мониторинг ETCD в Kubernetes через kube-prometheus-stack
+# Мониторинг etcd в Kubernetes через kube-prometheus-stack
 
 ## Определения
 
-**ETCD** — распределённое key-value хранилище, используемое Kubernetes как Single Source of Truth для хранения состояния кластера.
+**etcd** — высокодоступное распределённое key-value хранилище, используемое Kubernetes как Single Source of Truth для хранения всех данных состояния кластера (конфигурации, секреты, состояние объектов).
 
-**Мониторинг ETCD** — сбор метрик через HTTPS-эндпоинт ETCD (порт 2379) с использованием клиентских TLS-сертификатов для аутентификации Prometheus.
+**Мониторинг etcd** — процесс сбора и анализа метрик производительности хранилища (задержки записи/чтения, размер БД, смена лидеров) через HTTPS-эндпоинт (порт 2379) с обязательной TLS-аутентификацией.
 
-**Проблема автоматического обнаружения** — при ручном развертывании Kubernetes (без Rancher) `kube-prometheus-stack` не собирает метрики ETCD автоматически, т.к. ETCD работает как static Pod с `hostNetwork=true` и не имеет Kubernetes Service.
+**Prometheus Operator ServiceMonitor** — Custom Resource, определяющий способ обнаружения и параметры сбора метрик с etcd инстансов для Prometheus.
 
 ---
 
 ## Базовые концепции
 
-### Почему требуется ручная настройка
+### Проблема автоматического обнаружения
 
-ETCD в kubeadm-кластерах запускается как static Pod на control-plane узлах с `hostNetwork=true`. Prometheus Operator обнаруживает цели через Kubernetes Services, поэтому для ETCD необходимо вручную создать:
+В кластерах, развернутых через `kubeadm`, компоненты Control Plane (включая etcd) запускаются как **Static Pods** на мастер-узлах с параметром `hostNetwork: true`. Они не имеют стандартной абстракции Kubernetes Service, что делает их "невидимыми" для механизмов Service Discovery Prometheus Operator по умолчанию.
 
-1. **Secret** с TLS-сертификатами для аутентификации
-2. **Headless Service** без селектора — логическая точка входа
-3. **Endpoints** — указание реальных IP-адресов ETCD-узлов
-4. **ServiceMonitor** — инструкция для Prometheus Operator по сбору метрик
+Для реализации мониторинга необходимо создать логический мост между статическими подами и Оператором, состоящий из:
+1.  **Secret:** содержит клиентские TLS-сертификаты для доступа к API etcd.
+2.  **Headless Service & Endpoints/EndpointSlice:** предоставляют сетевой адрес узлов etcd.
+3.  **ServiceMonitor:** описывает правила сбора метрик и конфигурацию TLS.
 
-### TLS-аутентификация
+### Безопасность и RBAC
 
-ETCD использует mutual TLS. Для сбора метрик Prometheus должен предоставить:
+etcd хранит чувствительные данные кластера, поэтому доступ к его метрикам защищен mutual TLS (mTLS).
+*   **Сертификаты:** Prometheus должен использовать сертификат, подписанный CA кластера etcd (обычно `/etc/kubernetes/pki/etcd/ca.crt`).
+*   **Права доступа:** Инстанс Prometheus (ServiceAccount) должен иметь права `get` на Secret в неймспейсе `kube-system` (или там, где хранятся сертификаты), иначе сбор метрик завершится ошибкой `failed to load certificates`.
 
-- **CA-сертификат** — для валидации серверного сертификата ETCD
-- **Клиентский сертификат** — для аутентификации Prometheus перед ETCD
-- **Клиентский ключ** — для подписи клиентского сертификата
+### Масштабируемость: Endpoints vs EndpointSlice
 
-### Альтернативный подход через Helm values
-
-`kube-prometheus-stack` предоставляет параметры `kubeEtcd.*` для автоматической настройки мониторинга ETCD через `values.yaml`. Этот подход описан в [other_components_config.md](./other_components_config.md).
-
-Ручной подход (описанный ниже) применяется, когда:
-
-- ETCD использует нестандартную конфигурацию TLS
-- Требуется детальный контроль над ServiceMonitor
-- Helm values не покрывают специфический сценарий
+В современных кластерах (K8s 1.21+) рекомендуется использовать **EndpointSlice** вместо устаревших **Endpoints**. Это снижает нагрузку на API-сервер при обновлении сетевых адресов в больших кластерах. Prometheus Operator нативно поддерживает оба ресурса через роль обнаружения `endpointslice`.
 
 ---
 
@@ -52,7 +44,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: kube-etcd-client-certs
-  namespace: kube-system
+  namespace: kube-system # Или namespace, где запущен Prometheus
 type: Opaque
 data:
   etcd-client-ca.crt: <base64_encoded_ca_cert>
@@ -61,72 +53,79 @@ data:
 ```
 
 **Важно:**
+*   Если Prometheus запущен в другом неймспейсе (например, `monitoring`), Secret должен быть создан именно там, либо скопирован.
+*   Команда для кодирования: `cat /etc/kubernetes/pki/etcd/ca.crt | base64 -w 0`.
 
-- Ключи в `data` должны совпадать с именами, используемыми в `ServiceMonitor.tlsConfig`
-- Prometheus Operator должен иметь права на чтение этого Secret
-- Базовое кодирование: `cat etcd-client-ca.crt | base64 -w 0`
+### Сценарий 2: Создание Service и сетевых эндпоинтов
 
-### Сценарий 2: Создание Service и Endpoints
+Для обнаружения статических подов etcd используется Headless Service и ручное описание адресов.
 
-ETCD работает как static Pod с `hostNetwork=true`, поэтому требуется headless Service без селектора и ручные Endpoints.
-
+#### Вариант А: Стандартный (Endpoints)
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: etcd
+  name: etcd-k8s
   namespace: kube-system
   labels:
-    k8s-app: etcd-metrics
+    k8s-app: etcd
 spec:
-  ports:
-  - name: metrics
-    port: 2379
-    protocol: TCP
-    targetPort: 2379
   clusterIP: None
-  type: ClusterIP
+  ports:
+  - name: https-metrics
+    port: 2379
+    targetPort: 2379
 ---
 apiVersion: v1
 kind: Endpoints
 metadata:
-  name: etcd
+  name: etcd-k8s
   namespace: kube-system
-  labels:
-    k8s-app: etcd-metrics
 subsets:
-  - addresses:
-      - ip: <IP_ETCD_узла_1>
-      - ip: <IP_ETCD_узла_2>
-      - ip: <IP_ETCD_узла_3>
-    ports:
-      - name: metrics
-        port: 2379
-        protocol: TCP
+- addresses:
+  - ip: 192.168.1.10 # IP Master-узла 1
+  - ip: 192.168.1.11 # IP Master-узла 2
+  - ip: 192.168.1.12 # IP Master-узла 3
+  ports:
+  - name: https-metrics
+    port: 2379
 ```
 
-**Важно:**
-
-- Метка `k8s-app: etcd-metrics` используется ServiceMonitor для обнаружения
-- Замените `<IP_ETCD_узла_N>` на реальные IP control-plane узлов
-- `clusterIP: None` делает Service headless — трафик идёт напрямую в Endpoints
+#### Вариант Б: Современный (EndpointSlice)
+```yaml
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: etcd-k8s-slice
+  namespace: kube-system
+  labels:
+    kubernetes.io/service-name: etcd-k8s
+addressType: IPv4
+ports:
+  - name: https-metrics
+    port: 2379
+endpoints:
+  - addresses: ["192.168.1.10"]
+  - addresses: ["192.168.1.11"]
+  - addresses: ["192.168.1.12"]
+```
 
 ### Сценарий 3: Создание ServiceMonitor
 
-ServiceMonitor связывает Service с конфигурацией сбора метрик Prometheus.
+ServiceMonitor описывает для Prometheus Operator, как именно собирать метрики с созданного сервиса.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: etcd-k8s-monitor
-  namespace: kube-system
+  name: etcd-monitor
+  namespace: monitoring
   labels:
     release: prometheus-stack
 spec:
   jobLabel: k8s-app
   endpoints:
-  - port: metrics
+  - port: https-metrics
     interval: 30s
     scheme: https
     tlsConfig:
@@ -142,74 +141,58 @@ spec:
         secret:
           name: kube-etcd-client-certs
           key: etcd-client.key
+      # Критично, если сертификат выписан на конкретное имя
+      serverName: kubernetes
     metricRelabelings:
     - sourceLabels: [__name__]
-      regex: 'etcd_debugging_mvcc_db_total_size_in_bytes|etcd_server_has_leader|etcd_server_leader|etcd_network_client_grpc_received_bytes_total|etcd_network_client_grpc_sent_bytes_total|etcd_disk_wal_fsync_duration_seconds_bucket|etcd_mvcc_db_total_size_in_bytes'
+      regex: '(etcd_server_has_leader|etcd_server_leader_changes_seen_total|etcd_mvcc_db_total_size_in_bytes|etcd_network_client_grpc_received_bytes_total)'
       action: keep
   selector:
     matchLabels:
-      k8s-app: etcd-metrics
+      k8s-app: etcd
   namespaceSelector:
     matchNames:
     - kube-system
 ```
-
-**Критичные параметры:**
-
-| Параметр | Описание |
-| :--- | :--- |
-| `labels.release` | Должен совпадать с `release` меткой Prometheus (обычно `prometheus-stack` или `rancher-monitoring`) |
-| `scheme: https` | ETCD требует HTTPS для метрик |
-| `tlsConfig` | Ссылка на Secret с TLS-сертификатами |
-| `selector.matchLabels` | Должен совпадать с метками Service/Endpoints |
-| `metricRelabelings` | Фильтрация метрик для снижения нагрузки на Prometheus |
 
 ### Сценарий 4: Проверка работоспособности
 
 После применения манифестов:
 
 1. **Проверить статус ServiceMonitor:**
-
    ```bash
-   kubectl get servicemonitor etcd-k8s-monitor -n kube-system
+   kubectl get servicemonitor etcd-monitor -n monitoring
    ```
 
 2. **Проверить Target в Prometheus UI:**
-   - Открыть Prometheus → Status → Targets
-   - Найти target `serviceMonitor/kube-system/etcd-k8s-monitor/0`
-   - Убедиться в статусе `UP`
+   - Открыть Prometheus → Status → Targets.
+   - Найти target в формате `serviceMonitor/monitoring/etcd-monitor/0`.
+   - Статус должен быть `UP`.
 
-3. **Проверить метрики в Prometheus:**
-
-   ```
+3. **Проверить метрики:**
+   ```promql
    etcd_server_has_leader
-   etcd_mvcc_db_total_size_in_bytes
    ```
 
 ---
 
 ## Дополнительная информация
 
-### Примечание о Rancher UI
+### Диагностика и Troubleshooting
 
-При редактировании `values.yaml` через Rancher Web UI, Rancher удаляет все комментарии из файла. Для понимания доступных параметров рекомендуется обращаться к [официальной документации kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack).
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| **Target status: DOWN (403)** | Ошибка RBAC | Убедитесь, что ClusterRole Прометеуса имеет доступ к Secret в `kube-system`. |
+| **Target status: DOWN (TLS error)** | Ошибка сертификатов | Проверьте, что `serverName` совпадает с именами в сертификате etcd (`openssl x509 -in cert.crt -text`). |
+| **Target не виден в UI** | Ошибка селектора | Проверьте `labels` в Service и `matchLabels` в ServiceMonitor. |
 
-### Ключевые метрики ETCD
+### Ключевые метрики
 
-Подробное описание метрик ETCD, включая recommended thresholds и alerting rules, доступно в [etcd_monitoring.md](../../../etcd/etcd_monitoring.md).
+Подробный разбор метрик производительности и алертов доступен в руководстве: **[Метрики etcd](../../../etcd/etcd_monitoring.md)**.
 
 ### Связанные темы
 
-- **[ETCD monitoring (концепции и метрики)](../../../etcd/etcd_monitoring.md)** — ключевые метрики, health check, alerting
-- **[ETCD monitoring через Helm values](./other_components_config.md)** — настройка через параметры `kubeEtcd.*` в `values.yaml`
-- **[ServiceMonitor CRD](../../operator/crd/servicemonitor.md)** — полное описание CRD ServiceMonitor
-- **[Rancher мониторинг](../../../Kubernetes/Rancher/rancher_monitoring.md)** — настройка мониторинга в Rancher
-
-### Альтернативные подходы к TLS
-
-В зависимости от конфигурации кластера, TLS-сертификаты могут подключаться через:
-
-- **Kubernetes Secret** (описано выше) — универсальный подход
-- **hostPath volume** — прямое монтирование с хоста (описано в [other_components_config.md](./other_components_config.md))
-
-Выбор зависит от политики безопасности кластера и расположения сертификатов.
+- **[etcd: обслуживание в Kubernetes](../../../Kubernetes/Concepts/etcd_operations.md)** — команды обслуживания и проверки кворума.
+- **[Service Discovery и Relabeling](../../../Prometheus/service_discovery_and_relabeling.md)** — теория переименования меток.
+- **[Настройка других компонентов KPS](./other_components_config.md)** — конфигурация `values.yaml` для etcd.
+- **[Мониторинг в Rancher](../../../Kubernetes/Rancher/rancher_monitoring.md)** — особенности для Rancher-кластеров.

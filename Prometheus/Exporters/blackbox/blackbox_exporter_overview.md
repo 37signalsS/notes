@@ -2,16 +2,18 @@
 
 ## Определения
 
-**Blackbox Exporter** — официальный инструмент Prometheus для реализации **blackbox-мониторинга** (внешнего наблюдения). В отличие от классических экспортеров, он не собирает внутренние метрики приложения, а имитирует поведение клиента, проверяя доступность и корректность работы сервисов по сети.
+**Blackbox Exporter** — официальный инструмент Prometheus для реализации **blackbox-мониторинга** (внешнего наблюдения). В отличие от классических экспортеров (например, Node Exporter), он не собирает внутренние метрики системы или приложения, а имитирует поведение внешнего клиента, проверяя доступность, корректность и производительность сервисов по сети.
 
-- **Multi-Target Exporter:** один экземпляр экспортера может опрашивать неограниченное количество целей.
-- **Поддерживаемые протоколы:** HTTP(S), TCP, ICMP (Ping), DNS, gRPC.
-- **Порт по умолчанию:** `9115`
-- **Репозиторий:** [prometheus/blackbox_exporter](https://github.com/prometheus/blackbox_exporter)
-- **Связанные документы:**
-    - [Установка и настройка](./blackbox_exporter_installation_and_setup.md)
-    - [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
-    - [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
+*   **Multi-Target Exporter:** один экземпляр экспортера может опрашивать неограниченное количество целей, что упрощает масштабирование.
+*   **Поддерживаемые протоколы:** HTTP(S) (включая HTTP/2 и HTTP/3), TCP, ICMP (Ping), DNS, gRPC, Unix Domain Sockets.
+*   **Актуальная версия:** `v0.28.0` (2025/2026), полностью совместим с экосистемой Prometheus 3.0.
+*   **Порт по умолчанию:** `9115`.
+*   **Репозиторий:** [prometheus/blackbox_exporter](https://github.com/prometheus/blackbox_exporter).
+
+**Связанные документы:**
+*   [Установка и настройка](./blackbox_exporter_installation_and_setup.md)
+*   [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
+*   [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
 
 ## Основные концепции
 
@@ -27,15 +29,15 @@
 
 ### Принцип работы (Multi-Target Scrape)
 
-`blackbox_exporter` использует специфический паттерн опроса. Prometheus отправляет запрос не на целевой сервис, а на эндпоинт `/probe` самого экспортера, передавая параметры цели в URL.
+Blackbox Exporter использует паттерн делегированного опроса. Prometheus отправляет запрос не на целевой сервис, а на эндпоинт `/probe` самого экспортера, передавая параметры цели в URL.
 
-1. **Запрос:** Prometheus обращается к `http://blackbox:9115/probe?target=example.com&module=http_2xx`.
-2. **Выполнение:** Экспортер инициирует проверку (например, GET-запрос к `example.com`).
-3. **Результат:** Экспортер собирает метрики проверки и возвращает их Prometheus в текстовом формате.
+1.  **Запрос (Scrape):** Prometheus обращается к `http://blackbox:9115/probe?target=example.com&module=http_2xx`.
+2.  **Выполнение (Probing):** Экспортер инициирует проверку (например, GET-запрос к `example.com`), используя настройки указанного модуля.
+3.  **Сбор и возврат:** Экспортер собирает результаты (время ответа, коды состояния, детали TLS) и возвращает их Prometheus в текстовом формате.
 
-**Важно:**
-- Путь `/metrics` — содержит метрики здоровья самого экспортера (запросы, ошибки, аптайм).
-- Путь `/probe` — содержит результаты проверок целевых систем.
+**Важные эндпоинты:**
+*   `/metrics` — внутренние метрики самого экспортера (количество запросов, ошибки конфигурации, время работы процесса).
+*   `/probe` — результаты сетевых проверок целевых систем.
 
 ## Практические сценарии
 
@@ -43,17 +45,18 @@
 
 | Сценарий | Модуль | Ожидаемый результат |
 | :--- | :--- | :--- |
-| **Веб-сайт** | `http_2xx` | Статус 200, валидный SSL, ответ < 2с |
-| **API Endpoint** | `http_post_2xx` | Корректный ответ на POST-запрос с body |
+| **Веб-сайт (HTTP/2/3)** | `http_2xx` | Статус 200, валидный SSL, ответ < 2с |
+| **API Endpoint** | `http_post_2xx` | Корректный ответ на POST-запрос с JSON-body |
 | **База данных** | `tcp_connect` | TCP-порт (например, 5432) открыт и принимает соединения |
-| **Сетевая связность** | `icmp` | Хост отвечает на Ping (требуются права root/cap_net_raw) |
+| **Сетевая связность** | `icmp` | Хост отвечает на Ping (требуется `cap_net_raw`) |
 | **DNS-резолвинг** | `dns_udp` | Запись `A` возвращает ожидаемый IP-адрес |
-| **gRPC Service** | `grpc` | Сервис поддерживает Health Check Protocol |
-| **SSL-сертификаты** | `http_2xx` | Проверка даты истечения сертификата (`probe_ssl_earliest_cert_expiry`) |
+| **gRPC Service** | `grpc` | Сервис поддерживает Health Check Protocol и возвращает `SERVING` |
+| **SSL-сертификаты** | `http_2xx` | Мониторинг даты истечения сертификата через `probe_ssl_earliest_cert_expiry` |
+| **Локальные сокеты** | `unix_socket` | Проверка сервисов, слушающих на `/var/run/service.sock` |
 
 ### Стандартная конфигурация Relabeling
 
-Поскольку адрес цели передается как параметр, стандартная конфигурация Prometheus требует использования `relabel_configs` для подмены `__address__`:
+Поскольку адрес цели передается как параметр, в конфигурации Prometheus используется механизм `relabel_configs` для динамической подмены адреса скрейпинга:
 
 ```yaml
 scrape_configs:
@@ -67,30 +70,28 @@ scrape_configs:
         - https://github.com
     relabel_configs:
       - source_labels: [__address__]
-        target_label: __param_target    # Записываем адрес цели в параметр target
+        target_label: __param_target    # 1. Записываем адрес цели в параметр target
       - source_labels: [__param_target]
-        target_label: instance          # Сохраняем адрес цели в лейбле instance
+        target_label: instance          # 2. Сохраняем адрес цели в лейбле instance для удобства
       - target_label: __address__
-        replacement: 127.0.0.1:9115     # Указываем адрес самого Blackbox Exporter
+        replacement: 127.0.0.1:9115     # 3. Указываем адрес самого Blackbox Exporter для скрейпинга
 ```
 
 ## Дополнительная информация
 
-### Нововведения в версии v0.28.0
+### Нововведения и технические особенности (v0.28.0+)
 
-- **HTTP/3 (QUIC):** возможность проверки сайтов по новейшему протоколу.
-- **Unix Domain Sockets:** поддержка пробинга сервисов, работающих через локальные сокеты.
-- **Auto-Reload:** флаг `--config.enable-auto-reload` позволяет обновлять настройки без перезапуска процесса.
-- **Prober Logging:** расширенное логирование конкретных проверок для упрощения отладки.
+*   **HTTP/3 (QUIC):** Полная поддержка пробинга через протокол HTTP/3, что критично для современных веб-приложений и CDN.
+*   **Автоматическая перезагрузка (Auto-Reload):** Флаг `--config.enable-auto-reload` позволяет экспортеру отслеживать изменения в `blackbox.yml` и обновлять модули без перезапуска или отправки SIGHUP.
+*   **gRPC Metadata:** Возможность передачи пользовательских заголовков (metadata) в gRPC-запросах для авторизации или специфических проверок.
+*   **TCP Byte Matching:** Расширенный TCP-пробер позволяет выполнять проверку не только факта соединения, но и содержимого ответа на уровне байтов.
+*   **Интеграция с Grafana Alloy:** Blackbox Exporter является ключевым компонентом в современном стеке мониторинга и нативно поддерживается в Grafana Alloy (преемник Grafana Agent).
 
 ### Официальные ресурсы
 
-- [GitHub Repository](https://github.com/prometheus/blackbox_exporter)
-- [Official Documentation](https://prometheus.io/docs/guides/blackbox-exporter/)
-- [Configuration Reference](https://github.com/prometheus/blackbox_exporter/blob/master/CONFIGURATION.md)
+*   [GitHub Repository](https://github.com/prometheus/blackbox_exporter) — исходный код и релизы.
+*   [Configuration Reference](https://github.com/prometheus/blackbox_exporter/blob/master/CONFIGURATION.md) — детальное описание всех параметров `blackbox.yml`.
 
 **См. также:**
-
-- [Установка и настройка](./blackbox_exporter_installation_and_setup.md)
-- [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
-- [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
+*   [Предотвращение истечения SSL](../../../Kubernetes/Operations/ssl_expiration_prevention.md)
+*   [Обзор Prometheus](../../../Prometheus/overview.md)

@@ -16,35 +16,34 @@
 Node Exporter запускается как фоновый процесс (демон) и читает данные напрямую из виртуальных файловых систем ядра (`/proc` и `/sys`). Он не требует установки дополнительных библиотек или изменения кода приложений.
 
 ### Управление коллекторами
-По умолчанию большинство коллекторов включено. Для оптимизации или решения проблем безопасности их можно включать или выключать при запуске:
-*   Включение: `--collector.<name>`
-*   Отключение: `--no-collector.<name>`
+По умолчанию большинство коллекторов включено. Для оптимизации нагрузки на систему и уменьшения объема хранимых данных (cardinality) их можно фильтровать при запуске:
+*   **Включение:** `--collector.<name>`
+*   **Отключение:** `--no-collector.<name>`
+*   **Фильтрация в Prometheus:** Можно запрашивать только часть метрик через параметр `collect[]` в URL (например, `http://localhost:9100/metrics?collect[]=cpu&collect[]=meminfo`).
 
-### Актуальные версии (прогноз на 2026)
-
-| Параметр | Значение | Статус |
-| :--- | :--- | :--- |
-| **Последняя стабильная версия** | `1.11.0` | Stable |
-| **Репозиторий** | [prometheus/node_exporter](https://github.com/prometheus/node_exporter) | GitHub |
+### Мониторинг Windows
+Для ОС семейства Windows Node Exporter не предназначен. Используйте **[Windows Exporter](https://github.com/prometheus-community/windows_exporter)** или **Grafana Alloy**, которые собирают метрики WMI/Performance Counters.
 
 ## Практические сценарии
 
-### Сценарий 1: Установка из бинарных файлов (systemd)
+### Сценарий 1: Установка из бинарных файлов (Linux/systemd)
 
 Рекомендуемый метод для обеспечения максимальной производительности и доступа к системным ресурсам.
 
-**1. Загрузка и установка:**
+**1. Загрузка и установка (v1.12.1):**
 ```bash
-VERSION="1.11.0"
+VERSION="1.12.1"
 wget https://github.com/prometheus/node_exporter/releases/download/v${VERSION}/node_exporter-${VERSION}.linux-amd64.tar.gz
 tar xvfz node_exporter-${VERSION}.linux-amd64.tar.gz
 sudo mv node_exporter-${VERSION}.linux-amd64/node_exporter /usr/local/bin/
+# → node_exporter installed to /usr/local/bin/
 ```
 
 **2. Настройка systemd-юнита (`/etc/systemd/system/node_exporter.service`):**
 ```ini
 [Unit]
 Description=Prometheus Node Exporter
+Documentation=https://github.com/prometheus/node_exporter
 After=network.target
 
 [Service]
@@ -54,25 +53,34 @@ ExecStart=/usr/local/bin/node_exporter \
     --collector.textfile.directory=/var/lib/node_exporter/textfile_metrics
 Restart=always
 
+# Hardening (Безопасность)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
 [Install]
 WantedBy=multi-user.target
 ```
-*Примечание: Использование `User=root` необходимо для доступа к некоторым метрикам (например, `diskstats` или `hwmon`).*
+*Примечание: Использование `User=root` необходимо для доступа к некоторым метрикам ядра (например, `diskstats`, `hwmon`).*
 
 **3. Запуск:**
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now node_exporter
+# Проверка статуса
+systemctl is-active node_exporter
+# → active
 ```
 
-### Сценарий 2: Развертывание через Docker
+### Сценарий 2: Развертывание в Docker
 
-Используется для мониторинга хоста из изолированного контейнера.
+Используется для мониторинга хоста из изолированного контейнера. Требует монтирования системных директорий.
 
 ```yaml
 services:
   node-exporter:
-    image: prom/node-exporter:v1.11.0
+    image: prom/node-exporter:v1.12.1
     container_name: node_exporter
     volumes:
       - /proc:/host/proc:ro
@@ -82,21 +90,22 @@ services:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
-    network_mode: host # Рекомендуется для доступа к сетевым метрикам хоста
-    pid: host          # Рекомендуется для мониторинга процессов
+    network_mode: host
+    pid: host
     restart: unless-stopped
 ```
 
 ### Сценарий 3: Автоматизация через Ansible
 
-Для массового развертывания используйте роль `prometheus.prometheus.node_exporter`:
+Рекомендуемый способ для массового развертывания через коллекцию `prometheus.prometheus`.
 
 ```yaml
 - hosts: all
+  become: yes
   roles:
     - role: prometheus.prometheus.node_exporter
       vars:
-        node_exporter_version: "1.11.0"
+        node_exporter_version: "1.12.1"
         node_exporter_enabled_collectors:
           - systemd
           - textfile
@@ -105,9 +114,9 @@ services:
 
 ### Сценарий 4: Настройка безопасности (Basic Auth / TLS)
 
-Защита эндпоинта `/metrics` от несанкционированного доступа.
+Защита эндпоинта от несанкционированного доступа без использования Nginx.
 
-**1. Создание `web-config.yml`:**
+**1. Создание файла `web-config.yml`:**
 ```yaml
 basic_auth_users:
     admin: "$2y$12$..." # bcrypt hash
@@ -122,23 +131,28 @@ tls_server_config:
 
 ## Дополнительная информация
 
-### Использование Textfile Collector
-Позволяет собирать кастомные метрики из текстовых файлов. Это полезно для мониторинга завершения периодических задач (cron) или состояния RAID.
-Подробнее: **[Textfile Collector — механизм сбора текстовых метрик](../Exporters/extensibility/textfile_collector.md)**.
+### Диагностика типичных проблем
 
-### Настройка сбора в Prometheus
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| Ошибка `Permission denied` | Недостаточно прав у пользователя | Запустите от `root` или добавьте пользователя в группы `disk`, `hwmon`. |
+| Метрики файловой системы пустые | Контейнер без `rootfs` | Проверьте монтирование `/` и флаг `--path.rootfs`. |
+| Высокая нагрузка на CPU | Слишком много коллекторов | Отключите тяжелые коллекторы (например, `nfs`, `zfs`, если не нужны). |
+
+### Оптимизация сбора в Prometheus
+
+Рекомендуется использовать `scrape_interval` не менее 15 секунд для Node Exporter, чтобы избежать избыточной нагрузки на ядро при чтении `/proc`.
+
 ```yaml
 scrape_configs:
   - job_name: 'node-exporter'
+    scrape_interval: 30s
     static_configs:
-      - targets: ['192.168.1.10:9100', '192.168.1.11:9100']
+      - targets: ['localhost:9100']
 ```
 
 ### См. также
 *   **[Node Exporter (SSoT)](../Exporters/node_exporter.md)** — глубокое описание всех коллекторов.
-*   **[Установка Prometheus: обзор](./overview.md)** — сравнение методов установки.
-*   **[Диагностика производительности Linux](../../Linux/Diagnostics/Performance/overview.md)**.
-
----
-**Надежность:** 10 (SSoT + Валидация systemd/docker конфигураций)
-**,file_path:
+*   **[Установка Prometheus: обзор](./overview.md)** — сравнение методов установки компонентов.
+*   **[Textfile Collector](./extensibility/textfile_collector.md)** — механизм сбора кастомных метрик.
+*   **[Методология поиска неисправностей](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md)**.

@@ -4,7 +4,7 @@
 
 **Сценарий Nginx + Let's Encrypt в Docker** — метод развёртывания веб-сервера с автоматическим получением и обновлением SSL/TLS (Transport Layer Security) сертификатов в контейнеризированной среде.
 
-*   **[Nginx](../Core/nginx_overview.md)** — высокопроизводительный веб-сервер и обратный прокси. В данном сценарии используется версия 1.27+ для поддержки современных протоколов.
+*   **[Nginx](../Core/nginx_overview.md)** — высокопроизводительный веб-сервер и обратный прокси. В данном сценарии используется версия 1.27+ (Mainline) для поддержки современных протоколов.
 *   **Let's Encrypt** — некоммерческий центр сертификации (CA), предоставляющий бесплатные сертификаты.
 *   **Certbot** — официальный клиент для автоматизации получения и продления сертификатов через протокол ACME.
 *   **Docker Compose** — инструмент для управления многоконтейнерными приложениями, обеспечивающий связь между веб-сервером и клиентом сертификации.
@@ -26,13 +26,15 @@
 
 *   **Валидация**: Certbot размещает токен в `webroot`. Let's Encrypt проверяет его через HTTP (порт 80).
 *   **Обновление**: Certbot запускается по расписанию (раз в 12 часов) и проверяет срок действия.
-*   **Перезагрузка**: После успешного обновления Nginx должен перечитать файлы с диска. В контейнерной среде это реализуется через фоновый цикл `nginx -s reload` или внешние триггеры.
+*   **Перезагрузка (Reload)**: Nginx считывает файлы сертификатов только при запуске или перезагрузке конфигурации. Поскольку Certbot обновляет файлы на диске, Nginx должен выполнить `nginx -s reload`, чтобы изменения вступили в силу. В контейнеризированной среде это реализуется через фоновый цикл `sleep && nginx -s reload`.
 
 ## 3. Практический сценарий
 
 ### 3.1. Конфигурация Docker Compose
 
-Современный подход исключает использование ключа `version`. Используется Nginx 1.27 на базе Alpine для минимизации размера образа.
+Использование переменных окружения позволяет легко переиспользовать конфиг для разных доменов.
+
+**Пример `docker-compose.yaml`:**
 
 ```yaml
 services:
@@ -48,6 +50,7 @@ services:
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
     # Цикл для автоматической перезагрузки Nginx каждые 6 часов
+    # Это гарантирует подхват обновленного сертификата без остановки сервиса
     command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
 
   certbot:
@@ -56,7 +59,8 @@ services:
     volumes:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
-    # Проверка обновлений каждые 12 часов
+    # Проверка обновлений каждые 12 часов. 
+    # trap exit TERM обеспечивает корректное завершение контейнера при остановке.
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
 ```
 
@@ -77,7 +81,7 @@ server {
         root /var/www/certbot;
     }
 
-    # Редирект всех HTTP запросов на HTTPS
+    # Редирект всех HTTP запросов на HTTPS (кроме ACME)
     location / {
         return 301 https://$host$request_uri;
     }
@@ -117,34 +121,61 @@ server {
 
 Nginx не запустится, если файлы сертификатов, указанные в конфиге, отсутствуют.
 
-1.  **Холодный старт**: Временно закомментируйте блок `443` в `default.conf`.
+1.  **Холодный старт**: Временно закомментируйте блок `443` и директивы `ssl_*` в `default.conf`.
 2.  **Запуск HTTP**: Выполните `docker compose up -d nginx`.
-3.  **Запрос сертификата**:
+3.  **Запрос тестового сертификата (Staging)**: 
+    Используйте `--staging` для проверки связи, чтобы не исчерпать лимиты Let's Encrypt.
+    ```bash
+    docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+      --staging --email admin@example.com -d example.com --agree-tos
+    ```
+4.  **Получение боевого сертификата**:
+    Если staging прошел успешно, удалите папку `./certbot/conf/live/example.com` и выполните команду без `--staging`.
     ```bash
     docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
       --email admin@example.com -d example.com --agree-tos --no-eff-email
     ```
-4.  **Активация HTTPS**: Раскомментируйте блок `443` и перезапустите Nginx: `docker compose restart nginx`.
+5.  **Активация HTTPS**: Раскомментируйте блок `443` и перезапустите Nginx: `docker compose restart nginx`.
 
 ## 4. Дополнительная информация
 
+### Диагностика и отладка (White spots)
+
+- **Просмотр логов**: 
+  ```bash
+  docker compose logs -f certbot  # Логи процесса продления
+  docker compose logs -f nginx    # Ошибки доступа Nginx к файлам
+  ```
+- **Проверка срока действия**:
+  ```bash
+  docker compose run --rm certbot certificates
+  ```
+- **Тестовое продление (Dry Run)**:
+  ```bash
+  docker compose run --rm certbot renew --dry-run
+  ```
+- **Права доступа**: 
+  Если Nginx выдает `Permission denied` при чтении сертификатов, убедитесь, что пользователь внутри контейнера Nginx (обычно `uid 101` в Alpine) имеет права на чтение файлов, созданных Certbot (обычно `root`). В Docker это решается через монтирование томов, но на хосте файлы должны быть доступны для чтения группе или всем, если не настроено иначе.
+
 ### Рекомендации по эксплуатации
 
-*   **Wildcard сертификаты**: Для получения сертификатов вида `*.example.com` необходимо использовать `DNS-01 challenge`, что потребует API-ключей вашего DNS-провайдера и специализированных плагинов для Certbot.
-*   **Безопасность**: Используйте [Mozilla SSL Configuration Generator](https://ssl-config.mozilla.org/) для генерации актуальных настроек TLS под конкретные нужды проекта.
-*   **Мониторинг**: Следите за логами сервиса `certbot` для раннего обнаружения проблем с продлением (например, при изменении правил Firewall на порту 80).
+*   **Wildcard сертификаты**: Требуют `DNS-01 challenge`. В Docker это реализуется через специализированные образы Certbot с плагинами (например, `certbot/dns-cloudflare`).
+*   **Ресурсные лимиты**: Ограничьте потребление ресурсов для контейнера Certbot, так как он запускается периодически:
+    ```yaml
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    ```
 
 ### Альтернативные решения
 
 *   **[Angie](../../Angie/angie_overview.md)** — форк Nginx с **[встроенным модулем ACME](../../Angie/angie_acme_module.md)**, позволяющим получать сертификаты без внешних утилит.
-*   **[Traefik](../../Traefik/traefik_with_docker_compose.md)** — современный Edge Router с нативной поддержкой Let's Encrypt и Docker.
-*   **Nginx Proxy Manager** — решение с веб-интерфейсом для управления проксированием и SSL.
+*   **[Traefik](../../Traefik/traefik_with_docker_compose.md)** — Edge Router с нативной поддержкой Let's Encrypt (хранит сертификаты в `acme.json`).
+*   **Nginx Proxy Manager** — GUI для управления проксированием и SSL «в один клик».
 
 ### См. также
 
 *   **[Настройка HTTPS с помощью Let's Encrypt и Certbot](../../Concepts/https_with_certbot.md)**
 *   **[Безопасность Nginx](../Security/nginx_security_guide.md)**
 *   **[Оптимизация производительности Nginx](../Performance/nginx_performance_tuning.md)**
-
----
-**Достоверность:** 10 (Внутренняя верификация + Web) | **Актуальность:** Nginx 1.27 (Mainline), Docker Compose V2

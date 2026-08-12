@@ -2,9 +2,9 @@
 
 ## Определения
 
-**ConfigMap конфигурации Karma** — ресурс Kubernetes, содержащий файл `config.yaml`. Karma является stateless-приложением, поэтому все параметры подключения к Alertmanager и правила фильтрации меток передаются через этот манифест.
+**ConfigMap конфигурации Karma** — ресурс Kubernetes, содержащий файл `config.yaml`. Karma является stateless-приложением, поэтому все параметры подключения к Alertmanager, правила агрегации и визуализации передаются через этот манифест.
 
-> **См. также:** [Дашборд Karma — общая информация](../../karma_dashboard.md).
+> **См. также:** [Дашборд Karma — общая информация](../../../karma_dashboard.md).
 
 ---
 
@@ -14,15 +14,18 @@
 
 | Секция | Назначение |
 | :--- | :--- |
-| `alertmanager.servers` | Список инстансов Alertmanager, с которых Karma собирает данные. |
-| `labels.strip` | Метки, которые будут скрыты в интерфейсе (для уменьшения визуального шума). |
-| `annotations.default` | Список аннотаций, развернутых по умолчанию при просмотре алерта. |
+| `alertmanager.servers` | Список инстансов Alertmanager. Параметр `proxy: true` обязателен для возможности создания/редактирования silences через UI Karma. |
+| `filters.default` | Список фильтров, применяемых при загрузке страницы (например, скрытие подтвержденных алертов). |
+| `labels.strip` | Список меток, которые будут скрыты в UI для уменьшения визуального шума (например, служебные метки Kubernetes). |
+| `grouping` | Настройка логики объединения алертов в группы по общим признакам (по умолчанию — `alertname`). |
 
 ---
 
 ## Практические сценарии
 
-### Манифест ConfigMap для Karma
+### Расширенный манифест ConfigMap для Karma
+
+Пример конфигурации с агрегацией по Severity и фильтрацией служебных меток.
 
 **`karma-config.yaml`**
 
@@ -40,18 +43,33 @@ data:
         - name: "Kubernetes Cluster"
           uri: "http://alertmanager.monitoring.svc.cluster.local:9093"
           timeout: 10s
-          proxy: true
+          proxy: true  # Разрешает управление silences из Karma
+
+    # Настройки фильтрации при загрузке UI
+    filters:
+      default:
+        - "@state=active"  # По умолчанию показывать только активные алерты
 
     labels:
-      # Технические метки, которые не нужны в UI
-      strip: ["receiver", "deployment", "replicaset"]
-      keep: ["alertname", "severity", "instance", "pod"]
+      # Скрываем неинформативные метки
+      strip: 
+        - "receiver"
+        - "deployment"
+        - "replicaset"
+        - "controller-revision-hash"
+        - "pod-template-hash"
+      keep: ["alertname", "severity", "instance", "pod", "namespace"]
+
+    # Группировка алертов в интерфейсе
+    grouping:
+      by: ["alertname", "severity", "namespace"]
+      groupClusterBy: ["alertname"]
 ```
 
 ---
 
 ## Дополнительная информация
 
-- **[Развёртывание Karma (Deployment)](./karma-deployment.md)** — описание пода и монтирования томов.
-- **[Alertmanager StatefulSet](./alertmanager-statefulset.md)** — источник данных для дашборда.
-- **[Reliability Scores](../../../../GEMINI.md)** — методология оценки достоверности (Score: 10).
+- **[Развёртывание Karma (Deployment)](./karma-deployment.md)** — описание пода и процесса монтирования ConfigMap.
+- **[Сетевой доступ: Сервисы и Ingress](./services.md)** — настройка Ingress Auth для защиты интерфейса Karma.
+- **[Alertmanager StatefulSet](./alertmanager-statefulset.md)** — описание бэкенд-составляющей стека.

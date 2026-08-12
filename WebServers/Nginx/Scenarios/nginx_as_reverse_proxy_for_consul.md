@@ -2,60 +2,63 @@
 
 ## 1. Определения
 
-**Nginx в качестве обратного прокси для Consul** — сценарий развёртывания, при котором Nginx выступает единой точкой входа для доступа к веб-интерфейсу (UI) и API (Application Programming Interface) [Consul](../../../Consul/consul_overview.md), обеспечивая SSL/TLS-терминацию и ограничение прямого доступа к узлам кластера.
+**Nginx в качестве обратного прокси для Consul** — сценарий развёртывания, при котором Nginx выступает единой точкой входа для доступа к веб-интерфейсу (UI) и HTTP API (Application Programming Interface) [Consul](../../../Consul/consul_overview.md). Это обеспечивает SSL/TLS-терминацию, централизованную аутентификацию и сокрытие внутренней инфраструктуры кластера.
 
-*   **Обратный прокси (Reverse Proxy)** — сервер, принимающий запросы извне и перенаправляющий их на внутренние ресурсы. Подробнее: **[Прокси-серверы](../../../Networking/Concepts/proxy.md)**.
-*   **[Consul](../../../Consul/consul_overview.md)** — распределённая система для Service Discovery, конфигурации и Service Mesh.
+*   **[Обратный прокси (Reverse Proxy)](../../../Networking/Concepts/proxy.md)** — сервер-посредник, принимающий запросы от клиентов и распределяющий их между серверами бэкенда.
+*   **Consul UI** — графический интерфейс для управления сервисами, узлами, KV-хранилищем и политиками безопасности.
+*   **Consul API** — основной интерфейс взаимодействия для Service Discovery и автоматизации (порт `8500` по умолчанию).
 
 ## 2. Базовые концепции
 
-Сценарий направлен на решение следующих архитектурных и эксплуатационных задач:
+Использование Nginx перед Consul решает следующие задачи:
 
-1.  **Централизованная безопасность**: использование единого доверенного SSL/TLS-сертификата на уровне Nginx, что упрощает управление сертификатами в кластере.
-2.  **Скрытие инфраструктуры**: узлы Consul могут находиться в изолированной приватной подсети, исключая прямое воздействие из интернета.
-3.  **Балансировка и отказоустойчивость**: Nginx распределяет запросы между серверами кластера Consul, обеспечивая доступ к UI/API даже при выходе из строя одного из узлов.
-4.  **Управление доступом**: возможность фильтрации трафика на уровне HTTP-путей, например, блокировка критических методов API для внешних потребителей.
+1.  **Терминация SSL/TLS**: Перенос вычислительной нагрузки по шифрованию на Nginx. Это позволяет использовать один сертификат (например, Wildcard или Let's Encrypt) для доступа к консоли управления без необходимости настройки HTTPS на каждом узле Consul.
+2.  **Отказоустойчивость**: Nginx может выполнять балансировку между всеми серверами кластера (обычно 3 или 5 узлов), автоматически переключаясь на доступные инстансы при сбоях.
+3.  **Усиление безопасности**:
+    *   Ограничение доступа к административному API (`/v1/agent/`, `/v1/operator/`) по IP-адресам или через Basic Auth.
+    *   Внедрение заголовков безопасности (HSTS, CSP, X-Frame-Options).
+    *   Передача токенов доступа ([Consul ACL](../../../Consul/consul_overview.md#безопасность-acl)) через кастомные заголовки.
+4.  **Поддержка Long Polling**: Consul активно использует блокирующие запросы (Blocking Queries) для мгновенного получения обновлений. Nginx требует специальной настройки тайм-аутов для поддержки таких соединений.
 
 ## 3. Практический сценарий
 
 ### 3.1. Предварительные требования
 
-*   Сетевая связность между Nginx и серверами Consul по внутренним IP-адресам.
-*   Открытый порт `8500` на узлах Consul для входящих запросов от Nginx.
-*   Настроенная DNS-запись для домена управления (например, `consul.example.com`).
+- Наличие работающего кластера Consul (Servers или Clients).
+- Сетевой доступ от Nginx к портам `8500` узлов Consul.
+- Установленный Nginx версии 1.27+.
 
-### 3.2. Конфигурация Nginx
+### 3.2. Конфигурация Upstream
 
-Современная настройка (актуально для Nginx 1.27+) подразумевает использование раздельных директив для протоколов и поддержку IPv6.
+Для обеспечения высокой доступности и производительности API рекомендуется использовать `keepalive`.
 
-#### Настройка группы серверов (Upstream)
-
-Определите список узлов Consul для балансировки.
+**Пример (`/etc/nginx/conf.d/consul_upstream.conf`):**
 
 ```nginx
-# /etc/nginx/conf.d/upstream_consul.conf
-upstream consul_backend {
-    # Рекомендуется использовать keepalive для повышения производительности API
+upstream consul_servers {
+    # Поддержание постоянных соединений для снижения задержек API
     keepalive 32;
 
-    server 10.0.0.11:8500; # Сервер 1
-    server 10.0.0.12:8500; # Сервер 2
-    server 10.0.0.13:8500; # Сервер 3
+    # Список узлов кластера Consul
+    server 10.0.1.10:8500 max_fails=3 fail_timeout=10s;
+    server 10.0.1.11:8500 max_fails=3 fail_timeout=10s;
+    server 10.0.1.12:8500 max_fails=3 fail_timeout=10s;
 }
 ```
 
-> Подробнее о методах распределения нагрузки: **[Балансировка нагрузки в Nginx](../Proxy/Load_Balancing/overview_concepts.md)**.
+### 3.3. Виртуальный хост с поддержкой Long Polling
 
-#### Настройка виртуального хоста
+Основная сложность при проксировании Consul — необходимость длительного ожидания ответа (до 5-10 минут) при блокирующих запросах API.
+
+**Пример (`/etc/nginx/conf.d/consul.example.com.conf`):**
 
 ```nginx
-# /etc/nginx/sites-available/consul.example.com.conf
 server {
     listen 80;
     listen [::]:80;
     server_name consul.example.com;
 
-    # Принудительный редирект на HTTPS
+    # Редирект на HTTPS
     location / {
         return 301 https://$host$request_uri;
     }
@@ -66,64 +69,78 @@ server {
     listen [::]:443 ssl;
     server_name consul.example.com;
 
-    # Включение HTTP/2 (актуальный синтаксис 1.27+)
+    # Актуальный синтаксис 1.27+ для HTTP/2
     http2 on;
 
-    # Пути к сертификатам (например, Let's Encrypt)
     ssl_certificate     /etc/letsencrypt/live/consul.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/consul.example.com/privkey.pem;
 
-    # Параметры безопасности TLS 1.3 и HSTS
+    # Настройки безопасности TLS
     ssl_protocols TLSv1.3;
     ssl_prefer_server_ciphers off;
     add_header Strict-Transport-Security "max-age=63072000" always;
 
-    # Оптимизация заголовков прокси
+    # Общие настройки проксирования
     proxy_http_version 1.1;
-    proxy_set_header Connection "";
+    proxy_set_header Connection ""; # Необходимо для keepalive
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
+    # Оптимизация для Long Polling (Consul Blocking Queries)
+    # Consul по умолчанию ждет до 5 минут (300s). Nginx должен ждать чуть дольше.
+    proxy_read_timeout 310s;
+    proxy_connect_timeout 5s;
+
+    # Обработка UI и API
     location / {
-        proxy_pass http://consul_backend;
+        proxy_pass http://consul_servers;
+
+        # Обработка путей UI: Consul ожидает /ui/
+        # Если пользователь зашел на /, перенаправляем в интерфейс
+        if ($request_uri = "/") {
+            return 301 /ui/;
+        }
     }
 
-    # Безопасность: ограничение доступа к API управления агентом
+    # Ограничение доступа к критическому API агента
     location /v1/agent {
+        # Разрешить доступ только из внутренней сети управления
+        allow 10.0.0.0/24;
         deny all;
-        return 403;
+        proxy_pass http://consul_servers;
+    }
+
+    # Ограничение доступа к API оператора
+    location /v1/operator {
+        allow 10.0.0.0/24;
+        deny all;
+        proxy_pass http://consul_servers;
     }
 }
 ```
 
-> Детальные настройки шифрования: **[Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)**.
+### 3.4. Проверка и применение
 
-### 3.3. Валидация и применение
-
-Перед применением изменений необходимо убедиться в отсутствии синтаксических ошибок:
-
-```bash
-sudo nginx -t
-# → nginx: configuration file /etc/nginx/nginx.conf test is successful
-
-sudo systemctl reload nginx
-```
+1.  Проверьте синтаксис: `nginx -t`.
+2.  Перезагрузите конфигурацию: `systemctl reload nginx`.
+3.  Проверьте доступность интерфейса: `https://consul.example.com/ui/`.
 
 ## 4. Дополнительная информация
 
-### Проактивные рекомендации
+### Проактивная эксплуатация (White spots)
 
-*   **Динамическая конфигурация**: Поскольку IP-адреса серверов Consul могут меняться, рассмотрите использование инструмента `consul-template` для автоматического обновления файла `upstream_consul.conf` и перезагрузки Nginx.
-*   **Consul ACL**: Nginx обеспечивает сетевую защиту, но не заменяет систему авторизации Consul. Обязательно активируйте **ACL (Access Control List)** и требуйте токены доступа для всех запросов к API.
-*   **Мониторинг**: Настройте экспорт метрик Nginx (например, через VTS-модуль) для отслеживания ошибок `5xx` при обращении к бэкендам Consul.
+- **Проблема слэша в UI**: Consul UI требует завершающего слэша в пути `/ui/`. Без него статические ассеты (JS/CSS) могут загружаться некорректно. Рекомендуется добавлять принудительный редирект с `/ui` на `/ui/`.
+- **ACL и токены**: Если в Consul включены ACL, Nginx может автоматически добавлять заголовок `X-Consul-Token` для определенных запросов, если это необходимо для интеграции с внешними системами.
+- **Динамические Upstreams**: В больших средах IP-адреса серверов Consul могут меняться.
+    - **Nginx OSS**: Требует использования `consul-template` для генерации конфига и вызова `nginx -s reload`.
+    - **Angie / Nginx Plus**: Поддерживают динамическое разрешение имен в `upstream` через DNS (директива `resolve`).
+- **Мониторинг**: Обязательно отслеживайте метрику `upstream_addr` в логах Nginx, чтобы понимать, на какой конкретно узел Consul ушел запрос и были ли ошибки связи.
 
 ### См. также
 
-*   **[Использование Let's Encrypt с Nginx](./nginx_with_letsencrypt.md)**
-*   **[Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)**
-*   **[Обзор Consul](../../../Consul/consul_overview.md)**
-
----
-**Достоверность:** 10 (Внутренняя верификация + Документация HashiCorp) | **Актуальность:** Июль 2026 (Nginx 1.27, Consul 1.16+)
+*   **[Использование Let's Encrypt с Nginx](./nginx_with_letsencrypt.md)** — автоматизация SSL.
+*   **[Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)** — усиление защиты.
+*   **[Обзор Consul](../../../Consul/consul_overview.md)** — архитектура и возможности.
+*   **[Service Discovery в Prometheus](../../../Prometheus/service_discovery_and_relabeling.md)** — использование Consul как источника целей.

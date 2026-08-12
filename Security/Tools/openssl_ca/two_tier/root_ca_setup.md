@@ -6,116 +6,148 @@
 
 **Root CA (Корневой центр сертификации)** — вершина иерархии доверия. Самоподписанный сертификат с расширением `CA:true`, используемый исключительно для подписи промежуточных центров сертификации.
 
-**Air-gapped система** — компьютер или среда, физически изолированная от любых сетей. Применяется для защиты приватных ключей от удалённых атак.
+**Air-gapped система** — компьютер или среда, физически изолированная от любых сетей (Ethernet, Wi-Fi, Bluetooth). Применяется для защиты приватных ключей от удалённых атак.
 
-**HSM (Hardware Security Module, Аппаратный модуль безопасности)** — специализированное устройство для генерации и безопасного хранения криптографических ключей.
+**HSM (Hardware Security Module, Аппаратный модуль безопасности)** — специализированное устройство для генерации и безопасного хранения криптографических ключей, обеспечивающее защиту от физического и логического извлечения.
 
-> Базовые понятия (ключ, **CSR (Certificate Signing Request, Запрос на подпись сертификата)**, X.509, цепочка доверия, CRL/OCSP) подробно описаны в **[обзоре PKI](../../../../Concepts/pki_overview.md)**.
+**OpenSSL 3.0+** — версия инструментария, в которой депрецирован параметр `RANDFILE` и внедрена система провайдеров.
+
+> Базовые понятия (ключ, **CSR (Certificate Signing Request)**, X.509, цепочка доверия, CRL) подробно описаны в **[обзоре PKI](../../../../Concepts/pki_overview.md)**.
 
 ## Базовые концепции
 
 ### Назначение и безопасность
 
-В двухуровневой архитектуре Root CA является наиболее критичным компонентом. Его единственная задача — выпуск и отзыв сертификатов Intermediate CA. Основные принципы:
+В двухуровневой архитектуре Root CA является наиболее критичным компонентом. Его единственная задача — выпуск и отзыв сертификатов Intermediate CA.
 
-- **Офлайн-хранение:** приватный ключ должен находиться на air-gapped системе или в HSM.
+**Золотые правила безопасности Root CA:**
+- **Офлайн-хранение:** приватный ключ должен находиться на air-gapped системе. Операционная система должна загружаться с Read-Only носителя (например, Live USB с отключенной записью).
 - **Минимальный доступ:** ключ извлекается только для редких операций (выпуск нового промежуточного CA или генерация списка отзыва).
-- **Долговечность:** срок действия обычно составляет от 10 до 25 лет.
+- **Физическая защита:** носители с ключами должны храниться в сейфах с ограниченным доступом.
+- **Долговечность:** срок действия корня обычно составляет 20–25 лет (RSA-4096) или 15–20 лет (ECDSA P-384).
 
 Сравнение одноуровневой и двухуровневой архитектур приведено в **[обзоре двухуровневого CA](./overview.md)**.
 
 ### Структура директорий
 
-Подробное описание назначения файлов и иерархии папок для формального метода управления CA находится в **[обзоре двухуровневого CA](./overview.md#компоненты-двухуровневого-ca)**. Ниже приведена краткая структура для Root-уровня:
-
 ```text
 root-ca/
-├── openssl.cnf          # Конфигурация OpenSSL для Root CA
+├── openssl.cnf          # Конфигурация для Root-уровня
 ├── ca.key               # Приватный ключ Root CA
 ├── ca.crt               # Корневой сертификат
 └── db/
-    ├── index.txt        # База данных выданных сертификатов
-    ├── serial           # Счётчик серийных номеров
+    ├── index.txt        # База данных выданных Intermediate CA
+    ├── serial           # Счётчик серийных номеров (hex)
     ├── newcerts/        # Архив выданных сертификатов
     └── crl/             # Списки отзыва (CRL)
 ```
 
 ## Практические сценарии
 
-### 1. Подготовка структуры и конфигурации
+### 1. Подготовка конфигурации openssl.cnf
 
-```bash
-# Создание папок
-mkdir -p root-ca/db/{newcerts,crl}
-touch root-ca/db/index.txt
-echo "1000" > root-ca/db/serial
+Файл настроек для Root CA должен быть максимально строгим.
+
+```ini
+[ ca ]
+default_ca = CA_default
+
+[ CA_default ]
+dir             = .
+database        = $dir/db/index.txt
+new_certs_dir   = $dir/db/newcerts
+serial          = $dir/db/serial
+certificate     = $dir/ca.crt
+private_key     = $dir/ca.key
+default_md      = sha512
+default_days    = 3650
+policy          = policy_strict
+
+[ policy_strict ]
+countryName             = match
+stateOrProvinceName     = match
+organizationName        = match
+organizationalUnitName  = optional
+commonName              = supplied
+
+[ req ]
+default_bits        = 4096
+distinguished_name  = req_distinguished_name
+x509_extensions     = v3_ca
+prompt              = no
+
+[ req_distinguished_name ]
+C  = RU
+ST = Moscow
+L  = Moscow
+O  = My Private Corp
+CN = My Private Root CA
+
+# Расширения для самого Root CA
+[ v3_ca ]
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints       = critical, CA:true
+keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
+
+# Расширения для подписи Intermediate CA
+[ v3_intermediate_ca ]
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints       = critical, CA:true, pathlen:0
+keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
 ```
 
-Файл `root-ca/openssl.cnf` должен содержать политики (например, `policy_strict` для совпадения полей организации) и расширения `[v3_ca]` для самого корня и `[v3_intermediate_ca]` для подписи подчиненных узлов.
+### 2. Генерация корневого узла
 
-### 2. Генерация корневого ключа и самоподписанного сертификата
-
+#### Сценарий А: Классический RSA-4096 (Рекомендуется для корня)
 ```bash
-cd root-ca
-
-# Создание ключа и сертификата
-openssl req -new -x509 \
-    -config openssl.cnf \
-    -newkey rsa:4096 -sha512 -nodes \
-    -keyout ca.key \
-    -out ca.crt \
-    -days 3650
-
-cd ..
+openssl req -new -x509 -config openssl.cnf \
+    -newkey rsa:4096 -sha512 \
+    -keyout ca.key -out ca.crt -days 7300
 ```
 
-**Разбор параметров:**
+#### Сценарий Б: Современный ECDSA P-384
+```bash
+openssl req -new -x509 -config openssl.cnf \
+    -newkey ec:<(openssl ecparam -name secp384r1) -sha512 \
+    -keyout ca.key -out ca.crt -days 7300
+```
 
-- `-x509` — выпуск самоподписанного сертификата.
-- `-newkey rsa:4096` — создание нового ключа RSA длиной 4096 бит.
-- `-nodes` — (No DES) без шифрования ключа паролем (допустимо только для тестов).
-
-> **Внимание:** В производственной среде **обязательно** используйте парольную защиту ключа (уберите флаг `-nodes`).
+> **Важно:** Система запросит пароль (passphrase). Для Root CA пароль должен быть максимально сложным и храниться отдельно от ключа (например, разделен по схеме Шамира между несколькими доверенными лицами).
 
 ### 3. Подпись Intermediate CA
 
-После получения запроса от промежуточного узла подпись выполняется на изолированной системе:
+Операция выполняется при получении CSR от промежуточного узла:
 
 ```bash
-cd root-ca
-
 openssl ca -config openssl.cnf \
     -extensions v3_intermediate_ca \
-    -days 1825 \
-    -notext \
-    -in ../intermediate-ca/csr/intermediate.csr \
-    -out ../intermediate-ca/intermediate.crt
-
-cd ..
+    -days 3650 -notext -md sha512 \
+    -in intermediate.csr -out intermediate.crt
 ```
 
-### 4. Защита и вывод ключа в офлайн
+### 4. Вывод в офлайн и защита
 
-После завершения операций выпуска:
-
-1. Сохраните копию `ca.key` на нескольких защищенных физических носителях.
-2. Проверьте отпечаток ключа: `openssl rsa -in ca.key -noout -modulus | sha512sum`.
-3. Безвозвратно удалите ключ с рабочей системы: `shred -uvz ca.key`.
+1.  **Резервное копирование:** Сохраните `ca.key` и `ca.crt` на 2-3 USB-накопителях разных производителей.
+2.  **Верификация:** Проверьте контрольную сумму ключа: `sha512sum ca.key`.
+3.  **Уничтожение:** Если использовалась временная ОС, выполните `shred -u ca.key`.
+4.  **Безопасное хранение:** Носители должны находиться в запечатанных конвертах в банковской ячейке или сейфе.
 
 ## Дополнительная информация
 
-### Проверка результата
+### Верификация результата
 
 ```bash
-# Просмотр содержимого сертификата
-openssl x509 -in root-ca/ca.crt -noout -text
+# Просмотр расширений (CA:TRUE и pathlen)
+openssl x509 -in ca.crt -noout -text | grep -A 1 "Basic Constraints"
 
-# Проверка самоподписи
-openssl verify -CAfile root-ca/ca.crt root-ca/ca.crt
+# Проверка подписи самого себя
+openssl verify -CAfile ca.crt ca.crt
 ```
 
 ### Связанные темы
 
-- **[Обзор двухуровневого CA](./overview.md)** — архитектура и компоненты.
-- **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — следующий этап развертывания.
-- **[Обзор PKI](../../../../Concepts/pki_overview.md)** — теоретические основы иерархии доверия.
+- **[Обзор двухуровневого CA](./overview.md)** — архитектура и сравнение.
+- **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — следующий этап (онлайн-узел).
+- **[Обзор PKI](../../../../Concepts/pki_overview.md)** — теоретическая база.

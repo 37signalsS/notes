@@ -2,61 +2,63 @@
 
 ## Определения
 
-**Authentik** — self-hosted Identity Provider (IdP). Центр управления удостоверениями, обеспечивающий единую точку входа (SSO) для инфраструктуры.
+**Authentik** — современный Identity Provider (IdP) с открытым исходным кодом, обеспечивающий централизованное управление удостоверениями и доступом во всей инфраструктуре.
 
-**Single Sign-On (SSO)** — технология единого входа. Позволяет пользователю аутентифицироваться один раз в Authentik и получать доступ ко всем подключенным сервисам (Wazuh, Grafana, Proxmox) без повторного ввода пароля.
+**Single Sign-On (SSO)** — технология единого входа, позволяющая пользователю один раз пройти аутентификацию в Authentik и получить прозрачный доступ к Wazuh, Grafana и другим сервисам без повторного ввода пароля.
 
-**SAML (Security Assertion Markup Language)** — XML-стандарт для обмена данными аутентификации и авторизации между IdP (Authentik) и Service Provider (Wazuh).
+**SAML 2.0 (Security Assertion Markup Language)** — протокол на базе XML для обмена данными аутентификации и авторизации между IdP (Authentik) и Service Provider (Wazuh Indexer).
 
-**RBAC (Role-Based Access Control)** — управление доступом на основе ролей. В контексте SSO роли назначаются в Authentik и передаются в Wazuh через SAML-атрибуты для маппинга на внутренние права.
+**RBAC (Role-Based Access Control)** — модель управления доступом на основе ролей. В данной интеграции роли назначаются в Authentik и передаются через SAML-атрибуты для маппинга на внутренние права Wazuh.
 
 ## Основные концепции
 
-Интеграция Wazuh с централизованным IdP решает три фундаментальные задачи безопасности:
-1.  **Централизация управления**: Мгновенное отключение доступа уволенного сотрудника ко всем системам одновременно.
-2.  **Повышение безопасности (2FA)**: Принудительное использование TOTP (Time-based One-Time Password) на уровне IdP защищает все подключенные сервисы, даже если они не поддерживают 2FA нативно.
-3.  **Аудит доступа**: Централизованный сбор логов успешных и неуспешных входов, смен паролей и изменений политик.
+### Задачи интеграции
+1.  **Централизация управления**: Мгновенный отзыв доступа уволенного сотрудника ко всем системам через блокировку одной учетной записи.
+2.  **Повышение безопасности (MFA)**: Принудительное использование TOTP или WebAuthn на уровне IdP защищает SIEM даже при компрометации пароля.
+3.  **Аудит доступа**: Централизованный сбор логов об успешных и неуспешных входах, сменах паролей и изменениях политик.
 
-Взаимодействие по протоколу SAML может быть инициировано двумя путями:
-*   **IdP-initiated flow**: Пользователь заходит на портал Authentik, кликает на иконку Wazuh и пробрасывается в дашборд уже авторизованным.
-*   **SP-initiated flow**: Пользователь открывает дашборд Wazuh, перенаправляется на Authentik для ввода пароля, и возвращается обратно.
+### Механизмы взаимодействия (Flows)
+*   **IdP-initiated flow**: Пользователь авторизуется на портале Authentik, нажимает на иконку приложения Wazuh и перенаправляется в дашборд уже авторизованным.
+*   **SP-initiated flow**: Пользователь заходит по URL Wazuh Dashboard, система перенаправляет его в Authentik для ввода данных и возвращает обратно с SAML-ответом.
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка SSO (SAML) между Authentik и Wazuh
+### 1. Настройка SSO (SAML)
 
-Настройка требует конфигурации с обеих сторон.
+Настройка требует последовательных действий на обеих сторонах.
 
-#### 1. Настройка Authentik (IdP)
+#### Шаг А: Настройка Authentik (IdP)
 
-1.  **Группы и пользователи**: Создайте группу (например, `wazuh-administrators`) и добавьте в нее пользователей.
-2.  **Property Mappings**: Создайте `SAML Provider Property Mapping` для передачи ролей:
+1.  **Создание групп**: Создайте группу (например, `wazuh-administrators`) и добавьте в нее соответствующих пользователей.
+2.  **Property Mapping**: Создайте `SAML Provider Property Mapping` для передачи ролей:
     *   **Name**: Wazuh Roles Mapping
     *   **SAML Attribute Name**: `Roles`
     *   **Expression**:
         ```python
         if ak_is_group_member(request.user, name="wazuh-administrators"):
             yield "wazuh-admin"
+        elif ak_is_group_member(request.user, name="wazuh-analysts"):
+            yield "wazuh-readonly"
         ```
 3.  **SAML Provider**: Создайте провайдер с параметрами:
     *   **Name**: Wazuh
-    *   **ACS URL**: `https://<wazuh-dashboard-url>/_opendistro/_security/saml/acs/idpinitiated` (для IdP-initiated) или `.../saml/acs` (для SP-initiated).
+    *   **ACS URL**: `https://<wazuh-dashboard-url>/_opendistro/_security/saml/acs`
     *   **Issuer**: `wazuh-saml`
     *   **Binding**: `Post`
-    *   **Property Mappings**: Выберите созданный ранее маппинг.
-4.  **Application**: Создайте приложение, привяжите к нему Provider и скачайте `idp-metadata.xml` (раздел Related objects -> Metadata).
+    *   **Property Mappings**: Выберите созданный маппинг `Wazuh Roles Mapping`.
+4.  **Application**: Создайте приложение, привяжите к нему Provider и скачайте `idp-metadata.xml` (раздел Metadata в объекте провайдера).
 
-#### 2. Настройка Wazuh Indexer (SP)
+#### Шаг Б: Настройка Wazuh Indexer (SP)
 
 На **каждой ноде** кластера Wazuh Indexer выполните следующие действия:
 
-1.  Разместите метаданные:
+1.  Разместите файл метаданных:
     ```bash
     cp idp-metadata.xml /etc/wazuh-indexer/opensearch-security/
     chown wazuh-indexer:wazuh-indexer /etc/wazuh-indexer/opensearch-security/idp-metadata.xml
     chmod 640 /etc/wazuh-indexer/opensearch-security/idp-metadata.xml
     ```
-2.  Отредактируйте `/etc/wazuh-indexer/opensearch-security/config.yml` (предварительно сделав бэкап). Добавьте `saml_auth_domain`:
+2.  Отредактируйте `/etc/wazuh-indexer/opensearch-security/config.yml`. Добавьте или измените блок `saml_auth_domain`:
     ```yaml
     authc:
       basic_internal_auth_domain:
@@ -76,7 +78,7 @@
           type: saml
           challenge: true
           config:
-            idp_initiated: true # Включает IdP-initiated flow
+            idp_initiated: true
             idp:
               metadata_file: "/etc/wazuh-indexer/opensearch-security/idp-metadata.xml"
               entity_id: "wazuh-saml"
@@ -84,20 +86,20 @@
               entity_id: "wazuh-saml"
             kibana_url: "https://<wazuh-dashboard-url>/"
             roles_key: Roles
-            exchange_key: "сгенерируйте_ключ_через_openssl_rand_-hex_32"
+            # Важно для 4.9+: ключ должен быть длиной ровно 64 символа (hex)
+            exchange_key: "сгенерируйте_через_openssl_rand_-hex_32"
         authentication_backend:
           type: noop
     ```
-3.  Отредактируйте `/etc/wazuh-indexer/opensearch-security/roles_mapping.yml`, связав роль из SAML с внутренней ролью Wazuh:
+3.  Отредактируйте `/etc/wazuh-indexer/opensearch-security/roles_mapping.yml`, связав SAML-роль с внутренней ролью:
     ```yaml
     all_access:
       reserved: true
-      hidden: false
       backend_roles:
         - "wazuh-admin"
         - "admin"
     ```
-4.  Примените конфигурацию с помощью `securityadmin.sh` (укажите правильный FQDN ноды в ключе `-h`):
+4.  Примените конфигурацию:
     ```bash
     export JAVA_HOME=/usr/share/wazuh-indexer/jdk/ && bash \
     /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh \
@@ -105,85 +107,76 @@
     -icl -key /etc/wazuh-indexer/certs/admin-key.pem \
     -cert /etc/wazuh-indexer/certs/admin.pem \
     -cacert /etc/wazuh-indexer/certs/root-ca.pem \
-    -h indexer.yourdomain.com -p 9200 -nhnv
+    -h <indexer_fqdn> -p 9200 -nhnv
     ```
-    *Повторите команду для `roles_mapping.yml`*.
 
-#### 3. Настройка Wazuh Dashboard
+#### Шаг В: Настройка Wazuh Dashboard
 
-Отредактируйте `/etc/wazuh-dashboard/opensearch_dashboards.yml`:
-```yaml
-# Можно оставить оба метода: ["basicauth", "saml"]
-opensearch_security.auth.type: "saml"
-opensearch_security.auth.multiple_auth_enabled: true
+1.  В файле `/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml` установите:
+    ```yaml
+    run_as: true
+    ```
+2.  В файле `opensearch_dashboards.yml` добавьте белый список для CORS:
+    ```yaml
+    opensearch_security.auth.type: "saml"
+    opensearch_security.auth.multiple_auth_enabled: true
+    server.xsrf.allowlist:
+      - "/_opendistro/_security/saml/acs"
+      - "/_opendistro/_security/saml/logout"
+      - "/_opendistro/_security/saml/acs/idpinitiated"
+    opensearch_security.session.keepalive: false
+    ```
+3.  Перезапустите `wazuh-dashboard`.
 
-# Белый список для CORS. Без него SAML-ответы будут блокироваться.
-server.xsrf.allowlist:
-  - "/_opendistro/_security/saml/acs"
-  - "/_opendistro/_security/saml/logout"
-  - "/_opendistro/_security/saml/acs/idpinitiated"
+### 2. Принудительное включение 2FA (TOTP)
 
-# Отключаем keepalive для предотвращения конфликтов сессий с IdP
-opensearch_security.session.keepalive: false
-```
-Перезапустите `wazuh-dashboard`.
+Для защиты SIEM на уровне Authentik:
+1.  Перейдите в **Flows -> Flows** -> `default-authentication-flow`.
+2.  Отредактируйте стадию `default-authentication-mfa-validation`.
+3.  Установите **Not configured action** в значение **Force the user to configure an authenticator**.
+4.  Убедитесь, что **Device classes** включает `TOTP`.
 
-### Сценарий 2: Принудительное включение 2FA (TOTP)
+### 3. Аудит событий Authentik в Wazuh
 
-Для обеспечения безопасности всех подключенных сервисов, 2FA должна быть обязательной.
+Для отслеживания попыток взлома самого IdP (например, Brute Force на портале Authentik).
 
-1.  В Authentik перейдите в **Flows -> Flows**.
-2.  Выберите `default-authentication-flow`.
-3.  Отредактируйте Stage `default-authentication-mfa-validation`.
-4.  В поле **Not configured action** установите **Force the user to configure an authenticator**.
-5.  Убедитесь, что **Device classes** включает `TOTP`.
-
-Теперь при первом входе пользователь будет обязан отсканировать QR-код в приложении-аутентификаторе.
-
-### Сценарий 3: Аудит событий Authentik в Wazuh
-
-События самого Identity Provider (успешные входы, отказы, смены паролей) критически важны для мониторинга.
-
-#### 1. Интеграционный Python-скрипт
-Скрипт использует API Authentik для сбора событий с учетом пагинации и сохраняет state (последний обработанный ID) для дедупликации. События отправляются в Wazuh через REST API `/events`.
+#### Шаг А: Сбор событий через API
+Используйте Python-скрипт на менеджере для опроса эндпоинта `/api/v3/events/events/`. Скрипт должен сохранять состояние (последний обработанный ID) и записывать события в JSON-лог для Wazuh.
 
 **Требования:**
-- API Token в Authentik (Admin -> Directory -> Tokens and App Passwords). Рекомендуется создать выделенного Service Account.
+- API Token в Authentik (Service Account).
 - Учетная запись в Wazuh с правами на API `/events`.
 
-*Пример логики скрипта:*
-Скрипт делает GET-запрос к `https://<authentik>/api/v3/events/events/?ordering=-created&created__gte=<last_timestamp>`. Полученные JSON-объекты дополняются полем `"integration": "authentik"`, формируются в батчи и отправляются POST-запросом на `https://<wazuh-api>/events`. Для надежности скрипт также может писать события в локальный JSON-файл для сборки через Filebeat/Wazuh Agent.
-
-#### 2. Правила Wazuh для Authentik
-Разместите пользовательские правила в `/var/ossec/etc/rules/authentik_custom.xml`. Правила покрывают различные сценарии и смаплены на матрицы MITRE ATT&CK и стандарты комплаенса (PCI DSS, GDPR).
-
-Пример критического правила (Brute Force):
+#### Шаг Б: Правила алертинга
+Разместите в `/var/ossec/etc/rules/authentik_custom.xml`:
 ```xml
 <group name="authentik,">
-  <!-- Базовое правило неудачного входа -->
+  <!-- Базовое правило ошибки входа -->
   <rule id="110001" level="5">
     <field name="integration">authentik</field>
-    <action>login_failed</action>
-    <description>Authentik: Failed login attempt</description>
-    <mitre>
-      <id>T1078</id>
-      <id>T1110</id>
-    </mitre>
+    <field name="action">login_failed</field>
+    <description>Authentik: Ошибка входа для пользователя $(user)</description>
+    <mitre><id>T1078</id></mitre>
   </rule>
 
-  <!-- Корреляционное правило: 5 неудачных попыток за 60 секунд -->
+  <!-- Детекция Brute Force: 5 ошибок за минуту -->
   <rule id="110037" level="10" frequency="5" timeframe="60">
     <if_matched_sid>110001</if_matched_sid>
     <same_field>client_ip</same_field>
-    <description>Authentik: Brute force detected (5 failed logins from same IP)</description>
-    <mitre>
-      <id>T1110.001</id>
-    </mitre>
+    <description>Authentik: Обнаружен Brute force (5 ошибок с одного IP)</description>
+    <mitre><id>T1110.001</id></mitre>
   </rule>
 </group>
 ```
 
-После добавления правил перезапустите Wazuh Manager: `systemctl restart wazuh-manager`.
+### 4. Решение типичных проблем (Troubleshooting)
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **500 Internal Server Error** | Короткий `exchange_key`. | Ключ должен быть ровно 64 символа (hex). |
+| **Login Loop / Cookie Error** | Конфликт сессий. | Очистите куки; установите `session.keepalive: false`. |
+| **ACS Mismatch** | Разные URL в IdP и SP. | ACS URL должен быть строго `https://<wazuh-url>/_opendistro/_security/saml/acs`. |
+| **User has no permissions** | Ошибка RBAC маппинга. | Проверьте наличие атрибута `Roles` в SAML-ответе через Developer Tools браузера. |
 
 ## Дополнительная информация
 

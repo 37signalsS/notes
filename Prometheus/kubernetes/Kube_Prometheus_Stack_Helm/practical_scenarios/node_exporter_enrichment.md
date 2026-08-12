@@ -1,56 +1,56 @@
-# Node Exporter Metrics Enrichment via Relabeling (kube-prometheus-stack)
+# Обогащение метрик Node Exporter через Relabeling (kube-prometheus-stack)
 
 > [Назад к оглавлению](../overview.md)
 
-> **SSoT для темы:** обогащение метрик Node Exporter через relabeling в kube-prometheus-stack.  
-> **Смежные темы:** [Service Discovery и Relabeling](../../../service_discovery_and_relabeling.md) — общие концепции relabeling; [Kubernetes SD](../../service_discovery.md) — обнаружение целей в K8s; [Конфигурация экспортеров](../exporters_config.md) — параметры Node Exporter в Helm-чарте.
+> **SSoT для темы:** обогащение метрик Node Exporter через механизмы relabeling в составе kube-prometheus-stack.  
+> **Смежные темы:** [Service Discovery и Relabeling](../../../service_discovery_and_relabeling.md) — общие концепции трансформации меток; [Kubernetes SD](../../service_discovery.md) — механизмы обнаружения целей в K8s; [Конфигурация экспортеров](../exporters_config.md) — базовые параметры Node Exporter в Helm-чарте.
 
-## Definitions
+## Определения
 
-**`scrapeClasses`** — механизм kube-prometheus-stack, позволяющий определить именованные наборы relabeling-правил, которые можно применять к конкретным scrape-конфигурациям (например, к Node Exporter) через `values.yaml`. Не является нативной функцией Prometheus; специфичен для Helm-чарта.
+**`scrapeClasses`** — механизм в `kube-prometheus-stack` (начиная с v50+), позволяющий определять именованные наборы правил relabeling в `values.yaml`. Эти правила автоматически внедряются в конфигурацию скрейпинга компонентов (например, Node Exporter), что позволяет избежать дублирования YAML-кода.
 
-**`relabelingConfigs`** — список правил relabeling в рамках `scrapeClasses`. Работает как `relabel_configs` в нативном Prometheus: модифицирует метки цели **до** сбора метрик.
+**`relabelingConfigs`** (Target Relabeling) — конфигурация правил, применяемых к целям **до** начала сбора данных. Используется для фильтрации объектов скрейпинга и модификации меток на основе метаданных (например, `__meta_kubernetes_pod_node_name`).
 
-**Обогащение метрик (enrichment)** — процесс добавления, удаления или преобразования метрик/лейблов для повышения читаемости, стандартизации или контроля кардинальности.
+**`metricRelabelings`** (Metric Relabeling) — конфигурация правил, применяемых к метрикам **после** их получения от экспортера, но до записи в базу данных (TSDB). Это основной инструмент для удаления ненужных меток и снижения кардинальности (индексного веса данных).
 
-## Basic Concepts
+**Обогащение метрик (Enrichment)** — процесс добавления дополнительных контекстных меток (имя узла, зона, роль, команда) для повышения информативности дашбордов и точности алертинга.
+
+## Основные концепции
 
 ### Механизм работы scrapeClasses
 
 ```
-values.yaml (scrapeClasses)
+values.yaml (секция scrapeClasses)
     │
-    ├── scrapeClass: "node-exporter"
-    │       └── relabelingConfigs → применяются к PodMonitor Node Exporter
+    ├── Определение класса "node-exporter-standard"
+    │       └── relabelingConfigs (правила трансформации)
     │
-    └── Prometheus Operator генерирует конфигурацию
-            └── Вставка relabelingConfigs в scrape_config Node Exporter
-                    └── Prometheus собирает метрики с обогащёнными лейблами
+    └── Привязка класса к компоненту:
+            nodeExporter.podMonitor.scrapeClass: "node-exporter-standard"
 ```
 
-`scrapeClasses` автоматически применяются к соответствующим PodMonitor/ServiceMonitor ресурсам, создаваемым чартом. Для Node Exporter это PodMonitor `prometheus-node-exporter`.
+При такой структуре Prometheus Operator автоматически объединяет глобальные настройки класса с конкретным монитором экспортера.
 
 ### Зачем обогащать метрики Node Exporter
 
-| Проблема | Решение через relabeling |
-|---|---|
-| `instance` содержит IP:порт (нечитаемо) | Копирование имени узла в отдельную метку `node` |
-| Метрики без информации о роли узла | Добавление лейблов `role`, `env`, `datacenter` из annotations |
-| Высокая кардинальность из-за избыточных метрик | Удаление ненужных лейблов через `labeldrop` |
-| Необходимость фильтрации по фичам узлов | Копирование node labels из K8s в метрики |
+| Проблема | Решение через Relabeling | Описание |
+|:---|:---|:---|
+| Нечитаемый `instance` | Копирование имени узла в метку `node` | Заменяет `<IP>:9100` на понятное имя хоста. |
+| Отсутствие контекста роли | Маппинг меток `node-role` из K8s | Позволяет разделять метрики master и worker узлов. |
+| Высокая кардинальность | Удаление меток `pod`, `namespace` | Экономит место в TSDB, убирая уникальные ID подов для системных метрик. |
+| Топологический анализ | Проброс меток `zone` и `region` | Необходимо для анализа производительности в разных AZ. |
 
-### Отличие от других механизмов relabeling
+### Различия механизмов трансформации
 
-| Механизм | Где применяется | Контекст |
-|---|---|---|
-| **`scrapeClasses.relabelingConfigs`** | `values.yaml` kube-prometheus-stack | Helm-чарт, автоматически привязывается к PodMonitor/ServiceMonitor |
-| **`additionalScrapeConfigs`** | `values.yaml` kube-prometheus-stack | Ручные scrape_configs для внешних целей |
-| **`relabelings` в PodMonitor CRD** | YAML манифест PodMonitor | Prometheus Operator CRD |
-| **`relabel_configs` в prometheus.yml** | Нативная конфигурация Prometheus | Bare-metal/Docker развёртывания |
+| Метод | Где настраивается | Когда выполняется | Основная цель |
+|:---|:---|:---|:---|
+| **`relabelingConfigs`** | `scrapeClasses` или PodMonitor | До сбора (SD) | Фильтрация целей, изменение адресов. |
+| **`metricRelabelings`** | PodMonitor / ServiceMonitor | После сбора | Удаление лишних меток, фильтрация метрик. |
+| **`attachMetadata`** | Спецификация монитора | В процессе SD | Авто-подтягивание метаданных узла (Node) к поду. |
 
-> **См. также:** [relabel_configs и metric_relabel_configs](../../../service_discovery_and_relabeling.md), [External Monitoring](./external_monitoring.md) — `additionalScrapeConfigs`.
+> **См. также:** [relabel_configs и metric_relabel_configs](../../../service_discovery_and_relabeling.md).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Добавление читаемого имени узла в метрики
 
@@ -61,7 +61,7 @@ values.yaml (scrapeClasses)
 prometheus:
   prometheusSpec:
     scrapeClasses:
-      - name: node-exporter
+      - name: node-exporter-class
         relabelingConfigs:
           - sourceLabels: [__meta_kubernetes_pod_node_name]
             targetLabel: node
@@ -69,168 +69,124 @@ prometheus:
 ```
 
 **Результат в Prometheus:**
+- До: `node_cpu_seconds_total{instance="10.0.1.5:9100", job="node-exporter"}`
+- После: `node_cpu_seconds_total{instance="10.0.1.5:9100", node="worker-01", job="node-exporter"}`
 
-```
-# До обогащения:
-node_cpu_seconds_total{instance="10.0.1.5:9100", job="node-exporter"}
-
-# После обогащения:
-node_cpu_seconds_total{instance="10.0.1.5:9100", job="node-exporter", node="k8s-worker-01"}
-```
-
-**PromQL-запрос с enriched-метрикой:**
-
+**Пример PromQL:**
 ```promql
-# CPU usage по конкретному узлу по имени
+# CPU usage по имени узла
 avg by(node) (rate(node_cpu_seconds_total{mode!="idle"}[5m]))
 ```
 
-### Сценарий 2: Добавление роли узла из Kubernetes labels
+### Сценарий 2: Перенос меток топологии и роли из Kubernetes
 
-**Задача:** На узлах Kubernetes установлены labels (`node.kubernetes.io/role`, `topology.kubernetes.io/zone`). Перенести их в метрики Prometheus.
+**Задача:** Использовать системные метки узлов (`zone`, `role`) непосредственно в метриках Prometheus.
 
 ```yaml
 # values.yaml
 prometheus:
   prometheusSpec:
     scrapeClasses:
-      - name: node-exporter
+      - name: node-exporter-enriched
         relabelingConfigs:
-          # Копирование имени узла
-          - sourceLabels: [__meta_kubernetes_pod_node_name]
-            targetLabel: node
-            action: replace
-          # Копирование zone из K8s label узла
-          - sourceLabels: [__meta_kubernetes_endpoint_topology_zone]
+          # Требует nodeExporter.podMonitor.attachMetadata.node: true
+          - sourceLabels: [__meta_kubernetes_node_label_topology_kubernetes_io_zone]
             targetLabel: zone
             action: replace
-          # Копирование role из K8s label
-          - sourceLabels: [__meta_kubernetes_endpoint_label_node_kubernetes_io_role]
+          - sourceLabels: [__meta_kubernetes_node_label_node_role_kubernetes_io_control_plane]
             targetLabel: node_role
+            replacement: "master"
             action: replace
 ```
 
-**Пример PromQL с enriched-лейблами:**
+### Сценарий 3: Копирование аннотаций узлов (Environment, Team)
 
-```promql
-# CPU usage по ролям узлов (worker vs master)
-avg by(node_role) (rate(node_cpu_seconds_total{mode!="idle"}[5m]))
-
-# Сравнение метрик по зонам доступности
-avg by(zone) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
-```
-
-### Сценарий 3: Добавление кастомных лейблов из annotations узлов
-
-**Задача:** На узлах Kubernetes заданы annotations (`environment`, `team`). Перенести их в метрики.
+**Задача:** На узлах заданы аннотации `environment: prod` и `team: dba`. Перенести их в метрики.
 
 ```yaml
 # values.yaml
 prometheus:
   prometheusSpec:
     scrapeClasses:
-      - name: node-exporter
+      - name: metadata-enricher
         relabelingConfigs:
-          - sourceLabels: [__meta_kubernetes_pod_node_name]
-            targetLabel: node
-            action: replace
-          # Копирование annotation environment
-          - sourceLabels: [__meta_kubernetes_pod_annotation_environment]
+          - sourceLabels: [__meta_kubernetes_node_annotation_environment]
             targetLabel: env
             action: replace
-            replacement: "${1}"
-          # Копирование annotation team
-          - sourceLabels: [__meta_kubernetes_pod_annotation_team]
+          - sourceLabels: [__meta_kubernetes_node_annotation_team]
             targetLabel: team
             action: replace
 ```
 
-> **Примечание:** Для PodMonitor Node Exporter доступны meta-лейблы пода, а не узла. Для доступа к labels/annotations узлов через PodMonitor используется `__meta_kubernetes_pod_node_name` как ключ связывания.
+### Сценарий 4: Снижение кардинальности через Metric Relabeling
 
-### Сценарий 4: Снижение кардинальности — удаление избыточных лейблов
-
-**Задача:** Удалить лейблы с высокой кардинальностью (например, `pod`, `namespace`), чтобы уменьшить объём хранимых временных рядов.
+**Задача:** Удалить высококардинальные метки (`pod`, `namespace`, `container`), которые бесполезны для Node Exporter, так как он привязан к узлу.
 
 ```yaml
 # values.yaml
-prometheus:
-  prometheusSpec:
-    scrapeClasses:
-      - name: node-exporter
-        relabelingConfigs:
-          # Удаление лейбла pod (высокая кардинальность)
-          - regex: "pod"
-            action: labeldrop
-          # Удаление лейбла namespace
-          - regex: "namespace"
-            action: labeldrop
+nodeExporter:
+  podMonitor:
+    metricRelabelings:
+      - action: labeldrop
+        regex: (pod|namespace|container|endpoint|service)
 ```
 
-> **Важно:** `labeldrop` удаляет лейблы из **всех** метрик Node Exporter. Используйте с осторожностью — лейбл `instance` обычно необходим для идентификации цели.
+**Результат:** Существенное сокращение объема индекса (Label Index) в TSDB.
 
-### Сценарий 5: Фильтрация — сбор метрик только с определённых узлов
+### Сценарий 5: Фильтрация целей (Keep)
 
-**Задача:** Собирать метрики Node Exporter только с узлов определённой роли (например, `worker`).
+**Задача:** Собирать метрики Node Exporter только с узлов, имеющих метку `monitoring=enabled`.
 
 ```yaml
 # values.yaml
-prometheus:
-  prometheusSpec:
-    scrapeClasses:
-      - name: node-exporter
-        relabelingConfigs:
-          # Сбор только с worker-узлов
-          - sourceLabels: [__meta_kubernetes_pod_node_name]
-            regex: ".*worker.*"
-            action: keep
+nodeExporter:
+  podMonitor:
+    relabelings:
+      - sourceLabels: [__meta_kubernetes_node_label_monitoring]
+        regex: "enabled"
+        action: keep
 ```
 
-> **Альтернатива:** Вместо relabeling-фильтрации используйте `nodeSelector` или `affinity` в Helm values для ограничения нод, на которых запускается DaemonSet Node Exporter.
+## Дополнительная информация
 
-## Additional Information
-
-### Troubleshooting
+### Устранение неисправностей (Troubleshooting)
 
 | Симптом | Причина | Решение |
-| :--- | :--- | :--- |
-| Relabeling не применяется | `scrapeClasses` не привязан к PodMonitor | Проверить, что `scrapeClass: "node-exporter"` указан в PodMonitor Node Exporter |
-| Лейбл не появляется в метриках | Meta-лейбл недоступен в контексте PodMonitor | Проверить доступные `__meta_*` через `/api/v1/targets/metadata` в Prometheus UI |
-| Лейбл пустой | Source label не найден или пуст | Проверить `kubectl get nodes -o yaml` на наличие нужного label/annotation |
-| Метрики пропали после relabeling | `keep`-правило отфильтровало все цели | Проверить regex; временно заменить на `replace` для отладки |
-| Высокая кардинальность после enrichment | Добавлен лейбл с уникальными значениями | Использовать `labeldrop` или агрегировать значения |
+|:---|:---|:---|
+| Метки не добавляются | Класс не привязан к монитору | Проверьте `nodeExporter.podMonitor.scrapeClass` в `values.yaml`. |
+| Метки пустые | Не включен `attachMetadata` | Добавьте `attachMetadata: { node: true }` в настройки PodMonitor. |
+| Цели (Targets) исчезли | Ошибка в правиле `keep` | Проверьте регулярное выражение. Временно измените на `replace` для отладки. |
+| Метки не удаляются | Ошибка в `labeldrop` | Проверьте, что правило находится в `metricRelabelings`, а не в `relabelings`. |
+| Ошибки в логах оператора | Неверный синтаксис YAML | Проверьте отступы и названия полей в `values.yaml`. |
 
-### Диагностика
+### Диагностика из интерфейса Prometheus
+
+1. **Проверка SD:** Перейдите в `Status -> Service Discovery`. Найдите пул `node-exporter`. Там видны все "Discovered Labels" (с префиксом `__meta`).
+2. **Проверка итоговых меток:** Перейдите в `Status -> Targets`. Сравните колонку "Labels" (что попало в базу) и колонку "Discovered Labels".
+3. **Проверка конфига:** Перейдите в `Status -> Runtime & Build Information -> Configuration`. Найдите секцию `scrape_config` для Node Exporter и убедитесь, что ваши правила встроены корректно.
+
+### Полезные команды
 
 ```bash
-# Проверить сгенерированную конфигурацию Prometheus
-kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
-
-# Посмотреть relabeling-конфигурацию для Node Exporter
-# http://localhost:9090/config
-
-# Проверить доступные meta-лейблы для target
-# http://localhost:9090/api/v1/targets?scrapePool=node-exporter
-
-# Проверить, что PodMonitor использует scrapeClass
+# Проверка наличия scrapeClass в сгенерированном PodMonitor
 kubectl get podmonitor -n monitoring prometheus-node-exporter -o yaml | grep scrapeClass
 
-# Протестировать relabeling-правила
-# http://localhost:9090/targets — посмотреть "Discovered Labels" vs "Target Labels"
+# Просмотр логов конфигуратора (sidecar в поде Prometheus)
+kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus -c configmap-reload
 ```
 
-### Best Practices
+### Рекомендации (Best Practices)
 
-1. **Начинайте с `replace`** — добавление новых лейблов безопаснее, чем `keep`/`drop`, которые могут скрыть цели.
-2. **Проверяйте regex** — используйте [Prometheus relabeling tester](https://relabeler.promlabs.com/) для валидации правил перед применением.
-3. **`__meta_*` зависят от типа SD** — для PodMonitor Node Exporter доступны `__meta_kubernetes_pod_*`; для ServiceMonitor — `__meta_kubernetes_endpoint_*` и `__meta_kubernetes_service_*`.
-4. **`metric_relabel_configs` для пост-обработки** — если нужно фильтровать/изменять метрики **после** сбора (до записи в TSDB), используйте `metricRelabelings` в PodMonitor CRD.
-5. **Избегайте высокой кардинальности** — не копируйте уникальные идентификаторы (UID, pod name) в лейблы — это создаёт экспоненциальный рост временных рядов.
+1. **Сначала `replace`, потом `keep/drop`:** Всегда сначала добавляйте метки для идентификации, и только потом фильтруйте цели.
+2. **Используйте `attachMetadata.node`:** Это мощный инструмент современных версий оператора, позволяющий PodMonitor видеть метки узла без сложных Join-запросов.
+3. **Контролируйте кардинальность:** Не копируйте в метрики аннотации с уникальными значениями (например, временные метки деплоя).
+4. **Централизация через scrapeClasses:** Описывайте общие правила (env, cluster_name) один раз в `scrapeClasses` и переиспользуйте их для всех компонентов.
 
 ### Связанные ресурсы
 
 | Ресурс | Описание |
-|---|---|
-| [Relabeling в Prometheus](../../../service_discovery_and_relabeling.md) | Все relabeling-действия: `keep`, `drop`, `replace`, `labelmap`, `labeldrop`, `hashmod` |
-| [Kubernetes SD](../../service_discovery.md) | Meta-лейблы для pod, endpoint, service, node discovery |
-| [Конфигурация экспортеров](../exporters_config.md) | Параметры Node Exporter в kube-prometheus-stack |
-| [ServiceMonitor relabelings](../../../operator/crd/servicemonitor.md) | Relabeling в Prometheus Operator CRD |
+|:---|:---|
+| [Service Discovery и Relabeling](../../../service_discovery_and_relabeling.md) | Полный справочник действий: `keep`, `drop`, `replace`, `labelmap`, `labeldrop`. |
+| [Kubernetes Service Discovery](../../service_discovery.md) | Доступные мета-лейблы для разных типов объектов Kubernetes. |
+| [Конфигурация экспортеров](../exporters_config.md) | Настройка Node Exporter и других агентов в Helm-чарте. |
+| [PodMonitor CRD](../operator/crd/podmonitor.md) | Детальное описание спецификации монитора подов. |
