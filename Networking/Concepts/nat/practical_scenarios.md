@@ -116,6 +116,8 @@ nft add rule ip nat prerouting iifname "eth0" tcp dport 8080 dnat to 192.168.1.1
 iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 8080 -j DNAT --to-destination 192.168.1.10:80
 ```
 
+**См. также:** Детальный разбор прохождения пакета с DNAT/SNAT в инфраструктуре Docker — **[Packet Flow в Docker Bridge](../../../Docker/Docker_network/drivers/bridge.md#жизненный-цикл-пакета-packet-flow)**.
+
 ---
 
 ## Настройка Hairpin NAT (Loopback NAT)

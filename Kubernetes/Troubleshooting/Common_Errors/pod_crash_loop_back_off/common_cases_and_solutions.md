@@ -138,6 +138,8 @@ kubectl auth can-i get pods --as=system:serviceaccount:my-ns:my-sa
 1. **Loop detection:** Обычно возникает, когда `/etc/resolv.conf` на узле содержит `127.0.0.1` или `::1`. CoreDNS копирует эти настройки и зацикливается.
 2. **Forwarding:** Настройте CoreDNS на использование внешних DNS (например, `8.8.8.8`) в обход локального резолвера узла.
 
+Подробный разбор и методы диагностики: **[Петли перенаправления DNS](../../../../Networking/Protocols/DNS/dns_forwarding_loops.md)**.
+
 ### Сценарий 10: Проблемы с использованием subPath при монтировании
 
 **Симптомы:**

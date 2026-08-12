@@ -1,39 +1,35 @@
 # NetBox: Установка и настройка в Debian 12
 
-## Определения
+Руководство по развертыванию NetBox в операционной системе Debian 12 (Bookworm). Подробное описание концепций, архитектуры и новых функций NetBox 4.x приведено в файле **[NetBox: Обзор и базовые концепции](./overview.md)**.
 
-**NetBox** — специализированный инструмент класса **IPAM (IP Address Management)** и **DCIM (Data Center Infrastructure Management)** с открытым исходным кодом. Он выступает в роли «единого источника правды» (**SSoT — Single Source of Truth**) для сетевой инфраструктуры, позволяя документировать IP-адреса, стойки, устройства, кабели, виртуализацию и логические связи.
+### Системные требования (NetBox 4.4.8 — январь 2026)
 
-## Базовые концепции
-
-NetBox представляет собой веб-приложение на базе фреймворка **Django (Python)**. Для его полноценной работы требуется связка из нескольких системных компонентов:
-
-- **PostgreSQL (12+)**: Объектно-реляционная база данных для хранения основной структурированной информации.
-- **Redis (6.0+)**: Высокопроизводительное хранилище «ключ-значение», используемое для кэширования данных и управления очередями задач.
-- **Gunicorn (WSGI)**: Сервер интерфейса шлюза веб-сервера для запуска Python-кода NetBox.
-- **Nginx**: Веб-сервер, работающий в режиме реверс-прокси, обеспечивающий SSL/TLS терминацию и обслуживание статических файлов (CSS, JS, изображения).
-- **RQ (Redis Queue)**: Система обработки фоновых задач (отправка Webhooks, генерация отчетов, выполнение скриптов).
-- **Housekeeping**: Регламентная служба NetBox для очистки устаревших сессий и логов изменений.
-
-### Системные требования (NetBox 4.0)
-
-| Компонент | Минимальная версия | Версия в Debian 12 |
+| Компонент | Рекомендуемая версия | Версия в Debian 12 |
 | :--- | :--- | :--- |
-| **Python** | 3.10 | 3.11 |
-| **PostgreSQL** | 12 | 15 |
-| **Redis** | 6.0 | 7.0 |
+| **Python** | 3.10, 3.11, 3.12 | 3.11 |
+| **PostgreSQL** | 14+ | 15 |
+| **Redis** | 4.0+ | 7.0 |
+| **HTTP-сервер** | Nginx или Apache | Nginx 1.22 |
+| **Firewall** | UFW или nftables | nftables |
+| **OpenSSL** | 1.1.1+ | 3.0.8 |
 
 ## Практические сценарии
 
 ### 1. Подготовка операционной системы
 
-Обновите пакеты и установите необходимые системные зависимости для сборки Python-пакетов и работы с БД.
+Обновите пакеты и установите необходимые системные зависимости для сборки Python-пакетов и работы с БД. Включает базовые утилиты и сетевой экран.
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3 python3-pip python3-venv python3-dev \
 build-essential libxml2-dev libxslt1-dev libffi-dev libpq-dev \
-libssl-dev zlib1g-dev git redis-server postgresql
+libssl-dev zlib1g-dev git redis-server postgresql wget curl tar nginx ufw openssl
+
+# Настройка базового сетевого экрана
+sudo ufw allow 443
+sudo ufw allow 80
+sudo ufw allow 8000/tcp # Только для этапа тестирования
+sudo ufw enable
 ```
 
 ### 2. Настройка базы данных PostgreSQL
@@ -65,31 +61,49 @@ NetBox требует базу данных с кодировкой `UTF8`.
 
 ### 3. Настройка Redis
 
-Redis используется для кэширования и очередей задач. По умолчанию он слушает на `localhost:6379`, что достаточно для локальной установки.
+Redis используется для кэширования и очередей задач. В современных версиях NetBox обязательна настройка аутентификации.
 
-```bash
-sudo systemctl enable --now redis-server
-# Проверка связи
-redis-cli ping # → PONG
-```
+1.  **Редактирование `/etc/redis/redis.conf`:**
+    ```bash
+    sudo vi /etc/redis/redis.conf
+    ```
+    Установите следующие параметры:
+    ```conf
+    requirepass Ваш_Очень_Сложный_Пароль
+    supervised systemd
+    ```
+
+2.  **Запуск и проверка:**
+    ```bash
+    sudo systemctl enable --now redis-server
+    sudo systemctl restart redis
+    
+    # Проверка аутентификации
+    redis-cli
+    > AUTH Ваш_Очень_Сложный_Пароль
+    > PING
+    # → PONG
+    ```
 
 ### 4. Развертывание приложения NetBox
 
 1. **Создание системного пользователя:**
-    NetBox должен работать от имени непривилегированного пользователя.
-
     ```bash
     sudo adduser --system --group netbox
     ```
 
-2. **Загрузка исходного кода:**
-    Клонируйте стабильную ветку в директорию `/opt/netbox`.
-
+2. **Загрузка исходного кода и линковка:**
+    Для удобства будущих обновлений рекомендуется использовать символьные ссылки.
     ```bash
-    # Проверьте актуальную версию на GitHub (например, v4.0.5)
-    export NETBOX_VER="v4.0.5"
-    sudo git clone -b $NETBOX_VER https://github.com/netbox-community/netbox.git /opt/netbox
-    sudo chown -R netbox:netbox /opt/netbox
+    export NETBOX_VER="4.4.8"
+    sudo wget https://github.com/netbox-community/netbox/archive/refs/tags/v$NETBOX_VER.tar.gz
+    sudo tar -xzf v$NETBOX_VER.tar.gz -C /opt
+    sudo ln -s /opt/netbox-$NETBOX_VER/ /opt/netbox
+    
+    # Установка прав доступа
+    sudo chown -R netbox:netbox /opt/netbox-$NETBOX_VER/netbox/media/
+    sudo chown -R netbox:netbox /opt/netbox-$NETBOX_VER/netbox/reports/
+    sudo chown -R netbox:netbox /opt/netbox-$NETBOX_VER/netbox/scripts/
     ```
 
 ### 5. Конфигурация приложения
@@ -124,16 +138,18 @@ redis-cli ping # → PONG
         'PORT': '',
     }
 
-    # NetBox 4.0 использует два Redis-инстанса (обычно 0 и 1)
+    # NetBox 4.x+ использует два Redis-инстанса (обычно 0 и 1)
     REDIS = {
         'tasks': {
             'HOST': 'localhost',
             'PORT': 6379,
+            'PASSWORD': 'Ваш_Очень_Сложный_Пароль',
             'DATABASE': 0,
         },
         'caching': {
             'HOST': 'localhost',
             'PORT': 6379,
+            'PASSWORD': 'Ваш_Очень_Сложный_Пароль',
             'DATABASE': 1,
         }
     }
@@ -149,13 +165,34 @@ NetBox предоставляет скрипт `upgrade.sh`, который ав
 sudo /opt/netbox/upgrade.sh
 ```
 
-### 7. Создание администратора
+### 7. Инициализация (Первая установка)
 
-```bash
-source /opt/netbox/venv/bin/activate
-cd /opt/netbox/netbox/
-python3 manage.py createsuperuser
-```
+После выполнения `upgrade.sh` необходимо инициализировать базу данных и собрать статический контент для корректного отображения веб-интерфейса.
+
+1.  **Активация окружения:**
+    ```bash
+    source /opt/netbox/venv/bin/activate
+    cd /opt/netbox/netbox/
+    ```
+
+2.  **Миграция, суперпользователь и статика:**
+    ```bash
+    # Выполнение миграций БД
+    python3 manage.py migrate
+    
+    # Создание администратора
+    python3 manage.py createsuperuser
+    
+    # Сбор статических файлов (обязательно для первой установки)
+    python3 manage.py collectstatic
+    ```
+
+3.  **Тестовый запуск (опционально):**
+    Проверьте работоспособность без полноценного веб-сервера.
+    ```bash
+    python3 manage.py runserver 0.0.0.0:8000 --insecure
+    ```
+    Доступ: `http://ваш_ip:8000`. Остановка: `Ctrl+C`.
 
 ### 8. Настройка Gunicorn и Systemd
 
@@ -235,16 +272,18 @@ tar -czvf netbox_media_backup.tar.gz /opt/netbox/netbox/media/
 
 ## Дополнительная информация
 
-### Интеграции и плагины
+### Полезные ресурсы и скрипты
 
-NetBox поддерживает расширение функционала через плагины (например, для топологий или интеграции с BGP). Плагины устанавливаются в `venv` и регистрируются в `PLUGINS` внутри `configuration.py`.
-
+- **[Скрипты автоматической установки (Debian)](https://github.com/VladimirKalinushkin/Install_Netbox_on_Debian)** — примеры скриптов для быстрой настройки пакетов и systemd.
+- **[Официальная документация NetBox](https://netboxlabs.com/docs/netbox/installation/)** — первоисточник.
 - **[Документация по плагинам](https://docs.netbox.dev/en/stable/plugins/)**
 - **[LDAP Аутентификация](https://docs.netbox.dev/en/stable/administration/authentication/ldap/)**
 - **[NetBox API и Python-клиент (pynetbox)](https://pynetbox.readthedocs.io/)**
 
 ### См. также
 
+- [NetBox: Обзор и базовые концепции](./overview.md)
+- [Автоматизация NetBox с использованием Python](./netbox-automation-python.md)
 - [Работа с PostgreSQL из консоли (psql)](../../Databases/PostgreSQL/Operations/console_basics.md)
 - [Оптимизация Nginx](../../WebServers/Nginx/Performance/nginx_performance_tuning.md)
 - [Использование Redis как кэш](../../Databases/Concepts/Caching/redis_caching.md)

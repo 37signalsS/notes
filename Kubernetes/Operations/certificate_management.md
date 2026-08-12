@@ -152,25 +152,58 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
 ### Ротация сертификатов Kubelet (Server TLS Bootstrap)
 
-По умолчанию Kubelet использует сертификаты, выписанные при инициализации. Клиентские сертификаты (для связи с API) ротируются автоматически, однако **серверные сертификаты** (для `kubectl exec`, `logs`, `metrics-server`) требуют дополнительной настройки.
+По умолчанию Kubelet использует сертификаты, выписанные при инициализации. Клиентские сертификаты (для связи с API) ротируются автоматически, однако **серверные сертификаты** (порт 10250 для `kubectl exec`, `logs`, `metrics-server`) требуют дополнительной настройки. Без этого API-сервер часто работает в режиме `insecure-skip-tls-verify` при обращении к узлам.
 
-1. В `KubeletConfiguration` установите:
-   ```yaml
-   serverTLSBootstrap: true
-   rotateCertificates: true
-   ```
-2. После перезапуска Kubelet создаст CSR. Проверьте их:
+1. **Включение Bootstrap**:
+   - **Kubeadm / Generic**: В `KubeletConfiguration` установите:
+     ```yaml
+     serverTLSBootstrap: true
+     rotateCertificates: true
+     ```
+   - **Talos Linux**: В конфигурации узла (`machine.kubelet.extraConfig`):
+     ```yaml
+     machine:
+       kubelet:
+         extraConfig:
+           serverTLSBootstrap: true
+     ```
+2. **Процесс**:
+   После перезапуска Kubelet создаст CSR для signer `kubernetes.io/kubelet-serving`.
    ```bash
    kubectl get csr
+   # → Состояние: Pending
    ```
-3. Одобрите запрос (вручную):
+3. **Одобрение запроса (вручную)**:
    ```bash
    kubectl certificate approve <csr-name>
    ```
 
 **Автоматизация одобрения (CSR Approver)**: 
-Встроенный контроллер `kubernetes.io/kubelet-serving` **не одобряет** такие CSR автоматически из соображений безопасности. Для автоматизации необходимо развернуть сторонний контроллер (например, `kubelet-csr-approver`). 
-> **Внимание (Security Warning):** При использовании кастомного CSR-аппрувера убедитесь, что он строго верифицирует не только `CommonName`, но и запрошенные IP-адреса и DNS-имена (SANs) в CSR. Это предотвращает атаки, при которых скомпрометированный узел может запросить сертификат для чужого IP или домена.
+Встроенный контроллер `kubernetes.io/kubelet-serving` **не одобряет** такие CSR автоматически из соображений безопасности. 
+
+*   **Рекомендуемое решение (2026):** Контроллер `kubelet-serving-cert-approver`. Он сверяет SAN из запроса с реальными адресами объекта `Node` и одобряет CSR только при полном совпадении.
+*   **Установка (Standalone):**
+    ```bash
+    kubectl apply -f https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml
+    ```
+*   **Безопасность (RBAC):** Контроллер должен иметь права только на конкретный signer для минимизации ущерба:
+    ```yaml
+    - apiGroups: ["certificates.k8s.io"]
+      resourceNames: ["kubernetes.io/kubelet-serving"]
+      resources: ["signers"]
+      verbs: ["approve"]
+    ```
+
+> **Внимание (Security Warning):** При использовании любого кастомного CSR-аппрувера (например, `kubelet-csr-approver`) убедитесь, что он строго верифицирует не только `CommonName`, но и запрошенные IP-адреса и DNS-имена (SANs) в CSR. Это предотвращает атаки, при которых скомпрометированный узел может запросить сертификат для чужого IP или домена.
+
+**Верификация**:
+После одобрения проверьте эндпоинт узла:
+```bash
+echo | openssl s_client -connect <node-ip>:10250 -showcerts 2>/dev/null \
+  | openssl x509 -noout -issuer -subject
+# → issuer: CN = kubernetes (или CA кластера)
+# → subject: CN = system:node:<node-name>
+```
 
 ## Диагностика и устранение проблем
 

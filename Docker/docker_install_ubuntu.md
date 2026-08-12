@@ -18,7 +18,9 @@ for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker c
 done
 ```
 
-### 2. Настройка репозитория
+### 2. Способы установки
+
+#### Вариант А: Официальный репозиторий (Рекомендуемый)
 
 Рекомендуемый способ — установка из официального репозитория Docker, что гарантирует получение актуальных обновлений безопасности и поддержку плагинов.
 
@@ -44,19 +46,39 @@ done
     sudo apt-get update
     ```
 
-### 3. Установка Docker
+4.  **Установка Docker:**
+    Установка движка, CLI и современных плагинов (Buildx и Compose V2):
+    ```bash
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    ```
 
-Установка движка, CLI и современных плагинов (Buildx и Compose V2):
+#### Вариант Б: Удобный скрипт (Для быстрой настройки / Dev)
+
+Docker предоставляет скрипт для автоматической установки всех необходимых компонентов. Подходит для чистых систем.
 
 ```bash
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+```
+
+### 3. Шаги после установки (Post-installation)
+
+Чтобы не прописывать `sudo` перед каждой командой Docker, добавьте текущего пользователя в группу `docker`.
+
+```bash
+# Создание группы (обычно уже создана)
+sudo groupadd docker
+# Добавление пользователя
+sudo usermod -aG docker $USER
+# Применение изменений для текущей сессии (или перезагрузите терминал)
+newgrp docker
 ```
 
 ### 4. Проверка и управление сервисом
 
 ```bash
 # Проверка запуска
-sudo docker run hello-world
+docker run hello-world
 
 # Управление через systemd
 sudo systemctl status docker

@@ -101,6 +101,53 @@ NetBox Operator в 2026 году автоматически синхронизи
 *   **DNS64/NAT64:** Обязательная настройка для доступа из IPv6-only кластера к внешним IPv4-репозиториям (Docker Hub, GitHub).
 *   Прямая маршрутизация (Native Routing) вместо оверлея для снижения нагрузки на CPU.
 
+### 5. Миграция с Cluster-Pool на Multi-Pool (Cilium 1.20+)
+
+Сценарий актуален при необходимости смены `podCIDR` или `serviceCIDR` в работающем кластере (например, из-за пересечения с ЛВС/VPC).
+
+#### Подготовка и миграция Pod IP
+Для перехода в режим `multi-pool` без простоя Cilium 1.20 предоставляет специальный флаг миграции.
+
+1.  **Создание нового пула (`CiliumPodIPPool`):**
+    ```yaml
+    apiVersion: cilium.io/v2alpha1
+    kind: CiliumPodIPPool
+    metadata:
+      name: default
+    spec:
+      ipv4:
+        cidrs:
+        - 172.24.0.0/20
+        maskSize: 24
+    ```
+
+2.  **Обновление Cilium (Helm):**
+    ```bash
+    helm upgrade cilium cilium/cilium -n kube-system \
+      --set ipam.mode=multi-pool \
+      --set-string extraConfig.enable-cluster-pool-to-multi-pool-migration=true \
+      --set operator.rollOutPods=true \
+      --set rollOutCiliumPods=false
+    ```
+    *   `rollOutCiliumPods=false`: Предотвращает одновременный перезапуск всех агентов.
+    *   `enable-cluster-pool-to-multi-pool-migration`: Позволяет Cilium временно понимать старые адреса во время переезда.
+
+3.  **Постепенный перезапуск:**
+    *   Поочередный перезапуск `Cilium Agent` на узлах.
+    *   Рестарт `CoreDNS` для подхвата новых IP (рекомендуется настроить `PodDisruptionBudget`).
+    *   Перезапуск прикладных контейнеров для получения адресов из нового пула.
+
+#### Смена Service IP (Высокий риск)
+Если требуется сменить и диапазон сервисов, процедура затрагивает Control Plane:
+1.  **Бэкап:** Обязательный бэкап `etcd` и `/etc/kubernetes`.
+2.  **Обновление манифестов:** Изменение `--service-cluster-ip-range` в `kube-apiserver` и `kube-controller-manager` на всех мастерах.
+3.  **Kubelet:** Обновление `clusterDNS` в `/var/lib/kubelet/config.yaml`.
+4.  **Etcd cleanup:** Очистка `/registry/servicecidrs/` в etcd (через `etcdctl`) для удаления старых привязок.
+5.  **ServiceCIDR API:** Создание нового объекта `ServiceCIDR` с новым диапазоном.
+6.  **Пересоздание сервисов:** Удаление старых сервисов (включая `kubernetes` в `default`) для их пересоздания с новыми IP.
+
+**Внимание:** Смена Service IP вызывает временную потерю связности между компонентами и требует тщательной автоматизации (Ansible/Scripts). Миграция на `multi-pool` необратима.
+
 ---
 
 ## Диагностика и мониторинг

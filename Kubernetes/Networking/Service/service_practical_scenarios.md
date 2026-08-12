@@ -59,6 +59,20 @@ spec:
 
 ---
 
+### Сценарий 0: Быстрое создание Service (Императивный путь)
+
+Использование `kubectl expose` для автоматического создания сервиса на основе существующего Pod или Deployment.
+
+```bash
+# Создание ClusterIP сервиса для пода
+kubectl expose pod my-nginx --port=80 --target-port=80 --name=nginx-internal
+
+# Создание NodePort сервиса для Deployment
+kubectl expose deployment my-deploy --port=80 --type=NodePort --name=nginx-external
+```
+
+---
+
 ### Сценарий 1: Внутренний доступ (ClusterIP)
 
 Создание стабильной точки входа для межсервисного взаимодействия.

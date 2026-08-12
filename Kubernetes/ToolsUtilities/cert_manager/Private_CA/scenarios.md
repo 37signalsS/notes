@@ -192,6 +192,53 @@ spec:
 
 ---
 
+### Сценарий 4: Начальное создание внутреннего CA (Bootstrap)
+
+В новом кластере часто возникает проблема "курицы и яйца": для `ClusterIssuer` типа `ca` нужен Secret, который еще не существует. cert-manager решает это через временный `selfSigned` эмитент.
+
+**1. Создание временного Bootstrap-эмитента:**
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+```
+
+**2. Выпуск сертификата CA:**
+Этот ресурс преобразует запрос в Secret `internal-ca-secret`, содержащий пару ключей.
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: internal-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: "internal-ca"
+  secretName: internal-ca-secret
+  privateKey:
+    algorithm: Ed25519 # Оптимально для mTLS в 2026 году
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+```
+
+**3. Создание основного CA ClusterIssuer:**
+Теперь эмитент может ссылаться на созданный Secret.
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca
+spec:
+  ca:
+    secretName: internal-ca-secret
+```
+
+---
+
 ## Дополнительная информация
 
 ### Сравнение алгоритмов (2026)

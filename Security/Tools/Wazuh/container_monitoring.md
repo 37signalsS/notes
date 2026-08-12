@@ -114,7 +114,7 @@ pip3 install docker==7.1.0 urllib3==1.26.20 requests==2.32.3 --break-system-pack
 
 Для интеграции с K8s рекомендуется настроить Webhook или чтение логов `kube-apiserver`.
 
-**Пример конфигурации `<localfile>` на мастер-ноде:**
+**Пример конфигурации `<localfile>` на мастер-ноде (подробнее о параметрах: [Сбор логов](./wazuh-log-collection.md)):**
 ```xml
 <localfile>
   <location>/var/log/kubernetes/audit.log</location>
@@ -135,6 +135,7 @@ pip3 install docker==7.1.0 urllib3==1.26.20 requests==2.32.3 --break-system-pack
 
 ### См. также
 - [Wazuh: обзор SIEM](../wazuh.md)
+- [Обнаружение уязвимостей (Vulnerability Detector) в Wazuh](./wazuh-vulnerability-detector.md)
 - [Мониторинг безопасности контейнеров](../../../Docker/Docker_security/runtime_monitoring.md)
 - [Интеграция Docker с Prometheus](../../../Docker/Docker_metrics/docker_prometheus_integration.md)
 - [Мониторинг ядра через Wazuh](./kernel_monitoring.md) — детали eBPF и системных вызовов.

@@ -313,6 +313,50 @@ spec:
 
 ---
 
+### Сценарий 9: ACME (Let's Encrypt) через Gateway API Solver
+
+**Цель:** Автоматизация прохождения проверки HTTP-01 для внешних сертификатов с использованием Gateway API. cert-manager будет автоматически создавать временные маршруты для подтверждения владения доменом.
+
+**ClusterIssuer:**
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-gateway-api
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+    - http01:
+        gatewayHTTPRoute:
+          parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: public-gateway
+            namespace: infra-system
+```
+
+**Certificate:**
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: web-tls
+  namespace: app-namespace
+spec:
+  secretName: web-tls-secret
+  issuerRef:
+    name: letsencrypt-gateway-api
+    kind: ClusterIssuer
+  dnsNames:
+    - web.example.com
+```
+
+---
+
 ## Дополнительная информация
 
 ### Рекомендации по эксплуатации

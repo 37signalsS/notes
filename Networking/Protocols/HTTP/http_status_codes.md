@@ -117,6 +117,12 @@ curl -v https://api.example.com/resource 2>&1 | grep -E "< HTTP|< Location|< Con
 awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn
 ```
 
+Поиск эндпоинтов, вызывающих ошибку **499 (Client Closed Request)**:
+
+```bash
+awk '$9 == 499 {print $7}' /var/log/nginx/access.log | sort | uniq -c | sort -rn
+```
+
 ### Сценарий 3: Диагностика ошибки 429 (Too Many Requests)
 
 При получении 429 важно определить, какой именно лимит был превышен.

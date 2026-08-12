@@ -28,6 +28,7 @@
 | Тип образа | Преимущества | Недостатки | Рекомендация |
 | :--- | :--- | :--- | :--- |
 | **Wolfi (Chainguard)** | **0 CVE**, нативный `glibc`, non-root. | Требует настройки путей SDK. | **Основной выбор для Prod**. |
+| **Axiom Linux Base** | **Hardened-образ**, оптимизированный под Java, 0 CVE. | Менее распространен в open-source. | Для высокозащищенных контуров. |
 | **Alpine (`-alpine`)** | Минимальный размер. | `musl` требует тестирования производительности. | Для простых утилит. |
 | **Distroless** | Максимальная безопасность (нет shell). | Сложность диагностики внутри. | Для стабильных микросервисов. |
 | **Ubuntu (`-noble`)** | Максимальная совместимость. | Большой размер, наличие CVE. | Для сложных legacy-систем. |
@@ -84,8 +85,10 @@ COPY . .
 RUN ./mvnw clean package -DskipTests
 
 # Создание кастомной JRE (удаляем неиспользуемые модули)
-RUN $JAVA_HOME/bin/jlink \
-    --add-modules java.base,java.logging,java.naming,java.security.jgss,java.instrument \
+# jdeps используется для автоматического определения необходимых модулей приложения
+RUN JAVA_MODULES=$(jdeps --ignore-missing-deps --print-module-deps --recursive --multi-release 25 target/*.jar) && \
+    $JAVA_HOME/bin/jlink \
+    --add-modules $JAVA_MODULES,java.instrument \
     --strip-debug \
     --no-man-pages \
     --no-header-files \
@@ -145,6 +148,7 @@ docker exec <id> java -XshowSettings:system -version
 
 ### Смотрите также
 
+- **[Безопасность Java-образов: Hardening](../../Docker_security/java-image-security.md)** — глубокий анализ угроз и методов защиты.
 - **[Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md)** — SSoT по параметрам памяти и GC.
 - **[Оптимизация сборки Docker-образов](./build_optimization.md)** — общие принципы кэширования.
 - **[Безопасность в Dockerfile](./security.md)** — работа с non-root и SBOM.

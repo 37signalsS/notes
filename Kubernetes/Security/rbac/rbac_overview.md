@@ -80,10 +80,36 @@ RBAC напрямую влияет на то, что пользователь в
 
 ### Типовая изоляция (Namespacing)
 
-Для изоляции команд используется следующая стратегия:
-1. Создание отдельного **Namespace**.
-2. Создание **Role** с минимально необходимыми правами (`get`, `list`, `watch`, `update`).
-3. Создание **RoleBinding** для конкретного **ServiceAccount** приложения.
+Для изоляции команд в мультитенантных средах используется стратегия **«Минимально необходимых прав»** с разделением на три уровня:
+
+1.  **Уровень 1 — Платформенная команда (Cluster Admin):**
+    *   Полный доступ к API (`verbs: ["*"]` в `ClusterRoleBinding`).
+    *   Управление инфраструктурой, узлами, PV и общими сервисами кластера.
+2.  **Уровень 2 — Тимлиды (Namespace Admin):**
+    *   Права администратора внутри конкретного Namespace (`RoleBinding` к стандартной роли `admin`).
+    *   Возможность управлять всеми ресурсами команды, но без доступа к ресурсам уровня кластера и чужим Namespace.
+3.  **Уровень 3 — Разработчики (Namespace Developer):**
+    *   Ограниченные права на деплой и отладку (`get`, `list`, `watch`, `create`, `update`, `patch`).
+    *   Запрет на изменение RBAC-правил, квот ресурсов и создание PersistentVolumes.
+
+#### Пример Role для разработчика (Namespace Developer):
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: namespace-developer
+  namespace: payments-production
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec", "services", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"] # Только чтение, без создания/удаления
+```
 
 ---
 

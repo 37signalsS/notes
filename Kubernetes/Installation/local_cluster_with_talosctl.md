@@ -91,7 +91,20 @@ machine:
       - image: ghcr.io/siderolabs/nvidia-gpu-6.18:595.x.x
 ```
 
-### 5. Диагностика и Troubleshooting
+### 5. Настройка безопасности Kubelet (Server TLS Bootstrap)
+
+Для обеспечения проверяемого TLS между API-сервером и Kubelet (для `kubectl logs`, `exec`), необходимо включить ротацию серверных сертификатов. В Talos это делается одной строкой в конфигурации узла.
+
+```yaml
+machine:
+  kubelet:
+    extraConfig:
+      serverTLSBootstrap: true
+```
+
+После применения конфигурации (`talosctl apply-config`) и перезапуска сервиса kubelet, узел начнет отправлять CSR для серверного сертификата. Для автоматического одобрения этих запросов требуется установка контроллера одобрения (см. [Управление сертификатами](../Operations/certificate_management.md)).
+
+### 6. Диагностика и Troubleshooting
 
 Поскольку SSH нет, используются специфические команды `talosctl`.
 

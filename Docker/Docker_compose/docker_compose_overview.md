@@ -119,3 +119,4 @@ secrets:
 - **[Справочник по директивам](./docker_compose_directives.md)** — детальное описание синтаксиса `compose.yml`.
 - **[Справочник команд CLI](./docker_compose_cli_commands.md)** — полный список команд и флагов управления.
 - **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — модульность (`include`), профили и секреты.
+- **[Миграция VPS без простоя](./vps_migration_zero_downtime.md)** — практическое руководство по переносу стека между хостами.

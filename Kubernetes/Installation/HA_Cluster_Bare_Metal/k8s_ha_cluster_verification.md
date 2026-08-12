@@ -239,6 +239,7 @@ kubectl top pods -A
 #### Проблема: Поды CoreDNS в статусе CrashLoopBackOff
 **Причина**: Часто связано с зацикливанием DNS (loop). CoreDNS обнаруживает, что вышестоящий DNS — это он сам.
 **Решение**: Проверьте `/etc/resolv.conf` на узлах. Если там указан `127.0.0.53`, настройте CoreDNS на использование другого upstream DNS (например, 8.8.8.8) через `kubectl edit configmap -n kube-system coredns`.
+**Подробнее**: См. SSoT-файл **[Петли перенаправления DNS](../../../Networking/Protocols/DNS/dns_forwarding_loops.md)**.
 
 #### Проблема: Error from server (Forbidden) при `kubectl top`
 **Причина**: Metrics Server не может авторизоваться в Kubelet из-за сертификатов.

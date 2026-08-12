@@ -43,6 +43,7 @@
 - **OWASP Top 10 CI/CD (2025):** риски инфраструктуры доставки.
 - **SLSA (Supply-chain Levels for Software Artifacts):** уровни защиты цепочки поставок.
 - **VEX (Vulnerability Exploitability eXchange):** статус эксплуатируемости уязвимостей.
+- **[Сертификация ФСТЭК](../../Linux/Security/Fstec/overview.md):** требования к СЗИ и процессам безопасной разработки (SDL).
 
 ## Практические сценарии
 

@@ -91,7 +91,7 @@ done < /proc/modules
 
 ### 3. Проактивный аудит через SCA
 
-Использование модуля **SCA (Security Configuration Assessment)** для поиска уязвимых версий ядра (5.8 – 5.16.10).
+Использование модуля **SCA (Security Configuration Assessment)** для поиска уязвимых версий ядра (5.8 – 5.16.10). Подробнее о модуле: **[Оценка конфигурации безопасности (SCA) в Wazuh](./wazuh-sca.md)**.
 
 **Пример SCA политики (`/var/ossec/etc/sca/kernel_cve.yml`):**
 ```yaml

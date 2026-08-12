@@ -175,6 +175,7 @@ spec:
 ### Рекомендованные ссылки
 
 - [Сравнение стратегий развертывания](./comparison.md) — выбор между Blue-Green и Canary.
+- [Миграция VPS без простоя](../../Docker/Docker_compose/vps_migration_zero_downtime.md) — практическая реализация Blue-Green при переносе хоста через Proxy Bridge.
 - [Обратно-совместимые миграции (Expand-Contract)](../../Databases/Concepts/migrations/expand_contract.md) — критический компонент для работы с БД.
 - [Проверки здоровья и откат](./deployment_health_checks_and_rollback.md) — автоматизация верификации среды перед переключением.
 - [Стратегии и модели Deployment](../Core_Concepts/deployment_strategies.md) — теоретический обзор.

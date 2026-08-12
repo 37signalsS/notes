@@ -173,7 +173,9 @@ spec:
 
 ### Типичные проблемы
 
-- **DNS Loop:** CoreDNS пытается использовать `/etc/resolv.conf` узла, который сам указывает на CoreDNS. Решение: указать фиксированный upstream IP (например, `8.8.8.8`).
+- **DNS Loop (Петля перенаправления):** CoreDNS обнаруживает, что вышестоящий DNS (из `/etc/resolv.conf`) — это он сам (часто через `systemd-resolved` на хосте). Это приводит к `CrashLoopBackOff` или бесконечным рекурсивным запросам. 
+  - **Решение:** Указать фиксированный upstream IP (например, `8.8.8.8`) или использовать «чистый» resolv.conf хоста без заглушки: `--resolv-conf /run/systemd/resolve/resolv.conf` в параметрах kubelet.
+  - **Подробнее:** См. детальный разбор и методы диагностики в **[Петли перенаправления DNS](../../Networking/Protocols/DNS/dns_forwarding_loops.md)**.
 - **Блокировка NetworkPolicy:** Часто "Default Deny" политики забывают разрешить Egress на UDP/TCP порт 53 в неймспейс `kube-system`.
 - **UDP Conntrack Race:** Задержки в 1 или 5 секунд при резолвинге. Решение: NodeLocal DNSCache.
 - **Размер UDP-пакета:** Если в Headless Service >20 подов, ответ может не влезть в 512 байт UDP. Убедитесь, что клиенты поддерживают переключение на TCP.

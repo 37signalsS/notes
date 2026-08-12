@@ -142,11 +142,25 @@ docker exec -it gitlab-runner gitlab-runner register \
 
 ## Решение проблем (Troubleshooting)
 
-- **Runner не видит GitLab:** Убедитесь, что `extra_hosts` прописан в `docker-compose.yml`, иначе Runner внутри контейнера Docker (который он сам запустил) не сможет разрешить имя `gitlab.local`.
+- **Runner не видит GitLab (ошибка `resolve host gitlab.local` в пайплайне):**
+  Это классическая проблема локальных стендов. Контейнер, запускаемый раннером, живет в изолированной сети и не знает об `/etc/hosts` хоста.
+  
+  **Решение:** Отредактируйте `/srv/gitlab-runner/config/config.toml` на хосте и добавьте `extra_hosts` в секцию `[runners.docker]`:
+  ```toml
+  [[runners]]
+    [runners.docker]
+      # Проброс локального домена внутрь собираемых контейнеров
+      extra_hosts = ["gitlab.local:host-gateway"]
+  ```
+  После изменения перезапустите контейнер раннера: `docker restart gitlab-runner`.
+
 - **Ошибка 401 Unauthorized:** Проверьте, не истек ли `glrt-` токен. В новых версиях GitLab токены создаются "до" регистрации.
 - **Бесконечный запуск:** Проверьте логи (`docker logs -f gitlab`). Если процесс завис на `ruby_block[wait for redis]`, увеличьте лимит RAM.
 
 ## Дополнительная информация
+
+### Импорт проектов для локальных тестов
+Если вы хотите протестировать пайплайны на реальном коде, разрешите импорт по URL в GitLab: **Admin Area > Settings > General > Visibility and access controls > Import sources**. Отметьте **Repository by URL**. Это позволит быстро клонировать проекты с GitHub для отладки.
 
 ### Смотрите также
 

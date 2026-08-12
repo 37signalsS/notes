@@ -85,7 +85,7 @@ strace -e open,openat curl -s http://example.com 2>&1 | grep hosts
 # 1. systemd-resolved (самый частый случай)
 resolvectl flush-caches
 
-# 2. nscd (Name Service Caching Daemon) - если установлен
+# 2. [nscd](../../../Networking/Services/nscd.md) (Name Service Cache Daemon) — если установлен
 sudo nscd -i hosts
 
 # 3. Браузеры (Chrome/Firefox)

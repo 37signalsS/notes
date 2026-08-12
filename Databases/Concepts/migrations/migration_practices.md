@@ -93,6 +93,7 @@ ALTER TABLE products VALIDATE CONSTRAINT check_positive_price;
 ### Смежные темы
 
 - **[Миграции баз данных: Основы](migration_basics.md)** — парадигмы и жизненный цикл.
+- **[Миграция VPS без простоя](../../../Docker/Docker_compose/vps_migration_zero_downtime.md)** — практический сценарий с использованием защищенных каналов (VPN) для связи с БД.
 - **[Типовые сценарии миграций](scenarios.md)** — глубокий разбор батчинга и Online Schema Change.
 - **[Обратно-совместимые миграции (Expand-Contract)](expand_contract.md)** — паттерн для Zero-downtime.
 - **[Мониторинг миграций](monitoring.md)** — алертинг и диагностика блокировок в реальном времени.

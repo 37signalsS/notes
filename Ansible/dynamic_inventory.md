@@ -131,13 +131,15 @@ keyed_groups:
 compose:
   ansible_host: network_interfaces[0].primary_v4_address.one_to_one_nat.address
 ```
-
 ### Интеграция с CMDB (NetBox)
 
 NetBox часто выступает единым источником правды (SSoT) для сетевой инфраструктуры и DCIM. Коллекция `netbox.netbox` предоставляет плагин `nb_inventory`. Файл конфигурации обычно называется `netbox_inventory.yml`.
 
+См. также: [Автоматизация заполнения NetBox через API](../Networking/NetBox/netbox-automation-python.md).
+
 ```yaml
 plugin: netbox.netbox.nb_inventory
+...
 api_endpoint: https://netbox.example.com
 token: "YOUR_NETBOX_API_TOKEN"
 validate_certs: true

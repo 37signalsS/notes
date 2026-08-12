@@ -83,33 +83,26 @@ pvs && lvs
 
 ## Практические сценарии
 
-### Создание Cloud-Init шаблона через CLI
+### Создание Cloud-Init шаблона
 
-Cloud-Init позволяет автоматизировать настройку ВМ (пользователи, SSH-ключи, сеть) при первом запуске. Для шаблонов рекомендуется использовать официальные cloud-ready образы (например, Ubuntu Cloud Images). Актуальный LTS — Ubuntu 26.04 «Resolute Raccoon».
+Для автоматизации развертывания рекомендуется использовать Cloud-Init шаблоны. Процесс включает создание базовой ВМ (Generic Template), импорт облачного образа дистрибутива, настройку Cloud-Init диска и конвертацию в шаблон.
 
+Подробное пошаговое руководство (CLI и GUI): **[Шаблоны ВМ и Cloud-Init в Proxmox VE](./proxmox_vm_templates.md)**.
+
+Краткий пример создания через CLI:
 ```bash
-# 1. Загрузка образа и создание ВМ
-wget https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img
-qm create 9000 --name u-template --memory 2048 --net0 virtio,bridge=vmbr0
-# → VM 9000 created
+# 1. Создание заготовки
+qm create 9000 --name u-template --memory 2048 --net0 virtio,bridge=vmbr0 --serial0 socket --vga serial0
 
-# 2. Импорт диска
-qm importdisk 9000 resolute-server-cloudimg-amd64.img local-lvm
-# → successfully imported disk as 'unused0'
-
-# 3. Настройка параметров и Cloud-Init
+# 2. Импорт диска и настройка Cloud-Init
+qm disk import 9000 resolute-server-cloudimg-amd64.img local-lvm --format qcow2
 qm set 9000 --scsihw virtio-scsi-pci --scsi0 local-lvm:vm-9000-disk-0
 qm set 9000 --ide2 local-lvm:cloudinit
 qm set 9000 --boot c --bootdisk scsi0
-qm set 9000 --serial0 socket --vga serial0
-# → update VM 9000: ...
 
-# 4. Конвертация в шаблон
+# 3. Конвертация
 qm template 9000
-# → VM 9000 converted to template
 ```
-
-После клонирования из шаблона укажите в GUI Cloud-Init данные пользователя, SSH-ключ и сеть — они применятся при первом старте клона.
 
 ### Доступ по SSH для root в LXC
 
@@ -144,6 +137,7 @@ qm template 9000
 
 ### Связанные темы
 
+- [Шаблоны ВМ и Cloud-Init](./proxmox_vm_templates.md)
 - [LXC (Linux Containers) — системные контейнеры](../Linux/Virtualization/lxc_overview.md)
 - [Кластеризация и High Availability в Proxmox](./proxmox_cluster.md)
 - [Хранилища и Ceph в Proxmox](./proxmox_storage.md)
