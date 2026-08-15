@@ -40,6 +40,12 @@ def _get_score(r: dict) -> float:
     return v if v is not None else r.get("score", 0.0)
 
 
+def apply_score_threshold(results: list[dict], threshold: Optional[float]) -> list[dict]:
+    if threshold is None:
+        return results
+    return [r for r in results if _get_score(r) >= threshold]
+
+
 def limit_per_source(results: list[dict], max_per_source: int = _MAX_PER_SOURCE) -> list[dict]:
     counts: dict[str, int] = {}
     filtered: list[dict] = []
@@ -219,6 +225,7 @@ def perform_search(
         reranker = rag_utils.get_reranker()
         if reranker:
             all_results = rerank(query, all_results, reranker)
+            all_results = apply_score_threshold(all_results, rag_utils.RERANK_SCORE_THRESHOLD)
 
     if len(all_results) > top_k:
         mixed_dims = len({len(r.get("embedding", [])) for r in all_results if r.get("embedding")}) > 1

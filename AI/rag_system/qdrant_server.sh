@@ -31,7 +31,7 @@ start() {
             -p "$PORT":6333 \
             -p "$GRPC_PORT":6334 \
             -v "$VOLUME_DIR":/qdrant/storage \
-            qdrant/qdrant:latest
+            qdrant/qdrant:v1.18.3
     fi
     echo "Waiting for Qdrant to be ready..."
     for i in $(seq 1 30); do

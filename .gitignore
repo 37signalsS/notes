@@ -1,13 +1,23 @@
+# macOS
+.DS_Store
+
+# Obsidian
 .obsidian/**
 
-AI/rag_system/venv/
-AI/rag_system/qdrant_bge/
-AI/rag_system/qdrant_db/
-AI/rag_system/qdrant_storage/
-AI/rag_system/manifest.json
-AI/rag_system/*.log
+# Python
 **/__pycache__/
 *.py[cod]
 *$py.class
 
-.DS_Store
+# Генерируемые файлы RAG-системы (пересоздаются при развёртывании)
+AI/rag_system/venv/
+AI/rag_system/venv_py39/
+AI/rag_system/qdrant_bge/
+AI/rag_system/qdrant_db/
+AI/rag_system/qdrant_storage/
+AI/rag_system/manifest.json
+AI/rag_system/manifest.json.lock
+AI/rag_system/*.log
+AI/rag_system/.pytest_cache/
+AI/rag_system/analyze_diff.py
+AI/rag_system/diag_rag.py

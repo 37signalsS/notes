@@ -1,7 +1,7 @@
 excluded:
   dirs: [".git", ".obsidian", "venv", "rag_system"]
   files: ["GEMINI.md", "MEMORY.md", ".DS_Store"]
-  extensions: [".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".py"]
+  extensions: [".csv", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".py"]
 
 qdrant:
   mode: server          # "local" (on-disk) or "server" (Qdrant Docker)
@@ -33,11 +33,7 @@ engines:
 reranker:
   model: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
   max_chars: 2048
-
-rrf:
-  k: 60
-  dense_weight: 2
-  keyword_weight: 2
+  score_threshold: -3   # результаты с rerank_score ниже отсекаются
 
 hybrid:
   extra_k_offset: 50

@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import re
+import hashlib
 import shutil
 import tempfile
 import threading
@@ -78,6 +79,33 @@ def _delete_stray_points(client: QdrantClient, collection_name: str, rel_path: s
             break
     if ids_to_remove:
         client.delete(collection_name=collection_name, points_selector=models.PointIdsList(points=ids_to_remove))
+
+
+def _delete_source_points(client: QdrantClient, collection_name: str, rel_path: str, null_source: bool = False) -> int:
+    ids_to_remove = []
+    next_offset = None
+    while True:
+        pts, next_offset = client.scroll(
+            collection_name=collection_name,
+            limit=1000,
+            with_payload=False,
+            with_vectors=False,
+            offset=next_offset,
+            scroll_filter=models.Filter(
+                must=[
+                    (models.IsEmptyCondition(is_empty=models.PayloadField(key="source"))
+                     if null_source else
+                     models.FieldCondition(key="source", match=models.MatchValue(value=rel_path)))
+                ]
+            ),
+        )
+        for p in pts:
+            ids_to_remove.append(str(p.id))
+        if next_offset is None:
+            break
+    if ids_to_remove:
+        client.delete(collection_name=collection_name, points_selector=models.PointIdsList(points=ids_to_remove))
+    return len(ids_to_remove)
 
 
 class _ManifestLock:
@@ -199,6 +227,18 @@ def _ensure_collection(client: QdrantClient, collection_name: str, dense_embeddi
             )
 
 
+def _config_fingerprint(cfg: dict) -> str:
+    parts = [
+        cfg.get("model", ""),
+        str(cfg.get("chunk_size", "")),
+        str(cfg.get("chunk_overlap", "")),
+        str(cfg.get("doc_prefix", "")),
+        str(cfg.get("query_prefix", "")),
+        "strip_headers=true",
+    ]
+    return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()
+
+
 def _update_manifest(
     engine_name: str,
     client: QdrantClient,
@@ -206,12 +246,12 @@ def _update_manifest(
     changed: list[tuple[str, str]],
     deleted: list[str],
     file_chunk_info: list[tuple[str, list[str], float]],
+    cfg_hash: Optional[str] = None,
 ) -> None:
     with _ManifestLock(MANIFEST_LOCK_FILE):
         fresh_manifest = load_manifest()
         fresh_files = fresh_manifest.get(engine_name, {}).get("files", {})
         valid_deleted = _revalidate_deleted(deleted, fresh_files)
-        valid_changed = _revalidate_changed(changed, fresh_files)
 
         new_ids: set[str] = set()
         for _, ids, _ in file_chunk_info:
@@ -222,19 +262,21 @@ def _update_manifest(
             entry = fresh_files.pop(rel_path, None)
             if entry:
                 old_ids.extend(entry.get("chunk_ids", []))
-        for _, rel_path in valid_changed:
-            entry = fresh_files.pop(rel_path, None)
-            if entry:
-                for cid in entry.get("chunk_ids", []):
+
+        for rel_path, ids, mtime in file_chunk_info:
+            prev = fresh_files.pop(rel_path, None)
+            if prev:
+                for cid in prev.get("chunk_ids", []):
                     if cid not in new_ids:
                         old_ids.append(cid)
+            fresh_files[rel_path] = {"mtime": mtime, "chunk_ids": ids}
+
         _delete_chunk_ids(client, collection_name, old_ids)
 
-        changed_rel = {rel for _, rel in valid_changed}
-        for rel_path, ids, mtime in file_chunk_info:
-            if rel_path in changed_rel:
-                fresh_files[rel_path] = {"mtime": mtime, "chunk_ids": ids}
-        fresh_manifest[engine_name] = {"files": fresh_files}
+        engine_meta: dict[str, Any] = {"files": fresh_files}
+        if cfg_hash:
+            engine_meta["config_hash"] = cfg_hash
+        fresh_manifest[engine_name] = engine_meta
         save_manifest(fresh_manifest)
 
 
@@ -243,7 +285,7 @@ def build_text_splitters(cfg: dict) -> tuple[MarkdownHeaderTextSplitter, Recursi
         headers_to_split_on=[
             ("#", "H1"), ("##", "H2"), ("###", "H3"),
         ],
-        strip_headers=False
+        strip_headers=True
     )
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=cfg["chunk_size"],
@@ -251,6 +293,17 @@ def build_text_splitters(cfg: dict) -> tuple[MarkdownHeaderTextSplitter, Recursi
         add_start_index=True,
     )
     return header_splitter, text_splitter
+
+
+def _build_header_chain(header_pairs: list[tuple[str, str]]) -> str:
+    chain: list[str] = []
+    for _, value in header_pairs:
+        if chain and (value in chain[-1] or chain[-1] in value):
+            if len(value) > len(chain[-1]):
+                chain[-1] = value
+            continue
+        chain.append(value)
+    return " > ".join(chain)
 
 
 def process_files(
@@ -276,7 +329,7 @@ def process_files(
                 for d in docs:
                     h_levels = [(k, v) for k, v in d.metadata.items() if re.match(r"^H(\d+)$", k)]
                     h_levels.sort(key=lambda kv: int(kv[0][1:]))
-                    header_chain = " > ".join(v for _, v in h_levels)
+                    header_chain = _build_header_chain(h_levels)
                     if header_chain:
                         d.page_content = f"{header_chain} > {d.page_content}"
                 clean_docs = [d for d in docs if not rag_utils.is_garbled_chunk(d.page_content)]
@@ -310,6 +363,17 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
     doc_prefix = cfg.get("doc_prefix", "")
 
     with _ManifestLock(MANIFEST_LOCK_FILE):
+        cfg_hash = _config_fingerprint(cfg)
+        manifest_pre = load_manifest()
+        engine_state_pre = manifest_pre.get(engine_name, {})
+        config_changed = bool(engine_state_pre.get("files")) and engine_state_pre.get("config_hash") != cfg_hash
+        if config_changed and not force:
+            log.info(
+                "  Config fingerprint changed (%s -> %s) — full reindex",
+                engine_state_pre.get("config_hash"), cfg_hash,
+            )
+            force = True
+
         changed, deleted, manifest, engine_state = get_changed_files(
             engine_name, files, force, db_dir
         )
@@ -323,6 +387,15 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
 
         if repair:
             counts = _get_source_counts(client, collection_name)
+            stale_sources = [src for src in counts if src != "<none>" and src not in files_meta]
+            removed_stale = 0
+            for src in stale_sources:
+                removed_stale += _delete_source_points(client, collection_name, src)
+            none_count = counts.get("<none>", 0)
+            if none_count:
+                removed_stale += _delete_source_points(client, collection_name, "<none>", null_source=True)
+            if removed_stale:
+                log.info("  Repair: removed %d stale point(s) from %d unknown source(s)", removed_stale, len(stale_sources) + (1 if none_count else 0))
             changed_rel = {rel for _, rel in changed}
             repaired: list[tuple[str, str]] = []
             for rel_path, entry in files_meta.items():
@@ -356,7 +429,7 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
     docs, file_chunk_info = process_files(changed, header_splitter, text_splitter)
 
     if not docs:
-        _update_manifest(engine_name, client, collection_name, changed, deleted, [])
+        _update_manifest(engine_name, client, collection_name, changed, deleted, [], cfg_hash=cfg_hash)
         log.info("  No new documents. Index updated.")
         return
 
@@ -400,7 +473,7 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
             client.upsert(collection_name=collection_name, points=points)
             pbar.update(min(batch_size, total - i))
 
-    _update_manifest(engine_name, client, collection_name, changed, deleted, file_chunk_info)
+    _update_manifest(engine_name, client, collection_name, changed, deleted, file_chunk_info, cfg_hash=cfg_hash)
 
     log.info("  --- %s ready! ---", cfg['label'])
     bust_cache()

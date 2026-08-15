@@ -107,11 +107,6 @@ class TestConfig(unittest.TestCase):
         self.assertIsInstance(rag_utils.EXCLUDED_FILES, list)
         self.assertIsInstance(rag_utils.EXCLUDED_EXTENSIONS, list)
 
-    def test_rrf_constants(self):
-        self.assertIsInstance(rag_utils.RRF_K, int)
-        self.assertIsInstance(rag_utils.RRF_DENSE_WEIGHT, int)
-        self.assertIsInstance(rag_utils.RRF_KEYWORD_WEIGHT, int)
-
     def test_new_constants_exist(self):
         self.assertIsInstance(rag_utils.HYBRID_EXTRA_K_OFFSET, int)
         self.assertIsInstance(rag_utils.MMR_COMPARE_DEFAULT_K, int)
@@ -485,6 +480,36 @@ class TestReranker(unittest.TestCase):
         self.assertLessEqual(len(reranker.seen[0][1]), 10)
 
 
+class TestScoreThreshold(unittest.TestCase):
+    def test_none_threshold_keeps_all(self):
+        from unified_search import apply_score_threshold
+        results = [{"rerank_score": -5.0}, {"rerank_score": 3.0}]
+        res = apply_score_threshold(results, None)
+        self.assertEqual(len(res), 2)
+
+    def test_filters_below_threshold(self):
+        from unified_search import apply_score_threshold
+        results = [
+            {"rerank_score": 3.0},
+            {"rerank_score": -2.9},
+            {"rerank_score": -3.1},
+            {"rerank_score": 0.0},
+        ]
+        res = apply_score_threshold(results, -3.0)
+        self.assertEqual(len(res), 3)
+        for r in res:
+            self.assertGreaterEqual(r["rerank_score"], -3.0)
+
+    def test_uses_score_when_no_rerank(self):
+        from unified_search import apply_score_threshold
+        results = [{"score": 0.01}, {"score": 0.02}]
+        res = apply_score_threshold(results, -3.0)
+        self.assertEqual(len(res), 2)
+
+    def test_threshold_constant_is_float(self):
+        self.assertIsInstance(rag_utils.RERANK_SCORE_THRESHOLD, float)
+
+
 class TestIngestHelpers(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -674,6 +699,62 @@ class FakeQdrantClient:
 
     def delete(self, collection_name, points_selector):
         self.deleted.append(points_selector)
+
+
+class TestDeleteSourcePoints(unittest.TestCase):
+    def setUp(self):
+        self.ingest = __import__("ingest")
+
+    class _ScrollClient:
+        def __init__(self, points):
+            self.points = points
+            self.deleted_ids = []
+            self.used_filters = []
+
+        class _Record:
+            def __init__(self, pid):
+                self.id = pid
+
+        def scroll(self, collection_name, limit, with_payload, with_vectors, offset, scroll_filter):
+            self.used_filters.append(scroll_filter)
+            start = 0 if offset is None else int(offset)
+            page = [self._Record(p["id"]) for p in self.points[start:start + limit]]
+            nxt = start + limit if start + limit < len(self.points) else None
+            return page, nxt
+
+        def delete(self, collection_name, points_selector):
+            self.deleted_ids.extend(points_selector.points)
+
+    def test_deletes_all_matching_points(self):
+        client = self._ScrollClient([{"id": "1"}, {"id": "2"}, {"id": "3"}])
+        n = self.ingest._delete_source_points(client, "col", "stale.md")
+        self.assertEqual(n, 3)
+        self.assertEqual(sorted(client.deleted_ids), ["1", "2", "3"])
+
+    def test_multiple_pages(self):
+        client = self._ScrollClient([{"id": str(i)} for i in range(25)])
+        n = self.ingest._delete_source_points(client, "col", "stale.md")
+        self.assertEqual(n, 25)
+        self.assertEqual(len(client.deleted_ids), 25)
+
+    def test_empty_collection(self):
+        client = self._ScrollClient([])
+        n = self.ingest._delete_source_points(client, "col", "stale.md")
+        self.assertEqual(n, 0)
+        self.assertEqual(client.deleted_ids, [])
+
+    def test_uses_match_filter_for_source(self):
+        client = self._ScrollClient([{"id": "1"}])
+        self.ingest._delete_source_points(client, "col", "stale.md")
+        cond = client.used_filters[0].must[0]
+        self.assertEqual(cond.match.value, "stale.md")
+
+    def test_uses_is_empty_filter_for_null_source(self):
+        import qdrant_client.http.models as qmodels
+        client = self._ScrollClient([{"id": "1"}])
+        self.ingest._delete_source_points(client, "col", "<none>", null_source=True)
+        cond = client.used_filters[0].must[0]
+        self.assertIsInstance(cond, qmodels.IsEmptyCondition)
 
 
 class TestComputeCosineSimMatrix(unittest.TestCase):

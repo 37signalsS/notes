@@ -59,9 +59,7 @@ ENGINES_DEFAULT: dict[str, Any] = {
 
 RERANKER_MODEL_DEFAULT = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 RERANKER_MAX_CHARS_DEFAULT = 2048
-RRF_K_DEFAULT = 60
-RRF_DENSE_WEIGHT_DEFAULT = 2
-RRF_KEYWORD_WEIGHT_DEFAULT = 2
+RERANK_SCORE_THRESHOLD_DEFAULT = -3.0
 HYBRID_EXTRA_K_OFFSET_DEFAULT = 50
 MMR_DEFAULT_K_DEFAULT = 15
 MMR_COMPARE_DEFAULT_K_DEFAULT = 30
@@ -99,9 +97,7 @@ def _merge_config(file_cfg: dict[str, Any]) -> dict[str, Any]:
         "engines": file_cfg.get("engines", ENGINES_DEFAULT),
         "reranker_model": file_cfg.get("reranker", {}).get("model", RERANKER_MODEL_DEFAULT),
         "reranker_max_chars": file_cfg.get("reranker", {}).get("max_chars", RERANKER_MAX_CHARS_DEFAULT),
-        "rrf_k": file_cfg.get("rrf", {}).get("k", RRF_K_DEFAULT),
-        "rrf_dense_weight": file_cfg.get("rrf", {}).get("dense_weight", RRF_DENSE_WEIGHT_DEFAULT),
-        "rrf_keyword_weight": file_cfg.get("rrf", {}).get("keyword_weight", RRF_KEYWORD_WEIGHT_DEFAULT),
+        "rerank_score_threshold": file_cfg.get("reranker", {}).get("score_threshold", RERANK_SCORE_THRESHOLD_DEFAULT),
         "hybrid_extra_k_offset": file_cfg.get("hybrid", {}).get("extra_k_offset", HYBRID_EXTRA_K_OFFSET_DEFAULT),
         "mmr_default_k": file_cfg.get("mmr", {}).get("default_k", MMR_DEFAULT_K_DEFAULT),
         "mmr_compare_default_k": file_cfg.get("mmr", {}).get("compare_default_k", MMR_COMPARE_DEFAULT_K_DEFAULT),
@@ -138,9 +134,7 @@ EXCLUDED_EXTENSIONS: list[str] = _cfg["excluded_extensions"]
 ENGINES: dict[str, Any] = _cfg["engines"]
 RERANKER_MODEL: str = _cfg["reranker_model"]
 RERANKER_MAX_CHARS: int = _cfg["reranker_max_chars"]
-RRF_K: int = _cfg["rrf_k"]
-RRF_DENSE_WEIGHT: int = _cfg["rrf_dense_weight"]
-RRF_KEYWORD_WEIGHT: int = _cfg["rrf_keyword_weight"]
+RERANK_SCORE_THRESHOLD: float = float(_cfg["rerank_score_threshold"])
 HYBRID_EXTRA_K_OFFSET: int = _cfg["hybrid_extra_k_offset"]
 MMR_DEFAULT_K: int = _cfg["mmr_default_k"]
 MMR_COMPARE_DEFAULT_K: int = _cfg["mmr_compare_default_k"]

@@ -1,9 +1,18 @@
 venv/
-chroma_db/
-chroma_bge/
+venv_py39/
+.pytest_cache/
 __pycache__/
 *.pyc
 *.log
 .DS_Store
 manifest.json
 manifest.json.lock
+
+# Векторные индексы и данные Qdrant (перегенерируются)
+qdrant_bge/
+qdrant_db/
+qdrant_storage/
+
+# Временные диагностические скрипты
+analyze_diff.py
+diag_rag.py
