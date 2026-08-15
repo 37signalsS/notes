@@ -99,7 +99,7 @@ ls -la /proc/$PID/ns/
 # → net -> net:[4026532920]
 # → pid -> pid:[4026532921]
 
-# Человекочитаемый вывод через lsns
+# Человекочитаемый вывод через lsns (подробнее в [lsns](../../Linux/Diagnostics/Processes/lsns.md))
 lsns -p $PID
 ```
 

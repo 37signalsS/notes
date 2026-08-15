@@ -77,7 +77,7 @@ kubectl get pod <pod_name> -o jsonpath='{.spec.dnsConfig}'
 # 1. Поиск PID процесса контейнера
 PID=$(docker inspect -f '{{.State.Pid}}' <container_id>)
 
-# 2. Перехват DNS-трафика (порт 53) внутри пространства имен контейнера
+# 2. Перехват DNS-трафика (порт 53) внутри пространства имен контейнера (подробнее в [nsenter](../../../Processes/nsenter.md))
 sudo nsenter -t $PID -n tcpdump -i any port 53 -vv
 # → Позволяет увидеть, уходят ли запросы и приходят ли ответы
 ```

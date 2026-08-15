@@ -119,9 +119,11 @@ COPY --parents services/api/config.json /dist/
 ### Правила именования
 - **Стандарт:** `Dockerfile` (без расширения).
 - **Альтернативы:** `Dockerfile.dev`, `Dockerfile.prod`.
-- **Bake:** Для сложных проектов используйте `docker-bake.hcl` для параллельной сборки.
+- **Bake:** Для сложных проектов используйте **[docker-bake.hcl](../docker-bake.md)** для параллельной сборки.
 
 **См. также:**
+- **[Docker Bake: Декларативная сборка](../docker-bake.md)** — полное руководство по инструменту.
+- **[Инициализация проекта: docker init](../../docker_init.md)** — рекомендуемый способ создания Dockerfile.
 - **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)** — глубокое погружение в кэширование.
 - **[BuildKit в Dockerfile](../dockerfile_buildkit.md)** — архитектура и LLB-граф.
 - **[Контекст сборки и .dockerignore](../dockerfile_build_context.md)** — управление файлами.

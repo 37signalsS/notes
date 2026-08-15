@@ -9,7 +9,7 @@
 - Расширенное управление кэшем (экспорт в Registry, S3, GHA).
 - Поддержка аттестаций (SBOM и Provenance).
 - Гибкое управление секретами и SSH-ключами без сохранения их в слоях образа.
-- Использование декларативных конфигураций через инструмент **Bake**.
+- Использование декларативных конфигураций через инструмент **[Bake](./docker-bake.md)**.
 
 В современных версиях Docker (23.0+) команда `docker build` является псевдонимом (alias) для `docker buildx build`.
 
@@ -123,30 +123,11 @@ docker buildx build --secret id=npmrc,src=$HOME/.npmrc -t my-app:safe-build .
 ```
 
 ### Сценарий 3: Декларативная сборка через Bake
-Инструмент `bake` позволяет описать параметры сборки в HCL файле (`docker-bake.hcl`), что удобнее длинных CLI команд.
+Инструмент `bake` позволяет описать параметры сборки в HCL или YAML файлах, что удобнее длинных CLI команд. Поддерживает параллелизм, матричные сборки и наследование.
 
-```hcl
-variable "TAG" {
-  default = "latest"
-}
+Подробное руководство см. в разделе **[Docker Bake: Декларативная оркестрация сборки](./docker-bake.md)**.
 
-group "default" {
-  targets = ["api", "worker"]
-}
-
-target "api" {
-  context = "./api"
-  dockerfile = "Dockerfile"
-  platforms = ["linux/amd64", "linux/arm64"]
-  tags = ["myreg.com/api:${TAG}"]
-}
-
-target "worker" {
-  context = "./worker"
-  tags = ["myreg.com/worker:${TAG}"]
-}
-```
-**Запуск:** `docker buildx bake --set TAG=v1.2.0`
+**Запуск:** `docker buildx bake`
 
 ## Дополнительная информация
 

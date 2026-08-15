@@ -89,9 +89,10 @@ Lynis поддерживает систему плагинов, которые �
 | **Lynis** | Хостовая ОС (Linux/Unix) | Общий аудит безопасности системы. |
 | **[kube-bench](../../Kubernetes/Security/kube-bench.md)** | Инфраструктура Kubernetes | Проверка нод и Control Plane на CIS Benchmark. |
 | **[docker-bench-security](../../Docker/Dockerfile/dockerfile_optimization_tools.md)** | Среда Docker | Аудит настроек демона и хоста под контейнеры. |
-| **OpenSCAP** | Enterprise Compliance | Формальный аудит на соответствие государственным стандартам. |
+| **OpenSCAP** | Enterprise Compliance | Формальный аудит на соответствие государственным стандартам. См. [Ansible OS Hardening](../../Ansible/ansible-os-hardening.md). |
 
 ### См. также
+- [Ansible: OS Hardening и комплаенс](../../Ansible/ansible-os-hardening.md)
 - [Управление уязвимостями в Linux](../../Linux/Security/vulnerability_management.md)
 - [Харденинг ядра Linux](../../Linux/Security/Mechanisms/Kernel/hardening.md)
 - [Мониторинг событий через auditd](../../Linux/SystemAdministration/Logging/auditd.md)

@@ -99,5 +99,5 @@ Consul использует gossip-протокол (библиотека Serf) 
 
 - **[Обзор Consul](./consul_overview.md)**: общее описание платформы.
 - **[Raft-консенсус](./consul_consensus.md)**: глубокое погружение в репликацию.
-- **[Сервисная сетка (Service Mesh)](../Service_Mesh/service_mesh_concepts.md)**: использование Consul для mTLS и трафик-менеджмента.
+- **[Сервисная сетка (Service Mesh)](./consul_service_mesh.md)**: использование Consul для mTLS, Intentions и межкластерной связности.
 - **[Официальная архитектурная схема](https://developer.hashicorp.com/consul/docs/architecture)**.

@@ -230,6 +230,87 @@ kubectl logs -n logging -l app.kubernetes.io/component=write -f
 kubectl get servicemonitor -n logging
 ```
 
+### Сценарий 4: Локальная установка (Binary) на Linux
+
+Минималистичный способ запуска Loki без использования контейнеров, подходящий для отладки или малых систем.
+
+**1. Загрузка и подготовка бинарного файла:**
+
+```bash
+# Загрузка актуальной версии с GitHub Releases
+curl -O -L "https://github.com/grafana/loki/releases/download/v3.1.1/loki-linux-amd64.zip"
+
+# Распаковка
+unzip loki-linux-amd64.zip
+chmod +x loki-linux-amd64
+```
+
+**2. Конфигурация:**
+
+Для быстрого старта можно скачать пример конфигурации:
+```bash
+wget https://raw.githubusercontent.com/grafana/loki/main/cmd/loki/loki-local-config.yaml
+```
+
+**Основные параметры в `loki-local-config.yaml`:**
+*   **Порты:** `3100` (HTTP для API и метрик), `9096` (gRPC для взаимодействия компонентов).
+*   **Хранилище:** По умолчанию используется локальная файловая система (`filesystem`). Чанки логов сохраняются в `/tmp/loki/chunks`.
+
+**3. Запуск:**
+
+```bash
+./loki-linux-amd64 -config.file=loki-local-config.yaml
+```
+
+**4. Верификация:**
+
+Если сервер запущен успешно, эндпоинт метрик должен вернуть данные:
+```bash
+curl http://localhost:3100/metrics
+# → Ожидается вывод метрик в формате Prometheus
+```
+
+### Сценарий 5: Быстрый старт через Umbrella Chart (loki-stack)
+
+Используется для быстрого развертывания полного стека (Loki + Prometheus + Grafana + Promtail) в демонстрационных или тестовых целях.
+
+**1. Подготовка репозитория:**
+```bash
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+```
+
+**2. Настройка `values.yaml`:**
+В этом чарте Grafana по умолчанию отключена. Для активации создайте файл:
+```yaml
+# custom-stack-values.yaml
+grafana:
+  enabled: true
+  image:
+    tag: latest # Или конкретная версия, например 11.x
+promtail:
+  enabled: true
+```
+
+**3. Установка:**
+```bash
+helm install loki-stack grafana/loki-stack --values custom-stack-values.yaml
+```
+
+**4. Доступ к Grafana:**
+По умолчанию используется `ClusterIP`. Для доступа используйте Port-forward:
+```bash
+kubectl port-forward deployment/loki-stack-grafana 3000:3000
+```
+
+**5. Получение пароля администратора:**
+Логин по умолчанию: `admin`. Пароль генерируется автоматически и хранится в секрете:
+```bash
+kubectl get secret loki-stack-grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+```
+
+**Преимущество:** Loki автоматически добавляется как источник данных (DataSource) в Grafana, ручная настройка URL не требуется.
+
 ### Диагностика типичных ошибок
 
 | Ошибка | Возможная причина | Путь решения |

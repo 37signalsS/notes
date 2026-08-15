@@ -113,6 +113,7 @@
 
 ### Инструменты аудита
 
+*   **[Ansible: OS Hardening](./../Ansible/ansible-os-hardening.md):** Автоматизация приведения систем к стандартам CIS/DevSec через Ansible и OpenSCAP.
 *   **[Lynis](Tools/lynis.md):** Утилита для глубокого аудита безопасности и hardening'а Unix-систем на соответствие CIS.
 *   **[Wazuh](Tools/wazuh.md):** Open-source платформа XDR/SIEM, предоставляющая готовые модули комплаенса для PCI DSS, GDPR и HIPAA.
 *   **Checkov / Terrascan:** Статический анализ IaC-кода (Terraform, CloudFormation) на предмет нарушений политик безопасности.

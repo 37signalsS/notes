@@ -31,12 +31,13 @@
 | Категория | Метрика | Анализ и критические пороги |
 | :--- | :--- | :--- |
 | **GC** | `jvm_gc_pause_seconds` | Длительность Stop-the-world. Для ZGC/Shenandoah норма < 1мс. |
-| **Виртуальные потоки** | `jvm_threads_virtual_active` | Кол-во активных Virtual Threads (Loom). Рост > 1M требует проверки блокировок. |
+| **Hiccups** | `jvm_runtime_hiccups_seconds` | **Критично для SRE:** Измеряет время, за которое выполняется код, не делающий ничего. Показывает задержки на уровнях ниже JVM (шумные соседи в K8s, CPU троттлинг, планировщик ОС). |
+| **Safepoints** | `jvm_runtime_safepoint_time_seconds` | Время, когда все потоки приостановлены для внутренних нужд JVM. Не всегда связано с GC. |
 | **Память** | `jvm_memory_used_bytes` | Heap + Non-Heap (Metaspace, Code Cache). |
-| **Metaspace** | `jvm_memory_max_bytes{id="Metaspace"}` | Лимит метаданных классов. Опасно при динамической загрузке. |
 | **Native Memory** | `jvm_native_memory_total_bytes` | Память вне управления JVM (Direct Buffer, JNI). Причина «скрытых» OOM. |
 
-*   **Рекомендация:** Для Java 25+ мониторьте эффективность **Compact Headers** (снижение оверхеда объектов в куче).
+*   **Рекомендация:** Используйте концепцию **Hiccups** (Gil Tene) для разделения проблем кода и проблем инфраструктуры. Если Hiccups растут при нормальном GC — проблема в слоях ниже (кубер, железо).
+*   **Мониторинг Safepoints:** Требует использования Java Flight Recorder (JFR) или специфических экспортеров. Помогает найти скрытые задержки (Thread Contention, Revoke Bias).
 *   **См. также:** **[Управление Java в Linux](../../Linux/Development/java_management.md)**.
 
 ### 2. Go (Golang)

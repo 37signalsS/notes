@@ -127,7 +127,7 @@ ig trace dns --container-name my-distroless-app
 | **Sidecar (Netshoot)** | Огромный набор утилит | Нужно знать ID контейнера | Универсально |
 | **eBPF (ig)** | 0 накладных расходов, безопасно | Нужен доступ к ядру хоста | Глубокая диагностика |
 | **`kubectl debug`** | Нативно для K8s | Требует прав в RBAC | Production (K8s) |
-| **`nsenter`** | Нет лишних контейнеров | Нужен `root` на хосте | Узлы инфраструктуры |
+| **[`nsenter`](../../Linux/Diagnostics/Processes/nsenter.md)** | Нет лишних контейнеров | Нужен `root` на хосте | Узлы инфраструктуры |
 | **Remote Debug** | Пошаговая отладка кода | Требует спец. сборки и портов | Разработка / Тестирование |
 
 ### Профилактика и рекомендации
@@ -136,11 +136,13 @@ ig trace dns --container-name my-distroless-app
 2.  **Chainguard Dev:** Используйте `-dev` версии образов Chainguard на этапе тестирования — они содержат менеджер пакетов `apk` и shell.
 3.  **Централизованное логирование:** Убедитесь, что все ошибки пишутся в `stdout` (Loki, ELK), так как "войти" в упавший контейнер часто невозможно.
 4.  **Проверки здоровья:** Используйте **[HEALTHCHECK](../Dockerfile/Instructions/health_signals.md)**, чтобы Docker мог автоматически перезапускать зависшие процессы.
-5.  **Изоляция (Sandboxing):** Помните, что в **[Sandboxed Runtimes](../Docker_security/container_hardening.md)** (gVisor) метод `nsenter` может не работать напрямую из-за перехвата системных вызовов.
+5.  **Изоляция (Sandboxing):** Помните, что в **[Sandboxed Runtimes](../Docker_security/container_hardening.md)** (gVisor) метод [`nsenter`](../../Linux/Diagnostics/Processes/nsenter.md) может не работать напрямую из-за перехвата системных вызовов.
 
 ### См. также
 
 - **[Docker Debug](./docker_debug.md)** — описание нативной команды.
 - **[Ephemeral Containers](../../Kubernetes/Base/Pod/ephemeral_containers.md)** — отладка в Kubernetes.
+- **[Утилита lsns](../../Linux/Diagnostics/Processes/lsns.md)** — поиск и инспекция пространств имен.
+- **[Утилита nsenter](../../Linux/Diagnostics/Processes/nsenter.md)** — вход в изолированные окружения.
 - **[Namespaces](../../Linux/Core/namespaces.md)** — основы изоляции в Linux.
 - **[Коды завершения](./docker_exit_codes.md)** — понимание причин остановки distroless-контейнеров.

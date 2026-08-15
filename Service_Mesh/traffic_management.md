@@ -169,7 +169,7 @@ spec:
 2.  **Идемпотентность:** настраивайте `retries` только для методов, не изменяющих состояние (GET, HEAD, OPTIONS).
 3.  **Мониторинг задержек:** используйте «золотые метрики» (RPS, Error Rate, P99 Latency) для автоматического отката канареечных релизов (например, через Argo Rollouts).
 4.  **Сжатие трафика:** используйте фильтры сжатия (gzip/brotli) на уровне прокси для экономии пропускной способности.
-5.  **Локальность трафика:** в мультизональных кластерах используйте зональную балансировку — Topology Aware Routing (open-source Linkerd), HAZL (Buoyant Enterprise) или Locality Load Balancing (Istio) — для минимизации задержек и межзонных затрат. Учитывайте ограничения hints (TAR не работает при <3 эндпоинтов на зону и при `internalTrafficPolicy: Local`).
+5.  **Локальность трафика:** в мультизональных кластерах используйте зональную балансировку — Topology Aware Routing (open-source Linkerd), HAZL (Buoyant Enterprise) или Locality Load Balancing (Istio) — для минимизации задержек и межзонных затрат. Учитывайте ограничения hints (TAR не работает при <3 эндпоинтов на зону и при `internalTrafficPolicy: Local`). Подробнее о диагностике: **[Cross-zone traffic и задержки](../Networking/Troubleshooting/cross-zone-latency.md)**.
 6.  **AI-трафик:** для LLM-нагрузок применяйте Envoy AI Gateway с токен-ориентированными лимитами (`TokenRateLimitPolicy`) — они лимитируют по фактическому потреблению токенов, а не по количеству запросов.
 
 ### Актуальность и ссылки
@@ -181,6 +181,7 @@ spec:
 
 **См. также:**
 - [Архитектура Istio и режим Ambient](./istio_architecture.md)
+- [Конфигурация Sidecar в Istio](./istio-sidecar-configuration.md)
 - [Сравнение Istio и Linkerd](./istio_vs_linkerd.md)
 - [Gateway API: Глубокое погружение](../Kubernetes/Networking/gateway_api/definitions.md)
 

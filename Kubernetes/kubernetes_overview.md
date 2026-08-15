@@ -108,8 +108,9 @@ Kubernetes работает по принципу **цикла согласов�
 
 1. **kubectl** — основной CLI-инструмент.
 2. **Helm** — пакетный менеджер для Kubernetes.
-3. **ArgoCD / Flux** — реализация GitOps.
-4. **Lens / Headlamp** — графические интерфейсы для мониторинга и отладки. Подробнее: [Обзор Headlamp](./kubernetes-dashboard.md).
+3. **Ansible** — автоматизация ресурсов через коллекцию `kubernetes.core`. Подробнее: **[Автоматизация Kubernetes через Ansible](../Ansible/ansible-kubernetes-automation.md)**.
+4. **ArgoCD / Flux** — реализация GitOps.
+5. **Lens / Headlamp** — графические интерфейсы для мониторинга и отладки. Подробнее: [Обзор Headlamp](./kubernetes-dashboard.md).
 
 ### См. также
 

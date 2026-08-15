@@ -99,6 +99,7 @@ spec:
 - [Firewalld: Zone-based защита](../../Linux/Networking/Settings/tools/firewalld.md)
 - [Service Mesh: Идеология и инструменты](../../Service_Mesh/service_mesh_concepts.md)
 - [NetworkPolicy в Kubernetes: Практика](../../Kubernetes/Networking/Network/NetworkPolicy/practical_scenarios.md)
+- [Cilium: Высокопроизводительный CNI](../../Kubernetes/Networking/Network/CNI/cilium.md) — SSoT по реализации eBPF и политикам безопасности.
 - [Сравнение VPN и Service Mesh](./vpn_vs_service_mesh.md)
 
 ### Первоисточники

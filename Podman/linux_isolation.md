@@ -188,4 +188,4 @@ podman info --format '{{.Host.Pasta.Executable}}'
 | `unknown network mode` (slirp4netns / cni) | В Podman 6.0 драйверы `slirp4netns` и `cni` удалены | Замените на `pasta` (rootless) или `bridge`/`netavark` (rootful) |
 | Ошибки Cgroups v1 | Хост работает на cgroups v1 (не поддерживается с Podman 6.0) | Переведите систему на cgroups v2 (единая иерархия `/sys/fs/cgroup`) |
 
-**Совет:** Для анализа всех активных пространств имен в системе используйте утилиту `lsns`. Для анализа cgroups — `systemd-cgtop`.
+**Совет:** Для анализа всех активных пространств имен в системе используйте утилиту **[`lsns`](../Linux/Diagnostics/Processes/lsns.md)**. Для анализа cgroups — `systemd-cgtop`.

@@ -67,31 +67,9 @@
 
 ## Практические сценарии
 
-### Установка Istio с профилем Ambient
+### Установка и развертывание
 
-В 2026 году профиль `ambient` является предпочтительным для новых инсталляций.
-
-```bash
-# Установка Istio
-istioctl install --set profile=ambient -y
-
-# Проверка компонентов
-kubectl get pods -n istio-system
-# → istiod-xxx, istio-cni-node-xxx, ztunnel-xxx
-```
-
-### Активация меша для неймспейса
-
-В Ambient Mesh не требуется перезапуск подов для включения в меш.
-
-```bash
-# Включение режима Ambient
-kubectl label namespace my-app istio.io/dataplane-mode=ambient
-
-# Проверка состояния пода через диагностическую утилиту
-istioctl experimental ambient describe pod <pod-name> -n my-app
-# → Pod is part of ambient mesh (L4 handled by ztunnel)
-```
+Подробные инструкции по установке Istio через `istioctl` (включая профили Ambient, Demo, Default) и Helm, а также методы инъекции сайдкаров описаны в разделе **[Установка и базовая настройка Istio](./istio_installation.md)**.
 
 ### Настройка Waypoint Proxy через Gateway API (GAMMA)
 
@@ -121,23 +99,11 @@ spec:
 
 После этого трафик к сервисам неймспейса `my-app`, требующий L7-обработки, будет автоматически направляться Ztunnel через созданный Waypoint прокси. Все `HTTPRoute` в этом неймспейсе будут автоматически использовать созданный Waypoint прокси.
 
-### Политика безопасности L4 (Ztunnel)
+### Политики безопасности Istio
 
-Политика, разрешающая только mTLS-трафик от конкретного сервиса, исполняется максимально эффективно на уровне Ztunnel.
+Безопасность в Istio обеспечивается через ресурсы `PeerAuthentication` (аутентификация mTLS) и `AuthorizationPolicy` (авторизация доступа). Эти политики исполняются на уровне Ztunnel (L4) и Waypoint Proxy (L7) в режиме Ambient, либо непосредственно в Sidecar-прокси.
 
-```yaml
-apiVersion: security.istio.io/v1
-kind: AuthorizationPolicy
-metadata:
-  name: allow-internal-only
-  namespace: my-app
-spec:
-  action: ALLOW
-  rules:
-  - from:
-    - source:
-        principals: ["cluster.local/ns/prod/sa/api-gateway-sa"]
-```
+Подробное описание и примеры см. в [Политиках безопасности Istio](./istio-security-policies.md).
 
 ---
 
@@ -200,6 +166,8 @@ spec:
 ### См. также
 
 - [Управление трафиком в Istio](./traffic_management.md)
+- [Конфигурация Sidecar в Istio](./istio-sidecar-configuration.md)
+- [Политики безопасности Istio](./istio-security-policies.md)
 - [Сравнение Istio и Linkerd](./istio_vs_linkerd.md)
 - [Прокси Sidecar: реализации и сценарии](./proxy_sidecar.md)
 

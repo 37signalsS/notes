@@ -21,6 +21,51 @@
 - `RequestMirror`: Копирование трафика для тестирования (Traffic Shadowing).
 - `CORS`: Нативная обработка префлайт-запросов и заголовков безопасности.
 
+## Сравнение с Ingress (Legacy Annotations)
+
+Основное преимущество Gateway API — замена вендор-специфичных аннотаций на стандартизированные объекты `spec`.
+
+### Канареечные развертывания (Canary)
+
+В Ingress конфигурация зависела от реализации контроллера. В Gateway API это нативная часть `backendRefs`.
+
+| Метод | Ingress (NGINX) | Gateway API (Standard) |
+| :--- | :--- | :--- |
+| **Реализация** | `nginx.ingress.kubernetes.io/canary-weight: "10"` | `weight: 10` в `backendRefs` |
+| **Прозрачность** | Скрыта в метаданных | Явно видна в спецификации роута |
+
+**Пример Gateway API:**
+```yaml
+rules:
+- backendRefs:
+  - name: app-v1
+    port: 80
+    weight: 90
+  - name: app-v2-canary
+    port: 80
+    weight: 10
+```
+
+### Настройка CORS
+
+Gateway API v1.5+ вводит унифицированный фильтр, избавляя от необходимости знать специфичные ключи аннотаций.
+
+| Характеристика | Ingress (NGINX) | Gateway API (Standard) |
+| :--- | :--- | :--- |
+| **Аннотация/Фильтр**| `nginx.ingress.kubernetes.io/enable-cors: "true"` | `type: CORS` |
+| **Заголовки** | `nginx.ingress.kubernetes.io/cors-allow-headers` | `allowHeaders: [...]` |
+
+**Пример Gateway API:**
+```yaml
+rules:
+- filters:
+  - type: CORS
+    cors:
+      allowOrigins: ["https://example.com"]
+      allowMethods: [GET, POST]
+      allowHeaders: [Authorization, Content-Type]
+```
+
 ## Практические сценарии
 
 ### Настройка CORS (v1.5+)

@@ -1,99 +1,114 @@
-# Ansible: Развертывание MongoDB Replica Set
+# Ansible: автоматизация развертывания MongoDB Replica Set
 
 ## Определения
 
-**MongoDB Replica Set** — отказоустойчивый кластер из нескольких узлов `mongod`, обеспечивающий избыточность данных и высокую доступность (High Availability). Подробная теория механизмов кворума и выборов описана в разделе **[Обзор MongoDB](../../Databases/MongoDB/mongodb.md)** (SSoT).
+**MongoDB Replica Set** — отказоустойчивый кластер, состоящий из нескольких узлов `mongod`, который обеспечивает автоматическое переключение при сбоях (failover) и высокую доступность данных. Теоретические основы механизмов кворума описаны в разделе **[Обзор MongoDB](../../Databases/MongoDB/mongodb.md)**.
 
-**community.mongodb** — основная и единственная рекомендуемая коллекция Ansible для управления MongoDB 8.0+ в 2026 году. Поддерживает работу с локальными инстансами и MongoDB Atlas.
+**community.mongodb** — специализированная коллекция Ansible (FQCN), предоставляющая модули для управления конфигурацией, пользователями и репликацией MongoDB. Начиная с версии 8.0+, является основным инструментом автоматизации.
 
-**keyFile** — файл с общим секретом, используемый для внутренней аутентификации узлов внутри реплика-сета.
+**mongosh (MongoDB Shell)** — современная интерактивная оболочка на базе Node.js, пришедшая на смену устаревшей `mongo`. В 2026 году является обязательной для выполнения административных скриптов через Ansible.
 
-**RBAC (Role-Based Access Control)** — модель управления доступом на основе ролей, обязательная для защиты данных в MongoDB.
+**keyFile** — секретный файл, используемый для взаимной аутентификации узлов внутри реплика-сета. Без него включение RBAC в кластере невозможно.
+
+**RBAC (Role-Based Access Control)** — система управления доступом на основе ролей (например, `root`, `readWrite`), критически важная для защиты данных в распределенных системах.
 
 ## Базовые концепции
 
 ### Зависимости и инструментарий
 
-Для автоматизации MongoDB 8.0+ требуются современные драйверы и коллекции. Старая оболочка `mongo` удалена, используется исключительно `mongosh`.
+Автоматизация MongoDB 8.0+ требует актуальных версий Python-драйверов на целевых хостах.
 
-| Компонент | Где требуется | Назначение |
+| Компонент | Требование | Назначение |
 |---|---|---|
-| `community.mongodb` | Управляющий узел | Коллекция модулей (FQCN: `community.mongodb.*`) |
-| `pymongo` | Целевой хост | Python-драйвер для взаимодействия модулей с БД |
-| `mongosh` | Целевой хост | Современная оболочка для выполнения административных команд |
+| `community.mongodb` | Управляющий узел | Коллекция модулей для управления всеми аспектами БД. |
+| `pymongo` | Целевой хост | Python-библиотека для взаимодействия Ansible с протоколом MongoDB. |
+| `mongosh` | Целевой хост | CLI-инструмент для выполнения команд и проверки состояния кластера. |
 
 Установка коллекции:
 ```bash
-ansible-galaxy collection install community.mongodb  # → коллекция установлена
+ansible-galaxy collection install community.mongodb
 ```
 
-### Принципы идемпотентности и безопасности
+### Архитектура и роли узлов
 
-1.  **Порядок инициализации**: Сначала разворачиваются бинарные файлы и конфигурация, затем инициализируется Replica Set, и только после создания первого администратора включается параметр `security.authorization`.
-2.  **Управление секретами**: Все пароли и содержимое `keyFile` должны храниться в **[Ansible Vault](../Vault/basics.md)**.
-3.  **Localhost Exception**: При первом запуске (до создания пользователей) MongoDB позволяет подключаться с `localhost` без аутентификации.
+1.  **Primary:** Единственный узел, принимающий операции записи.
+2.  **Secondary:** Узлы, копирующие данные с Primary. Могут участвовать в выборах нового лидера.
+3.  **Arbiter:** Узел, который участвует только в голосовании и не хранит данные (используется для достижения нечетного количества голосующих узлов).
+
+### Принципы безопасности и идемпотентности
+
+- **Этапность**: При первой установке сначала настраивается `keyFile` и базовая конфигурация, затем инициализируется Replica Set, и только после создания пользователя `admin` включается авторизация (`security.authorization: enabled`).
+- **Тюнинг системы**: Для работы MongoDB 8.0+ через Ansible необходимо обеспечить отключение **Transparent Huge Pages (THP)** и установку лимитов `ulimit` (не менее 64000).
+- **Секреты**: Содержимое `keyFile` и пароли пользователей должны храниться исключительно в **[Ansible Vault](../Vault/basics.md)**.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий: Развертывание защищенного кластера MongoDB 8.0
+### Сценарий 1: Полный цикл развертывания кластера MongoDB 8.0
 
-#### 1. Подготовка переменных (group_vars/mongo.yml)
-
-```yaml
-mongodb_version: "8.0"
-mongodb_replset_name: "rs0"
-# vault_mongodb_keyfile_content: "..." (хранится в Vault)
-# vault_mongodb_admin_password: "..." (хранится в Vault)
-
-mongo_config:
-  Debian:
-    packages: ["mongodb-org", "python3-pymongo"]
-  RedHat:
-    packages: ["mongodb-org", "python3-pymongo"]
-```
-
-#### 2. Плейбук: Установка и настройка безопасности
+Плейбук включает настройку репозиториев, установку и инициализацию репликации.
 
 ```yaml
 ---
-- name: Развертывание узлов MongoDB
+- name: Подготовка узлов MongoDB
   hosts: mongo_nodes
   become: true
-  tasks:
-    - name: Установка MongoDB и зависимостей Python
-      ansible.builtin.package:
-        name: "{{ mongo_config[ansible_facts['os_family']].packages }}"
-        state: present
-        update_cache: yes
+  vars:
+    mongodb_version: "8.0"
+    mongodb_replset_name: "rs0"
+    # vault_mongodb_keyfile: "..." (через Vault)
 
-    - name: Деплой keyFile для внутренней аутентификации
+  tasks:
+    - name: Импорт GPG-ключа MongoDB
+      ansible.builtin.apt_key:
+        url: "https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc"
+        state: present
+        keyring: /usr/share/keyrings/mongodb-server.gpg
+
+    - name: Добавление официального репозитория
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/mongodb-server.gpg] https://repo.mongodb.org/apt/ubuntu {{ ansible_facts['distribution_release'] }}/mongodb-org/{{ mongodb_version }} multiverse"
+        state: present
+
+    - name: Установка пакетов MongoDB и Python-драйверов
+      ansible.builtin.package:
+        name:
+          - mongodb-org
+          - python3-pymongo
+        state: present
+
+    - name: Отключение Transparent Huge Pages (THP)
+      ansible.builtin.shell: |
+        echo never > /sys/kernel/mm/transparent_hugepage/enabled
+        echo never > /sys/kernel/mm/transparent_hugepage/defrag
+      changed_when: false
+
+    - name: Деплой keyFile для кластера
       ansible.builtin.copy:
-        content: "{{ vault_mongodb_keyfile_content }}"
+        content: "{{ vault_mongodb_keyfile }}"
         dest: /var/lib/mongodb/keyfile
         owner: mongodb
         group: mongodb
         mode: '0400'
       no_log: true
 
-    - name: Конфигурация mongod.conf (без авторизации для первого запуска)
+    - name: Настройка конфигурации mongod.conf
       ansible.builtin.template:
-        src: mongod.conf.j2
+        src: templates/mongod.conf.j2
         dest: /etc/mongod.conf
-      notify: restart mongodb
+      notify: Restart Mongodb
 
-    - name: Обеспечение запуска службы
-      ansible.builtin.service:
-        name: mongod
-        state: started
-        enabled: yes
-
-- name: Инициализация Replica Set и RBAC
-  hosts: mongo_primary # Выполняем только на одном узле
+- name: Инициализация Replica Set
+  hosts: mongo_primary
   become: true
   tasks:
-    - name: Инициализация Replica Set
+    - name: Ожидание запуска службы
+      ansible.builtin.wait_for:
+        port: 27017
+        timeout: 30
+
+    - name: Инициализация репликации (Replica Set)
       community.mongodb.mongodb_replicaset:
         login_host: localhost
         replica_set: "{{ mongodb_replset_name }}"
@@ -104,43 +119,83 @@ mongo_config:
       community.mongodb.mongodb_user:
         database: admin
         name: admin
-        password: "{{ vault_mongodb_admin_password }}"
+        password: "{{ vault_mongodb_admin_pass }}"
         roles:
           - { db: "admin", role: "root" }
         state: present
       run_once: true
+```
 
-    - name: Включение авторизации в конфигурации
-      ansible.builtin.lineinfile:
-        path: /etc/mongod.conf
-        regexp: '^#?security:'
-        line: 'security:'
-      # Далее необходимо добавить authorization: enabled через template или block
+### Сценарий 2: Настройка TLS/SSL для защиты трафика
+
+Обязательный шаг для обеспечения безопасности в 2026 году.
+
+```yaml
+- name: Деплой сертификатов SSL
+  ansible.builtin.copy:
+    src: "certs/{{ inventory_hostname }}.pem"
+    dest: /etc/ssl/mongodb.pem
+    mode: '0400'
+    owner: mongodb
+
+- name: Включение TLS в конфигурации
+  ansible.builtin.blockinfile:
+    path: /etc/mongod.conf
+    block: |
+      net:
+        ssl:
+          mode: requireSSL
+          PEMKeyFile: /etc/ssl/mongodb.pem
+          CAFile: /etc/ssl/ca.pem
+```
+
+### Сценарий 3: Настройка брандмауэра (Firewall)
+
+```yaml
+- name: Разрешение порта 27017 в UFW (Debian/Ubuntu)
+  community.general.ufw:
+    rule: allow
+    port: 27017
+    proto: tcp
+    from_ip: "{{ item }}"
+  loop: "{{ groups['mongo_nodes'] }}"
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Открытие порта в Firewalld (RHEL/Rocky)
+  ansible.posix.firewalld:
+    port: 27017/tcp
+    permanent: yes
+    state: enabled
+    immediate: yes
+  when: ansible_facts['os_family'] == 'RedHat'
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Масштабирование: Добавление узлов
+### Масштабирование и обслуживание
 
-При добавлении нового узла в инвентарь модуль `mongodb_replicaset` автоматически определит изменение и выполнит `rs.reconfig()`. Важно убедиться, что новый узел имеет тот же `keyFile`, что и остальная часть кластера.
-
-### Использование TLS/SSL
-
-В 2026 году использование TLS является стандартом. Для автоматизации сертификатов используйте коллекцию `community.crypto`. В конфигурации MongoDB (`net.ssl`) укажите пути к `PEMKeyFile` и `CAFile`.
+При добавлении новых узлов в инвентарь модуль `mongodb_replicaset` автоматически обнаруживает новые IP-адреса и выполняет `rs.reconfig()`. Если узел является Арбитром, укажите параметр `arbiterOnly: true` в определении участника.
 
 ### Типичные ошибки
 
 | Ошибка | Причина | Решение |
 |---|---|---|
-| `keyFile precision too open` | Права на файл выше `0600` | Установите `mode: '0400'` в задаче `copy`. |
-| `mongosh not found` | Используется старая версия MongoDB | Обновите MongoDB до 8.0+; `mongo` shell больше не поддерживается. |
-| `No replica set status available` | Служба не запущена или `bindIp` некорректен | Проверьте `systemctl status mongod` и доступность порта 27017. |
+| `keyFile precision too open` | Права на файл превышают `0400`. | Убедитесь, что `mode: '0400'` и владелец `mongodb`. |
+| `mongosh not found` | Используется устаревшая версия MongoDB. | Обновите MongoDB до 8.0+. Shell `mongo` удален. |
+| `Replica set is not yet initialized` | Попытка создать пользователя до `rs.initiate()`. | Соблюдайте порядок задач в сценарии 1. |
+| `Authentication failed` | Несовпадение `keyFile` на разных узлах. | Используйте одну переменную из Vault для всех узлов. |
+
+### Безопасность и надежность
+
+- **Write Concern**: Для критических данных используйте `w: majority`.
+- **Ansible Vault**: Никогда не оставляйте `vault_mongodb_keyfile` в открытом виде.
+- **Мониторинг**: Рекомендуется развертывание `mongodb_exporter` для сбора метрик в Prometheus.
 
 ## Смотрите также
 
-- [Обзор MongoDB (SSoT)](../../Databases/MongoDB/mongodb.md)
-- [Установка MongoDB на Ubuntu](../../Databases/MongoDB/installation_ubuntu.md)
-- [Ansible Vault: Работа с секретами](../Vault/basics.md)
-- [Мониторинг MongoDB с Prometheus](../../Prometheus/Exporters/other_exporters.md)
+- **[Обзор MongoDB (SSoT)](../../Databases/MongoDB/mongodb.md)**
+- **[Установка MongoDB на Ubuntu](../../Databases/MongoDB/installation_ubuntu.md)**
+- **[Ansible Vault: работа с секретами](../Vault/basics.md)**
+- **[Мониторинг MongoDB с Prometheus](../../Prometheus/Exporters/other_exporters.md)**

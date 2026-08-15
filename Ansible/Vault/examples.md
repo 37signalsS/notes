@@ -4,7 +4,9 @@
 
 - **Практические примеры Vault**: Сборник прикладных сценариев применения Ansible Vault для защиты конфиденциальных данных (секретов) в различных окружениях: разработка (Development), непрерывная интеграция и доставка (CI/CD — Continuous Integration / Continuous Delivery) и эксплуатация (Production).
 - **Тип переменной File (GitLab CI)**: Механизм CI/CD, при котором содержимое секретной переменной сохраняется во временный файл на диске раннера (Runner), а сама переменная содержит путь к этому файлу.
+- **GitHub Secrets**: Зашифрованное хранилище переменных в GitHub Actions, позволяющее безопасно передавать секреты в рабочие процессы (Workflows) через контекст `${{ secrets.NAME }}`.
 - **Инлайновое шифрование (Inline Encryption)**: Метод шифрования конкретных значений переменных, позволяющий оставлять структуру YAML-файла (YAML Ain't Markup Language — «YAML не язык разметки») открытой и читаемой для систем контроля версий.
+- **Vault Password Script**: Исполняемый файл (Python, Bash), который Ansible вызывает для получения пароля расшифровки. Скрипт должен возвращать только строку пароля в стандартный поток вывода (STDOUT).
 
 ## Основные концепции
 
@@ -65,11 +67,9 @@ Vagrant автоматически передает пароль Vault пров�
 Использование переменной типа **File** — стандарт безопасности, исключающий утечку пароля через команды `echo` в логах.
 
 1. **Настройка в GitLab UI**:
-    - Перейдите в `Settings -> CI/CD -> Variables`.
-    - Добавьте переменную `VAULT_PASS_FILE`.
-    - Выберите **Type: File**.
-    - Вставьте пароль в поле Value.
-    - Включите **Protect variable** и **Mask variable**.
+    - `Settings -> CI/CD -> Variables`.
+    - Добавьте `VAULT_PASS_FILE`, тип **File**.
+    - Включите **Protect** и **Mask**.
 
 2. **Конфигурация `.gitlab-ci.yml`**:
     ```yaml
@@ -78,14 +78,64 @@ Vagrant автоматически передает пароль Vault пров�
       image: alpine:latest
       before_script:
         - apk add ansible
-        # Установка прав доступа (Ansible требует 0600 для файлов паролей)
         - chmod 600 "$VAULT_PASS_FILE"
       script:
         - ansible-playbook deploy.yml --vault-password-file "$VAULT_PASS_FILE"
       environment: production
     ```
 
-### Сценарий 4: Шифрование строк в YAML-инвентаре
+### Сценарий 4: Интеграция с GitHub Actions
+
+В GitHub Actions секреты передаются через временные файлы, создаваемые в процессе выполнения Workflow.
+
+1. **Настройка секрета**:
+    - `Settings -> Secrets and variables -> Actions`.
+    - Создайте секрет `ANSIBLE_VAULT_PASSWORD`.
+
+2. **Конфигурация `.github/workflows/deploy.yml`**:
+    ```yaml
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - name: Run Playbook
+            env:
+              VAULT_PASS: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+            run: |
+              echo "$VAULT_PASS" > .vault_pass
+              chmod 600 .vault_pass
+              ansible-playbook deploy.yml --vault-password-file .vault_pass
+              rm .vault_pass
+    ```
+
+### Сценарий 5: Использование внешнего хранилища (HashiCorp Vault) через скрипт
+
+Этот метод исключает хранение пароля Vault на диске раннера, получая его динамически через API.
+
+1. **Скрипт получения пароля (`get_vault_pass.py`)**:
+    ```python
+    #!/usr/bin/env python3
+    import os
+    import requests
+
+    def get_secret():
+        url = "https://vault.example.com/v1/secret/data/ansible"
+        token = os.getenv("VAULT_TOKEN")
+        response = requests.get(url, headers={"X-Vault-Token": token})
+        return response.json()['data']['data']['password']
+
+    if __name__ == "__main__":
+        print(get_secret())
+    ```
+
+2. **Запуск**:
+    ```bash
+    export VAULT_TOKEN="s.xyz..."
+    ansible-playbook site.yml --vault-password-file ./get_vault_pass.py
+    ```
+
+### Сценарий 6: Шифрование строк в YAML-инвентаре
 
 Применяется, когда параметры подключения (например, `ansible_ssh_pass`) специфичны для конкретного хоста.
 
@@ -101,15 +151,34 @@ Vagrant автоматически передает пароль Vault пров�
         db-node-01:
           ansible_host: 192.168.1.50
           ansible_user: deploy
-          # Инлайновый секрет с заголовком версии 1.1 и алгоритмом AES256
+          # Инлайновый секрет
           ansible_ssh_pass: !vault |
             $ANSIBLE_VAULT;1.1;AES256
             6633363365313835663738643633393165333066373238313437346132333036
     ```
 
-### Сценарий 5: Валидация гигиены секретов с ansible-lint
+### Сценарий 7: Массовая перешифровка (Batch Rekeying)
 
-Используйте статический анализ для предотвращения случайного коммита открытых секретов.
+Используется для смены паролей во всем проекте одной командой.
+
+```bash
+# Поиск всех vault-файлов и смена пароля
+find group_vars host_vars -name "*.vault.yml" | \
+xargs ansible-vault rekey --vault-id old@.old_pass --new-vault-id new@.new_pass
+```
+
+### Сценарий 8: Извлечение секрета через CLI (Debug)
+
+Иногда нужно проверить значение секрета без запуска полного плейбука.
+
+```bash
+# Вывод конкретной переменной из зашифрованного файла
+ansible localhost -m debug -a "var=db_password" -e "@group_vars/all/vault.yml" --vault-password-file .vault_pass
+```
+
+### Сценарий 9: Валидация гигиены секретов с ansible-lint
+
+Использование статического анализа для предотвращения случайного коммита открытых секретов.
 
 1. **Настройка правила**:
     `ansible-lint` автоматически проверяет наличие директивы `no_log: true` в задачах, использующих переменные с именами `password`, `secret`, `token`.

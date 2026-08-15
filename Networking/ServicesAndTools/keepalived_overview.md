@@ -137,6 +137,10 @@ vrrp_instance VI_1 {
 ### Сценарии использования
 
 - **HA для балансировщиков (Angie/Nginx/HAProxy):** Отказоустойчивый вход с плавающим VIP. См. **[Настройка Angie с Keepalived](../../WebServers/Angie/angie_ha_with_keepalived.md)**.
+- **Паттерн Warmspare (Active-Passive с отложенной синхронизацией):** Подход, при котором VIP управляется Keepalived, но данные между узлами синхронизируются периодически (например, через `rsync` или восстановление бэкапов по расписанию).
+    *   **Особенности:** Узлы имеют независимые файловые системы. При сбое мастера VIP переходит на бэкап, где сервис запускается с последней сохраненной конфигурацией.
+    *   **Плюсы:** Изоляция файловых систем (сбой диска или ФС на одном узле не аффектит другой), простота настройки и администрирования.
+    *   **Минусы:** Данные на бэкапе могут быть неактуальны (лаг синхронизации). Требует логики активации ресурсов (транков, сервисов) через скрипты `notify_master`.
 - **HA для OpenSearch:** Плавающий VIP перед узлами API. См. **[Отказоустойчивость OpenSearch с помощью Keepalived](../../ELK_Stack/OpenSearch/opensearch_high_availability_keepalived.md)**.
 - **HA для балансировщика Kubernetes (Bare-metal):** VIP между двумя HAProxy для `kubectl` и Ingress. См. **[Настройка HA API-сервера](../../Kubernetes/Installation/kubeadm/ha_concepts.md)**.
 - **HA для MySQL/PostgreSQL:** Переключение VIP между мастером и репликой (в связке с инструментами типа Patroni). См. **[Отказоустойчивость MySQL](../../Databases/MySQL/replication/multi-source.md)** и **[HA PostgreSQL](../../Databases/PostgreSQL/Concepts/high_availability.md)**.

@@ -139,7 +139,66 @@ config:
 | **Пропуски данных** | Сбой файла `positions.yaml` | Проверьте монтирование HostPath для персистентности файла позиций. Убедитесь, что у Promtail есть права на запись в этот файл. |
 | **Ошибка 429** | Превышение лимитов в Loki | Увеличьте `ingestion_rate_mb` в конфигурации Loki или уменьшите `batchsize` в Promtail. |
 
-### Сценарий 4: Переход на Grafana Alloy
+### Сценарий 4: Локальная установка (Binary) на Linux
+
+Ручной запуск агента для сбора логов с физических или виртуальных серверов без Kubernetes.
+
+**1. Загрузка и подготовка:**
+
+```bash
+# Загрузка бинарного файла (выберите архитектуру)
+curl -O -L "https://github.com/grafana/loki/releases/download/v3.1.1/promtail-linux-amd64.zip"
+unzip promtail-linux-amd64.zip
+chmod +x promtail-linux-amd64
+```
+
+**2. Конфигурация (`promtail-local-config.yaml`):**
+
+Пример настройки для сбора системных логов и логов конкретного приложения:
+
+```yaml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+clients:
+  - url: http://<LOKI_SERVER_IP>:3100/loki/api/v1/push
+
+scrape_configs:
+  # Задача 1: Системные логи
+  - job_name: system
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          __path__: /var/log/*.log # Сбор всех .log файлов в директории
+
+  # Задача 2: Логи приложения
+  - job_name: custom_app
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: api_logs
+          env: production
+          __path__: /home/user/app/logs/app.log
+```
+
+**3. Запуск агента:**
+
+Для чтения логов из `/var/log` обычно требуются права суперпользователя.
+
+```bash
+sudo ./promtail-linux-amd64 -config.file=promtail-local-config.yaml
+```
+
+**4. Особенности конфигурации:**
+*   **`__path__`**: Поддерживает wildcard (например, `*.log`).
+*   **Labels**: Это метаданные, по которым будет происходить индексация в Loki. Старайтесь не создавать слишком много уникальных лейблов (High Cardinality).
+*   **Positions**: По умолчанию Promtail создает файл `positions.yaml`, чтобы помнить, на каком месте он закончил чтение при перезапуске.
+
+### Сценарий 5: Переход на Grafana Alloy
 
 Миграция рекомендуется как единственный путь обеспечения безопасности и масштабируемости.
 
@@ -156,6 +215,51 @@ config:
     Проверьте полученный файл `config.alloy`. Убедитесь, что логика `relabel_configs` сохранилась, так как изменение лейблов приведет к разрыву исторических данных (созданию новых потоков в Loki).
 4.  **Развертывание:**
     Инструкции по установке нового агента доступны в [Руководстве по Alloy](alloy_installation.md).
+
+### Сценарий 6: Динамическое извлечение лейблов из JSON-логов (Kubernetes)
+
+Используется для превращения полей внутри лог-сообщения (например, HTTP-кода или метода) в индексируемые лейблы Loki.
+
+**1. Проверка структуры лога:**
+Если приложение пишет логи в формате `{"log": {"code": 200, "method": "GET", "msg": "success"}}`, мы можем извлечь `code` и `method`.
+
+**2. Извлечение текущей конфигурации из Secret:**
+```bash
+kubectl get secret loki-stack-promtail -o jsonpath="{.data['promtail\.yaml']}" | base64 --decode > promtail.yaml
+```
+
+**3. Редактирование пайплайна в `promtail.yaml`:**
+Добавьте стадию `match` для конкретного приложения:
+```yaml
+pipeline_stages:
+  - match:
+      selector: '{app="api"}' # Фильтр подов
+      stages:
+        - json:
+            expressions:
+              extracted_log: log # Извлекаем вложенный объект
+        - json:
+            source: extracted_log
+            expressions:
+              code: code
+              method: method
+        - labels:
+            code:
+            method:
+```
+
+**4. Обновление секрета и перезапуск:**
+```bash
+# Удаление старого секрета
+kubectl delete secret loki-stack-promtail
+# Создание нового из файла
+kubectl create secret generic loki-stack-promtail --from-file=promtail.yaml
+# Перезапуск подов Promtail (удаление текущих)
+kubectl delete pod -l app=promtail
+```
+
+**5. Верификация:**
+В Grafana Explore выберите `{app="api"}`. В списке лейблов должны появиться `code` и `method`, позволяя фильтровать логи: `{app="api", code="200"}`.
 
 ## Дополнительная информация
 

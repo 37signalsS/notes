@@ -165,7 +165,7 @@ spec:
 | `Connection timeout` | NetworkPolicy или Firewall | `kubectl exec -it app-pod -- nc -zv db-service 5432` |
 | `SSL error: decryption failed` | Ошибка mTLS / Sidecar | Проверить логи `istio-proxy` или статус `Certificate` в cert-manager |
 | `Unknown host` | Проблемы DNS / CoreDNS | `kubectl exec -it app-pod -- nslookup db-service.namespace.svc.cluster.local` |
-| `Slow commits` | Высокий Cross-AZ Latency | `ping` между нодами разных зон. Проверить `topology-mode: Auto` |
+| `Slow commits` | Высокий Cross-AZ Latency | `ping` между нодами разных зон. Проверить `topology-mode: Auto`. Подробнее: **[Cross-zone traffic и задержки](../../../Networking/Troubleshooting/cross-zone-latency.md)** |
 
 ## Дополнительная информация
 

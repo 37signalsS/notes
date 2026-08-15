@@ -86,7 +86,7 @@ sudo smartctl -s on -o on -S on /dev/sda
 
 ### Корреляция с системным журналом (dmesg)
 
-Ошибки `smartctl` часто сопровождаются сообщениями ядра о сбоях на шине.
+Ошибки `smartctl` часто сопровождаются сообщениями ядра о сбоях на шине. Для NVMe-накопителей это критично, так как проблема может быть в PCIe-линке.
 
 ```bash
 # Поиск I/O ошибок и сбросов линка
@@ -94,7 +94,8 @@ dmesg | grep -iE "sd[a-z]|ata|nvme|error|timeout|reset"
 # → result: blk_update_request: I/O error, dev sda, sector ...
 ```
 
-Подробнее об анализе системных логов: [Troubleshooting с dmesg](../../Kernel/dmesg/troubleshooting.md).
+*   [**Troubleshooting с dmesg**](../../Kernel/dmesg/troubleshooting.md) — общие принципы.
+*   [**Диагностика NVMe: AER и Reset**](../nvme-errors-diagnostics.md) — глубокий анализ PCIe-ошибок.
 
 ---
 

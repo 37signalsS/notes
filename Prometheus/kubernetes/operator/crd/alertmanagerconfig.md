@@ -60,6 +60,36 @@ spec:
       - monitoring
 ```
 
+> **Ловушка «Пустого селектора»:** В Helm-чарте `kube-prometheus-stack` параметр `alertmanagerConfigSelector` по умолчанию часто пуст `{}`. Это означает, что Alertmanager **не будет подхватывать** никакие `AlertmanagerConfig`. Для активации необходимо обновить `values.yaml`:
+> ```yaml
+> alertmanager:
+>   alertmanagerSpec:
+>     alertmanagerConfigSelector:
+>       matchLabels:
+>         resource: prometheus # Любая метка на ваш выбор
+> ```
+
+## Особенности синтаксиса CRD
+
+При переходе от классического `alertmanager.yml` к `AlertmanagerConfig` CRD необходимо учитывать ключевые отличия:
+
+### 1. CamelCase против snake_case
+В отличие от нативной конфигурации Prometheus/Alertmanager (где используется `snake_case`), в Kubernetes CRD все параметры пишутся в **`camelCase`**:
+*   `group_by` → `groupBy`
+*   `group_wait` → `groupWait`
+*   `group_interval` → `groupInterval`
+*   `repeat_interval` → `repeatInterval`
+
+### 2. Синтаксис матчеров (Matchers)
+В CRD матчеры описываются как массив объектов с разделением на имя и значение:
+*   **Классика:** `job="kubernetes"`
+*   **CRD:**
+    ```yaml
+    matchers:
+      - name: job
+        value: kubernetes
+    ```
+
 ### Структура спецификации (spec)
 
 | Блок | Описание |

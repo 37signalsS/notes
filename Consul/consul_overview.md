@@ -12,7 +12,7 @@ Consul объединяет несколько критически важных
 - **[Каталог служб (Service Catalog)](./consul_service_catalog.md):** Центральный реестр "здоровых" экземпляров сервисов. Обнаружение происходит через DNS или HTTP API. В версии v1.17+ поддерживает **Multi-port services**, позволяя регистрировать несколько портов приложения под одним именем сервиса с единым sidecar-прокси.
 - **[Проверки состояния (Health Checking)](./consul_health_checks.md):** Гибкие механизмы мониторинга (HTTP, TCP, gRPC, скрипты), которые позволяют Consul автоматически изолировать неисправные инстансы от трафика.
 - **[KV-хранилище (Key/Value Store)](./consul_kv_store.md):** Иерархическое распределенное хранилище для динамической конфигурации, координации лидеров и управления флагами функций (`feature flags`).
-- **Сервисная сетка (Consul Service Mesh):** Обеспечивает безопасное взаимодействие через mTLS. В современных инсталляциях управляется через политики **Service Intentions** и поддерживает **Sameness Groups** для упрощенного failover между кластерами. Для обработки трафика используются прокси-серверы (Envoy) или облегченный **Consul Dataplane**.
+- **[Сервисная сетка (Consul Service Mesh)](./consul_service_mesh.md):** Обеспечивает безопасное взаимодействие через mTLS. В современных инсталляциях управляется через политики **Service Intentions** и поддерживает **Sameness Groups** для упрощенного failover между кластерами. Для обработки трафика используются прокси-серверы (Envoy) или облегченный **Consul Dataplane**.
 - **Безопасность (ACL):** Система контроля доступа (Access Control List) обеспечивает аутентификацию и авторизацию для всех операций в Consul (чтение KV, регистрация сервисов, доступ к API).
 - **Мультикластерность:**
     - **Cluster Peering (GA):** Основной механизм соединения независимых кластеров без общей корневой CA. Вытесняет сложную WAN-федерацию.
@@ -40,6 +40,7 @@ Consul KV позволяет хранить параметры приложен�
 ### Интеграция в экосистему
 
 - **[Бэкенд для Vault](../Vault/guides/vault_with_consul_backend.md)**: Хранение зашифрованных секретов Vault с обеспечением высокой доступности.
+- **[Динамический инвентарь Ansible](../Ansible/dynamic_inventory.md)**: Автоматическое получение списка хостов из каталога сервисов Consul для автоматизации конфигураций.
 - **[Динамический Nginx](../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_consul.md)**: Генерация конфигурации upstream на лету.
 - **[Мониторинг Prometheus](../Prometheus/service_discovery_and_relabeling.md)**: Автоматическое добавление новых сервисов в список целей для сбора метрик через динамический service discovery.
 - **[Оркестрация Nomad](../Nomad/definitions_and_concepts.md)**: Бесшовная регистрация задач и использование Service Mesh.
@@ -52,4 +53,4 @@ Consul KV позволяет хранить параметры приложен�
 - **[Официальная документация Consul](https://developer.hashicorp.com/consul)**: Техническая спецификация и гайды.
 - **[HashiCorp Learn](https://developer.hashicorp.com/consul/tutorials)**: Практические курсы по внедрению Dataplane и Cluster Peering.
 - **[Consul GitHub](https://github.com/hashicorp/consul)**: Исходный код и открытые issues.
-- **Связанные темы:** [Обзор Service Mesh](../Service_Mesh/service_mesh_concepts.md), [Высокая доступность (HA)](../Concepts/High_Availability/ha_overview.md).
+- **Связанные темы:** [Consul Service Mesh](./consul_service_mesh.md), [Обзор Service Mesh](../Service_Mesh/service_mesh_concepts.md), [Высокая доступность (HA)](../Concepts/High_Availability/ha_overview.md).

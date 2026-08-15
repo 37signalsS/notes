@@ -17,6 +17,7 @@
 | **GUI** | **Portainer** | Управление стеками, пользователями, RBAC | Управление парком серверов, доступ для команд |
 | **GUI** | **Yacht** | Упор на шаблоны приложений и простоту | Домашние лаборатории, простые проекты |
 | **Utility CLI** | **Skopeo** | Работа с образами без Docker-демона | Синхронизация реестров, инспекция манифестов |
+| **Utility CLI** | **docker init** | Интерактивная контейнеризация проекта | Быстрый старт, создание Dockerfile/Compose |
 
 ### Взаимодействие с Docker API
 
@@ -116,6 +117,7 @@ sudo chmod +x /usr/local/bin/ctop
 - [oxker GitHub](https://github.com/mrvillage/oxker)
 
 **Связанные темы:**
+- **[Инициализация проекта: docker init](./docker_init.md)** — интерактивный помощник контейнеризации.
 - **[Альтернативные среды выполнения](./alternative_runtimes_and_tools.md)** — Podman, Buildah и другие.
 - **[Инструменты оптимизации Dockerfile](./Dockerfile/dockerfile_optimization_tools.md)** — dive, dockle, hadolint.
 - **[Безопасность Docker: Обзор](./Docker_security/overview.md)** — общие принципы защиты контейнеров.

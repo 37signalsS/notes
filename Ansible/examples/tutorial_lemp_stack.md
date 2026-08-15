@@ -2,46 +2,46 @@
 
 ## Определения
 
-**LEMP (Linux, Nginx, MySQL/MariaDB, PHP)** — популярный набор программного обеспечения для развертывания динамических веб-приложений.
+**LEMP (Linux, Nginx, MySQL/MariaDB, PHP)** — популярный и высокопроизводительный набор программного обеспечения с открытым исходным кодом для развертывания динамических веб-приложений.
 
 **Компоненты стека:**
-- **Linux** — операционная система (ОС), выступающая фундаментом.
-- **Engine-X (Nginx)** — высокопроизводительный веб-сервер и реверс-прокси.
-- **MySQL/MariaDB** — реляционная СУБД (Система Управления Базами Данных).
-- **PHP** (Hypertext Preprocessor) — язык сценариев для серверной обработки данных.
+- **Linux** — операционная система, обеспечивающая базовые ресурсы и безопасность.
+- **Nginx** (Engine-X) — веб-сервер, известный своей эффективностью при обработке большого количества одновременных соединений, часто используемый как реверс-прокси.
+- **MySQL/MariaDB** — реляционные СУБД для надежного хранения и структурирования данных.
+- **PHP** (Hypertext Preprocessor) — серверный язык сценариев, обрабатывающий логику приложения.
 
 ## Базовые концепции
 
-### Структура управления
+### Структура управления и декларативность
 
 | Элемент | Назначение |
 |---|---|
-| `hosts` | Целевые группы хостов из инвентаря. |
-| `become: true` | Выполнение задач с правами суперпользователя (`sudo`). |
-| `tasks` | Основной список последовательных действий. |
-| `handlers` | Задачи, запускаемые через `notify` только при изменении состояния. |
-| `vars` | Переменные для кастомизации конфигурации (версии пакетов, креды через Ansible Vault). |
+| `hosts` | Целевые группы серверов из инвентаря (например, `web_servers`). |
+| `become: true` | Выполнение задач с правами суперпользователя через `sudo`. |
+| `tasks` | Декларативный список действий для приведения системы к LEMP-стеку. |
+| `handlers` | Задачи (Restart/Reload), срабатывающие через `notify` только при изменении конфигурации. |
+| `vars` | Параметры для настройки версий (PHP 8.3) и путей. |
 
 ### Ключевые модули
 
-Для развертывания LEMP используются стандартные модули Ansible:
+- `ansible.builtin.apt`: Установка системных пакетов и управление кэшем.
+- `ansible.builtin.apt_repository`: Подключение сторонних PPA (например, для свежих версий PHP).
+- `ansible.builtin.template`: Генерация конфигурационных файлов на основе Jinja2.
+- `ansible.builtin.copy`: Доставка статического контента.
+- `community.mysql.mysql_db` / `community.mysql.mysql_user`: Управление БД (требует `python3-pymysql` на хосте).
+- `community.general.ufw`: Настройка межсетевого экрана.
 
-- `ansible.builtin.apt`: Установка системных пакетов (Nginx, PHP, UFW).
-- `ansible.builtin.template`: Генерация конфигов Nginx и скриптов на основе Jinja2.
-- `ansible.builtin.copy`: Доставка статических файлов сайта.
-- `ansible.builtin.service`: Управление состоянием служб (`start`, `reload`).
-- `community.mysql.mysql_db` / `community.mysql.mysql_user`: Настройка базы данных и пользователей.
-- `community.general.ufw`: Настройка межсетевого экрана (firewall).
+---
 
 ## Практические сценарии
 
-### Сценарий: Развертывание защищенного LEMP-стека
+### Сценарий: Развертывание защищенного и актуального LEMP-стека
 
-Современный подход требует настройки межсетевого экрана (firewall), использования выделенных пользователей баз данных и базовой подготовки к HTTPS.
+Современный подход включает использование актуальных репозиториев, настройку безопасности (Firewall, HTTP-заголовки) и автоматическую проверку связности компонентов.
 
 #### Шаг 1: Подготовка переменных и Vault
 
-Пароли должны храниться в зашифрованном виде. Создайте файл `vars/vault.yml` с помощью **[Ansible Vault](../Vault/basics.md)**:
+Чувствительные данные (пароли) должны храниться в зашифрованном виде. Создайте файл `vars/vault.yml` с помощью **[Ansible Vault](../Vault/basics.md)**:
 
 ```bash
 ansible-vault create vars/vault.yml
@@ -56,9 +56,9 @@ php_version: "8.3"
 domain_name: "my-site.local"
 ```
 
-#### Шаг 2: Базовая безопасность ОС (UFW)
+#### Шаг 2: Подготовка ОС и репозиториев (PHP PPA)
 
-Настроим firewall для разрешения только необходимых портов (SSH, HTTP, HTTPS).
+Для получения PHP 8.3+ на Ubuntu/Debian рекомендуется использовать репозиторий Ondřej Surý.
 
 ```yaml
 ---
@@ -69,15 +69,24 @@ domain_name: "my-site.local"
     - vars/vault.yml
 
   tasks:
-    - name: Установка базовых пакетов и UFW
+    - name: Установка базовых зависимостей
       ansible.builtin.apt:
-        name: 
-          - ufw
-          - curl
+        name: [software-properties-common, curl, ufw, logrotate]
         state: present
         update_cache: yes
 
-    - name: Настройка UFW (разрешение SSH, HTTP, HTTPS)
+    - name: Добавление репозитория PHP PPA
+      ansible.builtin.apt_repository:
+        repo: 'ppa:ondrej/php'
+        state: present
+```
+
+#### Шаг 3: Настройка безопасности ОС (UFW)
+
+Настроим firewall для разрешения только необходимых портов (SSH, HTTP, HTTPS).
+
+```yaml
+    - name: Настройка UFW (SSH, HTTP, HTTPS)
       community.general.ufw:
         rule: allow
         name: "{{ item }}"
@@ -91,9 +100,9 @@ domain_name: "my-site.local"
         state: enabled
 ```
 
-#### Шаг 3: Установка и настройка Nginx
+#### Шаг 4: Установка и закалка Nginx
 
-Удаляем дефолтные страницы и подготавливаем директорию сайта.
+Удаляем дефолтные страницы и настраиваем директории.
 
 ```yaml
     - name: Установка Nginx
@@ -115,9 +124,9 @@ domain_name: "my-site.local"
         mode: '0755'
 ```
 
-#### Шаг 4: Развертывание базы данных MySQL/MariaDB
+#### Шаг 5: Развертывание базы данных MySQL/MariaDB
 
-Рекомендуется использовать модули из коллекции `community.mysql`. Для их работы на целевом сервере потребуется библиотека `python3-pymysql`. Подробное руководство см. в **[Установка и настройка MySQL/MariaDB](mysql_setup.md)**.
+Для работы модулей на целевом сервере необходима библиотека `python3-pymysql`. Подробное руководство см. в **[Установка и настройка MySQL/MariaDB](mysql_setup.md)**.
 
 ```yaml
     - name: Установка MariaDB и Python-драйвера
@@ -148,9 +157,10 @@ domain_name: "my-site.local"
         login_unix_socket: /var/run/mysqld/mysqld.sock
 ```
 
-#### Шаг 5: Установка PHP и интеграция с Nginx
+#### Шаг 6: Установка PHP и интеграция с Nginx
 
 **Шаблон виртуального хоста `templates/nginx-php.conf.j2`:**
+Включает базовые заголовки безопасности.
 
 ```jinja2
 server {
@@ -158,6 +168,11 @@ server {
     server_name {{ domain_name }};
     root /var/www/{{ domain_name }};
     index index.php index.html;
+
+    # Заголовки безопасности
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+    add_header X-XSS-Protection "1; mode=block";
 
     location / {
         try_files $uri $uri/ =404;
@@ -167,17 +182,22 @@ server {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/var/run/php/php{{ php_version }}-fpm.sock;
     }
+
+    location ~ /\.ht {
+        deny all;
+    }
 }
 ```
 
 **Задачи интеграции в плейбуке:**
 
 ```yaml
-    - name: Установка PHP-FPM и драйвера MySQL
+    - name: Установка PHP-FPM и расширений
       ansible.builtin.apt:
         name:
           - "php{{ php_version }}-fpm"
           - "php{{ php_version }}-mysql"
+          - "php{{ php_version }}-gd"
         state: present
 
     - name: Настройка виртуального хоста Nginx
@@ -194,9 +214,9 @@ server {
       notify: Reload Nginx
 ```
 
-#### Шаг 6: Развертывание тестового приложения
+#### Шаг 7: Развертывание тестового приложения и верификация
 
-Использование шаблонов предотвращает передачу паролей в открытом виде через модуль `copy`.
+Использование шаблонов предотвращает передачу паролей в открытом виде.
 
 **Шаблон `templates/db_test.php.j2`:**
 
@@ -212,13 +232,15 @@ $mysqli->close();
 ?>
 ```
 
-**Задача копирования:**
+**Задачи развертывания тестов:**
 
 ```yaml
     - name: Создание тестового файла phpinfo
       ansible.builtin.copy:
         content: "<?php phpinfo(); ?>"
         dest: "/var/www/{{ domain_name }}/index.php"
+        owner: www-data
+        mode: '0644'
 
     - name: Создание скрипта проверки БД из шаблона
       ansible.builtin.template:
@@ -233,23 +255,27 @@ $mysqli->close();
         name: nginx
         state: reloaded
 
+    - name: Restart PHP-FPM
+      ansible.builtin.service:
+        name: "php{{ php_version }}-fpm"
+        state: restarted
+
     - name: Reload UFW
       community.general.ufw:
         state: reloaded
 ```
 
-#### Шаг 7: Запуск и проверка
+#### Шаг 8: Запуск и проверка
 
-Выполнение плейбука с запросом пароля от хранилища Vault:
+Выполнение плейбука с запросом пароля Vault:
 
 ```bash
 ansible-playbook playbook.yml -i hosts.ini --ask-vault-pass
-# → Результат: стек LEMP развернут, службы запущены, UFW настроен
 ```
 
-1.  **Настройка локальных хостов**: Добавьте `127.0.0.1 my-site.local` в файл `/etc/hosts` на вашем компьютере.
+1.  **Настройка локальных хостов**: Добавьте `127.0.0.1 my-site.local` в файл `/etc/hosts`.
 2.  **Проверка PHP**: Откройте `http://my-site.local` — должна отобразиться страница `phpinfo`.
-3.  **Проверка базы данных**: Откройте `http://my-site.local/db_test.php` — вы должны увидеть сообщение об успешном соединении и версии сервера.
+3.  **Проверка базы данных**: Откройте `http://my-site.local/db_test.php` — ожидается сообщение об успешном соединении.
 
 ---
 
@@ -257,12 +283,14 @@ ansible-playbook playbook.yml -i hosts.ini --ask-vault-pass
 
 ### Масштабирование и SSL (HTTPS)
 
-- **Настройка HTTPS (Certbot/Let's Encrypt)**: В современном веб-окружении наличие SSL сертификата обязательно. Для автоматизации выдачи сертификатов добавьте задачу установки пакета `python3-certbot-nginx` и используйте модуль `ansible.builtin.command` или `community.crypto` для запроса сертификата.
-- **Универсальность**: Данный пример ориентирован на дистрибутивы на базе Debian/Ubuntu (используется `apt` и пути `/etc/nginx/sites-available`). Для кроссплатформенного подхода (включая RHEL/CentOS/AlmaLinux) используйте модуль `ansible.builtin.package` и ветвления в переменных. Подробнее: **[Кроссплатформенные плейбуки](../CrossPlatform/concepts.md)**.
-- **Рефакторинг**: По мере роста проекта выносите логику установки Nginx, MariaDB и PHP в отдельные **[роли Ansible](../ansible_roles.md)** (например, через структуру `roles/nginx`, `roles/php`).
+- **Настройка HTTPS (Certbot)**: В современном веб-окружении SSL обязателен. Рекомендуется использовать роль `geerlingguy.certbot` или модуль `ansible.builtin.command` для вызова `certbot --nginx`.
+- **Универсальность**: Данный пример ориентирован на Debian/Ubuntu. Для RHEL/CentOS необходимо использовать модули `ansible.builtin.yum/dnf` и учитывать различия в путях конфигураций Nginx. Подробнее: **[Кроссплатформенные плейбуки](../CrossPlatform/concepts.md)**.
+- **Мониторинг**: Включите статус-страницу PHP-FPM для сбора метрик. Подробнее: **[Мониторинг PHP-FPM](../../WebServers/PHP/php-fpm-monitoring.md)**.
+- **Рефакторинг**: Для крупных проектов выносите логику в отдельные **[роли Ansible](../ansible_roles.md)**.
 
 ## Смотрите также
 
 - [Установка и настройка MySQL/MariaDB через Ansible](mysql_setup.md)
 - [Кроссплатформенный пример развертывания LAMP](../CrossPlatform/lamp-example.md)
+- [Шаблонизация Jinja2 в Ansible](../ansible_jinja_templating.md)
 - [Обзор возможностей Nginx](../../WebServers/Nginx/Core/nginx_overview.md)

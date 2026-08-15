@@ -2,13 +2,21 @@
 
 ## Определения
 
-- **Sealed Secrets**: Инструмент от Bitnami для безопасного хранения Kubernetes Secrets в публичных Git-репозиториях через асимметричное шифрование.
-- **SealedSecret**: Кастомный ресурс Kubernetes (CRD), содержащий зашифрованные данные секрета.
-- **Controller**: Компонент Sealed Secrets в кластере, управляющий ключевыми парами и расшифровкой.
-- **kubeseal**: CLI-утилита для шифрования Secrets публичным ключом контроллера.
-- **Master Key**: Пара ключей RSA, хранящаяся в виде обычного Kubernetes Secret в пространстве имен контроллера, используемая для расшифровки всех SealedSecrets.
+- **Sealed Secrets**: Инструмент от Bitnami для безопасного хранения Kubernetes Secrets в публичных Git-репозиториях через асимметричное шифрование. Позволяет реализовать полноценный GitOps для чувствительных данных.
+- **SealedSecret**: Кастомный ресурс Kubernetes (CRD), содержащий зашифрованные данные. Предназначен для хранения в системе контроля версий.
+- **Controller**: Оператор, развернутый в кластере. Управляет ключевыми парами и автоматически расшифровывает `SealedSecret` в нативные `Secret`.
+- **kubeseal**: CLI-утилита для локального или CI/CD шифрования манифестов `Secret` публичным ключом контроллера.
+- **Master Key**: Пара ключей RSA (публичный и приватный), генерируемая контроллером. Хранится в виде обычного Kubernetes Secret в пространстве имен контроллера (обычно `kube-system`) с меткой `sealedsecrets.bitnami.com/sealed-secrets-key`.
 
 ## Основные концепции
+
+### Почему недостаточно стандартных Secrets?
+Основная проблема нативных Kubernetes Secrets заключается в том, что они **не зашифрованы**, а только **закодированы в Base64**. Это означает, что любой, кто имеет доступ к YAML-файлу манифеста, может мгновенно получить пароли в открытом виде:
+```bash
+# Пример декодирования пароля из обычного манифеста Secret
+echo "dGVzdC1wYXNzd29yZA==" | base64 --decode # → test-password
+```
+Хранение таких файлов в Git (даже приватном) нарушает принципы безопасности. Sealed Secrets решает эту проблему, позволяя хранить в Git зашифрованный `SealedSecret`, который может быть расшифрован только внутри целевого кластера.
 
 ### Архитектура и криптографическая схема
 
@@ -72,20 +80,38 @@ kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-ke
 
 ### Сценарий 2: Шифрование секрета
 
+Для шифрования `kubeseal` должен иметь доступ к публичному сертификату контроллера.
+
+**Вариант А: Онлайн-шифрование (нужен доступ к API кластера)**
 ```bash
-# Получение публичного сертификата контроллера
-kubeseal --controller-name=sealed-secrets \
-  --controller-namespace=kube-system \
-  --fetch-cert > pub-cert.pem
+kubeseal --controller-name=sealed-secrets --controller-namespace=kube-system < secret.yaml > sealed-secret.yaml
+```
 
-# Создание и шифрование секрета
-kubectl create secret generic my-secret \
-  --from-literal=password='supersecret' \
-  --dry-run=client -o yaml | \
-  kubeseal --cert pub-cert.pem --format yaml > my-sealed-secret.yaml
+**Вариант Б: Оффлайн-шифрование (рекомендуется для CI/CD)**
+1. Получите сертификат один раз (требуется доступ к кластеру):
+```bash
+kubeseal --controller-name=sealed-secrets --controller-namespace=kube-system --fetch-cert > pub-cert.pem
+```
+2. Используйте сертификат для шифрования без доступа к кластеру:
+```bash
+kubeseal --cert pub-cert.pem --format yaml < secret.yaml > sealed-secret.yaml
+```
 
-# Полученный SealedSecret можно безопасно коммитить в Git
+**Полный пример создания с нуля:**
+```bash
+# 1. Создаем манифест обычного секрета (локально)
+kubectl create secret generic my-db-secret \
+  --from-literal=password='P@ssw0rd123!' \
+  --dry-run=client -o yaml > secret.yaml
+
+# 2. Шифруем его в SealedSecret
+kubeseal --cert pub-cert.pem --format yaml < secret.yaml > my-sealed-secret.yaml
+
+# 3. Применяем зашифрованный манифест
 kubectl apply -f my-sealed-secret.yaml
+
+# 4. Проверяем появление расшифрованного секрета контроллером
+kubectl get secret my-db-secret
 ```
 
 ### Сценарий 3: RBAC для CI/CD
@@ -168,6 +194,14 @@ kubeseal --re-encrypt < old.sealed.yaml --cert new-pub-cert.pem > new.sealed.yam
 ```
 
 ### Сценарий 7: Troubleshooting (Диагностика)
+
+**Проблема:** `kubeseal` не может получить сертификат (`error: cannot get sealed secret service`).
+- **Причина:** Сервис контроллера имеет нестандартное имя или находится в другом namespace, и `kubeseal` не может найти его автоматически.
+- **Решение:** Укажите параметры контроллера явно через флаги:
+  ```bash
+  # Если сервис называется по-другому или в другом namespace
+  kubeseal --controller-name=имя-сервиса --controller-namespace=namespace-контроллера --fetch-cert
+  ```
 
 **Проблема:** SealedSecret не превращается в Secret.
 1. Проверьте логи контроллера: `kubectl logs -n kube-system -l app.kubernetes.io/name=sealed-secrets`.

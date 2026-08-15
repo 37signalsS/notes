@@ -40,25 +40,9 @@
     sudo reboot
     ```
 
-#### Шаг 2: Подготовка Ansible (для настройки клиентов)
+#### Шаг 2: Подготовка окружения (Ansible)
 
-Если планируется использовать Ansible для автоматизации подключения клиентов, установите официальную коллекцию:
-
-```bash
-ansible-galaxy collection install freeipa.ansible_freeipa
-```
-
-**Решение проблем с GSSAPI:**
-При ошибке `No module named 'gssapi'` на управляющей ноде (Control Node) доустановите необходимые системные библиотеки и Python-пакет:
-
-```bash
-# Для Ubuntu/Debian
-sudo apt install krb5-config libkrb5-dev python3-dev
-# Для RHEL/CentOS/Rocky
-sudo dnf install krb5-devel python3-devel
-
-pip install gssapi
-```
+Для автоматизации настройки большого количества клиентов рекомендуется использовать официальную коллекцию. Подробные инструкции по установке и настройке доступны в разделе **[Ansible Identity Management](../../Ansible/ansible-identity-management.md)**.
 
 #### Шаг 3: Настройка Docker Compose
 
@@ -184,68 +168,11 @@ sudo ipa-client-install \
 
 После завершения хост появится в разделе **Hosts** веб-интерфейса FreeIPA.
 
-### 3. Автоматизация присоединения клиентов через Ansible
+### 3. Автоматизация через Ansible
 
-Использование официальной коллекции `freeipa.ansible_freeipa` позволяет массово регистрировать узлы в домене и управлять настройками IPA.
+Масштабируемый ввод хостов в домен и управление объектами (пользователи, группы, HBAC) осуществляется через коллекцию `freeipa.ansible_freeipa`. 
 
-#### Шаг 1: Установка необходимых компонентов
-
-На управляющей машине (Ansible Control Node) выполните:
-
-```bash
-# Установка коллекции
-ansible-galaxy collection install freeipa.ansible_freeipa
-
-# Установка зависимостей для Kerberos-аутентификации (если не установлены ранее)
-pip install python-gssapi
-```
-
-#### Шаг 2: Настройка инвентаря
-
-Создайте файл `inventory.ini`. Обратите внимание на использование префикса `ipaclient_` для переменных.
-
-```ini
-[ipaclients]
-client-1.domain.local
-client-2.domain.local
-
-[ipaclients:vars]
-ipaclient_domain=domain.local
-ipaclient_realm=DOMAIN.LOCAL
-ipaadmin_principal=admin
-ipaadmin_password=YourStrongPassword
-ipaclient_mkhomedir=yes
-# Если NTP уже настроен на хосте (рекомендуется)
-ipaclient_no_ntp=yes
-```
-
-#### Шаг 3: Создание плейбука
-
-Создайте файл `ipa-playbook.yaml`. В коллекции роли называются по шаблону `freeipa.ansible_freeipa.ipaclient`.
-
-```yaml
----
-- name: "Конфигурация клиентов FreeIPA"
-  hosts: ipaclients
-  become: true
-  gather_facts: true
-
-  roles:
-    - role: freeipa.ansible_freeipa.ipaclient
-      state: present
-```
-
-#### Шаг 4: Запуск установки
-
-```bash
-ansible-playbook -i inventory.ini ipa-playbook.yaml
-```
-
-**Рекомендация:** Чтобы Ansible не запрашивал подтверждение SSH-ключей при первом подключении, можно временно отключить проверку в `ansible.cfg`:
-```ini
-[defaults]
-host_key_checking = False
-```
+Все сценарии, лучшие практики и примеры плейбуков вынесены в специализированный раздел: **[Ansible Identity Management](../../Ansible/ansible-identity-management.md)**.
 
 ### 4. Уведомления об истечении пароля (IPA-EPN)
 

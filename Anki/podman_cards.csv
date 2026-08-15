@@ -23,9 +23,10 @@
 23: Почему rootless режим более безопасен?;Потому что злоумышленник, сбежавший из контейнера, получает права обычного пользователя, а не root
 24: Что такое high-level runtime?;Управляющий демон, реализующий CRI, отвечающий за полный жизненный цикл контейнеров
 25: Что такое low-level runtime?;Утилита, совместимая с OCI, непосредственно создающая контейнер через namespaces и cgroups
-26: Для чего используется crictl?;Универсальный CLI для отладки любого CRI-совместимого рантайма (CRI-O, containerd)
-27: Для чего используется ctr?;Низкоуровневый CLI для прямого взаимодействия с containerd, в обход CRI-плагина
-28: Как эмулировать Docker API в Podman?;systemctl --user enable --now podman.socket + export DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock
+26: Для чего используется crictl?;Универсальный CLI для отладки любого CRI-совместимого рантайма (CRI-O, containerd). Предназначен для администраторов K8s, видит поды.;kubernetes::troubleshooting::crictl
+27: В чем разница между инструментами ctr, nerdctl и crictl?;ctr — низкоуровневая отладка containerd; nerdctl — полноценная замена Docker CLI; crictl — отладка CRI-рантаймов в Kubernetes.;podman::concepts::runtimes
+28: Какие возможности nerdctl отсутствуют в стандартном Docker CLI?;Поддержка namespaces Kubernetes, ленивая загрузка (lazy pulling), P2P распределение образов, нативное шифрование и подпись.;podman::concepts::tools
+29: Как эмулировать Docker API в Podman?;systemctl --user enable --now podman.socket + export DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock
 29: Что такое linger в контексте rootless контейнеров?;Настройка loginctl enable-linger $USER позволяет rootless-сервисам systemd запускаться при загрузке системы, а не только при входе пользователя
 30: Какой сетевой драйвер используется в Podman для rootful режима?;Netavark и Aardvark-dns
 31: Чем отличается философия CRI-O от containerd?;CRI-O: "Делай одну вещь, и делай ее хорошо" (только K8s); containerd: "Один рантайм для всех нужд" (универсальный)
@@ -95,7 +96,6 @@
 94: Где должны располагаться файлы Quadlet для системных контейнеров?;В директории /etc/containers/systemd/
 95: Как в Quadlet файле описать проверку состояния контейнера?;С помощью параметров HealthCmd, HealthInterval, HealthTimeout и HealthRetries в секции [Container]
 96: Перезапускает ли Podman контейнер при провале healthcheck?;Нет, Podman только меняет статус на unhealthy. Для перезапуска нужно использовать Restart=always в юните systemd
-97: Что делает флаг --replace в команде podman run?;Автоматически удаляет существующий контейнер с тем же именем перед запуском нового
 98: Как передать переменную окружения в контейнер Podman?;Через флаг -e KEY=VALUE или --env-file .env для чтения из файла
 99: Какой приоритет у переменных в Podman?;Флаг -e перекрывает значения из --env-file, которые перекрывают значения ENV из Containerfile
 100: В чем преимущество Podman Secrets перед переменными окружения?;Секреты не видны в podman inspect, не попадают в логи и монтируются в tmpfs (только для чтения)

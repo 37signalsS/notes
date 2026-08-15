@@ -31,25 +31,40 @@
 3. **Единообразие**: Команды выглядят одинаково для любого окружения.
 
 ## Практические сценарии
-
-### Сценарий 1: Управление топиками
+### Сценарий 1: Управление топиками и метаданными
 
 **Стандартные утилиты:**
 ```bash
 # Список топиков
 kafka-topics.sh --bootstrap-server localhost:9092 --list
 
-# Описание топика
+# Детальное описание топика (лидеры партиций, ISR, конфиги)
 kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic orders
+
+# Чтение сообщений из топика с самого начала (Интерактивно)
+kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic orders --from-beginning
+
+# Проверка версий API брокеров и их состояния
+kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+```
+
+**Работа в Docker:**
+Если Kafka запущена в контейнере, команды выполняются через `docker exec`:
+```bash
+docker exec -it <container_name> kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
 **rpk:**
+...
 ```bash
 # Список топиков
 rpk topic list
 
 # Создание топика с настройками
 rpk topic create orders -p 12 -r 3 --topic-config retention.ms=604800000
+
+# Чтение сообщений (Interactive)
+rpk topic consume orders
 ```
 
 **kafkactl:**

@@ -123,6 +123,7 @@ etcdctl put /services/worker-1 "10.0.0.5" --lease=$lease_id
 
 ### См. также
 
+*   **[Динамический инвентарь Ansible](../Ansible/dynamic_inventory.md)** — использование etcd как источника данных для автоматизации.
 *   **[Алгоритм Raft](./raft_consensus.md)** — детальное описание теории консенсуса и выборов.
 *   **[MVCC, версионирование и компакция](./mvcc_versioning_and_compaction.md)** — работа с историей и BoltDB.
 *   **[Кластеризация и восстановление](./clustering_and_recovery.md)** — процедуры DR и масштабирования.

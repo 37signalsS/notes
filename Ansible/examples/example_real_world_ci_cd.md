@@ -4,11 +4,13 @@
 
 **Безопасная архитектура Ansible для CI/CD** — комплексный подход к автоматизации, обеспечивающий изоляцию секретов, аудит действий и разделение логики автоматизации от данных конкретных окружений.
 
-**Скрипт-обертка (Wrapper Script)** — сценарий с жестко ограниченными правами доступа (через `sudo`), выступающий единственным шлюзом для запуска `ansible-playbook` из недоверенных сред (например, CI/CD-агентов).
+**Скрипт-обертка (Wrapper Script)** — сценарий с жестко ограниченными правами доступа (через `sudo`), выступающий единственным шлюзом для запуска `ansible-playbook` из недоверенных сред (например, CI/CD-агентов). Он предотвращает инъекцию произвольных аргументов и ограничивает область видимости инвентаря.
 
-**Control Node (Контрольный узел)** — защищенный сервер, являющийся единственной точкой входа в инфраструктуру. В современной архитектуре его роль часто выполняют **Ansible Automation Platform (AAP)** или **AWX**, предоставляющие API и RBAC (Role-Based Access Control).
+**Control Node (Контрольный узел)** — защищенный сервер, являющийся единственной точкой входа в инфраструктуру. В современной архитектуре его роль часто выполняют **[Ansible Automation Platform (AAP)](../ansible-automation-platform.md)** или **AWX**, предоставляющие API и RBAC (Role-Based Access Control).
 
-**Execution Environment (Среда исполнения, EE)** — контейнеризированное окружение со всеми необходимыми зависимостями (библиотеки Python, коллекции Ansible), гарантирующее идентичность запуска плейбуков в разных средах и исключающее конфликты зависимостей.
+**Execution Environment (Среда исполнения, EE)** — контейнеризированное окружение (образ), содержащее Ansible Core, коллекции и Python-зависимости. Гарантирует идентичность запуска плейбуков в разных средах и исключает конфликты библиотек.
+
+**OIDC (OpenID Connect) / Workload Identity** — протокол аутентификации, позволяющий CI/CD-пайплайнам (GitLab CI, GitHub Actions) получать временные токены доступа к менеджерам секретов (HashiCorp Vault) или облачным провайдерам без использования статических паролей.
 
 ## Базовые концепции
 
@@ -24,23 +26,20 @@
 Для минимизации рисков компрометации SSH-ключей и паролей применяются следующие методы:
 
 1.  **Делегирование через Sudo**: CI/CD-агент (например, GitLab Runner) имеет доступ только к скрипту-обертке, но не к SSH-ключам напрямую.
-2.  **Интеграция с Vault**: Использование зашифрованных файлов Ansible Vault, где пароль для расшифровки передается исключительно через защищенные переменные CI/CD (например, маскированные CI/CD Variables) в виде временного файла. См. **[Основы Ansible Vault](../Vault/basics.md)**.
-3.  **Внешние хранилища секретов**: Использование HashiCorp Vault или AWS Secrets Manager для динамической генерации паролей или получения токенов в процессе выполнения плейбука. См. **[Управление секретами в CI/CD](../../CI-CD/DevSecOps/secrets_management.md)**.
-4.  **Ограничение области действия (Blast Radius)**: Строгое использование разных SSH-ключей и сервисных пользователей для разных окружений (Staging/Prod).
-
-Подробные рекомендации по защите кода автоматизации приведены в разделе **[Рекомендации по безопасности Ansible](../ansible_security_best_practices.md)**.
+2.  **Интеграция с Vault**: Использование зашифрованных файлов Ansible Vault, где пароль передается исключительно через защищенные переменные CI/CD (например, маскированные `id_tokens` или временные файлы). См. **[Основы Ansible Vault](../Vault/basics.md)**.
+3.  **Использование OIDC (Keyless)**: Современный стандарт, при котором Vault доверяет JWT-токену, сгенерированному CI-системой, исключая хранение "Secret Zero" (мастер-пароля) в переменных.
+4.  **Внешние хранилища секретов**: Использование HashiCorp Vault или AWS Secrets Manager для динамической генерации паролей или получения токенов в процессе выполнения. См. **[Управление секретами в CI/CD](../../CI-CD/DevSecOps/secrets_management.md)**.
+5.  **Ограничение области действия (Blast Radius)**: Строгое использование разных SSH-ключей и сервисных пользователей для разных окружений (Staging/Prod).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий: Реализация безопасного пайплайна в GitLab CI
+### Сценарий 1: Реализация безопасного пайплайна в GitLab CI
 
-Современный пайплайн должен включать этапы статического анализа (Linting), загрузки зависимостей и безопасного деплоя.
+Современный пайплайн включает этапы линтинга, проверки синтаксиса и безопасного деплоя через скрипт-обертку.
 
 #### 1. Структура репозиториев
-
-Для разделения ответственности используются два типа репозиториев:
 
 **Централизованный репозиторий ролей (`ansible-shared-content`):**
 - Содержит переиспользуемые роли (`nginx`, `postgresql`, `docker`).
@@ -49,30 +48,23 @@
 **Проектный репозиторий (`app-deployment-config`):**
 - Содержит инвентарь проекта, плейбуки, файл зависимостей `requirements.yml` и `.gitlab-ci.yml`.
 
-#### 2. Процесс выполнения пайплайна
-
-Пайплайн делится на проверку кода и выполнение скрипта-обертки. Скрипт-обертка обеспечивает безопасный запуск плейбука от имени системного пользователя `ansible-deploy`.
-
-**Пример `.gitlab-ci.yml`:**
+#### 2. Пример `.gitlab-ci.yml`
 
 ```yaml
 stages:
   - lint
   - deploy
 
-# Этап статического анализа (проверяется каждый коммит)
+# Этап статического анализа
 ansible_lint:
   stage: lint
-  image: python:3.12
-  before_script:
-    - pip install ansible ansible-lint
+  image: quay.io/ansible/creator-ee:latest
   script:
     - ansible-lint playbooks/site.yml
     - ansible-playbook playbooks/site.yml --syntax-check
-  tags:
-    - docker-runner
+  tags: [docker-runner]
 
-# Этап безопасного деплоя (выполняется только в main ветке на защищенном Runner'е)
+# Этап безопасного деплоя
 deploy_prod:
   stage: deploy
   variables:
@@ -85,66 +77,105 @@ deploy_prod:
     - sudo /usr/local/bin/ansible_runner.sh --playbook playbooks/site.yml --limit production --vault-password-file $VAULT_PASS_FILE
   after_script:
     - rm -f $VAULT_PASS_FILE
-  environment: production
-  only:
-    - main
-  tags:
-    - protected-runner # Shell Runner на защищенном контрольном узле
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  tags: [protected-runner] # Shell Runner на защищенном контрольном узле
 ```
 
 #### 3. Пример скрипта-обертки (`ansible_runner.sh`)
 
-Скрипт-обертка берет на себя загрузку ролей из Galaxy и защищает систему от инъекций. Скрипт должен находиться в `/usr/local/bin/` с владельцем `root:root` и правами `0755`.
+Скрипт должен находиться в `/usr/local/bin/` с владельцем `root:root` и правами `0755`.
 
 ```bash
 #!/bin/bash
 set -e
 
-# Конфигурация и пути
+# Конфигурация
 ROLES_PATH="/opt/ansible/shared/roles"
 COLLECTIONS_PATH="/opt/ansible/shared/collections"
 LOG_DIR="/var/log/ansible"
-PROJECT_DIR="/home/gitlab-runner/builds/${CI_PROJECT_PATH}" # Рабочая директория Runner'а
+PROJECT_DIR="/home/gitlab-runner/builds/${CI_PROJECT_PATH}"
 
-# Простейшая валидация входных данных для предотвращения переопределения переменных окружения
+# Валидация аргументов
 if [[ "$*" == *"--extra-vars"* ]]; then
     echo "ОШИБКА: Использование --extra-vars запрещено политикой безопасности."
     exit 1
 fi
 
-# Установка зависимостей, если присутствует requirements.yml
+# Установка зависимостей (Idempotent)
 if [ -f "${PROJECT_DIR}/requirements.yml" ]; then
-    echo "Обновление зависимостей (ролей и коллекций)..."
-    ansible-galaxy install -r "${PROJECT_DIR}/requirements.yml" -p "$ROLES_PATH" --force
-    ansible-galaxy collection install -r "${PROJECT_DIR}/requirements.yml" -p "$COLLECTIONS_PATH" --force
+    ansible-galaxy install -r "${PROJECT_DIR}/requirements.yml" -p "$ROLES_PATH"
+    ansible-galaxy collection install -r "${PROJECT_DIR}/requirements.yml" -p "$COLLECTIONS_PATH"
 fi
 
-# Выполнение плейбука с фиксацией лога аудита
+# Выполнение с аудитом
 ansible-playbook \
     --roles-path "$ROLES_PATH" \
-    "$@" 2>&1 | tee "${LOG_DIR}/run_prod_$(date +%s).log"
+    "$@" 2>&1 | tee "${LOG_DIR}/run_$(date +%Y%m%d_%H%M%S).log"
 ```
 
 #### 4. Настройка разрешений (`/etc/sudoers.d/gitlab-runner`)
-
-Позволяет пользователю `gitlab-runner` выполнять ТОЛЬКО скрипт-обертку от имени пользователя `ansible-deploy` (или `root`, в зависимости от архитектуры) без ввода пароля:
 
 ```text
 # Разрешить запуск только конкретного скрипта без ввода пароля
 gitlab-runner ALL=(ansible-deploy) NOPASSWD: /usr/local/bin/ansible_runner.sh
 ```
 
+### Сценарий 2: Использование Execution Environments в GitHub Actions
+
+Если политика безопасности позволяет запуск из облачного CI, используйте контейнеризированные среды (EE).
+
+**Пример `.github/workflows/deploy.yml`:**
+
+```yaml
+name: Ansible EE Deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: my-registry.com/ansible-ee:v1.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Playbook
+        run: |
+          # Использование OIDC токена для расшифровки Vault (концептуально)
+          ansible-playbook site.yml -i inventory/prod.yml --vault-password-file <(echo "${{ secrets.VAULT_PASS }}")
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+```
+
 ---
 
 ## Дополнительная информация
 
+### Управление средами исполнения (EE)
+
+Для создания EE используется утилита `ansible-builder`. Это позволяет зафиксировать версии всех зависимостей.
+
+**Пример `execution-environment.yml`:**
+```yaml
+version: 3
+images:
+  base_image:
+    name: quay.io/fedora/fedora:latest
+dependencies:
+  ansible_core:
+    package_pip: ansible-core==2.17
+  ansible_collections:
+    - name: community.postgresql
+  python:
+    - psycopg2-binary
+```
+
 ### Масштабируемость и Enterprise-решения
 
-Для крупных организаций с десятками команд разработчиков рекомендуется переход от самописных скриптов-оберток к специализированным платформам:
+Для крупных организаций рекомендуется переход к специализированным платформам (см. подробнее **[Ansible Automation Platform (AAP)](../ansible-automation-platform.md)**):
 
 - **Ansible Automation Platform (AAP)**: Коммерческое решение от Red Hat. Обеспечивает централизованное управление, детальный аудит (каждый запуск логируется в БД), управление секретами внутри платформы и интеграцию с LDAP/AD.
-- **AWX**: Upstream-версия AAP с открытым исходным кодом. Идеально подходит для Kubernetes/Docker Swarm кластеров. Вместо bash-скриптов, GitLab CI делает REST API запрос к AWX для запуска Job Template.
-- **Интеграция через API (AWX/AAP)**: В пайплайне используется CLI-утилита `awx` (awxkit) или curl-запросы:
+- **AWX**: Upstream-версия AAP с открытым исходным кодом. Вместо bash-скриптов, CI/CD делает REST API запрос к AWX для запуска Job Template:
   ```bash
   # Пример вызова Job Template в AWX из CI/CD
   awx job_templates launch 'Deploy Prod App' --monitor
@@ -156,3 +187,4 @@ gitlab-runner ALL=(ansible-deploy) NOPASSWD: /usr/local/bin/ansible_runner.sh
 - [Типовая структура проекта Ansible](example_project_layout.md)
 - [Рекомендации по безопасности в Ansible](../ansible_security_best_practices.md)
 - [Управление секретами в CI/CD пайплайнах](../../CI-CD/DevSecOps/secrets_management.md)
+- [Ansible Execution Environments (Official)](https://docs.ansible.com/ansible/latest/getting_started_ee/index.html)

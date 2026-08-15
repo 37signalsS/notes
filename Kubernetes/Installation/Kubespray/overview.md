@@ -67,6 +67,7 @@ Kubespray следует циклу релизов Kubernetes, обеспечи�
 ### См. также
 
 *   [Ansible: Введение](../../../Ansible/ansible_introduction.md) — основы работы с инструментом автоматизации.
+*   [Автоматизация Kubernetes через Ansible](../../../Ansible/ansible-kubernetes-automation.md) — управление ресурсами кластера (Day-2 operations).
 *   [kubeadm: Быстрый старт](../kubeadm/index.md) — базовый механизм, используемый Kubespray.
 *   [HA с kubeadm](../kubeadm/ha_concepts.md) — концепции отказоустойчивости.
 *   [Control Plane: Архитектура](../../Concepts/control_plane_architecture.md) — внутреннее устройство Kubernetes.
