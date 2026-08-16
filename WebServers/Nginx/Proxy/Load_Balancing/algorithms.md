@@ -169,8 +169,9 @@ upstream api_cluster {
 
 ### Связанные документы
 
+- [Кластеризация и балансировка нагрузки](../../../../Concepts/High_Availability/ha_clustering_and_load_balancing.md) — общая теория и детальный разбор продвинутых алгоритмов (P2C, Maglev, Adaptive LB).
 - [Практическая конфигурация балансировки](./practical_configuration.md) — настройка upstream-групп и проксирования.
 - [Health Checks и мониторинг](./health_checks_and_monitoring.md) — механизмы проверки доступности бэкендов.
 - [Sticky Sessions](./sticky_sessions.md) — детальный разбор механизмов привязки сессий.
-- [Балансировка нагрузки HTTP в Angie](../../../WebServers/Angie/angie_http_load_balancing.md) — специфика Angie.
-- [Обзор Angie](../../../WebServers/Angie/angie_overview.md) — ключевые отличия и преимущества форка.
+- [Балансировка нагрузки HTTP в Angie](../../../Angie/angie_http_load_balancing.md) — специфика Angie.
+- [Обзор Angie](../../../Angie/angie_overview.md) — ключевые отличия и преимущества форка.

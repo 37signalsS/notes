@@ -229,6 +229,7 @@ is_excluded_namespace(ns) {
 ## Дополнительная информация
 
 ### См. также
+- **[Эшелонированная защита в IaC](../../CI-CD/DevSecOps/iac-security-defense-in-depth.md)** — общая стратегия многоуровневого контроля безопасности.
 - **[OPA Gatekeeper: детали и Rego](../../Kubernetes/Security/rbac/limitations_opa.md)** — глубокий разбор движка OPA.
 - **[Интеграция Kyverno с ArgoCD](../../Kubernetes/Security/kyverno/argo-cd.md)** — нюансы Server-Side Diff и мутаций.
 - **[ArgoCD: обзор архитектуры](../ArgoCD/argocd_overview.md)** — базовые принципы GitOps.

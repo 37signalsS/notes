@@ -32,7 +32,7 @@
 | **ASPM** | Cycode, Apiiro, Snyk AppRisk | Оркестрация, корреляция и приоритизация рисков. |
 | **SAST (AI-driven)** | Snyk DeepCode, Semgrep | Глубокий семантический анализ и авто-фикс. |
 | **SCA / SBOM** | Trivy, Grype, Syft | Генерация Living SBOM и VEX-анализ. |
-| **IaC Security** | Checkov, KICS | Проверка Terraform, Helm, Crossplane на этапе линтинга. |
+| **IaC Security** | Checkov, KICS, OPA | Проверка инфраструктурного кода (Terraform, Helm). Подробнее: [Defense in Depth в IaC](./iac-security-defense-in-depth.md). |
 | **Secret Scan** | Gitleaks, TruffleHog | Поиск секретов в Git, Slack, документации и логах. |
 | **DAST (Autonomous)** | XBOW, Penligent, Nuclei | Автономный ИИ-пентестинг и защита API. |
 | **Runtime (eBPF)** | Falco, Tetragon, Pixie | Обнаружение аномалий и дрейфа конфигурации (Drift Detection) в ядре. |
@@ -59,7 +59,7 @@
     - **Attestation:** создание криптографической аттестации сборки (SLSA).
 4.  **Развертывание (Deploy):**
     - **Admission Control:** проверка подписей образов и аттестаций перед запуском в кластер.
-    - **IaC Scan:** финальная проверка конфигурации перед применением (Terraform/Crossplane).
+    - **IaC Scan:** финальная проверка конфигурации перед применением (Terraform/Crossplane). Подробнее об уровнях проверки: [**Defense in Depth в IaC**](./iac-security-defense-in-depth.md).
 5.  **Эксплуатация (Run):**
     - **eBPF Monitoring:** отслеживание подозрительных системных вызовов.
     - **Drift Detection:** автоматическое обнаружение расхождений между IaC-кодом и реальным состоянием инфраструктуры.
@@ -84,6 +84,7 @@
 
 ## См. также
 
+- [Эшелонированная защита в IaC](./iac-security-defense-in-depth.md)
 - [Интеграция безопасности в CI/CD](./sast_dast_cicd_integration.md)
 - [Безопасность цепочки поставок](../../Security/Supply_Chain_Security/overview.md)
 - [Управление секретами в CI/CD](./secrets_management.md)
