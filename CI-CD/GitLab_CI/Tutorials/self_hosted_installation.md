@@ -1,165 +1,157 @@
 # Установка Self-Hosted GitLab CE с помощью Docker
 ## Определения
 
-**GitLab CE (Community Edition)** — бесплатная и открытая версия платформы GitLab для самостоятельного размещения (self-hosted).
+**GitLab CE (Community Edition)** — бесплатная и открытая версия платформы GitLab для самостоятельного размещения (self-hosted), включающая полный цикл DevSecOps: от управления исходным кодом до мониторинга и интеграции с AI.
 
-**Self-Hosted** — модель деплоя, при которой программное обеспечение устанавливается и обслуживается на собственной инфраструктуре организации, обеспечивая полный контроль над данными.
+**Self-Hosted** — модель деплоя, при которой ПО устанавливается на собственной инфраструктуре (On-premise или Private Cloud), обеспечивая полный суверенитет над данными, исходным кодом и пайплайнами.
 
-**GitLab Omnibus** — программный пакет, объединяющий Nginx, PostgreSQL, Redis, Puma и Sidekiq. Docker-образ GitLab является контейнеризированной версией этого пакета.
+**GitLab Omnibus** — монолитный программный пакет, объединяющий все компоненты GitLab (Nginx, PostgreSQL, Valkey/Redis, Puma, Sidekiq, Gitaly). Docker-образ GitLab является официальным способом запуска этого пакета в изолированной среде.
+
+**Valkey** — высокопроизводительное хранилище структур данных in-memory (форк Redis), используемое в GitLab 19.x как основной механизм кэширования и брокер сообщений для Sidekiq.
+
+**GitLab Duo (Self-Managed)** — набор функций на базе искусственного интеллекта (Code Suggestions, Security Review), доступный для self-hosted инстансов через интеграцию с AI Gateway.
 
 ## Основные концепции
 
-### Docker для Production: Нюансы и Тюнинг
+### Архитектура и выбор среды
 
-Хотя Omnibus-пакет на VM считается "золотым стандартом", Docker-инсталляция при правильной настройке подходит для большинства задач.
+Хотя исторически Omnibus на VM считался "золотым стандартом", в 2026 году Docker-инсталляция на базе Ubuntu 24.04 LTS является предпочтительной из-за простоты обновлений и изоляции зависимостей (особенно критично для PostgreSQL 17).
 
-- **Производительность:** Для исключения задержек I/O используйте SSD/NVMe и драйвер `overlay2`.
-- **Изоляция:** GitLab — ресурсоемкое приложение. Всегда ограничивайте CPU и RAM для контейнера, чтобы избежать OOM (Out of Memory) на хосте.
-- **Отладка:** Все основные утилиты (`gitlab-ctl`, `gitlab-rails`, `gitlab-rake`) доступны внутри контейнера через `docker exec`.
+- **Дисковая подсистема:** GitLab 19.x крайне чувствителен к задержкам I/O из-за интенсивной работы Gitaly (хранилище git-репозиториев). Использование SSD/NVMe и драйвера `overlay2` является обязательным требованием для Production.
+- **Управление памятью:** GitLab — ресурсоемкое Java/Ruby/Go приложение. В 19.x базовое потребление выросло из-за метрик и AI-интеграций. Ограничение CPU и RAM через Docker Cgroups предотвращает OOM-kill хоста.
+- **Shared Memory (`shm_size`):** Для стабильной работы веб-сервера Puma и системы метрик требуется минимум 1GB общей памяти. Стандартные 64MB в Docker приведут к частым ошибкам 502/504.
 
-### Критичные параметры конфигурации (`gitlab.rb`)
+### Ключевые компоненты и зависимости
 
-- **`external_url`:** Определяет протокол (HTTP/HTTPS) и домен. При указании `https` GitLab попытается автоматически настроить Let's Encrypt.
-- **`shm_size`:** Docker-контейнеру GitLab требуется минимум 256MB общей памяти (shared memory), иначе сервис Puma будет работать нестабильно.
+- **PostgreSQL 17:** Минимально поддерживаемая версия БД в GitLab 19.0+. При миграции со старых инстансов (17.x/18.x) требуется предварительное обновление схемы данных.
+- **Смена Redis на Valkey:** В версии 19.x GitLab официально перешел на поддержку Valkey 7.2+. Это обеспечивает лучшую производительность при многопоточной нагрузке Sidekiq.
+- **External URL:** Параметр `external_url` в `gitlab.rb` определяет не только адрес в браузере, но и внутреннюю логику формирования ссылок в API, уведомлениях и Git-адресах.
 
 ## Практические сценарии
 
 ### Предварительные требования
 
-**Сервер:**
-- Минимум 4 ядра CPU и 8 ГБ RAM (рекомендуется 16 ГБ для комфортной работы).
-- Docker Engine 24.0+ и Docker Compose v2+.
-- Свободное место: от 50 ГБ (SSD).
+**Аппаратные ресурсы (Production для 20+ пользователей):**
+- **CPU:** 8 vCPUs (минимально 4 для тестов).
+- **RAM:** 16 ГБ (8 ГБ — абсолютный минимум, требующий настройки swap).
+- **Storage:** 100 ГБ+ на SSD/NVMe (зависит от объема репозиториев и артефактов).
 
-**Сеть:**
-- DNS `A`-запись для домена (например, `gitlab.example.com`).
-- Открытые порты: `80`, `443` и `22` (или альтернативный порт для SSH).
+**Системные зависимости:**
+- Docker Engine 27.0+ / Docker Compose v2.20+.
+- Хост-ОС: Ubuntu 24.04 LTS или аналогичная с ядром 6.8+.
+
+**Сетевые требования:**
+- DNS `A`-запись (например, `gitlab.example.com`).
+- Открытые порты: `80`, `443` (Web/API/Registry) и `2222` (SSH, если 22 занят хостом).
+- Разрешенный исходящий HTTPS доступ к `cloud.gitlab.com` для работы GitLab Duo.
 
 ### Шаг 1: Подготовка инфраструктуры
 
-1. **Директории:** Создайте структуру директорий для сохранения данных между перезапусками контейнера:
+Создайте структуру директорий. Рекомендуется использовать переменную окружения `$GITLAB_HOME` для унификации путей.
 
 ```bash
-sudo mkdir -p /srv/gitlab/{config,logs,data}
-sudo chmod -R 755 /srv/gitlab/
+# Определяем путь в текущей сессии (или добавьте в ~/.bashrc)
+export GITLAB_HOME=$HOME/gitlab
+
+mkdir -p $GITLAB_HOME/{config,logs,data}
+chmod -R 755 $GITLAB_HOME
 ```
 
-2. **Локальный DNS (для тестирования):** Если вы разворачиваете GitLab локально без реального домена, добавьте запись в `/etc/hosts`, чтобы браузер и другие сервисы могли обращаться к нему по имени:
+### Шаг 2: Создание конфигурации Docker Compose
 
-```text
-# /etc/hosts
-127.0.0.1 gitlab.local
-```
-*Примечание: В `docker-compose.yml` используйте `hostname: gitlab.local` и соответствующий `external_url`.*
-
-### Шаг 2: Выбор метода запуска
-
-#### Вариант А: Docker Compose
-
-Создайте `/srv/gitlab/docker-compose.yml`:
+Создайте файл `$GITLAB_HOME/docker-compose.yml`. В этой версии мы используем Valkey и оптимизированные настройки для GitLab 19.x.
 
 ```yaml
 services:
   gitlab:
-    image: 'gitlab/gitlab-ce:18.10.3-ce.0'
+    image: 'gitlab/gitlab-ce:19.2.2-ce.0'
     container_name: gitlab
     restart: always
     hostname: 'gitlab.example.com'
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'https://gitlab.example.com'
-        # Настройка SSH, если 22 порт занят на хосте
+        # Настройка кэша: переход на Valkey
+        redis['backend'] = 'valkey'
+        # SSH на нестандартном порту
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        # Интеграция с AI Gateway (GitLab Duo)
+        gitlab_rails['ai_gateway_url'] = 'https://cloud.gitlab.com'
+        # Оптимизация для PostgreSQL 17
+        postgresql['shared_buffers'] = "1GB"
     ports:
       - '80:80'
       - '443:443'
       - '2222:22'
     volumes:
-      - '/srv/gitlab/config:/etc/gitlab'
-      - '/srv/gitlab/logs:/var/log/gitlab'
-      - '/srv/gitlab/data:/var/opt/gitlab'
-    shm_size: '256m'
+      - '$GITLAB_HOME/config:/etc/gitlab'
+      - '$GITLAB_HOME/logs:/var/log/gitlab'
+      - '$GITLAB_HOME/data:/var/opt/gitlab'
+    shm_size: '1gb'
     deploy:
       resources:
         limits:
-          memory: 12G
+          memory: 16G
+        reservations:
+          memory: 8G
 ```
 
-Запуск: `cd /srv/gitlab && sudo docker compose up -d`
+### Шаг 3: Запуск и первичная инициализация
 
-#### Вариант Б: Docker Run (Для тестов)
-
-```bash
-sudo docker run --detach \
-  --hostname gitlab.example.com \
-  --publish 443:443 --publish 80:80 --publish 2222:22 \
-  --name gitlab \
-  --restart always \
-  --volume /srv/gitlab/config:/etc/gitlab \
-  --volume /srv/gitlab/logs:/var/log/gitlab \
-  --volume /srv/gitlab/data:/var/opt/gitlab \
-  --shm-size 256m \
-  gitlab/gitlab-ce:18.10.3-ce.0
-```
-
-### Шаг 3: Первоначальная настройка
-
-1. **Ожидание:** Инициализация занимает до 15 минут. Следите через `docker logs -f gitlab`.
-2. **Пароль администратора:**
+1. **Запуск контейнера:**
    ```bash
-   sudo docker exec gitlab cat /etc/gitlab/initial_root_password
+   cd $GITLAB_HOME && docker compose up -d
    ```
-   *Пароль удаляется через 24 часа. Смените его сразу после входа.*
+2. **Мониторинг логов:** Инициализация базы данных и запуск AI-сервисов в 19.x может занять до 20 минут.
+   ```bash
+   docker logs -f gitlab
+   # Ожидайте строки: "gitlab Reconfigured!"
+   ```
+3. **Получение пароля `root`:**
+   ```bash
+   docker exec gitlab grep 'Password:' /etc/gitlab/initial_root_password
+   ```
+   *Внимание: Пароль автоматически удалится через 24 часа. Смените его немедленно в профиле администратора.*
+
+### Шаг 4: Валидация установки
+
+После входа проверьте статус компонентов:
+1. **Здоровье сервисов:** `docker exec gitlab gitlab-ctl status`. Все сервисы (включая `valkey` и `postgresql`) должны быть `run`.
+2. **Проверка конфигурации:** `docker exec gitlab gitlab-rake gitlab:check`.
+3. **AI-функционал:** Перейдите в `Admin Area -> Settings -> General -> AI-powered features` и проверьте статус подключения к GitLab Duo.
 
 ## Техническое обслуживание и Безопасность
 
-### Резервное копирование (Backup & Restore)
+### Резервное копирование и Восстановление
 
-**Ручное создание бэкапа:**
-Утилита `gitlab-backup` создает архив со всеми репозиториями и базой данных.
+**Критическое правило:** Бэкап GitLab состоит из двух частей:
+1. **Архив данных:** Создается через `gitlab-backup`.
+2. **Секреты:** Файлы `/etc/gitlab/gitlab-secrets.json` и `/etc/gitlab/gitlab.rb`. Без них восстановить БД невозможно.
+
+**Создание бэкапа:**
 ```bash
-# Создание архива
-sudo docker exec gitlab gitlab-backup create
-# → Создан файл в /var/opt/gitlab/backups/123456789_2026_04_13_18.10.3_gitlab_backup.tar
+docker exec gitlab gitlab-backup create
 ```
+Архив появится в `$GITLAB_HOME/data/backups/`.
 
-**Восстановление из бэкапа:**
-1. Поместите файл в `/srv/gitlab/data/backups/`.
-2. Остановите сервисы, работающие с БД:
-   ```bash
-   sudo docker exec gitlab gitlab-ctl stop puma
-   sudo docker exec gitlab gitlab-ctl stop sidekiq
-   ```
-3. Запустите восстановление:
-   ```bash
-   sudo docker exec gitlab gitlab-backup restore BACKUP=123456789_2026_04_13_18.10.3
-   ```
-4. Перезапустите и проверьте: `sudo docker exec gitlab gitlab-ctl restart`.
-
-**Облачные бэкапы (S3):**
-Для автоматической выгрузки бэкапов в S3 добавьте в `gitlab.rb`:
-```ruby
-gitlab_rails['backup_upload_connection'] = {
-  'provider' => 'AWS',
-  'region' => 'us-east-1',
-  'aws_access_key_id' => 'KEY',
-  'aws_secret_access_key' => 'SECRET',
-  'endpoint' => 'https://s3.example.com'
-}
-gitlab_rails['backup_upload_remote_directory'] = 'my-gitlab-backups'
-```
+**Восстановление (Recovery):**
+1. Остановите сервисы записи: `docker exec gitlab gitlab-ctl stop puma sidekiq`.
+2. Запустите восстановление: `docker exec gitlab gitlab-backup restore BACKUP=<TIMESTAMP>`.
+3. Скопируйте старые `gitlab-secrets.json` и `gitlab.rb` в `$GITLAB_HOME/config/`.
+4. Перезапустите контейнер: `docker restart gitlab`.
 
 ### Безопасность (Hardening)
 
-1. **Отключение регистрации:** `Admin Area -> Settings -> General -> Sign-up restrictions`.
-2. **MFA:** Принудительно включите 2FA для администраторов.
-3. **SSH:** Если используется нестандартный порт (2222), обновите `external_url` или `gitlab_shell_ssh_port`, чтобы ссылки `git clone` были корректными.
+1. **Реестр контейнеров:** Если планируете использовать встроенный Registry, обязательно настройте TLS и отдельный порт.
+2. **MFA:** Активируйте 2FA для всех пользователей. В 19.x доступна поддержка беспарольного входа (WebAuthn/Passkeys).
+3. **Обновления:** GitLab выпускает Security patches каждый месяц. Для обновления просто измените тег образа в `docker-compose.yml` и выполните `docker compose pull && docker compose up -d`.
 
-## Дополнительная информация (Белые пятна)
+## Дополнительная информация
 
 ### Работа за внешним Reverse Proxy (Nginx/Traefik)
 
-Если SSL терминируется на внешнем прокси, GitLab не должен пытаться выпустить сертификат. В `gitlab.rb`:
+Если SSL терминируется на внешнем балансировщике, GitLab должен знать об этом для корректного формирования заголовков. В `docker-compose.yml` (секция `GITLAB_OMNIBUS_CONFIG`):
+
 ```ruby
 external_url 'https://gitlab.example.com'
 nginx['listen_port'] = 80
@@ -170,14 +162,29 @@ nginx['proxy_set_headers'] = {
 }
 ```
 
-### Оптимизация памяти (Small Instance)
+### Оптимизация для малых ресурсов (Low RAM)
 
-Если у вас всего 8 ГБ RAM, уменьшите количество воркеров:
+Если доступно только 8 ГБ RAM, отключите мониторинг и ограничьте воркеры:
+
 ```ruby
+prometheus_monitoring['enable'] = false
+alertmanager['enable'] = false
 puma['worker_processes'] = 2
-sidekiq['max_concurrency'] = 10
-prometheus_monitoring['enable'] = false # Отключение для экономии ~500MB
+sidekiq['max_concurrency'] = 5
+gitaly['configuration'] = {
+  storage: [{ name: 'default', path: '/var/opt/gitlab/git-data/repositories' }],
+  concurrency: [{ rpc: "/gitaly.SmartHTTPService/PostReceivePack", max_per_repo: 3 }]
+}
 ```
+
+### Типичные ошибки и их решение (Troubleshooting)
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Ошибка 502 Whoops** | Puma еще запускается или мало RAM | Подождите 5 мин или увеличьте лимиты в Compose. |
+| **PostgreSQL Upgrade Fail** | Несовместимость версий при обновлении | Выполните `gitlab-ctl pg-upgrade` перед обновлением образа. |
+| **Git Clone SSH Fail** | Порт 2222 не проброшен | Проверьте секцию `ports` в Compose и настройки Firewall. |
+| **Duo Chat не работает** | Нет связи с AI Gateway | Проверьте доступ к `cloud.gitlab.com` и настройки WebSockets в прокси. |
 
 ### Смотрите также
 

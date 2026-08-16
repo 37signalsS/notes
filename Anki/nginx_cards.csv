@@ -394,3 +394,147 @@ L278: 278: Как скорость сети клиента влияет на в�
 392: 392: Как оптимизировать access_log?;Использовать buffer, flush и gzip: access_log /var/log/nginx/access.log buffer=32k flush=5s gzip;nginx::performance
 393: 393: Какой параметр buffer в access_log?;Логи записываются в буфер в памяти и сбрасываются на диск пачками, а не после каждого запроса;nginx::performance
 394: 394: Какой параметр flush в access_log?;Время через которое буфер будет принудительно сброшен на диск;nginx::performance
+Что выводит команда `nginx -V`?;Подробную информацию: версию, параметры компиляции и список установленных модулей (например, --with-http_v2_module, --with-http_ssl_module, --with-stream).;nginx::setup
+Что выводит команда `nginx -T`?;Полную объединённую конфигурацию в консоль. Удобно для аудита, поддержки, отладки и проверки порядка подключения include-файлов.;nginx::setup
+Какие сигналы поддерживает команда `nginx -s`?;"stop - немедленная остановка; quit - плавная остановка; reload - перезагрузка конфигурации; reopen - переоткрытие лог-файлов.";nginx::setup
+Почему рекомендуется reload вместо restart?;reload обновляет конфигурацию без разрыва текущих соединений (graceful).;nginx::setup
+Назовите основные контексты файла nginx.conf;1) Global Context - верхний уровень (user, worker_processes, pid) 2) events - сетевые соединения 3) http - основной контекст веб-трафика.;nginx::setup
+Где рекомендуется размещать server-блоки?;В отдельных файлах в директории sites-available, подключаемых через include, а не напрямую в nginx.conf (изоляция конфигурации).;nginx::setup
+Чем отличаются include /etc/nginx/conf.d/*.conf и include /etc/nginx/sites-enabled/*?;conf.d/*.conf подключает только файлы с расширением .conf, а sites-enabled/* - абсолютно все файлы в директории. Любой временный файл в sites-enabled будет прочитан Nginx, что рискованно.;nginx::setup
+Как активируется сайт в Nginx на Debian/Ubuntu?;Вручную: созданием символической ссылки (ln -s) из sites-available в sites-enabled. В отличие от Apache, у Nginx нет встроенной команды a2ensite.;nginx::setup
+Где находятся корни сайтов и логи Nginx?;Ubuntu: контент в /var/www/, логи в /var/log/nginx/ (access.log и error.log). RHEL: контент в /usr/share/nginx/html/.;nginx::setup
+Для чего нужен файл /etc/nginx/mime.types?;Определяет, как сервер обрабатывает различные расширения файлов (MIME-типы) для корректной отдачи контента в браузере.;nginx::setup
+Почему блок http нельзя вкладывать в server?;Блок http - глобальный контекст, определяется только один раз на верхнем уровне. Глобальные директивы (например, proxy_cache_path) задаются в основном http-блоке.;nginx::setup
+Что такое блок stream в Nginx?;Контекст для балансировки TCP/UDP трафика (L4). Появился в Nginx 1.9.0, находится на том же уровне иерархии, что и http.;nginx::setup
+Как установить Nginx из официального репозитория на Debian/Ubuntu?;Установить зависимости (curl, gnupg2, ca-certificates, lsb-release, ubuntu-keyring), импортировать ключ nginx.org, добавить репозиторий mainline в /etc/apt/sources.list.d/nginx.list и выполнить apt update && apt install nginx.;nginx::setup
+Как зафиксировать версию Nginx от нежелательных обновлений?;"Ubuntu: sudo apt-mark hold nginx; RHEL: sudo dnf versionlock nginx.";nginx::setup
+Какие порты нужно открыть в файрволе для Nginx?;80 (HTTP), 443 (HTTPS) и 22 (SSH). Перед активацией UFW (ufw enable) обязательно разрешить SSH, иначе можно потерять доступ к серверу.;nginx::setup
+Перечислите ключевые директивы базового server-блока;listen (порт/IP), server_name (домен), root (путь к файлам), index (файл по умолчанию), location / и try_files.;nginx::setup
+Как правильно применить изменения конфигурации Nginx?;Сначала обязательная валидация sudo nginx -t, затем sudo systemctl reload nginx.;nginx::setup
+Что делает try_files в базовой конфигурации сайта?;Последовательно проверяет существование ресурсов: $uri (файл), $uri/ (директория) и выполняет fallback (например, =404).;nginx::setup
+Где определяются директивы user и worker_processes?;В глобальном контексте (Global Context) на верхнем уровне nginx.conf.;nginx::setup
+Опишите послойную методологию диагностики Nginx;1) Локализация проблемы (клиент/сеть/сервер) 2) Проверка доступности 3) Валидация конфигурации 4) Анализ логов 5) Контроль ресурсов.;nginx::troubleshooting
+Как проверить, что Nginx слушает нужный порт?;"ss -lnpt | grep nginx - проверка открытых сокетов процесса; внешняя проверка: nc -zv domain 80.";nginx::troubleshooting
+Что означает Connection timed out при проверке порта?;Запрос блокируется файрволом (на самом сервере или на сетевом узле).;nginx::troubleshooting
+Что означает Connection refused при проверке порта?;Процесс Nginx не запущен или слушает другой порт/интерфейс.;nginx::troubleshooting
+Как выявить задержки при старте сервиса Nginx?;sudo systemd-analyze critical-chain nginx.service - анализ времени запуска и зависимостей.;nginx::troubleshooting
+Как включить debug-логирование в Nginx?;"error_log /var/log/nginx/error.log debug; Требуется поддержка debug при сборке (--with-debug в nginx -V). Создаёт огромную нагрузку на диск и CPU - только для точечной отладки.";nginx::troubleshooting
+Ошибка 403: причина и решение;Причина: нет прав у воркера (www-data/nginx) на чтение файлов или вход в директории. Решение: chown -R www-data:www-data, директории 755, файлы 644, проверить SELinux/AppArmor.;nginx::troubleshooting
+Ошибка 404: порядок диагностики;1) Проверить URL на опечатки 2) access.log: какой server_name обработал запрос (часто default_server) 3) error.log: путь, который Nginx пытался открыть 4) проверить root/alias и try_files.;nginx::troubleshooting
+Ошибка 413: причина и решение;Размер загружаемого файла превышает client_max_body_size. Решение: увеличить лимит, например client_max_body_size 100M.;nginx::troubleshooting
+Что означает HTTP-код 499?;Nginx-специфичный код: клиент разорвал соединение до того, как сервер отправил ответ. В логах выглядит как сбой бэкенда, хотя приложение могло обработать запрос успешно.;nginx::troubleshooting
+Как диагностировать ошибки 499 с помощью логов?;"Добавить в log_format переменные $request_time и $upstream_response_time. Если $request_time велик, а $upstream_response_time мал - клиент закрыл соединение; если оба высоки - медленный бэкенд.";nginx::troubleshooting
+Как найти URL с наибольшим числом ошибок 499?;awk '$9 == 499 {print $7}' /var/log/nginx/access.log | sort | uniq -c | sort -rn;nginx::troubleshooting
+Как заставить Nginx дожидаться ответа бэкенда после обрыва клиента?;Директива proxy_ignore_client_abort on - полезна для критических транзакций и гарантированного наполнения кэша.;nginx::troubleshooting
+Ошибка 500: возможные причины;Ошибки конфигурации (например, циклы rewrite), нехватка прав на запись в client_body_temp_path, сбой бэкенда. Если в логе rewrite or internal redirection cycle - исправить логику редиректов.;nginx::troubleshooting
+Ошибка 502: причина и решение;Nginx не получил ответ от бэкенда (процесс упал, не слушает порт или сбросил соединение). Проверить статус бэкенда, сокеты (ss -lnp | grep 9000), SELinux (getsebool httpd_can_network_connect).;nginx::troubleshooting
+Ошибка 504: причина и решение;Бэкенд принял запрос, но не успел ответить за таймаут Nginx. Решение: увеличить proxy_read_timeout и proxy_connect_timeout.;nginx::troubleshooting
+Ошибка 'upstream sent too big header';Бэкенд прислал слишком много заголовков (например, большие Cookies). Решение: увеличить proxy_buffer_size.;nginx::troubleshooting
+Ошибка 'an upstream response is buffered to a temporary file';Ответ бэкенда не помещается в память и записывается во временный файл. Если это замедляет работу - увеличить proxy_buffers.;nginx::troubleshooting
+Как проверить лимит файловых дескрипторов воркера Nginx?;cat /proc/$(pgrep -n nginx)/limits | grep 'Max open files'. Настройка: worker_rlimit_nofile 65535.;nginx::troubleshooting
+Что означает ошибка 'worker_connections are not enough'?;Нехватка лимита соединений на воркер. Решение: увеличить worker_connections в блоке events.;nginx::troubleshooting
+Ошибка 'could not allocate ... in shared memory zone';Зона разделяемой памяти (например, для limit_req или ssl_session_cache) переполнена. Решение: увеличить размер зоны в конфигурации.;nginx::troubleshooting
+Правила выбора server-блока при обработке запроса;1) Сначала точное совпадение IP:Port 2) затем server_name по заголовку Host 3) при отсутствии совпадений - default_server для данного порта.;nginx::troubleshooting
+Почему трафик может попадать не в тот server-блок?;Часто из-за неявного default_server: первый блок для порта перехватывает некорректные запросы. Диагностика: nginx -T (порядок include), явное указание default_server для мусорного трафика (444 или заглушка).;nginx::troubleshooting
+Как настроить stub_status в Nginx?;"location /nginx_status { stub_status; allow 127.0.0.1; deny all; } Модуль ngx_http_stub_status_module должен быть включён при сборке (nginx -V).";nginx::troubleshooting
+Типовые проблемы с /nginx_status (stub_status);"404: location перекрыт более приоритетным блоком или запрос идёт на другой хост; 403: проблемы allow/deny; конфликт порта 80 с другим server, определённым раньше.";nginx::troubleshooting
+Как посчитать статистику HTTP-кодов из access.log?;awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn;nginx::troubleshooting
+Как отфильтровать ошибки 5xx из access.log?;"sed -n '/HTTP\/[0-9.]*"" 5[0-9][0-9] /p' /var/log/nginx/access.log";nginx::troubleshooting
+Что такое nginx-module-vts?;Сторонний модуль Virtual Host Traffic Status - расширенная статистика трафика в реальном времени: по виртуальным хостам (server zones), группам апстримов, фильтрам и кэш-зонам.;nginx::monitoring
+В чём отличие VTS от stub_status?;stub_status даёт 7 базовых метрик для всего сервера без детализации. VTS: статус-коды (1xx-5xx) по каждому домену, время ответа апстримов, объём трафика, cache hit ratio, фильтрация по переменным.;nginx::monitoring
+Что такое RPS?;Requests Per Second - количество запросов в секунду, один из ключевых показателей производительности веб-сервера.;nginx::monitoring
+Что такое P95 (95-й перцентиль)?;Показатель: 95% запросов обработаны быстрее или за указанное время. Помогает выявить хвосты задержек, невидимые на средних значениях.;nginx::monitoring
+Опишите архитектуру мониторинга Nginx + VTS + Prometheus + Grafana;"Nginx с VTS агрегирует данные о каждом запросе в разделяемую память; Prometheus опрашивает (scrape) эндпоинт /metrics; Grafana запрашивает данные из Prometheus и строит дашборды.";nginx::monitoring
+Как настроить зону VTS в блоке http?;"vhost_traffic_status_zone shared:vhost_traffic_status:32m; (32Мб достаточно для ~1000 хостов). Для точных гистограмм - vhost_traffic_status_histogram_buckets.";nginx::monitoring
+Как включить экспорт метрик VTS в формате Prometheus?;"location /metrics { vhost_traffic_status_display; vhost_traffic_status_display_format prometheus; allow 127.0.0.1; deny all; }";nginx::monitoring
+Как исключить запросы из статистики VTS?;"Директива vhost_traffic_status_bypass $is_bot; - например, для исключения запросов систем мониторинга.";nginx::monitoring
+Как собирать статистику VTS по произвольным переменным?;"vhost_traffic_status_filter_by_set_key $status $server_name; - например, по статусу, User-Agent или типу контента.";nginx::monitoring
+PromQL: средний RPS по всем хостам;sum(rate(nginx_vts_server_requests_total[1m]));nginx::monitoring
+PromQL: доля ошибок 5xx;"sum(rate(nginx_vts_server_requests_total{code=""5xx""}[5m])) / sum(rate(nginx_vts_server_requests_total[5m]))";nginx::monitoring
+PromQL: P95 задержки ответов;histogram_quantile(0.95, sum(rate(nginx_vts_server_response_duration_seconds_bucket[5m])) by (le));nginx::monitoring
+Ошибка 'shared memory zone vhost_traffic_status is too small';Увеличить размер зоны в vhost_traffic_status_zone до 64m или 128m. Критично при большом числе хостов или использовании фильтров.;nginx::monitoring
+Метрики VTS не появляются в Prometheus;Проверить allow/deny в location /metrics, сетевую доступность порта Nginx и логи Nginx на ошибки доступа (403).;nginx::monitoring
+Отсутствуют гистограммы P95/P99 в VTS;"Проверить наличие vhost_traffic_status_histogram_buckets в контексте http; изменения требуют reload/restart Nginx.";nginx::monitoring
+Почему в новых проектах VTS не рекомендуется?;Модуль не обновляется активно с 2021 года. Рекомендуется Angie - расширенный мониторинг нативно и экспорт в Prometheus без сторонних модулей.;nginx::monitoring
+Что такое nginx-prometheus-exporter?;Официальное решение от Nginx Inc. Не требует пересборки Nginx, но работает через stub_status (ограниченный набор метрик) или Nginx Plus (платная версия).;nginx::monitoring
+Какие дашборды Grafana рекомендуются для VTS?;"ID 2949 - классический дашборд для VTS; ID 9614 - современная версия с поддержкой гистограмм.";nginx::monitoring
+Пример правила алерта NginxHighErrorRate;"sum(rate(nginx_vts_server_requests_total{code=""5xx""}[5m])) / sum(rate(nginx_vts_server_requests_total[5m])) > 0.05, for 2m - более 5% запросов с ошибкой 5xx.";nginx::monitoring
+Пример правила алерта NginxHighLatency;histogram_quantile(0.95, sum(rate(nginx_vts_server_response_duration_seconds_bucket[5m])) by (le)) > 2, for 5m - P95 задержка более 2 секунд.;nginx::monitoring
+Зачем ставить Nginx перед Consul?;Единая точка входа к UI и API: терминация SSL/TLS, отказоустойчивость (балансировка между узлами кластера), безопасность (ограничение admin API, заголовки, токены), поддержка long polling.;nginx::scenarios
+Почему при проксировании Consul важны таймауты?;"Consul использует блокирующие запросы (Blocking Queries), ожидая до ~5 минут. Nginx должен ждать дольше: proxy_read_timeout 310s; proxy_connect_timeout 5s.";nginx::scenarios
+Как настроить upstream для кластера Consul?;"upstream consul_servers { keepalive 32; server 10.0.1.10:8500 max_fails=3 fail_timeout=10s; server 10.0.1.11:8500 max_fails=3 fail_timeout=10s; } - поддержание постоянных соединений и отказоустойчивость.";nginx::scenarios
+Как ограничить доступ к admin API Consul (/v1/agent, /v1/operator)?;"location /v1/agent { allow 10.0.0.0/24; deny all; proxy_pass http://consul_servers; } - разрешить доступ только из внутренней сети управления.";nginx::scenarios
+Как решается проблема динамических upstream для Consul?;"Nginx OSS: consul-template для генерации конфига и nginx -s reload; Angie/Nginx Plus: динамическое разрешение имён в upstream через DNS (директива resolve).";nginx::scenarios
+Почему Consul UI может отдавать битые ассеты?;Consul UI требует завершающий слэш /ui/. Без него статические ассеты (JS/CSS) грузятся некорректно - нужен редирект /ui на /ui/.;nginx::scenarios
+Как узнать, на какой узел Consul ушёл запрос?;Через переменную $upstream_addr в логах Nginx - показывает конкретный адрес узла, обработавшего запрос.;nginx::scenarios
+Зачем ставить Nginx перед Grafana?;"Централизация доступа на портах 80/443 без открытия порта 3000 наружу; SSL-терминация; поддержка WebSockets (Grafana Live); передача реального IP клиента через X-Forwarded-For.";nginx::scenarios
+Как настроить проксирование WebSockets для Grafana Live?;"map $http_upgrade $connection_upgrade { default upgrade; '' close; } + в location: proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection $connection_upgrade;";nginx::scenarios
+Зачем в grafana.ini настраивать root_url?;Чтобы Grafana генерировала корректные ссылки и обрабатывала куки: domain и root_url должны соответствовать домену, через который отдаёт Nginx.;nginx::scenarios
+Как опубликовать Grafana в подпути (/grafana/)?;"Nginx: proxy_pass http://localhost:3000/; (важен слэш в конце); Grafana: root_url = https://example.com/grafana/ и serve_from_sub_path = true.";nginx::scenarios
+Почему нельзя использовать try_files при проксировании Grafana?;Nginx попытается найти файл на диске и вернёт 404, а Grafana отдаёт контент динамически через свой бэкенд.;nginx::scenarios
+Ошибка 'Origin not allowed' в Grafana;Заголовок Host в Nginx не совпадает с директивой domain в grafana.ini.;nginx::scenarios
+После логина в Grafana идёт редирект на http вместо https;"Проверить передачу заголовка proxy_set_header X-Forwarded-Proto $scheme; - Grafana должна знать, что соединение пришло по HTTPS.";nginx::scenarios
+Как устроен сценарий Nginx + Let's Encrypt в Docker?;"Два сервиса, связанные общими томами: nginx монтирует сертификаты только на чтение (ro); certbot отвечает за проверку домена и обновление сертификатов и имеет права на запись.";nginx::scenarios
+Как Certbot проверяет владение доменом (webroot)?;"Размещает токен в общей директории /var/www/certbot; Let's Encrypt проверяет его через HTTP-01 challenge по порту 80.";nginx::scenarios
+Как Nginx узнаёт об обновлённых сертификатах?;Nginx читает файлы сертификатов при запуске или reload. После обновления Certbot нужен nginx -s reload (в Docker - фоновый цикл sleep && nginx -s reload).;nginx::scenarios
+Какой location нужен для ACME challenge?;"location /.well-known/acme-challenge/ { root /var/www/certbot; }";nginx::scenarios
+Как решить проблему первого запуска (курица и яйцо)?;"Временно закомментировать блок 443 и ssl_* директивы; получить staging-сертификат (--staging), затем боевой; раскомментировать блок и перезапустить Nginx.";nginx::scenarios
+Зачем использовать --staging при получении сертификата?;Чтобы проверить связь и настройку, не исчерпывая лимиты Let's Encrypt.;nginx::scenarios
+Как проверить продление сертификатов Certbot?;"certbot certificates - список и срок действия; certbot renew --dry-run - тестовое продление без реальной замены.";nginx::scenarios
+Какой challenge нужен для Wildcard-сертификатов?;DNS-01. В Docker - через специализированные образы Certbot с плагинами (например, certbot/dns-cloudflare).;nginx::scenarios
+Nginx выдаёт Permission denied при чтении сертификатов;Пользователь внутри контейнера Nginx (обычно uid 101 в Alpine) должен иметь права на чтение файлов, созданных Certbot (обычно root).;nginx::scenarios
+Что такое защищённый APT-репозиторий?;Хранилище пакетов Debian/Ubuntu, доступ к которому ограничен на транспортном уровне (mTLS) и разрешён только клиентам с валидными сертификатами.;nginx::scenarios
+Что такое reprepro?;Инструмент командной строки для управления локальными .deb-репозиториями. Генерирует статическую структуру индексов (Packages, Sources, Release), что позволяет раздавать репозиторий любым веб-сервером.;nginx::scenarios
+Чем GPG-подпись отличается от mTLS?;"mTLS защищает доступ на транспортном уровне; GPG гарантирует целостность и подлинность пакетов (содержимое не изменено третьей стороной).";nginx::scenarios
+Назовите уровни защиты защищённого APT-репозитория;1) mTLS - сетевой уровень 2) проверка CN/серийного номера клиентского сертификата 3) GPG-подпись для целостности 4) изоляция reprepro (codenames, архитектуры, блокировка dbs/conf).;nginx::scenarios
+Как настроить mTLS в Nginx для репозитория?;"ssl_client_certificate /etc/nginx/ssl/ca.crt; ssl_verify_client on; ssl_verify_depth 2; ssl_crl /etc/nginx/ssl/crl.pem; - проверка клиентских сертификатов и их отзыва.";nginx::scenarios
+Как защитить служебные директории reprepro (conf, db)?;"location ~ ^/(conf|db) { deny all; return 404; }";nginx::scenarios
+Как настроить клиент apt для mTLS-аутентификации?;"Создать /etc/apt/apt.conf.d/99internal-repo с Acquire::https::repo.example.com { SslCert; SslKey; CaInfo; }. Ключ клиента хранить с правами chmod 600.";nginx::scenarios
+Как отозвать скомпрометированный клиентский сертификат?;Выпустить обновлённый crl.pem на CA, скопировать в /etc/nginx/ssl/crl.pem и выполнить nginx -s reload. Nginx начнёт возвращать 400 Bad Request для отозванного сертификата.;nginx::scenarios
+Ошибка GnuTLS: A TLS fatal alert has been received;Несоответствие версий TLS или отсутствие общего набора шифров. Убедиться, что на сервере разрешён TLS 1.3.;nginx::scenarios
+Ошибка 400 Bad Request при работе клиента apt с репозиторием;APT не отправил клиентский сертификат. Проверить пути в файле конфигурации apt.conf.d.;nginx::scenarios
+Что такое secure_link в Nginx?;Модуль ngx_http_secure_link_module для защиты контента от хотлинкинга и несанкционированного скачивания через проверку цифровой подписи ссылки (MD5) и времени её жизни.;nginx::security
+Как настроить secure_link?;"secure_link $arg_md5,$arg_expires; secure_link_md5 ""$secure_link_expires$uri secret_key""; Если $secure_link = """" - подпись отсутствует (вернуть 403); если ""0"" - срок истёк (вернуть 410).";nginx::security
+Какие значения принимает $secure_link?;"Пустая строка - подпись отсутствует или неверна (нужно вернуть 403); ""0"" - срок действия истёк (вернуть 410); иначе - время истечения из параметра ссылки.";nginx::security
+Что вычисляет secure_link_md5?;"MD5-подпись по формуле ""$secure_link_expires$uri secret_key"" - её генерирует приложение заранее для каждого защищаемого файла.";nginx::security
+Что делает директива limit_rate?;Ограничивает скорость передачи ответа клиенту (пропускную способность), защищая от исчерпания полосы. Пример: limit_rate 500k.;nginx::security
+Что делает limit_rate_after?;Отдаёт первые N байт ответа без ограничения скорости, затем применяет limit_rate. Пример: limit_rate_after 10m.;nginx::security
+Как ограничить скорость отдачи каталога загрузок?;"location /downloads/ { limit_rate_after 10m; limit_rate 500k; } - первые 10 МБ отдаются без ограничений, далее 500 КБ/с.";nginx::security
+Что делает limit_conn?;Ограничивает количество одновременных соединений с одного адреса (защита от открытия множества параллельных соединений).;nginx::security
+Как ограничить одновременные соединения с одного IP в http?;"limit_conn_zone $binary_remote_addr zone=per_ip:10m; ... limit_conn per_ip 10; - не более 10 одновременных соединений с одного IP.";nginx::security
+Что делает max_headers?;Ограничивает количество заголовков запроса (Nginx 1.25.1+ / Angie 1.4+). Защищает от атак на парсер заголовков, например HPACK Bomb в HTTP/2. Пример: max_headers 100.;nginx::security
+Что делает large_client_header_buffers?;Задаёт количество и максимальный размер буферов для чтения больших заголовков запроса. Пример: large_client_header_buffers 4 8k.;nginx::security
+Что делает client_header_buffer_size?;Размер буфера для чтения заголовков запроса клиента (обычно 1k). Участвует в защите от Header Flooding.;nginx::security
+Что делает client_body_buffer_size?;Размер буфера для чтения тела запроса (обычно 16k). Защищает RAM от переполнения большими запросами.;nginx::security
+Что делает limit_req_status?;Устанавливает HTTP-код при превышении лимита limit_req (по умолчанию 503). Рекомендуется 429 Too Many Requests.;nginx::security
+Какие таймауты помогают против Slowloris?;"client_body_timeout 10s; client_header_timeout 10s; keepalive_timeout 65s; send_timeout 10s; - ограничение времени на передачу заголовков, тела и ответа.";nginx::security
+Что такое ModSecurity?;Классический WAF (Web Application Firewall) для инспекции HTTP-трафика (SQLi, XSS, RCE) по наборам правил типа OWASP CRS. Рекомендуется v3 с коннектором для минимального влияния на производительность.;nginx::security
+Что такое Coraza?;Современный высокопроизводительный WAF на Go, в 2026 году активно внедряется через WebAssembly (WASM).;nginx::security
+Что делает заголовок Referrer-Policy?;"add_header Referrer-Policy ""strict-origin-when-cross-origin"" always; - ограничивает передачу Referer: origin отправляется только при переходе HTTPS -> HTTPS.";nginx::security
+Что делает заголовок Permissions-Policy?;"add_header Permissions-Policy ""camera=(), microphone=(), geolocation=(), usb=(), payment=()"" always; - запрещает сайту доступ к чувствительным API браузера.";nginx::security
+Что делает Cross-Origin-Opener-Policy (COOP)?;"add_header Cross-Origin-Opener-Policy ""same-origin"" always; - изолирует window.opener и защищает от утечек данных через побочные каналы (Spectre).";nginx::security
+Что делает Cross-Origin-Resource-Policy (CORP)?;"add_header Cross-Origin-Resource-Policy ""same-origin"" always; - запрещает другим origin'ам загружать ресурсы сайта.";nginx::security
+Что такое strict-dynamic в CSP?;Директива CSP (стандарт 2026): доверенными считаются только скрипты, загруженные одобренными (через nonce/hash) скриптами. Защищает от обхода политики через доверенные CDN.;nginx::security
+Что такое auth_request?;"Директива Nginx, передающая проверку прав доступа внешнему сервису (OIDC, LDAP) через подзапрос: auth_request /auth;. При ответе 2xx запрос пропускается, при 401/403 - отклоняется.";nginx::security
+Что делает proxy_hide_header?;Скрывает заголовки ответа бэкенда при проксировании (например, X-Powered-By, Server) для сокрытия информации о стеке.;nginx::security
+Как скрыть информацию о стеке бэкенда?;"В location с proxy_pass: proxy_hide_header X-Powered-By; proxy_hide_header Server; + server_tokens off; для самого Nginx.";nginx::security
+Как запретить выполнение скриптов в каталоге загрузок?;"location /static/uploads/ { location ~ \.php$ { deny all; } location ~ \.(pl|py|sh|cgi|exe)$ { return 403; } } - защита от Web Shell.";nginx::security
+Что делает блок geo в Nginx?;"Сопоставляет IP-адрес клиента с переменной на основе префиксов подсетей, например geo $geo_region { default RU; 10.0.0.0/8 EU; }. Используется для региональной логики.";nginx::security
+Какие возможности include в блоке geo?;"Начиная с Nginx 1.29.8+ директива include в geo поддерживает wildcards для управления большими базами IP: geo $geo_region { include /etc/nginx/geo/*.conf; }.";nginx::security
+Как правильно выставить права на /etc/nginx?;"sudo chown -R root:root /etc/nginx; sudo chmod -R 755 /etc/nginx; sudo chmod 640 /etc/nginx/nginx.conf; - конфигурационные файлы доступны только root.";nginx::security
+Что такое динамическое разрешение DNS в upstream?;Механизм, позволяющий Nginx периодически обновлять IP-адреса бэкендов на основе DNS-записей без перезагрузки конфигурации (reload).;nginx::lb
+В чём проблема статического разрешения DNS?;По умолчанию Nginx разрешает домены бэкендов только при старте или reload. Если IP изменится (Kubernetes, Docker, облако), Nginx продолжит слать трафик на старый IP, что даёт ошибки 502/504.;nginx::lb
+Когда появился параметр resolve в Nginx OSS?;В Nginx 1.27.3 (ноябрь 2024). До этого resolve был доступен только в Nginx Plus и Angie.;nginx::lb
+Как настроить динамическое разрешение DNS в upstream?;"upstream app_servers { zone backend_zone 128k; resolver 127.0.0.11 valid=10s; resolver_timeout 5s; server backend.example.com resolve; }";nginx::lb
+Что делает параметр resolve в upstream?;Указывает Nginx периодически перечитывать DNS-запись для указанного хоста. Требует обязательную директиву zone в блоке upstream.;nginx::lb
+Почему для resolve обязательна зона zone?;"Зона разделяемой памяти хранит состояние апстрима (список разрешённых IP, статусы, веса). Без неё динамическое обновление невозможно; при нехватке памяти Nginx не сможет обновлять список серверов.";nginx::lb
+Что делает директива resolver внутри upstream?;Определяет DNS-серверы для разрешения имён в рантайме. С Nginx 1.27.3 может располагаться непосредственно в блоке upstream. Параметр valid переопределяет TTL от DNS-сервера.;nginx::lb
+Что делает resolver_timeout?;Задаёт время ожидания ответа от DNS-сервера (по умолчанию 30с, рекомендуется снижать до 2-5с).;nginx::lb
+Что такое параметр service в upstream?;Параметр директивы server (Angie/Nginx Plus) для разрешения имён через DNS SRV-записи - автоматическое получение портов, весов и приоритетов.;nginx::lb
+Как настроить SRV-разрешение в Angie?;"server backend.local service=http resolve; - резолвинг через DNS SRV. Также Angie поддерживает resolver conf для авто-настройки из resolv.conf.";nginx::lb
+Как работает обходной путь динамического DNS через переменную?;"set $backend_host ""api.external-service.com""; proxy_pass http://$backend_host:8080; - переменная заставляет Nginx игнорировать статический кэш и резолвить имя в рантайме.";nginx::lb
+Какие минусы у обходного пути через переменную в proxy_pass?;"Игнорируются настройки блока upstream (least_conn, sticky, keepalive); при каждом запросе может выполняться DNS-запрос при малом TTL.";nginx::lb
+Что будет при старте, если домен с resolve не разрешается?;Nginx успешно запустится, пометит сервер как down и будет пытаться разрешить его в фоне. Без resolve ошибка разрешения имени при старте критическая - Nginx не запустится.;nginx::lb
+Какой резолвер используется в Docker-сетях?;"127.0.0.11 - встроенный DNS Docker. Для отключения IPv6: resolver 8.8.8.8 ipv6=off;.";nginx::lb
+Какой рекомендуемый размер zone для апстрима?;64k-128k достаточно для сотен бэкендов.;nginx::lb
+Как параметр valid влияет на кэширование DNS?;"valid в директиве resolver переопределяет TTL от DNS-сервера; если не указан, используется TTL из DNS-ответа.";nginx::lb

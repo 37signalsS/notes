@@ -1,6 +1,6 @@
 question;answer
 Что такое клиентская производительность (Client-Side Performance)?;Загрузка кода приложения (HTML, CSS, JS, изображения, шрифты) и исполнение кода (рендеринг, выполнение JavaScript в браузере)
-Что такое серверная производительность (Server-Side Performance)?;Фронт-сервер (Nginx, Angie) - обработка запросов, TLS, компрессия, кэширование, балансировка; Бэкенд - производительность серверных приложений, БД, промежуточных сервисов
+Что такое серверная производительность (Server-Side Performance)?;"Фронт-сервер (Nginx, Angie) - обработка запросов, TLS, компрессия, кэширование, балансировка; Бэкенд - производительность серверных приложений, БД, промежуточных сервисов"
 Что такое задержка (Latency/RTT)?;Время, необходимое для прохождения сигнала от клиента к серверу и обратно. Критический фактор для сетевых соединений
 Что такое пропускная способность (Throughput)?;Объем данных, который может быть передан за единицу времени
 Что такое Web Vitals?;Инициатива Google для оценки пользовательского опыта. Включает метрики LCP, INP, CLS
@@ -60,3 +60,123 @@ question;answer
 Как Brotli сжимает заголовки в HTTP/2?;С помощью HPACK
 Сколько RTT занимает установка TLS 1.2 соединения?;До 4 RTT
 Какое количество прогонов рекомендуется в WebPageTest?;3-5 прогонов для получения медианного результата
+Какой основной конфигурационный файл Apache в Ubuntu/Debian?;/etc/apache2/apache2.conf
+Какой основной конфигурационный файл Apache в RHEL/Rocky/AlmaLinux?;/etc/httpd/conf/httpd.conf
+Что определяет директива DocumentRoot в Apache?;Корневую директорию файлов веб-сайта, по умолчанию /var/www/html
+Что делают команды a2enmod и a2dismod в Debian/Ubuntu?;Включают и выключают модули Apache, создавая симлинки в mods-enabled
+Что делают команды a2ensite и a2dissite?;Включают и выключают виртуальные хосты из sites-available
+Какие MPM (Multi-Processing Modules) существуют в Apache?;Prefork (процесс на соединение), Worker (гибрид процессов и потоков), Event (асинхронный, современный стандарт)
+Почему MPM Event является современным стандартом Apache?;Оптимизирован для Keep-Alive, использует асинхронную обработку и лучше справляется с большим числом соединений
+Что такое .htaccess в Apache?;Распределённый конфигурационный файл, позволяющий делегировать управление настройками на уровне отдельных директорий без доступа к основному конфигу
+Какой недостаток у .htaccess?;"Снижает производительность, так как Apache ищет и обрабатывает .htaccess в каждой директории при каждом запросе; рекомендуется AllowOverride None"
+Как работает директива Require в Apache 2.4+?;Система управления доступом: Require ip, Require user, Require all granted / all denied
+Как включить HTTP/2 в Apache?;"Директива Protocols h2 http/1.1; требует модуля mod_http2 и TLS"
+Какие модули нужны для reverse proxy в Apache?;mod_proxy и mod_proxy_http
+Как Apache работает с PHP-FPM?;"Через FilesMatch \\.php$ и SetHandler ""proxy:fcgi://127.0.0.1:9000"""
+Какой модуль Apache защищает от Slowloris?;mod_reqtimeout, директива RequestReadTimeout (header и body с MinRate)
+Какие модули безопасности важны в Apache?;mod_security (WAF), mod_headers (заголовки), mod_ssl (TLS), mod_evasive (DoS/брутфорс), mod_reqtimeout (Slowloris)
+Как отключить листинг каталогов в Apache?;Директива Options -Indexes
+Чем SymLinksIfOwnerMatch лучше FollowSymLinks?;SymLinksIfOwnerMatch разрешает символьные ссылки только если владелец совпадает, защищая от атак через symlink
+Как скрыть информацию о версии Apache?;ServerTokens Prod, ServerSignature Off, TraceEnable Off
+Как ограничить размер запроса в Apache?;Директива LimitRequestBody (в байтах, например 102400 = 100 КБ)
+Как ограничить HTTP-методы в Apache?;Контейнер <LimitExcept GET POST HEAD> с Require all denied
+Что делает заголовок HSTS в Apache hardening?;"Header always set Strict-Transport-Security ""max-age=63072000; includeSubDomains; preload"" — принудительный HTTPS на 2 года"
+Какие системные ограничения задаются через systemd для Apache?;ProtectHome=true, ProtectSystem=full, PrivateTmp=true, NoNewPrivileges=true, CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Как настроить fail2ban для Apache?;В /etc/fail2ban/jail.local включить jail apache-auth с logpath /var/log/apache2/error.log и maxretry 3
+Какие параметры TLS рекомендуются для Apache?;SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1, SSLCipherSuite HIGH:!aNULL:!MD5, SSLHonorCipherOrder on
+Что такое HAProxy?;Высокопроизводительный балансировщик нагрузки и прокси для TCP/HTTP, стандарт де-факто для высоконагруженных систем
+Какие секции конфигурации есть в HAProxy?;global (общесистемные), defaults (значения по умолчанию), frontend (точка входа), backend (группа серверов), listen (объединение frontend+backend)
+Чем frontend отличается от backend в HAProxy?;frontend принимает запросы (IP/порт, ACL), backend определяет серверы, алгоритм балансировки и health checks
+Чем mode tcp отличается от mode http в HAProxy?;"tcp (L4) анализирует IP/порт/SNI и не разбирает приложение; http (L7) анализирует заголовки, path, cookies и поддерживает HTTP/2 и HTTP/3"
+Почему ACL по заголовкам не работают в mode tcp?;В mode tcp HAProxy не разбирает протокол прикладного уровня, поэтому ACL по HTTP-заголовкам, path и cookies игнорируются
+Перечислите алгоритмы балансировки HAProxy;roundrobin, leastconn, source, uri, url_param, hdr, first, random
+Что делает алгоритм source в HAProxy?;Хеширует IP клиента для фиксированной привязки к серверу (session affinity без cookies)
+Что делает алгоритм uri в HAProxy?;Хеширует URI для направления одного ресурса на один сервер, оптимизируя кэширование
+Какие типы health checks поддерживает HAProxy?;TCP check (порт), HTTP check (статус/тело через http-check expect), SSL check (сертификат), Agent check (внешний агент)
+Что задают параметры inter, fall, rise в HAProxy?;inter — интервал проверок, fall — число неудач до исключения сервера, rise — число успехов до возврата в ротацию
+Что делает option forwardfor в HAProxy?;Добавляет X-Forwarded-For с реальным IP клиента для передачи бэкенду
+Как настроить терминацию SSL в HAProxy?;bind *:443 ssl crt /etc/haproxy/certs/site.pem alpn h2,http/1.1
+Как включить HTTP/3 (QUIC) в HAProxy?;"Нужна версия 3.0+; добавить bind *:443 quic4 alpn h3 и заголовок Alt-Svc"
+Что такое SSL passthrough в HAProxy?;Режим mode tcp, при котором зашифрованный трафик пробрасывается к бэкенду без расшифровки на балансировщике
+Как проверить синтаксис конфигурации HAProxy?;haproxy -c -f /etc/haproxy/haproxy.cfg
+Как использовать Runtime API в HAProxy?;"Через socat к UNIX-сокету: echo ""show stat"" | socat /var/run/haproxy.sock stdio; set weight backend/server 50"
+Что означают флаги CD, sC, cC, PH в логах HAProxy?;CD — закрыто клиентом, sC — закрыто сервером/таймаут сервера, cC — закрыто HAProxy (лимиты), PH — ошибка разбора заголовков
+Что такое Stick Tables в HAProxy?;Хранение состояния в памяти для защиты от DDoS, брутфорса и rate limiting
+Чем HAProxy отличается от Nginx?;"HAProxy — узкоспециализированный балансировщик (скальпель) с глубокими проверками здоровья; Nginx — универсальный веб-сервер и прокси (швейцарский нож)"
+Какие таймауты рекомендуются в HAProxy?;timeout connect 5s, timeout client 50s, timeout server 50s, timeout http-request 10s (защита от Slowloris)
+Зачем параметр net.ipv4.ip_nonlocal_bind=1 для HAProxy?;Позволяет HAProxy запускаться на VIP, который ещё не назначен интерфейсу (нужно для работы с Keepalived)
+Что такое Traefik?;Современный cloud-native обратный прокси и балансировщик с автоматическим обнаружением сервисов (Docker, K8s, Nomad, Consul)
+Какая цепочка обработки запроса в Traefik v3?;Entrypoint -> Router (с Middlewares) -> Service -> Server (Backend)
+Чем статическая конфигурация Traefik отличается от динамической?;"Статическая загружается при старте (entrypoints, providers, certResolvers); динамическая обновляется на лету (routers, services, middlewares)"
+Что такое Providers в Traefik?;Источники динамической конфигурации: Docker, Kubernetes, File, Consul и др.
+Что такое Middlewares в Traefik?;Компоненты трансформации запроса: BasicAuth, ForwardAuth, IPAllowList, RateLimit, CircuitBreaker, Headers, StripPrefix
+Какие методы ACME challenge поддерживает Traefik?;HTTP Challenge (порт 80), TLS Challenge (ALPN на 443), DNS Challenge (TXT, нужен для wildcard)
+Как сделать canary-релиз в Traefik?;Weighted Round Robin в loadBalancer.services с весами (например, app-v1 90 / app-v2 10)
+Что такое Mirroring в Traefik?;Дублирование доли входящего трафика на другой сервис для тестирования без влияния на пользователя
+Как безопасно дать Traefik доступ к Docker?;Использовать docker-socket-proxy, ограничивающий доступ к docker.sock только чтением (CONTAINERS=1)
+Какие права нужны файлу acme.json в Traefik?;chmod 600, иначе Traefik проигнорирует файл
+Чем expose отличается от ports в Docker для Traefik?;"expose делает порт доступным только внутри Docker-сетей (рекомендуется для бэкендов); ports пробрасывает на хост — только для самого Traefik"
+Как защитить дашборд Traefik?;Через BasicAuth или ForwardAuth middleware, не выставлять на публичные entrypoints без TLS
+Что такое Lighttpd?;Лёгковесный высокопроизводительный веб-сервер, оптимизированный для окружений с ограниченными ресурсами
+Какой модуль используется для TLS в Lighttpd?;mod_openssl (реже mod_gnutls)
+Что такое профиль shortlived в Let's Encrypt?;Профиль для выпуска сертификатов на IP-адреса со сроком действия 6 дней, требующий частого обновления
+С какого времени Let's Encrypt выдает сертификаты на IP-адреса?;С 15 января 2026 года, профиль shortlived, методы HTTP-01 или TLS-ALPN-01
+С какой периодичностью нужно обновлять shortlived сертификаты?;Каждые 3-6 часов через ACME-клиент, например cron с certbot renew
+Что такое PHP-FPM?;FastCGI Process Manager — реализация PHP FastCGI с пулом процессов, связующее звено между веб-сервером и кодом приложения
+Какие три уровня мониторинга PHP-FPM существуют?;Blackbox (доступность порта/сокета), Whitebox (status page и метрики воркеров), System (CPU/RAM процессов php-fpm)
+Что такое listen queue в PHP-FPM?;"Число запросов в очереди на уровне сокета; если больше 0, приложение не справляется с нагрузкой"
+Что означает рост max children reached?;Пул достигал лимита pm.max_children — сигнал увеличить лимит или оптимизировать код
+Что происходит при достижении listen queue len?;Очередь переполняется и Nginx возвращает 502 Bad Gateway
+Чем active processes отличаются от idle processes?;"active выполняют код, idle ожидают; слишком много idle при pm=dynamic означает избыточный расход RAM в простое"
+Что такое slow requests в PHP-FPM?;"Запросы, превысившие request_slowlog_timeout; рост требует анализа slowlog"
+Какой OPcache Hit Rate считается хорошим?;"Выше 98%; ниже — неэффективное использование памяти или частая инвалидация кэша"
+Что происходит при 100% заполнении OPcache Memory Usage?;PHP перестаёт кэшировать новые файлы, что резко снижает производительность
+Какие метрики даёт ?full в статусе PHP-FPM?;last request memory (утечки памяти), last request cpu, request uri (какой скрипт вызвал нагрузку)
+Как ограничить доступ к status page PHP-FPM?;pm.status_path=/fpm-status и в Nginx location с allow 127.0.0.1, deny all (актуально после CVE-2026-6735)
+Как собирать метрики PHP-FPM в Prometheus с PHP 8.4+?;"Нативно через OpenMetrics: curl ""http://localhost/fpm-status?openmetrics"" без сторонних экспортеров"
+Какой экспортер использовать для PHP < 8.4?;php-fpm-exporter (рекомендуется v3.0+ с поддержкой OPcache), порт 9253
+Какой алерт сигнализирует о переполнении пула PHP-FPM?;phpfpm_max_children_reached_total > 0 или phpfpm_listen_queue > 0
+Как найти воркер PHP-FPM с утечкой памяти?;pidstat -r -C php-fpm 5 — мониторинг RSS памяти процессов каждые 5 секунд
+Что такое Let's Encrypt?;Некоммерческий центр сертификации, выдающий бесплатные TLS-сертификаты через протокол ACME
+Что такое ACME?;Automated Certificate Management Environment — протокол автоматизированного получения, обновления и отзыва сертификатов (RFC 8555)
+Что такое Certbot?;Официальный инструмент EFF для получения и обновления сертификатов Let's Encrypt, с плагинами для Nginx, Apache и webroot
+Что такое метод webroot в ACME?;Проверочный файл размещается в .well-known/acme-challenge/ на веб-сервере
+В чём разница HTTP-01 и DNS-01 валидации ACME?;"HTTP-01 требует открытый порт 80 и не поддерживает wildcard; DNS-01 использует TXT-запись _acme-challenge и поддерживает wildcard, но требует API DNS-провайдера"
+Какие лимиты есть у Let's Encrypt?;50 сертификатов на домен в неделю, 5 регистраций аккаунтов на IP в час, 30 проверок авторизации на домен в час
+Почему ECDSA рекомендуется вместо RSA?;"ECDSA быстрее и даёт меньшую нагрузку на CPU; тип по умолчанию в Certbot 2.x+; RSA нужен только для очень старых клиентов"
+Зачем использовать staging или dry-run перед боевым certbot?;"Для тестирования без расходования лимитов; при ошибке нельзя повторять команду сразу — будет блокировка (rate limit)"
+Какой способ установки Certbot рекомендует EFF?;Через snap: sudo snap install --classic certbot (всегда актуальная версия)
+Как проверить работу обновления сертификатов без реального продления?;sudo certbot renew --dry-run
+Какой срок действия сертификатов Let's Encrypt и когда обновлять?;"90 дней; обновление рекомендуется при остатке 30 дней"
+Что такое acme.sh?;Лёгковесный ACME-клиент на bash (зависимости только curl и openssl), поддерживает 100+ DNS API и wildcard
+Какой CA используется по умолчанию в acme.sh начиная с версии 3.0?;ZeroSSL (требует регистрации аккаунта по email)
+Какие преимущества acme.sh перед Certbot?;Меньше зависимостей (без Python), шире поддержка DNS API, гибкие hook-скрипты, параллельная поддержка ECDSA и RSA
+Как получить wildcard-сертификат через acme.sh?;"acme.sh --issue --dns dns_cf -d example.com -d ""*.example.com"" с указанием API-ключей провайдера (dns_cf для Cloudflare)"
+Что делает команда acme.sh --install-cert?;Устанавливает полученный сертификат в веб-сервер (--key-file, --fullchain-file, --reloadcmd)
+Что такое ARI (Automated Renewal Information)?;"Механизм, при котором CA может рекомендовать обновить сертификат раньше срока; поддерживается Certbot и acme.sh"
+Что такое RPS при бенчмаркинге?;Requests Per Second — количество успешно обработанных запросов в секунду
+Чем closed loop нагрузка отличается от open loop?;"Closed loop отправляет новый запрос после ответа (замедляется с сервером, скрывает проблемы); open loop шлёт с фиксированной частотой независимо от ответов, лучше имитирует реальных пользователей"
+Что такое Coordinated Omission?;Статистическая аномалия closed loop: зависший запрос замораживает поток, и тысячи пропущенных запросов не попадают в статистику, занижая перцентили задержки
+Почему нагрузчик и сервер должны быть на разных машинах?;Нагрузчик потребляет CPU и обходит реальный сетевой стек ядра, что искажает результаты
+На какие перцентили ориентироваться при анализе задержек?;p95, p99 (критичен для хвостовых задержек) и p99.9 (редкие блокировки: GC, диск)
+Как понять, что тест упёрся в сеть, а не в сервер?;"Рассчитать пропускную способность: на 1 Гбит/с линке максимум ~120 МБ/с; если упираетесь в это значение — проблема в сети"
+Какие sysctl нужны для высоких RPS при бенчмарке?;net.ipv4.ip_local_port_range=1024 65535, net.ipv4.tcp_tw_reuse=1, net.core.somaxconn, net.ipv4.tcp_max_syn_backlog
+Какие инструменты подходят для сырого RPS?;wrk, Bombardier, h2load
+Какие инструменты подходят для теста задержки под нагрузкой (SLA)?;wrk2/wrkx, Vegeta, k6 — они реализуют open loop и точные перцентили
+Какой инструмент лучший для HTTP/2 и HTTP/3 бенчмарка?;"h2load (часть nghttp2); для HTTP/3 задаётся --npn-list h3"
+Что делает параметр -m в h2load?;Число параллельных стримов в одном соединении (например, -m 50)
+Какие инструменты подходят для gRPC?;ghz (специализированный), fortio (стандарт для Istio), k6 (модуль k6/net/grpc)
+Как проверить работу 0-RTT при тесте HTTP/3?;Сравнить задержку первого запроса соединения с последующими: если первый значительно медленнее — 0-RTT не настроен
+Почему QUIC потребляет больше CPU, чем TCP?;Обработка UDP для QUIC требует до 2-3 раз больше CPU, чем эквивалентный трафик по TCP
+Какая команда ab проверяет RPS с keep-alive?;ab -n 10000 -c 50 -k (n — число запросов, c — одновременные соединения, k — keep-alive)
+Как изолировать TLS-тест от дискового I/O?;"Создать эндпоинт location /zero { return 200 """"; access_log off; }, отключить сжатие (gzip off) и логирование"
+Перечислите универсальный алгоритм диагностики веб-сервера;1) Статус процесса 2) Валидация конфигурации 3) Анализ логов и journalctl 4) Системные ресурсы 5) Сетевая связность (порт, файрвол) 6) Права и SELinux/AppArmor
+Какие команды проверяют синтаксис конфигурации Nginx и Apache?;sudo nginx -t и sudo apachectl configtest
+Как обнаружить OOM-killer для веб-сервера?;sudo dmesg -T | grep -i oom или sudo journalctl -k | grep -i oom
+Чем df -h отличается от df -i?;df -h показывает свободное место на диске, df -i — свободные inodes (важно при обилии мелких файлов)
+Как увеличить лимит открытых файлов для Nginx?;worker_rlimit_nofile в конфиге или LimitNOFILE в unit-файле systemd
+Почему может быть 403 Forbidden при верных правах chmod/chown?;Причина может быть в SELinux: проверить getenforce, ausearch -m avc -ts recent и исправить через restorecon или setsebool
+Что проверять при сбое веб-сервера после перезагрузки?;systemctl is-enabled (автозагрузка), mount -a (монтирование томов из fstab), зависимости через After= и Requires= в unit-файле
+Как узнать, какой процесс занял порт 80?;lsof -i :80 (или ss -tlpn)
+Что делает strace -p <PID> при зависании веб-сервера?;Трассирует системные вызовы процесса, позволяя найти точку зависания (крайняя мера)
+Что делает systemd-analyze critical-chain nginx.service?;Анализирует цепочку зависимостей службы при старте, помогает при проблемах с автозапуском

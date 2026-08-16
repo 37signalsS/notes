@@ -97,4 +97,4 @@ ALTER TABLE products VALIDATE CONSTRAINT check_positive_price;
 - **[Типовые сценарии миграций](scenarios.md)** — глубокий разбор батчинга и Online Schema Change.
 - **[Обратно-совместимые миграции (Expand-Contract)](expand_contract.md)** — паттерн для Zero-downtime.
 - **[Мониторинг миграций](monitoring.md)** — алертинг и диагностика блокировок в реальном времени.
-- **[Интеграция в CI/CD](cicd_integration.md)** — автоматизация проверок и линтинга в пайплайнах.
+- **[Интеграция в CI/CD](database-ci-cd.md)** — автоматизация проверок и линтинга в пайплайнах.

@@ -2,25 +2,43 @@
 
 ## Определения
 
-**Продвинутый сценарий** — сложные архитектурные паттерны использования CI/CD Components, включая миграцию с legacy-подходов, управление монорепозиториями, многоуровневые цепочки зависимостей (chaining), стратегии постепенного внедрения и методы глубокой отладки.
+**Продвинутый сценарий** — комплексный архитектурный паттерн использования CI/CD Components, выходящий за рамки базового импорта. Включает в себя миграцию крупномасштабных систем, управление монорепозиториями, многоуровневое каскадное подключение (chaining), стратегии безопасного развертывания новых версий и глубокую интеграцию с корпоративными политиками безопасности.
+
+**Инкапсуляция логики** — принцип проектирования, при котором внутренние детали реализации (Bash-команды, Docker-образы) скрыты за декларативным интерфейсом `spec:inputs`, что снижает когнитивную нагрузку на разработчиков.
+
+## Основные концепции
+
+### Фазы интерполяции и область видимости
+
+Для проектирования сложных систем необходимо учитывать жизненный цикл разрешения YAML-конфигурации:
+1.  **Разрешение `include`**: GitLab собирает все файлы (компоненты, шаблоны, локальные файлы).
+2.  **Интерполяция `inputs`**: Значения подставляются во все блоки кода. 
+    *   *Важно:* Теги `!reference` разрешаются **после** инпутов, поэтому передать `inputs` внутрь ссылки `!reference` напрямую невозможно.
+3.  **Обработка `variables`**: Инициализируются переменные. Значения из `inputs` уже доступны для использования внутри блока `variables`.
+4.  **Разрешение `extends` и `!reference`**: Выполняется финальное слияние структур и вставка фрагментов кода.
+
+### Безопасность и цепочка поставок (Supply Chain Security)
+
+Компоненты каталога обеспечивают уровень защиты Enterprise-класса:
+-   **Изоляция контекста**: Интерполяция `$[[ inputs.* ]]` выполняется в изолированной области видимости, исключая конфликты имен между независимыми модулями.
+-   **Контроль версий**: Поддержка Commit SHA (`@abc123de...`) гарантирует неизменность кода компонента и защищает от атак типа «отравление тега».
+-   **Интеграция с OIDC**: Использование `id_tokens` внутри компонентов позволяет реализовать Zero Trust аутентификацию в облаках без долгоживущих секретов.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 6: Миграция с include:project на компоненты
+### Сценарий 1: Миграция с include:project на компоненты
 
-**До (Legacy — include:project):**
-Пайплайны зависят от файлов в ветках, что затрудняет контроль версий и аудит.
+**До (Legacy):** Пайплайны зависят от веток (например, `main`), что делает их нестабильными.
 ```yaml
 include:
   - project: 'group/ci-templates'
     file: '/docker-build.yml'
-    ref: main # Нет версионирования, риск внезапного падения при обновлении
+    ref: main
 ```
 
-**После (Modern — include:component):**
-Использование компонентов с SemVer обеспечивает стабильность и строгий контракт параметров.
+**После (Modern):** Использование компонентов с SemVer и типизированными входами.
 ```yaml
 include:
   - component: '$CI_SERVER_FQDN/group/ci-components/docker-build@1.5.0'
@@ -29,16 +47,15 @@ include:
       push_registry: true
 ```
 
-**Шаги миграции:**
-1.  **Спецификация:** Создайте `.gitlab-ci.yml` с блоком `spec:inputs` в репозитории шаблона.
-2.  **Инкапсуляция:** Замените глобальные переменные внутри заданий на интерполяцию `$[[ inputs.* ]]`.
-3.  **Релиз:** Создайте тег SemVer (v1.0.0) и соответствующий GitLab Release.
-4.  **Проверка:** Используйте `glab ci lint --show-expanded` для подтверждения корректности.
-5.  **Очистка:** После перевода всех проектов удалите старые файлы шаблонов.
+**Алгоритм миграции:**
+1.  **Спецификация**: Создайте блок `spec:inputs` в исходном шаблоне.
+2.  **Рефакторинг**: Замените обращения к переменным `$VAR` на интерполяцию `$[[ inputs.var ]]`.
+3.  **Релиз**: Создайте тег SemVer (v1.0.0) и GitLab Release.
+4.  **Проверка**: Используйте `glab ci lint --show-expanded` для подтверждения корректности.
 
-### Сценарий 7: Компонент для монорепозитория
+### Сценарий 2: Компонент для монорепозитория (Selective CI)
 
-Эффективное управление сборкой в монорепозиториях через селективный запуск заданий.
+Эффективное управление сборкой через селективный запуск заданий на основе путей.
 
 ```yaml
 # templates/module-builder.yml
@@ -46,214 +63,156 @@ spec:
   inputs:
     module_path:
       type: string
-      description: "Относительный путь к директории модуля"
     build_command:
       default: "make build"
-      type: string
 ---
-build-changed-module:
+build-module:
   stage: build
-  image: golang:1.24
   script:
     - cd $[[ inputs.module_path ]]
     - $[[ inputs.build_command ]]
   rules:
     - changes:
         - $[[ inputs.module_path ]]/**/*
-      when: on_success
-    - when: never # Игнорировать, если изменений в директории нет
 ```
 
-**Применение в проекте:**
-```yaml
-include:
-  - component: '$CI_SERVER_FQDN/org/module-builder@1.2.0'
-    inputs:
-      module_path: services/api
-      build_command: go build ./...
+### Сценарий 3: Глубокая валидация через options и regex
 
-  - component: '$CI_SERVER_FQDN/org/module-builder@1.2.0'
-    inputs:
-      module_path: services/web
-      build_command: npm run build
-```
-
-### Сценарий 8: Валидация через options и regex
-
-Использование `options` превращает входные данные в каскадные списки в UI GitLab (Run Pipeline), а `regex` обеспечивает защиту от инъекций и некорректных строк.
+Использование `options` создает выпадающие списки в UI GitLab, а `regex` защищает от некорректных строк.
 
 ```yaml
 spec:
   inputs:
-    deploy_environment:
+    deploy_env:
       type: string
       options: [dev, staging, prod]
     replicas:
       type: number
       regex: '^[1-5]$' # Ограничение от 1 до 5 инстансов
-    require_approval:
-      type: boolean
-      default: false
 ---
 deploy_job:
-  stage: deploy
   script:
-    - echo "Deploying to $[[ inputs.deploy_environment ]] with $[[ inputs.replicas ]] nodes"
-  rules:
-    - if: '$[[ inputs.deploy_environment ]] == "prod" && $[[ inputs.require_approval ]] == true'
-      when: manual
-      allow_failure: false
-    - if: '$[[ inputs.deploy_environment ]] != "prod"'
-      when: on_success
+    - echo "Deploying $[[ inputs.replicas ]] nodes to $[[ inputs.deploy_env ]]"
 ```
 
-### Сценарий 9: Цепочка компонентов (Component Chaining)
+### Сценарий 4: Цепочка компонентов (Component Chaining)
 
-Компоненты могут выступать в роли оркестраторов, последовательно подключая другие компоненты для формирования стандартного пайплайна компании.
+Создание «золотых пайплайнов» организации путем каскадного подключения модулей.
 
 ```yaml
 # templates/standard-pipeline.yml
 spec:
   inputs:
-    app_name:
-      type: string
-    environment:
-      type: string
-      default: dev
+    app_name: { type: string }
 ---
 include:
   - component: '$CI_SERVER_FQDN/org/linter@2.0.0'
-  - component: '$CI_SERVER_FQDN/org/test-runner@1.8.0'
-    inputs:
-      coverage: true
   - component: '$CI_SERVER_FQDN/org/docker-builder@3.1.0'
-    inputs:
-      image_name: $[[ inputs.app_name ]]
-  - component: '$CI_SERVER_FQDN/org/deployer@4.0.0'
-    inputs:
-      env: $[[ inputs.environment ]]
+    inputs: { image_name: $[[ inputs.app_name ]] }
 ```
-> **Важно:** каждый вложенный компонент учитывается в системном лимите 150 `include`.
+> *Внимание:* Каждый вложенный компонент учитывается в лимите 150 `include`.
 
-### Сценарий 10: Постепенное внедрение (Rollout) через условия
+### Сценарий 5: Постепенное внедрение (Rollout) через условия
 
-Стратегия безопасного обновления критической инфраструктуры (например, линтеров или систем сборки).
+Безопасное тестирование новых версий критических инструментов на части проектов.
 
 ```yaml
 include:
-  # 90% проектов остаются на стабильной версии
+  # 90% проектов на стабильной версии
   - component: '$CI_SERVER_FQDN/org/security-scan@1.5.0'
     rules:
       - if: '$CI_PROJECT_ID % 10 != 0'
-  
-  # 10% проектов тестируют Release Candidate (ID оканчивается на 0)
+  # 10% проектов тестируют RC
   - component: '$CI_SERVER_FQDN/org/security-scan@2.0.0-rc1'
     rules:
       - if: '$CI_PROJECT_ID % 10 == 0'
 ```
 
-### Сценарий 11: Устранение неисправностей (Troubleshooting)
+### Сценарий 6: Вложенные компоненты (Nested Components)
 
-**Проблема 1: Компонент не загружается (Error 404)**
-*   **Диагностика:** Проверьте доступность через API:
-    `curl --header "PRIVATE-TOKEN: <token>" "https://gitlab.example.com/api/v4/projects/<project_id>/ci/components"`
-*   **Решение:** Убедитесь, что файл находится в папке `templates/`, а тег в Git соответствует SemVer.
-
-**Проблема 2: Ошибка валидации inputs**
-*   **Симптом:** `expected string, got number`.
-*   **Решение:** Всегда оборачивайте числовые значения в кавычки в YAML (например, `node_version: "22"`), если в `spec` указан тип `string`.
-
-**Проблема 3: Превышен лимит include**
-*   **Диагностика:** Подсчитайте количество вхождений через GitLab CLI:
-    `glab ci lint --show-expanded | grep -c "include:"`
-*   **Решение:** Объединяйте мелкие компоненты или используйте `!reference` для вставки скриптов без создания новых файлов.
-
-### Сценарий 12: Лучшие практики (Best Practices)
-
-1.  **Фиксация версий (Security):** В продакшене используйте **Commit SHA** (`@e3262fdb...`) для защиты от подмены тегов (Supply Chain Security).
-2.  **Документирование:** Каждый `input` должен иметь `description`. Поле `README.md` в корне репозитория автоматически парсится интерфейсом каталога.
-3.  **Атомарность:** Один компонент должен решать одну задачу. Не создавайте монолитные шаблоны на тысячи строк.
-4.  **Тестирование:** Создавайте папку `tests/` в репозитории компонента и запускайте проверку через `glab ci lint` перед каждым релизом.
-
-### Сценарий 13: Вложенные компоненты (Nested Components)
-
-Компоненты могут включать другие компоненты. Входы родительского компонента необходимо явно передавать дочернему.
+Явная передача параметров по иерархии вложенности.
 
 ```yaml
 # templates/parent.yml
 spec:
-  inputs:
-    stage_name:
-      default: test
+  inputs: { stage_name: { default: test } }
 ---
 include:
-  - component: $CI_SERVER_FQDN/my-org/sub-component@1.0.0
-    inputs:
-      target_stage: $[[ inputs.stage_name ]] # Проброс входа вниз по иерархии
+  - component: $CI_SERVER_FQDN/my-org/child@1.0.0
+    inputs: { target_stage: $[[ inputs.stage_name ]] }
 ```
 
-### Сценарий 14: Глобальные входы пайплайна (Pipeline-wide inputs)
+### Сценарий 7: Глобальные входы пайплайна (v17.11+)
 
-С версии GitLab 17.11 механизм `spec:inputs` можно использовать в корневом `.gitlab-ci.yml` проекта для создания динамических форм запуска.
+Создание динамических форм запуска в корневом `.gitlab-ci.yml` проекта.
 
 ```yaml
-# .gitlab-ci.yml (Корневой файл проекта)
+# .gitlab-ci.yml
 spec:
   inputs:
-    deploy_target:
-      options: [staging, production]
-      default: staging
-    run_security_scans:
-      type: boolean
-      default: true
+    target_cluster:
+      options: [k8s-eu, k8s-us]
+      default: k8s-eu
 ---
 include:
-  - component: $CI_SERVER_FQDN/org/deploy-comp@1.0.0
-    inputs:
-      env: $[[ inputs.deploy_target ]]
+  - component: $CI_SERVER_FQDN/org/k8s-deploy@1.0.0
+    inputs: { cluster: $[[ inputs.target_cluster ]] }
 ```
 
-### Сценарий 15: Интерполяция контекста (v18.6+)
+### Сценарий 8: Контекстная адаптация (v18.6+)
 
-Компоненты могут динамически адаптироваться к собственной версии или имени без передачи параметров из вызывающего пайплайна.
+Компонент автоматически определяет версию инструментов на основе собственной версии.
 
-| Переменная | Описание |
-| :--- | :--- |
-| `$[[ component.name ]]` | Имя текущего компонента. |
-| `$[[ component.version ]]` | Версия (тег или SHA), указанная при подключении. |
-| `$[[ component.sha ]]` | Полный хеш коммита компонента. |
-
-**Пример:** Автоматический выбор версии образа инструментов, соответствующей версии компонента.
 ```yaml
-build:
-  image: custom-registry/ci-tools:$[[ component.version ]]
+# templates/scanner.yml
+run-scan:
+  image: custom-registry/scanner:$[[ component.version ]]
   script:
-    - run-build.sh
+    - scanner-cli --path .
 ```
+
+---
+
+## Валидация и устранение неисправностей
+
+### Диагностика типичных ошибок
+
+| Проблема | Причина | Способ решения |
+| :--- | :--- | :--- |
+| **Error 404** | Неверный путь или проект не «Catalog resource». | Проверьте настройки Visibility и путь к файлу в `templates/`. |
+| **Input validation error** | Ошибка типа (string вместо number). | Оборачивайте числа в кавычки в YAML, если в `spec` указан тип `string`. |
+| **Exceeded max includes** | Слишком глубокая вложенность (лимит 150). | Используйте `!reference` для переиспользования кода внутри одного файла. |
+| **Interpolation failed** | Ошибка синтаксиса `$[[ ]]`. | Проверьте закрывающие скобки и отсутствие циклов в инпутах. |
+
+### Инструменты отладки
+- **`glab ci lint --show-expanded`**: Основной инструмент Senior-инженера для проверки итогового YAML.
+- **Pipeline Editor**: Вкладка «View merged YAML» в Web UI.
+
+---
+
+## Лучшие практики
+
+1.  **Атомарность**: Один компонент — одна логическая задача.
+2.  **Версионирование (Security)**: В продакшене используйте **Commit SHA** вместо тегов для защиты Supply Chain.
+3.  **Документирование**: Каждый `input` должен иметь `description`. Поле `README.md` обязательно.
+4.  **Тестирование**: Создавайте папку `tests/` в репозитории компонента и запускайте проверку перед каждым релизом.
 
 ---
 
 ## Справочная информация
 
-### Чек-лист перед публикацией компонента
-
+### Чек-лист перед публикацией
 - [ ] Секция `spec:inputs` заполнена и синтаксически верна.
-- [ ] Все входы имеют подробное описание в поле `description`.
-- [ ] Типы данных (`string`, `boolean`, `number`, `array`) соответствуют использованию в коде.
-- [ ] Добавлена строгая валидация через `regex` или `options`.
+- [ ] Добавлена валидация через `regex` или `options`.
 - [ ] Компонент прошел проверку через `glab ci lint --show-expanded`.
-- [ ] Создан тег в формате SemVer (vX.Y.Z) и GitLab Release.
-- [ ] Проект помечен как «Catalog resource» в настройках видимости.
+- [ ] Проект помечен как «Catalog resource».
+- [ ] Создан релиз с тегом SemVer.
 
 ### Внешние ресурсы
-
 - [GitLab Docs: CI/CD Components advanced patterns](https://docs.gitlab.com/ee/ci/components/index.html)
 - [GitLab Docs: Pipeline execution policies](https://docs.gitlab.com/ee/user/application_security/policies/pipeline_execution_policies.html)
 
----
-
-## Связанные документы
-
-- **[GitLab CI: Каталог компонентов](./ci_cd_catalog_components.md)** — архитектура и базовый синтаксис.
-- **[Ограничения каталога компонентов](./ci_cd_catalog_limits.md)** — системные лимиты и запрещенные ключи.
-- **[Справочная информация по каталогу](./ci_cd_catalog_reference.md)** — API, CLI и история изменений.
+### Связанные документы
+- **[GitLab CI: Каталог компонентов](./ci_cd_catalog_components.md)** — база и синтаксис.
+- **[Ограничения каталога компонентов](./ci_cd_catalog_limits.md)** — системные лимиты.
+- **[Справочная информация по каталогу](./ci_cd_catalog_reference.md)** — API и CLI.

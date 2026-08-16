@@ -199,5 +199,6 @@ export default function () {
 ### См. также
 
 - [Настройка Angie для высоких нагрузок](../WebServers/Angie/High_Load/index.md) — архитектурные паттерны и тюнинг.
+- [Интеграция k6 в CI/CD пайплайны](../Testing/testing_cicd_integration.md#нагрузочное-тестирование-в-ci-k6-и-quality-gates) — настройка Quality Gates и автоматизация порогов.
 - [RSS, RPS, RFS в Linux](../../Linux/Networking/Concepts/rss_rps_rfs.md) — многопоточная обработка трафика на уровне ядра.
 - [Диагностика HTTP-задержек](../../Linux/Diagnostics/Networking/curl_network_diagnostics.md) — использование curl для анализа Tail Latency.

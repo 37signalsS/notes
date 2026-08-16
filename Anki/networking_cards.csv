@@ -27,7 +27,7 @@ question;answer;tags
 Что такое /etc/nsswitch.conf?;Главный конфигурационный файл, определяющий порядок поиска информации (hosts, users, groups). Строка hosts: files dns означает - сначала /etc/hosts, затем DNS.;linux::networking::dns
 Что такое systemd-resolved?;Служба, выступающая в роли локального кэширующего DNS-резолвера. Обычно /etc/resolv.conf является симлинком на stub-resolv.conf с nameserver 127.0.0.53.;linux::networking::dns
 Что такое предсказуемые имена сетевых интерфейсов (Predictable Network Interface Names)?;Современная схема именования интерфейсов, кодирующая информацию о расположении устройства. Например: enp3s0 (Ethernet, шина PCI, слот) или wlp2s0 (Wireless LAN).;linux::networking::interfaces
-323: Что такое DNS-клиент в Linux?;Программное обеспечение или компонент ОС, ответственный за разрешение доменных имен в IP-адреса и наоборот. В Linux управляется через nsswitch.conf и resolv.conf.;linux::networking::dns
+Что такое DNS-клиент в Linux?;Программное обеспечение или компонент ОС, ответственный за разрешение доменных имен в IP-адреса и наоборот. В Linux управляется через nsswitch.conf и resolv.conf.;linux::networking::dns
 Какую проблему решает многопоточная обработка сетевого трафика (RSS, RPS, RFS)?;"На высокоскоростных сетях (10 Гбит/с+) обработка прерываний от сетевой карты на одном ядре CPU становится ""узким местом"", что приводит к неравномерной нагрузке, увеличению задержек и потерям пакетов.";linux::networking::concepts
 Что такое RSS (Receive Side Scaling)?;Это аппаратная технология сетевой карты (NIC), которая распределяет входящие пакеты по нескольким очередям приема (RX queues), привязанным к разным ядрам CPU, для параллельной обработки.;linux::networking::concepts
 Что такое RPS (Receive Packet Steering)?;Это программная технология в ядре Linux, которая эмулирует RSS. Она распределяет пакеты между ядрами CPU уже после их получения сетевой картой и работает на любом оборудовании.;linux::networking::concepts
@@ -42,129 +42,129 @@ question;answer;tags
 Что такое Policy-Based Routing (PBR) в Linux?;Это механизм, который позволяет выбирать таблицу маршрутизации на основе набора правил (политик), учитывая не только IP-адрес назначения, но и другие параметры, такие как IP-адрес источника, порт или метки пакетов.;linux::networking::routing
 В чем отличие PBR от традиционной маршрутизации?;Традиционная маршрутизация использует одну главную таблицу (`main`) и принимает решения только на основе IP-адреса назначения. PBR позволяет использовать несколько независимых таблиц маршрутизации и выбирать между ними на основе гибких правил.;linux::networking::routing
 Из каких трех ключевых компонентов состоит настройка PBR в Linux?;1) Несколько таблиц маршрутизации (создаются в `/etc/iproute2/rt_tables`). 2) Правила (`ip rule`), которые определяют, какую таблицу использовать. 3) Селекторы, часто в виде маркировки пакетов (`iptables -j MARK`), которые служат критерием для правил.;linux::networking::routing
-655: Что такое BBR (Bottleneck Bandwidth and Round-trip time)?;Алгоритм контроля перегрузки от Google, оптимизирующий пропускную способность и минимизирующий задержки путем моделирования характеристик канала.;linux::networking::tcp
-656: Что такое bufferbloat?;Проблема чрезмерной буферизации в сети, приводящая к высокой задержке и нестабильности соединения.;linux::networking::tcp
-657: Что такое Bandwidth-Delay Product (BDP)?;Произведение пропускной способности канала на время кругового пути. BBR старается поддерживать объем передаваемых данных на этом уровне.;linux::networking::tcp
-658: Что такое SYN backlog?;Очередь полуоткрытых TCP-соединений (SYN_RECV), контролируется параметром tcp_max_syn_backlog.;linux::networking::tcp
-659: Что такое Accept backlog?;Очередь установленных TCP-соединений (ESTABLISHED), ожидающих accept(), размер определяется параметром somaxconn.;linux::networking::tcp
-751: Что такое TCP/IP?;Семейство сетевых протоколов, лежащих в основе интернета. TCP обеспечивает надежную передачу, IP - адресацию и маршрутизацию.;linux::networking::protocols
-752: Что такое Three-Way Handshake?;Процесс установления TCP-соединения из трех шагов: SYN, SYN-ACK, ACK.;linux::networking::tcp
-753: Что такое Four-Way Termination?;Процесс разрыва TCP-соединения из четырех шагов: FIN, ACK, FIN, ACK.;linux::networking::tcp
-754: Что такое MTU (Maximum Transmission Unit)?;Максимальный размер пакета, который может быть передан без фрагментации. Для Ethernet обычно 1500 байт.;linux::networking::protocols
-755: Что такое MSS (Maximum Segment Size)?;Максимальный размер сегмента TCP данных. Обычно MTU минус заголовки IP и TCP (1460 байт для Ethernet).;linux::networking::tcp
-756: Что такое Window Scaling в TCP?;Расширение TCP для увеличения окна перегрузки выше 65535 байт. Необходимо для высокоскоростных сетей.;linux::networking::tcp
-757: Что такое SACK (Selective Acknowledgment)?;Механизм TCP для подтверждения получения конкретных сегментов, а не только последовательных. Ускоряет восстановление после потерь.;linux::networking::tcp
-758: Что такое TCP Fast Open (TFO)?;Расширение TCP, позволяющее отправлять данные в SYN-пакете, сокращая время установления соединения на один RTT.;linux::networking::tcp
-759: Что такое ECN (Explicit Congestion Notification)?;Механизм информирования о перегрузке без отбрасывания пакетов. Помечает пакеты флагами CE при перегрузке.;linux::networking::tcp
-760: Что такое NAT (Network Address Translation)?;Механизм преобразования IP-адресов и портов. Позволяет множеству устройств использовать один публичный IP.;linux::networking::routing
-761: Что такое PAT (Port Address Translation)?;Разновидность NAT, где разные устройства различаются по номерам портов. Несколько клиентов за одним IP.;linux::networking::routing
-762: Что такое ARP (Address Resolution Protocol)?;Протокол определения MAC-адреса по известному IP-адресу в локальной сети.;linux::networking::protocols
-763: Что такое ICMP (Internet Control Message Protocol)?;Протокол для передачи служебных сообщений и ошибок в сети. Используется ping и traceroute.;linux::networking::protocols
-764: Что такое VLAN (Virtual LAN)?;Технология логического разделения физической сети на изолированные широковещательные домены.;linux::networking::switching
-765: Что такое Trunk порт?;Порт коммутатора, передающий трафик нескольких VLAN с тегами 802.1Q.;linux::networking::switching
-766: Что такое 802.1Q?;Стандарт тегирования VLAN в Ethernet-кадрах. Добавляет 4 байта с идентификатором VLAN.;linux::networking::switching
-767: Что такое Routing Table?;Таблица маршрутизации, определяющая куда отправлять пакеты на основе их назначения.;linux::networking::routing
-768: Что такое Default Gateway?;Маршрут по умолчанию для пакетов, адрес назначения которых не найден в таблице маршрутизации.;linux::networking::routing
-769: Что такое CIDR (Classless Inter-Domain Routing)?;Метод адресации, позволяющий гибко задавать размер сети маской (например, /24 вместо классов A, B, C).;linux::networking::routing
-770: Что такое Subnet Mask?;Битовая маска, определяющая какая часть IP-адреса относится к сети, а какая к хосту.;linux::networking::routing
-824: Что такое MAC Address?;Уникальный аппаратный адрес сетевой карты на канальном уровне. Используется для идентификации устройств в локальной сети.;linux::networking::basics
-825: Что такое Broadcast Domain?;Сегмент сети, где broadcast-фреймы достигают всех устройств. Маршрутизаторы разделяют broadcast домены.;linux::networking::basics
-826: Что такое Collision Domain?;Сегмент сети, где пакеты могут конфликтовать при одновременной передаче. Коммутаторы разделяют collision домены.;linux::networking::basics
-828: Что такое Jumbo Frame?;Ethernet-кадр размером более 1500 байт (обычно 9000 байт). Увеличивает производительность в дата-центрах.;linux::networking::basics
-902: Что такое nsswitch.conf?;Файл Name Service Switch, определяющий порядок поиска информации (hosts, users, groups) в системе.;linux::networking::dns
-903: Что такое /etc/hosts?;Локальная статическая таблица соответствия IP-адресов и доменных имен. Имеет наивысший приоритет.;linux::networking::dns
-904: Что такое /etc/resolv.conf?;Файл с настройками DNS-клиента: список DNS-серверов (nameserver) и доменов для поиска (search).;linux::networking::dns
-906: Что такое resolvectl?;Утилита для диагностики и управления systemd-resolved. Показывает кэш, DNS-серверы, статистику.;linux::networking::dns
-907: Что такое DNS TTL (Time To Live)?;Время жизни DNS-записи в кэше. Определяет, как долго резолвер может хранить запись без повторного запроса.;linux::networking::dns
-908: Что такое DNS Caching?;Хранение результатов DNS-запросов для ускорения повторных обращений к тем же доменам.;linux::networking::dns
-909: Что такое A-запись в DNS?;Запись, связывающая доменное имя с IPv4-адресом.;linux::networking::dns
-910: Что такое AAAA-запись в DNS?;Запись, связывающая доменное имя с IPv6-адресом.;linux::networking::dns
-911: Что такое CNAME-запись в DNS?;Запись канонического имени - псевдоним для другого доменного имени. Например, www.example.com -> example.com.;linux::networking::dns
-912: Что такое MX-запись в DNS?;Mail Exchange - запись, указывающая почтовый сервер для домена с приоритетом.;linux::networking::dns
-913: Что такое NS-запись в DNS?;Name Server - запись, указывающая авторитетный DNS-сервер для домена.;linux::networking::dns
-914: Что такое PTR-запись в DNS?;Pointer - обратная DNS-запись, связывающая IP-адрес с доменным именем. Используется для reverse DNS.;linux::networking::dns
-915: Что такое SOA-запись в DNS?;Start of Authority - начальная запись зоны, содержащая основные параметры домена и серийный номер.;linux::networking::dns
-916: Что такое TXT-запись в DNS?;Текстовая запись для произвольных данных. Используется для SPF, DKIM, DMARC, верификации.;linux::networking::dns
-917: Что такое SRV-запись в DNS?;Service - запись с указанием хоста и порта для определенной службы. Используется для SIP, XMPP, Kerberos.;linux::networking::dns
-918: Что такое зона DNS?;Часть пространства доменных имен, за которую отвечает определенный DNS-сервер.;linux::networking::dns
-919: Что такое Forward DNS?;Прямое разрешение имен - преобразование доменного имени в IP-адрес (A/AAAA записи).;linux::networking::dns
-920: Что такое Reverse DNS?;Обратное разрешение имен - преобразование IP-адреса в доменное имя (PTR записи).;linux::networking::dns
-921: Что такое Authoritative DNS Server?;Сервер, имеющий полную информацию о зоне домена. Отвечает без обращения к другим серверам.;linux::networking::dns
-922: Что такое Recursive DNS Server?;Рекурсивный сервер, который от имени клиента выполняет полный поиск по иерархии DNS.;linux::networking::dns
-923: Что такое DNS Forwarder?;Сервер, перенаправляющий DNS-запросы на другие серверы вместо выполнения рекурсивного поиска.;linux::networking::dns
-924: Что такое DNS Root Server?;Один из 13 корневых серверов DNS. Начальная точка иерархии DNS, знает адреса TLD-серверов.;linux::networking::dns
-925: Что такое TLD (Top Level Domain)?;Домен верхнего уровня - часть домена после последней точки (.com, .org, .ru).;linux::networking::dns
-926: Что такое Delegation в DNS?;Делегирование - передача ответственности за поддомен другому DNS-серверу через NS-записи.;linux::networking::dns
-930: Что такое Split DNS?;Конфигурация, при которой внутренние и внешние клиенты получают разные ответы для одного домена.;linux::networking::dns
-931: Что такое BIND?;Berkeley Internet Name Domain - самая популярная реализация DNS-сервера для Linux.;linux::networking::services
-932: Что такое DNS over HTTPS (DoH)?;Протокол шифрования DNS-запросов через HTTPS. Предотвращает перехват и подмену DNS-трафика.;linux::networking::security
-933: Что такое DNS over TLS (DoT)?;Протокол шифрования DNS-запросов через TLS. Альтернатива DoH с явным указанием порта 853.;linux::networking::security
-934: Что такое мультикаст (Multicast)?;Тип сетевой передачи, при котором один пакет одновременно доставляется группе получателей.;linux::networking::protocols
-935: Что такое Anycast?;Тип адресации, при котором один IP-адрес назначен нескольким серверам. Запросы направляются на ближайший.;linux::networking::routing
-936: Что такое Load Balancing?;Распределение нагрузки между несколькими серверами для повышения доступности и производительности.;linux::networking::loadbalancing
-937: Что такое Health Check в балансировке?;Проверка состояния серверов для исключения неработающих из пула балансировки.;linux::networking::loadbalancing
-938: Что такое Session Persistence (Sticky Sessions)?;Привязка сессии пользователя к конкретному серверу в пуле балансировки.;linux::networking::loadbalancing
-939: Что такое Round Robin балансировка?;Алгоритм распределения запросов по кругу между серверами. Простой, но не учитывает нагрузку.;linux::networking::loadbalancing
-940: Что такое Least Connections балансировка?;Алгоритм, направляющий новые запросы на сервер с наименьшим количеством активных соединений.;linux::networking::loadbalancing
-941: Что такое Weighted балансировка?;Алгоритм с весами, позволяющий направлять больше трафика на более мощные серверы.;linux::networking::loadbalancing
-942: Что такое Layer 4 Load Balancing?;Балансировка на транспортном уровне (TCP/UDP). Работает с IP и портами, не анализирует содержимое.;linux::networking::loadbalancing
-943: Что такое Layer 7 Load Balancing?;Балансировка на прикладном уровне. Анализирует HTTP-заголовки, URL, cookies для принятия решений.;linux::networking::loadbalancing
-944: Что такое Reverse Proxy?;Промежуточный сервер, принимающий запросы от клиентов и перенаправляющий их на backend-серверы. Может кэшировать, сжимать, защищать.;linux::networking::proxy
-945: Что такое Forward Proxy?;Прокси-сервер, через который клиенты обращаются к внешним ресурсам. Используется для контроля доступа и кэширования.;linux::networking::proxy
-947: Что такое API Gateway?;Сервер, выступающий единой точкой входа для API. Обеспечивает аутентификацию, rate limiting, маршрутизацию.;linux::networking::api
-948: Что такое Rate Limiting?;Ограничение количества запросов от клиента за определенное время для защиты от перегрузки и abuse.;linux::networking::security
-1080: Что такое RDMA (Remote Direct Memory Access)?;Технология прямого доступа к памяти удаленного компьютера без участия CPU. Низкая задержка, высокая прорускная способность.;linux::networking::rdma
-1087: Что такое DPDK (Data Plane Development Kit)?;Набор библиотек для быстрой обработки пакетов в userspace. Обход ядра для максимальной производительности.;linux::networking::performance
-1088: Что такое Kernel Bypass?;Техника обработки сетевых пакетов в userspace без прохождения через ядро Linux. Максимальная производительность.;linux::networking::performance
-1089: Что такое Huge Pages в DPDK?;Большие страницы памяти (2MB или 1GB) для хранения буферов пакетов. Уменьшают TLB miss.;linux::networking::performance
-1301: Что такое Network Socket?;Сокет для связи процессов по сети (TCP, UDP). Использует IP-адреса и порты.;linux::networking::sockets
-1305: Что такое AF_INET?;Семейство адресов IPv4 сокетов.;linux::networking::sockets
-1306: Что такое AF_INET6?;Семейство адресов IPv6 сокетов.;linux::networking::sockets
-1307: Что такое SOCK_STREAM?;Тип сокета с установлением соединения, надежная доставка (TCP).;linux::networking::sockets
-1308: Что такое SOCK_DGRAM?;Тип сокета без установления соединения, ненадежная доставка (UDP).;linux::networking::sockets
-1309: Что такое SOCK_RAW?;Тип raw-сокета для доступа к низкоуровневым протоколам (IP, ICMP).;linux::networking::sockets
-1551: Что такое MTA (Mail Transfer Agent)?;Агент передачи почты - демон для отправки и приема email (Postfix, Sendmail, Exim).;linux::networking::email
-1552: Что такое MDA (Mail Delivery Agent)?;Агент доставки почты - доставляет email в почтовые ящики пользователей (dovecot, procmail).;linux::networking::email
-1553: Что такое MUA (Mail User Agent)?;Пользовательский агент почты - клиент для чтения писем (Thunderbird, Evolution, mutt).;linux::networking::email
-1554: Что такое SMTP (Simple Mail Transfer Protocol)?;Протокол передачи почты между серверами. Порт 25 (587 для submission).;linux::networking::email
-1571: Что такое SPF (Sender Policy Framework)?;DNS-запись с разрешенными IP для отправки почты от домена. Борется с spoofing.;linux::networking::email
-1584: Что такое Submission Port?;Порт 587 для отправки почты с аутентификацией (MSA - Mail Submission Agent).;linux::networking::email
-1687: Какой порядок разрешения имён в nsswitch.conf является стандартным?;files dns - сначала проверяется /etc/hosts, затем DNS-серверы.;linux::networking::dns
-1688: Что означает параметр files в nsswitch.conf?;Означает, что нужно сначала посмотреть в локальном файле /etc/hosts.;linux::networking::dns
-1689: Что означает параметр dns в nsswitch.conf?;Означает, что если имя не найдено локально, нужно отправить запрос к DNS-серверам.;linux::networking::dns
-1690: Какой файл содержит статические соответствия IP-адресов и доменных имён?;/etc/hosts - локальная база данных, имеет приоритет перед DNS-запросами.;linux::networking::dns
-1692: Какой файл является симлинком на stub-resolv.conf в системах с systemd-resolved?;/etc/resolv.conf обычно симлинк на /run/systemd/resolve/stub-resolv.conf.;linux::networking::dns
-1693: Какие параметры поддерживаются в /etc/resolv.conf?;nameserver - IP DNS-сервера, search - доменные суффиксы для поиска, options - дополнительные опции (timeout, attempts).;linux::networking::dns
-1694: Что делает опция search в resolv.conf?;Список доменных суффиксов, добавляемых к коротким именам при разрешении.;linux::networking::dns
-1695: Как очистить кэш DNS в systemd-resolved?;Команда resolvectl flush-caches.;linux::networking::dns
-1696: Как проверить текущие DNS-серверы через systemd-resolved?;Команда resolvectl status.;linux::networking::dns
-1697: Что такое LLMNR (Link-Local Multicast Name Resolution)?;Протокол для разрешения имён в локальной сети без DNS-сервера. Использует multicast. Может быть отключён в целях безопасности.;linux::networking::dns
-1699: Что такое сетевая латентность (Network Latency)?;Время, необходимое для передачи пакета данных от источника к получателю. Ключевой показатель производительности сети.;linux::networking::performance
-1702: Что такое p95/p99 Latency?;Хвостовая латентность - метрики, отражающие производительность для наихудших 5% или 1% запросов.;linux::networking::performance
-1704: Чем BBR отличается от CUBIC?;CUBIC основан на потерях пакетов, BBR - на моделировании пропускной способности и RTT. BBR минимизирует очереди.;linux::networking::tcp
-1708: Что делает параметр tcp_tw_reuse?;Разрешает повторное использование сокетов в состоянии TIME_WAIT для исходящих соединений.;linux::networking::tcp
-1709: Что такое SYN cookies?;Механизм защиты от SYN-flood атак, активируется при риске переполнения SYN backlog.;linux::networking::tcp
-1710: Что означает состояние TCP TIME_WAIT?;Состояние после закрытия соединения для обеспечения надёжной доставки последних пакетов и предотвращения проблем с новыми соединениями.;linux::networking::tcp
-1711: Что такое GRO (Generic Receive Offload)?;Механизм в ядре Linux, агрегирующий несколько входящих пакетов одного потока в один суперпакет перед передачей в сетевой стек.;linux::networking::offloading
-1712: Что такое LRO (Large Receive Offload)?;Аппаратная технология агрегации пакетов на сетевой карте. Может нарушать TCP-семантику.;linux::networking::offloading
-1713: Что такое TSO (TCP Segmentation Offload)?;Механизм разделения крупных TCP-пакетов на более мелкие сегменты аппаратно на NIC перед отправкой.;linux::networking::offloading
-1717: Что такое Policy-Based Routing (PBR)?;Механизм маршрутизации на основе политик, позволяющий выбирать таблицу маршрутизации по IP-адресу источника, порту, протоколу или меткам пакетов.;linux::networking::routing
-1718: Какие селекторы поддерживает ip rule?;from (исходный IP), to (адрес назначения), fwmark (метка iptables), iif (входящий интерфейс), oif (исходящий интерфейс), sport/dport, protocol.;linux::networking::routing
-1719: Что такое fwmark?;Метка пакета, устанавливаемая через iptables (таблица mangle, действие MARK) для последующего использования в ip rule.;linux::networking::routing
-1720: Какой приоритет у пользовательских правил в ip rule?;Пользовательские правила добавляются между local (0) и main (32766), обычно с приоритетом 1000.;linux::networking::routing
-1721: Что такое DHCP Relay?;Ретрансляция DHCP-запросов между VLAN или подсетями. Позволяет одному DHCP-серверу обслуживать несколько сетей.;linux::networking::dhcp
-1722: Что такое DHCP Lease?;Аренда IP-адреса - период времени, на который DHCP-сервер выдаёт адрес клиенту. Информация хранится в файле аренды.;linux::networking::dhcp
-1723: Какие порты использует DHCP?;UDP/67 (сервер) и UDP/68 (клиент) для классического DHCP.;linux::networking::dhcp
-1724: Что такое DHCP Failover?;Механизм отказоустойчивости с двумя DHCP-серверами, синхронизирующими аренды через TCP/647.;linux::networking::dhcp
-1725: Что такое Kea DHCP?;Современный DHCP-сервер от ISC с JSON-конфигурацией, REST API и активной поддержкой. Рекомендуется для новых развёртываний.;linux::networking::dhcp
-1726: Что измеряет утилита ping?;RTT (Round Trip Time) - время прохождения пакета до хоста и обратно, а также потери пакетов.;linux::networking::diagnostics
-1727: Что показывает TTL в ответе ping?;Число хопов до хоста. Linux имеет начальное 64, Windows - 128, сетевое оборудование - 255.;linux::networking::diagnostics
-1728: Что такое mtr?;Утилита, объединяющая ping и traceroute - показывает маршрут и статистику потерь/задержек на каждом хопе.;linux::networking::diagnostics
-1729: Для чего используется iperf3?;Измерение реальной пропускной способности канала между двумя хостами.;linux::networking::diagnostics
-1730: Что показывает команда ss -ti?;Расширенная TCP-информация включая RTT (время往返), cwnd (окно перегрузки), retransmits (повторные передачи).;linux::networking::diagnostics
-1731: Что позволяет сделать nc (netcat) для диагностики?;Проверить доступность TCP или UDP порта на удалённом хосте. Помогает определить, блокируется ли порт firewall.;linux::networking::diagnostics
-1732: Что показывает ss -s?;Сводная статистика по всем сокетам: количество в каждом состоянии TCP, общее количество соединений.;linux::networking::diagnostics
-1738: Что такое Bonding?;Объединение нескольких физических интерфейсов в один логический для увеличения пропускной способности и отказоустойчивости.;linux::networking::interfaces
+Что такое BBR (Bottleneck Bandwidth and Round-trip time)?;Алгоритм контроля перегрузки от Google, оптимизирующий пропускную способность и минимизирующий задержки путем моделирования характеристик канала.;linux::networking::tcp
+Что такое bufferbloat?;Проблема чрезмерной буферизации в сети, приводящая к высокой задержке и нестабильности соединения.;linux::networking::tcp
+Что такое Bandwidth-Delay Product (BDP)?;Произведение пропускной способности канала на время кругового пути. BBR старается поддерживать объем передаваемых данных на этом уровне.;linux::networking::tcp
+Что такое SYN backlog?;Очередь полуоткрытых TCP-соединений (SYN_RECV), контролируется параметром tcp_max_syn_backlog.;linux::networking::tcp
+Что такое Accept backlog?;Очередь установленных TCP-соединений (ESTABLISHED), ожидающих accept(), размер определяется параметром somaxconn.;linux::networking::tcp
+Что такое TCP/IP?;Семейство сетевых протоколов, лежащих в основе интернета. TCP обеспечивает надежную передачу, IP - адресацию и маршрутизацию.;linux::networking::protocols
+Что такое Three-Way Handshake?;Процесс установления TCP-соединения из трех шагов: SYN, SYN-ACK, ACK.;linux::networking::tcp
+Что такое Four-Way Termination?;Процесс разрыва TCP-соединения из четырех шагов: FIN, ACK, FIN, ACK.;linux::networking::tcp
+Что такое MTU (Maximum Transmission Unit)?;Максимальный размер пакета, который может быть передан без фрагментации. Для Ethernet обычно 1500 байт.;linux::networking::protocols
+Что такое MSS (Maximum Segment Size)?;Максимальный размер сегмента TCP данных. Обычно MTU минус заголовки IP и TCP (1460 байт для Ethernet).;linux::networking::tcp
+Что такое Window Scaling в TCP?;Расширение TCP для увеличения окна перегрузки выше 65535 байт. Необходимо для высокоскоростных сетей.;linux::networking::tcp
+Что такое SACK (Selective Acknowledgment)?;Механизм TCP для подтверждения получения конкретных сегментов, а не только последовательных. Ускоряет восстановление после потерь.;linux::networking::tcp
+Что такое TCP Fast Open (TFO)?;Расширение TCP, позволяющее отправлять данные в SYN-пакете, сокращая время установления соединения на один RTT.;linux::networking::tcp
+Что такое ECN (Explicit Congestion Notification)?;Механизм информирования о перегрузке без отбрасывания пакетов. Помечает пакеты флагами CE при перегрузке.;linux::networking::tcp
+Что такое NAT (Network Address Translation)?;Механизм преобразования IP-адресов и портов. Позволяет множеству устройств использовать один публичный IP.;linux::networking::routing
+Что такое PAT (Port Address Translation)?;Разновидность NAT, где разные устройства различаются по номерам портов. Несколько клиентов за одним IP.;linux::networking::routing
+Что такое ARP?;Протокол определения MAC-адреса по известному IP-адресу в локальной сети.;linux::networking::protocols
+Что такое ICMP (Internet Control Message Protocol)?;Протокол для передачи служебных сообщений и ошибок в сети. Используется ping и traceroute.;linux::networking::protocols
+Что такое VLAN (Virtual LAN)?;Технология логического разделения физической сети на изолированные широковещательные домены.;linux::networking::switching
+Что такое Trunk порт?;Порт коммутатора, передающий трафик нескольких VLAN с тегами 802.1Q.;linux::networking::switching
+Что такое 802.1Q?;Стандарт тегирования VLAN в Ethernet-кадрах. Добавляет 4 байта с идентификатором VLAN.;linux::networking::switching
+Что такое Routing Table?;Таблица маршрутизации, определяющая куда отправлять пакеты на основе их назначения.;linux::networking::routing
+Что такое Default Gateway?;Маршрут по умолчанию для пакетов, адрес назначения которых не найден в таблице маршрутизации.;linux::networking::routing
+Что такое CIDR (Classless Inter-Domain Routing)?;Метод адресации, позволяющий гибко задавать размер сети маской (например, /24 вместо классов A, B, C).;linux::networking::routing
+Что такое Subnet Mask?;Битовая маска, определяющая какая часть IP-адреса относится к сети, а какая к хосту.;linux::networking::routing
+Что такое MAC Address?;Уникальный аппаратный адрес сетевой карты на канальном уровне. Используется для идентификации устройств в локальной сети.;linux::networking::basics
+Что такое Broadcast Domain?;Сегмент сети, где broadcast-фреймы достигают всех устройств. Маршрутизаторы разделяют broadcast домены.;linux::networking::basics
+Что такое Collision Domain?;Сегмент сети, где пакеты могут конфликтовать при одновременной передаче. Коммутаторы разделяют collision домены.;linux::networking::basics
+Что такое Jumbo Frame?;Ethernet-кадр размером более 1500 байт (обычно 9000 байт). Увеличивает производительность в дата-центрах.;linux::networking::basics
+Что такое nsswitch.conf?;Файл Name Service Switch, определяющий порядок поиска информации (hosts, users, groups) в системе.;linux::networking::dns
+Что такое /etc/hosts?;Локальная статическая таблица соответствия IP-адресов и доменных имен. Имеет наивысший приоритет.;linux::networking::dns
+Что такое /etc/resolv.conf?;Файл с настройками DNS-клиента: список DNS-серверов (nameserver) и доменов для поиска (search).;linux::networking::dns
+Что такое resolvectl?;Утилита для диагностики и управления systemd-resolved. Показывает кэш, DNS-серверы, статистику.;linux::networking::dns
+Что такое DNS TTL (Time To Live)?;Время жизни DNS-записи в кэше. Определяет, как долго резолвер может хранить запись без повторного запроса.;linux::networking::dns
+Что такое DNS Caching?;Хранение результатов DNS-запросов для ускорения повторных обращений к тем же доменам.;linux::networking::dns
+Что такое A-запись в DNS?;Запись, связывающая доменное имя с IPv4-адресом.;linux::networking::dns
+Что такое AAAA-запись в DNS?;Запись, связывающая доменное имя с IPv6-адресом.;linux::networking::dns
+Что такое CNAME-запись в DNS?;Запись канонического имени - псевдоним для другого доменного имени. Например, www.example.com -> example.com.;linux::networking::dns
+Что такое MX-запись в DNS?;Mail Exchange - запись, указывающая почтовый сервер для домена с приоритетом.;linux::networking::dns
+Что такое NS-запись в DNS?;Name Server - запись, указывающая авторитетный DNS-сервер для домена.;linux::networking::dns
+Что такое PTR-запись в DNS?;Pointer - обратная DNS-запись, связывающая IP-адрес с доменным именем. Используется для reverse DNS.;linux::networking::dns
+Что такое SOA-запись в DNS?;Start of Authority - начальная запись зоны, содержащая основные параметры домена и серийный номер.;linux::networking::dns
+Что такое TXT-запись в DNS?;Текстовая запись для произвольных данных. Используется для SPF, DKIM, DMARC, верификации.;linux::networking::dns
+Что такое SRV-запись в DNS?;Service - запись с указанием хоста и порта для определенной службы. Используется для SIP, XMPP, Kerberos.;linux::networking::dns
+Что такое зона DNS?;Часть пространства доменных имен, за которую отвечает определенный DNS-сервер.;linux::networking::dns
+Что такое Forward DNS?;Прямое разрешение имен - преобразование доменного имени в IP-адрес (A/AAAA записи).;linux::networking::dns
+Что такое Reverse DNS?;Обратное разрешение имен - преобразование IP-адреса в доменное имя (PTR записи).;linux::networking::dns
+Что такое Authoritative DNS Server?;Сервер, имеющий полную информацию о зоне домена. Отвечает без обращения к другим серверам.;linux::networking::dns
+Что такое Recursive DNS Server?;Рекурсивный сервер, который от имени клиента выполняет полный поиск по иерархии DNS.;linux::networking::dns
+Что такое DNS Forwarder?;Сервер, перенаправляющий DNS-запросы на другие серверы вместо выполнения рекурсивного поиска.;linux::networking::dns
+Что такое DNS Root Server?;Один из 13 корневых серверов DNS. Начальная точка иерархии DNS, знает адреса TLD-серверов.;linux::networking::dns
+Что такое TLD (Top Level Domain)?;Домен верхнего уровня - часть домена после последней точки (.com, .org, .ru).;linux::networking::dns
+Что такое Delegation в DNS?;Делегирование - передача ответственности за поддомен другому DNS-серверу через NS-записи.;linux::networking::dns
+Что такое Split DNS?;Конфигурация, при которой внутренние и внешние клиенты получают разные ответы для одного домена.;linux::networking::dns
+Что такое BIND?;Berkeley Internet Name Domain - самая популярная реализация DNS-сервера для Linux.;linux::networking::services
+Что такое DNS over HTTPS (DoH)?;Протокол шифрования DNS-запросов через HTTPS. Предотвращает перехват и подмену DNS-трафика.;linux::networking::security
+Что такое DNS over TLS (DoT)?;Протокол шифрования DNS-запросов через TLS. Альтернатива DoH с явным указанием порта 853.;linux::networking::security
+Что такое мультикаст (Multicast)?;Тип сетевой передачи, при котором один пакет одновременно доставляется группе получателей.;linux::networking::protocols
+Что такое Anycast?;Тип адресации, при котором один IP-адрес назначен нескольким серверам. Запросы направляются на ближайший.;linux::networking::routing
+Что такое Load Balancing?;Распределение нагрузки между несколькими серверами для повышения доступности и производительности.;linux::networking::loadbalancing
+Что такое Health Check в балансировке?;Проверка состояния серверов для исключения неработающих из пула балансировки.;linux::networking::loadbalancing
+Что такое Session Persistence (Sticky Sessions)?;Привязка сессии пользователя к конкретному серверу в пуле балансировки.;linux::networking::loadbalancing
+Что такое Round Robin балансировка?;Алгоритм распределения запросов по кругу между серверами. Простой, но не учитывает нагрузку.;linux::networking::loadbalancing
+Что такое Least Connections балансировка?;Алгоритм, направляющий новые запросы на сервер с наименьшим количеством активных соединений.;linux::networking::loadbalancing
+Что такое Weighted балансировка?;Алгоритм с весами, позволяющий направлять больше трафика на более мощные серверы.;linux::networking::loadbalancing
+Что такое Layer 4 Load Balancing?;Балансировка на транспортном уровне (TCP/UDP). Работает с IP и портами, не анализирует содержимое.;linux::networking::loadbalancing
+Что такое Layer 7 Load Balancing?;Балансировка на прикладном уровне. Анализирует HTTP-заголовки, URL, cookies для принятия решений.;linux::networking::loadbalancing
+Что такое Reverse Proxy?;Промежуточный сервер, принимающий запросы от клиентов и перенаправляющий их на backend-серверы. Может кэшировать, сжимать, защищать.;linux::networking::proxy
+Что такое Forward Proxy?;Прокси-сервер, через который клиенты обращаются к внешним ресурсам. Используется для контроля доступа и кэширования.;linux::networking::proxy
+Что такое API Gateway?;Сервер, выступающий единой точкой входа для API. Обеспечивает аутентификацию, rate limiting, маршрутизацию.;linux::networking::api
+Что такое Rate Limiting?;Ограничение количества запросов от клиента за определенное время для защиты от перегрузки и abuse.;linux::networking::security
+Что такое RDMA (Remote Direct Memory Access)?;Технология прямого доступа к памяти удаленного компьютера без участия CPU. Низкая задержка, высокая прорускная способность.;linux::networking::rdma
+Что такое DPDK (Data Plane Development Kit)?;Набор библиотек для быстрой обработки пакетов в userspace. Обход ядра для максимальной производительности.;linux::networking::performance
+Что такое Kernel Bypass?;Техника обработки сетевых пакетов в userspace без прохождения через ядро Linux. Максимальная производительность.;linux::networking::performance
+Что такое Huge Pages в DPDK?;Большие страницы памяти (2MB или 1GB) для хранения буферов пакетов. Уменьшают TLB miss.;linux::networking::performance
+Что такое Network Socket?;Сокет для связи процессов по сети (TCP, UDP). Использует IP-адреса и порты.;linux::networking::sockets
+Что такое AF_INET?;Семейство адресов IPv4 сокетов.;linux::networking::sockets
+Что такое AF_INET6?;Семейство адресов IPv6 сокетов.;linux::networking::sockets
+Что такое SOCK_STREAM?;Тип сокета с установлением соединения, надежная доставка (TCP).;linux::networking::sockets
+Что такое SOCK_DGRAM?;Тип сокета без установления соединения, ненадежная доставка (UDP).;linux::networking::sockets
+Что такое SOCK_RAW?;Тип raw-сокета для доступа к низкоуровневым протоколам (IP, ICMP).;linux::networking::sockets
+Что такое MTA (Mail Transfer Agent)?;Агент передачи почты - демон для отправки и приема email (Postfix, Sendmail, Exim).;linux::networking::email
+Что такое MDA (Mail Delivery Agent)?;Агент доставки почты - доставляет email в почтовые ящики пользователей (dovecot, procmail).;linux::networking::email
+Что такое MUA (Mail User Agent)?;Пользовательский агент почты - клиент для чтения писем (Thunderbird, Evolution, mutt).;linux::networking::email
+Что такое SMTP (Simple Mail Transfer Protocol)?;Протокол передачи почты между серверами. Порт 25 (587 для submission).;linux::networking::email
+Что такое SPF (Sender Policy Framework)?;DNS-запись с разрешенными IP для отправки почты от домена. Борется с spoofing.;linux::networking::email
+Что такое Submission Port?;Порт 587 для отправки почты с аутентификацией (MSA - Mail Submission Agent).;linux::networking::email
+Какой порядок разрешения имён в nsswitch.conf является стандартным?;files dns - сначала проверяется /etc/hosts, затем DNS-серверы.;linux::networking::dns
+Что означает параметр files в nsswitch.conf?;Означает, что нужно сначала посмотреть в локальном файле /etc/hosts.;linux::networking::dns
+Что означает параметр dns в nsswitch.conf?;Означает, что если имя не найдено локально, нужно отправить запрос к DNS-серверам.;linux::networking::dns
+Какой файл содержит статические соответствия IP-адресов и доменных имён?;/etc/hosts - локальная база данных, имеет приоритет перед DNS-запросами.;linux::networking::dns
+Какой файл является симлинком на stub-resolv.conf в системах с systemd-resolved?;/etc/resolv.conf обычно симлинк на /run/systemd/resolve/stub-resolv.conf.;linux::networking::dns
+Какие параметры поддерживаются в /etc/resolv.conf?;nameserver - IP DNS-сервера, search - доменные суффиксы для поиска, options - дополнительные опции (timeout, attempts).;linux::networking::dns
+Что делает опция search в resolv.conf?;Список доменных суффиксов, добавляемых к коротким именам при разрешении.;linux::networking::dns
+Как очистить кэш DNS в systemd-resolved?;Команда resolvectl flush-caches.;linux::networking::dns
+Как проверить текущие DNS-серверы через systemd-resolved?;Команда resolvectl status.;linux::networking::dns
+Что такое LLMNR (Link-Local Multicast Name Resolution)?;Протокол для разрешения имён в локальной сети без DNS-сервера. Использует multicast. Может быть отключён в целях безопасности.;linux::networking::dns
+Что такое сетевая латентность (Network Latency)?;Время, необходимое для передачи пакета данных от источника к получателю. Ключевой показатель производительности сети.;linux::networking::performance
+Что такое p95/p99 Latency?;Хвостовая латентность - метрики, отражающие производительность для наихудших 5% или 1% запросов.;linux::networking::performance
+Чем BBR отличается от CUBIC?;CUBIC основан на потерях пакетов, BBR - на моделировании пропускной способности и RTT. BBR минимизирует очереди.;linux::networking::tcp
+Что делает параметр tcp_tw_reuse?;Разрешает повторное использование сокетов в состоянии TIME_WAIT для исходящих соединений.;linux::networking::tcp
+Что такое SYN cookies?;Механизм защиты от SYN-flood атак, активируется при риске переполнения SYN backlog.;linux::networking::tcp
+Что означает состояние TCP TIME_WAIT?;Состояние после закрытия соединения для обеспечения надёжной доставки последних пакетов и предотвращения проблем с новыми соединениями.;linux::networking::tcp
+Что такое GRO (Generic Receive Offload)?;Механизм в ядре Linux, агрегирующий несколько входящих пакетов одного потока в один суперпакет перед передачей в сетевой стек.;linux::networking::offloading
+Что такое LRO (Large Receive Offload)?;Аппаратная технология агрегации пакетов на сетевой карте. Может нарушать TCP-семантику.;linux::networking::offloading
+Что такое TSO?;Механизм разделения крупных TCP-пакетов на более мелкие сегменты аппаратно на NIC перед отправкой.;linux::networking::offloading
+Что такое Policy-Based Routing (PBR)?;Механизм маршрутизации на основе политик, позволяющий выбирать таблицу маршрутизации по IP-адресу источника, порту, протоколу или меткам пакетов.;linux::networking::routing
+Какие селекторы поддерживает ip rule?;from (исходный IP), to (адрес назначения), fwmark (метка iptables), iif (входящий интерфейс), oif (исходящий интерфейс), sport/dport, protocol.;linux::networking::routing
+Что такое fwmark?;Метка пакета, устанавливаемая через iptables (таблица mangle, действие MARK) для последующего использования в ip rule.;linux::networking::routing
+Какой приоритет у пользовательских правил в ip rule?;Пользовательские правила добавляются между local (0) и main (32766), обычно с приоритетом 1000.;linux::networking::routing
+Что такое DHCP Relay?;Ретрансляция DHCP-запросов между VLAN или подсетями. Позволяет одному DHCP-серверу обслуживать несколько сетей.;linux::networking::dhcp
+Что такое DHCP Lease?;Аренда IP-адреса - период времени, на который DHCP-сервер выдаёт адрес клиенту. Информация хранится в файле аренды.;linux::networking::dhcp
+Какие порты использует DHCP?;UDP/67 (сервер) и UDP/68 (клиент) для классического DHCP.;linux::networking::dhcp
+Что такое DHCP Failover?;Механизм отказоустойчивости с двумя DHCP-серверами, синхронизирующими аренды через TCP/647.;linux::networking::dhcp
+Что такое Kea DHCP?;Современный DHCP-сервер от ISC с JSON-конфигурацией, REST API и активной поддержкой. Рекомендуется для новых развёртываний.;linux::networking::dhcp
+Что измеряет утилита ping?;RTT (Round Trip Time) - время прохождения пакета до хоста и обратно, а также потери пакетов.;linux::networking::diagnostics
+Что показывает TTL в ответе ping?;Число хопов до хоста. Linux имеет начальное 64, Windows - 128, сетевое оборудование - 255.;linux::networking::diagnostics
+Что такое mtr?;Утилита, объединяющая ping и traceroute - показывает маршрут и статистику потерь/задержек на каждом хопе.;linux::networking::diagnostics
+Для чего используется iperf3?;Измерение реальной пропускной способности канала между двумя хостами.;linux::networking::diagnostics
+Что показывает команда ss -ti?;Расширенная TCP-информация включая RTT (время往返), cwnd (окно перегрузки), retransmits (повторные передачи).;linux::networking::diagnostics
+Что позволяет сделать nc (netcat) для диагностики?;Проверить доступность TCP или UDP порта на удалённом хосте. Помогает определить, блокируется ли порт firewall.;linux::networking::diagnostics
+Что показывает ss -s?;Сводная статистика по всем сокетам: количество в каждом состоянии TCP, общее количество соединений.;linux::networking::diagnostics
+Что такое Bonding?;Объединение нескольких физических интерфейсов в один логический для увеличения пропускной способности и отказоустойчивости.;linux::networking::interfaces
 Как диагностировать ситуацию, когда сеть не «умерла», а всё уткнулось в ARP-cache (хаос, часть IP не пингуется)?;1. ip -s neigh (ищем INCOMPLETE/FAILED) 2. ip neigh show | wc -l (количество записей) 3. Проверяем лимит: cat /proc/sys/net/ipv4/neigh/default/gc_thresh3 4. dmesg | grep -i arp;linux::networking::arp::troubleshooting
 Чем полезен флаг -i в команде ss (Socket Statistics)?;Он выводит внутреннюю TCP-информацию (tcp_info), включая алгоритм контроля перегрузки (cong), RTT, cwnd и статистику ретрансмиссий (retrans).;linux::networking::diagnostics
 Как с помощью ss найти все TCP-соединения, находящиеся в стадиях активного разрыва?;ss -tan state fin-wait-1 state fin-wait-2 state close-wait;linux::networking::diagnostics
@@ -1350,3 +1350,83 @@ question;answer;tags
 Какие уровни реализации сегментации существуют?;Макросегментация (VLAN/VRF, фильтрация NGFW между подсетями), облачная (Security Groups, Network ACLs), хостовая на eBPF (Cilium), прикладная (Service Mesh, mTLS, контроль L7).;linux::networking::ip_addressing
 Назовите ключевые принципы микросегментации в Zero Trust?;Deny-by-default (весь трафик запрещен, пока не разрешен явно), Assume Breach (предполагать, что сегмент уже скомпрометирован), ограничение Lateral Movement и контекстная осведомленность.;linux::networking::topology
 На каком уровне OSI работает Service Mesh сегментация?;L7 — контроль на уровне конкретных HTTP-методов и путей, с аутентификацией через mTLS и идентичностью на базе SPIFFE.;linux::networking::osi_model
+Каков минимальный и максимальный размер TCP-заголовка?;Минимум 20 байт, максимум 60 байт (заголовок выровнен по 32 битам, все поля big-endian).;linux::networking::tcp
+Какие поля входят в фиксированную часть TCP-заголовка?;Порты источника и назначения (по 16 бит), Sequence Number, Acknowledgment Number, Data Offset, зарезервированные биты, флаги, Window Size, Checksum, Urgent Pointer.;linux::networking::tcp
+Что такое поле Data Offset в TCP-заголовке?;Длина заголовка в 32-битных словах (отсюда ограничение 60 байт), указывает начало данных.;linux::networking::tcp
+Что такое опции EOL и NOP в TCP?;EOL (kind 0) — конец списка опций, NOP (kind 1) — байт-заполнитель для выравнивания по 32 бита.;linux::networking::tcp
+Что такое TCP-опция MSS и когда она передается?;"kind 2, размер 4 байта, передается только в сегменте SYN; объявляет максимальный размер сегмента.";linux::networking::tcp
+Что такое TCP-опция Window Scale?;kind 3, объявленное окно умножается на 2^wscale, позволяет окнам до ~1 ГБ (необходима в высокоскоростных сетях).;linux::networking::tcp
+Что такое алгоритм Нагла (Nagle)?;RFC 896/1122: на соединении разрешен только один небольшой неподтвержденный сегмент, остальные копятся до получения ACK или накопления полного MSS.;linux::networking::tcp
+Когда TCP разрешает отправить сегмент немедленно, не дожидаясь ACK?;Если можно отправить полный MSS, если нет неподтвержденных данных, если отключен Nagle (TCP_NODELAY) или если соединение в полузакрытии (FIN уже отправлен).;linux::networking::tcp
+Почему Nagle конфликтует с Delayed ACK и к чему это приводит?;"Nagle не отправляет мелкий сегмент, ожидая ACK, а Delayed ACK не отправляет ACK, ожидая данные: возникает взаимное ожидание (deadlock) с задержкой до ~200 мс; лечится TCP_NODELAY.";linux::networking::tcp
+Что такое Delayed ACK в Linux?;"RFC 1122: ACK задерживается до 200 мс (минимум 40 мс), обычно отправляется на каждый второй сегмент размером в MSS; существует режим QuickACK.";linux::networking::tcp
+Что такое Small Packet Problem?;Отправка данных мелкими порциями, например сегмент в 41 байт (20 IP + 20 TCP + 1 данных), при этом оверхед заголовков превышает полезную нагрузку.;linux::networking::tcp
+Что такое скользящее окно отправки (sliding window) и какие у него зоны?;"Диапазон неподтвержденных и разрешенных к отправке данных; ключевые точки: LastByteAcked, LastByteSent и граница LastByteAcked + Win (размер окна).";linux::networking::tcp
+Что такое BDP (Bandwidth-Delay Product)?;"Произведение пропускной способности канала на RTT; это объем данных, который должен быть в полете для заполнения канала. Максимальная скорость ограничена как Window / RTT.";linux::networking::tcp
+Что такое эффективное окно отправки (Effective Window)?;min(cwnd, rwnd): rwnd ограничивает поток от получателя (flow control), cwnd — контроль перегрузки (congestion control).;linux::networking::tcp
+Что такое Sequence Number в TCP?;"32-битный номер первого байта данных сегмента; обеспечивает упорядочивание, дедупликацию и подтверждение приема.";linux::networking::tcp
+Что такое ISN и как он выбирается?;"Initial Sequence Number, стартовый номер последовательности при установке соединения; по RFC 6528 выбирается криптографически случайно.";linux::networking::tcp
+Сколько байт в sequence space занимают SYN и FIN?;Каждый из флагов SYN и FIN занимает по одному виртуальному байту последовательности.;linux::networking::tcp
+Что происходит при переполнении 32-битного Sequence Number и как защищаются?;"Номера заворачиваются (wrap-around, ~4 секунды на 10 Gbps); защита — PAWS (RFC 7323) на основе опции Timestamps.";linux::networking::tcp
+Что такое cumulative ACK?;ACK-номер равен следующему ожидаемому байту и подтверждает получение всех данных до него.;linux::networking::tcp
+Что такое Duplicate ACK и чем опасен?;"Повторный ACK с тем же номером; сигнализирует о потере или переупорядочивании, три подряд (3 DupACK) триггерят Fast Retransmit.";linux::networking::tcp
+Что такое SACK?;"Selective Acknowledgment, подтверждение выборочных сегментов вне последовательного потока; ускоряет восстановление после множественных потерь.";linux::networking::tcp
+Как вычисляется RTO (Retransmission Timeout)?;RTO = SRTT + max(G, 4 * RTTVAR) по RFC 6298, где SRTT — сглаженный RTT, RTTVAR — вариация RTT, G — гранулярность таймера.;linux::networking::tcp
+Что такое алгоритм Карна (Karn's algorithm)?;Измерения RTT по ретранслированным сегментам игнорируются, чтобы не искажать оценку SRTT/RTTVAR.;linux::networking::tcp
+Как работает экспоненциальный backoff RTO?;При каждой повторной передаче RTO удваивается, вплоть до предела tcp_retries2, после чего соединение закрывается.;linux::networking::tcp
+Что такое Fast Retransmit?;Отправка потерянного сегмента сразу после получения трех Duplicate ACK, без ожидания истечения RTO.;linux::networking::tcp
+Как TCP гарантирует целостность данных?;Контрольной суммой (checksum): при несовпадении пакет молча отбрасывается, восстановление происходит по RTO.;linux::networking::tcp
+Что входит в TCP pseudo-header для контрольной суммы?;"IP-адрес источника, IP-адрес назначения, зарезервированный ноль, номер протокола (6) и длина TCP-сегмента; плюс сам сегмент.";linux::networking::tcp
+Что такое Receive Window (rwnd)?;"Объем данных в байтах, который получатель готов принять; объявляется в поле Window заголовка TCP.";linux::networking::tcp
+Что такое Zero Window и как возобновляется передача?;"Состояние rwnd = 0, когда получатель приостановил прием; отправитель периодически шлет Window Probe, чтобы узнать о появлении окна.";linux::networking::tcp
+Что такое SWS (Silly Window Syndrome)?;"Патологическая передача крошечными порциями, когда получатель объявляет маленькие окна; лечится отказом объявлять окна меньше min(MSS, половины буфера) и отправлять меньше min(MSS, половины окна).";linux::networking::tcp
+Как работает фаза Slow Start?;cwnd растет экспоненциально (удваивается за RTT), начиная с initcwnd (по умолчанию 10 MSS), до достижения порога ssthresh.;linux::networking::congestion
+Что такое ssthresh?;Slow Start Threshold — порог, по достижении которого TCP переходит из Slow Start в Congestion Avoidance.;linux::networking::congestion
+Как работает фаза Congestion Avoidance?;cwnd растет линейно, примерно на 1 MSS за RTT, до потери пакета.;linux::networking::congestion
+Как TCP реагирует на потерю пакета?;При потере (таймаут или 3 DupACK) окно уменьшается: ssthresh ставится на cwnd/2, далее механизмы Fast Recovery (по RFC 5681).;linux::networking::congestion
+Какие поколения алгоритмов контроля перегрузки существуют?;"На основе потерь (Reno, CUBIC), на основе задержки (Vegas, Vegas+), на основе модели (BBR), на основе ECN (DCTCP); также L4S.";linux::networking::congestion
+В чем принципиальное отличие BBR от loss-based алгоритмов?;BBR моделирует пропускную способность узкого места и минимальный RTT, не ориентируется на потери пакетов и минимизирует очереди.;linux::networking::congestion
+Что такое правило 14 КБ для initcwnd?;"initcwnd = 10 MSS = 14,6 КБ (10 x 1460); контент меньше ~14 КБ укладывается в один RTT, больше — минимум в два.";linux::networking::congestion
+Перечислите состояния TCP-конечного автомата.;11 состояний: CLOSED, LISTEN, SYN_SENT, SYN_RECEIVED, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, LAST_ACK, TIME_WAIT, CLOSED (циклическое).;linux::networking::tcp
+Какая сторона уходит в TIME_WAIT и на сколько?;"Сторона, инициировавшая закрытие (первый FIN); состояние длится 2 x MSL (в Linux MSL = 30 сек, итого ~60 сек).";linux::networking::tcp
+Что такое MSL?;"Maximum Segment Lifetime — максимальное время жизни сегмента в сети; в Linux 30 секунд, время TIME_WAIT = 2 x MSL.";linux::networking::tcp
+Что такое half-close (полузакрытие)?;Состояние, когда одна сторона отправила FIN и прекратила отправку, но продолжает принимать данные.;linux::networking::tcp
+Какие сценарии приводят к отказу установления TCP-соединения?;"RST в ответ на SYN — Connection refused (порт закрыт); таймаут SYN — Connection timed out; ICMP Type 3 — No route to host; при переполнении очереди listen может слаться RST (tcp_abort_on_overflow).";linux::networking::tcp
+Что происходит при достижении таймеров T1 и T2 аренды DHCP?;"T1 (50% аренды) — клиент шлет unicast DHCPREQUEST на сервер для продления; T2 (87,5%) — при недоступности сервера переходит на broadcast DHCPREQUEST.";linux::networking::dhcp
+Какие опции DHCP управляют арендой?;Option 51 (время аренды, lease time), Option 58 (T1, 50%), Option 59 (T2, 87,5%).;linux::networking::dhcp
+Какие типы распределения адресов есть в DHCP?;Dynamic (адрес из пула), automatic (пул, но адрес запоминается за клиентом), static (привязка через fixed-address).;linux::networking::dhcp
+Чем отличаются порты DHCPv4 и DHCPv6?;"DHCPv4 использует UDP 67 (сервер) и 68 (клиент); DHCPv6 — UDP 546 (клиент) и 547 (сервер).";linux::networking::dhcp
+Какие основные атаки на DHCP в IPv4?;DHCP starvation (истощение пула адресов поддельными DISCOVER), rogue DHCP server (подставной сервер), IP/MAC spoofing.;linux::networking::dhcp
+Какие атаки возможны в IPv6 на уровне NDP/DHCPv6?;RA spoofing (подделка Router Advertisement, анонс ложного шлюза), NDP spoofing (подмена NS/NA), DHCPv6 starvation.;linux::networking::dhcp
+Что такое ICMP Redirect?;Type 5 в IPv4 (Type 137 в IPv6): маршрутизатор сообщает хосту, что для данного назначения есть более короткий маршрут через другой роутер той же подсети.;linux::networking::icmp
+Каковы условия генерации ICMP Redirect и почему хосты должны его игнорировать?;"Маршрутизатор генерирует Redirect, если пакет пришел с интерфейса, через который он и должен уйти, и следующий хоп в той же подсети; из-за риска атак (подмена маршрута) по RFC 1812 хосты обязаны игнорировать Redirect.";linux::networking::icmp
+Что такое ICMP Source Quench?;"Type 4 — устаревший механизм управления перегрузкой (RFC 6633), должен игнорироваться; современный TCP не использует его.";linux::networking::icmp
+Что такое туннель IPIP?;"IP-in-IP (RFC 2003), инкапсуляция IPv4 в IPv4; protocol 4, оверхед 20 байт, stateless, без шифрования и аутентификации.";linux::networking::tunneling
+Что такое туннель SIT (6in4)?;"Инкапсуляция IPv6 в IPv4 (RFC 4213); protocol 41, оверхед 20 байт, используется для связности IPv6 через IPv4-инфраструктуру.";linux::networking::tunneling
+Почему IPIP и SIT плохо работают через NAT и каково решение?;"Нет портов (работают на protocol 4/41, не TCP/UDP), поэтому NAT/PAT не может сопоставить сессии, а SOHO-роутеры блокируют эти протоколы; решение — FOU (Foo Over UDP) для инкапсуляции в UDP.";linux::networking::tunneling
+Какой MTU нужен туннелю IPIP/SIT при физическом MTU 1500?;"1480 (1500 - 20 байт оверхеда); для TCP требуется MSS Clamping, иначе сессии будут фрагментироваться или падать.";linux::networking::tunneling
+Как диагностировать туннели IPIP/SIT?;"tcpdump -ni eth0 proto 4 (IPIP) или proto 41 (SIT); просмотр параметров: ip -d link show <iface>; статистика ошибок: ip -s link show.";linux::networking::tunneling
+Каковы уровни работы прокси L4 и L7?;"L4 работает с TCP/UDP-потоками без анализа содержимого (HAProxy mode tcp, nginx stream); L7 понимает протоколы HTTP/FTP/gRPC, умеет менять заголовки, кэшировать и маршрутизировать.";linux::networking::proxy
+Как работает HTTP CONNECT для HTTPS?;Клиент шлет CONNECT host:443, прокси открывает TCP-порт к цели и отвечает 200 Connection Established, далее TLS handshake идет напрямую, прокси видит только шифрованный поток.;linux::networking::proxy
+Чем отличаются SSL Passthrough, SSL Termination и SSL Bridging?;"Passthrough — трафик передается как есть (L4, максимум безопасности); Termination — прокси расшифровывает и передает бэкенду открытый HTTP; Bridging — расшифровывает для анализа и снова шифрует.";linux::networking::proxy
+Чем forward proxy отличается от reverse proxy?;"Forward стоит на стороне клиента: защита, анонимность, фильтрация доступа; Reverse стоит перед серверами: балансировка, SSL-termination, кэширование, скрытие реальных бэкендов.";linux::networking::proxy
+Что такое transparent proxy?;Перехват трафика на сетевом уровне без настройки в браузере: реализуется через iptables (цели REDIRECT или TPROXY) на шлюзе.;linux::networking::proxy
+Какие алгоритмы балансировки нагрузки есть в прокси?;Round Robin, Least Connections, Weighted (учет мощности), IP Hash (привязка к серверу по IP), Sticky Sessions (привязка по Cookie).;linux::networking::proxy
+Что такое PAC и WPAD?;"PAC — JavaScript-файл с функцией FindProxyForURL(url, host), определяющий прокси для адреса; WPAD — механизм обнаружения PAC через DHCP или DNS (поиск хоста wpad.domain.com).";linux::networking::proxy
+Какие основные риски безопасности у прокси?;Open Proxy (открытый прокси для спама и атак), SSRF (прокси отправляет запросы во внутреннюю сеть), инъекция данных (подмена ответов и рекламы).;linux::networking::proxy
+Чем SOCKS5 отличается от SOCKS4?;SOCKS5 поддерживает IPv6, UDP и аутентификацию, SOCKS4 — только IPv4 и TCP.;linux::networking::proxy
+Из каких этапов состоит жизненный цикл веб-запроса?;Разрешение DNS (кэш, рекурсивный резолвер), межсетевое взаимодействие (ARP, маршрутизация на шлюз), транспорт (TCP или QUIC) и TLS, HTTP-обмен, обработка на сервере (LB, reverse proxy, backend) и рендеринг в браузере.;linux::networking::concepts
+Чем отличаются DoH, DoT и DoQ?;"DoH — DNS через HTTPS (порт 443); DoT — DNS через TLS (порт 853); DoQ — DNS через QUIC (RFC 9250), минимальная латентность, поддержка 0-RTT.";linux::networking::concepts
+Какие преимущества дает QUIC для HTTP/3?;Работает поверх UDP, устраняет Head-of-Line blocking на уровне TCP и поддерживает Connection Migration (сохранение соединения при смене IP клиента).;linux::networking::concepts
+Какие механизмы TLS 1.3 ускоряют соединение?;Рукопожатие сокращено до 1 RTT, режим 0-RTT (Early Data), обмен ключами через ECDHE, SNI для нескольких сайтов на одном IP, OCSP Stapling.;linux::networking::concepts
+Что такое HSTS?;HTTP Strict Transport Security — заголовок, предписывающий браузеру всегда использовать HTTPS для данного хоста.;linux::networking::concepts
+Как выглядит обработка запроса на сервере?;"Балансировщик (L4/L7) принимает трафик, reverse proxy выполняет TLS-termination и проксирование, backend обрабатывает бизнес-логику с использованием БД и кэша; для тысяч соединений применяются select/poll/epoll.";linux::networking::concepts
+Что такое cross-zone latency?;"Задержка между зонами доступности: типично 1,0–2,5 мс против 0,2–0,5 мс внутри зоны, то есть в 5–10 раз выше; межзонный трафик также тарифицируется провайдером.";linux::networking::cloud
+Как диагностировать cross-zone трафик?;ss -tnp (проверить подсети AZ у активных соединений), mtr -T -P 443 до эндпоинтов своей и чужой зоны, nstat -az (рост TcpRetransSegs), VPC Flow Logs / CloudWatch.;linux::networking::cloud
+Какие механизмы Kubernetes снижают cross-zone трафик?;Topology Aware Routing (аннотация topology-mode: Auto), поле trafficDistribution: PreferClose (K8s 1.31+), internalTrafficPolicy: Local.;linux::networking::cloud
+Почему синхронная репликация БД между зонами увеличивает задержку записи?;"Запись подтверждается только после доставки в реплику другой AZ, поэтому к каждому коммиту добавляется межзонная задержка (1–2 мс); решение — асинхронная репликация или батчинг.";linux::networking::cloud
+Чем ipcalc отличается от ipcalc-ng?;"ipcalc — классическая утилита для IPv4; ipcalc-ng — современный форк (стандарт RHEL 9+), с поддержкой IPv6, выводом в JSON и расширенной декомпозицией адресов.";linux::networking::tools
+Что делает утилита sipcalc?;Продвинутый анализ IPv6-структур со структурированным выводом, удобным для парсинга в shell-скриптах.;linux::networking::tools
+Что делает утилита prips?;Разворачивает CIDR-нотацию или диапазон в полный список IP-адресов, например для генерации целей в циклах.;linux::networking::tools
+Что делает утилита grepcidr?;Фильтрует файлы (например, логи) по вхождению IP в заданные CIDR-диапазоны, понимая сетевую логику.;linux::networking::tools
+Какие программные библиотеки используются для IP-расчетов?;Python ipaddress (стандартная библиотека), Ansible ipaddr на базе netaddr (фильтр Jinja2), Go netip (Go 1.18+).;linux::networking::tools

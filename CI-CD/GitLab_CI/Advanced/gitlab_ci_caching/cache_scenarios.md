@@ -1,80 +1,104 @@
 # Практические сценарии кэширования в GitLab CI
 
-## Определения
+## Требования и предварительные условия
+- **Инфраструктура:** GitLab Runner с настроенным `Distributed Cache` (S3/MinIO) для гарантии доступности кэша между разными узлами.
+- **Версии GitLab:** Примеры актуальны для GitLab 17.x–19.x (включая лимиты Gitaly на `cache:key:files` и алгоритмы `zstd`).
 
-**Практический сценарий кэширования** — оптимизированная конфигурация для конкретного стека технологий, минимизирующая время загрузки зависимостей и сборки артефактов.
-
-**Якорь YAML (`&` / `*`)** — встроенный механизм переиспользования блоков кода, позволяющий избежать дублирования настроек кэша в рамках одного файла.
-
-**BuildKit** — современный движок сборки Docker-образов, обеспечивающий эффективное кэширование слоёв и параллельное выполнение задач через Registry.
-
-**Distributed Cache** — модель хранения, где кэш находится во внешнем хранилище (S3/MinIO), что позволяет всем Runner'ам проекта (включая масштабируемые в облаке) использовать общие данные.
-
-**Zstd (Zstandard)** — высокоэффективный алгоритм сжатия, используемый GitLab Runner (16.2+) по умолчанию. Значительно быстрее стандартного `zip`.
-
-## Основные концепции
+## Базовые концепции
 
 ### Принципы эффективных сценариев
 
-1. **Использование якорей YAML** для соблюдения принципа DRY.
-2. **Настройка политик** (`pull`, `push`, `pull-push`) для исключения лишних операций ввода-вывода.
-3. **Кэширование по файлам зависимостей** для автоматической инвалидации при обновлении `lock`-файлов.
-4. **Разделение кэшей** (до 4 записей) для разных экосистем (например, Node.js + Java) внутри одного проекта.
-5. **Локальные пути:** Переопределение путей кэша в `$CI_PROJECT_DIR`, так как Runner архивирует только данные внутри корня проекта.
-6. **Типизация через `spec:inputs`:** Динамическое формирование префиксов ключей кэша в переиспользуемых компонентах.
+1.  **Соблюдение принципа DRY (Don't Repeat Yourself):** Использование якорей YAML (`&` и `*`) или ключевого слова `!reference` для переиспользования блоков конфигурации кэша.
+2.  **Асимметричные политики (`pull`, `push`, `pull-push`):**
+    *   Задача установки зависимостей (например, `npm ci`) должна иметь политику `pull-push`.
+    *   Задачи потребители (линтеры, тесты) должны иметь **строго** политику `pull`. Это предотвращает перезапись кэша, защищает от `Cache Poisoning` и ускоряет пайплайн (убирает фаза архивации в конце).
+3.  **Детерминированная валидация (`cache:key:files`):** Привязка кэша к хэшу lock-файлов (`package-lock.json`, `poetry.lock`, `go.sum`). Если lock-файл не изменился, кэш считается актуальным.
+4.  **Разделение контекстов (Множественное кэширование):** Если проект требует и `node_modules`, и `.m2` (Java), они должны лежать в разных кэшах с разными ключами. GitLab допускает до 4 кэшей на одну задачу.
+5.  **Трансляция путей:** GitLab Runner архивирует только те файлы, которые находятся *внутри* `$CI_PROJECT_DIR`. Глобальные кэши инструментов (например, `~/.npm` или `~/.cache/pip`) необходимо переопределять через переменные окружения, направляя их в директорию проекта.
 
-### Ограничения и особенности
+## Практические сценарии по языкам и технологиям
 
-- **Лимиты:** Максимум **4 кэша** на одну задачу.
-- **Размер:** Кэш сжимается в `.zip` (или `.zstd`), размер ограничен настройками инстанса (на GitLab.com — 5ГБ).
-- **Изоляция:** Кэши защищённых веток изолированы суффиксом `-protected` для предотвращения атак на цепочку поставок (Supply Chain Security).
+### Сценарий 1 — Node.js (NPM / Yarn / pnpm / bun)
 
-## Практические сценарии
+Экосистема JavaScript сильно зависит от глубоких деревьев зависимостей. Цель — кэшировать как сами модули (`node_modules`), так и внутренний кэш пакетного менеджера.
 
-### Сценарий 1 — Кэширование зависимостей Node.js (NPM/Yarn)
-
-Рекомендуемый подход с использованием локального кэша NPM:
-
+**Вариант А: Стандартный NPM**
 ```yaml
 variables:
-  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  # Перенаправляем глобальный кэш npm внутрь проекта
+  NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.npm"
 
-default:
-  cache: &global_cache
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - node_modules/
-      - .npm/
-    policy: pull
+.node_cache: &node_cache
+  key:
+    files: [package-lock.json]
+    prefix: npm
+  paths:
+    - .npm/
+  policy: pull
 
-install_dependencies:
+install_deps:
   stage: .pre
-  script:
-    - npm ci --prefer-offline
   cache:
-    <<: *global_cache
+    <<: *node_cache
     policy: pull-push
+  script:
+    # --prefer-offline ускоряет установку, используя пакеты из $NPM_CONFIG_CACHE
+    - npm ci --prefer-offline
 
-test_job:
+test_app:
   stage: test
+  cache:
+    <<: *node_cache
   script:
     - npm run test
-  cache:
-    <<: *global_cache
-    policy: pull
+```
+*Почему не кэшируется `node_modules`?* В современных пайплайнах (особенно с Node.js) кэширование глобальной директории `.npm` эффективнее, так как `npm ci` работает детерминированно и очень быстро при наличии локального кэша пакетов, исключая проблемы с платформозависимыми бинарниками (например, `node-sass`).
+
+**Вариант Б: Современный pnpm (2026 Standard)**
+```yaml
+variables:
+  PNPM_STORE_PATH: "$CI_PROJECT_DIR/.pnpm-store"
+
+cache:
+  key:
+    files: [pnpm-lock.yaml]
+  paths:
+    - .pnpm-store/
+
+install_pnpm:
+  script:
+    - corepack enable pnpm
+    - pnpm config set store-dir $PNPM_STORE_PATH
+    - pnpm install --frozen-lockfile
 ```
 
-**Ключевые моменты:**
-- `npm ci --prefer-offline` максимально использует локальный кэш `.npm`.
-- Задача `install_dependencies` выполняется в `.pre` для подготовки кэша для всего пайплайна.
+### Сценарий 2 — Python (uv / pip / Poetry)
 
-### Сценарий 2 — Кэширование зависимостей Python (Pip/Poetry)
+В 2026 году стандартом де-факто для CI/CD является `uv` благодаря его скорости (написан на Rust) и встроенному управлению окружениями.
 
-Использование виртуального окружения и локального хранилища пакетов.
+**Вариант А: Использование `uv` (Рекомендуется)**
+```yaml
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
 
-**Pip:**
+.python_cache:
+  cache:
+    - key:
+        files: [pyproject.toml, uv.lock]
+      paths: [.uv-cache/]
+      policy: pull
+
+install:
+  extends: .python_cache
+  cache:
+    - policy: pull-push
+  script:
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - uv sync --frozen
+```
+*Механика:* `uv sync` создает виртуальное окружение `.venv` (по умолчанию в корне проекта) и использует кэшированные wheels из `.uv-cache`. 
+
+**Вариант Б: Классический Pip + Venv**
 ```yaml
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -89,81 +113,76 @@ cache:
 before_script:
   - python -m venv .venv
   - source .venv/bin/activate
-  - pip install -r requirements.txt
+  - pip install --require-hashes -r requirements.txt
 ```
 
-**Poetry:**
-```yaml
-variables:
-  POETRY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/poetry"
-  POETRY_VIRTUALENVS_IN_PROJECT: "true"
+### Сценарий 3 — Go (Golang)
 
-cache:
-  key:
-    files: [poetry.lock]
-  paths:
-    - .cache/poetry
-    - .venv/
-```
-
-### Сценарий 3 — Кэширование зависимостей Go
-
-Эффективное кэширование модулей и кэша компиляции:
+Для Go необходимо разделять кэш скачанных модулей (`GOMODCACHE`) и кэш результатов компиляции (`GOCACHE`).
 
 ```yaml
 variables:
-  GOPATH: $CI_PROJECT_DIR/.go
-  GOLANGCI_LINT_CACHE: $CI_PROJECT_DIR/.golangci-lint-cache
+  GOMODCACHE: "$CI_PROJECT_DIR/.go/pkg/mod"
+  GOCACHE: "$CI_PROJECT_DIR/.go/cache/build"
+  GOLANGCI_LINT_CACHE: "$CI_PROJECT_DIR/.go/cache/lint"
 
 cache:
   key:
-    files:
-      - go.sum
+    files: [go.sum]
+    prefix: go-v1
   paths:
-    - .go/pkg/mod/
-    - .golangci-lint-cache/
-    - $CI_PROJECT_DIR/.cache/go-build
+    - .go/
+  policy: pull-push
 
-test:
-  image: golang:1.21
+test_and_lint:
+  image: golang:1.22
   script:
+    - go mod download
     - go test -v ./...
+    - golangci-lint run
 ```
+*Почему `prefix: go-v1`?* При смене мажорной версии Go формат внутренних кэшей может меняться. Префикс позволяет быстро инвалидировать старый кэш.
 
-### Сценарий 4 — Кэширование зависимостей Rust (Cargo)
+### Сценарий 4 — Rust (Cargo)
 
-Кэширование реестра и скомпилированных артефактов:
+Компиляция Rust крайне ресурсоемка. Cargo хранит скачанные крейты и индекс реестра.
 
 ```yaml
 variables:
-  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
 
 cache:
   key:
-    files:
-      - Cargo.lock
+    files: [Cargo.lock]
+    prefix: rust-build
   paths:
     - .cargo/bin/
     - .cargo/registry/index/
     - .cargo/registry/cache/
     - target/
 ```
+*Рекомендация:* Для ускорения `cargo fetch` в современных версиях используется Sparse Index (по умолчанию с Rust 1.70+). Кэширование директории `target/` значительно ускоряет инкрементальную сборку, но размер кэша может достигать нескольких гигабайт.
 
-### Сценарий 5 — Кэширование зависимостей Java (Maven/Gradle)
+### Сценарий 5 — Java (Maven / Gradle)
 
-Обеспечение персистентности локального репозитория и оберток (wrappers) для JVM-стека.
+Главная задача — сохранить загруженные `.jar` пакеты и артефакты плагинов, чтобы не выкачивать "половину интернета" при каждом запуске.
 
 **Maven:**
 ```yaml
 variables:
+  # Переопределяем локальный репозиторий
   MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
 
 cache:
   key:
-    files:
-      - pom.xml
+    files: [pom.xml]
   paths:
     - .m2/repository/
+
+build_java:
+  script:
+    # Использование режима offline/batch для предотвращения проверок обновлений плагинов
+    - mvn clean package -B -o -DskipTests 
 ```
 
 **Gradle:**
@@ -173,20 +192,55 @@ variables:
 
 cache:
   key:
-    files:
-      - build.gradle
-      - gradle/wrapper/gradle-wrapper.properties
+    files: [build.gradle.kts, gradle/wrapper/gradle-wrapper.properties]
   paths:
     - .gradle/caches/
     - .gradle/wrapper/
 ```
 
-### Сценарий 6 — Кэширование слоёв Docker через Registry (BuildKit)
-
-Современный способ ускорения сборки без использования `docker pull/push` вручную:
+### Сценарий 6 — PHP (Composer)
 
 ```yaml
-build:
+variables:
+  COMPOSER_CACHE_DIR: "$CI_PROJECT_DIR/.composer-cache"
+
+cache:
+  key:
+    files: [composer.lock]
+  paths:
+    - .composer-cache/
+
+install_php_deps:
+  script:
+    - composer install --prefer-dist --no-progress --no-suggest
+```
+
+### Сценарий 7 — Ruby (Bundler)
+
+```yaml
+variables:
+  BUNDLE_PATH: "$CI_PROJECT_DIR/vendor/ruby"
+
+cache:
+  key:
+    files: [Gemfile.lock]
+  paths:
+    - vendor/ruby
+
+install_gems:
+  script:
+    - bundle config set --local path 'vendor/ruby'
+    - bundle install --jobs $(nproc)
+```
+
+## Инфраструктурные и архитектурные сценарии
+
+### Сценарий 8 — Кэширование слоёв Docker через Registry (BuildKit)
+
+Классический `docker build` не использует GitLab Runner Cache. Вместо этого применяется кэширование внутри Docker Registry с использованием BuildKit.
+
+```yaml
+build_image:
   stage: build
   image: docker:24.0.5
   services:
@@ -194,70 +248,84 @@ build:
   variables:
     DOCKER_BUILDKIT: 1
   script:
-    - docker build 
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - >
+      docker build 
       --cache-from type=registry,ref=$CI_REGISTRY_IMAGE/cache:latest 
       --cache-to type=registry,ref=$CI_REGISTRY_IMAGE/cache:latest,mode=max 
       -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 ```
+*Механика:* `mode=max` сохраняет метаданные и слои всех этапов multi-stage сборки. Кэш живет в `Container Registry`, а не в `Distributed Cache` GitLab'а.
 
-**Ключевые моменты:**
-- `mode=max` сохраняет кэш всех слоёв, включая промежуточные.
-- Кэш хранится в реестре образов, что делает его доступным для любых Runner'ов.
+### Сценарий 9 — Монорепозиторий с разделением кэша (Selective Caching)
 
-### Сценарий 7 — Монорепозиторий с разделением кэша
-
-Использование `rules:changes` для выборочного кэширования:
+В монорепозиториях (например, Frontend на React + Backend на Go) использование единого кэша приведет к "Gitaly Timeout" (из-за огромного количества файлов) и перерасходу сети.
 
 ```yaml
-.frontend_cache: &frontend_cache
-  key:
-    files:
-      - frontend/package-lock.json
-  paths:
-    - frontend/node_modules/
-
-frontend_test:
-  cache: *frontend_cache
+.cache_base:
+  policy: pull-push
+  
+frontend_job:
+  extends: .cache_base
+  cache:
+    key:
+      files: [apps/frontend/package-lock.json]
+    paths: [apps/frontend/.npm/]
   rules:
-    - changes:
-        - frontend/**/*
+    - changes: [apps/frontend/**/*]
   script:
-    - cd frontend && npm test
+    - cd apps/frontend && npm ci
+
+backend_job:
+  extends: .cache_base
+  cache:
+    key:
+      files: [apps/backend/go.sum]
+    paths: [apps/backend/.go/]
+  rules:
+    - changes: [apps/backend/**/*]
+  script:
+    - cd apps/backend && go test ./...
 ```
 
-### Сценарий 8 — Резервные ключи (Fallback Keys)
+### Сценарий 10 — Защита от холодного старта (Fallback Keys)
 
-Использование кэша основной ветки для новых feature-веток (GitLab 16.0+ поддерживает до 5 ключей):
+Использование `fallback_keys` позволяет новой feature-ветке (у которой еще нет кэша) использовать кэш от ветки `main`, избегая полной сборки с нуля.
 
 ```yaml
-job:
+test_feature:
   cache:
     - key: "cache-$CI_COMMIT_REF_SLUG"
       fallback_keys:
-        - "cache-$CI_DEFAULT_BRANCH"
-        - "global-cache"
+        - "cache-$CI_DEFAULT_BRANCH" # Используем кэш main, если свой еще не создан
+        - "cache-global"
       paths:
         - vendor/
+  script:
+    - make test
 ```
 
+## Валидация и устранение неполадок
+
+### Как убедиться, что кэш работает?
+1.  **Чтение логов Runner'а:** Ищите строки `Checking cache for...`, `Downloading cache.zip from...` в начале задачи.
+2.  **Время выполнения:** Задача `npm ci` с кэшем должна выполняться за секунды (вывод: `added X packages in Xs`), тогда как "холодная" сборка занимает минуты.
+3.  **Сохранение кэша:** В конце задачи должна присутствовать секция `Creating cache...` и `Uploading cache.zip to...`. Если там написано `Archive is up to date!`, значит `FF_SKIP_NOOP_CACHE` работает корректно.
+
+### Диагностика типичных ошибок
+
+| Проблема | Причина и решение |
+| :--- | :--- |
+| **Gitaly Timeout при создании Pipeline** | **Причина:** Слишком много файлов в `cache:key:files` (максимум 2) или огромный монорепозиторий. **Решение:** Используйте статический ключ с префиксом или якоря YAML для сокращения конфигурации. |
+| **Кэш собирается каждый раз с нуля** | **Причина:** Несовпадение ключей между ветками (Protected vs Unprotected) или пути кэша находятся ВНЕ каталога проекта (`$CI_PROJECT_DIR`). **Решение:** Используйте `fallback_keys` и проверяйте переменные путей (`X_CACHE_DIR`). |
+| **Ошибка 403 при скачивании (Distributed Cache)** | **Причина:** Срок жизни (TTL) pre-signed URL от GitLab истек, либо IAM-роль Runner'а потеряла доступ к S3. **Решение:** Проверить настройки `config.toml` Runner'а и синхронизацию времени NTP. |
+| **Раздувание кэша (No space left on device)** | **Причина:** Накапливание старых версий пакетов в локальных папках вроде `target/` или `node_modules/`. **Решение:** Включите регулярную инвалидацию ключа (смена префикса) или очистите кэш через UI GitLab (Clear runner caches). |
+
 ## Дополнительная информация
-
-### Устранение типичных проблем
-
-- **Кэш не обновляется:** Проверьте правильность путей в `paths` (они должны быть относительны `$CI_PROJECT_DIR`). Если хеш `lock`-файла не меняется, кэш не будет пересобран.
-- **Медленная загрузка:** Большие кэши (гигабайты) могут замедлять пайплайн сильнее, чем повторная установка. Используйте `artifacts` для передачи результатов сборки и `FF_USE_FASTZIP: "true"` для ускорения работы с архивами.
-- **Конфликты версий:** При обновлении мажорных версий рантаймов добавляйте статический префикс в `key:prefix`, чтобы инвалидировать несовместимый кэш.
-- **Лимиты Gitaly (17.x+):** В очень больших репозиториях избегайте использования слишком большого количества файлов в `key:files`, так как это создает нагрузку на сервер при генерации пайплайна.
 
 ### Связанные документы
 
 - **Ключи и политики:** [настройка cache:key](./cache_keys.md)
 - **Концепции и механизмы:** [обзор кэширования](./caching_overview.md)
 - **Рекомендации:** [лучшие практики](./cache_best_practices.md)
-
----
-
-**Надёжность:** 10 (SSoT + Документация GitLab 17.x–19.x + Практический опыт)
-**Свежесть:** GitLab 19.2 (2026)
-**Триггеры обновления:** Появление новых пакетных менеджеров, изменения в синтаксисе BuildKit, релизы GitLab 20.x.

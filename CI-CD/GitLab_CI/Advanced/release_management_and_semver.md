@@ -6,6 +6,7 @@
 - **Conventional Commits** — соглашение о форматировании сообщений коммитов (`feat:`, `fix:`, `refactor:`), обеспечивающее машиночитаемую историю для автоматизации SemVer. См. **[Шаблоны и стандарты коммитов](../../../Git/git_commit_template.md)**.
 - **Release Evidence** — JSON-отчет (снимок состояния), содержащий метаданные релиза, результаты тестов и отчеты о безопасности. Используется для аудита и комплаенса.
 - **GitLab Release** — объект в интерфейсе GitLab, связывающий тег, описание изменений (Changelog) и ссылки на активы. Создается через блок `release:` в `.gitlab-ci.yml`.
+- **SBOM (Software Bill of Materials)** — декларативный список всех компонентов и зависимостей. В современных пайплайнах (2026+) генерация SBOM является обязательным шагом для обеспечения безопасности цепочки поставок (SLSA).
 
 ## Основные концепции
 
@@ -13,19 +14,21 @@
 
 Процесс автоматизации релиза в GitLab CI/CD включает следующие этапы:
 
-1. **Анализ истории** — пайплайн сканирует коммиты с момента последнего тега для определения следующей версии по правилам SemVer.
-2. **Создание Git-тега** — создание уникальной метки версии в репозитории.
-3. **Генерация Release Notes** — автоматический сбор описания изменений на основе заголовков коммитов.
-4. **Сбор доказательств (Evidence)** — автоматическое создание снимка состояния проекта (результаты тестов, SBOM) для соответствия стандартам безопасности.
-5. **Ассоциация активов (Assets)** — привязка Docker-образов, бинарных файлов и документации к релизу через постоянные ссылки (Permanent Links).
-6. **Публикация** — отправка артефактов в реестры (Container Registry, Package Registry).
+1.  **Анализ истории** — пайплайн сканирует коммиты с момента последнего тега для определения следующей версии по правилам SemVer.
+2.  **Генерация SBOM и аттестаций** — создание спецификации компонентов и доказательств сборки в доверенной среде.
+3.  **Создание Git-тега** — создание уникальной метки версии в репозитории.
+4.  **Генерация Release Notes** — автоматический сбор описания изменений на основе заголовков коммитов.
+5.  **Сбор доказательств (Evidence)** — автоматическое создание снимка состояния проекта (результаты тестов, SBOM).
+6.  **Ассоциация активов (Assets)** — привязка Docker-образов, бинарных файлов и документации к релизу через постоянные ссылки.
+7.  **Публикация** — отправка артефактов в реестры (Container Registry, Package Registry).
 
 ### Инструментарий и современное состояние
 
 С версии GitLab **16.0** основным инструментом является декларативное ключевое слово `release:`.
 - **`release-cli`**: Начиная с версии **17.0**, инструмент находится в режиме поддержки. Рекомендуется использовать встроенные возможности YAML или прямой вызов **GitLab Releases API**.
 - **CI/CD Catalog**: Требует строгого соблюдения SemVer. Неподдерживаемые форматы тегов блокируют публикацию компонентов в каталоге.
-- **Передача версии**: Для передачи вычисленной версии между этапами `prepare` и `release` используется механизм `artifacts:reports:dotenv`.
+- **Передача версии**: Для передачи вычисленной версии между этапами используется механизм `artifacts:reports:dotenv`.
+- **OIDC (id_tokens)**: Используется для безопасной аутентификации в облаках и подписи релизных артефактов (например, через Sigstore).
 
 ## Практические сценарии
 
@@ -33,9 +36,9 @@
 
 Классический подход для проектов, не использующих сторонние инструменты автоматизации.
 
-#### Шаг 1: Анализ коммитов и генерация версии
+#### Шаг 1: Анализ коммитов, генерация версии и SBOM
 
-Задача анализирует историю Git и формирует переменные для создания тега.
+Задача анализирует историю Git и формирует переменные для создания тега, а также генерирует SBOM.
 
 **Файл `templates/analyze_commit.yaml`:**
 
@@ -84,17 +87,23 @@ analyze_commit:
     # 4. Генерация Release Notes
     - git log --pretty="* %s (%h)" ${LAST_TAG}..HEAD > $RELEASE_NOTE_FILE
 
+    # 5. Генерация SBOM (используя syft)
+    - wget https://raw.githubusercontent.com/anchore/syft/main/install.sh -O install_syft.sh
+    - sh install_syft.sh -b /usr/local/bin
+    - syft . -o cyclonedx-json=sbom.json
+
   artifacts:
     paths: [$RELEASE_NOTE_FILE]
     reports:
       dotenv: variables.env
+      cyclonedx: sbom.json
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
 #### Шаг 2: Создание релиза через декларативный блок
 
-Использование встроенного функционала GitLab для создания официального релиза.
+Использование встроенного функционала GitLab для создания официального релиза с привязкой SBOM.
 
 **Файл `.gitlab-ci.yml`:**
 
@@ -125,6 +134,8 @@ create_release:
       links:
         - name: "Container Image"
           url: "$CI_REGISTRY_IMAGE:$NEW_TAG"
+        - name: "SBOM Report"
+          url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/file/sbom.json"
 ```
 
 #### Шаг 3: Публикация артефактов
@@ -134,9 +145,9 @@ create_release:
 ```yaml
 publish_image:
   stage: publish
-  image: docker:24.0
+  image: docker:27.0
   services:
-    - docker:24.0-dind
+    - docker:27.0-dind
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $CI_REGISTRY_IMAGE:$NEW_TAG .
@@ -152,7 +163,7 @@ publish_image:
 ```yaml
 release_automated:
   stage: release
-  image: node:20-alpine
+  image: node:22-alpine
   before_script:
     - apk add --no-cache git
     - npm install -g semantic-release @semantic-release/gitlab @semantic-release/git
@@ -170,10 +181,43 @@ release_automated:
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     "@semantic-release/gitlab",
-    "@semantic-release/git"
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["package.json", "CHANGELOG.md"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ]
   ]
 }
 ```
+
+### Сценарий 3: Релиз для CI/CD Catalog (GitLab 17.x+)
+
+Специфические требования к публикации компонентов в каталоге.
+
+```yaml
+publish_catalog_component:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/ # Строгий SemVer
+  release:
+    name: 'Component Release $CI_COMMIT_TAG'
+    tag_name: '$CI_COMMIT_TAG'
+    description: 'Automatic release for CI/CD Catalog'
+```
+
+## Устранение неполадок (Troubleshooting)
+
+### Типичные ошибки
+-   **`Tag already exists`**: Пайплайн пытается создать тег, который уже есть в Git. Решение: Проверьте логику вычисления версии или удалите конфликтующий тег вручную (осторожно с историей).
+-   **`Validation failed: SemVer required`**: Ошибка при публикации в CI/CD Catalog. Решение: Убедитесь, что формат тега строго соответствует `vX.Y.Z`.
+-   **`403 Forbidden` при создании релиза**: Недостаточно прав у `CI_JOB_TOKEN`. Решение: Проверьте настройки «Token Access» в проекте или используйте персональный токен с правами `api`.
+-   **`Release Evidence missing`**: JSON-отчет не был сформирован. Решение: Проверьте, что все задачи стадии `test` завершились успешно и сгенерировали отчеты.
+
+### Инструменты диагностики
+-   **Merged YAML**: В Pipeline Editor проверьте, как интерполируются переменные версии.
+-   **API Dry Run**: Используйте `curl` для проверки создания релиза через GitLab API до внесения изменений в YAML.
 
 ## Дополнительная информация
 

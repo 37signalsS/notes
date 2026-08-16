@@ -6,16 +6,20 @@
 
 **GitLab Agent for Kubernetes (KAS)** — основной механизм интеграции, обеспечивающий безопасный доступ пайплайнов к кластеру через **CI/CD Tunnel**. Подробнее см. **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)**.
 
-**Эфемерный Namespace (Ephemeral Namespace)** — временное пространство имен в Kubernetes, в которое разворачивается Review App. Оно должно быть удалено вместе с окружением.
+**Эфемерный Namespace (Ephemeral Namespace)** — временное пространство имен в Kubernetes, в которое разворачивается Review App. Оно должно быть удалено вместе с окружением для предотвращения «засорения» кластера.
 
 **Wildcard DNS & Ingress** — конфигурация, позволяющая автоматически направлять трафик на динамические URL (например, `https://feature-123.review.example.com`).
 
+**Wildcard Certificate** — SSL/TLS сертификат, действующий для всех поддоменов определенного уровня (например, `*.review.example.com`). Обычно выпускается через Let's Encrypt с использованием DNS-01 challenge.
+
 ## Основные концепции
 
-Использование динамических окружений в Kubernetes строится на трех столпах:
-1. **Изоляция:** Каждое MR-окружение разворачивается в свой Namespace или имеет уникальный префикс ресурсов.
-2. **Динамическая маршрутизация:** Ingress-контроллер (Nginx, Traefik) обрабатывает запросы на основе `Host` заголовков, соответствующих именам веток.
-3. **Автоматическая очистка:** Использование хуков `on_stop` и параметра `auto_stop_in` в GitLab CI для удаления ресурсов в кластере.
+Использование динамических окружений в Kubernetes строится на четырех ключевых принципах:
+
+1.  **Изоляция (Isolation):** Каждое MR-окружение разворачивается в свой Namespace. Это обеспечивает полную изоляцию ресурсов (Pods, Services, Secrets) и позволяет применять специфичные квоты и политики безопасности.
+2.  **Динамическая маршрутизация (Dynamic Routing):** Ingress-контроллер (Nginx, Traefik, Istio) автоматически создает правила маршрутизации на основе `Host` заголовков.
+3.  **Автоматическое управление жизненным циклом (Lifecycle Management):** Использование хуков `on_stop` и параметра `auto_stop_in` в GitLab CI для автоматического удаления ресурсов в кластере при закрытии MR или неактивности.
+4.  **Безопасность (Security):** Доступ к кластеру осуществляется через GitLab Agent, что исключает передачу статических `kubeconfig` файлов и токенов в переменные окружения пайплайна.
 
 Общие принципы описаны в **[Окружения и развертывания в GitLab CI](../Concepts/environments_and_deployments.md)**.
 
@@ -25,9 +29,39 @@
 
 ### Шаг 1: Подготовка инфраструктуры
 
-Для корректной работы Review Apps в кластере должны быть настроены:
-1. **Wildcard A-запись в DNS:** `*.review.example.com` указывает на IP Ingress-контроллера.
-2. **Wildcard Сертификат:** Рекомендуется использовать **Cert-Manager** с DNS-01 challenge для получения валидных SSL-сертификатов на динамические поддомены.
+Для корректной работы Review Apps в кластере должны быть настроены компоненты автоматизации трафика.
+
+#### 1. Wildcard DNS
+Настройте A-запись в вашем DNS-провайдере:
+- **Name:** `*.review.example.com`
+- **Value:** Внешний IP вашего LoadBalancer (Ingress Controller).
+
+#### 2. Cert-Manager и DNS-01 Challenge
+Для динамических окружений нельзя использовать HTTP-01 challenge, так как Ingress для каждого MR создается «на лету». Используйте **DNS-01 challenge**.
+
+Пример ClusterIssuer для Cloudflare:
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-dns01
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-dns01-account-key
+    solvers:
+    - dns01:
+        cloudflare:
+          email: admin@example.com
+          apiTokenSecretRef:
+            name: cloudflare-api-token-secret
+            key: api-token
+```
+
+#### 3. Wildcard Certificate (пре-генерация)
+Рекомендуется создать один Wildcard сертификат в общем пространстве имен (например, `istio-system` или `nginx-ingress`) и использовать его для всех Review Apps, либо настроить Cert-Manager на создание сертификата для каждого Ingress.
 
 ### Шаг 2: Настройка доступа к кластеру
 
@@ -98,6 +132,88 @@ stop_review:
       when: manual # Позволяет вручную удалить среду из интерфейса MR
 ```
 
+## Безопасность и изоляция
+
+Для обеспечения безопасности кластера при использовании Review Apps необходимо следовать принципу наименьших привилегий.
+
+### 1. Сетевая изоляция (Network Policies)
+Review Apps часто содержат экспериментальный код. Ограничьте их доступ к внутренней сети кластера, чтобы предотвратить обращение к Production или Staging базам данных.
+
+```yaml
+# k8s/network-policy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-only
+  namespace: review-feature-branch
+spec:
+  podSelector: {} # Применить ко всем подам в namespace
+  policyTypes:
+  - Ingress
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system # Разрешить DNS
+    ports:
+    - protocol: UDP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8 # Запретить доступ к внутренним подсетям (пример)
+```
+
+### 2. RBAC для GitLab Agent
+Агент должен иметь доступ только к определенным пространствам имен. В конфигурации агента (`config.yaml`) ограничьте область действия:
+
+```yaml
+user_access:
+  access_as:
+    agent: {}
+  projects:
+  - id: path/to/project
+    default_namespace: review-*
+```
+
+## Работа с базами данных
+
+Review Apps по умолчанию должны быть **Stateless**. Если приложению требуется БД, используйте один из подходов:
+
+### 1. Эфемерная БД в составе Helm-чарта
+Самый надежный способ изоляции. БД разворачивается вместе с приложением и удаляется при очистке.
+
+```yaml
+# charts/my-app/values.yaml
+postgresql:
+  enabled: true
+  auth:
+    database: myapp_db
+    username: user
+  persistence:
+    enabled: false # Данные не сохраняются после удаления
+```
+
+### 2. Общая база данных (Shared Database)
+Использование одного инстанса БД (например, в Staging) с созданием уникальных схем/логических БД для каждого MR.
+- **Плюсы:** Экономия ресурсов кластера.
+- **Минусы:** Сложность очистки (нужны дополнительные скрипты для DROP DATABASE) и риск влияния Review Apps на стабильность Staging БД.
+
+## Отладка и мониторинг
+
+### Просмотр логов
+Для отладки Review Apps используйте `kubectl` через туннель агента или интерфейс GitLab (Environments -> Review App -> Terminal).
+
+```bash
+# Просмотр логов пода в динамическом namespace
+kubectl logs -f -l app=my-app -n review-$CI_COMMIT_REF_SLUG
+```
+
+### Мониторинг ресурсов
+В Grafana рекомендуется создать отдельный Dashboard для Review Apps, отфильтрованный по префиксу Namespace `review-*`. Это поможет выявить «зависшие» окружения, которые потребляют ресурсы.
+
 ## Технические нюансы и ограничения
 
 ### Квоты ресурсов (Resource Quotas)
@@ -117,10 +233,11 @@ spec:
     limits.memory: "2Gi"
 ```
 
-### Хранение данных (PV/PVC)
-Review Apps обычно являются **Stateless**. Если приложению нужна БД, рекомендуется:
-1. Использовать эфемерную БД внутри пода (без Persistent Volume).
-2. Или использовать общую Staging-БД с разделением схем по имени ветки (не рекомендуется из-за риска повреждения данных).
+### Горизонтальное масштабирование (HPA)
+В Review Apps рекомендуется **отключать** HPA или устанавливать минимальные лимиты (например, `maxReplicas: 1`), чтобы избежать неконтролируемого роста потребления ресурсов при тестах.
+
+### Graceful Shutdown
+Убедитесь, что ваше приложение корректно обрабатывает `SIGTERM`. При удалении Namespace Kubernetes завершает все поды. Если приложение не успеет закрыть соединения, это может привести к ошибкам в логах или повреждению данных в общих БД.
 
 ### Удаление Registry-образов
 После удаления Review App и слияния MR, в Container Registry остаются временные образы. Настройте **Registry Cleanup Policy** в настройках проекта для удаления тегов, не соответствующих `main` или `tags`.

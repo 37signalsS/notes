@@ -88,7 +88,7 @@ CREATE INDEX idx_users_email ON users(email);
 - **[Лучшие практики миграций](migration_practices.md)** — глубокий разбор именования, транзакций и безопасности.
 - **[Обратно-совместимые миграции (Expand-Contract)](expand_contract.md)** — паттерн для Zero-downtime релизов.
 - **[Типовые сценарии миграций](scenarios.md)** — примеры пакетной обработки и Online Schema Change.
-- **[Интеграция в CI/CD](cicd_integration.md)** — автоматизация проверок и пайплайны.
+- **[Интеграция в CI/CD](database-ci-cd.md)** — автоматизация проверок и пайплайны.
 - **[Мониторинг миграций](monitoring.md)** — отслеживание блокировок и лага репликации.
 - **[Стратегии отката (Rollback)](rollback_strategies.md)** — методы возврата в стабильное состояние.
 - **[Безопасные массовые операции](../safe_large_scale_data_modification.md)** — работа с терабайтами данных.

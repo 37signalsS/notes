@@ -11,31 +11,35 @@
 *   **[Artifacts](https://docs.gitlab.com/ci/jobs/job_artifacts/)**: Файлы и директории, сохраняемые после выполнения задачи и передаваемые между стадиями внутри одного пайплайна.
 *   **[Cache](https://docs.gitlab.com/ci/yaml/cache/)**: Временное хранилище для ускорения повторных запусков (например, `node_modules`). Не гарантирует сохранность данных между запусками.
 *   **[Component](https://docs.gitlab.com/ee/ci/components/)**: Переиспользуемая единица конфигурации CI/CD, хранящаяся в **CI/CD Catalog**. Современный стандарт для DRY-подхода.
+*   **[CI/CD Variables](./gitlab_ci_variables_secrets.md)**: Динамические параметры, управляющие поведением пайплайна без изменения кода. Делятся на переменные окружения и файлы.
+*   **[Environments](./environments_and_deployments.md)**: Виртуальные пространства (dev, staging, prod), куда развертывается приложение. Позволяют отслеживать историю деплоев и выполнять откаты (Rollback).
 
 ## Базовые концепции
 
 ### Архитектура GitLab CI/CD
 
-Для работы системы необходимы три ключевых компонента (подробнее — в [gitlab_platform_architecture.md](./gitlab_platform_architecture.md)):
+Для работы современной системы (v19.x) необходимы следующие компоненты (подробнее — в [gitlab_platform_architecture.md](./gitlab_platform_architecture.md)):
 
 1.  **GitLab Server** — управляет репозиториями, отслеживает изменения и инициирует пайплайны.
 2.  **GitLab Runner** — агент, выполняющий задания. Основные типы исполнителей (Executors):
     *   **Docker Executor** — изоляция в контейнерах (стандарт индустрии).
     *   **Kubernetes Executor** — запуск заданий в подах K8s.
-    *   **Shell Executor** — выполнение прямо на хосте (не рекомендуется из-за отсутствия изоляции).
-3.  **GitLab Agent for Kubernetes (KAS)** — современный стандарт интеграции с кластерами. В отличие от устаревших методов на базе сертификатов, KAS обеспечивает безопасное двустороннее соединение (Pull/Push) и позволяет CI/CD-задачам взаимодействовать с API Kubernetes через защищенный туннель.
-4.  **`.gitlab-ci.yml`** — конфигурационный файл, описывающий логику пайплайна.
+3.  **GitLab Duo & Agentic Platform** — интегрированная ИИ-платформа (v19.x). ИИ-агенты помогают в диагностике упавших пайплайнов, авто-исправлении уязвимостей (Auto-Remediation) и оптимизации конфигураций.
+4.  **GitLab Secrets Manager (GA)** — встроенное защищенное хранилище секретов, заменяющее внешние Vault-решения для базовых CI/CD сценариев.
+5.  **GitLab Agent for Kubernetes (KAS)** — обеспечивает безопасное двустороннее соединение между GitLab и кластерами Kubernetes.
+6.  **Registry (Container/Package)** — встроенные хранилища для Docker-образов и пакетов (NPM, Maven, PyPI), обеспечивающие замкнутый цикл сборки и хранения.
+7.  **`.gitlab-ci.yml`** — конфигурационный файл, описывающий логику пайплайна.
 
-С версии **19.2** **GitLab Secrets Manager** перешел в стадию General Availability (GA), предоставляя встроенное решение для безопасного хранения секретов с поддержкой версионирования и динамической инъекции в задачи, что минимизирует зависимость от внешних систем типа HashiCorp Vault для базовых сценариев.
-
-```
-[Разработчик] --push--> [GitLab Server] <---(KAS)---> [Kubernetes Cluster]
-                                |
+```text
+[Разработчик / Duo CLI] --push--> [GitLab Server] <---(KAS)---> [Kubernetes Cluster]
+                                      |
+                                      +--- [Secrets Manager]
+                                      |
+                                      v
+                                [GitLab Runner]
+                                |  (Executors)
                                 v
-                          [GitLab Runner]
-                          |-- Docker Executor
-                          |-- Kubernetes Executor
-                          |-- Shell Executor
+                          [Docker / K8s / Shell]
 ```
 
 Подробная информация о типах Runner и Executor — в [gitlab_ci_runners_executors.md](../Advanced/gitlab_ci_runners_executors.md). Установка self-hosted GitLab с Runner — в [self_hosted_installation.md](../Tutorials/self_hosted_installation.md).
@@ -51,6 +55,16 @@
 5.  **Docker Build**: Упаковка артефакта в Docker-образ. Часто используется **Kaniko** — инструмент для сборки образов внутри контейнера без необходимости в привилегированном режиме или Docker-демоне.
 6.  **Push**: Загрузка проверенного Docker-образа в Registry (например, GitLab Container Registry).
 7.  **Deploy**: Развертывание в Kubernetes (Dev, Test, Prod) автоматически или вручную.
+
+### Типы пайплайнов
+
+В зависимости от события запуска выделяют несколько видов конвейеров:
+
+*   **Branch Pipelines**: Запускаются при каждом пуше в ветку.
+*   **Merge Request Pipelines**: Запускаются только для MR. Позволяют использовать `detached` пайплайны для проверки кода перед слиянием.
+*   **Scheduled Pipelines**: Запускаются по расписанию (аналог cron). Используются для ночных сборок или сканирования безопасности.
+*   **Parent-Child Pipelines**: Один пайплайн запускает другой (дочерний) в том же или другом проекте. Это позволяет разделять сложные процессы (например, сборка фронтенда и бэкенда).
+*   **Multi-project Pipelines**: Взаимодействие пайплайнов разных проектов через мост (bridge job).
 
 ### Разница между артефактами и кэшем
 
@@ -76,18 +90,20 @@
 *   **`stages`**: Список и порядок стадий.
 *   **`default`**: Набор общих настроек для всех заданий (образ, скрипты подготовки, кэш).
 *   **`variables`**: [Переменные окружения](./gitlab_ci_variables_secrets.md). Рекомендуется использовать **GitLab Secrets Manager** для чувствительных данных.
-*   **`workflow:rules`**: Глобальные правила запуска всего пайплайна.
+*   **`workflow:rules`**: Глобальные правила запуска всего пайплайна. Позволяют избежать дублирования пайплайнов (например, при одновременном открытии MR и пуше в ветку).
 
 #### Параметры заданий
 
 *   **`script`**: Обязательный блок с shell-командами.
-*   **`needs`**: Создает направленный ациклический граф (DAG), позволяя запускать задания сразу после готовности зависимостей.
-*   **`rules`**: Условия включения задания (замена устаревшим `only`/`except`).
+*   **`needs`**: Создает направленный ациклический граф (DAG), позволяя запускать задания сразу после готовности зависимостей, не дожидаясь завершения всей стадии.
+*   **`rules`**: Современный и гибкий стандарт управления условиями (замена устаревшим `only`/`except`).
+    *   **Почему `rules`?**: Поддерживают сложные логические выражения (`if`, `changes`, `exists`), позволяют изменять атрибуты задания (например, `when: manual` или `variables`) в зависимости от условий.
 *   **`environment`**: Описание целевой среды.
 
 #### Безопасность и доступ
 
 *   **CI/CD Job Token Scope**: Начиная с версии **18.0**, доступ к проектам через `CI_JOB_TOKEN` ограничен белым списком (Allowlist) по умолчанию. Необходимо явно разрешать входящие и исходящие запросы между проектами.
+*   **Scan Execution Policies**: Принудительное выполнение проверок безопасности, которое невозможно переопределить в `.gitlab-ci.yml` проекта.
 
 ### Взаимосвязь `needs` и `dependencies`
 
@@ -109,6 +125,14 @@
 ### Пример базового пайплайна
 
 ```yaml
+# Глобальные правила для предотвращения дублирования пайплайнов
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 stages:
   - build
   - test
@@ -122,7 +146,7 @@ default:
   image: python:3.12
   before_script:
     - pip install -r requirements.txt
-    # → Installing dependencies...
+    # Duo Assistant: Installing core dependencies for Python 3.12 environment
 
 build_job:
   stage: build
@@ -137,30 +161,34 @@ test_job:
   stage: test
   needs: ["build_job"]
   script:
-    - pytest -q
+    - pytest -v
+    # → Executing unit tests...
 
 deploy_job:
   stage: deploy
   environment:
     name: production
+    url: https://app.example.com
   needs: ["test_job"]
-  dependencies: []
+  dependencies: ["build_job"]
   script:
     - ./scripts/deploy.sh $CI_COMMIT_SHORT_SHA
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
+      allow_failure: false
 ```
 
 ## Дополнительная информация
 
-*   **CI Lint**: Инструмент проверки синтаксиса в UI GitLab (`CI/CD -> Editor`).
-*   **Pipeline Execution Policies**: Принудительное выполнение проверок безопасности на уровне группы. С версии **19.2** доступны запланированные политики выполнения (Scheduled Execution Policies).
-*   **GitLab Duo**: AI-помощник, интегрированный в Web IDE и CLI. Начиная с версии **18.0**, функции Duo (Code Suggestions, Chat) включены в Premium/Ultimate по умолчанию.
+*   **CI Lint**: Инструмент проверки синтаксиса в UI GitLab (`CI/CD -> Editor`). Обязателен для использования перед коммитом сложных конфигураций.
+*   **GitLab Duo CLI (GA 19.2)**: Полноценный интерфейс командной строки для взаимодействия с ИИ-агентами. Позволяет диагностировать ошибки пайплайнов и генерировать тесты прямо из терминала.
+*   **Auto-Remediation (19.2)**: Система автоматического исправления уязвимостей. ИИ-агент не только находит проблему, но и предлагает Merge Request с исправленным кодом, проверяя его на отсутствие breaking changes.
+*   **Pipeline Execution Policies**: Принудительное выполнение проверок безопасности на уровне всей организации. С версии **19.2** поддерживаются **Scheduled Execution Policies** для регулярного сканирования всех проектов группы.
 *   **Стратегия ветвления**: О применении GitLab Flow — в [gitlab_flow.md](../Tutorials/gitlab_flow.md).
 
-> **Критичные изменения последних версий:**
+> **Критичные изменения и требования версий 19.x:**
 >
-> *   **19.0**: Минимальная версия PostgreSQL — **17**. Поддержка Redis 6 полностью прекращена (требуется переход на Redis 7+ или **Valkey**). Прекращена поддержка Ubuntu 20.04.
-> *   **18.0**: Enforced **Job Token Allowlist**. Все межпроектные взаимодействия должны быть явно разрешены в настройках CI/CD.
-> *   **18.x**: AI-функции GitLab Duo стали частью базовых подписок.
+> *   **Инфраструктура**: Минимальная версия **PostgreSQL 17**, поддержка **Redis 7+** или **Valkey**. Прекращена поддержка устаревших ОС (Ubuntu 20.04).
+> *   **Безопасность**: Enforced **Job Token Allowlist** (18.0+) — межпроектные взаимодействия через токены должны быть явно разрешены в настройках.
+> *   **ИИ-интеграция**: Функции GitLab Duo (Code Suggestions, Chat) стали стандартом и глубоко интегрированы в жизненный цикл пайплайнов для ускорения разработки (Agentic Engineering).

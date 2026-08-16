@@ -1,42 +1,40 @@
 # Комплексный CI/CD пайплайн для Python-проекта
 
-## Надежность и актуальность
-
-- **Оценка надежности:** 10 (SSoT + Современные практики GitLab 17.x)
-- **Триггеры обновления:** Выход мажорных версий GitLab (18.0+), обновление Python до 3.13+, изменения в API GitLab Agent (KAS).
-
 ## Определения
 
 **Комплексный CI/CD Pipeline** — полностью автоматизированный процесс жизненного цикла ПО, включающий проверку качества кода, многоуровневое тестирование, сборку артефактов и автоматизированное развертывание в различные среды.
 
-**`id_tokens` (OIDC)** — современный механизм аутентификации, позволяющий GitLab Runner безопасно взаимодействовать с облаками и Kubernetes без использования долгоживущих секретов.
+**`uv`** — сверхбыстрый менеджер пакетов и установщик Python, написанный на Rust. К 2026 году является индустриальным стандартом для CI/CD благодаря экстремальной скорости установки (до 10-100 раз быстрее `pip`) и встроенной поддержке виртуальных окружений.
 
-**GitLab Agent for Kubernetes (KAS)** — инструмент для безопасного управления кластером через **CI/CD Tunnel**, исключающий необходимость хранения `KUBECONFIG` в переменных репозитория.
+**`ruff`** — высокопроизводительный линтер и форматер кода для Python, заменяющий собой целый стек инструментов (Flake8, isort, Black). Позволяет значительно ускорить стадию валидации.
 
-**SBOM (Software Bill of Materials)** — формализованный список всех компонентов, библиотек и зависимостей приложения, необходимый для обеспечения безопасности цепочки поставок (Supply Chain Security).
+**`id_tokens` (OIDC)** — современный механизм аутентификации (стандарт 2026 года), позволяющий GitLab Runner безопасно взаимодействовать с внешними сервисами (Vault, облачные провайдеры, Kubernetes) без использования долгоживущих секретов на основе доверия между провайдером личности (GitLab) и потребителем.
 
-**Quality Gates (Ворота качества)** — набор автоматических проверок (линтеры, тесты, сканеры), которые должны быть пройдены для перехода артефакта на следующую стадию деплоя.
+**GitLab Agent for Kubernetes (KAS)** — основной инструмент для безопасной интеграции GitLab с кластером. Обеспечивает двусторонний канал связи (**CI/CD Tunnel**), исключающий необходимость экспонирования API кластера наружу или хранения `KUBECONFIG` в переменных.
+
+**SBOM (Software Bill of Materials)** — формализованный перечень всех библиотек и зависимостей, необходимый для аудита безопасности и соответствия стандартам цепочки поставок (**SLSA**).
 
 ## Основные концепции
 
-### Архитектура и рабочий процесс
+### Архитектура и принцип Fail Fast
 
-1. **Стратегия ветвления (GitLab Flow + TBD):**
-    - **`feature/*`**: Короткоживущие ветки для разработки. Запускают проверки качества (Lint, Test, SAST).
-    - **`develop`**: Ветка интеграции. Автоматический деплой в окружение **Development**.
-    - **`main`**: Стабильная ветка. Автоматический деплой в окружение **Staging**.
-    - **Git-теги (`v*.*.*`)**: Официальные релизы. Ручной деплой в **Production**.
+Современный пайплайн строится по принципу **Fail Fast**: наиболее быстрые и критичные проверки выполняются первыми. Это экономит ресурсы раннеров и время разработчиков.
 
-2. **Иерархия окружений:**
-    - **Development (`dev`)**: Среда для быстрой проверки функционала разработчиками.
-    - **Staging**: Копия продакшена для финального тестирования и QA.
-    - **Production**: Продуктивная среда, доступная конечным пользователям.
+1. **Стратегия ветвления (GitLab Flow):**
+    - **`feature/*`**: Проходят стадию `validate` (линтеры, типы) и `unit-tests`.
+    - **`develop`**: Проходит полный цикл проверок и деплоится в **Development**.
+    - **`main`**: Финальные интеграционные тесты и деплой в **Staging**.
+    - **Git-теги (`v*.*.*`)**: Инициируют релизный цикл с деплоем в **Production**.
 
-3. **Слои безопасности:**
-    - **SAST**: Статический анализ исходного кода.
-    - **Dependency Scanning (SCA)**: Анализ уязвимостей в сторонних библиотеках.
-    - **Container Scanning**: Проверка Docker-образа на уязвимости в ОС и системных пакетах.
-    - **Secret Detection**: Поиск случайно закомиченных ключей и паролей.
+2. **Zero Trust в CI/CD:**
+    - Отказ от статических паролей и токенов в пользу кратковременных OIDC-токенов (`id_tokens`).
+    - Использование GitLab Agent (KAS) с RBAC-ограничениями на уровне конкретных namespaces.
+    - Сканирование образов и зависимостей на каждом этапе сборки.
+
+3. **Оптимизация Python-сред:**
+    - **Контейнеризация:** Использование Multi-stage Docker-сборок для минимизации размера и поверхности атаки.
+    - **Управление зависимостями:** Использование `uv.lock` для гарантии детерминированности сборок.
+    - **Кэширование:** Разделение кэша для загрузки пакетов (`uv cache`) и результатов тестирования.
 
 ## Практические сценарии
 
@@ -47,6 +45,11 @@
 Используем `workflow:rules` для фильтрации запусков и типизации тегов образов.
 
 ```yaml
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  DOCKER_IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  KUBE_CONTEXT: "my-group/infra:prod-agent"
+
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -76,18 +79,23 @@ include:
   - template: Security/Dependency-Scanning.gitlab-ci.yml
 
 default:
-  image: python:3.12-slim
-  interruptible: true
+  image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .uv-cache
 ```
 
-#### Шаг 2: Валидация и Сборка (SBOM + Kaniko)
+#### Шаг 2: Валидация и Сборка (Ruff + Kaniko)
 
 ```yaml
 linting:
   stage: validate
   script:
-    - pip install ruff
-    - ruff check .
+    - uvx ruff check .
+    - uvx ruff format --check .
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
@@ -102,39 +110,34 @@ build_and_sbom:
       --context $CI_PROJECT_DIR
       --dockerfile $CI_PROJECT_DIR/Dockerfile
       --destination $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG
-    # Генерация SBOM (Software Bill of Materials)
-    - wget https://github.com/anchore/syft/releases/download/v1.0.0/syft_1.0.0_linux_amd64.tar.gz
-    - tar -xf syft_1.0.0_linux_amd64.tar.gz
-    - ./syft $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG -o cyclonedx-json=sbom.json
+    # Генерация SBOM с использованием образа Syft (в отдельной джобе или через скрипт)
   artifacts:
-    paths:
-      - sbom.json
+    reports:
+      cyclonedx: sbom.json
 ```
 
-#### Шаг 3: Тестирование в изолированных средах
+#### Шаг 3: Тестирование с использованием uv
 
 ```yaml
 .pytest_base:
   stage: test
-  cache:
-    key: "python-deps-$CI_COMMIT_REF_SLUG"
-    paths:
-      - .cache/pip
-  before_script:
-    - pip install --cache-dir .cache/pip -r requirements-dev.txt
-
-unit_tests:
-  extends: .pytest_base
   script:
-    - pytest tests/unit --junitxml=report.xml
+    - uv sync --frozen
+    - uv run pytest tests/unit --junitxml=report.xml
   artifacts:
     reports:
       junit: report.xml
 
+unit_tests:
+  extends: .pytest_base
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.11", "3.12", "3.13"]
+
 integration_tests:
   extends: .pytest_base
   script:
-    - pytest tests/integration
+    - uv run pytest tests/integration
   rules:
     - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"
 ```
@@ -144,9 +147,10 @@ integration_tests:
 ```yaml
 .helm_deploy:
   stage: deploy
-  image: bitnami/kubectl:1.30.0
-  variables:
-    KUBE_CONTEXT: "my-group/infra:prod-agent"
+  image: bitnami/kubectl:latest
+  id_tokens:
+    K8S_TOKEN:
+      aud: https://kubernetes.default.svc.cluster.local
   script:
     - kubectl config use-context $KUBE_CONTEXT
     - >
@@ -162,7 +166,6 @@ deploy_dev:
     NAMESPACE: "dev"
   environment:
     name: development
-    url: https://dev.example.com
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
 
@@ -173,7 +176,6 @@ deploy_prod:
     NAMESPACE: "production"
   environment:
     name: production
-    url: https://app.example.com
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
       when: manual
@@ -182,19 +184,37 @@ deploy_prod:
 ## Технические нюансы и Тюнинг
 
 ### Оптимизация кэширования
-Для Python-проектов критично кэшировать не только `.venv` (который может быть привязан к версии Python), но и саму директорию загрузки `pip` (`.cache/pip`). Это позволяет избежать повторной скачки пакетов при изменении структуры виртуального окружения.
+Для Python-проектов при использовании `uv` критично кэшировать директорию `.uv-cache`. В отличие от `pip`, `uv` использует глобальный кэш для всех виртуальных окружений, что позволяет избежать повторной загрузки и компиляции пакетов (wheel) даже при смене версии Python в матрице тестов.
 
 ### Безопасность через ID Tokens
-В примере с Helm рекомендуется использовать `id_tokens` для аутентификации в Kubernetes, если кластер поддерживает OIDC. Это исключает хранение статических токенов в переменных проекта.
+Использование `id_tokens` в сочетании с GitLab Agent (KAS) позволяет реализовать модель **Workload Identity Federation (WIF)**. Раннер получает временный JWT, который Kubernetes (или Vault) проверяет через OIDC. Это полностью устраняет риск компрометации статических токенов доступа.
 
 ### Тюнинг Docker-образа
-Всегда используйте многостадийную сборку (multi-stage). В первом слое (`builder`) устанавливайте зависимости, во втором (`runtime`) — копируйте только `site-packages` и код. Запускайте приложение от имени `non-root` пользователя.
+Для Python в 2026 году рекомендуется использовать многостадийную сборку (multi-stage):
+1.  **Stage 1 (Builder):** Установка `uv`, компиляция зависимостей, экспорт виртуального окружения.
+2.  **Stage 2 (Runtime):** Использование максимально легкого базового образа (например, `distroless` или `python-slim`). Копирование только готового окружения.
+3.  **Non-root:** Обязательный запуск приложения от пользователя с ограниченными правами (UID > 1000).
+
+## Валидация и проверка
+
+Для подтверждения успешной работы пайплайна выполните следующие действия:
+1.  **Проверка визуализации тестов:** Убедитесь, что во вкладке **Tests** пайплайна отображаются результаты `pytest` (благодаря JUnit артефактам).
+2.  **Аудит SBOM:** Скачайте артефакт `sbom.json` и проверьте его через `trivy sbom sbom.json` на наличие известных уязвимостей.
+3.  **Логи KAS:** Проверьте вывод команды деплоя: там должен быть статус `atomic success`, подтверждающий корректный выкат в Kubernetes.
+
+## Устранение неисправностей (Troubleshooting)
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **`uv sync` fails** | Несоответствие `uv.lock` и `pyproject.toml` | Обновите lock-файл локально: `uv lock` и закомитьте его. |
+| **`KAS Context not found`** | Ошибка в имени проекта или агента | Проверьте формат: `group/project:agent-name`. Убедитесь, что агент разрешен для текущего проекта. |
+| **`Permission denied` в Kaniko** | Неверные данные в `config.json` | Проверьте переменные `$CI_REGISTRY_USER` и пароль. Попробуйте использовать `id_tokens` для Registry. |
+| **Тесты падают по таймауту** | Недостаточно ресурсов у раннера | Оптимизируйте тесты или увеличьте лимиты в конфигурации GitLab Runner. |
 
 ## Дополнительная информация
 
 ### Смотрите также
 
-- **[Основы GitLab CI](../Concepts/gitlab_ci_basics.md)** — базовые термины.
 - **[Интеграция с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — детальная настройка KAS.
-- **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление доступом.
+- **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление доступом через OIDC.
 - **[Dockerfile для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md)** — глубокая оптимизация сборки.

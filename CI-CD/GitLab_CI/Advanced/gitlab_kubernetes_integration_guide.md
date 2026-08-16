@@ -2,56 +2,81 @@
 
 ## Определения
 
-**GitLab Agent for Kubernetes (KAS)** — основной инструмент для безопасной интеграции GitLab с кластером Kubernetes. Состоит из серверной части (**GitLab KAS**) и агента (**agentk**), устанавливаемого внутри кластера.
+**GitLab Agent for Kubernetes (KAS)** — основной и единственный рекомендуемый метод интеграции GitLab с кластерами Kubernetes (начиная с версий 17.x/18.x). Система состоит из серверного компонента (**GitLab KAS**) и агента (**agentk**), работающего внутри кластера по Pull-модели.
 
-**CI/CD Tunnel** — механизм, позволяющий CI/CD-задачам GitLab взаимодействовать с API кластера Kubernetes через защищенное соединение Агента, без необходимости экспонирования API-сервера в интернет.
+**CI/CD Tunnel** — защищенный GRPC-туннель, позволяющий CI/CD-задачам GitLab взаимодействовать с API кластера Kubernetes напрямую. Исключает необходимость хранения `KUBECONFIG` в переменных и экспонирования API кластера в интернет.
 
-**Workload Identity Federation (OIDC)** — современный стандарт аутентификации, позволяющий GitLab Runner получать временные учетные данные облачных провайдеров (AWS, GCP, Azure) на основе JWT-токенов (`id_tokens`).
+**Workload Identity Federation (OIDC/WIF)** — модель безопасности **Zero Trust**, при которой GitLab Runner получает временный JWT-токен (`id_tokens`) для федеративной аутентификации в облаках (AWS EKS, GKE, Azure AKS) без использования статических секретов.
 
-**GitLab Workspaces** — функционал (GitLab 16.0+), позволяющий запускать полноценные среды разработки (Cloud IDE) внутри кластера Kubernetes через Агент.
+**GitLab Workspaces** — функционал (v16.x–19.x) для предоставления разработчикам облачных сред разработки (Cloud IDE) внутри кластера Kubernetes, управляемых через Агент.
 
 ## Основные концепции
 
-### Стратегии интеграции (GitLab 17+)
+### Стратегии интеграции (GitLab 18.x/19.x)
 
-| Метод | Тип | Механизм | Преимущества |
+| Метод | Тип | Технология | Основной сценарий |
 | :--- | :--- | :--- | :--- |
-| **CI/CD Tunnel** | Push-модель | Runner → KAS → Agent → K8s API | Гибкость пайплайнов, использование Helm/Kubectl напрямую. |
-| **GitOps (Native)** | Pull-модель | Agent → Git Repo → K8s API | Простота настройки, встроенный в GitLab дрейф-контроль. |
-| **GitOps (External)** | Pull-модель | Git Repo ← **Flux/ArgoCD** | Профессиональный стандарт для сложных инфраструктур. |
-| **OIDC (ID Tokens)** | Push-модель | Runner → Cloud IAM → K8s API | Безопасность без долгоживущих секретов (AWS EKS, GKE). |
+| **CI/CD Tunnel** | Push-модель | KAS + `kubectl`/`helm` | Динамический деплой, администрирование, Review Apps. |
+| **GitOps (Native)** | Pull-модель | KAS + Git Sync | Простая синхронизация манифестов из репозитория. |
+| **GitOps (Flux)** | Pull-модель | Flux v2 + GitLab UI | Enterprise-стандарт с визуализацией состояния в GitLab. |
+| **OIDC (WIF)** | Push-модель | `id_tokens` + IAM | Максимальная безопасность в публичных облаках. |
 
-### Иерархия доступа и контексты
+### Контексты доступа и иерархия
 
-Доступ к кластеру в пайплайне осуществляется через переменную `KUBE_CONTEXT`. Формат контекста:
-`путь/к/проекту-конфигурации:имя-агента`
+Связь пайплайна с кластером устанавливается через переменную `KUBE_CONTEXT`.
+**Формат:** `путь/к/проекту-конфигурации:имя-агента`
+**Пример:** `ops/k8s-infra:production-agent`
 
-**Пример:** `infra/k8s-connection:prod-agent`
-
-Если агент настроен в другом проекте, необходимо явно разрешить доступ в файле `config.yaml` агента:
+Если агент находится в отдельном «инфраструктурном» проекте, необходимо разрешить доступ в его `config.yaml`:
 ```yaml
-# .gitlab/agents/my-agent/config.yaml
+# .gitlab/agents/production-agent/config.yaml
 ci_access:
   projects:
-    - id: path/to/app-project
+    - id: web-apps/frontend
   groups:
-    - id: path/to/app-group
+    - id: backend-services
 ```
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка аутентификации в AWS EKS через OIDC
+### Сценарий 1: Деплой через CI/CD Tunnel с имперсонацией (RBAC)
 
-Использование `id_tokens` для получения временных прав в AWS без хранения `AWS_ACCESS_KEY_ID`.
+Использование механизма `access_as` для ограничения прав пайплайна до уровня пользователя.
 
 ```yaml
-deploy_eks:
+# В пайплайне приложения (.gitlab-ci.yml)
+deploy_app:
+  stage: deploy
+  image: 
+    name: line/kubectl-kustomize:latest
+  variables:
+    KUBE_CONTEXT: "ops/infra:my-agent"
+  script:
+    - kubectl config use-context $KUBE_CONTEXT
+    - kubectl apply -f manifests/ --namespace $CI_PROJECT_NAME
+```
+
+**Настройка агента (config.yaml):**
+```yaml
+ci_access:
+  projects:
+    - id: my-app/repo
+      access_as:
+        user: {} # Пайплайн получит права пользователя, запустившего его
+```
+
+### Сценарий 2: Аутентификация в облаке AWS через OIDC
+
+Исключение использования статических `AWS_ACCESS_KEY_ID`.
+
+```yaml
+deploy:aws:
   image: amazon/aws-cli:latest
   id_tokens:
     GITLAB_OIDC_TOKEN:
-      aud: https://gitlab.example.com
+      aud: https://gitlab.com
   variables:
-    ROLE_ARN: "arn:aws:iam::123456789012:role/GitLabDeployRole"
+    ROLE_ARN: "arn:aws:iam::123456789012:role/GitLabDeployer"
   script:
     - >
       export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s"
@@ -61,73 +86,60 @@ deploy_eks:
       --web-identity-token ${GITLAB_OIDC_TOKEN}
       --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
       --output text))
-    - aws eks update-kubeconfig --name my-cluster
-    - kubectl get pods
+    - aws eks update-kubeconfig --name prod-cluster
+    - helm upgrade --install my-app ./chart
 ```
 
-### Сценарий 2: Интеграция с Flux (GitLab 17.x)
+### Сценарий 3: Интеграция с Flux v2 (Enterprise GitOps)
 
-GitLab официально поддерживает интеграцию с **Flux** для реализации Enterprise-уровня GitOps.
+GitLab v18.x обеспечивает нативную поддержку Flux с отображением ресурсов в UI.
 
-1.  **Генерация токена**: Создайте Project Access Token с правами `write_repository`.
-2.  **Flux Bootstrap**:
+1.  **Bootstrap Flux** в кластере (рекомендуется через GitLab Runner):
     ```bash
     flux bootstrap gitlab \
       --owner=my-group \
-      --repository=my-repo \
+      --repository=infra-gitops \
       --branch=main \
-      --path=clusters/my-cluster
+      --path=clusters/prod-cluster \
+      --personal
     ```
-3.  **Визуализация**: Состояние ресурсов Flux отображается непосредственно в интерфейсе GitLab в разделе **Operate > Kubernetes clusters**.
+2.  **Визуализация**: В интерфейсе GitLab перейдите в **Operate > Kubernetes clusters**. Выберите ваш агент для просмотра состояния синхронизации (Kustomizations, HelmReleases).
 
-### Сценарий 3: Настройка GitLab Workspaces
+### Сценарий 4: Настройка сред разработки (GitLab Workspaces)
 
-Для предоставления разработчикам изолированных сред в K8s:
-1. Включите Workspaces в настройках группы.
-2. Настройте Ingress-контроллер с поддержкой wildcard-доменов.
-3. Добавьте в `config.yaml` агента блок `remote_development`.
+1.  **Условие**: Наличие Ingress-контроллера с поддержкой Wildcard (например, `*.workspaces.example.com`).
+2.  **Конфигурация агента**:
+    ```yaml
+    remote_development:
+      enabled: true
+      dns_zone: workspaces.example.com
+    ```
+3.  **Использование**: Разработчик может запустить Workspace непосредственно из Web IDE или раздела **Operate > Workspaces**.
 
-## Дополнительная информация
+## Безопасность и RBAC
 
-### Безопасность и RBAC
+1.  **Принцип наименьших привилегий**: Никогда не назначайте ServiceAccount агента роль `cluster-admin`. Используйте RoleBindings для ограничения доступа конкретными неймспейсами.
+2.  **Защита туннеля**: Ограничивайте сетевой доступ `agentk` к KAS через Network Policies.
+3.  **Имперсонация**: Механизм `access_as: { agent: {} }` (по умолчанию) использует права агента, в то время как `user: {}` или `service_account: { name: ... }` обеспечивают более гранулярный контроль.
 
-- **Access As**: Используйте директиву `access_as: { agent: {} }` для выполнения задач от имени ServiceAccount агента или `access_as: { user: {} }` для ограничения прав до уровня запустившего пайплайн пользователя.
-- **Network Policies**: Обязательно ограничивайте сетевой доступ `agentk` внутри кластера, так как он имеет доступ к API-серверу.
+## Устранение неполадок (Troubleshooting)
 
-### Устранение неполадок
+### Типичные ошибки
+-   **`Context not found`**: 
+    -   Пайплайн запущен в проекте, который не добавлен в `ci_access` агента.
+    -   Имя проекта или агента в `KUBE_CONTEXT` указано неверно (чувствительно к регистру).
+-   **`GRPC: connection error`**: Проблема сетевой связности между `agentk` и GitLab KAS. Проверьте настройки прокси и доступность порта 443/wss.
+-   **`RBAC: forbidden`**: Права ServiceAccount агента в кластере недостаточны для выполнения `kubectl` команд. Проверьте логи агента: `kubectl logs -n gitlab-agent -l app=gitlab-agent`.
 
-1. **KAS Connectivity**:
-   ```bash
-   # Проверка логов агента на наличие ошибок авторизации
-   kubectl logs -n gitlab-agent -l app=gitlab-agent
-   ```
-2. **Context Not Found**:
-   - Проверьте, что проект с конфигурацией агента публичный или проект с пайплайном добавлен в `ci_access`.
-   - Выполните `kubectl config get-contexts` внутри CI-задачи для проверки доступных туннелей.
-
-### См. также
-
-- **[Обзор GitLab Runner и Executor](./gitlab_ci_runners_executors.md)** — выбор среды выполнения.
-- **[GitOps: Обзор методологии](../../../GitOps/GitOps_overview.md)** — принципы Pull-модели.
-- **[Интеграция GitLab CI и Vault](../Tutorials/vault_kubernetes_integration.md)** — управление секретами.
-- **[Установка GitLab Runner в Kubernetes](../../../Kubernetes/Installation/gitlab_runner_kubernetes_installation.md)** — деплой исполнителя.
+### Команды диагностики
+-   `kubectl config get-contexts` — внутри CI задачи для проверки активных туннелей.
+-   `glab cluster agent list` — проверка статуса агентов через GitLab CLI.
 
 ## Дополнительная информация
 
-### Безопасность и RBAC
-
-- **Принцип наименьших привилегий**: Назначайте Агенту и его `ServiceAccount` только те права, которые необходимы для работы (избегайте `cluster-admin`).
-- **Имперсонация**: Используйте механизм `access_as` в конфигурации агента, чтобы ограничить права доступа CI/CD задач до уровня конкретных пользователей или групп.
-- **Секреты**: Для управления секретами в Kubernetes рекомендуется использовать **[Sealed Secrets](../../../Kubernetes/Security/sealed_secrets_overview.md)** или интеграцию с **[Vault](../Tutorials/vault_kubernetes_integration.md)**.
-
-### Устранение неполадок
-
-- **Ошибка подключения к KAS**: Проверьте сетевую доступность `kasAddress` изнутри кластера (особенно если используется самоподписанный сертификат).
-- **Контекст не найден**: Убедитесь, что имя проекта и имя агента указаны верно, и что проект, в котором запущен пайплайн, имеет доступ к агенту (настраивается в `config.yaml`).
-- **RBAC Forbidden**: Проверьте `RoleBinding` для `ServiceAccount`, под которым работает агент в целевом namespace.
-
 ### См. также
-
-- **[Обзор GitLab Runner и Executor](./gitlab_ci_runners_executors.md)** — выбор среды выполнения (Kubernetes Executor).
-- **[GitOps: Обзор методологии](../../../GitOps/GitOps_overview.md)** — принципы Pull-модели.
-- **[Установка GitLab Runner в Kubernetes](../../../Kubernetes/Installation/gitlab_runner_kubernetes_installation.md)** — деплой исполнителя.
+-   **[Обзор GitLab Runner и Executor](./gitlab_ci_runners_executors.md)** — выбор между Kubernetes и Docker executors.
+-   **[GitOps: Обзор методологии](../../../GitOps/GitOps_overview.md)** — принципы Pull-модели.
+-   **[Интеграция GitLab CI и Vault](../Tutorials/vault_kubernetes_integration.md)** — использование OIDC для получения секретов.
+-   **[Установка GitLab Runner в Kubernetes](../../../Kubernetes/Installation/gitlab_runner_kubernetes_installation.md)** — детальное руководство по Helm-чарту.
+-   **[Sealed Secrets](../../../Kubernetes/Security/sealed_secrets_overview.md)** — управление секретами в GitOps.

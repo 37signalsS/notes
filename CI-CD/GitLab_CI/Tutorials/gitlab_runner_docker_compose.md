@@ -1,52 +1,69 @@
-# Установка GitLab и Runner через Docker Compose
+# Развертывание стека GitLab и Runner через Docker Compose
+
+Практическое руководство по созданию локальной среды разработки (Dev-инфраструктуры), объединяющей GitLab CE и GitLab Runner в единый стек с использованием Docker Compose.
+
+---
 
 ## Определения
 
-**Docker Compose** — инструмент для описания и запуска многоконтейнерных приложений. Позволяет поднять GitLab и его Runner одной командой с общими сетями и томами.
+**Docker Compose** — инструмент для декларативного описания и управления многоконтейнерными приложениями. В контексте GitLab позволяет поднять сервер и агентов исполнения одной командой в изолированной сети.
 
-**GitLab Runner** — агент, выполняющий задачи (jobs). В данной схеме Runner запускается как соседний контейнер (Sidecar).
+**GitLab Runner** — агент, отвечающий за выполнение задач (jobs) пайплайна. В данной схеме запускается как «побочный» контейнер (Sidecar), тесно связанный с основным инстансом.
 
-**Container Registry** — встроенный реестр образов. Для локальной работы требует настройки HTTP-доступа или доверенных сертификатов.
+**Container Registry** — встроенное в GitLab хранилище Docker-образов. Для локальной работы по протоколу HTTP требует специфической настройки доверия со стороны Runner'а.
 
-**Docker-in-Docker (DinD)** — метод сборки образов внутри контейнера. В данном руководстве реализуется через проброс Docker Socket (`/var/run/docker.sock`).
+**Docker-in-Docker (DinD)** — технология, позволяющая собирать и запускать Docker-образы внутри контейнера. В этом руководстве реализуется через **Bind Mount** системного сокета Docker (`/var/run/docker.sock`).
+
+**Valkey** — высокопроизводительное in-memory хранилище (форк Redis), используемое в GitLab 19.x для управления очередями задач и кэширования.
 
 ## Основные концепции
 
-### Взаимодействие сервисов (Networking)
+### Сетевое взаимодействие (Networking)
 
-В Docker Compose контейнеры находятся в одной сети. Это позволяет Runner'у обращаться к GitLab по имени сервиса (`http://gitlab`), а не по внешнему IP. Однако для корректной генерации ссылок в интерфейсе GitLab должен знать свой внешний URL.
+В среде Docker Compose контейнеры GitLab и Runner помещаются в общую пользовательскую сеть (bridge). Это дает два преимущества:
+1.  **Service Discovery:** Runner обращается к GitLab по имени сервиса (`http://gitlab`), что упрощает конфигурацию.
+2.  **Изоляция:** Трафик между компонентами не выходит за пределы виртуальной сети Docker, если это не требуется.
 
-### Жизненный цикл и Healthchecks
+*Важно:* Для того чтобы ссылки в интерфейсе GitLab (например, для Git Clone) были корректными, необходимо явно указывать `external_url`, соответствующий домену на хост-машине.
 
-GitLab Omnibus — тяжелое приложение (запуск 5–10 мин). Использование `healthcheck` в Compose позволяет Runner'у не начинать работу, пока сервер не будет полностью готов.
+### Оркестрация запуска и Healthchecks
 
-### Безопасность в Dev-окружении
+GitLab Omnibus является «тяжелым» приложением и проходит длительный этап инициализации (от 5 до 15 минут). Использование директивы `healthcheck` в Docker Compose критично: она позволяет Runner'у дождаться полной готовности API GitLab перед попыткой регистрации или выполнения задач, предотвращая каскадные ошибки запуска.
 
-Проброс `/var/run/docker.sock` дает Runner'у полные права `root` на хост-системе. Это допустимо для локальной разработки, но **категорически запрещено** для публичных инстансов.
+### Безопасность и риски Docker Socket
+
+Проброс `/var/run/docker.sock` внутрь контейнера Runner'а дает ему права суперпользователя на хост-системе. 
+*   **Dev-окружение:** Допустимо для локальных тестов и сборки образов.
+*   **Production:** Категорически запрещено. Используйте изолированные виртуальные машины или технологию Kaniko для сборки без привилегий.
 
 ## Практические сценарии
 
 ### Предварительные требования
 
-- **RAM:** Минимум 8 ГБ (16 ГБ рекомендуется).
-- **Диск:** SSD, минимум 40 ГБ свободного места.
-- **ОС:** Linux, macOS или Windows (WSL2) с Docker Desktop 4.x+.
+**Аппаратные ресурсы:**
+- **RAM:** 16 ГБ (минимум 12 ГБ при отключении мониторинга).
+- **CPU:** 4 ядра и более.
+- **Диск:** SSD, минимум 50 ГБ свободного места.
 
-### Шаг 1: Настройка локального DNS
+**Программное обеспечение:**
+- Docker Engine 27.0+ и Docker Compose v2.20+.
+- Настроенный локальный DNS или отредактированный файл `/etc/hosts`.
 
-Добавьте в `/etc/hosts` (или `C:\Windows\System32\drivers\etc\hosts`):
+### Шаг 1: Подготовка окружения и DNS
+
+Для корректной работы Registry и SSH добавьте запись в `/etc/hosts` (или `C:\Windows\System32\drivers\etc\hosts` для Windows):
 ```text
 127.0.0.1 gitlab.local
 ```
 
-### Шаг 2: Создание конфигурации Docker Compose
+### Шаг 2: Конфигурация Docker Compose
 
-Создайте файл `docker-compose.yml`:
+Создайте файл `docker-compose.yml` в рабочей директории. Данная конфигурация оптимизирована для GitLab 19.x и включает использование Valkey.
 
 ```yaml
 services:
   gitlab:
-    image: 'gitlab/gitlab-ce:18.10.3-ce.0'
+    image: 'gitlab/gitlab-ce:19.2.2-ce.0'
     container_name: gitlab
     restart: always
     hostname: 'gitlab.local'
@@ -55,27 +72,32 @@ services:
         external_url 'http://gitlab.local'
         registry_external_url 'http://gitlab.local:5050'
         gitlab_rails['registry_enabled'] = true
-        # Оптимизация для малых инстансов (Dev)
+        # Переход на Valkey (вместо Redis) в 19.x
+        redis['backend'] = 'valkey'
+        # Оптимизация ресурсов для локальной среды
         puma['worker_processes'] = 2
-        sidekiq['max_concurrency'] = 10
+        sidekiq['max_concurrency'] = 8
+        prometheus_monitoring['enable'] = false
+        postgresql['shared_buffers'] = "512MB"
     ports:
       - '80:80'
       - '443:443'
       - '5050:5050'
+      - '2222:22'
     volumes:
-      - '/srv/gitlab/config:/etc/gitlab'
-      - '/srv/gitlab/logs:/var/log/gitlab'
-      - '/srv/gitlab/data:/var/opt/gitlab'
+      - './config:/etc/gitlab'
+      - './logs:/var/log/gitlab'
+      - './data:/var/opt/gitlab'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/-/health"]
       interval: 30s
       timeout: 10s
-      retries: 10
-    shm_size: '256m'
+      retries: 20
+    shm_size: '1gb'
     deploy:
       resources:
         limits:
-          memory: 12G
+          memory: 14G
 
   gitlab-runner:
     image: 'gitlab/gitlab-runner:alpine'
@@ -85,85 +107,86 @@ services:
       gitlab:
         condition: service_healthy
     volumes:
-      - '/srv/gitlab-runner/config:/etc/gitlab-runner'
+      - './runner-config:/etc/gitlab-runner'
       - '/var/run/docker.sock:/var/run/docker.sock'
-    # Добавляем алиас для связи с локальным GitLab
     extra_hosts:
       - "gitlab.local:host-gateway"
 ```
 
-### Шаг 3: Запуск и получение пароля
+### Шаг 3: Запуск и Валидация
 
-1. Запустите стек: `docker compose up -d`.
-2. Дождитесь статуса `healthy` (проверка: `docker ps`).
-3. Извлеките временный пароль `root`:
-   ```bash
-   docker exec -it gitlab grep 'Password:' /etc/gitlab/initial_root_password
-   ```
+1.  **Запуск стека:**
+    ```bash
+    docker compose up -d
+    ```
+2.  **Мониторинг здоровья:** Дождитесь, пока `docker ps` покажет статус `(healthy)` для контейнера `gitlab`.
+3.  **Первичный пароль:**
+    ```bash
+    docker exec -it gitlab grep 'Password:' /etc/gitlab/initial_root_password
+    ```
+4.  **Проверка доступа:** Откройте `http://gitlab.local` в браузере. Если страница загружается, сервер готов к работе.
 
-### Шаг 4: Современная регистрация Runner (GitLab 17.x+)
+### Шаг 4: Регистрация Runner (Современный метод 17.x+)
 
-С выходом GitLab 17.0 старые Registration Tokens (из настроек CI/CD) считаются устаревшими.
+В новых версиях GitLab регистрация происходит через **Authentication Tokens**.
 
-1. Зайдите в GitLab под `root`.
-2. Перейдите в **Settings > CI/CD > Runners**.
-3. Нажмите **New project runner**.
-4. Укажите теги (например, `local-docker`) и нажмите **Create runner**.
-5. Скопируйте **Authentication Token** (начинается с `glrt-`).
-6. Запустите регистрацию:
+1.  В GitLab перейдите в **Admin Area > CI/CD > Runners**.
+2.  Нажмите **New instance runner**, укажите тег `local-docker` и создайте его.
+3.  Скопируйте полученный токен (`glrt-xxxx`).
+4.  Выполните регистрацию внутри контейнера:
 
 ```bash
 docker exec -it gitlab-runner gitlab-runner register \
   --non-interactive \
   --url "http://gitlab.local" \
-  --token "glrt-ВАШ_ТОКЕН" \
+  --token "ВАШ_ТОКЕН" \
   --executor "docker" \
-  --docker-image "alpine:latest" \
+  --docker-image "python:3.13-slim" \
   --docker-volumes "/var/run/docker.sock:/var/run/docker.sock" \
-  --docker-network-mode "gitlab_default"
+  --docker-network-mode "gitlab-runner-default"
 ```
-*Примечание: `--docker-network-mode` должен соответствовать имени сети, созданной Compose (обычно `директория_default`).*
+*Примечание:* Имя сети можно узнать через `docker network ls`. Обычно это `название-папки_default`.
 
 ## Технические нюансы и Тюнинг
 
-### Проблема доступности Registry
-Для того чтобы Runner мог пушить образы в локальный Registry по HTTP, в `/etc/gitlab-runner/config.toml` (на хосте) или в параметрах регистрации нужно добавить:
+### Доступ к локальному Registry по HTTP
+
+Runner по умолчанию требует HTTPS для взаимодействия с реестрами. Чтобы разрешить работу с `gitlab.local:5050` по HTTP, отредактируйте `runner-config/config.toml` на хосте:
+
 ```toml
 [[runners]]
   [runners.docker]
-    allowed_images = ["*"]
-    allowed_services = ["*"]
-    # Разрешить незащищенные реестры
+    # Разрешаем проброс локального домена в запускаемые пайплайном контейнеры
     extra_hosts = ["gitlab.local:host-gateway"]
+    # Для сборки образов через Docker-in-Docker
+    privileged = true 
 ```
 
-### Очистка ресурсов
-Локальные сборки быстро забивают диск. Настройте автоматическую очистку в GitLab: **Admin Area > Settings > CI/CD > Container Registry**.
+### Автоматическая очистка диска
 
-## Решение проблем (Troubleshooting)
+Локальные сборки быстро потребляют дисковое пространство. Рекомендуется периодически выполнять очистку на хосте:
+```bash
+docker system prune -f
+```
 
-- **Runner не видит GitLab (ошибка `resolve host gitlab.local` в пайплайне):**
-  Это классическая проблема локальных стендов. Контейнер, запускаемый раннером, живет в изолированной сети и не знает об `/etc/hosts` хоста.
-  
-  **Решение:** Отредактируйте `/srv/gitlab-runner/config/config.toml` на хосте и добавьте `extra_hosts` в секцию `[runners.docker]`:
-  ```toml
-  [[runners]]
-    [runners.docker]
-      # Проброс локального домена внутрь собираемых контейнеров
-      extra_hosts = ["gitlab.local:host-gateway"]
-  ```
-  После изменения перезапустите контейнер раннера: `docker restart gitlab-runner`.
+## Решение проблем
 
-- **Ошибка 401 Unauthorized:** Проверьте, не истек ли `glrt-` токен. В новых версиях GitLab токены создаются "до" регистрации.
-- **Бесконечный запуск:** Проверьте логи (`docker logs -f gitlab`). Если процесс завис на `ruby_block[wait for redis]`, увеличьте лимит RAM.
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Runner: resolve host fail** | Контейнер пайплайна не знает о `gitlab.local` | Добавьте `extra_hosts = ["gitlab.local:host-gateway"]` в `config.toml` раннера. |
+| **Ошибка 401 при регистрации** | Токен `glrt-` устарел или неверно скопирован | Перевыпустите токен в Admin Area. |
+| **Бесконечный статус Starting** | Недостаточно RAM для Valkey/PostgreSQL | Увеличьте лимиты в Compose или RAM на хосте. |
+| **Registry: Connection Refused** | Порт 5050 не проброшен или Registry выключен | Проверьте `gitlab_rails['registry_enabled']` в конфиге. |
 
 ## Дополнительная информация
 
-### Импорт проектов для локальных тестов
-Если вы хотите протестировать пайплайны на реальном коде, разрешите импорт по URL в GitLab: **Admin Area > Settings > General > Visibility and access controls > Import sources**. Отметьте **Repository by URL**. Это позволит быстро клонировать проекты с GitHub для отладки.
+### Импорт проектов для тестов
+
+Для быстрой проверки пайплайнов можно импортировать существующие репозитории. Включите эту возможность: **Admin Area > Settings > General > Visibility and access controls > Import sources** (отметьте `Repository by URL`).
 
 ### Смотрите также
 
 - **[Установка Self-Hosted GitLab CE](./self_hosted_installation.md)** — подробнее о параметрах Omnibus.
-- **[Регистрация GitLab Runner](./runner_registration.md)** — глубокий разбор типов токенов.
-- **[Обзор Runner'ов и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)** — выбор между Docker и Shell.
+- **[Регистрация GitLab Runner](./runner_registration.md)** — детализация параметров `gitlab-runner register`.
+- **[Обзор Runner'ов и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)** — глубокая теория.
+- **[Dockerfile: Лучшие практики для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md)** — подготовка образов для CI/CD.

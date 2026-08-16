@@ -100,6 +100,7 @@ Cache-Status: Cloudflare-CDN; hit; ttl=345; key=a1b2c3d4; detail=mismatch-encodi
 
 ### См. также
 - **[Обзор CDN](cdn_overview.md)** — архитектура и принципы работы сети.
+- **[Интеграция инвалидации в CI/CD](../../CI-CD/Frontend_CI_CD/frontend_pipeline_specifics.md)** — автоматизация Purge и тегов в пайплайнах.
 - **[HTTP-кэширование](../Protocols/HTTP/http_caching.md)** — основы и заголовки протокола.
 - **[Граничные вычисления (Edge Computing)](../../Concepts/edge_computing_overview.md)** — выполнение кода на узлах CDN.
 - **[Защита от DDoS (L7)](../../Security/ApplicationSecurity/ddos_overview.md)** — механизмы фильтрации трафика.

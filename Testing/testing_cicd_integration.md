@@ -32,9 +32,9 @@
 | :--- | :--- | :--- |
 | **Lint / Static** | ruff, golangci-lint | 0 критических замечаний, соблюдение архитектурных правил. |
 | **Unit** | pytest, JUnit 5, Jest | 100% прохождение + анализ мутационного тестирования. |
-| **Integration** | Testcontainers | Изолированное окружение, успешные контракты API. |
+| **Integration** | Testcontainers, Pact | Изолированное окружение, успешные контракты API (Pact Broker). |
 | **Security** | Snyk, Trivy, Semgrep | Отсутствие CVE с доступными патчами. |
-| **E2E / UI** | Playwright, Cypress | Стабильность ключевых сценариев (User Journeys). |
+| **E2E / UI** | Playwright, Percy | Стабильность сценариев + отсутствие визуальных регрессий. |
 
 ### Оптимизация пайплайна (TIA)
 
@@ -128,7 +128,158 @@ test:coverage:
 
 **Принудительное применение (approval rules):** в Premium/Ultimate можно включить правило одобрения `Coverage-Check`, требующее одобрения при снижении покрытия относительно базового прогона; в 2026 добавлен параметр `coverage_minimum_threshold` — жёсткий порог, блокирующий слияние при покрытии ниже заданного значения независимо от дельты.
 
-## 4. Дополнительная информация
+### Нагрузочное тестирование в CI (k6 и Quality Gates)
+
+Инструмент **k6** является стандартом для Performance Testing as Code. В CI/CD он используется не для проверки предела производительности, а для верификации соблюдения **SLA/SLO** и **обнаружения регрессий (Regression Detection)**. Подробная теория и определения: **[Методология тестирования производительности](./performance_testing_methodology.md)**.
+
+#### 1. Скрипт с описанием порогов и базовой линии (`load-test.js`)
+Ключевым механизмом Quality Gates в k6 является объект `thresholds`. Для реализации Regression Detection в 2026 году используется сравнение с динамической базовой линией.
+
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  scenarios: {
+    constant_load: {
+      executor: 'constant-arrival-rate',
+      rate: 50,              // 50 RPS
+      timeUnit: '1s',
+      duration: '5m',
+      preAllocatedVUs: 20,
+      maxVUs: 50,
+    },
+  },
+  thresholds: {
+    http_req_failed: ['rate<0.01'],    // Абсолютный порог: ошибки < 1%
+    http_req_duration: ['p(95)<500'],  // Абсолютный порог: P95 < 500мс
+  },
+};
+
+export default function () {
+  const url = __ENV.TARGET_URL || 'http://localhost:8080';
+  const res = http.get(`${url}/api/v1/resource`);
+  check(res, { 'status is 200': (r) => r.status === 200 });
+  sleep(1);
+}
+```
+
+#### 2. Интеграция в GitLab CI: Regression Detection
+Для автоматического сравнения текущих результатов с предыдущими используются JSON-отчеты и артефакты CI.
+
+```yaml
+performance-test:
+  stage: verify-preview
+  image: 
+    name: grafana/k6:latest
+    entrypoint: [""]
+  variables:
+    TARGET_URL: "https://$CI_COMMIT_REF_SLUG.example.com"
+  script:
+    # 1. Запуск теста с генерацией JSON-отчета
+    - k6 run --summary-export=result.json ./tests/load-test.js
+    # 2. Логика Regression Detection (сравнение с baseline из артефактов main)
+    - |
+      if [ -f baseline.json ]; then
+        PREV_P95=$(jq '.metrics.http_req_duration.values."p(95)"' baseline.json)
+        CURR_P95=$(jq '.metrics.http_req_duration.values."p(95)"' result.json)
+        # Блокировка, если P95 вырос более чем на 10%
+        if (( $(echo "$CURR_P95 > $PREV_P95 * 1.1" | bc -l) )); then
+          echo "Performance regression detected! Baseline: ${PREV_P95}ms, Current: ${CURR_P95}ms"
+          exit 1
+        fi
+      fi
+  artifacts:
+    paths:
+      - result.json
+    expose_as: 'performance-report'
+  # Загрузка последнего успешного отчета из основной ветки как baseline
+  needs:
+    - job: performance-test
+      project: my-org/my-project
+      ref: main
+      artifacts: true
+```
+
+#### 3. Интеграция с Prometheus (Performance-as-Code)
+Для долгосрочного анализа трендов k6 отправляет метрики напрямую в Prometheus через Remote Write.
+
+**Схема:** `k6 --[Remote Write]--> Prometheus --[Query API]--> CI Gate`
+
+```yaml
+performance-prometheus:
+  stage: verify-preview
+  script:
+    # Запуск с расширением xk6-output-prometheus-remote
+    - k6 run -o output-prometheus-remote ./tests/load-test.js \
+      --tag commit=$CI_COMMIT_SHA \
+      --tag env=$CI_ENVIRONMENT_SLUG
+  variables:
+    K6_PROMETHEUS_REMOTE_URL: "http://prometheus:9090/api/v1/write"
+```
+
+**Рекомендации 2026:**
+- **Baseline:** Храните эталонные результаты в Git (LFS) для критических релизов или в выделенном S3-бакете.
+- **Изоляция:** Используйте `dedicated` раннеры, чтобы избежать влияния соседних сборок на Latency.
+- **Quality Gates:** Начинайте с "мягких" порогов (`allow_failure: true`), переводя их в блокирующие только после стабилизации окружения.
+
+### Chaos Engineering в CI (проверка устойчивости)
+
+В 2026 году Chaos Engineering перестал быть только упражнением в Production (Game Days) и стал частью CI-пайплайна. Интеграция «хаос-экспериментов» позволяет гарантировать, что новая версия приложения корректно обрабатывает сбои инфраструктуры (потерю связи с БД, задержки сети, перезапуск подов).
+
+#### 1. Использование Chaos Mesh в пайплайне
+Chaos Mesh поддерживает запуск экспериментов через Custom Resources (CRD), что удобно для CI/CD в Kubernetes.
+
+```yaml
+# chaos-experiment.yaml
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: api-network-delay
+spec:
+  action: delay
+  mode: one
+  selector:
+    labelSelectors:
+      'app': 'my-api-service'
+  delay:
+    latency: '200ms'
+    correlation: '100'
+  duration: '30s'
+```
+
+#### 2. Сценарий автоматизированного эксперимента (GitLab CI)
+Алгоритм проверки: запуск приложения → подача нагрузки → инъекция сбоя → проверка SLO.
+
+```yaml
+chaos-test:
+  stage: verify-preview
+  script:
+    # 1. Запуск нагрузки в фоне (k6)
+    - k6 run load-test.js --duration 1m &
+    # 2. Применение хаос-эксперимента
+    - kubectl apply -f ./tests/chaos-experiment.yaml
+    # 3. Ожидание завершения и проверка метрик
+    - sleep 40
+    - |
+      SUCCESS_RATE=$(curl -s "http://prometheus:9090/api/v1/query?query=success_rate_last_minute")
+      if [ $(echo "$SUCCESS_RATE < 0.95" | bc) -eq 1 ]; then
+        echo "Chaos test failed: SLO violation during network delay"
+        exit 1
+      fi
+  only:
+    - schedules
+    - tags
+```
+
+### Визуальное регрессионное тестирование (Visual Regression)
+
+Snapshot-тестирование интерфейсов (Visual Diffing) необходимо для обнаружения «сломанной» верстки, которую не ловит функциональное E2E-тестирование. 
+
+**Практическое руководство, настройка Docker и примеры пайплайнов:** **[Visual Regression в CI/CD](../CI-CD/Testing/visual-regression-cicd.md)**.
+
+### 4. Дополнительная информация
+
 
 ### Борьба с нестабильностью (AI-Driven Flaky Detection)
 
@@ -141,8 +292,10 @@ test:coverage:
 
 Интеграция пайплайнов с OpenTelemetry позволяет анализировать их как распределенные системы:
 *   Каждый джоб и шаг пайплайна генерирует **span**.
-*   Визуализация в Grafana/Tempo помогает найти "бутылочное горлышко" в процессе сборки.
+*   Визуализация в Grafana/Tempo помогает найти "бутылочное горлышко" в процессе сборки и проанализировать критический путь в DAG.
 *   Корреляция логов тестов с трейсами приложения упрощает отладку интеграционных сценариев.
+
+**Подробнее:** **[Наблюдаемость пайплайнов](../../CI-CD/Core_Concepts/pipeline_observability.md)**.
 
 ---
 

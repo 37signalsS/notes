@@ -1,27 +1,41 @@
-# Практические примеры CI/CD пайплайна в GitLab
-
-> Этот документ предоставляет практические сценарии и примеры конфигурации `.gitlab-ci.yml` для различных этапов CI/CD в GitLab. Он дополняет общий обзор концепций CI/CD, описанный в **[CI/CD: Обзор](../../ci_cd_overview.md)**, фокусируясь на конкретных реализациях.
+# Практические примеры CI/CD пайплайнов в GitLab
 
 ## Определения
 
-- **GitLab Agent for Kubernetes (KAS):** Современный механизм интеграции, обеспечивающий безопасный доступ к кластеру через **CI/CD Tunnel**. Исключает передачу `KUBECONFIG` через переменные.
-- **`id_tokens` (OIDC):** Механизм генерации временных JWT-токенов для аутентификации в облаках и K8s без использования паролей.
-- **Docker-in-Docker (dind):** Специальный образ-сервис, позволяющий запускать Docker-команды внутри контейнера задачи.
-- **Атомарный деплой (Atomic Deployment):** Принцип, при котором обновление либо полностью успешно, либо автоматически откатывается при малейшей ошибке (флаг `--atomic` в Helm).
+**GitLab Agent for Kubernetes (KAS)** — сервис интеграции, обеспечивающий безопасный двусторонний канал связи (**CI/CD Tunnel**) между GitLab и кластером. Исключает необходимость хранения `KUBECONFIG` в переменных и позволяет использовать RBAC кластера напрямую через пайплайн.
+
+**id_tokens (OIDC)** — современный механизм генерации временных JWT-токенов для федерации идентичности (Workload Identity Federation). Позволяет аутентифицироваться в облаках (AWS, GCP) или хранилищах секретов (Vault) без использования долгоживущих паролей.
+
+**Quality Gates (Ворота качества)** — набор автоматизированных критериев (покрытие тестами, отсутствие уязвимостей CVE, соответствие линтам), которые должны быть выполнены для продвижения артефакта на следующий этап деплоя.
+
+**Docker-in-Docker (dind)** — паттерн запуска Docker-демона внутри контейнера задачи. Необходим для выполнения команд `docker build` и `docker push` в изолированных средах.
+
+**SBOM (Software Bill of Materials)** — формализованный список всех компонентов и зависимостей приложения, необходимый для обеспечения безопасности цепочки поставок (Supply Chain Security).
+
+**Атомарный деплой (Atomic Deployment)** — метод обновления приложения, при котором изменения вступают в силу одновременно, а при любой ошибке происходит автоматический откат к предыдущему стабильному состоянию (например, флаг `--atomic` в Helm).
 
 ## Основные концепции
 
-### Жизненный цикл артефакта
-1. **Сборка (Build):** Создание Docker-образа с тегом коммита (`$CI_COMMIT_SHORT_SHA`).
-2. **Валидация (Quality Gates):** Линтинг, Unit-тесты, сканирование уязвимостей.
-3. **Публикация (Push):** Загрузка проверенного образа в Registry.
-4. **Развертывание (Deploy):** Применение манифестов в целевое окружение.
+### Жизненный цикл артефакта в GitLab 19.x
+
+Современный пайплайн в GitLab строится по модульному принципу:
+1.  **Подготовка (Prepare):** Динамическая генерация конфигурации, установка зависимостей с использованием кэширующих прокси.
+2.  **Валидация (Quality Gates):** Параллельный запуск линтеров, статического анализа (SAST) и проверки секретов.
+3.  **Сборка и Аттестация:** Создание Docker-образа с генерацией SBOM и подписью артефакта (стандарт SLSA).
+4.  **Многоуровневое тестирование:** Unit-тесты, интеграционные тесты в Service Containers и DAST-сканирование.
+5.  **Доставка (CD):** Развертывание в различные среды (Dev, Staging, Prod) с использованием GitOps или Push-модели.
+
+### Безопасность и изоляция
+
+*   **Zero Trust:** Использование `id_tokens` для всех внешних интеграций.
+*   **Изоляция сред:** Разделение раннеров по тегам для разных уровней критичности (например, выделенные ноды для Prod-деплоя).
+*   **Маскирование секретов:** Использование переменных типа `File` для предотвращения случайного вывода паролей в логи.
 
 ## Практические сценарии
 
-### Сценарий 1: Деплой в Kubernetes через Агент (KAS)
+### Сценарий 1: Деплой в Kubernetes через Агент (KAS) и Helm
 
-Использование Агента — стандарт безопасности. Вам не нужно создавать секреты `docker-registry` вручную, так как Агент может использовать права пайплайна.
+Это наиболее безопасный и рекомендуемый метод интеграции в 2026 году.
 
 ```yaml
 stages:
@@ -30,109 +44,134 @@ stages:
 
 variables:
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
-  FULL_IMAGE_NAME: $CI_REGISTRY_IMAGE:$IMAGE_TAG
-  # Формат: путь/к/проекту-агента:имя-агента
-  KUBE_CONTEXT: "group/infra/k8s-connection:prod-agent"
+  FULL_IMAGE: $CI_REGISTRY_IMAGE:$IMAGE_TAG
+  KUBE_CONTEXT: "my-group/infra/k8s-connection:prod-agent"
 
+# Сборка с использованием BuildKit для ускорения
 build_job:
   stage: build
-  image: docker:24.0
-  services: [docker:24.0-dind]
+  image: docker:27.0
+  services: [docker:27.0-dind]
+  variables:
+    DOCKER_BUILDKIT: 1
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
-    - docker build -t $FULL_IMAGE_NAME .
-    - docker push $FULL_IMAGE_NAME
+    - >
+      docker build 
+        --build-arg BUILDKIT_INLINE_CACHE=1
+        --cache-from $CI_REGISTRY_IMAGE:latest
+        -t $FULL_IMAGE 
+        -t $CI_REGISTRY_IMAGE:latest .
+    - docker push $FULL_IMAGE
+    - docker push $CI_REGISTRY_IMAGE:latest
+  tags: [docker-runner]
 
 deploy_k8s:
   stage: deploy
-  image: dtzar/helm-kubectl:3.14
+  image: dtzar/helm-kubectl:3.15
+  id_tokens:
+    K8S_TOKEN:
+      aud: https://kubernetes.default.svc.cluster.local
   script:
     - kubectl config use-context $KUBE_CONTEXT
     - >
-      helm upgrade --install my-app ./chart
+      helm upgrade --install my-app ./charts/app
         --namespace production
         --set image.tag=$IMAGE_TAG
-        --wait --atomic --timeout 5m
+        --wait --atomic --timeout 10m
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  tags: [secure-deploy-runner]
 ```
 
-### Сценарий 2: Деплой на Docker-хост по SSH (Безопасный метод)
+### Сценарий 2: Деплой на Docker-хост по SSH (Hardened Method)
 
-Использование `ssh-agent` и проверка ключей хоста предотвращают перехват данных (MitM).
+Сценарий для проектов, не использующих Kubernetes. Включает проверку `known_hosts` и использование `ssh-agent`.
 
 ```yaml
 deploy_ssh:
   stage: deploy
-  image: alpine:latest
+  image: alpine:3.20
   before_script:
     - apk add --no-cache openssh-client
     - eval $(ssh-agent -s)
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    # SSH_PRIVATE_KEY должна быть типа File для безопасности
+    - chmod 600 "$SSH_PRIVATE_KEY"
+    - ssh-add "$SSH_PRIVATE_KEY"
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
   script:
     - >
       ssh $SSH_USER@"$PRODUCTION_IP" "
         docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY &&
-        docker pull $FULL_IMAGE_NAME &&
+        docker pull $FULL_IMAGE &&
         docker stop my-app || true &&
         docker rm my-app || true &&
-        docker run --name my-app -d -p 80:8080 $FULL_IMAGE_NAME
+        docker run -d --name my-app -p 80:8080 --restart always $FULL_IMAGE
       "
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
+  tags: [docker-runner]
 ```
 
-### Сценарий 3: Автоматическое создание Merge Request и уведомление через API
+### Сценарий 3: Автоматизация Merge Request и нотификации через API
 
-Позволяет автоматизировать процесс код-ревью при пуше в feature-ветки.
+Позволяет автоматически создавать MR и информировать команду о статусе пайплайна.
 
 ```yaml
 stages:
   - automation
-  - test
+  - notify
 
 variables:
   GL_PROJECT_API: "$CI_API_V4_URL/projects/$CI_PROJECT_ID"
 
-create_mr_automation:
+create_mr_auto:
   stage: automation
-  image: python:3.12-slim
+  image: curlimages/curl:latest
   script:
     - |
-      MR_IID=$(curl -s --request POST "$GL_PROJECT_API/merge_requests" \
-        --header "PRIVATE-TOKEN: $GL_ACCESS_TOKEN" \
+      RESPONSE=$(curl --silent --request POST "$GL_PROJECT_API/merge_requests" \
+        --header "PRIVATE-TOKEN: $GITLAB_API_TOKEN" \
         --form "source_branch=$CI_COMMIT_BRANCH" \
         --form "target_branch=$CI_DEFAULT_BRANCH" \
-        --form "title=Auto-MR: $CI_COMMIT_TITLE" \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('iid',''))")
+        --form "title=WIP: $CI_COMMIT_TITLE" \
+        --form "remove_source_branch=true")
+      MR_IID=$(echo $RESPONSE | jq -r '.iid')
       echo "MR_IID=$MR_IID" > mr.env
   artifacts:
     reports:
       dotenv: mr.env
   rules:
-    - if: '$CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
 
-post_comment:
-  stage: test
-  needs: [create_mr_automation]
+notify_mr:
+  stage: notify
+  image: curlimages/curl:latest
+  needs: [create_mr_auto]
   script:
     - |
-      curl -s --request POST "$GL_PROJECT_API/merge_requests/$MR_IID/notes" \
-        --header "PRIVATE-TOKEN: $GL_ACCESS_TOKEN" \
-        --form "body=Пайплайн запущен для ветки $CI_COMMIT_BRANCH. Ссылка на артефакты: $CI_JOB_URL"
+      curl --request POST "$GL_PROJECT_API/merge_requests/$MR_IID/notes" \
+        --header "PRIVATE-TOKEN: $GITLAB_API_TOKEN" \
+        --form "body= Пайплайн запущен. Результаты тестов будут доступны здесь: $CI_PIPELINE_URL"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
 ```
 
-### Сценарий 4: Quality Gates (JUnit, Coverage и блокировка MR)
+### Сценарий 4: Quality Gates (JUnit, Coverage и SBOM)
 
-Пайплайн визуализирует результаты тестов и покрытие кода прямо в интерфейсе Merge Request.
+Обеспечивает визуализацию качества кода и безопасность зависимостей.
 
 ```yaml
-test_job:
+stages:
+  - test
+  - scan
+
+test_python:
   stage: test
-  image: python:3.12-slim
+  image: python:3.13-slim
   script:
     - pip install pytest pytest-cov
     - pytest --junitxml=report.xml --cov=src/ --cov-report=xml:coverage.xml
@@ -143,56 +182,77 @@ test_job:
       coverage_report:
         coverage_format: cobertura
         path: coverage.xml
-  allow_failure: false # Блокирует Merge при падении тестов
+  allow_failure: false
+
+container_security:
+  stage: scan
+  image: 
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy image --format json --output report.json --exit-code 0 $FULL_IMAGE
+    - trivy image --format cyclonedx --output sbom.json $FULL_IMAGE
+  artifacts:
+    reports:
+      cyclonedx: sbom.json
+    paths: [report.json]
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Сценарий 5: Оптимизация сборки через BuildKit и кэширование
+### Сценарий 5: Динамические Parent-Child пайплайны (Монорепозитории)
 
-Ускорение пайплайна за счет переиспользования слоев Docker из Registry.
+Оптимизация времени выполнения за счет запуска задач только для изменившихся модулей.
 
 ```yaml
-build_optimized:
-  stage: build
-  image: docker:24.0
-  services: [docker:24.0-dind]
-  variables:
-    DOCKER_BUILDKIT: 1
+generate-config:
+  stage: .pre
+  image: python:3.13-slim
   script:
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
-    - >
-      docker build 
-        --cache-from $CI_REGISTRY_IMAGE:cache
-        --build-arg BUILDKIT_INLINE_CACHE=1
-        -t $FULL_IMAGE_NAME 
-        -t $CI_REGISTRY_IMAGE:cache .
-    - docker push $FULL_IMAGE_NAME
-    - docker push $CI_REGISTRY_IMAGE:cache
+    - python3 scripts/generate-pipeline-config.py > child-pipeline.yml
+  artifacts:
+    paths: [child-pipeline.yml]
+
+trigger-modules:
+  stage: build
+  trigger:
+    include:
+      - artifact: child-pipeline.yml
+        job: generate-config
+    strategy: depend
 ```
 
 ## Технические нюансы и Безопасность
 
-### Безопасность ID Tokens
-С версии **17.0** вместо `CI_JOB_JWT` рекомендуется использовать `id_tokens`. Это позволяет настроить доверительные отношения (Trust Relationship) с AWS/GCP/Vault на основе конкретных параметров пайплайна (проект, ветка).
+### Интеграция с Vault через OIDC
+С выходом GitLab 17.x и переходом к 19.x использование `id_tokens` для аутентификации в Vault является обязательным стандартом. Это позволяет джобе получить временный токен Vault без хранения секретов в GitLab.
 
-### Маскирование секретов
-Никогда не используйте `echo $SECRET` в скриптах. GitLab автоматически маскирует переменные в логах, если они помечены как **Masked**, но принудительный вывод через команды отладки может обойти эту защиту.
+### Оптимизация кэширования
+Используйте `cache:key:files` для привязки кэша к файлам манифестов (например, `package-lock.json` или `uv.lock`). Это гарантирует, что кэш будет пересобираться только при изменении зависимостей.
 
-### Использование CI/CD Components
-Для типичных задач (сборка, деплой) рекомендуется переходить на компоненты:
+### Использование CI/CD Components (Catalog)
+В 2026 году рекомендуется заменять стандартные `include:template` на компоненты из каталога. Это обеспечивает версионирование логики пайплайна.
 ```yaml
 include:
-  - component: $CI_SERVER_FQDN/gitlab-components/sast/sast@1.2.0
-    inputs:
-      stage: test
+  - component: $CI_SERVER_FQDN/gitlab-components/sast/sast@2.1.0
 ```
+
+## Устранение неполадок (Troubleshooting)
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **dind: job failed to start** | Runner не в привилегированном режиме | Включите `privileged = true` в `config.toml` раннера. |
+| **MR API returns 403** | Недостаточно прав у токена | Проверьте Scope токена (`api`) и права пользователя. |
+| **KAS context not found** | Агент не авторизован в проекте | Проверьте настройки авторизации в `config.yaml` агента. |
+| **SSH deploy hangs** | Нет ответа от `ssh-agent` | Убедитесь, что `eval $(ssh-agent -s)` выполнен в той же джобе. |
+| **Coverage не отображается** | Неверный формат отчета | GitLab 19.x требует формат Cobertura XML для визуализации. |
 
 ## Дополнительная информация
 
 ### Смотрите также
 
-- **[Основы GitLab CI](../Concepts/gitlab_ci_basics.md)** — архитектура и стадии.
+- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — архитектура и стадии.
 - **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление доступом.
 - **[Интеграция с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — глубокая настройка KAS.
 - **[Кэширование в GitLab CI](../Advanced/gitlab_ci_caching/caching_overview.md)** — стратегии ускорения.
+- **[Downstream Pipelines](../Advanced/Downstream_Pipelines/definitions.md)** — детали иерархии пайплайнов.

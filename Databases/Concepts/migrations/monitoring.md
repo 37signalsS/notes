@@ -109,6 +109,7 @@ ALTER TABLE users ADD COLUMN age INT; /* traceparent='00-4bf92f3577b34da6a3ce929
 ### Смежные темы
 
 - **[Типовые сценарии миграций](scenarios.md)** — реализация батчинга и безопасных DDL.
+- **[Database CI/CD](database-ci-cd.md)** — автоматизация проверок, GitOps и дрейф схемы.
 - **[Безопасные массовые операции](../safe_large_scale_data_modification.md)** — глубокий разбор пакетной обработки и лимитов.
 - **[Стратегии отката (Rollback)](rollback_strategies.md)** — действия при срабатывании алертов.
 - **[Метрики SRE](../../Concepts/sre_concepts_main.md)** — общие принципы надежности систем.

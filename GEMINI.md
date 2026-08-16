@@ -81,7 +81,7 @@ Topics often overlap — always check adjacent domains:
 
 1. **SSoT-First:** All changes only after SSoT-analysis (§0).
 2. **Structuring:** `Definitions → Basic Concepts → Practical Scenarios → Additional Information`.
-3. **Integrity & Proactivity:** Proactively identify "white spots" (gaps, missing details, or undocumented scenarios) and fix them. All information—whether provided by the user or already present in the knowledge base—MUST be verified and actualized before any creation or modification, as it may be outdated. Validate all internal links after every edit.
+3. **Integrity & Proactivity:** Proactively and independently identify "white spots" (gaps, missing details, or undocumented scenarios) and fix them. Do not limit yourself to requested fixes: analyze the entire document, identify inaccuracies, weak explanations, or logical gaps, and improve them autonomously. If a change in one section affects others or requires restructuring, perform all necessary systemic edits to maintain document integrity. All information—whether provided by the user or already present in the knowledge base—MUST be verified and actualized before any creation or modification, as it may be outdated. Validate all internal links after every edit. After making changes, perform a full self-check: ensure the document is complete, logically structured, technically correct, and that no useful information was lost.
 
 ---
 
@@ -93,9 +93,9 @@ Topics often overlap — always check adjacent domains:
   - Applies to all headings created or modified in knowledge-base files
   - Technology names and established terms within headings may remain in English (e.g., `## Обзор Kubernetes`, `### Docker — сеть`)
 - **Emojis:** DO NOT use emojis in any response, file content, or comments
-- **Style:** Professional, technical, comprehensive. **Technical Depth Preservation:** NEVER truncate or remove valid technical details, examples, or theoretical explanations. The goal is a complete and detailed knowledge base, not a short summary.
+- **Style:** Professional, technical, comprehensive. **Technical Depth & Theory:** NEVER truncate or remove valid technical details, examples, or theoretical explanations. Explain not just **what** is happening, but **why**. Theory must be sufficient for understanding: include definitions, principles of operation, architecture, lifecycle, component relationships, and reasons for specific approaches. Address important limitations and features to eliminate assumptions. The goal is a complete knowledge base, not a short summary.
 - **Maintenance of Technical Content (STRICT RULE):**
-  - Outdated technical information MUST be updated, not deleted.
+  - **Do NOT delete** useful theoretical or practical information. If information is outdated, inaccurate, or poorly structured — **improve, clarify, expand, or relocate** it, but preserve the underlying value and meaning.
   - Deleting technical details is PROHIBITED unless one of the following conditions is met:
     1. **SSoT Integrity:** Removing direct duplicates already present in their authoritative SSoT file.
     2. **Absolute Obsolescence:** The technology, tool, or method is completely defunct, has no successor/replacement, and is no longer relevant for the knowledge base.
@@ -111,6 +111,24 @@ Topics often overlap — always check adjacent domains:
   - **Prohibited in knowledge-base files:** the phrase `SSoT (Single Source of Truth)` and its variants (`SSoT`, `Single Source of Truth`) — this is an internal meta-concept used only in this instruction file; when describing content hierarchy in knowledge-base files, use neutral terms
 - **Links:** inline only (`[text](url)`)
 - **"See also" section:** 2–3 curated links maximum; lists of >5 links are prohibited
+
+---
+
+## 5. Practical Implementation & Completeness
+
+Documentation MUST enable the reader to independently apply knowledge in practice.
+- **Prerequisites:** Explicitly state hardware/software requirements, tool versions, initial setup, and environment state.
+- **Step-by-Step Instructions:** Provide a logical, continuous sequence of actions. Explain every significant step to eliminate guesswork.
+- **Configurations & Commands:**
+  - Examples must be complete and copy-pasteable (with minimal, clearly marked placeholders).
+  - Explain each parameter and variable.
+  - Commands and configs must be consistent with the theory described in the file.
+- **Validation:** Include expected results and clear methods to verify correct execution (e.g., specific command output, log entry, or status).
+- **Troubleshooting:**
+  - List typical errors and their causes.
+  - Provide diagnostic methods and step-by-step solutions.
+- **Best Practices & Cleanup:** Include industry standards for the task and instructions on how to revert changes or clean up the environment.
+- **Edge Cases:** Describe limitations, known bugs, and behavior in non-standard or complex scenarios.
 
 ---
 
@@ -197,6 +215,8 @@ Topics often overlap — always check adjacent domains:
 
 1. **Safety** (No secrets, no irreversible actions without confirmation).
 2. **SSoT integrity** (One authoritative source).
-3. **User intent** (Explicit request overrides defaults).
-4. **Efficiency** (Minimize tool calls).
-5. **Style** (Naming, language).
+3. **Information Preservation** (NEVER delete useful data; improve and expand instead).
+4. **Documentation Quality** (Completeness, technical accuracy, and practical applicability).
+5. **User intent** (Explicit request overrides defaults).
+6. **Efficiency** (Minimize tool calls).
+7. **Style** (Naming, language).
