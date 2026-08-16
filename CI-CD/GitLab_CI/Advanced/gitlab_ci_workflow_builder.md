@@ -222,7 +222,8 @@ test:ui:
 
 ### См. также
 
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции.
+-   **[Отладка и устранение неполадок](./debugging_and_troubleshooting.md)** — использование `glab` и `CI_DEBUG_TRACE`.
+-   **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции.
 - **[Продвинутые рабочие процессы](./gitlab_ci_advanced_workflow.md)** — глубокое погружение.
 - **[Обзор переиспользуемых пайплайнов](../Reusable_Pipelines/overview.md)** — сравнение методов.
 - **[Родительско-дочерние пайплайны](./Downstream_Pipelines/parent_child_pipelines.md)** — архитектура downstream.

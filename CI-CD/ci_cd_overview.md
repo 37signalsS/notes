@@ -164,6 +164,7 @@
 
 ### См. также
 
+* **[Управление парком раннеров](./runner-fleet-management.md)** — административные аспекты, квоты и политики распределения ресурсов.
 * **[Mobile CI/CD (iOS/Android)](./mobile-ci-cd/index.md)** — особенности сборки на macOS, управление сертификатами (Fastlane Match) и публикация в App Stores.
 * **[Специфические задачи Frontend CI/CD](./Frontend_CI_CD/frontend_pipeline_specifics.md)** — CDN, Cache Busting, Lighthouse и A11y.
 * **[Типичный поток пайплайна](./Core_Concepts/pipeline_workflow.md)** — глубокое погружение в Fail-Fast и DAG.

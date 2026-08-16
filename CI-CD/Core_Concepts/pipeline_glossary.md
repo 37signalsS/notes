@@ -15,7 +15,7 @@
 ### Триггер (Trigger) {#триггер-trigger}
 **Описание:** Событие, инициирующее автоматический запуск пайплайна.
 **Примеры:** `push` в репозиторий, создание Merge Request, расписание (cron), вызов через API/Webhook или событие в AI-агенте (Agentic Trigger).
-**Подробнее:** **[Основы GitLab CI](../GitLab_CI/Concepts/gitlab_ci_basics.md)**.
+**Подробнее:** **[Основы GitLab CI](../GitLab_CI/Concepts/gitlab_ci_basics.md)**, **[Программная автоматизация (API/Webhook)](../GitLab_CI/Advanced/api_and_webhooks_automation.md)**.
 
 ### Исполнитель (Runner / Agent) {#исполнитель-runner-agent}
 **Описание:** Изолированная среда (машина, контейнер, Pod в Kubernetes), выполняющая конкретные задачи пайплайна. Раннеры могут быть как общими (Shared), так и специфичными для проекта (Specific).

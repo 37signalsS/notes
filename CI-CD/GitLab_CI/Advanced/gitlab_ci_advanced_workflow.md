@@ -41,6 +41,7 @@
     -   **Изоляция**: Ошибки в одном сервисе не блокируют CI/CD других.
     -   **inputs**: Передача параметров через `trigger:inputs` (GitLab 18.0+) для валидации конфигурации дочернего пайплайна.
 2.  **Dynamic Pipeline Generation**: Программная генерация YAML через скрипты (Python/Go). Используется, когда количество окружений или задач зависит от внешнего API (например, список динамических Feature-бранчей).
+3.  **Programmatic Automation (API & Webhooks)**: Управление жизненным циклом пайплайна через внешние системы. Позволяет интегрировать CI/CD в общую шину автоматизации предприятия, реализуя сложные сценарии обратной связи и динамической переконфигурации ([подробнее](./api_and_webhooks_automation.md)).
 
 ## Практические сценарии
 
@@ -161,7 +162,9 @@ db_migrate:
 
 ### См. также
 
+-   **[Отладка и устранение неполадок](./debugging_and_troubleshooting.md)** — глубокое погружение в `glab` и `CI_DEBUG_TRACE`.
 -   **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — база и глоссарий.
+-   **[Программная автоматизация: API и Webhooks](./api_and_webhooks_automation.md)** — SSoT по программному управлению и обратной связи.
 -   **[Конструктор рабочих процессов](./gitlab_ci_workflow_builder.md)** — детализация по стадиям и артефактам.
 -   **[DAG с needs](./workflow_rules/dag_with_needs.md)** — глубокое погружение в графы.
 -   **[Матричные сборки и сериализация](./workflow_rules/matrix_builds_and_serialization.md)** — подробнее о `parallel:matrix` и `resource_group`.

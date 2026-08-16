@@ -108,6 +108,7 @@ xcodebuild archive \
 *   **Ephemeral Runners:** Использование одноразовых виртуальных машин гарантирует, что секреты и «мусор» от предыдущих сборок не останутся на диске.
 
 ### См. также:
+*   **[GitLab CI/CD для iOS и macOS: Настройка](./gitlab-ios-ci.md)**
 *   **[iOS CI/CD: Подпись кода и Match](./ios-ci-cd.md)**
 *   **[Android CI/CD: Keystore и публикация](./android-ci-cd.md)**
 *   **[Автоматизация через Fastlane](./fastlane-guide.md)**

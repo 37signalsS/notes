@@ -287,6 +287,8 @@ glab mr approve 45
 # → Approved Merge Request !45
 ```
 
+Подробное руководство по использованию CLI для диагностики пайплайнов см. в разделе **[Отладка и устранение неполадок в GitLab CI/CD](../CI-CD/GitLab_CI/Advanced/debugging_and_troubleshooting.md)**.
+
 ### Инструменты для Trunk-Based Development
 
 * **TBD Flow** — CLI-инструмент для автоматизации типичных задач TBD (фиксация в main, создание короткоживущих веток, контроль конвенций коммитов).

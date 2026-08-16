@@ -32,7 +32,7 @@
 
 *   **Организационные:** Trunk-Based Development, Branch Protection, Developer Self-Service (IDP).
 *   **Технические:** Immutable Artifacts, Fail Fast, Pipeline as Code, OIDC Authentication.
-*   **Инфраструктурные:** GitOps, Ephemeral Environments, Infrastructure as Code (IaC), Configuration-as-Code Promotion, **Traditional Infrastructure Patterns (Bare Metal/VM)**.
+*   **Инфраструктурные:** GitOps, Ephemeral Environments, Infrastructure as Code (IaC), **[Runner Fleet Management](./runner-fleet-management.md)**, Configuration-as-Code Promotion, **Traditional Infrastructure Patterns (Bare Metal/VM)**.
 *   **Безопасность:** Shift-Left Security, Secrets Management (Vault), Artifact Signing (Cosign), SLSA Attestations, Policy as Code, **Air-gapped Deployment Strategies**.
 *   **Релизные:** Blue/Green, Canary, Dark Launches, Feature Toggles. См. **[Стратегии развертывания](./Deployment_Strategies/comparison.md)**.
 *   **Операционные:** Continuous Verification, Auto-Rollback, Observability-driven Deployment.
