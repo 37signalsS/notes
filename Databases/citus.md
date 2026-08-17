@@ -190,6 +190,7 @@ Citus позволяет выполнять агрегации (SUM, AVG, COUNT)
 | :--- | :--- | :--- |
 | **[PostgreSQL](./PostgreSQL/overview.md)** | Single Node | OLTP, данные до 1-2 ТБ |
 | **Citus** | Distributed Extension | SaaS, Real-time OLAP, Scale-out PostgreSQL |
+| **[MongoDB](./MongoDB/mongodb.md)** | Document Store | Time-series (8.0), горизонтальное масштабирование. |
 | **[Greenplum](./greenplum.md)** | MPP Cluster | Big Data DWH, тяжелые JOIN'ы (>100 ТБ) |
 | **[TimescaleDB](./timescaledb.md)** | Extension | Временные ряды (Time-series) |
 

@@ -211,6 +211,7 @@ promtool tsdb check-blocks /path/to/tsdb/data
 
 ### См. также
 * [Лейблы и кардинальность](./labels_and_cardinality.md) — влияние на TSDB.
+* [Time-series в MongoDB](../../Databases/MongoDB/mongodb.md#time-series-коллекции-временные-ряды) — реализация в документо-ориентированных БД.
 * [Remote Read/Write](../scaling/remote_read_write.md) — внешние хранилища.
 * [promtool](../promtool_and_best_practices.md) — анализ и отладка.
 * [Журнал предзаписи (WAL)](../../Databases/Concepts/write_ahead_log.md) — общая теория WAL.

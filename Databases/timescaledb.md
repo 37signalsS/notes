@@ -144,6 +144,7 @@ SELECT add_continuous_aggregate_policy('sensor_stats_hourly',
 | Система | Тип | Ключевой кейс |
 | :--- | :--- | :--- |
 | **TimescaleDB** | Реляционная TSDB | Сложная аналитика, JOIN с SQL-данными, ACID. |
+| **[MongoDB](./MongoDB/mongodb.md)** | Document TSDB | Гибкая схема, MongoDB 8.0+ (колоночное сжатие). |
 | **[ClickHouse](./ClickHouse/clickhouse.md)** | OLAP | Петабайты данных, сверхбыстрые агрегации. |
 | **[VictoriaMetrics](../VictoriaMetrics/overview.md)** | Monitoring TSDB | Метрики Prometheus, экстремальная плотность хранения. |
 | **InfluxDB** | NoSQL TSDB | Простые IoT сценарии без сложной структуры. |
