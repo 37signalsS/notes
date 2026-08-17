@@ -4,6 +4,24 @@
 
 **psql** — интерактивный терминальный клиент для PostgreSQL, основной инструмент администратора и разработчика для выполнения SQL-запросов и управления сервером из командной строки.
 
+**Ключевые особенности:**
+- **Frontend/Backend протокол:** `psql` общается с сервером по протоколу `libpq`.
+- **Автономность:** работает без графической оболочки, минимальные зависимости.
+- **Двухслойная архитектура:** разделение на SQL-команды (серверные) и мета-команды (клиентские).
+
+## Предпосылки
+
+Для полноценной работы с `psql` необходимо:
+
+1.  **Установленный клиент:** Пакет `postgresql-client` (в Debian/Ubuntu) или `postgresql` (в RHEL/CentOS).
+    ```bash
+    # Проверка версии
+    psql --version
+    ```
+2.  **Сетевая доступность:** База данных должна быть доступна по сети (проверить через `telnet` или `nc`).
+3.  **Конфигурация доступа:** Разрешение в файле `pg_hba.conf` на сервере для вашего IP и пользователя.
+4.  **Переменные окружения (опционально):** Настроенный `EDITOR` для редактирования запросов (`export EDITOR=vim`).
+
 ## Основные концепции
 
 ### Режимы работы
@@ -11,8 +29,11 @@
 - **Интерактивный режим:** работа в консоли с получением немедленного ответа. Основной режим для отладки и администрирования.
 - **Пакетный режим:** выполнение заранее подготовленных скриптов.
   ```bash
+  # Выполнение файла
   psql -f script.sql -d mydb
-  # Или через конвейер (stdin)
+  # Выполнение одной команды без входа в оболочку
+  psql -c "SELECT now();" -d mydb
+  # Использование конвейера (stdin)
   cat script.sql | psql -d mydb
   ```
 - **Синтаксис:**
@@ -27,10 +48,12 @@
    ```bash
    psql -h <хост> -p <порт> -U <пользователь> -d <база_данных>
    ```
-2. **Строка подключения (Connection URI):** (Рекомендуется для 2026 года, так как поддерживает параметры в одном месте)
+2. **Строка подключения (Connection URI):** (Рекомендуется для 2026 года)
    ```bash
-   psql "postgresql://user:password@host:port/dbname?sslmode=require"
+   # Поддержка SSL, таймаутов и имени приложения
+   psql "postgresql://user:password@host:port/dbname?sslmode=verify-full&connect_timeout=10&application_name=psql_admin"
    ```
+   *Примечание: Использование `application_name` позволяет легко идентифицировать сессию в `pg_stat_activity`.*
 
 ### Аутентификация
 
@@ -44,6 +67,21 @@
 2. **Файл `.pgpass`:** (Рекомендуется для удаленных подключений) файл в домашней директории (`~/.pgpass`) с правами `0600`.
    - Формат: `hostname:port:database:username:password`
 3. **Переменная окружения `PGPASSWORD`:** (Менее безопасно) пароль передается в открытом виде, может быть виден в списке процессов (`ps aux`).
+
+## Валидация и проверка
+
+После подключения к серверу рекомендуется выполнить базовую проверку среды:
+
+1.  **Проверка версии клиента и сервера:**
+    ```sql
+    SELECT version();
+    ```
+2.  **Проверка прав и текущей роли:**
+    ```sql
+    SELECT current_user, is_superuser;
+    ```
+3.  **Инспекция соединения:**
+    Мета-команда `\conninfo` покажет хост, порт и параметры шифрования (SSL/TLS). Убедитесь, что используется ожидаемый уровень безопасности.
 
 ## Практические сценарии
 
@@ -121,16 +159,17 @@ WHERE state != 'idle';
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `psql: error: connection... failed: Connection refused` | База не запущена или порт 5432 закрыт. | Проверить статус через `systemctl status postgresql` и `netstat -ntlp`. |
-| `FATAL: password authentication failed` | Неверный пароль или пользователь. | Проверить `.pgpass` или `PGPASSWORD`. |
+| `psql: error: connection... failed: Connection refused` | База не запущена или порт 5432 закрыт. | Проверить статус через `systemctl status postgresql` и `ss -ntlp | grep 5432`. |
+| `FATAL: password authentication failed` | Неверный пароль или пользователь. | Проверить `.pgpass`, `PGPASSWORD` или соответствие в `pg_hba.conf`. |
 | `FATAL: no pg_hba.conf entry` | Доступ с этого IP или для этого пользователя запрещен. | Настроить **[pg_hba.conf](../../installation_security.md#postgresql-безопасность-на-уровне-хоста-и-ролей)**. |
-| `psql: error: FATAL: remaining connection slots are reserved` | Исчерпан лимит `max_connections`. | Завершить лишние сессии (`pg_terminate_backend`) или использовать **PGBouncer**. |
+| `psql: error: FATAL: remaining connection slots are reserved` | Исчерпан лимит `max_connections`. | Завершить сессии через `pg_terminate_backend` или использовать **PgBouncer**. |
+| `ERROR: relation "..." does not exist` | Неправильная схема или опечатка. | Проверьте `search_path` (`SHOW search_path;`) или используйте `\dt` для поиска объекта. |
 
 ## Дополнительная информация
 
 ### Продвинутая настройка .psqlrc
 
-Файл `~/.psqlrc` позволяет автоматизировать рутинные действия и улучшить визуализацию.
+Файл `~/.psqlrc` позволяет автоматизировать рутинные действия и улучшить визуализацию. Рекомендуемый набор для 2026 года:
 
 ```sql
 -- 1. Визуальное оформление
@@ -142,10 +181,13 @@ WHERE state != 'idle';
 
 -- 2. Полезные сокращения (Variables)
 -- Быстрый поиск блокировок через :locks
-\set locks 'SELECT pid, mode, granted FROM pg_locks WHERE NOT granted;'
+\set locks 'SELECT pid, relname, locktype, mode, granted FROM pg_locks l JOIN pg_class c ON l.relation = c.oid WHERE NOT granted;'
+-- Поиск активных запросов через :active
+\set active 'SELECT pid, query, state, now() - query_start AS duration FROM pg_stat_activity WHERE state != \'idle\';'
 
--- 3. Цветовое выделение (через внешние переменные)
--- PostgreSQL 2026 поддерживает кастомизацию через терминальные escape-последовательности
+-- 3. Безопасность
+-- Автоматическое включение режима транзакций для всех команд psql (только для чтения)
+-- \set AUTOCOMMIT off
 ```
 
 ### Переменные окружения

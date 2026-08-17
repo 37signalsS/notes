@@ -2,123 +2,152 @@
 
 ## Определения
 
-**MySQL Operator for Kubernetes** — это специализированный контроллер (Operator Pattern), автоматизирующий жизненный цикл кластеров MySQL (InnoDB Cluster) в среде Kubernetes. Он преобразует сложные задачи администрирования (репликация, failover, бэкапы) в декларативные операции через Custom Resource Definitions (CRD).
+**MySQL Operator for Kubernetes** — специализированный контроллер, реализующий паттерн **Operator**, который автоматизирует управление жизненным циклом InnoDB Cluster в Kubernetes. Он берет на себя задачи инициализации, масштабирования, резервного копирования и восстановления, используя декларативный подход.
 
-**InnoDB Cluster** — высокодоступное решение MySQL, объединяющее Group Replication, MySQL Router и MySQL Shell. Оператор является официальным инструментом Oracle для управления этой технологией в K8s.
+**InnoDB Cluster** — нативное высокодоступное решение от Oracle, объединяющее **Group Replication** (синхронная репликация на базе Paxos), **MySQL Router** (прокси для маршрутизации трафика) и **MySQL Shell** (инструмент администрирования).
+
+**Reconciliation Loop (Цикл согласования)** — основной механизм работы оператора, который непрерывно сравнивает текущее состояние ресурсов в кластере с желаемым (описанным в YAML) и выполняет действия по их приведению в соответствие.
+
+**Custom Resource Definition (CRD)** — расширение API Kubernetes, позволяющее оператору создавать и управлять специфичными для MySQL объектами (`InnoDBCluster`, `MySQLBackup` и др.) как стандартными ресурсами K8s.
 
 ## Базовые концепции
 
-### 1. Архитектура и Custom Resources (CRD)
+### 1. Архитектура управления
+Оператор состоит из центрального контроллера, который наблюдает за CRD, и набора Sidecar-контейнеров внутри подов с базой данных.
+*   **InnoDBCluster CR**: Определяет топологию (Single-Primary по умолчанию), версию СУБД, количество узлов и требования к хранилищу.
+*   **MySQL Router CR**: Развертывается как отдельный Deployment или DaemonSet. Он обеспечивает прозрачный Read/Write Split: запросы на запись идут на Primary узел, запросы на чтение — на Secondary узлы.
+*   **Storage Management**: Оператор использует `VolumeClaimTemplates` для создания уникальных Persistent Volume Claims (PVC) для каждого узла. При удалении пода оператор гарантирует, что новый под привяжется к тому же PVC, сохраняя данные.
 
-Оператор расширяет API Kubernetes следующими ресурсами:
+### 2. Group Replication и консенсус
+В отличие от классической репликации, InnoDB Cluster в Kubernetes использует Group Replication:
+- **Кворум:** Для работы кластера требуется большинство узлов (минимум 2 из 3).
+- **Автоматический Failover:** Если мастер-под падает, оставшиеся узлы выбирают нового лидера через протокол консенсуса. Оператор обновляет конфигурацию MySQL Router, чтобы трафик мгновенно переключился на новый адрес.
 
-*   **`InnoDBCluster`**: Описывает желаемое состояние кластера (количество узлов, версия, ресурсы, топология).
-*   **`MySQLRouter`**: Управляет развертыванием прокси-слоя для маршрутизации трафика (Read/Write Split).
-*   **`MySQLBackup` / `MySQLRestore`**: Управляет процессом создания резервных копий и восстановления данных.
-
-### 2. Высокая доступность и самовосстановление
-Оператор обеспечивает автоматический **Failover**:
-1.  **Group Replication** внутри подов обнаруживает сбой мастера.
-2.  Выбирается новый лидер (Primary).
-3.  **MySQL Router** автоматически перенаправляет трафик на новый Primary.
-4.  Оператор перезапускает упавший под и возвращает его в кластер в качестве реплики (Secondary).
-
-### 3. Безопасность
-*   **mTLS**: Оператор автоматически генерирует и обновляет сертификаты для шифрования трафика между узлами кластера и роутерами.
-*   **Secrets Integration**: Пароли `root` и системных пользователей хранятся в [Kubernetes Secrets](../../Kubernetes/Base/secrets/secrets_overview.md).
+### 3. Предварительные требования (Prerequisites)
+- **Kubernetes**: Версия 1.27+ (рекомендуется).
+- **StorageClass**: Должен поддерживать динамическое создание томов с `accessModes: [ReadWriteOnce]`. Для Production критически важна поддержка быстрых SSD/NVMe.
+- **Resources**: Минимум 2 ГБ RAM на каждый узел MySQL для стабильной работы Group Replication.
 
 ## Практические сценарии
 
-### 1. Установка Оператора через Helm
+### 1. Расширенная установка через Helm
 
-Рекомендуемый способ развертывания в 2026 году.
+Установка оператора с настройкой глобальных параметров безопасности.
 
 ```bash
 # Добавление репозитория
 helm repo add mysql-operator https://mysql.github.io/mysql-operator/
 helm repo update
 
-# Установка оператора в отдельный namespace
-helm install my-operator mysql-operator/mysql-operator \
+# Установка с ограничением прав (Namespace-scoped)
+helm install mysql-operator mysql-operator/mysql-operator \
   --namespace mysql-operator \
-  --create-namespace
+  --create-namespace \
+  --set installRouter=true
 ```
 
-### 2. Развертывание кластера (8.4 LTS)
+### 2. Развертывание кластера с Affinity и Ресурсами
 
-Пример манифеста для создания отказоустойчивого кластера из 3 узлов.
+Пример для Production: использование Anti-Affinity, чтобы узлы базы данных не попадали на один физический хост, и лимитов ресурсов.
 
 ```yaml
 apiVersion: mysql.oracle.com/v2
 kind: InnoDBCluster
 metadata:
-  name: prod-db
+  name: main-db
+  namespace: database
 spec:
   instances: 3
-  # Использование актуальной LTS версии
   version: "8.4.10"
-  secretName: mysql-root-password
-  tlsUseSelfSigned: true
-  router:
-    instances: 2
-  datadirVolumeClaimTemplate:
-    storageClassName: premium-rwo
-    accessModes: [ "ReadWriteOnce" ]
+  secretName: mysql-credentials
+  # Правила размещения для обеспечения HA
+  podSpec:
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+                - key: "mysql.oracle.com/cluster"
+                  operator: In
+                  values: ["main-db"]
+            topologyKey: "kubernetes.io/hostname"
     resources:
       requests:
-        storage: 100Gi
+        cpu: "1"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+  # Конфигурация роутера
+  router:
+    instances: 2
+    httpServerPort: 8443
+  # Шаблон хранилища
+  datadirVolumeClaimTemplate:
+    storageClassName: local-ssd
+    resources:
+      requests:
+        storage: 50Gi
 ```
 
-### 3. Настройка бэкапов в S3-хранилище
+### 3. Горизонтальное и вертикальное масштабирование
 
-Оператор поддерживает выгрузку дампов во внешние объектные хранилища.
+**Горизонтальное (изменение кол-ва узлов):**
+Просто измените параметр `spec.instances` в манифесте и примените его (`kubectl apply`). Оператор автоматически добавит новый узел, инициирует `Clone Plugin` для копирования данных и введет его в группу.
 
-```yaml
-apiVersion: mysql.oracle.com/v2
-kind: MySQLBackup
-metadata:
-  name: daily-backup
-spec:
-  clusterName: prod-db
-  destination:
-    s3:
-      endpoint: https://s3.yandexcloud.net
-      bucket: my-mysql-backups
-      credentials: s3-credentials-secret
-      config: s3-config-secret
-```
+**Вертикальное (изменение ресурсов):**
+Обновите `spec.podSpec.resources`. Оператор будет выполнять **Rolling Update**, поочередно перезапуская узлы (сначала Secondary, затем Primary после перевыборов), минимизируя простой.
 
-### 4. Мониторинг через Prometheus
+### 4. Управление секретами и паролями
 
-Для сбора метрик оператор может экспортировать данные в формате Prometheus.
-
-```yaml
-spec:
-  # Включение экспортера внутри подов InnoDBCluster
-  metrics:
-    enabled: true
-    image: prom/mysqld-exporter:latest
-```
-*Примечание: После включения необходимо создать `ServiceMonitor` для автоматического обнаружения целей Prometheus Operator.*
-
-## Диагностика и устранение проблем
-
-Основные команды для проверки состояния:
+Не храните пароли в YAML. Создайте секрет заранее:
 
 ```bash
-# Проверка статуса кластера (уровни ONLINE, RECOVERING, OFFLINE)
-kubectl get innodbcluster prod-db
-
-# Просмотр событий оператора при ошибках развертывания
-kubectl describe innodbcluster prod-db
-
-# Логи контроллера оператора
-kubectl logs -n mysql-operator -l app.kubernetes.io/name=mysql-operator
+kubectl create secret generic mysql-credentials \
+  --from-literal=rootUser=root \
+  --from-literal=rootPassword=$(openssl rand -base64 12) \
+  --from-literal=rootHost='%'
 ```
+*Примечание: Оператор автоматически синхронизирует эти данные с внутренними таблицами пользователей MySQL.*
+
+## Диагностика и устранение неисправностей
+
+### Типовые состояния кластера
+- **`ONLINE`**: Кластер полностью исправен.
+- **`RECOVERING`**: Узел присоединяется к группе и синхронизирует данные (используется Clone Plugin).
+- **`OFFLINE` / `UNREACHABLE`**: Узел недоступен. Проверьте состояние пода и сетевую связность.
+
+### Команды отладки
+```bash
+# Проверка детального статуса кластера (включая топологию Group Replication)
+kubectl get innodbcluster main-db -o yaml
+
+# Доступ к встроенному логу ошибок MySQL
+kubectl logs main-db-0 -c mysql
+
+# Проверка статуса MySQL Router
+kubectl logs -l component=router
+```
+
+### Решение проблем с кворумом (Split-Brain)
+Если более половины узлов вышли из строя, кластер перейдет в режим `Read-Only` для защиты данных.
+1. Убедитесь, что PVC не повреждены.
+2. Проверьте логи оператора на наличие ошибок `Waiting for quorum`.
+3. При необходимости выполните принудительную инициализацию через MySQL Shell внутри пода (только для экспертов).
 
 ## Дополнительная информация
 
+### Рекомендации (Best Practices)
+1.  **Anti-Affinity**: Всегда используйте `podAntiAffinity`, чтобы выход из строя одного гипервизора не убил весь кластер.
+2.  **PDB**: Настраивайте `PodDisruptionBudget` для предотвращения одновременного удаления слишком большого количества узлов при обслуживании K8s.
+3.  **Бэкапы**: Используйте `MySQLBackup` с расписанием (`CronJob` стиль) и выгрузкой в S3 для защиты от потери данных всего региона.
+
+### Краевые случаи (Edge Cases)
+- **Имя узлов**: Оператор использует StatefulSet, поэтому имена подов (`db-0`, `db-1`) фиксированы. Не пытайтесь менять их вручную.
+- **Обновление сертификатов**: Если `tlsUseSelfSigned: true`, оператор сам ротирует сертификаты. При использовании внешних CA следите за сроком их действия в секретах.
+
+### См. также
 *   **[Официальная документация MySQL Operator](https://dev.mysql.com/doc/mysql-operator/en/)**
 *   **[MySQL: Обзор и сравнение форков](./overview.md)** — архитектура InnoDB и Group Replication.
-*   **[StatefulSet: Лучшие практики](../../Kubernetes/Base/StatefulSet/statefulset_best_practices.md)** — почему оператор лучше "голых" манифестов.
-*   **[Kubernetes Operators](../../Kubernetes/Concepts/kubernetes_operators.md)** — общие принципы работы паттерна.
+*   **[Репликация в MySQL: Обзор](./replication/overview.md)** — теоретические основы GTID и Binlog.
+*   **[StatefulSet: Лучшие практики](../../Kubernetes/Base/StatefulSet/statefulset_best_practices.md)** — специфика работы с stateful-приложениями.

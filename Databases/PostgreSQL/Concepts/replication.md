@@ -6,7 +6,9 @@
 - **Физическая репликация (Physical Replication)**: Побайтовая передача данных. Реализуется через механизм **Streaming Replication**. Реплика является точной бинарной копией основного сервера.
 - **Логическая репликация (Logical Replication)**: Передача изменений на уровне отдельных строк или таблиц по принципу «издатель — подписчик» (**Publisher-Subscriber**). Основана на декодировании WAL в поток логических изменений.
 - **WAL (Write-Ahead Log)**: Журнал предзаписи транзакций. Фундамент для всех видов репликации: все изменения сначала фиксируются в WAL, а затем передаются на реплики.
-- **Репликационный слот (Replication Slot)**: Механизм на источнике, гарантирующий, что необходимые WAL-файлы не будут удалены до тех пор, пока они не будут успешно переданы на реплику.
+- **LSN (Log Sequence Number)**: Уникальный 64-битный идентификатор позиции в WAL. Используется для синхронизации и определения "отставания" (lag) реплик.
+- **Репликационный слот (Replication Slot)**: Механизм на источнике, гарантирующий, что необходимые WAL-файлы не будут удалены до тех пор, пока они не будут успешно переданы на реплику. Предотвращает разрыв связи, но несет риск переполнения диска при длительном простое реплики.
+- **Replication Origin**: Механизм идентификации источника изменений в логической репликации, позволяющий избежать циклов при двунаправленной репликации.
 
 ## Цели репликации
 
@@ -19,7 +21,7 @@
 
 ### Потоковая репликация (Streaming Replication)
 
-Основной тип физической репликации. WAL-записи передаются в реальном времени.
+Основной тип физической репликации. Процесс `walsender` на мастере читает WAL и отправляет его процессу `walreceiver` на реплике.
 
 **Режимы синхронизации:**
 
@@ -35,18 +37,18 @@
 
 ### Логическая репликация
 
-Работает по модели **Публикация (Publication)** — **Подписка (Subscription)**.
+Работает по модели **Публикация (Publication)** — **Подписка (Subscription)**. Процесс `walsender` выполняет логическое декодирование (Logical Decoding) WAL-записей в сообщения об изменениях (INSERT/UPDATE/DELETE).
 
 **Ключевые возможности и улучшения (PG 16/17):**
-- **Выборочная репликация**: Только нужные таблицы или строки (через `WHERE`).
-- **Разные версии**: Работа между разными мажорными версиями PostgreSQL.
-- **Репликация со Standby (PG 16)**: Теперь логическое декодирование может выполняться на Standby-сервере, что снимает нагрузку с основного мастера.
-- **Failover слотов (PG 17)**: Синхронизация логических слотов между мастером и физической репликой позволяет логическим подписчикам продолжать работу после переключения мастера.
+- **Выборочная репликация**: Только нужные таблицы или строки (фильтрация через `WHERE`).
+- **Разные версии**: Работа между разными мажорными версиями PostgreSQL (идеально для миграций).
+- **Репликация со Standby (PG 16)**: Теперь логическое декодирование может выполняться на Standby-сервере, что полностью снимает нагрузку с основного мастера.
+- **Репликация последовательностей (PG 17)**: Нативная поддержка синхронизации `sequences`, что упрощает переключение (failover) приложений.
+- **Failover слотов (PG 17)**: Синхронизация логических слотов между мастером и физической репликой позволяет логическим подписчикам бесшовно продолжать работу после переключения мастера.
 
 **Ограничения:**
-- Не реплицируются DDL (`CREATE TABLE`, `ALTER`).
-- Не реплицируются последовательности (`sequences`) и крупные объекты.
-- Требуется `PRIMARY KEY` (или `REPLICA IDENTITY FULL`).
+- Не реплицируются DDL (`CREATE TABLE`, `ALTER`), кроме случаев использования специализированных триггеров.
+- Требуется `PRIMARY KEY` или `REPLICA IDENTITY FULL` (последнее существенно увеличивает нагрузку на WAL).
 
 ## Уровни синхронизации (synchronous_commit)
 
@@ -61,6 +63,13 @@
 
 ## Практические сценарии
 
+### Предварительные требования
+
+1.  **Сетевая связность**: Реплика должна иметь доступ к порту мастера (по умолчанию 5432).
+2.  **Настройки ОС**: `max_files_per_process` и лимиты памяти должны быть достаточны для поддержания процессов репликации.
+3.  **Пользователь**: Выделенная роль с атрибутом `REPLICATION`.
+4.  **Метод аутентификации**: Рекомендуется `scram-sha-256`.
+
 ### 1. Настройка потоковой репликации (физической)
 
 Подробное пошаговое руководство: **[Настройка потоковой репликации](../Operations/replication_setup.md)**.
@@ -72,42 +81,49 @@
    max_wal_senders = 10
    wal_keep_size = 1GB
    ```
-2. Создать пользователя: `CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'pass';`
+2. Создать пользователя: `CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'strong_password';`
 3. Добавить в `pg_hba.conf`: `host replication replicator <replica_ip>/32 scram-sha-256`
 
 **На стороне Standby:**
 1. Снять базовую копию:
    ```bash
+   # Остановка текущего сервиса и очистка PGDATA
+   systemctl stop postgresql
+   rm -rf /var/lib/postgresql/data/*
+   
+   # Создание копии
    pg_basebackup -h <primary_ip> -U replicator -D /var/lib/postgresql/data -P -R --slot=replica_1
    ```
-   *Флаг `-R` создаст `standby.signal` и `postgresql.auto.conf`.*
+   *Флаг `-R` создаст `standby.signal` и `postgresql.auto.conf` с параметрами подключения.*
 
-### 2. Настройка логической репликации (PG 16/17)
+### 2. Настройка логической репликации (PG 17)
 
-**Публикация с фильтрацией (Publisher):**
+**Публикация (Publisher):**
 ```sql
-CREATE PUBLICATION sales_pub FOR TABLE orders (id, amount, status) WHERE (status = 'completed');
+-- Создание публикации для таблиц и всех последовательностей (PG 17)
+CREATE PUBLICATION sales_pub 
+FOR TABLE orders, users, 
+    ALL SEQUENCES IN SCHEMA public;
 ```
 
-**Подписка со Standby (PG 16):**
-Для настройки логической репликации, где источником является Standby-сервер:
-1. На Standby: `wal_level = logical`, `hot_standby_feedback = on`.
-2. На подписчике:
+**Подписка (Subscriber):**
 ```sql
-CREATE SUBSCRIPTION sales_sub CONNECTION 'host=<standby_ip> dbname=...' PUBLICATION sales_pub;
+-- Создание подписки
+CREATE SUBSCRIPTION sales_sub 
+CONNECTION 'host=<primary_ip> dbname=mydb user=replicator password=...' 
+PUBLICATION sales_pub;
 ```
 
-**Синхронизация слотов (PG 17):**
-Чтобы логические слоты выжили после Failover физической реплики:
-1. На Primary создать слот с поддержкой failover:
+**Синхронизация слотов при Failover (PG 17):**
+1. На Primary создать слот с флагом `failover`:
 ```sql
-SELECT pg_create_logical_replication_slot('my_slot', 'pgoutput', false, true); -- failover = true
+SELECT pg_create_logical_replication_slot('my_slot', 'pgoutput', false, true);
 ```
-2. На Standby включить параметр: `sync_replication_slots = on`.
+2. На физическом Standby включить: `sync_replication_slots = on`.
 
 ### 3. Использование pg_createsubscriber (PG 17)
 
-Новая утилита для быстрого преобразования физической реплики в логическую.
+Новая утилита для быстрого преобразования физической реплики в логическую (идеально для "бесшовной" миграции).
 ```bash
 pg_createsubscriber -d "host=master_node dbname=mydb" -s "host=standby_node dbname=mydb" -p 5432 -D /var/lib/postgresql/data
 ```
@@ -118,39 +134,41 @@ pg_createsubscriber -d "host=master_node dbname=mydb" -s "host=standby_node dbna
 На Primary через `pg_stat_replication`:
 ```sql
 SELECT client_addr, state, sync_state,
-       pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn) AS send_lag,
-       pg_wal_lsn_diff(sent_lsn, write_lsn) AS write_lag,
-       pg_wal_lsn_diff(write_lsn, flush_lsn) AS flush_lag,
-       pg_wal_lsn_diff(flush_lsn, replay_lsn) AS replay_lag,
-       replay_lag AS time_lag
-FROM pg_stat_replication;
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)) AS send_lag,
+       pg_size_pretty(pg_wal_lsn_diff(sent_lsn, write_lsn)) AS write_lag,
+       pg_size_pretty(pg_wal_lsn_diff(write_lsn, flush_lsn)) AS flush_lag,
+       pg_size_pretty(pg_wal_lsn_diff(flush_lsn, replay_lsn)) AS replay_lag;
 ```
 
 ### Статус на Standby
 ```sql
-SELECT pg_is_in_recovery(), 
-       pg_last_wal_receive_lsn(), 
-       pg_last_wal_replay_lsn(),
+SELECT pg_is_in_recovery() AS is_replica, 
+       pg_last_wal_receive_lsn() AS last_received, 
+       pg_last_wal_replay_lsn() AS last_replayed,
        now() - pg_last_xact_replay_timestamp() AS last_apply_delay;
 ```
 
-### Управление слотами
-```sql
--- Проверка размера удерживаемого WAL слотом
-SELECT slot_name, active, restart_lsn, 
-       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS wal_keep_size
-FROM pg_replication_slots;
-```
+## Типичные проблемы и пограничные случаи
+
+1.  **WAL Bloat**: Слот репликации "держит" WAL-файлы, если реплика отключена. 
+    - *Симптом:* Резкий рост занимаемого места в `pg_wal`.
+    - *Решение:* Удалить неактивный слот `SELECT pg_drop_replication_slot('slot_name');`.
+2.  **Конфликты логической репликации**: Ошибка `duplicate key value violates unique constraint` на подписчике.
+    - *Причина:* Прямая запись данных на подписчик, которые затем приходят по репликации.
+    - *Решение:* Запретить запись на подписчик (RLS или права) или использовать `SKIP` в настройках подписки (PG 15+).
+3.  **Vacuum и Репликация**: На Standby может возникнуть ошибка `User query might have needed a row version that must be removed`.
+    - *Решение:* Установить `hot_standby_feedback = on` на реплике.
 
 ## Дополнительная информация
 
 ### Управление отказоустойчивостью
-Автоматизация переключения при сбое:
-- **Patroni**: Стандарт для HA-кластеров. Подробнее: **[High Availability](./high_availability.md)**.
-- **repmgr**: Инструментарий для управления репликацией и Failover.
+Автоматизация переключения (Automatic Failover):
+- **Patroni**: Отраслевой стандарт. Использует etcd/Consul для хранения состояния. Подробнее: **[High Availability](./high_availability.md)**.
+- **repmgr**: Популярный инструмент для ручного и полуавтоматического управления.
 
 ### Смежные темы
 - Теория: **[Репликация баз данных](../../Concepts/replication.md)**
 - Масштабирование: **[Масштабирование PostgreSQL](./scaling.md)**
 - Внутренности: **[Write Ahead Log (WAL)](../../Concepts/write_ahead_log.md)**
 - Настройка HA: **[High Availability в PostgreSQL](./high_availability.md)**
+- Пошаговая настройка: **[Настройка потоковой репликации](../Operations/replication_setup.md)**

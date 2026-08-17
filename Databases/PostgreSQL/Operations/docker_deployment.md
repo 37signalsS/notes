@@ -2,41 +2,55 @@
 
 ## Определения
 
-**postgres** — официальный Docker-образ PostgreSQL. Включает сервер СУБД, утилиты (`psql`, `pg_dump`) и `entrypoint`-скрипты для автоматизации развертывания.
+**postgres** — официальный Docker-образ PostgreSQL, поддерживаемый сообществом. Включает сервер СУБД, клиентские утилиты (`psql`, `pg_dump`, `pg_restore`, `pg_isready`) и скрипты `entrypoint` для автоматизации развертывания.
 
-**PGDATA** — переменная окружения, определяющая путь к файлам данных внутри контейнера. Для персистентности этот путь всегда должен быть примонтирован к тому (Volume).
+**PGDATA** — переменная окружения, определяющая абсолютный путь к директории с данными (Database Cluster) внутри контейнера. Для персистентности этот путь всегда должен быть примонтирован к тому (Volume).
 
-**POSTGRES_PASSWORD_FILE** — безопасный способ передачи пароля через Docker Secrets или примонтированные файлы вместо открытых переменных окружения.
+**POSTGRES_PASSWORD_FILE** — безопасный способ передачи пароля через Docker Secrets или примонтированные файлы вместо открытых переменных окружения (предотвращает утечку через `docker inspect`).
 
-**docker-entrypoint-initdb.d** — директория в образе, скрипты из которой (`.sql`, `.sh`, `.sql.gz`) выполняются автоматически при **первом** запуске контейнера на пустом томе.
+**docker-entrypoint-initdb.d** — директория в образе, содержимое которой (`.sql`, `.sql.gz`, `.sh`) выполняется автоматически при **первом** запуске контейнера на пустом томе.
+
+**Fast Shutdown (SIGINT)** — рекомендуемый метод остановки PostgreSQL в контейнере. В отличие от `Smart Shutdown` (SIGTERM), он не ждет завершения всех клиентских сессий, а немедленно прерывает их, сохраняя консистентность данных (предпочтительно для Docker).
+
+## Предпосылки
+
+1.  **Docker Engine & Compose:** Установленные и настроенные компоненты (рекомендуется Docker 24+).
+2.  **Ресурсы:** Минимум 512MB RAM для пустого инстанса; для Production — согласно планируемой нагрузке.
+3.  **Сетевой доступ:** Разрешение подключений в `pg_hba.conf` и firewall хоста.
 
 ## Основные концепции
 
 ### Управление данными и правами
 
-PostgreSQL в Docker работает под пользователем `postgres` (стандартный UID 999, GID 999). 
+PostgreSQL в Docker работает под системным пользователем `postgres` (стандартный **UID 999, GID 999**).
 
-- **Персистентность:** Всегда монтируйте том в поддиректорию внутри точки монтирования, чтобы избежать конфликтов с `lost+found`. Рекомендуется: `-e PGDATA=/var/lib/postgresql/data/pgdata`.
+- **Персистентность:** Всегда монтируйте том в поддиректорию внутри точки монтирования, чтобы избежать конфликтов с системной папкой `lost+found` (актуально для Ext4). Рекомендуется: `-e PGDATA=/var/lib/postgresql/data/pgdata`.
 - **Права доступа (Permissions):** 
   - На Linux bind-mounts требуют, чтобы владелец папки на хосте имел UID 999.
-  - На macOS/Windows Docker Desktop выполняет автоматический маппинг прав, ручная настройка обычно не требуется.
-- **Подробнее о томах:** [Docker: Тома и персистентное хранение](../../../Docker/Docker_fs/docker_volumes.md).
+  - На macOS/Windows Docker Desktop выполняет автоматический маппинг прав.
+- **Подробнее о томах:** **[Docker: Тома и персистентное хранение](../../../Docker/Docker_fs/docker_volumes.md)**.
 
 ### Тюнинг ресурсов и производительность
 
-В контейнеризированной среде PostgreSQL требует специфических настроек ядра и Docker-демона.
-
-- **Shared Memory (shm_size):** PostgreSQL активно использует разделяемую память. В Docker Compose по умолчанию лимит `shm_size` равен 64MB, чего недостаточно для нагруженных БД. Рекомендуется устанавливать `shm_size` равным лимиту оперативной памяти контейнера.
-- **Huge Pages:** Для повышения производительности (снижение нагрузки на TLB) рекомендуется включать Huge Pages.
-  - На хосте: `sysctl -w vm.nr_hugepages=1024`
+- **Shared Memory (shm_size):** PostgreSQL активно использует разделяемую память. В Docker по умолчанию лимит равен 64MB. **Обязательно** устанавливайте `shm_size` равным лимиту RAM контейнера или минимум 25% от доступной памяти.
+- **Huge Pages:** Снижают нагрузку на TLB.
+  - На хосте: `sysctl -w vm.nr_hugepages=1024`.
   - В контейнере: `huge_pages = try` (по умолчанию).
-- **Stop Signal:** По умолчанию Docker отправляет `SIGTERM` для остановки, что в PostgreSQL приводит к `Smart Shutdown` (ожидание завершения всех сессий). Для быстрого, но безопасного закрытия в Docker рекомендуется использовать `STOPSIGNAL SIGINT` (Fast Shutdown).
+- **Stop Signal:** Docker отправляет `SIGTERM` (`Smart Shutdown`), что может привести к долгому ожиданию завершения сессий. Рекомендуется использовать `STOPSIGNAL SIGINT` (`Fast Shutdown`) для ускорения остановки без риска повреждения данных.
 
 ### Инициализация и логирование
 
-- **Init-скрипты:** Выполняются строго один раз. Если нужно создать несколько баз данных или пользователей при старте, используйте `.sh` скрипт в `docker-entrypoint-initdb.d`.
-- **Логи:** По умолчанию выводятся в `stdout`. Для SRE-задач рекомендуется настроить `log_destination = 'stderr'` и собирать их через `fluentd` или `promtail`.
-- **Тюнинг через CLI:** Параметры конфигурации можно передавать напрямую в команду запуска контейнера: `docker run ... postgres -c 'max_connections=200'`.
+- **Init-скрипты:** Выполняются строго один раз. Если нужно создать несколько БД или пользователей при старте, используйте `.sh` скрипт в `docker-entrypoint-initdb.d`.
+- **Логи:** По умолчанию выводятся в `stdout`. Рекомендуется настроить `log_destination = 'stderr'` и собирать их через `fluentd`, `promtail` или напрямую через Docker Logging Driver.
+- **Тюнинг через CLI:** Параметры конфигурации можно передавать напрямую в команду запуска: `docker run ... postgres -c 'max_connections=200'`.
+
+### Сетевое взаимодействие и Безопасность
+
+- **Сетевая изоляция:** Используйте `internal` сети в Docker Compose для БД, чтобы она была доступна только бэкенд-сервисам.
+- **Защита I/O:** При использовании больших БД на Linux монтируйте тома на файловые системы **XFS** или **Ext4** с опцией `noatime`.
+- **Upgrade-стратегии:**
+  - **Minor:** Обновление тега образа (16.1 -> 16.2).
+  - **Major:** Требует `pg_upgrade` (через спец. образы вроде `tianon/postgres-upgrade`) или `dump/restore`.
 
 ## Практические сценарии
 
@@ -68,7 +82,9 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: pg_prod
+    shm_size: '1gb'
     restart: unless-stopped
+    stop_signal: SIGINT
     # Тюнинг параметров через аргументы командной строки
     command: >
       postgres -c 'shared_buffers=256MB' 
@@ -114,9 +130,9 @@ networks:
 
 ### Сценарий 3: Инициализация нескольких БД и пользователей
 
-Официальный образ создает только одну БД через переменные. Для создания сложной структуры используйте `.sh` скрипт.
+Официальный образ создает только одну БД. Для сложной структуры используйте `.sh` скрипт.
 
-**Файл `./init-sql/01-init-multiple-databases.sh`:**
+**Файл `./init-sql/01-init.sh`:**
 ```bash
 #!/bin/bash
 set -e
@@ -126,15 +142,13 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     CREATE DATABASE dev_db;
     GRANT ALL PRIVILEGES ON DATABASE dev_db TO dev_user;
     
-    CREATE DATABASE test_db;
-    GRANT ALL PRIVILEGES ON DATABASE test_db TO dev_user;
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp" SCHEMA extensions;
 EOSQL
-# → результат: созданы БД dev_db и test_db при первом старте.
+# → результат: созданы БД dev_db и расширения при первом старте.
 ```
 
 ### Сценарий 4: Кастомный образ с расширениями
-
-Если требуются расширения, не входящие в стандартную поставку (например, `pg_repack` или `pg_stat_statements`), соберите свой образ.
 
 **Файл `Dockerfile`:**
 ```dockerfile
@@ -142,25 +156,17 @@ FROM postgres:16-alpine
 
 # Установка зависимостей для сборки расширений
 RUN apk add --no-cache --virtual .build-deps \
-    gcc make musl-dev clang15 llvm15 util-linux-dev
+    gcc make musl-dev clang15 llvm15 util-linux-dev \
+    postgresql16-contrib
 
-# Пример установки расширения через пакетный менеджер (если есть) или сборки
-RUN apk add --no-cache postgresql16-contrib
-
-# Настройка STOPSIGNAL для корректного завершения
+# Настройка STOPSIGNAL для корректного завершения (Fast Shutdown)
 STOPSIGNAL SIGINT
 
-# Удаление временных зависимостей
+# Очистка временных зависимостей
 RUN apk del .build-deps
 ```
 
-### Сценарий 5: Администрирование и бэкапы
-
-**Подключение через psql с хоста:**
-Требуется установленный клиент (`sudo apt install postgresql-client`).
-```bash
-psql -h 127.0.0.1 -U admin -d main_db
-```
+### Сценарий 5: Администрирование и бэкапы (Cheat Sheet)
 
 **Подключение внутри контейнера:**
 ```bash
@@ -177,28 +183,39 @@ docker exec pg_prod pg_dump -U admin main_db | gzip > backup_$(date +%F).sql.gz
 gunzip < backup.sql.gz | docker exec -i pg_prod psql -U admin -d main_db
 ```
 
-### Типовые проблемы и Troubleshooting
+**Горячее обновление конфига (Reload):**
+```bash
+docker exec -it pg_prod psql -U admin -c "SELECT pg_reload_conf();"
+```
+
+## Валидация и проверка
+
+1.  **Статус готовности:** `docker exec pg_prod pg_isready`.
+2.  **Проверка логов инициализации:** `docker logs pg_prod | grep "database system is ready to accept connections"`.
+3.  **Проверка разделяемой памяти:** `docker inspect pg_prod --format '{{.HostConfig.ShmSize}}'`.
+
+## Типовые проблемы и Troubleshooting
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Zombie processes** | PostgreSQL — не PID 1. | Используйте `STOPSIGNAL SIGINT` или `--init` флаг в Docker. |
+| **Zombie processes** | PostgreSQL — не PID 1. | Используйте `STOPSIGNAL SIGINT` или флаг `--init`. |
 | **Permission denied (Data)** | Несовпадение UID/GID. | `chown -R 999:999` на папку хоста или используйте Named Volumes. |
-| **Container OOM Kill** | Нехватка RAM или лимитов. | Установите `deploy.resources.limits.memory` > `shared_buffers` + 200MB. |
-| **Init scripts not running** | Папка `PGDATA` не пуста. | Очистите том/папку перед первым запуском. |
+| **Container OOM Kill** | Нехватка RAM или лимитов. | Установите `memory limit` > `shared_buffers` + 200MB (overhead). |
+| **Init scripts not running** | Папка `PGDATA` не пуста. | Очистите том перед первым запуском. |
+| **Shared memory error** | Лимит `shm_size` слишком мал. | Увеличьте `shm_size` в `compose.yaml` или параметром `--shm-size`. |
 
 ## Дополнительная информация
 
 ### Безопасность
 
-1. **Минимизация:** Всегда предпочитайте образы на базе `alpine` или `distroless` (если есть поддержка).
-2. **Изоляция:** Используйте `internal` сети в Docker Compose для БД, публикуя порт только на `127.0.0.1` для отладки.
-3. **Секреты:** Используйте Docker Secrets (`/run/secrets/`) вместо переменных окружения для паролей в production.
-4. **Защита I/O:** При использовании больших БД на Linux монтируйте тома на файловые системы XFS или Ext4 с опцией `noatime`.
+1. **Минимизация:** Предпочитайте `alpine` версии образа.
+2. **Изоляция:** Публикуйте порты только на `127.0.0.1`, если доступ нужен только для отладки.
+3. **Секреты:** Используйте Docker Secrets (`POSTGRES_PASSWORD_FILE`) вместо переменных окружения.
 
 ### Связанные документы
 
-- [Наблюдаемость PostgreSQL](./observability.md) — мониторинг контейнеров и метрики.
-- [Оптимизация производительности](./performance_tuning.md) — детальный тюнинг параметров `postgresql.conf`.
-- [PostgreSQL в Kubernetes](./kubernetes_deployment.md) — использование CloudNativePG оператора.
-- [Тома в Docker](../../../Docker/Docker_fs/docker_volumes.md) — детальный разбор типов монтирования.
-- [Безопасность Docker](../../../Docker/Docker_security/vulnerability_scanning.md) — сканирование образов на CVE.
+- **[Наблюдаемость PostgreSQL](./observability.md)** — мониторинг контейнеров и метрики.
+- **[Оптимизация производительности](./performance_tuning.md)** — детальный тюнинг параметров.
+- **[PostgreSQL в Kubernetes](./kubernetes_deployment.md)** — использование CloudNativePG оператора.
+- **[Тома в Docker](../../../Docker/Docker_fs/docker_volumes.md)** — детальный разбор типов монтирования.
+- **[Автоматизация бэкапов](./backup_automation.md)** — стратегии резервного копирования.

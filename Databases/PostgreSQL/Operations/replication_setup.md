@@ -1,43 +1,54 @@
-# Настройка потоковой репликации в PostgreSQL
+# Настройка репликации в PostgreSQL
 
-Данное руководство описывает процесс настройки физической потоковой асинхронной репликации в режиме **Primary-Standby** (основной сервер для записи, реплика только для чтения). Инструкции актуальны для PostgreSQL версий 13, 14, 15, 16 и 17.
+Данное руководство описывает процесс настройки различных видов репликации в режиме **Primary-Standby**. Инструкции актуальны для PostgreSQL версий 13, 14, 15, 16 и 17.
 
 Теоретические основы и сравнение типов репликации описаны в разделе **[Репликация в PostgreSQL](../Concepts/replication.md)**.
 
+## Определения
+
+- **Репликация** — процесс дублирования данных с основного сервера (**Primary**) на вспомогательные (**Standby**).
+- **Потоковая репликация (Streaming Replication)** — физическая передача WAL-записей в реальном времени.
+- **Синхронная репликация** — режим, при котором транзакция на Primary не считается завершенной, пока не получено подтверждение от реплики.
+- **Каскадная репликация** — Standby-сервер выступает источником для других реплик.
+- **Логическая репликация** — передача изменений на уровне строк/таблиц (Publisher-Subscriber).
+- **Репликационный слот (Replication Slot)** — механизм на Primary, предотвращающий удаление WAL, не дошедших до реплики.
+
 ## Предварительные требования
 
-*   Два сервера с установленным PostgreSQL одной мажорной версии.
+*   Два и более серверов с установленным PostgreSQL одной мажорной версии (для физической репликации).
 *   Сетевая связность по порту 5432.
-*   **Синхронизация времени**: Настройте NTP или Chrony на обоих серверах (критично для мониторинга лага).
-*   Права `sudo` на обоих хостах.
-*   Настроенный брандмауэр (разрешить входящие соединения на порт 5432 с IP-адресов партнеров).
+*   **Синхронизация времени**: Настройка NTP или Chrony на всех узлах (критично для мониторинга лага).
+*   Права `sudo` на всех хостах.
+*   Настроенный брандмауэр (разрешить порт 5432 для IP партнеров).
 
-## Шаг 1: Подготовка Primary-сервера (Master)
+## Базовый сценарий: Потоковая асинхронная репликация
+
+Это стандартная конфигурация для обеспечения высокой доступности и масштабирования чтения.
+
+### Шаг 1: Подготовка Primary-сервера (Master)
 
 1.  **Создание пользователя для репликации**:
-    Подключитесь к PostgreSQL и создайте роль с правами репликации.
     ```sql
     CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'your_strong_password';
     ```
 
-2.  **Настройка доступа**: Отредактируйте файл `pg_hba.conf` (путь обычно `/etc/postgresql/XX/main/pg_hba.conf`).
+2.  **Настройка доступа (`pg_hba.conf`)**:
     ```conf
-    # Разрешить пользователю replicator подключаться для репликации с IP реплики
+    # Разрешить пользователю replicator подключаться с IP реплики
     host    replication    replicator    REPLICA_IP/32    scram-sha-256
     ```
 
-3.  **Конфигурация параметров**: Внесите изменения в `postgresql.conf`:
+3.  **Конфигурация параметров (`postgresql.conf`)**:
     ```conf
-    listen_addresses = '*'          # Или список конкретных IP
-    wal_level = replica             # Минимальный уровень для репликации
-    max_wal_senders = 10            # Максимальное число процессов передачи WAL
-    wal_keep_size = 1GB             # Объем WAL, который мастер хранит для реплик (с PG 13)
-    max_replication_slots = 10      # Максимальное количество слотов репликации
-    hot_standby = on                # Рекомендуется включать и на мастере для единообразия
+    listen_addresses = '*'
+    wal_level = replica
+    max_wal_senders = 10
+    wal_keep_size = 1GB             # Хранить WAL на случай кратковременного сбоя связи
+    max_replication_slots = 10
+    hot_standby = on                # Включить для единообразия
     ```
 
-4.  **Создание слота репликации (рекомендуется)**:
-    Использование слотов гарантирует, что мастер не удалит WAL-файлы, пока они не будут получены репликой.
+4.  **Создание слота репликации**:
     ```sql
     SELECT * FROM pg_create_physical_replication_slot('replica_1_slot');
     ```
@@ -47,24 +58,22 @@
     sudo systemctl restart postgresql
     ```
 
-## Шаг 2: Подготовка Standby-сервера (Replica)
+### Шаг 2: Подготовка Standby-сервера (Replica)
 
 1.  **Остановка и очистка данных**:
-    Перед клонированием данных сервис должен быть остановлен, а текущая директория данных очищена.
     ```bash
     sudo systemctl stop postgresql
     sudo su - postgres
-    # ВНИМАНИЕ: убедитесь, что путь верный перед выполнением rm
-    rm -rf /var/lib/postgresql/XX/main/*
+    # ВНИМАНИЕ: убедитесь в правильности пути
+    rm -rf /var/lib/postgresql/17/main/*
     ```
 
 2.  **Клонирование данных (Base Backup)**:
-    Выполните `pg_basebackup` с использованием созданного ранее слота.
     ```bash
-    pg_basebackup -h MASTER_IP -D /var/lib/postgresql/XX/main -U replicator -P -R --slot=replica_1_slot -X stream
+    pg_basebackup -h MASTER_IP -D /var/lib/postgresql/17/main -U replicator -P -R --slot=replica_1_slot -X stream
     ```
-    *   `-R`: Создает файл `standby.signal` и добавляет настройки подключения в `postgresql.auto.conf`.
-    *   `--slot`: Привязывает реплику к конкретному слоту на мастере.
+    *   `-R`: Создает файл `standby.signal` и обновляет `postgresql.auto.conf`.
+    *   `--slot`: Привязывает реплику к физическому слоту.
 
 3.  **Запуск реплики**:
     ```bash
@@ -72,59 +81,90 @@
     sudo systemctl start postgresql
     ```
 
-## Шаг 3: Проверка и мониторинг
+## Дополнительные сценарии
 
-### Проверка статуса на Primary
-Выполните запрос для анализа подключенных реплик и их отставания:
+### Сценарий 3: Синхронная репликация (Zero Data Loss)
+
+Обеспечивает гарантию сохранности данных при аварии Primary.
+
+**На Primary (`postgresql.conf`):**
+```conf
+synchronous_commit = on
+synchronous_standby_names = 'ANY 1 (replica_1, replica_2)'
+```
+
+**На Standby (`postgresql.auto.conf` через `primary_conninfo`):**
+Добавьте `application_name` к строке подключения:
+```conf
+primary_conninfo = 'host=MASTER_IP ... application_name=replica_1'
+```
+*Требуется перезапуск сервисов.*
+
+### Сценарий 4: Каскадная репликация
+
+Снижает нагрузку на Primary в распределенных сетях.
+1.  **Standby 1** настраивается как Master (включая `max_wal_senders`).
+2.  **Standby 2** выполняет `pg_basebackup` с адреса **Standby 1**.
+3.  В `primary_conninfo` на Standby 2 указывается адрес Standby 1.
+
+### Сценарий 5: Логическая репликация (PG 17)
+
+Для миграций или частичной синхронизации.
+**Publisher (Мастер):** `wal_level = logical`.
+```sql
+CREATE PUBLICATION app_pub FOR ALL TABLES;
+```
+**Subscriber (Реплика):**
+```sql
+CREATE SUBSCRIPTION app_sub CONNECTION 'host=PUB_IP ...' PUBLICATION app_pub;
+```
+
+## Шаг 3: Мониторинг
+
+### На Primary
+Анализ подключенных реплик и лага:
 ```sql
 SELECT 
     client_addr, 
+    application_name,
     state, 
     sync_state, 
-    pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)) AS send_lag,
-    pg_size_pretty(pg_wal_lsn_diff(sent_lsn, write_lsn)) AS write_lag,
-    pg_size_pretty(pg_wal_lsn_diff(write_lsn, flush_lsn)) AS flush_lag,
-    pg_size_pretty(pg_wal_lsn_diff(flush_lsn, replay_lsn)) AS replay_lag
+    pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)) AS total_lag
 FROM pg_stat_replication;
 ```
 
-### Проверка статуса на Standby
-Убедитесь, что сервер находится в режиме восстановления (чтения):
+### На Standby
 ```sql
-SELECT pg_is_in_recovery(); -- Должно вернуть 't' (true)
-
--- Просмотр времени последней примененной транзакции
+SELECT pg_is_in_recovery(); -- Должно быть 't'
 SELECT now() - pg_last_xact_replay_timestamp() AS replication_lag;
 ```
 
-## Шаг 4: Повышение реплики до мастера (Promotion)
+## Шаг 4: Повышение реплики (Promotion)
 
-В случае аварии на основном сервере реплику можно перевести в режим записи.
-
-1.  **Команда повышения**:
-    ```bash
-    sudo -u postgres pg_ctl promote -D /var/lib/postgresql/XX/main
-    ```
-    После этого файл `standby.signal` будет удален автоматически.
-
-**Примечание:** Повышение реплики вручную не перенаправляет трафик приложений автоматически. Для построения отказоустойчивых кластеров с автоматическим переключением рекомендуется использовать **[Patroni](./high_availability_patroni.md)**.
+В случае аварии на Primary:
+```bash
+sudo -u postgres pg_ctl promote -D /var/lib/postgresql/17/main
+```
+Файл `standby.signal` будет удален, сервер перейдет в режим записи. Для автоматизации используйте **[Patroni](./high_availability_patroni.md)**.
 
 ## Типичные проблемы и решения
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| `FATAL: password authentication failed` | Ошибка в `pg_hba.conf` или пароле | Проверьте метод аутентификации и пароль пользователя `replicator`. |
-| `is already active` (при запуске реплики) | Слот занят другим процессом | Проверьте `pg_replication_slots` на мастере, удалите и пересоздайте слот при необходимости. |
-| Репликация не стартует | Firewall блокирует порт 5432 | Проверьте доступность порта: `telnet MASTER_IP 5432`. |
-| Огромный рост папки `pg_wal` на мастере | Реплика не забирает данные, слот держит WAL | Проверьте статус реплики. Если она выключена надолго, удалите слот: `pg_drop_replication_slot('slot_name')`. |
+| `FATAL: password authentication failed` | Ошибка в `pg_hba.conf` | Проверьте метод (scram-sha-256) и пароль. |
+| `is already active` | Слот занят | Проверьте `pg_replication_slots` на мастере. |
+| Огромный рост `pg_wal` | Реплика не забирает данные | Удалите неактивный слот: `pg_drop_replication_slot('slot')`. |
+| Репликация не стартует | Firewall или `listen_addresses` | Проверьте доступность 5432 через `nc -zv`. |
+| Конфликты восстановления | Vacuum удалил нужные реплике строки | Включите `hot_standby_feedback = on` на Standby. |
 
 ## Обслуживание
 
-*   **Мониторинг слотов**: Регулярно проверяйте `pg_replication_slots`, чтобы неактивные слоты не переполнили диск на мастере.
-*   **Смена пароля**: При изменении пароля пользователя `replicator` на мастере, необходимо обновить его в `postgresql.auto.conf` на реплике (параметр `primary_conninfo`) и перезапустить сервис.
+*   **Мониторинг слотов**: Регулярно проверяйте `pg_replication_slots`.
+*   **Смена пароля**: Обновите пароль на мастере и в `primary_conninfo` на всех репликах.
+*   **Безопасность**: Используйте TLS для репликации через открытые сети.
 
 ### См. также
 *   [Репликация в PostgreSQL: Концепции](../Concepts/replication.md)
-*   [Отказоустойчивость (High Availability)](../Concepts/high_availability.md)
-*   [Оптимизация PostgreSQL](./performance_tuning.md)
-*   [Управление ролями и БД](./role_management.md)
+*   [Отказоустойчивость (Patroni)](./high_availability_patroni.md)
+*   [Оптимизация производительности](./performance_tuning.md)
+*   [Write Ahead Log (WAL)](../../Concepts/write_ahead_log.md)
