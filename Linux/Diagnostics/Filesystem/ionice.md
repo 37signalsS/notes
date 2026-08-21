@@ -99,6 +99,7 @@ echo "8:0 weight=200" | sudo tee /sys/fs/cgroup/system.slice/my_service.service/
 
 ### См. также
 
+- [Планирование процессов: nice, renice и приоритеты CPU](../../Core/processes/scheduling.md)
 - [Планировщики ввода-вывода (I/O Schedulers)](../../Core/kernel/io_schedulers.md)
 - [Интерактивный мониторинг I/O (iotop)](./iotop.md)
 - [Контрольные группы (cgroups v2)](../../Core/cgroups.md)

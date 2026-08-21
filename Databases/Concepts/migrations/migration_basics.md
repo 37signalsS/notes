@@ -117,4 +117,6 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 - **[Обратно-совместимые миграции (Expand-Contract)](expand_contract.md)** — архитектура Zero-downtime релизов.
 - **[Типовые сценарии миграций](scenarios.md)** — готовые SQL-рецепты для сложных случаев.
 - **[Database CI/CD](database-ci-cd.md)** — глубокая автоматизация пайплайнов.
+- **[Flyway: Практическое руководство](./tools/flyway_practical_guide.md)** — глубокое погружение в инструмент.
+- **[Liquibase: Практическое руководство](./tools/liquibase_practical_guide.md)** — глубокое погружение в инструмент.
 - **[Стратегии отката (Rollback)](rollback_strategies.md)** — методы аварийного восстановления.

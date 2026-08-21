@@ -57,7 +57,7 @@
 
 ### 2. Физический бэкап (Бинарный)
 Прямое копирование файлов данных БД.
-- **Инструменты:** `pg_basebackup`, `wal-g`, `pgBackRest`, `mariadb-backup`, `Percona XtraBackup`.
+- **Инструменты:** `pg_basebackup`, `wal-g`, `pgBackRest`, `mariadb-backup` (см. **[бэкапы MariaDB](../MariaDB/backup_and_recovery.md)**), `Percona XtraBackup` (см. **[бэкапы MySQL](../MySQL/backup_and_recovery/overview.md)**).
 - **Когда использовать:** Высоконагруженные Production-системы, где RTO критичен.
 - **PITR:** Комбинация физического бэкапа и архивирования **[WAL](./write_ahead_log.md)** позволяет откатиться на любую секунду.
 

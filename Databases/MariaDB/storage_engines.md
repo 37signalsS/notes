@@ -34,17 +34,26 @@
 - **Назначение:** Используется для системных таблиц MariaDB и сложных временных таблиц.
 - **Преимущества:** Быстрое восстановление после сбоя через логи транзакций без накладных расходов на полную MVCC-изоляцию.
 
-**MyRocks:** Движок на базе LSM-дерева ( RocksDB).
+**MyRocks:** Движок на базе LSM-дерева (RocksDB).
 - **Преимущества:** Экстремальное сжатие данных (в 3-4 раза лучше InnoDB) и минимизация износа SSD (Write Amplification).
-- **Сценарии:** Массивы исторических данных, логи, метрики с высокой интенсивностью записи.
+- **SRE-тюнинг (LSM):**
+    - **Compaction:** По умолчанию используется *Leveled Compaction*. Для снижения Write Amplification рекомендуется `level_compaction_dynamic_level_bytes=ON`.
+    - **Потоки:** Параметр `rocksdb_max_background_jobs` должен быть ~ `CPU_cores / 2` для предотвращения остановки записи (Write Stalls).
+    - **Мониторинг:** Ключевые метрики — `Write Amp` (цель < 20) и `Compaction Lag`.
 
 **ColumnStore:** Колоночный движок для распределенной аналитики (OLAP).
-- **Принцип:** Хранит данные по столбцам. Читает только необходимые колонки, обеспечивая мгновенную агрегацию по миллиардам строк.
-- **Сценарии:** Хранилища данных (DWH) и Big Data аналитика.
+- **Архитектура MPP (Massively Parallel Processing):**
+    - **User Module (UM):** SQL-слой, агрегация данных, управление метаданными.
+    - **Performance Module (PM):** Операции ввода-вывода, вычисления над экстентами.
+- **Эксплуатация:**
+    - **Загрузка данных:** Утилита `cpimport` работает напрямую с PM, минуя SQL-слой (быстрее в 100 раз). Режим `-m 2` обеспечивает параллельную загрузку на все PM-узлы.
+    - **Блокировки:** `cpimport` накладывает Write Metadata Lock (MDL).
 
 **Spider:** Движок для прозрачного шардирования.
-- **Функция:** Распределяет данные одной таблицы между несколькими удаленными узлами MariaDB (через MariaDB или MySQL протоколы).
-- **Сценарии:** Горизонтальное масштабирование сверх ресурсов одного сервера.
+- **Функция:** Распределяет данные одной таблицы между несколькими удаленными узлами MariaDB.
+- **Распределенные транзакции:**
+    - Поддержка **XA (2PC)** для обеспечения атомарности между шардами. Рекомендуется `spider_sync_trx_isolation=1` для согласованности уровней изоляции.
+- **Отказоустойчивость:** Мониторинг бэкенд-узлов через таблицу `mysql.link_mon_servers` и `monitoring_bg_kind=1`.
 
 ### Вспомогательные и специализированные движки
 
@@ -82,7 +91,24 @@ SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_read%';
 
 -- 2. Диагностика MyRocks (Compaction Lag)
 SHOW ENGINE ROCKSDB STATUS; -- Ищите 'Cumulative compaction stats'
+
+-- 3. Мониторинг Spider (XA-транзакции)
+SHOW ENGINE SPIDER STATUS; -- Проверка XA_recover_prepares и активных соединений
+
+-- 4. Диагностика ColumnStore (состояние экстентов)
+-- Выполняется в шелле Performance Module
+-- edg -view
+-- calGetStats 1 1 -- детальная статистика по операциям ввода-вывода
 ```
+
+### Сводная таблица SRE-метрик
+
+| Движок | Ключевая метрика | Инструмент мониторинга |
+| :--- | :--- | :--- |
+| **ColumnStore** | `Extent Map` fragmentation | `edg` utility / `calGetStats` |
+| **Spider** | `XA_recover_prepares` | `SHOW ENGINE SPIDER STATUS` |
+| **MyRocks** | `Write Stalls` / `Write Amp` | `SHOW ENGINE ROCKSDB STATUS` |
+| **InnoDB** | `Buffer Pool Hit Rate` | `SHOW GLOBAL STATUS` |
 
 ### Настройка векторного индекса (MariaDB 12.3 LTS)
 
@@ -154,6 +180,7 @@ SELECT * FROM articles WHERE MATCH(txt) AGAINST('DevOps' IN BOOLEAN MODE);
 
 ### См. также
 - **[Обзор MariaDB](overview.md)** — общая архитектура.
+- **[Отказоустойчивость MariaDB](high_availability.md)** — Galera, Orchestrator и MaxScale.
 - **[Конфигурация MariaDB](configuration.md)** — тюнинг параметров движков.
 - **[ACID в базах данных](../Concepts/acid.md)** — теоретические основы надежности.
 - **[Официальная база знаний (Storage Engines)](https://mariadb.com/kb/en/storage-engines/)**

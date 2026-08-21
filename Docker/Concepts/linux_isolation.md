@@ -48,6 +48,8 @@ Docker использует драйвер **overlay2** для создания 
 
 **Механизм Copy-on-Write (CoW):** если контейнер пытается изменить файл из `lowerdir`, ядро сначала копирует его в `upperdir`, и только потом применяет изменения. Оригинал в образе остается нетронутым.
 
+Подробный разбор работы драйвера (copy-up, whiteout, opaque-директории, `d_type`, лимит 128 слоев): **[Драйвер хранения OverlayFS](../Docker_fs/docker_overlayfs.md)**.
+
 ### Дополнительные уровни безопасности
 
 Сами по себе механизмы изоляции не являются "границей безопасности" (security boundary). Для полноценной защиты используются:
@@ -57,7 +59,67 @@ Docker использует драйвер **overlay2** для создания 
 - **LSM (AppArmor / SELinux):** принудительный контроль доступа к файлам и сетевым портам на уровне политик ОС.
 - **ReadOnly RootFS:** возможность запуска контейнера с неизменяемой ФС (`--read-only`), что блокирует большинство эксплойтов.
 
+### Крайние случаи и особенности поведения
+
+Механизмы изоляции имеют ограничения, проявляющиеся в нестандартных сценариях:
+
+1. **Вложенные контейнеры (Docker-in-Docker / Podman-in-Podman):** При запуске контейнера внутри контейнера (DinD) требуется привилегированный режим (`--privileged`) или явное предоставление доступа к `cgroups` и `devices`, так как внутренний демон не видит cgroups хоста без делегирования.
+2. **Systemd внутри контейнера:** Для корректной работы `systemd` как PID 1 требуется:
+   - Монтирование хостовой иерархии cgroups (`--cgroupns=host`) или приватное пространство cgroup namespace (`--cgroupns=private` с делегированием).
+   - Доступ к `/sys/fs/cgroup` и `/run` как tmpfs.
+   - Отключение `--read-only` или явное указание writable-путей (`--tmpfs /run`, `--tmpfs /run/lock`).
+3. **Ограничение глубины OverlayFS:** Стандартное ограничение — 128 нижних слоев (`lowerdir`). При превышении возникает ошибка `too many levels of symbolic links`. Решение: использование `overlay2` с оптимизацией или переход на `fuse-overlayfs` в rootless-режиме.
+4. **Time Namespace:** Несмотря на наличие в ядре 5.6+, Docker не включает `CLONE_NEWTIME` по умолчанию. Контейнеры, которым требуется изолированное время, должны использовать явные флаги или патч рантайма.
+5. **Общий кеш страниц (Page Cache):** Cgroups ограничивают потребление *активной* памяти, но page cache учитывается в `memory.stat`. При высокой I/O-нагрузке cache может занимать значительную часть лимита, приводя к ложным OOMKilled.
+6. **Seccomp и гетерогенные архитектуры:** Профили seccomp могут зависеть от архитектуры (amd64, arm64). Системные вызовы, разрешенные на x86_64, могут отсутствовать на ARM, что приводит к `ENOSYS` при переносе образов.
+
 ## Практические сценарии
+
+### Предварительные требования
+
+Перед работой с изоляцией убедитесь, что система соответствует требованиям:
+
+**Аппаратные и программные требования:**
+- Ядро Linux **5.8+** для полной поддержки Cgroups v2 и всех контроллеров.
+- Docker **20.10+** (предпочтительно 24.0+ для стабильной работы cgroups v2 и `--cgroupns`).
+- Файловая система с поддержкой `overlay2` (ext4, xfs, btrfs).
+
+**Проверка окружения:**
+
+```bash
+# Проверка версии ядра
+uname -r
+# → 5.15.0-xx-generic (должен быть ≥ 5.8)
+
+# Проверка режима cgroups (должен быть cgroup2)
+stat -fc %T /sys/fs/cgroup/
+# → cgroup2fs
+
+# Проверка версии Docker
+docker --version
+# → Docker version 24.0.x, build xxxxx
+
+# Проверка доступного storage driver
+docker info | grep -i "storage driver"
+# → Storage Driver: overlay2
+
+# Проверка поддержки namespaces в ядре
+grep -i "CONFIG_NAMESPACES" /boot/config-$(uname -r)
+# → CONFIG_NAMESPACES=y
+# → CONFIG_CGROUPS=y
+# → CONFIG_CGROUP_SCHED=y
+# → CONFIG_CGROUP_PIDS=y
+# → CONFIG_MEMCG=y
+# → CONFIG_CGROUP_DEVICE=y
+# → CONFIG_CGROUP_NET_PRIO=y
+# → CONFIG_CGROUP_NET_CLASSID=y
+# → CONFIG_CPUSETS=y
+# → CONFIG_IPC_NS=y
+# → CONFIG_UTS_NS=y
+# → CONFIG_USER_NS=y
+# → CONFIG_PID_NS=y
+# → CONFIG_NET_NS=y
+```
 
 ### Сравнение низкоуровневых механизмов и Docker
 
@@ -129,6 +191,62 @@ nsenter -t $PID -n ip addr
 nsenter -t $PID -n -p -m -- bash
 ```
 
+**5. Валидация изоляции файловой системы:**
+
+```bash
+# Проверка работы CoW: изменение файла в контейнере не должно касаться образа
+docker run --rm -it alpine sh -c "echo 'modified' > /etc/hostname && cat /etc/hostname"
+# → modified
+
+# Проверка на хосте (файл образа не изменился)
+docker inspect --format '{{.GraphDriver.Data.UpperDir}}' <container_name>
+# → /var/lib/docker/overlay2/.../diff
+
+# Проверка ReadOnly RootFS
+docker run --rm --read-only -it alpine sh -c "touch /test && echo OK" || echo "Ожидаемая ошибка: RO FS"
+# → touch: /test: Read-only file system
+# → Ожидаемая ошибка: RO FS
+```
+
+### Типичные проблемы и диагностика
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `permission denied` на томах | Ошибка маппинга UID/GID между хостом и контейнером | Проверьте владельца каталога на хосте; используйте `--userns=keep-id` (Podman) или явно задайте `--user $(id -u):$(id -g)` |
+| `no space left on device` (OverlayFS) | Исчерпан лимит нижних слоев (обычно 128) или место на диске | Проверьте `docker system df`; объедините или пересоберите образ с меньшим количеством слоев |
+| `cgroup: cannot set cgroup ...` | Отсутствует поддержка cgroups v2 или неправильные права | Переведите хост на cgroups v2; проверьте `docker info | grep -i cgroup` |
+| Контейнер не видит сеть | Ошибка в bridge/overlay сети или конфликт iptables | Выполните `docker network inspect bridge`; проверьте `iptables -L -n -v` |
+| `OOMKilled` при наличии лимита | Page cache учитывается в memory.max; приложение не учитывает лимит | Установите `memory.high` ниже `memory.max`; настройте приложение на чтение cgroup-лимитов |
+| `clock: invalid argument` (Time) | Попытка изменения времени без `CAP_SYS_TIME` или нестабильный `clock_gettime` | Не предоставляйте `CAP_SYS_TIME` без необходимости; обновите ядро для поддержки Time Namespace |
+| `operation not permitted` (Seccomp) | Системный вызов заблокирован профилем seccomp | Определите блокируемый вызов через `dmesg` или `audit.log`; добавьте исключение в кастомный профиль |
+
+### Рекомендации и лучшие практики
+
+**Безопасность:**
+1. **Минимальные privileges:** Запускайте контейнеры с `--read-only`, `--cap-drop=ALL` и добавляйте только необходимые capabilities через `--cap-add`.
+2. **Cgroup Namespace:** Используйте `--cgroupns=private` (Docker 20.10+) для скрытия иерархии cgroups хоста. На хостах с systemd может потребоваться `--cgroupns=host` для корректного взаимодействия с юнитами.
+3. **Seccomp:** Применяйте профиль `docker-default` или кастомный. Избегайте `--security-opt seccomp=unconfined` в production.
+4. **User Namespace Remap:** Включите `userns-remap` в демоне Docker для маппинга root-UID контейнера на непривилегированного пользователя хоста.
+5. **PIDs Limit:** Ограничьте количество процессов через `--pids-limit` для защиты от fork-бомб.
+
+**Стабильность и производительность:**
+1. **Memory High:** Всегда устанавливайте `memory.high` (soft limit) ниже `memory.max` (hard limit). Это позволяет демону OOM (`systemd-oomd` или встроенный) корректно дросселировать процесс до принудительного убийства.
+2. **CPU Quota:** Используйте `--cpus` вместо `--cpu-period`/`--cpu-quota` для простоты. Для высоконагруженных приложений рассмотрите `--cpuset-cpus` для привязки к конкретным ядрам.
+3. **I/O Weight:** Настройте `--blkio-weight` (1-1000) для контейнеров с интенсивным I/O, чтобы предотвратить starvation остальных сервисов.
+4. **Прослеживание (Tracing):** Используйте `docker events` и `cAdvisor` для мониторинга поведения cgroups в реальном времени.
+
+**Чистка окружения:**
+```bash
+# Удаление остановленных контейнеров, неиспользуемых сетей и висющих образов
+docker system prune -a --volumes
+
+# Принудительная остановка и удаление всех контейнеров
+docker rm -f $(docker ps -aq)
+
+# Очистка кеша builder
+docker builder prune -a
+```
+
 ## Ограничения и риски изоляции
 
 Namespaces и Cgroups не обеспечивают 100% изоляцию. Основные "белые пятна":
@@ -147,4 +265,5 @@ Namespaces и Cgroups не обеспечивают 100% изоляцию. Ос�
 - [Обзор Docker](../docker_overview.md) — общие принципы работы.
 - [Безопасность Docker](../Docker_security/overview.md) — глубокое погружение в защиту.
 - [Сетевая модель Docker](../Docker_network/docker_network.md) — детализация работы Network Namespace.
+- **[Драйвер хранения OverlayFS](../Docker_fs/docker_overlayfs.md)** — глубокий разбор copy-up, whiteout и storage driver.
 - [Изоляция в Podman](../../Podman/linux_isolation.md) — специфические особенности Podman.

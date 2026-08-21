@@ -112,7 +112,7 @@ FLUSH PRIVILEGES;
 ### 5. Обновление MySQL
 
 При переходе между минорными версиями (например, 8.4.1 -> 8.4.2) процесс автоматизирован:
-1.  **Бэкап:** `mysqldump --all-databases > full_backup.sql`.
+1.  **Резервное копирование:** Выполните полный бэкап (подробнее см. **[Резервное копирование и восстановление в MySQL](./backup_and_recovery/overview.md)**).
 2.  **Обновление пакетов:** `sudo apt update && sudo apt upgrade mysql-server`.
 3.  **Перезапуск:** `sudo systemctl restart mysql`.
 4.  **Проверка:** MySQL 8.0.16+ выполняет `mysql_upgrade` автоматически при старте.

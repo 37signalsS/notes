@@ -36,7 +36,7 @@ PostgreSQL использует модель **Process-per-connection** (отд�
     - **Роль MAINTAIN (PG 17):** Позволяет делегировать задачи обслуживания (`VACUUM`, `ANALYZE`, `REINDEX`) без выдачи прав суперпользователя.
 *   **RLS (Row-Level Security):** Политики доступа к данным на уровне конкретных строк таблицы.
 *   **Аутентификация:** Поддержка современных методов, таких как `SCRAM-SHA-256`, и интеграция с внешними системами через LDAP/Kerberos.
-*   **Шифрование:** Обязательное использование TLS для соединений и прозрачное шифрование данных (TDE) через расширения.
+*   **Шифрование:** Обязательное использование TLS для соединений и прозрачное шифрование данных (TDE) через расширения. Подробный разбор методов защиты: **[Безопасность и шифрование](./Concepts/security_and_encryption.md)**.
 
 ### Универсальность и расширяемость
 *   **Типы индексов:** B-дерево (стандарт), Hash, GiST (геометрия/текст), GIN (массивы/JSONB), BRIN (огромные временные ряды).
@@ -110,7 +110,7 @@ LIMIT 5;
 *   **Инструменты:** [Графические и веб-интерфейсы](./Operations/management_tools.md) и [PgBouncer](./Operations/pgbouncer_setup.md).
 *   **Наблюдаемость:** [Мониторинг и трассировка SQL](./Operations/observability.md).
 *   **Резервное копирование:** [Бэкап и восстановление](./Concepts/backup_and_recovery.md) и [Corruption Recovery](./Concepts/corruption_recovery.md).
-*   **Оптимизация:** [Производительность](./Operations/performance_tuning.md), [Масштабирование](./Concepts/scaling.md) и [Оптимизация PL/pgSQL](./Concepts/pl_pgsql_optimization.md).
+*   **Оптимизация:** [Производительность](./Operations/performance_tuning.md), [Масштабирование](./Concepts/scaling.md), [Оптимизация PL/pgSQL](./Concepts/pl_pgsql_optimization.md) и [Отладка хранимых объектов](./Concepts/stored_objects_debugging.md).
 
 ### Смотрите также
 *   [Интеграция с ClickHouse](./Integrations/clickhouse.md)

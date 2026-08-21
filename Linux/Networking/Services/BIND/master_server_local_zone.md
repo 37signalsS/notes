@@ -137,6 +137,7 @@ dig @127.0.0.1 web.corp.local
 *   **Связанные разделы:**
     *   **[Зоны DNS и SOA-запись](../../../../Networking/Protocols/DNS/dns_zones.md)** — глубокая теория метаданных.
     *   **[Вторичный сервер (Slave)](./slave_server_configuration.md)** — настройка репликации.
+    *   **[Отказоустойчивый кластер BIND9](./high-availability-cluster.md)** — сквозной сценарий Master-Slave с ручным переключением ролей.
     *   **[Обратная зона (Reverse)](./reverse_zone_configuration.md)** — настройка PTR-записей.
     *   **[Ресурсные записи DNS](../../../../Networking/Protocols/DNS/dns_records.md)** — детали форматов MX, TXT, SRV.
     *   **[Диагностика BIND](./troubleshooting.md)** — поиск и устранение ошибок.

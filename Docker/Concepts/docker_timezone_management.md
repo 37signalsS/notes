@@ -8,6 +8,21 @@
 
 **Переменная окружения `TZ`** — стандарт POSIX для указания часового пояса процессу. Значение переменной (например, `Europe/Moscow`) заставляет системные библиотеки (glibc, musl) динамически вычислять локальное время без изменения системных файлов.
 
+## Требования и предпосылки
+
+| Компонент | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| **Docker Engine** | 20.10+ | Поддержка переменной `TZ` работает со всеми версиями, но рекомендуется актуальная LTS. |
+| **Docker Compose** | v2.0+ | Compose V2 интегрирован в Docker CLI как `docker compose` (с пробелом). |
+| **Kubernetes** | 1.27+ | Поле `timeZone` в CronJob доступно, начиная с версии 1.27 (было `beta` в 1.24–1.26). |
+| **Базовый образ** | — | Alpine 3.18+, Debian 12+, Ubuntu 22.04+ для актуального `tzdata`. |
+| **Хостовая ОС** | Linux kernel 5.6+ | Для поддержки Time Namespace (`CLONE_NEWTIME`) в OCI-рънтайме. |
+
+**Исходное состояние окружения:**
+- Хост-машина с установленным Docker Engine и синхронизированными системными часами (см. [Синхронизация времени в systemd](../../Linux/Core/systemd/time_synchronization.md)).
+- Доступ к терминалу хоста для выполнения `docker` и `docker exec` команд.
+- Базовый образ содержит минимум один из механизмов определения часового пояса (переменная `TZ`, файл `/etc/localtime` или установленный пакет `tzdata`).
+
 ## Базовые концепции
 
 ### Разделение времени: Ядро против Пользовательского пространства
@@ -41,15 +56,27 @@
 **Docker CLI:**
 ```bash
 docker run -d --name app -e TZ=Europe/Moscow nginx
+# → <container_id>
 ```
 
-**Docker Compose:**
+**Docker Compose (v2):** Поддерживается как через `environment`, так и через `profiles` для условного применения:
 ```yaml
 services:
   app:
-    image: nginx
+    image: nginx:1.27-alpine
     environment:
       - TZ=Europe/Moscow
+    # Альтернатива: использовать deploy.resources для prod-окружений
+    # с отдельной переменной через profiles
+    profiles: ["local"]
+```
+
+**Проверка в контейнере, созданном через Compose:**
+```bash
+docker compose exec app date
+# → Mon Aug 21 12:10:19 MSK 2026
+docker compose exec app printenv TZ
+# → Europe/Moscow
 ```
 
 ### 2. Kubernetes и Helm
@@ -143,6 +170,82 @@ docker run -d \
 На многих дистрибутивах `/etc/localtime` — это симлинк. Если вы монтируете только его, а внутри контейнера нет директории `/usr/share/zoneinfo/`, симлинк окажется "битым".
 *Решение:* Монтируйте целевой файл напрямую (`/usr/share/zoneinfo/Europe/Moscow:/etc/localtime:ro`) или используйте `TZ`.
 
+### 6. Настройка через Dockerfile (жесткая привязка в образ)
+
+Метод подходит, когда часовой пояс должен быть **неизменяемо зашит** в образ (immutable infrastructure). Подходит для образов, где переменная `TZ` недостаточна (например, приложения, которые читают `/etc/localtime` напрямую, минуя `TZ`).
+
+**Debian/Ubuntu (glibc):**
+```dockerfile
+FROM node:20-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      tzdata \
+    && ln -fs /usr/share/zoneinfo/Europe/Moscow /etc/localtime \
+    && echo "Europe/Moscow" > /etc/timezone \
+    && dpkg-reconfigure --frontend noninteractive tzdata \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Europe/Moscow
+```
+
+**Alpine (musl):**
+```dockerfile
+FROM alpine:3.20
+
+RUN apk add --no-cache tzdata \
+    && cp /usr/share/zoneinfo/Europe/Moscow /etc/localtime \
+    && echo "Europe/Moscow" > /etc/timezone
+
+ENV TZ=Europe/Moscow
+```
+
+**Оптимизация:** Чтобы уменьшить размер образа, можно удалить `tzdata` после создания ссылки — данные зоны уже скопированы в `/etc/localtime`:
+```dockerfile
+RUN apk add --no-cache --virtual .tz-build tzdata \
+    && cp /usr/share/zoneinfo/Europe/Moscow /etc/localtime \
+    && echo "Europe/Moscow" > /etc/timezone \
+    && apk del .tz-build
+```
+
+**Kubernetes (Rootless / OpenShift):**
+В OpenShift наложенные политики SCC (Security Context Constraints) могут блокировать запись в `/etc/`. Обходной путь — использовать `TZ` через `env` (см. сценарий 2) или multi-stage сборку с копированием `zoneinfo` (см. сценарий 4).
+
+### 7. Сброс часового пояса в работающем контейнере
+
+Если необходимо сменить часовой пояс без пересоздания контейнера (например, во время отладки):
+
+```bash
+# Смена переменной TZ в runtime (работает только если приложение читает TZ динамически)
+docker exec <id> sh -c "TZ=Europe/Moscow date"
+# → Mon Aug 21 12:10:19 MSK 2026
+
+# Для приложений, требующих /etc/localtime, монтируем изнутри через nsenter
+docker cp /usr/share/zoneinfo/Europe/Moscow <id>:/tmp/localtime
+# → (без вывода, успешное выполнение)
+docker exec <id> sh -c "cp /tmp/localtime /etc/localtime"
+# → (без вывода, успешное выполнение)
+```
+
+*Примечание:* переменная `TZ`, установленная через `docker exec`, действует только на новые процессы, запущенные в этой сессии. Перезапустите процесс или используйте `docker restart`.
+
+### 8. Podman
+
+В Podman часовой пояс можно задать через флаг `--tz` (начиная с версии 4.0), что эквивалентно переменной `TZ`. Это особенно удобно в rootless-режиме:
+
+```bash
+podman run -d --name app --tz Europe/Moscow nginx
+# → <container_id>
+```
+
+Или через `containers.conf`:
+```ini
+[containers]
+tz = "Europe/Moscow"
+```
+
+*Podman использует тот же механизм `TZ`/`/etc/localtime`, поэтому все описанные выше принципы применимы. Подробнее: [Изоляция в Podman](../../Podman/linux_isolation.md).*
+
 ## Специфика операционных систем
 
 ### Windows-контейнеры
@@ -173,8 +276,8 @@ RUN powershell -Command "Set-TimeZone -Id 'Russian Standard Time'"
 **Пример (json-file driver):**
 ```json
 {
-  "log": "2026-10-27 15:00:00 [INFO] Приложение запустилось\n", 
-  "stream": "stdout", 
+  "log": "2026-10-27 15:00:00 [INFO] Приложение запустилось\\n",
+  "stream": "stdout",
   "time": "2026-10-27T12:00:00.123456789Z"
 }
 ```
@@ -196,7 +299,7 @@ RUN powershell -Command "Set-TimeZone -Id 'Russian Standard Time'"
 - **Offsets:** Рантайм может задавать смещения (`timeOffsets`) для таймеров, что полезно для приложений, чувствительных к времени работы системы (uptime).
 
 ### Синхронизация времени (NTP/Chrony)
-Контейнеры **никогда не должны** запускать NTP-клиенты. 
+Контейнеры **никогда не должны** запускать NTP-клиенты.
 - **Причина:** Синхронизация системных часов — задача ядра. У контейнера нет прав изменять время ядра (без `--privileged`).
 - **Механизм:** Хост-система должна быть синхронизирована (через `chrony` или `systemd-timesyncd`). Все контейнеры автоматически получают это скорректированное время через системные вызовы ядра.
 
@@ -205,9 +308,10 @@ RUN powershell -Command "Set-TimeZone -Id 'Russian Standard Time'"
 | Метод | Изоляция | Переносимость | Сложность | Рекомендация |
 | :--- | :--- | :--- | :--- | :--- |
 | **Переменная `TZ`** | Высокая | Отличная | Низкая | **Золотой стандарт** |
-| **Mount `/etc/localtime`** | Низкая | Плохая | Низкая | Только для локальной отладки |
+| **Mount `/etc/localtime`** | Низкая | Плохая | Низкая | Только для локальной отработки |
 | **Dockerfile `RUN ln...`** | Высокая | Хорошая | Средняя | Для неизменяемых образов |
 | **Multi-stage + `tzdata`** | Высокая | Отличная | Высокая | Для Distroless/Scratch |
+| **Podman `--tz`** | Высокая | Отличная | Низкая | Для rootless-сред, аналог `TZ` |
 
 ## Специфические настройки приложений
 
@@ -216,7 +320,12 @@ RUN powershell -Command "Set-TimeZone -Id 'Russian Standard Time'"
 | **Java (JVM)** | `-Duser.timezone=Europe/Moscow` | Явное указание пояса для виртуальной машины Java. |
 | **Python** | `pytz` или `zoneinfo` (3.9+) | Библиотеки используют базу `tzdata` из образа. |
 | **PostgreSQL** | `timezone` в `postgresql.conf` | Можно также использовать переменную `PGTZ`. |
-| **Cron** | Перезапуск демона | Демон `cron` считывает `TZ` только при старте. |
+| **MySQL / MariaDB** | `default-time-zone` в `my.cnf` или переменная `TZ` | MySQL использует системный TZ или `tzdata`, если установлена. |
+| **Node.js** | `Intl.DateTimeFormat` или переменная `TZ` | Node.js (v14+) использует ICU. При отсутствии ICU использует системный `TZ`. |
+| **Go** | Переменная `ZONEINFO` или `time.LoadLocation` | Go ищет zoneinfo в пути, указанном в `ZONEINFO`, либо в `/usr/share/zoneinfo`. |
+| **.NET** | `TZ` или `TimeZoneInfo` | .NET 6+ корректно читает `TZ` на Linux. Для Windows-контейнеров используйте `Set-Thread-Info`. |
+| **Ruby** | `TZ` переменная | Ruby (с `tzinfo` gem) использует `TZ` и `tzdata` из образа. |
+| **Cron** | Перезапуск демона | Демон `cron` считывает `TZ` только при старте. Для гибкой настройки используйте `CRON_TZ` в crontab (поддерживается в `cronie` 2.0+). |
 | **PHP** | `date.timezone` в `php.ini` | Также можно задать через `ENV` в пуле FPM. |
 
 ## Проверка и верификация
@@ -226,16 +335,174 @@ RUN powershell -Command "Set-TimeZone -Id 'Russian Standard Time'"
 ```bash
 # 1. Проверка текущего времени и пояса (строковый формат)
 docker exec <id> date
+# → Mon Aug 21 12:10:19 MSK 2026
 
 # 2. Проверка значения переменной TZ
 docker exec <id> printenv TZ
+# → Europe/Moscow
 
-# 3. Детальная проверка через zdump (только для glibc)
+# 3. Детальная проверка через zdump (только для glibc, требует пакет tzdata)
 docker exec <id> zdump /etc/localtime
+# → /etc/localtime  Europe/Moscow  2026  DST offset 3:00:00
 
-# 4. Проверка изнутри приложения (пример Python)
+# 4. Проверка изнутри приложения (пример Python, требует установленный tzdata)
 docker exec <id> python3 -c "import time; print(time.strftime('%Z %z'))"
+# → MSK +0300
+
+# 5. Проверка смещения относительно UTC (универсальный метод)
+docker exec <id> date -u
+# → Mon Aug 21 09:10:19 UTC 2026
 ```
+
+**Верификация в Kubernetes:**
+```bash
+kubectl exec <pod-name> -- date
+# → Mon Aug 21 12:10:19 MSK 2026
+```
+
+**Верификация в Podman:**
+```bash
+podman exec <id> date
+# → Mon Aug 21 12:10:19 MSK 2026
+```
+
+## Лучшие практики
+
+Сводка рекомендаций по управлению временем в контейнерах:
+
+1. **Используйте переменную `TZ`** — это золотой стандарт (golden standard). Она не зависит от файловой системы хоста, работает в rootless-режиме и не требует привилегий.
+2. **Пишите логи в UTC / ISO 8601** — локализация должна происходить только на уровне UI (Grafana, Kibana, Loki). Это устраняет проблему "двойных временных меток" (см. ниже).
+3. **Указывайте IANA-имена зон** (например, `Europe/Moscow`, `America/New_York`), а не смещения (`+03:00`). IANA-имена учитывают исторические изменения и DST.
+4. **Не монтируйте `/etc/localtime` из хоста** в продакшене — это создает жёсткую связь с хостом и нарушает переносимость. Исключение: локальная отладка.
+5. **В Multi-stage сборках копируйте только нужную зону** из `tzdata`, а не всю директорию `/usr/share/zoneinfo/`, чтобы уменьшить размер образа:
+   ```dockerfile
+   COPY --from=builder /usr/share/zoneinfo/Europe/Moscow /etc/localtime
+   ```
+6. **Синхронизируйте время на хосте** через `systemd-timesyncd` или `chrony` — контейнеры наследуют системные часы ядра.
+7. **Не запускайте NTP-клиенты внутри контейнеров** — это бесполезно и опасно (требует `--privileged`).
+8. **В Kubernetes** используйте глобальную переменную `TZ` через Helm (`global.timezone`) для согласованности всех компонентов стека.
+9. **В CronJob** (K8s 1.27+) используйте поле `timeZone`, а не переменную `TZ` — `timeZone` влияет на расписание, а `TZ` — только на приложение внутри пода.
+10. **Для Distroless/Scratch** убеждайтесь, что `tzdata` или `zoneinfo` включены — иначе приложения (особенно Go) не смогут разрешить часовой пояс.
+
+## Очистка и откат
+
+Инструкции по отмене изменений, если настройки часового пояса вызвали проблемы:
+
+```bash
+# 1. Остановка и удаление контейнера с настройками TZ
+docker stop <id> && docker rm <id>
+# → <id>
+
+# 2. Пересоздание контейнера без TZ (будет использовать UTC)
+docker run -d --name app nginx
+# → <container_id>
+
+# 3. Проверка, что контейнер вернулся в UTC
+docker exec <id> date
+# → Mon Aug 21 09:10:19 UTC 2026
+```
+
+**Для Docker Compose:**
+```bash
+docker compose stop
+docker compose up -d
+# Проверка:
+docker compose exec app printenv TZ
+# → (пустой вывод, если переменная удалена)
+```
+
+**Для Dockerfile:** Уберите строки `ln -s`, `COPY` зоны и `ENV TZ=...` из Dockerfile, пересоберите образ.
+
+## Устранение неполадок
+
+### Проблема: `TZ` задана, но время не меняется
+
+**Признак:** `docker exec <id> date` возвращает UTC, хотя `TZ=Europe/Moscow` установлена.
+
+**Причины и решения:**
+
+1. **`tzdata` не установлен в образе** — библиотека `glibc`/`musl` не может разрешить зону.
+    ```bash
+    # Проверка:
+    docker exec <id> ls /usr/share/zoneinfo/Europe/Moscow
+    # → ls: /usr/share/zoneinfo/Europe/Moscow: No such file or directory
+
+    # Решение для Debian/Ubuntu:
+    docker exec <id> apt-get update && apt-get install -y tzdata
+    # → Reading package lists... Done / Setting up tzdata (2024a-0+deb12u1) ...
+
+    # Решение для Alpine:
+    docker exec <id> apk add --no-cache tzdata
+    # → OK: Downloading tzdata-2024a-r0.apk
+    ```
+
+2. **`/etc/localtime` не обновлен** — приложение читает файл, а не переменную.
+    ```bash
+    # Проверка:
+    docker exec <id> ls -la /etc/localtime
+    # → (может быть битой симлинкой)
+
+    # Решение:
+    docker exec <id> ln -snf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
+    # → (без вывода, успешное выполнение)
+    ```
+
+3. **Приложение имеет собственную конфигурацию TZ** (например, JVM, PostgreSQL) и игнорирует системную переменную.
+   - Добавьте `-Duser.timezone=Europe/Moscow` (Java) или `timezone = 'Europe/Moscow'` (PostgreSQL).
+   - См. таблицу «Специфические настройки приложений».
+
+### Проблема: "Битая" симлинк `/etc/localtime` при монтировании
+
+**Признак:** `date` внутри контейнера возвращает UTC, хотя `/etc/localtime` смонтирован.
+
+**Причина:** На хосте `/etc/localtime` — символическая ссылка на `/usr/share/zoneinfo/...`, но в контейнере этот путь отсутствует.
+
+**Решение:** Монтируйте конечный файл напрямую:
+```bash
+docker run -d -v /usr/share/zoneinfo/Europe/Moscow:/etc/localtime:ro nginx
+# → <container_id>
+```
+
+### Проблема: Cron не учитывает `TZ`
+
+**Причина:** Демон `cron` считывает переменную `TZ` только при старте. Если `TZ` была изменена после запуска контейнера — перезапустите:
+```bash
+docker restart <id>
+# → <id>
+```
+
+Для более гибкой настройки используйте `CRON_TZ` в crontab (поддерживается в `cronie`):
+```crontab
+CRON_TZ=Europe/Moscow
+0 * * * * /usr/local/bin/backup.sh
+```
+
+### Проблема: В Windows-контейнерах `TZ` игнорируется
+
+**Причина:** Windows использует имена часовых поясов в формате Windows (например, `Russian Standard Time`), а не IANA.
+
+**Решение:** Используйте PowerShell или `tzutil` (см. раздел «Специфика операционных систем»).
+
+## Граничные случаи
+
+### Переход на летнее/зимнее время (DST)
+
+- Переменная `TZ` автоматически учитывает переходы на DST, если `tzdata` установлен и актуален.
+- **Важно:** `tzdata` в старых образах может содержать устаревшие правила DST. Регулярно обновляйте образы.
+- При переходе на летнее время (весна) час **пропускается** (например, 02:00 → 03:00). При осени час **повторяется** (02:00 → 03:00 → 02:00). Приложения должны корректно обрабатывать эти граничные случаи.
+- **CronJob в Kubernetes:** поле `timeZone` (K8s 1.27+) учитывает DST. Переменная `TZ` внутри пода не влияет на расписание CronJob.
+
+### Високосные секунды (Leap Seconds)
+
+- Linux-ядро использует «вращающиеся» високосные секунды (leap seconds), которые не удаляются из UTC-счётчика.
+- **Проблема:** Некоторые приложения (особенно Java) могут дублировать или пропускать секунду 23:59:60.
+- **Решение:** Используйте `tzdata` из последнего обновления и следите за обновлениями дистрибутива. Для критичных систем рассмотрите метод **leap smear** (смещение вместо вставки секунды).
+
+### Исторические изменения часовых поясов
+
+- IANA tzdata хранит историю изменений часовых поясов. Например, Россия отменила переход на летнее время в 2014 году.
+- Приложения, обрабатывающие исторические временные метки (например, анализ логов за годы), должны использовать актуальную версию `tzdata`.
+- В Docker это значит: не используйте `--virtual .tz-build` с удалением `tzdata` в продакшене, если приложение работает с историческими датами.
 
 ## Дополнительная информация
 

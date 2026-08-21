@@ -110,7 +110,7 @@ binlog_format            = ROW
 
 ### Закалка безопасности (Security Hardening)
 
-Параметры, снижающие поверхность атаки:
+Параметры, снижающие поверхность атаки. Детальное руководство по TLS, аудиту и шифрованию см. в **[Безопасность MariaDB](security/index.md)**.
 
 ```ini
 [mariadb]
@@ -123,8 +123,8 @@ skip-show-database      = 1
 # Символические ссылки (защита от атак через файловую систему)
 symbolic-links          = 0
 
-# Принудительное использование TLS для соединений
-# require_secure_transport = ON
+# Принудительное использование TLS для соединений (подробнее в security/ssl-tls.md)
+require_secure_transport = ON
 ```
 
 ## Устранение неполадок (Troubleshooting)
@@ -142,13 +142,13 @@ symbolic-links          = 0
 
 ## Дополнительная информация
 
-### Расчет памяти для InnoDB
-Формула для `innodb_buffer_pool_size`:
-`Total RAM - (OS Reserved) - (Global Buffers) - (Thread Stack * max_connections)`
-Для выделенного сервера БД: ~75% от общего объема ОЗУ.
+### Управление памятью
+Подробный расчет буферов для смешанных нагрузок, диагностика утечек памяти и особенности работы с MyRocks описаны в руководстве **[Управление памятью в MariaDB: Диагностика и оптимизация](memory_management.md)**.
 
 ### См. также
 - **[Обзор MariaDB](overview.md)** — архитектура и стратегия развития.
+- **[Стандартная репликация MariaDB](./replication/overview.md)** — настройка Source-Replica и GTID.
+- **[Мониторинг MariaDB](monitoring.md)** — отслеживание метрик через Prometheus.
 - **[Движки хранения MariaDB](storage_engines.md)** — влияние выбора движка на параметры конфигурации.
 - **[Клиентские утилиты](client_utilities.md)** — использование `--defaults-file` и `--defaults-extra-file`.
 - **[Официальная документация по параметрам](https://mariadb.com/kb/en/server-system-variables/)**

@@ -11,6 +11,34 @@
 - **Project Leyden:** Инициатива по улучшению времени запуска и прогрева Java-приложений за счет статического анализа и оптимизации на этапе сборки.
 - **CRaC (Coordinated Restore at Checkpoint):** Технология для создания дампа памяти работающего Java-приложения и его мгновенного восстановления, что позволяет достигать времени старта <100 мс.
 - **SBOM (Software Bill of Materials):** Декларативный список всех компонентов и зависимостей, входящих в состав образа, необходимый для аудита безопасности.
+- **BuildKit:** Современный движок сборки Docker, поддерживающий параллельное выполнение этапов, монтирование кэша и Heredocs.
+- **Multi-stage Build (Многоэтапная сборка):** Техника использования нескольких инструкций `FROM` в одном файле. Позволяет разделить среду сборки (с JDK и Maven/Gradle) и среду выполнения (только JRE и JAR), исключая инструменты из итогового образа.
+- **JAR (Java Archive):** Файл-архив, содержащий скомпилированные классы, ресурсы и метаданные. В Spring Boot используется "fat JAR" (упаковка всех зависимостей в один файл).
+- **WAR (Web Application Archive):** Формат развертывания веб-приложений, предназначенный для deployment в серверы приложений (Tomcat, Jetty).
+- **Jakarta EE:** Спецификация корпоративных Java-приложений (наследник Java EE). Определяет контракты для сервлетов, CDI, JPA и других компонентов.
+- **Maven / Gradle:** Два основных инструмента сборки для Java-проектов. Maven 3.9+ использует `pom.xml`, Gradle 8+ — Groovy/Kotlin DSL. Оба поддерживают кэширование зависимостей в Docker через BuildKit mounts.
+- **Spring Boot:** Фреймворк для создания автономных микросервисов. В контексте Docker поддерживает Layered JAR и provides production-ready features (Actuator, metrics, health checks).
+- **Quarkus / Micronaut:** Альтернативные фреймворки, оптимизированные для контейнеров и GraalVM Native Image. Обеспечивают время старта <100 мс и потребление памяти <100 МБ.
+- **Testcontainers:** Библиотека для поднятия полноценных контейнеров (БД, брокеры сообщений) во время интеграционных тестов. В Java-экосистеме работает через Docker API и требует доступа к `/var/run/docker.sock`.
+- **JMX (Java Management Extensions):** Механизм мониторинга и управления JVM в runtime. Позволяет получать метрики (память, потоки, GC) и изменять параметры без перезапуска.
+- **JFR (Java Flight Recorder):** Встроенный в JVM низко-оюерходный профайлер, записывающий события (GC, методы, блокировки) в файл `.jfr` для последующего анализа в JDK Mission Control.
+- **jcmd / jstack / jmap / jinfo:** Утилиты JDK для диагностики живого процесса (`jcmd`), получения дампов потока (`jstack`), анализа кучи (`jmap`) и изменения параметров JVM (`jinfo`) без перезапуска.
+- **-XX:MaxRAMPercentage:** Флаг JVM, задающий процент от лимита памяти контейнера, который JVM может использовать для Heap. Стандарт для контейнеризированных приложений — `75.0`.
+- **-XX:+ExitOnOutOfMemoryError:** Флаг, заставляющий JVM завершиться (с non-zero exit code) при OutOfMemoryError вместо попытки продолжить работу в неопределенном состоянии.
+- **-Xlog:gc:** Флаг включения детального логирования Garbage Collector в файл. Критичен для диагностики проблем с памятью в production.
+- **Cache Mount (Монтирование кэша):** Механизм BuildKit (`--mount=type=cache`), сохраняющий данные пакетных менеджеров (`~/.m2`, `~/.gradle`) между сборками без их попадания в итоговый образ.
+- **Bind Mount (Монтирование контекста):** Механизм BuildKit (`--mount=type=bind`), предоставляющий доступ к файлам (`pom.xml`, `go.mod`) из контекста сборки без их физического копирования в слой образа.
+- **Reproducible Build (Воспроизводимая сборка):** Свойство сборки давать идентичный JAR/образ при одинаковых исходных данных. Достигается через `SOURCE_DATE_EPOCH`, pinning базовых образов по дайджесту и фиксацию зависимостей.
+- **SOURCE_DATE_EPOCH:** Переменная окружения (Unix timestamp), фиксирующая метку времени для всех файлов в образе. Используется для получения идентичных дайджестов при повторных сборках.
+- **.dockerignore:** Файл в корне контекста сборки, задающий исключения. Ускоряет сборку, исключая `.git`, `target/`, `build/`, `*.jar`, `*.war` из передачи сборщику.
+- **checksec:** Утилита для проверки hardening-флагов в ELF-бинарниках. Для Java приложений релевантна при использовании GraalVM Native Image.
+- **trivy:** Мультиформатный сканер уязвимостей от Aqua Security. Анализирует файловую систему контейнера, JAR-файлы и SBOM.
+- **syft:** Утилита от Anchore для генерации SBOM в форматах SPDX и CycloneDX. Поддерживает анализ Maven/Gradle зависимостей.
+- **dive:** Интерактивный инструмент для анализа слоев Docker-образов. Позволяет обнаруживать "мусор" (кэши Maven, исходный код), попавший в итоговый образ.
+- **Tomcat / Jetty / Undertow:** Серверы приложений для部署 Java веб-приложений. В контейнерах часто используются как embedded (встроенные) серверы в Spring Boot или Quarkus.
+- **Virtual Threads (Java 21+):** Легковесные потоки (Project Loom), работающие поверх ограниченного пула системных потоков. В контейнерах позволяют масштабировать приложения до миллионов конкурентных запросов без увеличения потребления памяти.
+- **Metaspace:** Область памяти JVM для хранения метаданных классов (заменила PermGen в Java 8). Рекомендуется ограничивать через `-XX:MaxMetaspaceSize` для предотвращения утечек.
+- **Direct Memory:** Память, выделяемая вне кучи (Heap) через NIO (например, в Netty, Kafka). Лимитируется через `-XX:MaxDirectMemorySize`.
 
 ## Базовые концепции
 
@@ -37,6 +65,125 @@
 
 *   **Heap Hard Limit:** Всегда ограничивайте кучу через `%` от памяти контейнера, а не абсолютные значения, для гибкости при масштабировании.
 *   **Soft Max Heap Size:** Используйте `-XX:SoftMaxHeapSize`, чтобы GC активнее возвращал память операционной системе при низкой нагрузке.
+
+### Multi-stage сборка для Java (Best Practices)
+
+Multi-stage сборка является обязательной для Java-приложений, так как JDK весит 300–600 МБ, а финальному рантайму нужен только JRE (~50–150 МБ) или нативный бинарник.
+
+*   **Правильный порядок слоев:**
+    1.  Копирование только манифеста зависимостей (`pom.xml`, `build.gradle`) → кэш mount → загрузка зависимостей.
+    2.  Копирование исходного кода → сборка.
+    3.  Копирование только артефакта (`target/*.jar`) в финальный этап.
+*   **Кэш Maven/Gradle:** Никогда не копируйте `COPY . .` перед установкой зависимостей — это инвалидирует кэш при любом изменении кода.
+*   **Разделение тестов и сборки:** Запускайте тесты в отдельном промежуточном этапе (`tester`), чтобы не включать тестовые зависимости в финальный образ.
+
+### Управление зависимостями и кэширование
+
+Для радикального ускорения сборок используйте комбинацию **BuildKit Cache Mounts + Bind Mounts**:
+
+```dockerfile
+# --- Stage: Dependency warm-up ---
+FROM eclipse-temurin:25-jdk AS deps
+WORKDIR /app
+COPY pom.xml .
+RUN --mount=type=cache,target=/root/.m2 \
+    --mount=type=bind,source=pom.xml,target=pom.xml \
+    mvn dependency:go-offline -B
+
+# --- Stage: Build ---
+FROM eclipse-temurin:25-jdk AS builder
+WORKDIR /app
+COPY --from=deps /root/.m2 /root/.m2
+COPY src ./src
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn package -DskipTests
+```
+
+*   **Maven Local Repository:** По умолчанию находится в `~/.m2/repository`. При монтировании через `type=cache` кэш сохраняется между сборками, но не попадает в итоговый образ.
+*   **Gradle:** Аналогично Maven, использует `~/.gradle/caches`. В Dockerfile применяется `--mount=type=cache,target=/home/gradle/.gradle`.
+*   **Gradle Daemon:** В CI/CD рекомендуется отключать демон (`org.gradle.daemon=false`) для предсказуемости, но в локальных сборках он ускоряет инкрементальные изменения.
+
+### Воспроизводимость сборок (Reproducible Builds)
+
+Для получения идентичных дайджестов JAR-файлов и образов при повторных сборках:
+
+1.  **SOURCE_DATE_EPOCH:** Переменная окружения, фиксирующая временную метку. BuildKit поддерживает её нативно:
+    ```dockerfile
+    ARG SOURCE_DATE_EPOCH=1724200000
+    ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+    ```
+2.  **Pinning по дайджесту:** Базовые образы фиксируются по SHA256:
+    ```dockerfile
+    FROM cgr.dev/chainguard/jdk:25@sha256:abc123...
+    ```
+3.  **Фиксация зависимостей:** Maven использует `mvn dependency:go-offline` с зафиксированными версиями в `pom.xml`. Gradle — `gradle dependencies --write-locks`.
+4.  **Удаление путей:** Используйте `-fdebug-prefix-map` (для нативных бинарников) или убедитесь, что `pom.xml` не содержит абсолютных путей.
+
+### .dockerignore для Java
+
+Исключение лишних файлов из контекста сборки радикально ускоряет передачу данных в BuildKit:
+
+```dockerignore
+# Системные директории
+.git
+.idea
+.vscode
+
+# Сборка Maven/Gradle
+target/
+build/
+out/
+
+# Зависимости (не нужны в контексте, если используется go-offline)
+vendor/
+node_modules/
+
+# Конфигурации и документация
+*.md
+LICENSE
+.dockerignore
+Dockerfile*
+docker-compose*
+Makefile
+Taskfile*
+Jenkinsfile*
+.gitlab-ci.yml
+```
+
+### Мультиплатформенная сборка и кросс-компиляция
+
+Для сборки под AMD64 и ARM64 используйте `docker buildx build` с флагом `--platform`. Java-приложения не требуют нативной кросс-компиляции (в отличие от Go/C++), так как байт-код JVM платформо-независим. Однако GraalVM Native Image требует кросс-компиляции:
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --builder=remote-builder \
+  -t myapp:1.0.0 .
+```
+
+*   **QEMU/binfmt_misc:** Для GraalVM Native Image под ARM64 требуется эмулятор QEMU, если сборка происходит на AMD64. Установите `binfmt_misc` на хосте сборщика.
+*   **Spring Boot JAR:** Не требует кросс-компиляции — работает на любой архитектуре, поддерживаемой JVM.
+
+### Оптимизация сборки (PGO и кэширование)
+
+1.  **PGO (Profile-Guided Optimization):** В 2026 году использование PGO считается стандартом для высоконагруженных систем.
+    *   *Процесс:* Соберите образ → запустите под нагрузкой → снимите профиль (через JFR или async-profiler) → пересоберите с профилем.
+    *   *GraalVM Native Image:* Поддерживает PGO через флаг `--pgo=profile.jdg`.
+2.  **Кэширование BuildKit:** Монтирование `~/.m2` и `~/.gradle` через `type=cache` ускоряет повторные сборки в разы.
+3.  **Layered JAR:** В Spring Boot разделение на слои (`dependencies`, `spring-boot-loader`, `snapshot-dependencies`, `application`) позволяет Docker кэшировать неизменяемые слои.
+
+### Подводные камни минимальных образов (scratch / distroless / Wolfi)
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **HTTPS/TLS ошибки** | Нет доверенных CA | Копировать `/etc/ssl/certs/ca-certificates.crt` из builder |
+| **Неверное время** | Нет базы `tzdata` | Копировать `/usr/share/zoneinfo` или устанавливать `TZ=UTC` |
+| **Permission Denied** | Запуск от root | Создать UID 10001 в builder и скопировать `/etc/passwd` |
+| **ClassNotFoundException** | JLink отсек нужный модуль | Проверить `jdeps --print-module-deps` и добавить модуль |
+| **DNS Resolving** | Проблемы с resolver в minimal image | Настройка `-Djava.net.preferIPv4Stack=true` или использование Wolfi |
+| **OOM Kill (Exit 137)** | Отсутствие `-XX:MaxRAMPercentage` | Установить `-XX:MaxRAMPercentage=75.0` |
+| **CPU Throttling** | Потоки GC превышают лимит CPU | Использовать `-XX:PreferContainerQuotaForCPUCount=true` |
+| **Locale errors** | Нет `glibc` locale | Копировать `/usr/share/locale` или использовать Wolfi |
 
 ## Практические сценарии
 

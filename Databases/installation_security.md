@@ -26,12 +26,16 @@
 4.  **Уровень объектов и данных (Database/Data):**
     *   **RBAC (Role-Based Access Control):** Гранулярное управление правами на таблицы, схемы и представления.
     *   **Encryption at Rest:** Шифрование данных на диске (TDE) и бэкапов.
+        *   Подробнее для MySQL: **[TDE в MySQL](./MySQL/security.md#1-настройка-шифрования-данных-tde)**.
+        *   Подробнее для MariaDB: **[TDE в MariaDB](./MariaDB/security/tde.md)**.
+        *   Подробнее для PostgreSQL: **[Шифрование в PostgreSQL](./PostgreSQL/Concepts/security_and_encryption.md#1-шифрование-данных-в-покое-tde)**.
+        *   Теория: **[Шифрование в покое (SSoT)](./Concepts/encryption_at_rest.md)**.
 
 ## Практические сценарии по типам СУБД
 
 ### MySQL и MariaDB: Закалка в 2026 году
 
-Для версий MySQL 8.4 LTS / 9.x и MariaDB 12.x аудит безопасности является неотъемлемой частью жизненного цикла.
+Для версий MySQL 8.4 LTS / 9.x и MariaDB 12.x аудит безопасности является неотъемлемой частью жизненного цикла. Детальная специфика MariaDB описана в руководстве **[Безопасность MariaDB](./MariaDB/security/index.md)**.
 
 **1. Использование скриптов защиты:**
 ```bash

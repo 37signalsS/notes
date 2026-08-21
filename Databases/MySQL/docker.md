@@ -216,12 +216,12 @@ networks:
 
 ### 5. Создание бэкапа и восстановление
 
+Для контейнеризированной MySQL рекомендуется использовать те же инструменты, что и для классической установки. Детальные инструкции и примеры (XtraBackup, MySQL Shell, mysqldump) находятся в **[Резервное копирование и восстановление в MySQL](./backup_and_recovery/overview.md)**.
+
+Пример выполнения логического дампа через `docker exec`:
 ```bash
 # Создание логического дампа (все базы)
 docker exec mysql-db mysqldump -u root -p"pass" --all-databases > full_backup.sql
-
-# Восстановление из дампа
-docker exec -i mysql-db mysql -u root -p"pass" < full_backup.sql
 ```
 
 ### 6. Процедура обновления (например, 8.0 -> 8.4)

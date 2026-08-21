@@ -73,6 +73,33 @@ db.serverStatus().wiredTiger.cache["tracked dirty bytes in the cache"] // # → 
 db.serverStatus().wiredTiger.cache["bytes currently in the cache"] // # → Общая загрузка кэша
 ```
 
+### Настройка WiredTiger под высокой нагрузкой (SRE Guide)
+
+В высоконагруженных системах стандартных настроек кэша недостаточно. 
+
+#### 1. Управление кэшем (Cache Eviction)
+WiredTiger начинает вытеснять данные из памяти по достижении определенных порогов.
+- **`eviction_trigger`**: % заполнения кэша, при котором фоновые потоки начинают агрессивную очистку (по умолчанию 95%).
+- **`eviction_target`**: целевой % заполнения после очистки (по умолчанию 80%).
+
+**Рекомендация SRE:** Если вы видите рост задержек при записи, снизьте пороги в `mongod.conf`:
+```yaml
+storage:
+  wiredTiger:
+    engineConfig:
+      configString: "eviction=(low=70,high=90)"
+```
+
+#### 2. Работа с тикетами (Read/Write Tickets)
+Тикеты ограничивают количество параллельных операций внутри движка.
+- Проверить текущее состояние: `db.serverStatus().wiredTiger.concurrentTransactions`.
+- **Проблема:** Если `available` стремится к 0 — запросы встают в очередь (Queue), что вызывает лавинообразный рост latency.
+- **Решение:** Не увеличивайте количество тикетов бездумно. Обычно это симптом медленных дисков или отсутствия индексов.
+
+#### 3. Чекпоинты (Checkpoints)
+Раз в 60 секунд WiredTiger сбрасывает данные на диск. Это создает всплеск I/O (Checkpoint spike).
+- В MongoDB 8.0 этот процесс более плавный, но для SRE важно мониторить `wiredTiger.transaction.checkpoint amount written`.
+
 ---
 
 ## Устранение неполадок

@@ -126,8 +126,10 @@ db.users.aggregate([
 *   **[Моделирование данных](./mongodb-modeling.md)** — Embedding vs Referencing, валидация схем.
 *   **[Индексы](./mongodb-indexes.md)** — ESR правило, типы индексов, профилирование.
 *   **[Репликация](./mongodb-replication.md)** — Replica Set, кворум, отказоустойчивость.
-*   **[Шардирование](./mongodb-sharding.md)** — масштабирование, распределение данных.
-*   **[Aggregation Framework](./mongodb-aggregation.md)** — конвейеры обработки данных.
+*   [Шардирование](./mongodb-sharding.md) — масштабирование, распределение данных.
+*   **[Решардинг (Live Resharding)](./mongodb-resharding.md)** — изменение ключа без простоя.
+*   [Aggregation Framework](./mongodb-aggregation.md) — конвейеры обработки данных.
+
 *   **[Time-series коллекции](./mongodb-time-series.md)** — работа с временными рядами в 8.0.
 *   **[Транзакции и согласованность](./mongodb-transactions.md)** — ACID в NoSQL.
 *   **[Безопасность](./mongodb-security.md)** — RBAC, TLS, аутентификация.

@@ -61,7 +61,8 @@ CAP не учитывает задержки (latency) в нормальном �
 
 ### Настройка уровней согласованности (Примеры)
 
-**1. Apache Cassandra (CQL):**
+**1. Apache Cassandra / ScyllaDB (CQL):**
+Подробное руководство по эксплуатации: **[Cassandra и ScyllaDB: Deep Dive](../cassandra_scylladb_guide.md)**. Обзор архитектуры: **[Архитектура Cassandra vs ScyllaDB](../cassandra-scylladb/architecture.md)**.
 ```sql
 -- Установка кворума для текущей сессии (CP-поведение)
 CONSISTENCY QUORUM;

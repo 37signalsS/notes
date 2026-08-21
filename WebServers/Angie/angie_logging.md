@@ -365,6 +365,7 @@ kill -USR1 $(cat /var/run/angie.pid)
 
 ## См. также
 
+* [Переменные в Angie](./angie_variables.md) — основы работы с переменными, `map`, `geo`, `volatile`.
 * [Оптимизация производительности Angie](./High_Load/performance_optimization.md)
 * [Мониторинг Angie: основные концепции](./angie_monitoring/angie_monitoring_concepts.md)
 * [Руководство по безопасности Nginx — настройка логирования](../Nginx/Security/nginx_security_guide.md)

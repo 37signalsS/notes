@@ -153,9 +153,11 @@ fio --name=randread --ioengine=libaio --iodepth=64 --rw=randread --bs=4k --direc
 
 ## Дополнительная информация
 
+- **[Бенчмаркинг СУБД](./benchmarking.md)** — методология измерения производительности (sysbench, HammerDB).
 - **[Индексы](./indexes.md)** — глубокий разбор структур данных.
 - **[Репликация](./replication.md)** — стратегии масштабирования.
 - **[Шардирование](./sharding.md)** — распределение данных между узлами.
+- **[SQLite: Обзор и SRE-операции](../SQLite/sqlite_overview.md)** — эксплуатация в Edge и IoT.
 - **[Write-Ahead Logging](./write_ahead_log.md)** — детали работы журнала транзакций.
 - **[Диагностика дискового узкого места](../../db_disk_bottleneck_troubleshooting.md)**.
 - **[Тонкая настройка PostgreSQL](../PostgreSQL/Operations/performance_tuning.md)**.

@@ -129,6 +129,9 @@ RESTORE VERIFYONLY FROM DISK = 'C:\Backup\DB.bak';
 
 ## Дополнительная информация
 
+- **[SQL Server: Обзор и лицензирование](./overview.md)** — архитектура и SRE-контекст.
+- **[SQL Server: Always On HA](./high_availability.md)** — кластеризация на Linux.
+- **[Тюнинг производительности в Linux](./performance_tuning_linux.md)** — оптимизация контейнеров.
 - **[Стратегии резервного копирования баз данных](../Concepts/backups.md)** — общая теория и метрики RPO/RTO.
 - **[Валидация бэкапов](../Concepts/backup_validation.md)** — расширенные методы проверки и DBCC CHECKDB.
 - **[Метрики надежности SRE](../../Concepts/sre_concepts_main.md)** — SLA и SLO в контексте доступности данных.

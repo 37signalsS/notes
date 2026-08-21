@@ -123,6 +123,7 @@ server {
 
 ### См. также
 
+*   **[Переменные в Angie](./angie_variables.md)** — основы переменных, `map`, `geo`, `volatile`.
 *   **[Директивы location в Angie](./angie_location_directives.md)** — основы и приоритеты выбора блоков.
 *   **[Логирование в Angie](./angie_logging.md)** — настройка форматов для анализа URI.
 *   **[Nginx: Rewrite, Redirect и try_files](../Nginx/Core/nginx_rewrite_rules_and_try_files.md)** — теоретическая база.

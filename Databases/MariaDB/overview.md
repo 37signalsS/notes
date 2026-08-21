@@ -8,7 +8,9 @@
 
 **Galera Cluster** — технология синхронной multi-master репликации, интегрированная в MariaDB. Обеспечивает высокую доступность и отсутствие потери данных при сбое узла (RPO=0), позволяя выполнять запись на любой узел кластера.
 
-**MaxScale** — интеллектуальный прокси-сервер баз данных, который понимает протокол MariaDB. Используется для балансировки нагрузки (Read/Write Split), автоматического переключения (Failover), обеспечения безопасности (SQL-firewall) и маскирования данных.
+**Стандартная репликация (Source-Replica)** — механизм асинхронного или полусинхронного копирования данных. В отличие от Galera, имеет четкое разделение на узел записи (Source) и узлы чтения (Replica), что упрощает масштабирование и снижает требования к сети.
+
+**[MaxScale](./MaxScale/maxscale_overview.md)** — интеллектуальный прокси-сервер баз данных, который понимает протокол MariaDB. Используется для балансировки нагрузки (Read/Write Split), автоматического переключения (Failover), обеспечения безопасности (SQL-firewall) и маскирования данных.
 
 ## Основные концепции
 
@@ -126,22 +128,17 @@ SHOW GLOBAL STATUS LIKE 'Threadpool_threads';
 -- Если значение близко к thread_pool_max_threads, требуется увеличение лимита или оптимизация запросов.
 ```
 
+### Сценарии миграции и обновления
+
+Для обеспечения непрерывности бизнеса и перехода с других систем используйте следующие чек-листы:
+*   **[Миграция с MySQL](./Operations/migration_mysql_to_mariadb.md)** — детальный разбор несовместимостей (GTID, аутентификация) и процедура логического переноса.
+*   **[Zero-Downtime Upgrade](./Operations/zero_downtime_upgrade.md)** — стратегии поочередного обновления узлов в Galera Cluster и топологии Source-Replica без остановки сервиса.
+
 ## Диагностика и устранение неисправностей
 
 ### Диагностика Galera Cluster
 
-При возникновении проблем с кластером (например, узел не принимает записи), проверьте статус синхронизации:
-
-```sql
-SHOW STATUS LIKE 'wsrep_local_state_comment';
--- Ожидаемое значение: 'Synced'
--- Значение 'Donor/Desynced' указывает на процесс передачи данных (SST/IST)
--- Значение 'Initialized' указывает на отсутствие соединения с кластером
-```
-
-**Common Issue: Split-Brain**
-Если кластер разделен, узлы в меньшинстве перейдут в состояние `Non-Primary`.
-- **Решение:** Проверьте `wsrep_cluster_size`. Если оно меньше ожидаемого, используйте `SET GLOBAL wsrep_provider_options='pc.bootstrap=YES';` на узле с актуальными данными для принудительного создания кворума.
+При возникновении проблем с кластером (например, узел не принимает записи), проверьте статус синхронизации и Flow Control. Детальная диагностика очередей и метрик доступна в **[Мониторинге MariaDB](monitoring.md)**.
 
 ### Анализ медленных запросов
 
@@ -163,9 +160,21 @@ EXPLAIN FORMAT=JSON SELECT ...;
 
 ### См. также
 - **[Движки хранения MariaDB](storage_engines.md)** — глубокий разбор InnoDB, MyRocks, ColumnStore и S3.
+- **[Отказоустойчивость MariaDB](high_availability.md)** — Galera Cluster, Orchestrator и MaxScale.
+- **[Репликация MariaDB: Обзор](./replication/overview.md)** — стандартные Source-Replica топологии и GTID.
 - **[Клиентские утилиты MariaDB](client_utilities.md)** — обзор `mariadb-shell`, `mariadb-dump` и переход на новые имена CLI.
+- **[MaxScale: Обзор и эксплуатация](./MaxScale/maxscale_overview.md)** — детальное руководство по прокси для MariaDB.
+- **[Хранимые объекты в MariaDB](./Concepts/stored_objects_management.md)** — процедуры, функции, триггеры и Event Scheduler.
+- **[Мониторинг MariaDB: Prometheus и Galera](monitoring.md)** — метрики SRE-уровня.
+- **[Управление памятью в MariaDB](memory_management.md)** — расчет буферов и диагностика утечек.
+- **[Оптимизация запросов: EXPLAIN и Hints](../../MySQL/Operations/explain_and_optimization.md)** — чтение планов выполнения и специфика MariaDB.
+- **[ProxySQL: Обзор и использование](../../MySQL/ProxySQL/proxysql_overview.md)** — сравнение и применение в гетерогенных средах.
 - **[Конфигурация MariaDB](configuration.md)** — тюнинг `my.cnf`, параметры Thread Pool и кеширование.
-- **[Безопасная установка MariaDB](installation_and_setup.md)** — практическое руководство по `mariadb-secure-installation` и RBAC.
+- **[Безопасность MariaDB](security/index.md)** — SSL/TLS, Аудит, TDE и ролевая модель (RBAC).
+- **[Обслуживание MariaDB](maintenance.md)** — дефрагментация и секционирование.
+- **[Безопасная установка MariaDB](installation_and_setup.md)** — практическое руководство по `mariadb-secure-installation`.
+- **[Миграция с MySQL](./Operations/migration_mysql_to_mariadb.md)** — пошаговый чек-лист перехода.
+- **[Zero-Downtime Upgrade](./Operations/zero_downtime_upgrade.md)** — стратегия обновления без простоя.
 
 ### Статус версий (на август 2026)
 - **12.3 LTS:** Основная стабильная версия. Поддержка до мая 2031 г.

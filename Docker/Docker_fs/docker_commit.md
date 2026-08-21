@@ -13,6 +13,16 @@
 
 ## Основные концепции
 
+### Предварительные требования
+
+- **Docker Engine**: версия 20.10 или новее. Команда `docker version` проверяет установленную версию.
+- **Драйвер хранения**: OverlayFS (по умолчанию на большинстве дистрибутивов) или совместимый драйвер с поддержкой слоёв. Проверить: `docker info | grep -i "Storage Driver"`.
+- **Дисковое пространство**: достаточно места в `docker data root` (по умолчанию `/var/lib/docker`) для нового слоя. Размер зависит от объёма изменений в контейнере. Оценить: `docker system df`.
+- **Состояние контейнера**: контейнер должен существовать (работающий или остановленный). Для целостности данных рекомендуется останавливать контейнер перед коммитом (`docker stop <container>`), особенно если он активно пишет в ФС.
+- **Права доступа**: пользователь должен иметь права на чтение записываемого слоя контейнера и запись в хранилище образов (обычно требует `root` или membership в группе `docker`).
+
+### Использование в Production
+
 Использование `docker commit` в производственной среде (Production) считается **анти-паттерном**. Команда предназначена в первую очередь для быстрой отладки, форензики (криминалистического анализа) или сохранения промежуточного состояния "сломанного" контейнера для последующего анализа.
 
 ### Механизм работы (OverlayFS)
@@ -38,6 +48,7 @@
 Этот сценарий демонстрирует, как создать собственный базовый образ, который в дальнейшем можно использовать для других приложений.
 
 **Шаг 1: Запуск базового контейнера и установка ПО**
+
 ```bash
 docker run --name base-container -it ubuntu bash
 
@@ -50,12 +61,16 @@ node -e "console.log('Hello World')"
 ```
 
 **Шаг 2: Фиксация изменений в новый образ**
+
 В отдельном терминале фиксируем изменения:
+
 ```bash
 docker commit -m "Add Node.js" base-container node-base
+# → sha256:<image-id>
 ```
 
 **Шаг 3: Проверка слоёв нового образа**
+
 ```bash
 docker history node-base
 
@@ -63,9 +78,11 @@ docker history node-base
 # <missing>      2 minutes ago   docker commit -m Add Node.js    137MB     Add Node.js
 # <missing>      ...             /bin/sh -c #(nop) CMD ["bash"]   0B
 ```
+
 *Видим новый слой размером ~137 МБ — это установленный Node.js и зависимости.*
 
 **Шаг 4: Проверка работоспособности и удаление**
+
 ```bash
 docker run node-base node -e "console.log('Hello again')"
 # → Hello again
@@ -77,6 +94,7 @@ docker rm -f base-container
 Использование созданного `node-base` как основы для приложения.
 
 **Шаг 1: Запуск контейнера из базового образа**
+
 ```bash
 docker run --name app-container -it node-base bash
 
@@ -85,12 +103,16 @@ echo "console.log('Hello from node app')" > app.js
 ```
 
 **Шаг 2: Фиксация с установкой команды по умолчанию**
+
 Флаг `-c` позволяет задать конфигурацию образа, включая `CMD`:
+
 ```bash
 docker commit -c 'CMD ["node", "app.js"]' -m "Add app" app-container sample-app
+# → sha256:<image-id>
 ```
 
 **Шаг 3: Проверка нового слоя и запуск**
+
 ```bash
 docker history sample-app
 # IMAGE          CREATED        CREATED BY                         SIZE      COMMENT
@@ -106,69 +128,175 @@ docker rm -f app-container
 Используется для сохранения состояния "упавшего" или некорректно ведущего себя контейнера.
 
 1. **Диагностика в контейнере:**
-    ```bash
-    docker exec -it my-app-container bash
-    
-    # Внутри контейнера
-    apt-get update && apt-get install -y curl dnsutils
-    curl -v http://some-internal-service:8080
-    ```
+
+   ```bash
+   docker exec -it my-app-container bash
+
+   # Внутри контейнера
+   apt-get update && apt-get install -y curl dnsutils
+   curl -v http://some-internal-service:8080
+   ```
 
 2. **Сохранение состояния для анализа:**
-    ```bash
-    docker commit my-app-container my-app:debug-snapshot
-    ```
-    Теперь образ `my-app:debug-snapshot` можно передать коллеге через `docker save` для детального разбора.
 
-*Примечание:* Современной альтернативой является команда **`docker debug`**, которая позволяет подключать отладочный sidecar-контейнер с инструментами, не изменяя оригинальный образ.
+   ```bash
+   docker commit my-app-container my-app:debug-snapshot
+   # → sha256:<image-id>
+   ```
+
+   Теперь образ `my-app:debug-snapshot` можно передать коллеге через `docker save` для детального разбора.
+
+   *Примечание:* Современной альтернативой является команда **`docker debug`**, которая позволяет подключать отладочный sidecar-контейнер с инструментами, не изменяя оригинальный образ (подробнее — в **[Отладка через Docker Debug](../Docker_troubleshooting/docker_debug.md)**).
 
 ### Сценарий 4: Анти-паттерн (сборка production-образа)
 
 Пример того, **как делать не следует**, и правильная альтернатива.
 
 1. **Ручная сборка (Анти-паттерн):**
-    ```bash
-    docker run -it --name web-manual ubuntu:22.04 bash
-    
-    # Внутри контейнера
-    apt-get update && apt-get install -y nginx
-    echo "<h1>Hello from manual container</h1>" > /var/www/html/index.html
-    exit
-    
-    docker commit web-manual my-nginx:manual-build
-    ```
+
+   ```bash
+   docker run -it --name web-manual ubuntu:22.04 bash
+
+   # Внутри контейнера
+   apt-get update && apt-get install -y nginx
+   echo "<h1>Hello from manual container</h1>" > /var/www/html/index.html
+   exit
+
+   docker commit web-manual my-nginx:manual-build
+   # → sha256:<image-id>
+   ```
 
 2. **Правильный подход с Dockerfile:**
-    ```dockerfile
-    FROM ubuntu:24.04
-    
-    # Установка Nginx и очистка кеша в одной инструкции
-    RUN apt-get update \
-     && apt-get install -y nginx \
-     && rm -rf /var/lib/apt/lists/*
-    
-    # Копирование контента
-    COPY index.html /var/www/html/
-    
-    # Запуск Nginx
-    CMD ["nginx", "-g", "daemon off;"]
-    ```
+
+   ```dockerfile
+   FROM ubuntu:24.04
+
+   # Установка Nginx и очистка кеша в одной инструкции
+   RUN apt-get update \
+    && apt-get install -y nginx \
+    && rm -rf /var/lib/apt/lists/*
+
+   # Копирование контента
+   COPY index.html /var/www/html/
+
+   # Запуск Nginx
+   CMD ["nginx", "-g", "daemon off;"]
+   ```
+
+   Сборка:
+
+   ```bash
+   docker build -t my-nginx:build-optimized .
+   # → Successfully built <image-id>
+   # → Successfully tagged my-nginx:build-optimized:latest
+   ```
+
+### Валидация результатов
+
+После каждого коммита выполняйте проверку, чтобы убедиться, что образ корректен:
+
+```bash
+# 1. Образ появился в локальном реестре:
+docker images --filter "reference=<image_name>"
+# → REPOSITORY   TAG          IMAGE ID       CREATED         SIZE
+# → node-base    latest       <id>           2 minutes ago   137MB
+
+# 2. Слой соответствует ожиданиям (размер не превышает разумный предел):
+docker history --no-trunc <image_name>
+# Проверьте, что нет неожиданно больших слоёв (>200 MB для простых образов).
+
+# 3. Образ запускается и выполняет ожидаемую команду:
+docker run --rm <image_name> <command>
+# → <expected output>
+
+# 4. Метаданные корректны (если использовался -c):
+docker inspect --format '{{.Config.Cmd}}' <image_name>
+# → [\"node\", \"app.js\"]
+
+docker inspect --format '{{.Config.Env}}' <image_name>
+# → [\"PATH=...\", ...]
+```
 
 ## Дополнительная информация
 
-- **Разница между `commit` и `export`**:
-  - `docker commit` создает **образ** со всей историей слоев и метаданными, сохраняя возможность запуска контейнера из него.
-  - `docker export` создает "плоский" (flattened) **tar-архив** файловой системы контейнера, при этом вся история слоев и метаданные (например, `ENV`, `EXPOSE`) теряются. Подробнее: **[Перенос и экспорт образов](./images/diagnostics_transfer.md)**.
+### Разница между `commit` и `export`
 
-- **Анализ изменений (`docker diff`)**: Перед выполнением коммита рекомендуется запустить `docker diff <container_name>`, чтобы просмотреть список измененных файлов:
-  - `A` (Added) — файл добавлен;
-  - `C` (Changed) — файл изменен;
-  - `D` (Deleted) — файл удален.
+- `docker commit` создает **образ** со всей историей слоев и метаданными, сохраняя возможность запуска контейнера из него.
+- `docker export` создает "плоский" (flattened) **tar-архив** файловой системы контейнера, при этом вся история слоев и метаданные (например, `ENV`, `EXPOSE`) теряются. Подробнее: **[Перенос и экспорт образов](./images/diagnostics_transfer.md)**.
 
-- **Проверка слоев (`docker history`)**: После коммита новый слой можно увидеть с помощью команды `docker history <image_name>`.
+### Анализ изменений (`docker diff`)
+
+Перед выполнением коммита рекомендуется запустить `docker diff <container_name>`, чтобы просмотреть список измененных файлов:
+- `A` (Added) — файл добавлен;
+- `C` (Changed) — файл изменен;
+- `D` (Deleted) — файл удален.
+
+```bash
+docker diff my-app-cont
+# → C /usr/share/nginx/html/flag.txt
+# → A /tmp/session.log
+```
+
+### Проверка слоев (`docker history`)
+
+После коммита новый слой можно увидеть с помощью команды `docker history <image_name>`:
+
+```bash
+docker history node-base
+# → REPOSITORY   TAG          IMAGE ID       CREATED         SIZE      COMMENT
+# → node-base    latest       <id>           2 minutes ago   137MB     Add Node.js
+```
+
+### Устранение неполадок
+
+| Симптом | Причина | Диагностика и решение |
+| :--- | :--- | :--- |
+| `No such container: <name>` | Контейнер с указанным именем или ID не существует | `docker ps -a` — убедитесь, что контейнер существует и не был удалён. Если контейнер удалён, его записываемый слой потерян безвозвратно. |
+| `Error response from daemon: failed to commit ...` | Нет прав на запись в хранилище или несовместимый драйвер | Проверьте membership в группе `docker`: `id -nG`. Убедитесь, что Docker запущен: `docker info`. |
+| `no space left on device` | Диск, на котором хранится `docker data root`, заполнен | `docker system df` — оцените занятое место. Очистите неиспользуемые ресурсы: `docker image prune -a`, `docker container prune`, `docker system prune`. |
+| Новый образ имеет неожиданно большой размер | В записываемый слой попали временные файлы, кэши или логи | Запустите `docker diff <container>` до коммита, чтобы увидеть список изменений. Очистите кэш внутри контейнера (`apt-get clean`, `rm -rf /var/cache/*`) перед коммитом. |
+| Метаданные (ENV, EXPOSE, CMD) отсутствуют в новом образе | `docker commit` наследует метаданные от базового образа; если они не переопределены флагом `-c`, старые значения сохраняются | Используйте `docker inspect <image>` для проверки конфигурации. Явно задавайте нужные параметры через `-c` или `--change`. |
+| Образ не запускается после коммита | В базовом образе отсутствует `ENTRYPOINT`/`CMD` или они были переопределены пустым значением | Проверьте `docker inspect --format '{{.Config.Cmd}}' <image>`. Задайте команду запуска через `-c 'CMD [...]'` при коммите. |
+
+### Рекомендации и очистка
+
+#### Лучшие практики
+
+- **Предпочитайте сборку через Dockerfile, а не через `docker commit`**, для любых повторяющихся сборок. Dockerfile обеспечивает прозрачность, контроль версий и воспроизводимость.
+- **Останавливайте контейнер перед коммитом** (`docker stop <container>`), если он выполняет активную запись в ФС, чтобы избежать гонок данных и частичных слоёв.
+- **Очищайте временные файлы и кэши** внутри контейнера до выполнения коммита: `rm -rf /var/lib/apt/lists/*`, `apt-get clean`, удаление логов.
+- **Минимизируйте изменения в записываемом слое**: каждый лишний файл в `upperdir` увеличивает размер итогового образа и время передачи.
+- **Используйте `docker diff` перед коммитом** для аудита изменений. Это помогает обнаружить случайно добавленные секреты или конфиденциальные данные.
+- **Фиксируйте образ по дайджесту** (`image@sha256:...`) при использовании в пайплайнах или развёртывании, чтобы гарантировать детерминизм.
+- **Не храните секреты в образе**. Даже если вы не коммитите контейнер с секретами, ручные изменения легко забыть очистить. Используйте внедрение секретов во время выполнения (Docker secrets, Kubernetes Secrets, переменные окружения).
+
+#### Очистка окружения (revert / cleanup)
+
+```bash
+# Удалить коммиченный образ, если он больше не нужен:
+docker rmi node-base sample-app my-app:debug-snapshot
+
+# Удалить исходный контейнер (если он больше не нужен):
+docker rm -f base-container app-container my-app-container
+
+# Полная очистка неиспользуемых ресурсов (неуправляемые dangling images, остановленные контейнеры, висячие сети):
+docker system prune -f
+```
+
+### Граничные случаи
+
+- **Остановленный контейнер**: `docker commit` работает с остановленными контейнерами, но если контейнер был остановлен нештатно (SIGKILL, `kill -9`), записываемый слой может находиться в несогласованном состоянии. Для остановленных контейнеров целостность данных выше, чем для работающих.
+- **Метаданные базового образа**: при коммите метаданные (`ENV`, `EXPOSE`, `ENTRYPOINT`, `CMD`) наследуются от родительского образа. Флаг `-c` позволяет переопределить только часть инструкций. Если нужно полностью переопределить `CMD`, используйте `-c 'CMD []'` для очистки, а затем задайте новое значение.
+- **Вложенные композитные слои**: при последовательных коммитах каждый новый слой ссылается на предыдущий. Удаление промежуточного образа (`docker rmi`) не удаляет слои, на которые ещё ссылаются другие образы. Полное освобождение места требует удаления всех дочерних образов или выполнения `docker system prune`.
+- **Совместимость с Podman**: команда `podman commit` имеет похожий синтаксис, но работает с независимым хранилищем образов (`containers-storage`). Образы, созданные через `podman commit`, не совместимы с Docker без конвертации.
+- **Docker Desktop (Mac/Windows)**: на не-Linux хостах записываемый слой находится внутри виртуальной машины. `docker commit` работает корректно, но размер итогового образа может отличаться от ожидаемого из-за особенностей файловой системы хоста (грязные блоки, кэширование).
+- **Rootless Docker**: в режиме Rootless хранилище образов находится в домашней директории пользователя. Убедитесь, что на разделе `/home` достаточно места; иначе коммит завершится ошибкой `no space left on device`.
+- **Immutable tags**: если тег `<image>:tag` уже существует, `docker commit` перезаписывает его. Это может привести к потере предыдущего образа. Используйте уникальные теги или дайджесты для отслеживания версий.
 
 ### См. также
 
 - **[Основы и определения Dockerfile](../Dockerfile/Instructions/overview_definitions.md)** — рекомендуемый способ сборки.
 - **[Оптимизация сборки Docker-образов](../Dockerfile/Docker_best_practices/build_optimization.md)** — стратегии уменьшения размера.
 - **[Драйвер хранения OverlayFS](./docker_overlayfs.md)** — фундаментальные знания о слоях.
+- **[Сравнение образа и контейнера](./images/image_vs_container.md)** — записываемый слой, эфемерность, `--read-only`.
+- **[Перенос и экспорт образов](./images/diagnostics_transfer.md)** — `docker save` / `docker export` / `docker import`.

@@ -134,6 +134,7 @@ dig @192.168.10.10 corp.local AXFR
 
 **Связанные разделы:**
 *   **[Первичный сервер (Master)](./master_server_local_zone.md)** — настройка источника данных.
+*   **[Отказоустойчивый кластер BIND9](./high-availability-cluster.md)** — полный цикл эксплуатации кластера: репликация, failover, обмен ролями.
 *   **[Обратная зона](./reverse_zone_configuration.md)** — репликация PTR-записей.
 *   **[Диагностика BIND](./troubleshooting.md)** — общие методы отладки.
 *   **[Зоны DNS и SOA](../../../../Networking/Protocols/DNS/dns_zones.md)** — теория иерархии и метаданных.

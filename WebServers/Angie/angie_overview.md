@@ -75,6 +75,7 @@ Angie (1.10+) поддерживает прямое взаимодействие
 ### См. также
 
 *   [Обзор Nginx](../Nginx/Core/nginx_overview.md)
+*   [Переменные в Angie](./angie_variables.md)
 *   [Логирование в Angie](./angie_logging.md)
 *   [Настройка Angie для высоких нагрузок](./High_Load/index.md)
 *   [Балансировка нагрузки HTTP в Angie](./angie_http_load_balancing.md)

@@ -160,4 +160,5 @@ server {
 - **[Обзор Nginx](./nginx_overview.md)** — архитектура и базовые принципы.
 - **[Директива location: основы и приоритеты](./Location/basics.md)** — алгоритмы выбора блоков.
 - **[Внутренняя маршрутизация в Nginx](./Location/internal_routing.md)** — детали работы `internal` и `X-Accel-Redirect`.
+- **[Переменные в Angie](../../Angie/angie_variables.md)** — полный справочник по `map`, `geo`, `volatile`.
 - **[Логирование в Nginx и Angie](../../Angie/angie_logging.md)** — форматирование и хранение журналов.

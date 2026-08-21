@@ -84,7 +84,7 @@ mount -t tmpfs -o size=512M,noexec,nosuid,nodev tmpfs /tmp
 
 ### 4. Работа с OverlayFS (Слоеная ФС)
 
-Хотя `overlayfs` является "стековой" (stacking) ФС, она активно использует механизмы VFS для объединения нескольких каталогов в один (база контейнеров Docker/Podman).
+Хотя `overlayfs` является "стековой" (stacking) ФС, она активно использует механизмы VFS для объединения нескольких каталогов в один (база контейнеров Docker/Podman). Детальный разбор работы OverlayFS в контексте Docker — в **[Драйвере хранения OverlayFS](../../Docker/Docker_fs/docker_overlayfs.md)**.
 
 ```bash
 # Объединение нижнего слоя (read-only) и верхнего (writable)

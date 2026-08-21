@@ -119,5 +119,6 @@ export async function handleRequest(request) {
 ### См. также
 *   **[Обзор облачных вычислений](./cloud_computing_overview.md)** — сравнение с централизованной моделью.
 *   **[Обзор CDN](../Networking/CDN/cdn_overview.md)** — инфраструктурный фундамент.
+*   **[SQLite для Edge-вычислений](../Databases/SQLite/sqlite_overview.md)** — практическая эксплуатация локальных БД.
 *   **[WebAssembly и WasmEdge](./unikernel/tools_future.md)** — глубокое погружение в среду исполнения.
 *   **[IoT и стратегии сбора метрик](./Observability_and_Monitoring/metrics_collection_strategies.md)** — практика мониторинга распределенных устройств.

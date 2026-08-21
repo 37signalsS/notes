@@ -118,6 +118,7 @@ sudo mariadb -u root -e "SELECT User, Host, Plugin FROM mysql.user WHERE User='r
 MariaDB 12.3 LTS поддерживает современные плагины, включая `caching_sha2_password` (по умолчанию в MySQL 8+). При миграции старых PHP/Python приложений может потребоваться обновление клиентских библиотек или явное указание плагина `mysql_native_password` для совместимости.
 
 ### См. также
+- **[Безопасность MariaDB](security/index.md)** — продвинутая настройка TLS, аудита и шифрования.
 - **[Обзор MariaDB](overview.md)** — архитектурные основы.
 - **[Конфигурация MariaDB](configuration.md)** — глубокая настройка `my.cnf`.
 - **[Клиентские утилиты](client_utilities.md)** — работа с `mariadb-shell` и `mariadb-admin`.
