@@ -135,3 +135,8 @@ ip link show master br-$(docker network inspect my-net -f '{{.Id}}' | cut -c 1-1
 - [DNS и Service Discovery](../dns_and_service_discovery.md)
 - [Сетевой драйвер host](./host.md)
 - [Диагностика сетевых проблем](../../Docker_troubleshooting/network_connectivity_issues.md)
+- **[Сетевые политики Docker](../docker_network_policies.md)** — правила фильтрации трафика, DOCKER-USER chain, нативные политики.
+
+**Глубокое изучение:**
+- **[Cilium](../../Kubernetes/Networking/Network/CNI/cilium.md)** — eBPF CNI. В Docker bridge: Cilium может заменить iptables для фильтрации трафика, L7/FQDN policies, Hubble для наблюдаемости сетевого трафика контейнеров.
+- **[Traefik](../../WebServers/Traefik/traefik_overview.md)** — reverse proxy. В Docker bridge: Traefik автоматически обнаруживает контейнеры через Docker API, маршрутизация по labels, TLS Let's Encrypt.

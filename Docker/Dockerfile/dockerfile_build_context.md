@@ -652,3 +652,7 @@ docker history myimage:latest --no-trunc | grep -i "COPY\|ADD"
 - **[Инструкции COPY и ADD](./Instructions/copying_files.md)** — механизмы импорта данных.
 - **[BuildKit: Техническое устройство](./dockerfile_buildkit.md)** — детали работы LLB и фронтендов.
 - **[Docker Context для удаленного управления](../docker_context.md)** — не путать с Build Context.
+
+**Глубокое изучение:**
+- **[.dockerignore паттерны](../../Git/git_ignore.md)** — синтаксис исключений. В Docker: `.dockerignore` работает аналогично `.gitignore`, но файлы-исключения всё равно попадают в контекст сборки (tar), просто исключаются из инструкций COPY/ADD.
+- **[Multi-stage builds](./dockerfile_buildkit.md#сценарий-2-multi-stage-сборка)** — разделение сборки и рантайма. В Docker: `COPY --from=builder` для передачи артефактов между стадиями, уменьшение размера финального образа в 10-50 раз.

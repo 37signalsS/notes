@@ -403,3 +403,8 @@ docker info --format '{{json .LoggingDriver}}'
 *   **[Агентный сбор логов Docker](./docker_agent_based_logging.md)** — настройка Vector, Alloy и Fluentd для чтения с диска.
 *   **[Централизованное логирование: Лог-драйверы](./docker_centralized_logging.md)** — работа с GELF, Syslog, Fluentd и Journald.
 *   **[Паттерн Multi-Process в Docker](./docker_multi_process_logging.md)** — особенности сбора логов в контейнерах с несколькими процессами (s6-overlay, tini).
+
+**Глубокое изучение:**
+- **[Structured Logging](../../Concepts/Observability_and_Monitoring/logs_deep_dive.md)** — JSON-формат, Correlation IDs. В Docker: лог-драйвер `json-file` уже пишет в JSON, но приложение должно логировать структурированно (JSON на stdout) для корректного парсинга агентами.
+- **[Log Aggregation Pipelines](../../Concepts/Observability_and_Monitoring/logs_deep_dive.md)** — архитектура: Capture → Transform → Buffer → Route → Sink. В Docker: piping через logging drivers (driver-mediated) vs агентный сбор (node-agent), Dual Logging для сохранения `docker logs`.
+- **[Log-based Alerting](../../Prometheus/concepts/metric_types/alerts.md)** — алерты на логи. В Docker: через Loki alerting rules или VictoriaLogs vmalert, мониторинг OOM/die событий через `docker events`.

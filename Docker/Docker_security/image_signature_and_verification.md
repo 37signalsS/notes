@@ -137,3 +137,8 @@ spec:
 - **[Sigstore и Cosign](../../Security/Tools/sigstore.md)** — глубокий разбор инструментария.
 - **[Подписание артефактов](../../Security/Supply_Chain_Security/artifact_signing.md)** — общая методология и теория.
 - **[Docker SBOM](./docker_sbom.md)** — генерация аттестаций состава ПО.
+
+**Глубокое изучение:**
+- **[Cosign keyless signing](../../Security/Tools/sigstore.md)** — подпись без ключей. В Docker: `cosign sign --yes image:tag` через OIDC token (GitHub Actions, GitLab CI), проверка через `--certificate-identity` и `--certificate-oidc-issuer`.
+- **[Notation (OCI)](../../Security/Supply_Chain_Security/artifact_signing.md)** — PKI-based подпись. В Docker: `notation sign --key ca.key image:tag`, проверка через `notation verify`, интеграция с Harbor 2.11+.
+- **[Kyverno admission](../../Kubernetes/Security/kyverno/Scenarios/security_policies.md)** — блокировка неподписанных. В Docker/K8s: `imageVerify` policy для проверки Cosign/Notation перед запуском Pod.

@@ -52,7 +52,7 @@ test:coverage:
 
 **Инструменты для Diff-analysis:**
 *   **diff-cover** (Python/Generic)
-*   **SonarQube / SonarCloud** (автоматический анализ в PR)
+*   **[SonarQube / SonarCloud](../CI-CD/Tools/sonarqube.md)** (автоматический анализ в PR)
 *   **Codecov** (визуализация дельты в интерфейсе GitHub/GitLab)
 
 ### Инструментарий по языкам (2025–2026)

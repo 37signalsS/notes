@@ -120,3 +120,7 @@ secrets:
 - **[Справочник команд CLI](./docker_compose_cli_commands.md)** — полный список команд и флагов управления.
 - **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — модульность (`include`), профили и секреты.
 - **[Миграция VPS без простоя](./vps_migration_zero_downtime.md)** — практическое руководство по переносу стека между хостами.
+
+**Глубокое изучение:**
+- **[Kompose](../../Kubernetes/ToolsUtilities/kompose.md)** — конвертация Docker Compose → Kubernetes манифесты. В Docker: `kompose convert` для миграции на K8s, поддержка `volumes`, `networks`, `secrets`.
+- **[Docker Swarm](../../../Docker_swarm/docker_swarm_overview.md)** — кластерный режим. В Docker Compose: `docker stack deploy` для деплоя в Swarm, отличия от `docker compose up` (оркестрация vs локальный запуск).

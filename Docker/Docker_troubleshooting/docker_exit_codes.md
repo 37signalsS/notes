@@ -125,3 +125,8 @@ docker debug <container_id> --command "ls -la /usr/local/bin"
 - **[Сигналы процессов в Linux](../../Linux/Core/processes/signals.md)** — детальный разбор SIGTERM, SIGKILL и др.
 - **[Инструкция STOPSIGNAL](../Dockerfile/Instructions/health_signals.md)** — переопределение сигнала остановки.
 - **[Docker Debug](./docker_debug.md)** — инструмент для анализа состояния контейнеров.
+
+**Глубокое изучение:**
+- **[CrashLoopBackOff (Kubernetes)](../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/definitions_and_concepts.md)** — полный разбор причин. В Docker аналог: контейнер перезапускается по `restart: always/on-failure`. Диагностика: `docker inspect` → `RestartCount`, `docker logs --since`, проверка `docker ps -a` для exited контейнеров.
+- **[OOM Killer](../../Linux/Core/processes/oom_killer_mechanism.md)** — механизм OOM. В Docker: `memory.events` (cgroup v2) для подтверждения OOM без `dmesg`, silent OOM когда убит дочерний процесс но PID 1 жив, `--cgroup-conf=memory.oom.group=1` для группового убийства.
+- **[Disk Space Issues](../../Linux/Diagnostics/Filesystem/disk_usage.md)** — диагностика диска. В Docker: `docker system df -v`, `docker system prune -a --volumes`, проблема с логами `json-file` без ротации.

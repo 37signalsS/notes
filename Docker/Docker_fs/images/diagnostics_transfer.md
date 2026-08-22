@@ -366,3 +366,4 @@ sudo ctr -n k8s.io images rm docker.io/library/my-app:latest
 - **[Основы Docker-образов](./docker_images_basics.md)** — структура и слои.
 - **[Реестры Docker](../../docker_registries.md)** — хранение артефактов.
 - **[Работа в изолированных средах (Air-gapped)](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md)** — стратегии доставки в закрытые контуры.
+- **[Резервное копирование и восстановление](../docker_backup_restore.md)** — стратегии бэкапа томов, образов и данных контейнеров.

@@ -600,3 +600,7 @@ curl -s "http://localhost:3100/loki/api/v1/query?query={job=\"docker\"}" | pytho
 *   **[Агентный сбор логов Docker](./docker_agent_based_logging.md)** — альтернативный, более надежный подход.
 *   **[Управление ротацией логов Docker](./docker_log_rotation.md)** — защита диска от переполнения.
 *   **[rsyslog: Фильтрация и пересылка](../../Linux/SystemAdministration/Logging/rsyslog.md)** — настройка приемника для драйвера syslog.
+
+**Глубокое изучение:**
+- **[Audit Logging](../../Security/audit_and_compliance_overview.md)** — аудит для compliance. В Docker: `auditd` для мониторинга `/var/run/docker.sock`, логирование `docker events` в централизованное хранилище, трекинг изменений `daemon.json`.
+- **[Structured Logging](../../Concepts/Observability_and_Monitoring/logs_deep_dive.md)** — Correlation IDs. В Docker: `log-driver` может добавлять labels/env через `--log-opt tag`, но для correlation ID приложение должно генерировать `request_id` на stdout.

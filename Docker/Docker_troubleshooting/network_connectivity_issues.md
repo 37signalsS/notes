@@ -135,3 +135,8 @@ mtr -T -P 80 google.com
 - **[Решение проблем с DNS](../Docker_network/troubleshooting/dns_resolution_issues.md)** — глубокая диагностика резолва.
 - **[Обзор сетевых моделей Docker](../Docker_network/docker_network.md)** — архитектура и драйверы.
 - **[Диагностика через Docker Events](./debugging_with_docker_events.md)** — отслеживание сетевых событий.
+
+**Глубокое изучение:**
+- **[iperf3](../../Linux/Diagnostics/Networking/iperf3.md)** — benchmarking. В Docker: `docker run --network=host networkstatic/iperf3 -s` (сервер) и `docker run networkstatic/iperf3 -c <host>` (клиент) для замера throughput между контейнерами/хостами.
+- **[tcpdump](../../Linux/Diagnostics/Networking/tcpdump.md)** — захват пакетов. В Docker: `nsenter -t $(docker inspect -f '{{.State.Pid}}' <container>) -n tcpdump -i eth0` для захвата трафика контейнера без `--privileged`.
+- **[netshoot](../../Kubernetes/Troubleshooting/troubleshooting_overview.md)** — диагностический toolkit. В Docker: `docker run --rm --net container:<target> nicolaka/netshoot` для диагностики сети целевого контейнера.

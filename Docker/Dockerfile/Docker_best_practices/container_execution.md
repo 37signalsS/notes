@@ -822,3 +822,4 @@ spec:
 - **[Коды завершения контейнеров](../../Docker_troubleshooting/docker_exit_codes.md)** — справочник по причинам падения процессов (137, 143 и др.).
 - **[Паттерн Multi-Process в Docker](../../Docker_logs/docker_multi_process_logging.md)** — использование `supervisord`, `s6-overlay`, логирование.
 - **[Graceful Shutdown в Kubernetes](../../../Kubernetes/Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md)** — специфика оркестрации.
+- **[Init Process и tini](../init_process_tini.md)** — подробный разбор tini, dumb-init, интеграция и best practices.

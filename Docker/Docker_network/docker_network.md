@@ -94,6 +94,16 @@ Docker управляет правилами **iptables/nftables** автома�
 - [DNS и Service Discovery](./dns_and_service_discovery.md)
 - [Устранение сетевых проблем](../Docker_troubleshooting/network_connectivity_issues.md)
 - [Docker Swarm: Сетевое взаимодействие](../../../Docker_swarm/swarm_networking.md)
+- **[Сетевые политики Docker](./docker_network_policies.md)** — правила фильтрации трафика, DOCKER-USER chain, нативные политики.
+
+**Глубокое изучение:**
+- **[eBPF в Linux](../../Linux/Core/kernel/ebpf.md)** — технология для XDP, TC, Cilium. В Docker: eBPF заменяет iptables для фильтрации, Cilium как CNI для Docker Swarm.
+- **[Cilium](../../Kubernetes/Networking/Network/CNI/cilium.md)** — eBPF CNI, kube-proxy replacement. В Docker: microsegmentation через eBPF, L7/FQDN policies, Hubble для наблюдаемости.
+- **[Traefik](../../WebServers/Traefik/traefik_overview.md)** — reverse proxy с автодискавери. В Docker: Traefik читает Docker API для маршрутизации, TLS Let's Encrypt, labels для конфигурации.
+- **[IPVS](../../Kubernetes/Networking/Network/CNI/ipvs.md)** — L4 балансировка. В Docker Swarm: Routing Mesh через IPVS, VIP balancing между репликами.
+- **[iperf3](../../Linux/Diagnostics/Networking/iperf3.md)** — benchmarking throughput. В Docker: `docker run netstatic/iperf3` для замера скорости между контейнерами.
+- **[tcpdump](../../Linux/Diagnostics/Networking/tcpdump.md)** — захват пакетов. В Docker: `nsenter -t <PID> -n tcpdump` или `--net=host` для захвата трафика контейнера.
+- **[MTU и VPN](../../Networking/OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — jumbo frames. В Docker: VXLAN overhead = 50 байт, MTU overlay сети = 1450 при физическом MTU 1500.
 
 ---
 **Reliability Score: 10 (SSoT + Docker v28 verified features)**

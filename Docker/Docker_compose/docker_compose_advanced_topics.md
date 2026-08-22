@@ -166,4 +166,9 @@ secrets:
 - **[Справочник по директивам](./docker_compose_directives.md)** — детальное описание всех ключей YAML.
 - **[Примеры конфигураций](./docker_compose_file_example.md)** — готовые шаблоны для типовых стеков.
 - **[Справочник команд CLI](./docker_compose_cli_commands.md)** — управление профилями и файлами.
+- **[Compose extends, include и правила слияния](./docker_compose_extends_include.md)** — подробный разбор `extends`, `include`, приоритеты и конфликты.
 - **[Миграция VPS без простоя](./vps_migration_zero_downtime.md)** — практическое руководство по переносу стека между хостами через прокси-мост.
+
+**Глубокое изучение:**
+- **[Let's Encrypt + Nginx в Docker](../../WebServers/Nginx/Scenarios/nginx_with_letsencrypt.md)** — автоматические сертификаты. В Compose: Certbot как сервис с volume для `/etc/letsencrypt`, auto-renewal через cron/job, TLS termination на Nginx.
+- **[Docker Secrets](../../Security/Concepts/secrets_management_overview.md)** — управление секретами. В Compose: `secrets:` с `file:` или `external: true`, монтирование в `/run/secrets/`,/tmpfs для защиты от записи на диск.

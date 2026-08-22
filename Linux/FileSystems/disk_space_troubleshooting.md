@@ -88,16 +88,66 @@ sudo ncdu /
 - **Логи приложений в `/var/log`:**
   Удалите старые архивные файлы (заканчивающиеся на `.gz` или `.1`).
 
-### 4. Очистка файла без удаления (Truncate)
+### 5. Причины переполнения диска в Kubernetes-кластере
 
-Если вы нашли огромный лог-файл, который нельзя удалить (потому что сервис перестанет писать логи или место не освободится из-за открытого дескриптора), используйте перенаправление для обнуления:
+На узлах Kubernetes наиболее частые причины исчерпания дискового пространства:
 
+**Логи контейнеров:**
+- Kubelet хранит логи контейнеров в `/var/lib/docker/containers/` или `/var/lib/containerd/` (зависит от рантайма).
+- Без настроенной ротации (драйвер `local` по умолчанию ротирует, `json-file` — нет) логи могут занимать десятки гигабайт.
+- Проверка: `sudo du -sh /var/lib/docker/containers/*/*-json.log | sort -rh | head -20`
+
+**Образы контейнеров:**
+- Kubelet хранит скачанные слои образов на диске. При частых обновлениях старые слои накапливаются.
+- Garbage Collection Kubelet удаляет неиспользуемые образы по порогам (`imageGCHighThresholdPercent`, `imageGCLowThresholdPercent`, по умолчанию 85%/80%).
+- Если пороги завышены или GC не справляется — диск заполняется.
+- Проверка: `docker system df` или `crictl images`
+
+**emptyDir-тома:**
+- Тома типа `emptyDir` хранятся на узле в `/var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~empty-dir/`.
+- Приложения, пишущие кэш или временные файлы в `emptyDir` без ограничения `sizeLimit`, могут заполнить диск.
+- Проверка конкретного Pod: `kubectl exec <pod> -- df -h`
+
+**Логи на уровне узла:**
+- `/var/log/pods/` — символические ссылки на логи контейнеров.
+- `/var/log/containers/` — аналогично.
+- Системные демоны (kubelet, containerd, CNI) также пишут логи.
+
+**Диагностика на узле:**
 ```bash
-# Файл останется на месте, но его размер станет 0
-sudo truncate -s 0 /var/log/very_large_app.log
-# Или через перенаправление
-sudo true > /var/log/very_large_app.log
+# Общая картина
+df -h
+
+# Кто занимает больше всего
+sudo du -sh /var/lib/docker /var/lib/containerd /var/lib/kubelet 2>/dev/null | sort -rh
+
+# Логи контейнеров
+sudo du -sh /var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir 2>/dev/null | sort -rh | head -20
+
+# Образы
+sudo du -sh /var/lib/docker/overlay2 2>/dev/null
 ```
+
+### 6. Очистка логов
+
+**Экстренная очистка без остановки контейнеров:**
+```bash
+# Для драйвера json-file
+sudo truncate -s 0 /var/lib/docker/containers/*/*-json.log
+
+# Для драйвера local
+sudo truncate -s 0 /var/lib/docker/containers/*/local-logs/*
+
+# Логи в Kubernetes
+sudo find /var/log/pods -type f -name "*.log" -exec truncate -s 0 {} \;
+```
+
+**Профилактика переполнения:**
+1. Настроить ротацию логов Docker (см. [Ротация логов Docker](../../Docker/Docker_logs/docker_log_rotation.md))
+2. Использовать драйвер `local` с параметрами `max-size` и `max-file`
+3. Настроить logrotate для системных логов узла
+4. Мониторить `node_filesystem_avail_bytes` в Prometheus
+5. Установить `sizeLimit` для `emptyDir`-томов
 
 ## Дополнительная информация
 

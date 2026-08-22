@@ -91,6 +91,149 @@ docker context create ssh-swarm \
 ```
 # → Доступ к Docker API будет осуществляться через SSH (требует наличия ключа в ssh-agent)
 
+### Сценарий 4: Верификация контекста после создания
+
+Перед выполнением `docker stack deploy` необходимо убедиться, что контекст работает корректно. Добавьте проверку в `before_script`:
+
+```yaml
+deploy_prod:
+  stage: deploy
+  image: docker:27.x
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "$CA_PEM" > ~/.docker/ca.pem && echo "$CERT_PEM" > ~/.docker/cert.pem && echo "$KEY_PEM" > ~/.docker/key.pem
+    - chmod 600 ~/.docker/*.pem
+    - docker context rm -f swarm-prod || true
+    - docker context create swarm-prod \
+      --docker "host=$DOCKER_HOST,ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
+    - docker context use swarm-prod
+    # Верификация: проверяем доступность кластера и роль узла
+    - docker info --format '{{.Swarm.LocalNodeState}}' | grep -q "active" || (echo "ERROR: Swarm is not active" && exit 1)
+    - docker node ls --format '{{.Hostname}} {{.Status}}' | head -1
+  script:
+    - docker stack deploy -c docker-compose.yml myapp --with-registry-auth --prune
+  after_script:
+    - docker context rm -f swarm-prod || true
+```
+
+**Что проверяется:**
+- `docker info --format '{{.Swarm.LocalNodeState}}'` — подтверждает, что подключение к кластеру работает и Swarm активен.
+- `docker node ls` — показывает список узлов (доказывает, что mTLS-аутентификация прошла успешно).
+
+### Сценарий 5: Жизненный цикл контекста в пайплайне (after_script cleanup)
+
+На долгоживущих раннерах (Self-hosted) контексты накапливаются между запусками. Секреты должны очищаться в `after_script`:
+
+```yaml
+deploy:
+  stage: deploy
+  image: docker:27.x
+  variables:
+    CONTEXT_NAME: "swarm-${CI_ENVIRONMENT_SLUG}"
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "$CA_PEM" > ~/.docker/ca.pem
+    - echo "$CERT_PEM" > ~/.docker/cert.pem
+    - echo "$KEY_PEM" > ~/.docker/key.pem
+    - chmod 600 ~/.docker/*.pem
+    - docker context rm -f ${CONTEXT_NAME} || true
+    - docker context create ${CONTEXT_NAME} \
+      --docker "host=$DOCKER_HOST,ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
+    - docker context use ${CONTEXT_NAME}
+  script:
+    - docker stack deploy -c docker-compose.yml app-${CI_ENVIRONMENT_SLUG} --with-registry-auth --prune
+  after_script:
+    # Обязательная очистка: удаление контекста и сертификатов
+    - docker context rm -f ${CONTEXT_NAME} || true
+    - rm -rf ~/.docker/
+```
+
+**Важно:** На эфемерных раннерах (GitLab SaaS, GitHub Actions) `after_script` не обязателен — контейнер уничтожается после завершения. Но на Self-hosted раннерах это критично для безопасности.
+
+### Сценарий 6: Мультиокружение через Docker Context (dev/staging/prod)
+
+Для деплоя в несколько окружений из одного пайплайна используйте уникальные имена контекстов:
+
+```yaml
+.deploy_template: &deploy_template
+  stage: deploy
+  image: docker:27.x
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "$CA_PEM" > ~/.docker/ca.pem
+    - echo "$CERT_PEM" > ~/.docker/cert.pem
+    - echo "$KEY_PEM" > ~/.docker/key.pem
+    - chmod 600 ~/.docker/*.pem
+    - docker context rm -f ${CONTEXT_NAME} || true
+    - docker context create ${CONTEXT_NAME} \
+      --docker "host=${DOCKER_HOST},ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
+    - docker context use ${CONTEXT_NAME}
+    - docker info --format '{{.Swarm.LocalNodeState}}' | grep -q "active"
+  script:
+    - docker stack deploy -c envs/${ENVIRONMENT}/docker-compose.yml infra-${ENVIRONMENT} --with-registry-auth --prune
+  after_script:
+    - docker context rm -f ${CONTEXT_NAME} || true
+    - rm -rf ~/.docker/
+
+deploy_dev:
+  <<: *deploy_template
+  variables:
+    ENVIRONMENT: dev
+    CONTEXT_NAME: swarm-dev
+    DOCKER_HOST: tcp://dev-manager.example.com:2376
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+      when: manual
+
+deploy_staging:
+  <<: *deploy_template
+  variables:
+    ENVIRONMENT: staging
+    CONTEXT_NAME: swarm-staging
+    DOCKER_HOST: tcp://staging-manager.example.com:2376
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+
+deploy_prod:
+  <<: *deploy_template
+  variables:
+    ENVIRONMENT: prod
+    CONTEXT_NAME: swarm-prod
+    DOCKER_HOST: tcp://prod-manager.example.com:2376
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false
+```
+
+### Сценарий 7: Docker Context + Buildx (кросс-платформенные сборки)
+
+Docker Context позволяет Buildx собирать образы для нескольких архитектур (amd64, arm64) на удаленном кластере или через удаленный Docker API:
+
+```bash
+# Создание контекста для удаленного сборщика
+docker context create buildkit-ctx \
+  --docker "host=ssh://build-user@build-node.example.com"
+
+# Создание buildx-инстанса, привязанного к контексту
+docker buildx create --name multiarch \
+  --driver docker-container \
+  --use buildkit-ctx
+
+# Сборка для двух архитектур
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t myregistry/myapp:latest \
+  --push .
+```
+
+**Преимущества:**
+- Сборка для arm64 на x86_64 хосте (эмуляция через QEMU или нативно на ARM-нодах).
+- Использование удаленного BuildKit для ускорения сборки (кэш, параллелизм).
+
+**Важно:** Для работы `docker-container` драйвера Buildx требует, чтобы целевой Docker-хост поддерживал запуск контейнеров (не все Swarm-менеджеры подходят — лучше выделить отдельную ноду для сборки).
+
 ### Дополнительные операции и диагностика
 
 Основные команды для обслуживания контекстов в CI:
@@ -122,10 +265,13 @@ docker context rm swarm-ctx
 | `TLS: unknown authority` | Ошибка в сертификате CA | Проверить соответствие `ca.pem` корневому сертификату сервера |
 | `permission denied` | Некорректные права на файл ключа | Применить `chmod 600` к ключу и сертификату |
 | `Is the docker daemon running?` | Порт 2376 закрыт или адрес хоста неверный | Проверить доступность порта через `nc -zv <host> 2376` |
+| `certificate has expired` | Сертификат клиента или сервера истек | Проверить сроки через `openssl x509 -in cert.pem -noout -dates`, при необходимости перевыпустить |
+| `x509: certificate signed by unknown authority` | Сертификат подписан внутренним CA, который не добавлен в trust store | Убедиться, что `ca.pem` — корневой сертификат того же CA, которым подписан серверный сертификат |
+| `Error response from daemon: context "xxx" is already in use` | Контекст активно используется другим процессом | Переключиться на `default` контекст (`docker context use default`), затем удалить |
+| `error during connect: Get http://...` | Некорректный формат `DOCKER_HOST` или отсутствие `tcp://` префикса | Проверить формат: `tcp://<IP>:2376` (обязательно с `tcp://`) |
 
 ### Связанные документы
 
 - **[Подготовка кластера (mTLS)](./swarm_setup.md)** — генерация сертификатов и настройка порта 2376.
-- **[Справочник CLI Swarm](../swarm_management_cli.md)** — команды управления сервисами и стеками.
 - **[Развертывание инфраструктуры](./infra_deployment.md)** — примеры деплоя Traefik через контексты.
-- **[Развертывание приложения](./app_deployment.md)** — построение полного цикла доставки.
+- **[Лучшие практики CI/CD](./best_practices.md)** — стандарты безопасности и оптимизации.

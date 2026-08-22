@@ -550,3 +550,4 @@ df -i /var/lib/docker
 - **[Тома (Volumes) в Docker](./docker_volumes.md)** — рекомендуемый способ для персистентных и write-heavy данных
 - **[Создание образов через Docker Commit](./docker_commit.md)** — как OverlayFS участвует при фиксации контейнера в образ
 - **[Copy-on-Write в Linux](../../Linux/Core/processes/basic_concepts.md)** — базовый принцип работы CoW в ядре
+- **[Производительность Docker](../Docker_performance_tuning.md)** — оптимизация CPU, памяти, I/O и сети в контейнерах.

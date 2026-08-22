@@ -110,5 +110,6 @@ Docker не сохраняет ваши правила в `DOCKER-USER` или �
 
 **Связанные темы:**
 - **[Настройка DNS в Docker](./dns_resolution_issues.md)** — проблемы связности из-за DNS.
+- **[Сетевые политики Docker](../docker_network_policies.md)** — правила фильтрации трафика, DOCKER-USER chain, нативные политики.
 - **[Устранение сетевых проблем](../../Docker_troubleshooting/network_connectivity_issues.md)** — общий чек-лист диагностики.
 - **[nftables: практические сценарии](../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md)** — справочник команд.

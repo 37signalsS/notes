@@ -100,6 +100,11 @@ scrape_configs:
 ### Связанные темы
 - **[Нативные метрики Docker (stats/df)](./docker_native_metrics.md)** — быстрая диагностика без Prometheus.
 - **[cAdvisor (Container Advisor)](../../Prometheus/Exporters/cadvisor.md)** — глубокий сбор метрик ресурсов контейнеров.
+- **[cAdvisor: развертывание и сбор метрик](./docker_cadvisor_deployment.md)** — деплой cAdvisor, конфигурация сбора и интеграция с Prometheus.
 - **[Node Exporter](../../Prometheus/Exporters/node_exporter.md)** — мониторинг ресурсов хоста.
 - **[Конфигурация Prometheus в Docker Stack](../../Prometheus/installation/docker_stack/prometheus_config.md)** — примеры `prometheus.yml`.
 - **[Типы метрик Prometheus](../../Prometheus/concepts/metric_types/overview.md)** — понимание Counters, Gauges и Histograms.
+
+**Глубокое изучение:**
+- **[Grafana Dashboards](../../Grafana/grafana-dashboards.md)** — визуализация метрик. В Docker: Dashboard ID 1229 (Docker Engine), ID 10619 (Docker + Containerd), кастомные дашборды для `docker stats` через Prometheus.
+- **[cAdvisor в Docker Compose](../../Prometheus/installation/docker_stack/docker-compose_config.md)** — деплой cAdvisor как сервис в Compose, permissions для `/sys/fs/cgroup`, интеграция с Prometheus.

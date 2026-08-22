@@ -212,4 +212,5 @@ services:
 
 - **[Сравнение версий Docker Compose](./docker_compose_versions_comparison.md)** — эволюция формата от v2/v3 к Compose Spec
 - **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — интерполяция переменных, профили и масштабирование
+- **[Compose extends, include и правила слияния](./docker_compose_extends_include.md)** — подробный разбор `extends`, `include`, приоритеты и конфликты
 - **[Пример compose.yml](./docker_compose_file_example.md)** — практические примеры конфигураций стеков

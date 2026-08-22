@@ -122,6 +122,42 @@ docker debug --host ssh://user@remote-host container-name
    ```
 4. Исследуйте состояние ФС и сетевую связность перед выполнением команды.
 
+### Сценарий 7: Диагностика, когда приложение «не открывается»
+
+**Задача:** Контейнер запущен (`docker ps` показывает `Up`), но по адресу `localhost:8080` (или внешнему IP) приложение не отвечает.
+
+```bash
+# 1. Проверяем, что порт действительно опубликован
+docker ps
+# → Поле PORTS должно содержать 0.0.0.0:8080->8080/tcp
+
+# 2. Проверяем, слушает ли приложение внутри контейнера
+docker exec <container_id> ss -tlnp
+# → Должен быть LISTEN на 0.0.0.0:8080 или 127.0.0.1:8080
+
+# 3. Проверяем сеть контейнера
+docker inspect <container_id> | jq '.[0].NetworkSettings'
+# → IPAddress, Ports, NetworkMode
+
+# 4. Если приложение слушает только 127.0.0.1 внутри контейнера,
+#    внешний доступ будет недоступен. Нужно изменять конфигурацию приложения
+#    на 0.0.0.0 или использовать сеть host.
+
+# 5. Проверяем firewall на хосте
+sudo iptables -L -n -v | grep -i drop
+sudo ufw status
+
+# 6. Проверяем логи на предмет падений после старта
+docker logs --tail 100 <container_id>
+
+# 7. Вход в контейнер для проверки файлов конфигурации
+docker exec -it <container_id> sh
+# → cat /etc/app/config.yaml
+# → env | grep BIND
+```
+
+Если контейнер слушает на `127.0.0.1`, исправьте конфигурацию приложения на `0.0.0.0` и перезапустите контейнер. Для быстрой проверки без изменения конфигурации можно использовать `network_mode: host`, но это снижает изоляцию.
+
 ## Дополнительная информация
 
 ### Сохранение состояния
@@ -151,3 +187,7 @@ docker debug --host ssh://user@remote-host container-name
 - **[Отладка Distroless образов](./debugging_distroless.md)** — особенности работы с минималистичными средами.
 - **[Сигналы и проверки здоровья](../Dockerfile/Instructions/health_signals.md)** — автоматизация мониторинга.
 - **[Создание образов через commit](../Docker_fs/docker_commit.md)** — сохранение результатов отладки.
+
+**Глубокое изучение:**
+- **[Performance Degradation](../../Linux/Diagnostics/Networking/iperf3.md)** — диагностика производительности. В Docker: `docker stats` для CPU/memory, `docker exec <c> cat /proc/1/sched` для планировщика, PSI метрики через `/proc/pressure/` для обнаружения bottleneck.
+- **[Permission Denied](../../Linux/Security/Concepts/File_Permissions/special_permissions.md)** — проблемы с правами. В Docker: `COPY --chown=user:group` для правильного ownership, `--user` в `docker run` для запуска от нужного UID, /etc/passwd в контейнере.

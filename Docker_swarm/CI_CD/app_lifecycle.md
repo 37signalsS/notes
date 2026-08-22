@@ -120,6 +120,71 @@ docker node update --availability drain <NODE_NAME>
 docker node update --availability active <NODE_NAME>
 ```
 
+### Сценарий 4: Управление обновлением через CLI
+
+Помимо конфигурации в YAML, жизненный цикл сервиса управляется через CLI-команды:
+
+```bash
+# Ручное обновление образа (перезаписывает update_config)
+docker service update --image registry.example.com/api:v2.3.0 my_service
+
+# Принудительное обновление (мгновенная замена всех реплик без соблюдения задержек)
+docker service update --force my_service
+
+# Обновление с новым parallelism и delay
+docker service update \
+  --update-parallelism 3 \
+  --update-delay 15s \
+  --update-order start-first \
+  my_service
+
+# Откат к предыдущей версии
+docker service rollback my_service
+
+# Пауза обновления (если оно в процессе)
+docker service update --update-pause my_service
+
+# Продолжение приостановленного обновления
+docker service update --update-continue my_service
+
+# Отмена текущего обновления (возврат к текущей стабильной версии)
+docker service update --update-abort my_service
+```
+
+**Важно:** Команда `docker service update --force` пересоздает все контейнеры даже если образ не изменился. Полезно для применения изменений, которые не отслеживаются оркестратором (например, обновление секрета или конфига).
+
+### Сценарий 5: Мониторинг состояния обновления
+
+Для отслеживания прогресса Rolling Update в реальном времени:
+
+```bash
+# Текущее состояние и история задач
+docker service ps my_service
+
+# Включая остановленные задачи (для анализа истории)
+docker service ps --no-trunc --filter desired-state=running my_service
+
+# Детальная информация о статусе обновления
+docker service inspect --format '{{json .UpdateStatus}}' my_service | jq
+# Пример вывода:
+# {
+#   "State": "updating",
+#   "Message": "update in progress",
+#   "StartedAt": "2026-08-22T10:30:00Z",
+#   "CompletedAt": "0001-01-01T00:00:00Z",
+#   "Error": ""
+# }
+
+# Логи конкретной задачи (по ID из service ps)
+docker service logs <TASK_ID>
+
+# События Swarm (все изменения в кластере)
+docker events --filter 'type=service' --filter 'name=my_service' --since 1h
+
+# Проверка, какие узлы заняты репликами
+docker service ps my_service --format "{{.Node}} -> {{.CurrentState}}"
+```
+
 ## Дополнительная информация
 
 ### Влияние Placement Constraints
@@ -134,12 +199,15 @@ docker node update --availability active <NODE_NAME>
 | Rollback срабатывает сразу | Значение `monitor` меньше, чем время инициализации приложения | Увеличить `monitor` в `update_config`. |
 | Ошибки 502 при обновлении | Приложение убивается мгновенно, не закрыв коннекты | Настроить обработку `SIGTERM` и `stop_grace_period`. |
 | Нет ресурсов для деплоя | `start-first` требует двойного объема ресурсов на время обновления одной реплики | Проверить `reservations` или переключиться на `stop-first`. |
+| `update paused` в status | Кто-то выполнил `--update-pause` или `max_failure_ratio` превышен | Выполнить `docker service update --update-continue` или исправить причину паузы. |
+| Обновление отменяется само | `failure_action: rollback` сработал из-за Health Check | Увеличить `monitor`, проверить логи новой версии. |
+| `task: no suitable node` | Нет узлов, удовлетворяющих placement constraints | Проверить `docker node ls`, `docker service inspect --format '{{.Spec.TaskTemplate.Placement}}'`. |
+| Реплики "мергают" при обновлении | `order: stop-first` + `parallelism: 1` = длительное обновление | Использовать `order: start-first` для Zero Downtime. |
 
 ### Связанные документы
 
 - **[Деплой приложения через GitLab CI](./app_deployment.md)** — интеграция жизненного цикла в пайплайн.
 - **[Секреты и конфигурации](../swarm_secrets_configs.md)** — как обновление секретов триггерит жизненный цикл.
 - **[Traefik в Swarm](../swarm_ingress_traefik.md)** — управление трафиком при сложных стратегиях (Blue-Green).
-- **[Инструкция HEALTHCHECK](../../Docker/Dockerfile/Instructions/health_signals.md)** — база для настройки проверок.
-- **[nginx_mtls_configuration.md](../../WebServers/Nginx/Security/TLS_SSL/nginx_mtls_configuration.md#сценарий-4-исключение-healthcheck-из-mtls-docker-swarm)** — особенности проверок при mTLS.
+- **[Стратегии развертывания](../../CI-CD/Deployment_Strategies/rolling_update.md)** — общие принципы Rolling Update (Kubernetes-контекст).
 

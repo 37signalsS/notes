@@ -226,6 +226,57 @@ basic_auth_users:
 | **Источники** | Только Prometheus API | Любые БД (SQL, Cloud) |
 | **Назначение** | Инфраструктурный мониторинг | Бизнес-метрики, визуализация |
 | **HA** | Встроенный Gossip | Требует БД (Postgres/MySQL) |
+
+### Отправка уведомлений в Telegram
+
+Alertmanager не имеет встроенного receiver для Telegram. Для отправки алертов в Telegram используется промежуточный webhook-сервис.
+
+**Архитектура решения:**
+
+```
+Alertmanager → Webhook (telegram-bot/prometheus-telegram-bot) → Telegram API
+```
+
+**Варианты реализации:**
+
+1.  **prometheus-alertmanager-bot (Go):**
+    - Легковесный сервер, принимающий webhook от Alertmanager и отправляющий сообщения в Telegram.
+    - Поддерживает шаблонизацию сообщений (Go templates).
+    - Репозиторий: [metalmatze/alertmanager-bot](https://github.com/metalmatze/alertmanager-bot).
+
+2.  **self-written proxy:**
+    - Написание собственного микросервиса на Python/Go для трансформации webhook Alertmanager в Telegram Bot API.
+
+**Пример конфигурации Alertmanager:**
+
+```yaml
+receivers:
+  - name: 'telegram-critical'
+    webhook_configs:
+      - url: 'http://alertmanager-bot:9090/alert'
+        send_resolved: true
+```
+
+**Проблема с Telegram в России:**
+Telegram API может быть недоступен из-за блокировок. Решение — использование прокси:
+
+- **HTTP/SOCKS5-прокси:** Настройка прокси на уровне приложения (alertmanager-bot) или через переменные окружения `HTTP_PROXY`, `HTTPS_PROXY`.
+- **Outbound proxy в Kubernetes:** Использование Service Mesh (Istio) или sidecar-контейнера (envoy/squid) для маршрутизации трафика к Telegram API через внешний прокси-сервер.
+
+**Пример настройки прокси для alertmanager-bot:**
+
+```yaml
+# Kubernetes Deployment
+env:
+  - name: HTTPS_PROXY
+    value: "http://proxy-server:3128"
+  - name: HTTP_PROXY
+    value: "http://proxy-server:3128"
+  - name: NO_PROXY
+    value: "localhost,127.0.0.1,10.0.0.0/8"
+```
+
+**Альтернативный подход:** Использование Grafana Alerting с встроенным контакт-пойнтом Telegram (Grafana 9+), который также поддерживает настройку прокси через конфигурацию datasource.
 ### Рекомендации SRE по алертингу
 
 1.  **Actionable Alerts:** Каждый алерт должен иметь аннотацию `runbook_url`. Если на алерт нельзя отреагировать действием — это не алерт, а шум на дашборде.

@@ -84,9 +84,27 @@ Prometheus идентифицирует данные через имя метр�
 ### Масштабирование и долгосрочное хранение
 
 Для преодоления ограничений одиночного сервера Prometheus используются внешние решения через протокол **Remote Write 2.0**:
-*   **[Grafana Mimir](../Mimir/mimir_overview.md)** — горизонтальное масштабирование и мульти-тенантность.
+*   **[Grafana Mimir](../Mimir/mimir_overview.md)** — горизонтальное масштабирование и мультитенантность.
 *   **[VictoriaMetrics](../VictoriaMetrics/overview.md)** — высокая производительность и плотность хранения.
 *   **[Thanos](./scaling/thanos_overview.md)** — неограниченное хранение в S3/GCS.
+
+### Пример правила алертинга
+
+```yaml
+groups:
+  - name: host_alerts
+    rules:
+      - alert: HostHighCpuLoad
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая нагрузка на CPU ({{ $labels.instance }})"
+          description: "CPU usage > 80% на {{ $labels.instance }} в течение 5 минут."
+```
+
+Подробнее о синтаксисе и типах правил — в **[Правила алертинга](./rules.md)**. О доставке оповещений — в **[Alertmanager](./alertmanager.md)**.
 
 ### См. также
 *   [Конфигурация prometheus.yml](./configuration.md)

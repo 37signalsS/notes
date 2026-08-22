@@ -132,6 +132,12 @@ docker inspect <container_id> --format='{{json .HostConfig.SecurityOpt}}'
 - **[Механизмы безопасности Linux](../../Linux/Security/Linux_Security_Mechanisms_Overview.md)** — обзор Seccomp, AppArmor и SELinux.
 - **[Мониторинг в Runtime](./runtime_monitoring.md)** — обнаружение аномалий (Falco, Tetragon).
 
+**Глубокое изучение:**
+- **[Linux Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)** — полный справочник всех capabilities, bounding set, ambient capabilities. В Docker: `--cap-drop=ALL --cap-add=NET_BIND_SERVICE`, запрет `--privileged`, `no-new-privileges`.
+- **[Linux Namespaces](../../Linux/Core/namespaces.md)** — глубокий разбор 8 типов namespaces. В Docker: PID namespace (PID 1 внутри контейнера), NET namespace (veth-пара, bridge), USER namespace (rootless, userns-remap).
+- **[Cgroups v2](../../Linux/Core/cgroups.md)** — сравнение v1/v2, ручное управление. В Docker: `docker stats`, `memory.events` для OOM detection, `cpu.stat` для throttling, PSI метрики.
+- **[Seccomp](../../Linux/Security/Mechanisms/Seccomp.md)** — создание кастомных профилей. В Docker: профиль по умолчанию блокирует ~44 syscall, `--security-opt seccomp=profile.json`.
+
 **Инструменты:**
 * **Docker Bench for Security:** Скрипт для проверки соответствия CIS Docker Benchmark.
 * **Trivy:** Сканирование образов и конфигураций (IaC).

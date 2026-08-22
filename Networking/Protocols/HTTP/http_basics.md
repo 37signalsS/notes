@@ -126,7 +126,66 @@ Content-Length: 46
 В современных спецификациях заголовки делятся на:
 -   **Request Fields:** Только в запросах (`Accept`, `User-Agent`).
 -   **Response Fields:** Только в ответах (`Server`, `Allow`).
--   **Representation Fields:** Описывают формат ресурса (`Content-Type`, `Content-Encoding`).
+- **Representation Fields:** Описывают формат ресурса (`Content-Type`, `Content-Encoding`).
+
+#### Content-Type и восприятие тела запроса сервером
+
+**Content-Type** — критически важный заголовок для запросов с телом (POST, PUT, PATCH). Он указывает серверу, как интерпретировать переданные данные.
+
+**Распространенные значения:**
+
+| Content-Type | Применение | Пример тела |
+|:---|:---|:---|
+| `application/json` | REST API, JSON-данные | `{"name": "test"}` |
+| `application/x-www-form-urlencoded` | HTML-формы | `name=test&value=123` |
+| `multipart/form-data` | Загрузка файлов | Бинарные данные с границами |
+| `text/plain` | Простой текст | Любой текст |
+| `application/xml` | SOAP, XML API | `<root><item>1</item></root>` |
+
+**Проблема отсутствующего Content-Type:**
+
+Многие серверные фреймворки (Spring Boot, Express, Flask) полагаются на заголовок `Content-Type` для определения способа парсинга тела запроса:
+
+1. Если `Content-Type: application/json` — сервер парсит тело как JSON.
+2. Если `Content-Type` отсутствует — сервер может:
+   - Вернуть `400 Bad Request` (Spring Boot по умолчанию).
+   - Вернуть `415 Unsupported Media Type`.
+   - Попытаться парсить как form-data и получить пустые данные.
+
+**Разница между curl и Postman:**
+
+- **curl** по умолчанию НЕ устанавливает `Content-Type` для POST-запросов с `-d`:
+  ```bash
+  curl -X POST http://api.example.com/data -d '{"key":"value"}'
+  # Content-Type отсутствует → сервер может вернуть 400
+  ```
+  
+  Явное указание:
+  ```bash
+  curl -X POST http://api.example.com/data \
+    -H "Content-Type: application/json" \
+    -d '{"key":"value"}'
+  ```
+
+- **Postman** автоматически определяет тип контента по содержимому тела и устанавливает соответствующий `Content-Type`:
+  - Если в теле JSON — ставит `application/json`.
+  - Если форма — `application/x-www-form-urlencoded`.
+
+**Диагностика проблем с Content-Type:**
+
+```bash
+# Проверка заголовков запроса
+curl -v -X POST http://api.example.com/data -d '{"key":"value"}'
+# Обратить внимание на строку:
+# > Content-Type: application/x-www-form-urlencoded  (по умолчанию для -d)
+
+# Явное указание JSON
+curl -v -X POST http://api.example.com/data \
+  -H "Content-Type: application/json" \
+  -d '{"key":"value"}'
+```
+
+**Важно:** При использовании `--data-binary` в curl заголовок НЕ устанавливается автоматически. При использовании `-d` curl ставит `application/x-www-form-urlencoded`, если не указан другой тип явно.
 -   **Payload Fields:** Описывают само тело сообщения (`Content-Length`, `Content-Range`).
 
 ### Промежуточные узлы (Intermediaries)

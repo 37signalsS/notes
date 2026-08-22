@@ -180,6 +180,75 @@ spec:
 - **UDP Conntrack Race:** Задержки в 1 или 5 секунд при резолвинге. Решение: NodeLocal DNSCache.
 - **Размер UDP-пакета:** Если в Headless Service >20 подов, ответ может не влезть в 512 байт UDP. Убедитесь, что клиенты поддерживают переключение на TCP.
 
+### Диагностика NodeLocal DNSCache
+
+NodeLocal DNSCache (NLDC) — критически важный компонент для production-кластеров. Проблемы с ним могут привести к невозможности загрузки образов и сбоям в работе приложений.
+
+**Симптомы проблем с NLDC:**
+- Поды не могут загрузить образ с ошибкой `dial tcp: lookup registry: no such host`.
+- Неконсистентное поведение: на одних нодах поды работают, на других — нет.
+- Задержки при резолвинге DNS-имен (1-5 секунд).
+
+**Алгоритм диагностики:**
+
+1.  **Проверка статуса DaemonSet:**
+    ```bash
+    kubectl get daemonset -n kube-system node-local-dns
+    kubectl rollout status daemonset node-local-dns -n kube-system
+    ```
+
+2.  **Проверка подов на конкретных нодах:**
+    ```bash
+    kubectl get pods -n kube-system -l k8s-app=node-local-dns -o wide
+    # Обратить внимание на поды в статусе Error, CrashLoopBackOff, Pending
+    ```
+
+3.  **Анализ логов:**
+    ```bash
+    # Логи конкретного пода
+    kubectl logs -n kube-system <node-local-dns-pod-name>
+    
+    # Логи всех подов
+    kubectl logs -n kube-system -l k8s-app=node-local-dns --tail=100
+    ```
+
+4.  **Проверка конфигурации (ConfigMap):**
+    ```bash
+    kubectl get configmap -n kube-system node-local-dns -o yaml
+    ```
+    Убедиться, что указан корректный `ClusterIP` CoreDNS (обычно `10.96.0.10`).
+
+5.  **Проверка сетевой связности:**
+    ```bash
+    # Из проблемного пода NLDC
+    kubectl exec -n kube-system <node-local-dns-pod> -- nc -zv <coredns-ip> 53
+    ```
+
+**Типичные ошибки и решения:**
+
+| Ошибка в логах | Причина | Решение |
+|:---|:---|:---|
+| `connection refused` к CoreDNS | CoreDNS не работает или недоступен | Перезапустить CoreDNS, проверить Service |
+| `bind: address already in use` | Конфликт портов на узле | Проверить, что порт 53 не занят другим процессом |
+| `no such host` для upstream | Неверный upstream DNS | Исправить Corefile в ConfigMap |
+| `OOMKilled` | Нехватка памяти | Увеличить `resources.limits.memory` |
+| `CrashLoopBackOff` на конкретных нодах | Проблема с конкретным узлом | Проверить `kubectl describe node`, ресурсы узла |
+
+**Восстановление при массовом сбое NLDC:**
+```bash
+# Перезапуск DaemonSet
+kubectl rollout restart daemonset node-local-dns -n kube-system
+
+# Если не помогло — удалить проблемные поды вручную
+kubectl delete pod -n kube-system -l k8s-app=node-local-dns
+
+# В крайнем случае — пересоздать DaemonSet
+kubectl delete daemonset -n kube-system node-local-dns
+# Затем заново применить манифест
+```
+
+**Важно:** При сбое NLDC на всех узлах кластера может пропасть возможность загрузки образов из внешних реестров, что приведет к `ImagePullBackOff` для новых подов. В этом случае временным решением может быть использование IP-адреса реестра вместо DNS-имени (если поддерживается).
+
 > **Совет для интервью:**
 > Если под не может разрешить имя сервиса, проверьте цепочку: `Под -> NetworkPolicy (Egress) -> Service kube-dns -> Endpoints CoreDNS -> CoreDNS Logs -> Upstream DNS`. Самая частая причина в защищенных кластерах — отсутствие разрешения на трафик к `kube-system:53`.
 

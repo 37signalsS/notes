@@ -267,3 +267,4 @@ Namespaces и Cgroups не обеспечивают 100% изоляцию. Ос�
 - [Сетевая модель Docker](../Docker_network/docker_network.md) — детализация работы Network Namespace.
 - **[Драйвер хранения OverlayFS](../Docker_fs/docker_overlayfs.md)** — глубокий разбор copy-up, whiteout и storage driver.
 - [Изоляция в Podman](../../Podman/linux_isolation.md) — специфические особенности Podman.
+- **[Производительность Docker](../Docker_performance_tuning.md)** — оптимизация CPU, памяти, I/O и сети в контейнерах.

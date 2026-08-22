@@ -55,10 +55,70 @@
 | `Pending` | `kubectl describe pod` | Нехватка ресурсов, Taints, Affinity, ошибки PVC |
 | `ContainerCreating` | `kubectl describe pod` | Проблемы монтирования Volume, загрузки образа, CNI |
 | `ImagePullBackOff` | `kubectl logs` (если возможно) | Неверные `imagePullSecrets`, ошибка в имени образа |
+| `ErrImagePull` | `kubectl describe pod`, логи рантайма | Ошибка сети, DNS, аутентификации или отсутствие образа |
 | `CrashLoopBackOff` | `kubectl logs --previous` | Ошибка приложения (exit code > 0), отсутствие конфигов |
 | `OOMKilled` | `kubectl top pod` | Превышение лимитов (Limits). Exit Code: 137 |
 | `Evicted` | `kubectl describe node` | DiskPressure (нехватка места) или MemoryPressure на узле |
 | `Terminating` | `kubectl get pod -o yaml` | Finalizers в метаданных, зависшие процессы в контейнере |
+
+### Алгоритм диагностики: поды не могут загрузить образ
+
+Когда поды находятся в статусе `ErrImagePull` или `ImagePullBackOff` с ошибкой, связанной с сетью или DNS:
+
+**Шаг 1: Первичная диагностика**
+```bash
+kubectl describe pod <pod-name> -n <namespace>
+```
+Обратить внимание на секцию `Events`:
+- `Failed to pull image "..."`: rpc error: code = Unknown desc = ...
+- `dial tcp: lookup registry.example.com: no such host` — проблема DNS
+- `deadline exceeded` — проблема сети/доступности
+
+**Шаг 2: Проверка DNS внутри кластера**
+```bash
+# Запуск тестового пода для проверки DNS
+kubectl run dns-test --image=busybox --rm -it --restart=Never -- nslookup registry.example.com
+
+# Если nslookup не работает — проблема с CoreDNS или NodeLocal DNSCache
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+kubectl logs -n kube-system -l k8s-app=kube-dns
+```
+
+**Шаг 3: Проверка NodeLocal DNSCache**
+```bash
+# Статус DaemonSet
+kubectl get daemonset -n kube-system node-local-dns
+
+# Логи подов NodeLocal DNSCache
+kubectl logs -n kube-system -l k8s-app=node-local-dns --tail=50
+
+# Если поды на конкретных нодах в ошибке:
+kubectl get pods -n kube-system -l k8s-app=node-local-dns -o wide
+```
+
+**Шаг 4: Проверка сетевой связности**
+```bash
+# Запуск отладочного контейнера в сетевом пространстве имен ноды
+kubectl debug node/<node-name> -it --image=nicolaka/netshoot
+# Внутри:
+nslookup registry.example.com
+curl -v https://registry.example.com/v2/
+```
+
+**Шаг 5: Проверка NetworkPolicy**
+```bash
+# Убедиться, что трафик к DNS (порт 53) разрешен
+kubectl get networkpolicy -A
+```
+
+**Типичные проблемы и решения:**
+
+| Проблема | Причина | Решение |
+|:---|:---|:---|
+| `no such host` | DNS не резолвит имя реестра | Проверить CoreDNS, NodeLocal DNSCache |
+| `connection timed out` | Реестр недоступен | Проверить Firewall, Security Groups |
+| `i/o timeout` | Медленная сеть или большие слои | Настроить таймауты или зеркало реестра |
+| TLS ошибки | Проблемы с сертификатами | Добавить CA в доверенные на узлах |
 
 ### Диагностика сетевого взаимодействия
 

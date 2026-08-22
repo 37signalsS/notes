@@ -91,6 +91,10 @@ spec:
 - **[eBPF — виртуальная машина ядра](../../Linux/Core/kernel/ebpf.md)** — технологическая база.
 - **[auditd: Аудит событий](../../Linux/SystemAdministration/Logging/auditd.md)** — классический подход к мониторингу хоста.
 
+**Глубокое изучение:**
+- **[Tetragon](../../Kubernetes/Networking/Network/CNI/cilium.md#tetragon)** — eBPF enforcement. В Docker: TracingPolicy YAML для блокировки записи в `/etc/`, `Sigkill` при drift, защита от container escape.
+- **[Audit Logging](../../Security/audit_and_compliance_overview.md)** — аудит для compliance. В Docker: `docker events` + auditd для `/var/run/docker.sock`, мониторинг `exec_create`/`exec_start`.
+
 **Внешние ресурсы:**
 - **Tetragon Documentation:** [github.com/cilium/tetragon](https://github.com/cilium/tetragon).
 - **Falco Rules Library:** [falco.org/docs/rules/](https://falco.org/docs/rules/).

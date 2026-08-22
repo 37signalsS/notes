@@ -135,6 +135,252 @@ deploy_infra:
       when: manual # Инфраструктурные изменения требуют ручного подтверждения
 ```
 
+### Сценарий 5: Подготовка нод через IaC (Ansible + Terraform)
+
+Прежде чем развернуть Swarm-кластер, необходимо подготовить виртуальные или физические сервера. Рекомендуемый стек: **Terraform** (провижининг инфраструктуры) + **Ansible** (настройка ОС и Docker).
+
+**Terraform (минимальный пример для AWS EC2):**
+
+```hcl
+# main.tf — развертывание 3 менеджеров + 3 воркеров
+resource "aws_instance" "swarm_manager" {
+  count         = 3
+  ami           = "ami-0c55b159cbfafe1f0"  # Ubuntu 22.04
+  instance_type = "t3.medium"
+  key_name      = var.ssh_key_name
+  vpc_security_group_ids = [aws_security_group.swarm.id]
+
+  tags = {
+    Name = "swarm-manager-${count.index}"
+    Role = "manager"
+  }
+}
+
+resource "aws_instance" "swarm_worker" {
+  count         = 3
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.large"
+  key_name      = var.ssh_key_name
+  vpc_security_group_ids = [aws_security_group.swarm.id]
+
+  tags = {
+    Name = "swarm-worker-${count.index}"
+    Role = "worker"
+  }
+}
+```
+
+**Ansible (настройка Docker и инициализация Swarm):**
+
+```yaml
+# playbooks/swarm_init.yml
+- hosts: managers[0]
+  become: yes
+  tasks:
+    - name: Install Docker
+      apt:
+        name: [docker.io, docker-compose-plugin]
+        state: present
+        update_cache: yes
+
+    - name: Initialize Swarm cluster
+      command: docker swarm init --advertise-addr {{ ansible_host }}
+      register: init_result
+      changed_when: "'Swarm initialized' in init_result.stdout"
+
+    - name: Get worker join token
+      command: docker swarm join-token worker -q
+      register: worker_token
+      changed_when: false
+
+    - name: Join workers to cluster
+      hosts: workers
+      become: yes
+      tasks:
+        - name: Join Swarm
+          command: >
+            docker swarm join
+            --token {{ hostvars['managers[0]'].worker_token.stdout }}
+            {{ hostvars['managers[0]'].ansible_host }}:2377
+
+- hosts: managers
+  become: yes
+  tasks:
+    - name: Configure Docker daemon
+      template:
+        src: daemon.json.j2
+        dest: /etc/docker/daemon.json
+      notify: restart docker
+
+  handlers:
+    - name: restart docker
+      systemd:
+        name: docker
+        state: restarted
+```
+
+**Важно:** Не храните IP-адреса и токены в Playbook напрямую — используйте Ansible Inventory и переменные окружения.
+
+### Сценарий 6: Мультиокружение (dev/staging/prod)
+
+Разделение кластеров по окружениям через Docker Context и отдельные Compose-файлы:
+
+```yaml
+# Структура репозитория
+infra-stack/
+├── envs/
+│   ├── dev/
+│   │   ├── docker-compose.yml      # 1 replica, без TLS
+│   │   └── context.env             # DOCKER_HOST=...
+│   ├── staging/
+│   │   ├── docker-compose.yml      # 2 replicas, self-signed TLS
+│   │   └── context.env
+│   └── prod/
+│       ├── docker-compose.yml      # 3+ replicas, Let's Encrypt
+│       └── context.env
+└── .gitlab-ci.yml
+```
+
+```yaml
+# .gitlab-ci.yml — деплой в dev/staging/prod
+.deploy_template: &deploy_template
+  stage: deploy
+  image: docker:27.x
+  before_script:
+    - docker context rm -f ${CONTEXT_NAME} || true
+    - docker context create ${CONTEXT_NAME}
+        --docker "host=${DOCKER_HOST},ca=${DOCKER_CA},cert=${DOCKER_CERT},key=${DOCKER_KEY}"
+    - docker context use ${CONTEXT_NAME}
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    - docker stack deploy -c envs/${ENVIRONMENT}/docker-compose.yml infra-${ENVIRONMENT} --with-registry-auth --prune
+
+deploy_dev:
+  <<: *deploy_template
+  variables:
+    ENVIRONMENT: dev
+    CONTEXT_NAME: swarm-dev
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+      when: manual
+
+deploy_staging:
+  <<: *deploy_template
+  variables:
+    ENVIRONMENT: staging
+    CONTEXT_NAME: swarm-staging
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+
+deploy_prod:
+  <<: *deploy_template
+  variables:
+    ENVIRONMENT: prod
+    CONTEXT_NAME: swarm-prod
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false
+```
+
+**Отличия окружений:**
+
+| Параметр | dev | staging | prod |
+|:---|:---|:---|:---|
+| Реплики | 1 | 2 | 3+ |
+| TLS | Нет | Self-signed | Let's Encrypt |
+| Ресурсы (limits) | Минимальные | Средние | Production |
+| Мониторинг | Не обязателен | Обязателен | Обязателен + алертинг |
+| Ручной подтверждение | Да | Да | Да |
+
+### Сценарий 7: Автоматизация TLS через Let's Encrypt (Traefik ACME)
+
+Traefik встроенно поддерживает автоматическое получение и обновление SSL-сертификатов через ACME-протокол (Let's Encrypt). Это исключает необходимость ручного управления сертификатами:
+
+```yaml
+# Дополнение к docker-compose.yml (Сценарий 2)
+services:
+  traefik:
+    command:
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@example.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # HTTP-01 Challenge (требует порта 80)
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # Для тестирования (чтобы не попасть в Rate Limit)
+      # - "--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "letsencrypt:/letsencrypt"
+
+  # Сервис для wildcard-сертификатов (DNS-01 Challenge)
+  # Требует DNS-провайдера (Cloudflare, Route53 и т.д.)
+  # traefik:
+  #   command:
+  #     - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+  #     - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
+
+volumes:
+  letsencrypt:
+    driver: local
+```
+
+**Метки сервиса для автоматического TLS:**
+
+```yaml
+services:
+  my-app:
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.my-app.rule=Host(`app.example.com`)"
+        - "traefik.http.routers.my-app.entrypoints=websecure"
+        - "traefik.http.routers.my-app.tls.certresolver=letsencrypt"
+```
+
+**Важно:** Let's Encrypt имеет Rate Limit (50 сертификатов на домен в неделю). На dev/staging используйте staging-сервер или self-signed сертификаты.
+
+### Сценарий 8: Rolling Update инфраструктурных сервисов
+
+Инфраструктурные сервисы (Traefik, Prometheus) обновляются через тот же механизм `docker stack deploy`, но с особыми ограничениями:
+
+```yaml
+# Ключевые параметры для инфраструктурных сервисов
+deploy:
+  update_config:
+    parallelism: 1        # Одна реплика за раз
+    delay: 30s            # Долгая задержка для инициализации
+    order: start-first    # Сначала новая, потом старая
+    failure_action: rollback
+    monitor: 60s          # Долгий мониторинг (Traefik может долго стартовать)
+  rollback_config:
+    parallelism: 1
+    delay: 10s
+    order: start-first
+  restart_policy:
+    condition: any
+    delay: 5s
+    max_attempts: 3
+    window: 120s
+```
+
+**Порядок обновления инфраструктуры:**
+
+1. **Сети** — проверьте, что новые overlay-сети созданы (`docker network ls`).
+2. **Traefik** — обновите первым, так как он маршрутизирует трафик ко всем сервисам.
+3. **Prometheus/Grafana** — обновите вторыми для контроля метрик.
+4. **Логирование** — обновите последним, чтобы не потерять логи во время обновления.
+
+**Команда принудительного отката:**
+
+```bash
+# Если новая версия Traefik вызвала ошибки
+docker service rollback infra_traefik
+
+# Проверка статуса отката
+docker service inspect --format '{{.UpdateStatus.State}} {{.UpdateStatus.Message}}' infra_traefik
+```
+
 ## Дополнительная информация
 
 ### Безопасность инфраструктурного слоя
@@ -155,8 +401,6 @@ deploy_infra:
 
 ### Связанные документы
 
-- **[Подготовка кластера (mTLS)](./swarm_setup.md)** — генерация сертификатов и настройка API.
-- **[Настройка Docker Context](./docker_context_setup.md)** — глубокое погружение в управление контекстами.
-- **[Traefik в Swarm](../swarm_ingress_traefik.md)** — детальная настройка маршрутизации.
-- **[Развертывание прикладных приложений](./app_deployment.md)** — пайплайны для бизнес-логики.
+- **[Подготовка кластера (mTLS)](./swarm_setup.md)** — генерация сертификатов и инициализация Swarm.
+- **[Traefik в Swarm](../swarm_ingress_traefik.md)** — детальная настройка маршрутизации и middleware.
 - **[Лучшие практики CI/CD](./best_practices.md)** — стандарты безопасности и оптимизации.

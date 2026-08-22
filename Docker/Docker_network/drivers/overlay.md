@@ -94,3 +94,7 @@ networks:
 - [Сетевое взаимодействие в Docker Swarm](../../../Docker_swarm/swarm_networking.md)
 - [Технология VXLAN и инкапсуляция](../../../Networking/Tunnels/vxlan.md)
 - [Диагностика сетевых проблем](../../Docker_troubleshooting/network_connectivity_issues.md)
+
+**Глубокое изучение:**
+- **[Cilium](../../Kubernetes/Networking/Network/CNI/cilium.md)** — eBPF замена overlay. В Docker Swarm: Cilium может работать как CNI вместо стандартного overlay, обеспечивая L7 policies и eBPF-based балансировку без VXLAN overhead.
+- **[IPVS](../../Kubernetes/Networking/Network/CNI/ipvs.md)** — L4 балансировка. В Docker overlay: IPVS используется для VIP balancing между репликами сервиса, Routing Mesh через ingress_sbox.

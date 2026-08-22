@@ -185,6 +185,53 @@ sudo systemctl stop patroni
 patronictl -c /etc/patroni.yml resume pg_cluster
 ```
 
+### 7. Интеграция Patroni с S3 (WAL-архивирование и бэкапы)
+
+Patroni нативно поддерживает интеграцию с S3-совместимыми хранилищами для WAL-архивирования и создания бэкапов через **pgBackRest** или **WAL-G**.
+
+**Конфигурация WAL-G с S3 в Patroni (DCS):**
+
+```yaml
+# patronictl edit-config
+postgresql:
+  parameters:
+    archive_mode: "on"
+    archive_command: "wal-g wal-push %p"
+    restore_command: "wal-g wal-fetch %f %p"
+  
+  # Настройки pgBackRest (альтернатива WAL-G)
+  pgbackrest:
+    command: /usr/bin/pgbackrest --stanza=main archive-push %p
+    keep_data: true
+    no_params: true
+  
+  # Или использование pgBackRest для полных бэкапов
+  recovery_conf:
+    restore_command: "pgbackrest --stanza=main archive-get %f %p"
+```
+
+**Переменные окружения для доступа к S3:**
+
+```bash
+# Должны быть доступны процессу PostgreSQL
+export WALG_S3_PREFIX=s3://bucket-name/path/to/wal
+export AWS_ACCESS_KEY_ID=<key>
+export AWS_SECRET_ACCESS_KEY=<secret>
+export AWS_ENDPOINT_URL=https://s3.yandexcloud.net  # Для Yandex Cloud
+export AWS_S3_FORCE_PATH_STYLE=true  # Важно для MinIO и Yandex Cloud
+```
+
+**Принцип работы:**
+1.  Каждый WAL-файл при завершении (16 МБ) автоматически загружается в S3.
+2.  При failover/switchover новая реплика может восстановить недостающие WAL-сегменты из S3.
+3.  Полные бэкапы (через `pgbackrest backup` или `wal-g backup-push`) также загружаются в S3.
+4.  **Point-in-Time Recovery (PITR):** Позволяет восстановить базу на любой момент времени, используя полный бэкап + WAL-архив из S3.
+
+**Patroni + S3 внутри Kubernetes:**
+При развертывании Patroni в Kubernetes (через Zalando Operator или чарты), доступ к S3 осуществляется через:
+- **Kubernetes Secret** с ключами доступа, монтируемый как volume или переменные окружения.
+- **IAM-роли для Service Account (IRSA в AWS, Workload Identity в GCP)** — более безопасный подход без хранения статических ключей.
+
 ---
 
 ## Устранение неисправностей (Troubleshooting)

@@ -227,6 +227,63 @@ git worktree list
 git worktree prune
 ```
 
+### Сценарий 10: Удаление секретов из истории Git
+
+**Проблема:** Коммит с паролями, API-ключами или другими секретами был отправлен в удаленный репозиторий.
+
+**Важно понимать:**
+- Простое удаление файла в новом коммите НЕ решает проблему — секрет остается в истории.
+- Если репозиторий публичный — считайте секрет скомпрометированным и немедленно ротируйте его.
+
+**Метод 1: git-filter-repo (рекомендуемый)**
+
+```bash
+# Установка
+pip install git-filter-repo
+
+# Удаление конкретного файла из всей истории
+git filter-repo --path secrets.env --invert-paths
+
+# Замена текста (секретов) в истории
+git filter-repo --replace-text <(echo 'SECRET_KEY==>REPLACED')
+```
+
+**Метод 2: BFG Repo-Cleaner (для больших репозиториев)**
+
+```bash
+# Удаление файла с секретами
+java -jar bfg.jar --delete-files secrets.env
+
+# Замена текста
+java -jar bfg.jar --replace-text passwords.txt
+```
+
+**Метод 3: git filter-branch (устаревший, но работает)**
+
+```bash
+# Удаление файла из истории
+git filter-branch --force --index-filter \
+  'git rm --cached --ignore-unmatch secrets.env' \
+  --prune-empty --tag-name-filter cat -- --all
+```
+
+**После очистки истории:**
+
+```bash
+# Принудительный push всех веток
+git push origin --force --all
+git push origin --force --tags
+
+# Удаление объектов сборщиком мусора
+git reflog expire --expire=now --all
+git gc --prune=now --aggressive
+```
+
+**Важно:**
+- Все коллеги должны переклонировать репозиторий или выполнить `git rebase` после force-push.
+- Для предотвращения в будущем используйте `git-secrets`, `truffleHog` или `gitleaks` в pre-commit хуках.
+- См. [Защита от секретов в Git](../Security/Tools/gitleaks.md).
+
 ---
 
 ## Дополнительная информация

@@ -120,6 +120,58 @@ image: myregistry.io/my-app@sha256:45b23dee...
 ```
 Это полностью исключает ошибки `manifest not found` для уже запущенных систем и повышает безопасность.
 
+### Сценарий 9: Проблемы с DNS-именем реестра
+
+**Симптом:**
+Ошибка `dial tcp: lookup registry.example.com: no such host` или `i/o timeout` при попытке загрузить образ.
+
+**Причина:**
+Рантайм контейнеров не может разрешить DNS-имя реестра образов.
+
+**Диагностика:**
+
+1.  **Проверка DNS из тестового пода:**
+    ```bash
+    kubectl run dns-debug --image=busybox --rm -it -- nslookup registry.example.com
+    ```
+
+2.  **Проверка CoreDNS:**
+    ```bash
+    kubectl get pods -n kube-system -l k8s-app=kube-dns
+    kubectl logs -n kube-system -l k8s-app=kube-dns
+    ```
+
+3.  **Проверка NodeLocal DNSCache:**
+    ```bash
+    kubectl get daemonset -n kube-system node-local-dns
+    kubectl logs -n kube-system -l k8s-app=node-local-dns
+    ```
+
+**Возможные причины и решения:**
+
+| Причина | Диагностика | Решение |
+| :--- | :--- | :--- |
+| CoreDNS не работает | `kubectl get pods -n kube-system` — поды в `CrashLoopBackOff` | Перезапуск CoreDNS, проверка конфигурации |
+| NetworkPolicy блокирует DNS | Проверка политик в неймспейсе | Добавить разрешение на UDP/TCP порт 53 |
+| NodeLocal DNSCache не работает на узлах | Логи `node-local-dns` содержат ошибки | Перезапустить DaemonSet, проверить конфигурацию |
+| Внешний DNS не резолвится | `nslookup` из тестового пода не работает | Проверить upstream DNS в CoreDNS Corefile |
+| Проблема с `/etc/resolv.conf` пода | Проверка конфигурации пода | Настроить `dnsConfig` или `dnsPolicy` |
+
+**Специфика NodeLocal DNSCache:**
+Если `node-local-dns` работает на части узлов, а на других — нет, это приводит к неконсистентному поведению: поды на одних узлах могут загружать образы, а на других — нет.
+
+**Алгоритм диагностики при проблемах с NodeLocal DNSCache:**
+1.  Проверить статус DaemonSet: `kubectl get ds -n kube-system node-local-dns`.
+2.  Проверить логи подов: `kubectl logs -n kube-system -l k8s-app=node-local-dns`.
+3.  Если поды в `CrashLoopBackOff`, проверить:
+    - Доступность CoreDNS Service IP (обычно `10.96.0.10`).
+    - Корректность ConfigMap с конфигурацией.
+    - Наличие необходимых ресурсов (CPU/Memory).
+4.  Временное решение: удалить проблемные поды DaemonSet для перезапуска.
+5.  Для полного восстановления: `kubectl rollout restart daemonset node-local-dns -n kube-system`.
+
+**Важно:** NodeLocal DNSCache использует IP `169.254.20.10` (по умолчанию) для локального кэширования. Убедитесь, что этот IP не конфликтует с другими сервисами в кластере.
+
 ---
 
 ## Дополнительная информация

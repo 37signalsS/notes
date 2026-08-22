@@ -106,3 +106,10 @@ helm install my-app oci://registry.example.com/charts/my-chart --version 0.1.0
 - **[Версионирование и тегирование](./Docker_registries/image_versioning_and_tagging.md)** — стратегии SemVer и использование Digest.
 - **[Команды Docker CLI](./docker_commands.md)** — подробнее о `login`, `push`, `pull`.
 - **[Управление артефактами](../CI-CD/artifact_management.md)** — концептуальный обзор SSoT по артефактам.
+
+**Глубокое изучение:**
+- **[Docker Hub](https://hub.docker.com)** — официальный реестр. В Docker: rate limit 100 pulls/6h (anonymous), 200 pulls/6h (auth), Docker Scout для анализа, официальные образы.
+- **[GitHub Container Registry (GHCR)](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)** — интеграция с GitHub. В Docker: `docker buildx build --push -t ghcr.io/owner/repo:tag`, OIDC keyless signing через GitHub Actions.
+- **[GitLab Container Registry](https://docs.gitlab.com/ee/user/packages/container_registry/)** — встроенный реестр. В Docker: автоматическая очистка через Cleanup Policy, интеграция с GitLab CI/CD.
+- **[crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md)** — манипуляции с образами. В Docker: `crane ls`, `crane copy`, `crane mutate` для управления тегами и слоями без daemon.
+- **[skopeo](https://github.com/containers/skopeo)** — копирование образов. В Docker: `skopeo copy docker://src docker://dst` для миграции между реестрами, проверка подписей.

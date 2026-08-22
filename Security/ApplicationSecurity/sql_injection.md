@@ -104,7 +104,7 @@ SecRule REQUEST_COOKIES|ARGS|XML:/* "@detectSQLi" \
 | :--- | :--- | :--- |
 | **sqlmap** | DAST / Exploitation | Автоматизация поиска и эксплуатации SQLi. |
 | **Semgrep** | SAST | Быстрый статический анализ по правилам. |
-| **SonarQube** | SAST | Комплексный контроль качества и безопасности кода. |
+| **[SonarQube / SonarCloud](../../CI-CD/Tools/sonarqube.md)** | SAST | Комплексный контроль качества и безопасности кода. |
 | **OWASP ZAP** | DAST | Бесплатный сканер безопасности веб-приложений. |
 
 ### Связанные уязвимости

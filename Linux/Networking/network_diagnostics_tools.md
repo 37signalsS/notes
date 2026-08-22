@@ -44,20 +44,39 @@
 
 **Задача:** Убедиться, что порт на удаленном хосте открыт и не блокируется.
 
+**Основные методы:**
+
 ```bash
-# Проверить TCP-порт 443 (HTTPS)
+# 1. nc (netcat) — самый универсальный инструмент
 nc -zv example.com 443
 # → Connection to example.com 443 port [tcp/https] succeeded!
 
-# Проверить UDP-порт 53 (DNS) с таймаутом 2с
-nc -zvu -w 2 8.8.8.8 53
-# → Connection to 8.8.8.8 53 port [udp/domain] succeeded!
+nc -zvu -w 2 8.8.8.8 53  # UDP с таймаутом 2с
+
+# 2. Bash built-in /dev/tcp — работает без дополнительных утилит
+echo > /dev/tcp/example.com/443 && echo "Port open" || echo "Port closed"
+# Или с таймаутом:
+timeout 2 bash -c 'echo > /dev/tcp/example.com/443' && echo "OK" || echo "FAIL"
+
+# 3. curl — для HTTP/HTTPS портов
+curl -s -o /dev/null -w "%{http_code}" http://example.com:8080/health
+# → 200
+
+# 4. nmap — для сканирования нескольких портов
+nmap -p 80,443,8080 example.com
+
+# 5. ss — проверка локальных портов
+ss -tlnp | grep :80
+
+# 6. telnet — если доступен (устарел, но иногда есть)
+telnet example.com 443
 ```
 
 **Интерпретация результатов:**
-- `succeeded`: Порт открыт.
+- `succeeded` / код 2xx: Порт открыт и сервис отвечает.
 - `Connection refused`: Порт закрыт ОС сервера (сервис не запущен).
-- `Timed out`: Пакеты отбрасываются (DROP) файрволом.
+- `Timed out`: Пакеты отбрасываются (DROP) файрволом или хост недоступен.
+- `No route to host`: Проблема маршрутизации.
 
 ### Сценарий 2: Тестирование пропускной способности (L3-L4)
 

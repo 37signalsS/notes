@@ -591,3 +591,4 @@ docker inspect --format='{{json .Config.Healthcheck}}' myapp:latest | jq
 - **[Проблема PID 1 и сигналы](./runtime_execution.md#решение-проблемы-pid-1)** — детали работы систем инициализации.
 - **[Healthchecks в Podman](../../Podman/podman_healthchecks.md)** — отличия в реализации.
 - **[Пробы в Kubernetes](../../Kubernetes/Base/probes.md)** — мониторинг в K8s.
+- **[Init Process и tini](../init_process_tini.md)** — подробный разбор tini, dumb-init, интеграция и best practices.

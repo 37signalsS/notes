@@ -99,6 +99,26 @@ vault status
 
 ## Дополнительная информация
 
+### Vault внутри Kubernetes
+
+Развертывание Vault в Kubernetes — распространенный паттерн для обеспечения безопасности кластера:
+
+**Архитектура:**
+- **Vault Server** разворачивается как StatefulSet в выделенном неймспейсе (например, `vault`).
+- Хранилище — **Raft** (Integrated Storage) для HA без внешних зависимостей.
+- Для production обязателен **Auto-unseal** через облачный KMS (AWS KMS, GCP CKMS) или HSM.
+
+**Способы доставки секретов в поды:**
+1.  **Vault Agent Sidecar:** Контейнер-сайдкар, который аутентифицируется в Vault, получает секреты и записывает их в общий `emptyDir` volume.
+2.  **Vault Secrets Operator (VSO):** Оператор, синхронизирующий секреты из Vault в нативные Kubernetes Secret ресурсы (CRD `VaultSecret`).
+3.  **Secrets Store CSI Driver:** CSI-драйвер, монтирующий секреты из Vault как volume в `tmpfs` пода (секреты не попадают в etcd).
+
+**Аутентификация подов:**
+- **Kubernetes Auth Method:** Под аутентифицируется через свой ServiceAccount JWT-токен. Vault проверяет токен через Kubernetes API.
+- **JWT/OIDC:** Для внешних систем (CI/CD) используется подписанный JWT-токен.
+
+**Рекомендация:** Vault внутри Kubernetes подходит для кластеров, где требуется централизованное управление секретами с динамической генерацией, аудитом и ротацией. Для простых сценариев достаточно External Secrets Operator (ESO) с внешним хранилищем.
+
 *   **[Архитектура и основные концепции](./concepts.md):** Глубокое погружение в механизмы работы Vault.
 *   **[Vault Agent](./guides/vault_agent/basics.md):** Автоматизация аутентификации и шаблонизации секретов.
 *   **[Официальная документация HashiCorp Vault](https://developer.hashicorp.com/vault/docs):** Технический справочник по актуальным версиям.

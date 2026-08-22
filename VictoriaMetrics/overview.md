@@ -145,6 +145,41 @@ vmrestore -storageDataPath=/victoria-metrics-data \
 
 Существует также сервис `vmbackupmanager` (Enterprise) для управления retention бэкапов (например, хранить N дней).
 
+### Сбор метрик через vmagent
+
+Для сбора метрик с целевых систем и передачи в VictoriaMetrics используется **vmagent**. Он заменяет Prometheus в сценариях, где нужен только сбор и forwarding, без локального TSDB.
+
+```yaml
+# vmagent.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['localhost:9100']
+
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+```
+
+Запуск:
+```bash
+docker run -d \
+  -v vmagent-data:/victoria-metrics-data \
+  -p 8429:8429 \
+  victoriametrics/vmagent \
+  -promscrape.config=vmagent.yml \
+  -remoteWrite.url=http://localhost:8428/api/v1/write
+```
+
+Для алертинга используется **vmalert**, который consuming метрики из VictoriaMetrics по MetricsQL/PromQL. Правила описываются через ресурс [VMRule](./vmalert_rules_management_with_manifests.md).
+
 ### Сравнение с альтернативами
 
 | Характеристика | VictoriaMetrics | Thanos | Grafana Mimir (v3.x) |

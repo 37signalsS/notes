@@ -670,3 +670,7 @@ docker system prune -a --volumes
 
 - **[Docker Buildx: Мультиплатформенность](./docker_buildx.md)** — управление инстансами сборщиков.
 - **[Docker Bake: Декларативная сборка](./docker-bake.md)** — HCL/YAML конфигурации.
+
+**Глубокое изучение:**
+- **[BuildKit Secrets](../../Vault/guides/vault_docker_integration.md)** — секреты в сборке. В Docker: `--mount=type=secret,id=mysecret` для передачи паролей/ключей без попадания в слои образа, совместимость с Vault Agent.
+- **[Cache Mounts](../../Linux/Core/kernel/psi.md)** — кэширование зависимостей. В Docker: `--mount=type=cache,target=/root/.cache/pip` для ускорения pip install, `--mount=type=cache,target=/go/pkg/mod` для Go модулей.

@@ -215,3 +215,7 @@ kernel.kptr_restrict = 2
 - **[Обзор безопасности Docker](./overview.md)** — общие принципы и векторы атак.
 - **[Укрепление безопасности контейнеров](./container_hardening.md)** — настройки изоляции внутри контейнера.
 - **[Механизмы изоляции Linux](../Concepts/linux_isolation.md)** — технические детали Namespaces и Cgroups.
+
+**Глубокое изучение:**
+- **[mTLS и TLS](../../Linux/Security/ssh/ssh_usage_and_tunnels.md)** — шифрование Docker API. В Docker: порт 2376 для защищенного API, сертификаты для `dockerd --tlsverify`, SSH туннели вместо TCP.
+- **[Vault + Docker](../../Vault/guides/vault_docker_integration.md)** — управление секретами. В Docker: BuildKit `--mount=type=secret`, Vault Agent sidecar в Compose, tmpfs для `/run/secrets/`.

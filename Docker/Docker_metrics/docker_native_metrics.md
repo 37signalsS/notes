@@ -109,6 +109,11 @@ docker system df -v
 
 - **[Интеграция Docker с Prometheus](./docker_prometheus_integration.md)** — использование встроенного экспортера (`daemon.json`).
 - **[cAdvisor](../../Prometheus/Exporters/cadvisor.md)** — стандарт для глубокого сбора метрик контейнеров (включая детали cgroup).
+- **[cAdvisor: развертывание и сбор метрик](./docker_cadvisor_deployment.md)** — деплой cAdvisor, конфигурация сбора и интеграция с Prometheus.
 - **[Vector](../../Vector/vector_overview.md)** — высокопроизводительный агент для сбора и маршрутизации метрик.
 - **[Контрольные группы (cgroups)](../../Linux/Core/cgroups.md)** — теоретическая база механизмов ограничения ресурсов.
 - **[Pressure Stall Information (PSI)](../../Linux/Core/kernel/psi.md)** — глубокая диагностика задержек на уровне ядра.
+
+**Глубокое изучение:**
+- **[Resource Tuning](../../Kubernetes/Base/Deployment/deployment_manifest.md)** — оптимизация CPU/memory limits. В Docker: `docker stats` для мониторинга, `docker update` для изменения limits без перезапуска, `nr_throttled` в `cpu.stat` для диагностики дросселирования.
+- **[Container Profiling](../../Concepts/continuous_profiling.md)** — профилирование CPU/memory в runtime. В Docker: `pyroscope` как sidecar, `perf` через `--pid=host`, eBPF-based profiling через Parca.

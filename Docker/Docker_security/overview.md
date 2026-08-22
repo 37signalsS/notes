@@ -82,6 +82,10 @@
 - **[Мониторинг в Runtime](./runtime_monitoring.md)** (eBPF, Tetragon, Falco)
 - **[Аудит событий (auditd)](../../Linux/SystemAdministration/Logging/auditd.md)**
 
+**Глубокое изучение:**
+- **[CI/CD Security](../../Security/Supply_Chain_Security/overview.md)** — защита pipeline. В Docker: runner hardening (ephemeral runners), секреты через OIDC (не в variables), сканирование при сборке, signing перед push.
+- **[Docker Desktop Security](https://docs.docker.com/desktop/security/)** — изоляция VM на macOS. В Docker: credential helper, file sharing limitations, Docker Socket exposure risks.
+
 **Внешние стандарты:**
 
 - **CIS Docker Benchmark:** Фундаментальные рекомендации по настройке.

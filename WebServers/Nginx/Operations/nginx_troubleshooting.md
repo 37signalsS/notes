@@ -282,6 +282,47 @@ Angie предоставляет более детальную информац�
 awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn
 ```
 
+### Топ IP-адресов по количеству запросов
+
+```bash
+# Топ 10 IP, которые чаще всего обращались к серверу
+awk '{print $1}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -10
+```
+
+**Разбор команды:**
+1. `awk '{print $1}'` — извлекает первую колонку (IP-адрес клиента в стандартном combined формате).
+2. `sort` — сортирует для группировки одинаковых IP (обязательно для работы `uniq -c`).
+3. `uniq -c` — подсчитывает количество повторений каждой уникальной строки.
+4. `sort -rn` — сортирует по числу в обратном порядке (от большего к меньшему).
+5. `head -10` — выводит топ-10 результатов.
+
+**Пример вывода:**
+```
+  15234 192.168.1.100
+   8923 10.0.0.50
+   4521 172.16.0.1
+   ...
+```
+
+**Вариации для других задач:**
+
+```bash
+# Топ запрашиваемых URL (7-я колонка)
+awk '{print $7}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -20
+
+# Топ IP по количеству запросов с кодом 4xx (ошибки клиента)
+awk '$9 ~ /^4/ {print $1}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -10
+
+# Топ IP по объему переданных данных (10-я колонка - bytes_sent)
+awk '{a[$1]+=$10} END {for(k in a) print a[k], k}' /var/log/nginx/access.log | sort -rn | head -10
+
+# Топ User-Agent
+awk -F'"' '{print $6}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -10
+
+# Топ рефереров (откуда перешли)
+awk -F'"' '{print $4}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -10
+```
+
 ### Фильтрация ошибок 5xx (sed)
 
 ```bash

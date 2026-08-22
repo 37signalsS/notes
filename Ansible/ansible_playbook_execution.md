@@ -77,6 +77,7 @@ ansible-playbook site.yml
     ansible-playbook site.yml -e "app_version=1.2.3 env=prod"
     ```
 *   `-b`, `--become`: Выполнение задач с повышением привилегий (`sudo`).
+*   `--become-user`: Указание пользователя, от имени которого выполнять задачу (по умолчанию `root`). Пример: `--become-user postgres`.
 *   `-K`, `--ask-become-pass`: Запрос пароля для `sudo`.
 *   `-k`, `--ask-pass`: Запрос пароля для SSH.
 *   `--ask-vault-pass`: Запрос пароля для расшифровки [Ansible Vault](./Vault/basics.md).
@@ -136,6 +137,26 @@ config.vm.provision "ansible" do |ansible|
   # ansible.extra_vars = { version: "1.0.1" }
 end
 ```
+
+### Запуск задачи от конкретного пользователя
+
+Если все плейбуки по умолчанию выполняются от одного пользователя (например, `deploy`), но отдельную задачу нужно запустить от другого (например, `postgres`), используйте директиву `become_user` на уровне задачи:
+
+```yaml
+- name: Выполнить миграции базы данных
+  ansible.builtin.command: /opt/app/scripts/migrate.sh
+  become: true
+  become_user: postgres
+  register: migration_result
+
+- name: Проверить результат миграции
+  ansible.builtin.assert:
+    that:
+      - migration_result.rc == 0
+    fail_msg: "Миграция завершилась с ошибкой"
+```
+
+Это соответствует принципу наименьших привилегий: только конкретная задача работает от имени сервисного пользователя, а не весь плейбук.
 
 ### Неинтерактивный запуск в CI/CD
 

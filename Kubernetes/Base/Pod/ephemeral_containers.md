@@ -94,7 +94,46 @@ volumeMounts:
 kubectl debug <pod_name> -it --image=ubuntu --custom=custom-debug.yaml
 ```
 
-### Сценарий 4: Отладка на уровне узла (Node)
+### Сценарий 5: Диагностика сетевой связности между подом
+
+**Задача:** Проверить доступность одного пода с другого, когда в поде нет сетевых утилит (distroless или минимальный образ).
+
+**Методы:**
+
+1. **Ephemeral Container с нужными инструментами** — наиболее правильный подход:
+
+```bash
+# Добавить отладочный контейнер с сетевыми утилитами
+kubectl debug <source_pod> -it --image=nicolaka/netshoot
+
+# Внутри ephemeral контейнера:
+curl http://<service_name>.<namespace>.svc.cluster.local:8080/health
+# или
+nc -zv <service_name>.<namespace>.svc.cluster.local 8080
+```
+
+2. **Отладочная копия Pod на той же ноде** — если нужно воспроизвести сетевое окружение:
+
+```bash
+# Создать копию pod с инструментами отладки
+kubectl debug <pod_name> -it --image=nicolaka/netshoot --copy-to=debug-pod
+```
+
+3. **Bash /dev/tcp** — если в контейнере есть bash, но нет curl/nc:
+
+```bash
+# Проверка TCP-порта без дополнительных утилит
+kubectl exec <pod_name> -- bash -c 'echo > /dev/tcp/<service>/8080 && echo OK || echo FAIL'
+```
+
+4. **Proc filesystem** — через /proc/{pid}/net/tcp можно увидеть состояние TCP-соединений процесса:
+
+```bash
+# Просмотр активных TCP-соединений контейнера
+kubectl exec <pod_name> -- cat /proc/1/net/tcp
+```
+
+**Важно:** Команды вроде `echo > /dev/tcp/host/port` работают только если в контейнере есть bash с поддержкой /dev/tcp (опция `HAVE_DEV_TCP` при компиляции). В busybox/alpine bash обычно включен, в distroless — нет.
 
 Запуск контейнера в пространстве имен хоста для инспектирования `kubelet` или конфигурации сети узла:
 
