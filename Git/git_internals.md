@@ -302,11 +302,13 @@ git update-ref refs/heads/main c3d4e5f6
 
 ### Связанные темы
 
-- [Git — основы](./git_basics.md) — базовые концепции и команды
-- [Управление ветками и слияние](./git_branching.md) — merge, rebase, cherry-pick
-- [Манипуляции с историей](./git_history_manipulation.md) — reset, revert, amend
-- [Производительность Git](./git_performance.md) — оптимизация работы с большими репозиториями
-- [Git LFS](./git_lfs.md) — работа с бинарными данными
+- [Git — основы](./git_basics.md) — базовые концепции и команды.
+- [Управление ветками и слияние](./git_branching.md) — merge, rebase, cherry-pick.
+- [Git Reflog](./git_reflog.md) — журнал ссылок для восстановления потерянных коммитов.
+- [Конфигурация Git](./git_configuration.md) — core.* настройки, reftable backend, storage layout.
+- [Манипуляции с историей](./git_history_manipulation.md) — reset, revert, amend, filter-repo.
+- [Производительность Git](./git_performance.md) — pack files, commit-graph, FSMonitor.
+- [Git LFS](./git_lfs.md) — работа с бинарными данными.
 
 ### Официальные ресурсы
 
