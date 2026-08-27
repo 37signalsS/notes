@@ -12,6 +12,12 @@
 
 **ansible-navigator** — современный CLI/TUI инструмент для запуска плейбуков, инспекции образов и просмотра документации, который обеспечивает идентичность сред выполнения между разработкой и эксплуатацией.
 
+**execution-environment.yml** — декларативный YAML-файл, описывающий зависимости и параметры сборки EE.
+
+**Container Engine** — OCI-совместимый движок контейнеров (Podman, Docker), используемый для запуска EE.
+
+---
+
 ## Основные концепции
 
 До появления EE (версии до Ansible 2.11) зависимости устанавливались напрямую на хост Control Node. Это приводило к проблемам «dependency hell», когда разные проекты требовали конфликтующих версий коллекций или Python-библиотек. EE решает эту проблему, инкапсулируя всё необходимое в переносимый контейнер.
@@ -21,6 +27,44 @@
 *   **Воспроизводимость:** Гарантия того, что плейбук, протестированный локально, отработает идентично в CI/CD или в продакшене.
 *   **Масштабируемость:** Узлы выполнения (Execution Nodes) в Ansible Automation Platform (AAP) или AWX могут динамически запускать контейнеры EE на различных хостах без их предварительной настройки.
 *   **Упрощение пайплайнов:** В CI больше не требуется устанавливать зависимости через `pip install` или `ansible-galaxy` при каждом запуске.
+
+### Сравнение: EE vs Virtualenv
+
+| Критерий | Execution Environment | Virtualenv |
+| :--- | :--- | :--- |
+| **Изоляция** | Полная (процессная + файловая) | Частичная (только Python) |
+| **Воспроизводимость** | 100% (образ неизменяемый) | Зависит от хоста |
+| **Переносимость** | Высокая (OCI-образ) | Низкая (привязка к хосту) |
+| **Накладные расходы** | Средние (старт контейнера) | Минимальные |
+| **Сложность настройки** | Средняя | Низкая |
+| **Безопасность** | Высокая (rootless, namespaces) | Средняя |
+| **Использование в CI/CD** | Рекомендуется | Допустимо |
+
+### Архитектура EE
+
+```
+┌─────────────────────────────────────────┐
+│         Execution Environment           │
+├─────────────────────────────────────────┤
+│  ┌─────────────────────────────────┐    │
+│  │      Ansible Core (2.17+)       │    │
+│  └─────────────────────────────────┘    │
+│  ┌─────────────────────────────────┐    │
+│  │      Ansible Collections        │    │
+│  │  (kubernetes.core, aws, etc.)   │    │
+│  └─────────────────────────────────┘    │
+│  ┌─────────────────────────────────┐    │
+│  │      Python Libraries           │    │
+│  │  (boto3, kubernetes, etc.)      │    │
+│  └─────────────────────────────────┘    │
+│  ┌─────────────────────────────────┐    │
+│  │      System Packages            │    │
+│  │  (git, sshpass, openssh)        │    │
+│  └─────────────────────────────────┘    │
+└─────────────────────────────────────────┘
+```
+
+---
 
 ## Практические сценарии
 
@@ -145,12 +189,66 @@ ansible-navigator:
 ansible-navigator run site.yml --mode stdout
 ```
 
+### Переменные окружения в EE
+
+Ansible передает определенные переменные окружения в контейнер EE:
+
+```yaml
+# В ansible-navigator.yml
+ansible-navigator:
+  execution-environment:
+    environment-variables:
+     ARA_API_SERVER: "http://ara.example.com"
+      ANSIBLE_FORCE_COLOR: "true"
+      ANSIBLE_NOCOWS: "1"
+    container-options:
+      - "--pull=missing"
+      - "--quiet"
+```
+
+### Кастомный entrypoint
+
+Для выполнения предварительных действий перед запуском Ansible:
+
+```bash
+#!/bin/bash
+# custom-entrypoint.sh
+echo "Initializing Execution Environment..."
+echo "Python: $(python3 --version)"
+echo "Ansible: $(ansible --version | head -1)"
+
+# Выполнение команды
+exec "$@"
+```
+
+```yaml
+# В execution-environment.yml
+additional_build_steps:
+  append_final:
+    - COPY custom-entrypoint.sh /opt/custom-entrypoint.sh
+    - RUN chmod +x /opt/custom-entrypoint.sh
+
+# В ansible-navigator.yml
+ansible-navigator:
+  execution-environment:
+    container-options:
+      - "--entrypoint=/opt/custom-entrypoint.sh"
+```
+
+---
+
 ## Безопасность и оптимизация
 
 ### Безопасность образов (Supply Chain Security)
 1.  **Подпись образов:** Используйте `cosign` или встроенные механизмы реестров для подписи EE-образов. Это критично при использовании в AWX/AAP.
 2.  **Rootless Podman:** Всегда запускайте сборку и выполнение EE в rootless-режиме для минимизации рисков компрометации хоста.
 3.  **Минимальные образы:** В качестве `base_image` для продакшена используйте `minimal` образы (например, на базе RHEL UBI), отключая ненужные утилиты.
+4.  **Сканирование уязвимостей:** Используйте `trivy` или `grype` для проверки образов перед деплоем:
+    ```bash
+    trivy image my-custom-ee:v1.0.0
+    grype my-custom-ee:v1.0.0
+    ```
+5.  **Пиннинг версий:** Всегда указывайте конкретные версии зависимостей в `execution-environment.yml` для воспроизводимости.
 
 ### Интеграция с AWX / Ansible Automation Platform (AAP)
 Подробное описание платформы и её компонентов доступно в разделе **[Ansible Automation Platform (AAP)](./ansible-automation-platform.md)**.
@@ -163,6 +261,27 @@ ansible-navigator run site.yml --mode stdout
 ### Оптимизация слоев
 1.  **Порядок зависимостей:** Размещайте редко меняющиеся зависимости (системные пакеты) выше часто меняющихся (внутренние коллекции).
 2.  **Многоэтапная сборка:** `ansible-builder` по умолчанию использует multi-stage билд, удаляя инструменты сборки (gcc, devel-пакеты) из финального слоя, что существенно уменьшает размер образа.
+3.  **Кеширование:** Используйте `--no-cache` для полной пересборки или `--cache` для использования кеша предыдущих сборок.
+
+### Мультиархитектурные сборки
+
+Для поддержки разных архитектур (amd64, arm64):
+
+```bash
+# Установка поддержки мультиархитектуры
+podman manifest create my-custom-ee:latest
+
+# Сборка для разных архитектур
+ansible-builder build --tag my-custom-ee:latest-amd64 --build-arg ARCH=amd64
+ansible-builder build --tag my-custom-ee:latest-arm64 --build-arg ARCH=arm64
+
+# Объединение в манифест
+podman manifest add my-custom-ee:latest my-custom-ee:latest-amd64
+podman manifest add my-custom-ee:latest my-custom-ee:latest-arm64
+podman manifest push my-custom-ee:latest
+```
+
+---
 
 ## Отладка и устранение проблем
 
@@ -182,6 +301,45 @@ ansible --version
 pip list | grep <package>
 ansible-galaxy collection list
 ```
+
+### Диагностические команды
+
+```bash
+# Просмотр информации об образе
+podman inspect my-custom-ee:v1.0.0
+
+# Проверка размера образа
+podman images my-custom-ee:v1.0.0
+
+# Просмотр слоев образа
+podman history my-custom-ee:v1.0.0
+
+# Запуск с отладкой
+ansible-navigator run site.yml -m stdout --vvv
+
+# Проверка конфигурации ansible-navigator
+ansible-navigator config dump
+
+# Просмотр логов сборки
+ansible-builder build --tag my-custom-ee:v1.0.0 --log-level debug
+```
+
+### Таблица типовых ошибок
+
+| Проблема | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| `Error: unable to find image` | Образ не найден локально | Проверьте `podman images` или добавьте `--pull=always` |
+| `Permission denied` | Rootless-режим или права доступа | Используйте `podman unshare` или проверьте права |
+| `ModuleNotFoundError` | Python-зависимость отсутствует | Добавьте пакет в `requirements.txt` |
+| `Collection not found` | Коллекция не установлена | Добавьте в `requirements.yml` |
+| `Containerfile parse error` | Ошибка в `execution-environment.yml` | Проверьте YAML-синтаксис и версию формата |
+| `dial tcp: lookup ghcr.io` | Проблемы с DNS | Проверьте сеть или используйте прокси |
+| `error building image` | Ошибка в `additional_build_steps` | Проверьте Dockerfile-синтаксис в `context/` |
+| `ansible-playbook: command not found` | Ansible не установлен в EE | Проверьте `ansible_core.package_pip` |
+| `timeout expired` | Медленная загрузка зависимостей | Увеличьте таймаут или используйте кеш |
+| `certificate signed by unknown authority` | Проблемы с сертификатами | Добавьте CA-сертификат в `additional_build_steps` |
+
+---
 
 ## Дополнительная информация
 

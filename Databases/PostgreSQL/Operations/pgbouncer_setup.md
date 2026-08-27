@@ -40,6 +40,19 @@
 
 > **Важно:** Начиная с версии 1.21, PgBouncer поддерживает протокольные Prepared Statements в режиме транзакций через параметр `max_prepared_statements`.
 
+### Планирование ёмкости пула (Capacity Planning)
+
+Размер пула задаётся профилем нагрузки на БД, а не числом клиентов или воркеров приложения:
+
+- `default_pool_size` — число серверных соединений на пару (база, пользователь). Для коротких OLTP-транзакций обычно 20–50.
+- `max_client_conn` — лимит **клиентских сессий** (не соединений к БД). Ограничен `ulimit -n` процесса: сумма `max_client_conn + default_pool_size × число_баз` должна быть меньше доступных дескрипторов.
+- Правило: суммарный `default_pool_size` всех пулов **меньше** `max_connections` PostgreSQL (оставляем запас на админов и миграции). Иначе PgBouncer упирается в лимит СУБД.
+- Транзакционный пулинг умножает ёмкость: 10 000 клиентов при пуле 50 → ~50 реальных соединений к БД.
+
+Общие принципы пулинга соединений — в **[Connection Pooling](../../../Networking/Concepts/connection_pooling.md)**.
+
+**Типичная ошибка:** `default_pool_size = воркеры_приложения × реплики` — при горизонтальном масштабировании приложения серверные соединения БД взлетают. Пул фиксируется по нагрузке БД.
+
 ## Практические сценарии
 
 ### Установка
@@ -149,6 +162,19 @@ psql -h localhost -p 6432 -U postgres pgbouncer
 3. **`pgbouncer_pools_server_active_connections`** — количество занятых серверных соединений.
 4. **`pgbouncer_up`** — доступность самого сервиса.
 
+### Переключение бэкенда (Failover) без обрыва клиентов
+
+При смене Primary (Patroni или вручную) не разрывайте клиентов: поставьте PgBouncer на паузу (активные транзакции завершатся, новые встанут в очередь), укажите новый адрес и возобновите:
+
+```bash
+psql -h localhost -p 6432 -U postgres pgbouncer -c "PAUSE myapp_db"
+# обновить [databases] -> host=новый_primary в /etc/pgbouncer/pgbouncer.ini
+psql -h localhost -p 6432 -U postgres pgbouncer -c "RELOAD"
+psql -h localhost -p 6432 -U postgres pgbouncer -c "RESUME myapp_db"
+```
+
+**Валидация:** `SHOW POOLS` показывает `paused=0` и рост `sv_active` на новом бэкенде; в логах отсутствуют `closing because:`.
+
 ## Эксплуатация и надежность
 
 ### Безопасность (TLS/SSL)
@@ -204,10 +230,13 @@ client_tls_cert_file = /etc/pgbouncer/server.crt
 | **`ERROR: prepared statement "..." already exists`** | Конфликт имен в режиме транзакций (старые версии). | Обновитесь до 1.21+ или отключите Prepared Statements в приложении. |
 | **`sv_active` достигает `default_pool_size`** | Пул переполнен, запросы встают в очередь. | Увеличьте `default_pool_size` или проанализируйте длительные транзакции в БД. |
 | **`ERROR: closing because: pgbouncer: connection pool full`** | Исчерпан лимит `max_client_conn`. | Увеличьте `max_client_conn` в `pgbouncer.ini` (зависит от `ulimit` процесса). |
+| **`client_waiting` постоянно > 0** | Клиенты ждут свободного серверного соединения. | Проверьте долгие транзакции (`pg_stat_activity`), увеличьте `default_pool_size` или добавьте реплики для чтения. |
+| **`FATAL: too many open files`** | Исчерпан лимит дескрипторов у процесса pgbouncer. | Поднимите `ulimit -n` для сервиса и убедитесь, что `max_client_conn + пулы < ulimit`. |
+| **`ERROR: cannot access temporary tables during a non-session pooling`** | Temp-таблицы не работают в режиме transaction. | Переведите этого пользователя в `session` пул или перепишите логику без temp-таблиц. |
 
 ## Дополнительная информация
 
-### Рекомендации 2026 года
+### Рекомендации по эксплуатации
 1. **Версия 1.21+**: Переход на версии 1.21 и выше обязателен для использования Prepared Statements в режиме транзакций, что значительно повышает производительность ORM (Hibernate, Prisma, Django).
 2. **HBA**: Используйте `hba_file` в PgBouncer для гибкого управления доступом на уровне IP/сетей, аналогично `pg_hba.conf`.
 3. **Odyssey**: Если вам нужна многопоточность на стороне пулера (одно ядро PgBouncer перестало справляться), рассмотрите **Odyssey** (Yandex) или **PgCat**.

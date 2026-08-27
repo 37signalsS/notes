@@ -1,5 +1,10 @@
 # Специальные маски подсети и CIDR
 
+**Необходимые знания:**
+- Понимание двоичной системы счисления (биты, октеты)
+- Основы IP-адресации: структура адреса, назначение маски
+- Базовые понятия маршрутизации (таблица маршрутизации, longest prefix match)
+
 ## Определения
 
 **CIDR (Classless Inter-Domain Routing)** — бесклассовая адресация, заменившая классовую модель в 1993 году ([RFC 4632](#основные-rfc)). Позволяет гибко задавать размер сети через маску переменной длины (VLSM), записываемую в префиксной нотации `/N`.
@@ -111,6 +116,462 @@ ip addr add 172.16.0.1/31 dev eth1
 
 В высокопроизводительных коммутаторах и маршрутизаторах поиск по LPM выполняется в памяти **TCAM** (Ternary Content-Addressable Memory). В отличие от обычной RAM, TCAM позволяет проверять совпадение адреса со всеми строками таблицы одновременно за один такт, учитывая маски (биты "0", "1" и "don't care").
 
+### Проверка маски через ipcalc
+
+```bash
+# Установка ipcalc
+sudo apt install ipcalc   # Debian/Ubuntu
+sudo dnf install ipcalc   # Fedora/RHEL
+
+# Проверка параметров подсети
+ipcalc 192.168.1.0/26
+# → Network:   192.168.1.0/26
+# → Netmask:   255.255.255.192
+# → Broadcast: 192.168.1.63
+# → HostMin:   192.168.1.1
+# → HostMax:   192.168.1.62
+# → Hosts/Net: 62
+
+# Проверка вхождения IP в подсеть
+ipcalc 192.168.1.100/26 | grep -i "network\|broadcast\|host"
+```
+
+### Bash-функция для расчёта CIDR
+
+```bash
+# Быстрый расчёт параметров подсети по CIDR
+calc_cidr() {
+    local ip=$1
+    local cidr=$2
+    
+    # Количество хостов
+    local hosts=$((2 ** (32 - cidr) - 2))
+    
+    # Маска в десятичном формате
+    local mask=$((0xFFFFFFFF << (32 - cidr)))
+    local mask_str="$((mask >> 24)).$(((mask >> 16) & 0xFF)).$(((mask >> 8) & 0xFF)).$((mask & 0xFF))"
+    
+    # Адрес сети
+    local ip_num=$(echo "$ip" | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    local network_num=$((ip_num & mask))
+    local network_str="$((network_num >> 24)).$(((network_num >> 16) & 0xFF)).$(((network_num >> 8) & 0xFF)).$((network_num & 0xFF))"
+    
+    # Широковещательный адрес
+    local broadcast_num=$((network_num | (0xFFFFFFFF >> cidr)))
+    local broadcast_str="$((broadcast_num >> 24)).$(((broadcast_num >> 16) & 0xFF)).$(((broadcast_num >> 8) & 0xFF)).$((broadcast_num & 0xFF))"
+    
+    echo "IP: $ip/$cidr"
+    echo "Маска: $mask_str (/$cidr)"
+    echo "Сеть: $network_str/$cidr"
+    echo "Broadcast: $broadcast_str"
+    echo "Доступно хостов: $hosts"
+    echo "Диапазон: $(echo "$network_str" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}') — $(echo "$broadcast_str" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4-1}')"
+}
+
+# Использование
+calc_cidr 192.168.1.100 26
+```
+
+### Вывод таблицы подсетей
+
+```bash
+# Генерация таблицы подсетей для сетевого диапазона
+generate_subnet_table() {
+    local network=$1
+    local prefix=$2
+    
+    echo "Адрес сети | Broadcast | Диапазон хостов | Кол-во адресов"
+    echo "-----------|-----------|-----------------|---------------"
+    
+    local total_hosts=$((2 ** (32 - prefix)))
+    local ip_num=$(echo "$network" | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    
+    for ((i=0; i < 16; i++)); do
+        local current_net=$((ip_num + i * total_hosts))
+        local current_broadcast=$((current_net + total_hosts - 1))
+        
+        local net_str="$((current_net >> 24)).$(((current_net >> 16) & 0xFF)).$(((current_net >> 8) & 0xFF)).$((current_net & 0xFF))"
+        local bcast_str="$((current_broadcast >> 24)).$(((current_broadcast >> 16) & 0xFF)).$(((current_broadcast >> 8) & 0xFF)).$((current_broadcast & 0xFF))"
+        
+        printf "%-9s | %-9s | %-15s | %d\n" "$net_str/$prefix" "$bcast_str" "$((ip_num+1))-$((current_broadcast-1))" "$total_hosts"
+    done
+}
+
+# Использование: вывод подсетей /28 в диапазоне 192.168.1.0/24
+generate_subnet_table 192.168.1.0 28
+```
+
+### Проверка корректности маски
+
+```bash
+# Проверка, является ли маска валидной (непрерывные единицы)
+validate_mask() {
+    local mask=$1
+    
+    # Преобразование в 32-битное число
+    local mask_num=$(echo "$mask" | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    
+    # Проверка: маска & (маска + 1) должно быть 0
+    if [ $((mask_num & (mask_num + 1))) -eq 0 ]; then
+        echo "Маска $mask — валидная"
+        
+        # Подсчет единичных бит
+        local ones=0
+        local temp=$mask_num
+        while [ $temp -gt 0 ]; do
+            ones=$((ones + (temp & 1)))
+            temp=$((temp >> 1))
+        done
+        echo "Количество единичных бит: $ones (/$ones в CIDR)"
+    else
+        echo "Маска $mask — НЕВАЛИДНА (есть разрывы в единицах)"
+    fi
+}
+
+# Примеры использования
+validate_mask 255.255.255.0      # Валидная (/24)
+validate_mask 255.255.0.255      # Невалидная (разрыв)
+validate_mask 255.255.255.128    # Валидная (/25)
+```
+
+### Конфигурация /31 на оборудовании
+
+```bash
+# Cisco IOS
+interface GigabitEthernet0/1
+ ip address 172.16.0.1 255.255.255.254
+ no shutdown
+
+# MikroTik RouterOS
+/ip address add address=172.16.0.1/31 interface=ether1
+
+# Juniper JunOS
+set interfaces ge-0/0/1 unit 0 family inet address 172.16.0.1/31
+
+# Linux (iproute2)
+ip addr add 172.16.0.1/31 dev eth1
+ip link set eth1 up
+```
+
+### Визуализация диапазона адресов
+
+```bash
+# Визуализация диапазона IP-адресов для заданной маски
+visualize_range() {
+    local ip=$1
+    local cidr=$2
+    
+    local total=$((2 ** (32 - cidr)))
+    local ip_num=$(echo "$ip" | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    local network=$((ip_num & (0xFFFFFFFF << (32 - cidr))))
+    local broadcast=$((network + total - 1))
+    
+    echo "=== Диапазон для $ip/$cidr ==="
+    echo "Сеть:     $((network >> 24)).$(((network >> 16) & 0xFF)).$(((network >> 8) & 0xFF)).$((network & 0xFF))"
+    echo "Broadcast: $((broadcast >> 24)).$(((broadcast >> 16) & 0xFF)).$(((broadcast >> 8) & 0xFF)).$((broadcast & 0xFF))"
+    echo "Всего адресов: $total"
+    echo ""
+    
+    # Визуализация
+    echo "Адреса: [$(echo "$network" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4+1}') — $(echo "$broadcast" | awk -F. '{printf "%d.%d.%d.%d", $1, $2, $3, $4-1}')]"
+}
+
+# Использование
+visualize_range 192.168.1.100 26
+```
+
+## Troubleshooting
+
+### Частые ошибки с масками подсети
+
+| Проблема | Симптом | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Невалидная маска** | Интерфейс не поднимается | `ip addr show` — нет IP | Проверить маску через `ipcalc` |
+| **Дырявая маска** | Маршрутизация работает некорректно | `ip route show` — маршруты пересекаются | Исправить маску на непрерывную |
+| **Маска /30 на PtP** | Тратится 4 адреса на 2 хоста | Проверка浪费: `(4-2)/4 = 50% потерь` | Перейти на /31 (RFC 3021) |
+| **Маска не совпадает с сетью** | Хост не может связаться с gateway | `ip route get <gateway>` — нет маршрута | Использовать адрес из диапазона подсети |
+| **Дублирующиеся подсети** | Конфликт адресов, потеря пакетов | `ip route show` — проверка пересечений | Пересмотреть план адресации |
+
+### Диагностика проблем с масками
+
+```bash
+# Проверка текущей конфигурации интерфейса
+ip addr show eth0 | grep inet
+# → inet 192.168.1.100/24 brd 192.168.1.255 scope global eth0
+
+# Проверка таблицы маршрутизации
+ip route show
+# → 192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.100
+
+# Проверка маршрута до конкретного адреса
+ip route get 192.168.1.50
+# → 192.168.1.50 dev eth0 src 192.168.1.100 uid 0
+
+# Проверка, является ли маска валидной
+python3 -c "
+mask = 0xFFFFFF00  # /24
+if mask & (mask + 1) == 0:
+    print('Маска валидная')
+else:
+    print('Маска НЕВАЛИДНА')
+"
+```
+
+### Поиск конфликтующих подсетей
+
+```bash
+# Список всех подсетей на интерфейсах
+ip -o addr show | awk '{print $2, $4}'
+
+# Поиск пересекающихся маршрутов
+ip route show | sort -t'/' -k2 -n | uniq -D -f1
+
+# Проверка маршрутов для конкретной сети
+ip route show | grep "192.168.1"
+```
+
+### Восстановление после невалидной маски
+
+```bash
+# Если интерфейс не поднимается из-за невалидной маски:
+# 1. Временный адрес для доступа
+sudo ip addr add 10.0.0.1/24 dev eth0
+sudo ip link set eth0 up
+
+# 2. Исправление конфигурации
+sudo vi /etc/network/interfaces  # или netplan, NetworkManager
+
+# 3. Применение изменений
+sudo systemctl restart networking
+# или
+sudo netplan apply
+```
+
+## Best Practices
+
+### Выбор маски для различных сценариев
+
+| Тип сети | Рекомендуемая маска | Количество адресов | Примечания |
+| :--- | :--- | :--- | :--- |
+| **Point-to-Point линки** | /31 | 2 | Использовать RFC 3021 |
+| **Серверные VLAN** | /28 | 14 | Для небольших серверных кластеров |
+| **Корпоративные VLAN** | /24 | 254 | Стандарт для пользовательских сетей |
+| **Для IoT устройств** | /26 | 62 | Ограниченный размер для безопасности |
+| **DMZ** | /27 | 30 | Буферная зона между сетями |
+| **Магистральные сети** | /30 или /31 | 2 | Только для соединений маршрутизаторов |
+
+### Планирование адресного пространства
+
+1. **Резервирование:** Оставляйте 20-30% адресов для роста.
+2. **Документирование:** Ведите точные записи о выделенных подсетях.
+3. **Иерархия:** Используйте VLSM для оптимизации адресного пространства.
+4. **Безопасность:** Выделяйте отдельные подсети для критичных систем.
+
+### Безопасность масок
+
+- **Фильтрация по маске:** Используйте ACL для ограничения доступа по подсетям.
+- **Изоляция:** Разделяйте серверы, пользователей и IoT устройства.
+- **Мониторинг:** Отслеживайте изменения в таблицах маршрутизации.
+
+### Оптимизация производительности
+
+- **Агрегация маршрутов:** Объединяйте мелкие префиксы для уменьшения размера FIB.
+- **TCAM:** Учитывайте ограничения аппаратной памяти при проектировании ACL.
+- **Длина префикса:** Избегайте слишком длинных префиксов (/32) для маршрутов к целым сетям.
+
+## Edge Cases
+
+### /31 на оборудовании, не поддерживающем RFC 3021
+
+**Проблема:** Старое оборудование (например, Cisco Catalyst 2960, некоторые модели MikroTik) может не поддерживать /31.
+
+**Решение:** Использовать /30 с wasteful адресацией или проверить обновление прошивки.
+
+```bash
+# Проверка поддержки /31 на Cisco IOS
+show interface GigabitEthernet0/1
+# Если маска отображается как 255.255.255.254 — поддерживается
+
+# Проверка на Linux
+ip addr show dev eth1 | grep inet
+# → inet 172.16.0.1/31 scope global eth1
+```
+
+### Агрегация маршрутов в BGP
+
+**Особенности:**
+- При агрегации маршрутов в BGP может произойти утечка информации (route leak).
+- Агрегированный маршрут должен покрывать все включенные в него префиксы.
+
+```bash
+# Пример агрегации в BGP (FRRouting)
+router bgp 65000
+ aggregate-address 192.168.0.0 255.255.0.0 summary-only
+ # Создает один маршрут 192.168.0.0/16 вместо множества /24
+```
+
+### Dual-stack (IPv4 + IPv6) и маски
+
+**Особенности:**
+- В IPv6 маски всегда используют префиксную нотацию (/N).
+- Десятичная запись масок в IPv6 не применяется.
+
+```bash
+# Проверка масок в dual-stack среде
+ip -6 addr show | grep inet6
+# → inet6 2001:db8::1/64 scope global
+# → inet6 fe80::1/64 scope link
+
+# Сравнение: IPv4 использует десятичную маску, IPv6 — только префикс
+ip addr show | grep inet | head -2
+# → inet 192.168.1.100/24 scope global eth0
+# → inet6 2001:db8::1/64 scope global eth0
+```
+
+### Маска и MTU
+
+**Проблема:** Неправильная маска может привести к проблемам с MTU и фрагментацией.
+
+**Диагностика:**
+```bash
+# Проверка MTU для подсети
+ping -M do -s 1472 192.168.1.1  # 1472 + 28 = 1500 = MTU
+
+# Если MTU меньше стандартного (например, 1400 в VPN)
+ping -M do -s 1372 10.0.0.1     # 1372 + 28 = 1400
+```
+
+### Расчет маски по количеству хостов
+
+```bash
+#!/bin/bash
+# calc_mask_by_hosts.sh — Расчет маски по необходимому количеству хостов
+
+calc_mask() {
+    local needed_hosts=$1
+    
+    # Определяем количество бит для хостов
+    local bits=0
+    local total=2
+    while [ $total -lt $((needed_hosts + 2)) ]; do
+        bits=$((bits + 1))
+        total=$((2 ** (bits + 1)))
+    done
+    
+    local cidr=$((32 - bits))
+    local available=$((2 ** bits - 2))
+    
+    echo "=== Расчет маски для $needed_hosts хостов ==="
+    echo "Требуется бит для хостов: $bits"
+    echo "Маска: /$cidr"
+    echo "Доступно адресов: $available"
+    echo "Запас: $((available - needed_hosts)) ($(( (available - needed_hosts) * 100 / available ))%)"
+}
+
+# Примеры
+calc_mask 50    # Нужно 50 хостов
+calc_mask 100   # Нужно 100 хостов
+calc_mask 10    # Нужно 10 хостов
+```
+
+### Автоматическая генерация таблицы подсетей
+
+```bash
+#!/bin/bash
+# gen_subnet_table.sh — Генерация таблицы подсетей для заданной сети
+
+gen_table() {
+    local network=$1
+    local mask=$2
+    
+    echo "=== Таблица подсетей для $network/$mask ==="
+    echo ""
+    printf "%-18s %-18s %-18s %-10s\n" "Адрес сети" "Broadcast" "Диапазон хостов" "Хостов"
+    echo "------------------------------------------------------------------------"
+    
+    local net_ip=$(echo "$network" | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    local subnet_bits=$((32 - mask))
+    local subnet_count=$((2 ** subnet_bits))
+    local hosts_per_subnet=$((2 ** (32 - mask) - 2))
+    
+    for ((i=0; i<subnet_count && i<16; i++)); do
+        local current_net=$((net_ip + i * (hosts_per_subnet + 2)))
+        local broadcast=$((current_net + hosts_per_subnet + 1))
+        
+        local net_str=$(printf "%d.%d.%d.%d" $(( (current_net >> 24) & 0xFF )) $(( (current_net >> 16) & 0xFF )) $(( (current_net >> 8) & 0xFF )) $(( current_net & 0xFF )))
+        local bcast_str=$(printf "%d.%d.%d.%d" $(( (broadcast >> 24) & 0xFF )) $(( (broadcast >> 16) & 0xFF )) $(( (broadcast >> 8) & 0xFF )) $(( broadcast & 0xFF )))
+        local first_host=$(printf "%d.%d.%d.%d" $(( ((current_net + 1) >> 24) & 0xFF )) $(( ((current_net + 1) >> 16) & 0xFF )) $(( ((current_net + 1) >> 8) & 0xFF )) $(( (current_net + 1) & 0xFF )))
+        local last_host=$(printf "%d.%d.%d.%d" $(( ((broadcast - 1) >> 24) & 0xFF )) $(( ((broadcast - 1) >> 16) & 0xFF )) $(( ((broadcast - 1) >> 8) & 0xFF )) $(( (broadcast - 1) & 0xFF )))
+        
+        printf "%-18s %-18s %-18s %-10d\n" "$net_str/$mask" "$bcast_str" "$first_host — $last_host" "$hosts_per_subnet"
+    done
+    
+    if [ $subnet_count -gt 16 ]; then
+        echo "... и ещё $((subnet_count - 16)) подсетей"
+    fi
+}
+
+# Примеры
+gen_table 192.168.1.0 26
+gen_table 10.0.0.0 24
+```
+
+### Проверка пересечения подсетей
+
+```bash
+#!/bin/bash
+# check_subnet_overlap.sh — Проверка пересечения двух подсетей
+
+check_overlap() {
+    local subnet1=$1
+    local subnet2=$2
+    
+    # Преобразование в числа
+    local ip1=$(echo "$subnet1" | cut -d'/' -f1 | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    local mask1=$((0xFFFFFFFF << (32 - $(echo "$subnet1" | cut -d'/' -f2)))
+    local net1=$((ip1 & mask1))
+    local broadcast1=$((net1 | ~mask1 & 0xFFFFFFFF))
+    
+    local ip2=$(echo "$subnet2" | cut -d'/' -f1 | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    local mask2=$((0xFFFFFFFF << (32 - $(echo "$subnet2" | cut -d'/' -f2)))
+    local net2=$((ip2 & mask2))
+    local broadcast2=$((net2 | ~mask2 & 0xFFFFFFFF))
+    
+    echo "=== Проверка пересечения ==="
+    echo "Сеть 1: $subnet1 (сеть: $(printf "%d.%d.%d.%d" $(( (net1 >> 24) & 0xFF )) $(( (net1 >> 16) & 0xFF )) $(( (net1 >> 8) & 0xFF )) $(( net1 & 0xFF ))), broadcast: $(printf "%d.%d.%d.%d" $(( (broadcast1 >> 24) & 0xFF )) $(( (broadcast1 >> 16) & 0xFF )) $(( (broadcast1 >> 8) & 0xFF )) $(( broadcast1 & 0xFF ))))"
+    echo "Сеть 2: $subnet2 (сеть: $(printf "%d.%d.%d.%d" $(( (net2 >> 24) & 0xFF )) $(( (net2 >> 16) & 0xFF )) $(( (net2 >> 8) & 0xFF )) $(( net2 & 0xFF ))), broadcast: $(printf "%d.%d.%d.%d" $(( (broadcast2 >> 24) & 0xFF )) $(( (broadcast2 >> 16) & 0xFF )) $(( (broadcast2 >> 8) & 0xFF )) $(( broadcast2 & 0xFF ))))"
+    echo ""
+    
+    # Проверка пересечения
+    if [ $net1 -le $broadcast2 ] && [ $net2 -le $broadcast1 ]; then
+        echo "✗ ПЕРЕСЕЧЕНИЕ ОБНАРУЖЕНО!"
+        echo "Общие адреса: $(printf "%d.%d.%d.%d" $(( (net2 > net1 ? net2 : net1) >> 24 & 0xFF )) $(( (net2 > net1 ? net2 : net1) >> 16 & 0xFF )) $(( (net2 > net1 ? net2 : net1) >> 8 & 0xFF )) $(( (net2 > net1 ? net2 : net1) & 0xFF ))) — $(printf "%d.%d.%d.%d" $(( (broadcast1 < broadcast2 ? broadcast1 : broadcast2) >> 24 & 0xFF )) $(( (broadcast1 < broadcast2 ? broadcast1 : broadcast2) >> 16 & 0xFF )) $(( (broadcast1 < broadcast2 ? broadcast1 : broadcast2) >> 8 & 0xFF )) $(( (broadcast1 < broadcast2 ? broadcast1 : broadcast2) & 0xFF )))"
+    else
+        echo "✓ Подсети НЕ пересекаются"
+    fi
+}
+
+# Примеры
+check_overlap "192.168.1.0/24" "192.168.1.128/25"
+check_overlap "10.0.0.0/16" "10.0.1.0/24"
+```
+
+### Маска в контейнерах (Docker, Kubernetes)
+
+**Особенности:**
+- Docker использует /16 по умолчанию (172.17.0.0/16).
+- Kubernetes обычно использует /16 для под CIDR и /112 для service CIDR.
+
+```bash
+# Проверка подсети Docker
+docker network inspect bridge | grep Subnet
+# → "Subnet": "172.17.0.0/16"
+
+# Проверка подсети Kubernetes
+kubectl get nodes -o jsonpath='{.items[*].spec.podCIDRs}'
+# → [10.244.0.0/16]
+```
+
 ## Дополнительная информация
 
 ### Навигация по разделу
@@ -118,6 +579,13 @@ ip addr add 172.16.0.1/31 dev eth1
 - **[IP-адресация — точка входа](./index.md)** — архитектура и определения.
 - **[Обзор IP-адресации](./ip_overview.md)** — детализация заголовков IPv4/IPv6.
 - **[Методы расчета подсетей](./subnetting_calculation.md)** — практические алгоритмы и VLSM.
+
+### Связанные темы
+
+- **[Инструменты для расчетов](../../ServicesAndTools/network_calculation_tools.md)** — `ipcalc`, `sipcalc`, `grepcidr`.
+- **[Маршрутизация и LPM](../../OSI_TCP_IP_Model/Network_layer/Concepts/routing_scenarios.md)** — принцип longest prefix match.
+- **[Специальные адреса](./special_addresses.md)** — Loopback, APIPA, Multicast.
+- **[DHCP и подсети](../DHCP/dhcp_overview.md)** — автоматическое назначение адресов в подсетях.
 
 ### Основные RFC
 
@@ -128,3 +596,4 @@ ip addr add 172.16.0.1/31 dev eth1
 | **RFC 4291** | IP Version 6 Addressing Architecture (структура префиксов). |
 | **RFC 1812** | Requirements for IP Version 4 Routers (алгоритм LPM). |
 | **RFC 791** | Internet Protocol Specification. |
+| **RFC 1918** | Address Allocation for Private Internets (частные адреса). |

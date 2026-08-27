@@ -128,6 +128,225 @@ end
 | **Google Cloud (GCS)** | Максимальная | Лучший выбор при использовании GCP Workload Identity. |
 | **Cloudflare R2** | Высокая | S3-совместимый вариант без платы за исходящий трафик (Egress). |
 
+### 5. Дистрибуция приложений
+
+**TestFlight (Internal & External Testing):**
+```ruby
+lane :distribute_testflight do
+  setup_ephemeral_keychain
+  
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+  
+  match(
+    type: "appstore",
+    readonly: true,
+    api_key: api_key,
+    keychain_name: "ci_build_keychain",
+    keychain_password: ENV["KEYCHAIN_PASSWORD"]
+  )
+  
+  build_app(
+    scheme: "Production",
+    export_method: "app-store",
+    workspace: "MyApp.xcworkspace"
+  )
+  
+  upload_to_testflight(
+    api_key: api_key,
+    skip_waiting_for_build_processing: true,
+    distribute_external: true,
+    notify_external_testers: true,
+    changelog: ENV["CHANGELOG"] || "Bug fixes and improvements"
+  )
+end
+```
+
+**App Store (Production Release):**
+```ruby
+lane :release_appstore do
+  setup_ephemeral_keychain
+  
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+  
+  match(
+    type: "appstore",
+    readonly: true,
+    api_key: api_key,
+    keychain_name: "ci_build_keychain",
+    keychain_password: ENV["KEYCHAIN_PASSWORD"]
+  )
+  
+  build_app(
+    scheme: "Production",
+    export_method: "app-store",
+    workspace: "MyApp.xcworkspace"
+  )
+  
+  upload_to_app_store(
+    api_key: api_key,
+    force: true,
+    skip_screenshots: true,
+    skip_metadata: false,
+    precheck_include_in_app_purchases: false,
+    submission_information: {
+      add_id_info_limits_tracking: true,
+      add_id_info_serves_ads: false,
+      add_id_info_tracks_action: true,
+      add_id_info_tracks_install: true,
+      add_id_info_tracks_wifi: true,
+      content_rating: "4+",
+      copyright_year: Time.now.year.to_s
+    }
+  )
+end
+```
+
+**Ad Hoc (Для тестирования на реальных устройствах):**
+```ruby
+lane :build_adhoc do
+  setup_ephemeral_keychain
+  
+  api_key = app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
+  
+  match(
+    type: "adhoc",
+    readonly: true,
+    api_key: api_key,
+    keychain_name: "ci_build_keychain",
+    keychain_password: ENV["KEYCHAIN_PASSWORD"]
+  )
+  
+  build_app(
+    scheme: "Staging",
+    export_method: "ad-hoc",
+    workspace: "MyApp.xcworkspace"
+  )
+  
+  # Дистрибуция через Firebase App Distribution или Crashlytics
+  firebase_app_distribution(
+    app: ENV["FIREBASE_APP_ID"],
+    groups: "qa-team, developers",
+    release_notes: "Build #{ENV['CI_BUILD_NUMBER']} - Ad Hoc testing"
+  )
+end
+```
+
+### 6. Тестирование в CI/CD
+
+**Unit-тесты:**
+```ruby
+lane :run_unit_tests do
+  run_tests(
+    scheme: "UnitTests",
+    devices: ["iPhone 16", "iPhone 15 Pro"],
+    clean: true,
+    code_coverage: true,
+    output_types: "html,junit",
+    output_directory: "./test_output"
+  )
+end
+```
+
+**UI-тесты (на реальных устройствах через Firebase Test Lab):**
+```ruby
+lane :run_ui_tests do
+  run_tests(
+    scheme: "UITests",
+    devices: ["iPhone 16"],
+    testplan: "UITests",
+    clean: true,
+    output_types: "html,junit",
+    output_directory: "./test_output"
+  )
+end
+```
+
+**Snapshot-тесты (для скриншотов App Store):**
+```ruby
+lane :capture_screenshots do
+  capture_screenshots(
+    scheme: "Production",
+    devices: ["iPhone 16 Pro Max", "iPad Pro 12.9-inch (6th generation)"],
+    languages: ["en-US", "ru-RU"],
+    output_directory: "./fastlane/screenshots"
+  )
+  
+  # Загрузка скриншотов в App Store Connect
+  upload_screenshots(
+    api_key: api_key,
+    skip_screenshots: false
+  )
+end
+```
+
+### 7. Notarization (для macOS-приложений)
+
+Для распространения macOS-приложений вне Mac App Store требуется нотаризация:
+
+```ruby
+lane :notarize_macos do
+  # Сборка
+  build_app(
+    scheme: "MacApp",
+    export_method: "developer-id",
+    workspace: "MyApp.xcworkspace"
+  )
+  
+  # Нотаризация
+  notarize(
+    app_path: "./build/MacApp.app",
+    apple_id: ENV["APPLE_ID"],
+    team_id: ENV["TEAM_ID"],
+    password: ENV["APP_SPECIFIC_PASSWORD"],
+    skip_waiting_for_notarization: false
+  )
+  
+  # Стэппинг (после успешной нотаризации)
+  stapp(
+    app_path: "./build/MacApp.app",
+    staple: true
+  )
+end
+```
+
+### 8. Мониторинг и Observability в iOS CI/CD
+
+**Метрики для отслеживания:**
+- **Build Success Rate:** Процент успешных сборок (целевое значение: > 95%).
+- **Build Duration:** Среднее время сборки (целевое значение: < 15 минут для PR, < 30 минут для release).
+- **Test Pass Rate:** Процент пройденных тестов.
+- **Flaky Test Rate:** Процент "мигающих" тестов (целевое значение: < 2%).
+- **Time to First Install (TTFI):** Время от коммита до установки на устройство.
+
+**Интеграция с мониторингом:**
+```ruby
+# Отправка метрик в Datadog/Prometheus
+lane :report_metrics do |options|
+  # Метрики сборки
+  Datadog.measure("ci.build.duration", options[:duration], tags: ["project:ios", "lane:#{options[:lane]}"])
+  Datadog.increment("ci.build.count", tags: ["project:ios", "status:#{options[:status]}"])
+  
+  # Метрики тестов
+  Datadog.measure("ci.test.duration", options[:test_duration], tags: ["project:ios", "suite:#{options[:suite]}"])
+  Datadog.increment("ci.test.count", tags: ["project:ios", "status:#{options[:test_status]}"])
+end
+```
+
 ---
 
 ## Валидация и проверка
@@ -137,6 +356,46 @@ end
 2.  **Проверка сертификатов:** `security find-identity -p codesigning ci_build_keychain.keychain` — должен вывести список импортированных сертификатов.
 3.  **Xcode Build Logs:** Ищите строку `Check dependencies`, там должен быть указан путь к профилю, скачанному Match.
 4.  **Match Verify:** Используйте `fastlane match verify --type appstore`, чтобы убедиться, что локальные сертификаты соответствуют хранилищу.
+5.  **Проверка подписи IPA:** `codesign -vvvv -d ./build/*.ipa` — должна возвращать `valid on disk` и `Identifier=com.company.app`.
+6.  **Проверка Provisioning Profile:** `security cms -D -i ./build/*.mobileprovision` — выводит содержимое профиля в plist формате.
+
+**Скрипт автоматической проверки:**
+```bash
+#!/bin/bash
+# ios_signing_verify.sh
+
+set -e
+
+KEYCHAIN="ci_build_keychain.keychain"
+IPA_PATH="./build/*.ipa"
+
+echo "=== Проверка Keychain ==="
+if security show-keychain-info "$KEYCHAIN" 2>&1 | grep -q "keychain"; then
+  echo "✓ Keychain создан"
+else
+  echo "✗ Keychain не найден"
+  exit 1
+fi
+
+echo "=== Проверка сертификатов ==="
+CERTS=$(security find-identity -p codesigning "$KEYCHAIN" | grep -c "iPhone")
+if [ "$CERTS" -gt 0 ]; then
+  echo "✓ Найдено $CERTS сертификат(ов)"
+else
+  echo "✗ Сертификаты не найдены"
+  exit 1
+fi
+
+echo "=== Проверка подписи IPA ==="
+if codesign -vvvv "$IPA_PATH" 2>&1 | grep -q "valid on disk"; then
+  echo "✓ Подпись валидна"
+else
+  echo "✗ Подпись невалидна"
+  exit 1
+fi
+
+echo "=== Все проверки пройдены ==="
+```
 
 ---
 
@@ -154,10 +413,37 @@ end
 *   **Срок действия Apple WWDR:**
     *   Иногда Apple обновляет промежуточный сертификат (Worldwide Developer Relations). 
     *   Решение: Match обычно обновляет его автоматически, но в редких случаях его нужно скачать и импортировать в Keychain вручную через скрипт.
+*   **Ошибка: "No signing certificate "iOS Distribution" found":**
+    *   Профиль содержит сертификат, которого нет в Keychain.
+    *   Решение: Убедитесь, что `match` запускается с `readonly: false` для обновления сертификатов, или выполните `fastlane match nuke` и пересоздайте.
+*   **Ошибка: "The executable was signed with invalid entitlements":**
+    *   Entitlements в проекте не соответствуют App ID в App Store Connect.
+    *   Решение: Проверьте `TARGET` > `Signing & Capabilities` в Xcode и сверьте с App ID в Apple Developer Portal.
+*   **Ошибка: "Provisioning profile doesn't match signing identity":**
+    *   Сертификат в профиле не совпадает с установленным в Keychain.
+    *   Решение: Выполните `security find-identity -p codesigning` и сверьте с `match` --force для пересоздания.
+*   **Ошибка: "IPHONEOS_DEPLOYMENT_TARGET is higher than SDK":**
+    *   Версия iOS в проекте выше, чем в установленном Xcode.
+    *   Решение: Обновите Xcode или понизьте `IPHONEOS_DEPLOYMENT_TARGET` в настройках проекта.
+*   **Ошибка: "Unable to install application" на реальном устройстве:**
+    *   Устройство не добавлено в Provisioning Profile или_UDID не зарегистрирован.
+    *   Решение: Добавьте устройство в Apple Developer Portal и выполните `fastlane match adhoc` для обновления профиля.
+*   **Ошибка: "The file is corrupted or cannot be read":**
+    *   IPA поврежден при загрузке или архивирован неверно.
+    *   Решение: Проверьте целостность артефакта и повторите сборку с `clean: true`.
 
 ---
 
-## Дополнительная информация
+## Edge Cases и ограничения
+
+1.  **Лимиты Apple:** Apple устанавливает лимиты на количество сертификатов (100 Development, 100 Distribution на команду). Match автоматически управляет этим, но при ручном добавлении сертификатов лимит может быть исчерпан.
+2.  **Ротация ключей App Store Connect:** API Keys (.p8) не имеют срока действия, но могут быть отозваны. Рекомендуется ротация каждые 6-12 месяцев.
+3.  **Смена Apple ID:** При смене Apple ID Account Holder необходимо обновить все API Keys и повторно настроить Match.
+4.  **Обновление WWDR:** Apple периодически обновляет промежуточный сертификат (Worldwide Developer Relations). Match обычно обновляет его автоматически, но в редких случаях требуется ручное обновление.
+5.  **Управление командой:** При добавлении нового разработчика необходимо добавить его UDID в Provisioning Profile (для Ad Hoc) или предоставить ему доступ к Match.
+6.  **Мульти-таргетинг:** Если проект имеет несколько таргетов (extension, widget), каждый требует отдельного App ID и Provisioning Profile.
+7.  **Конфликт версий Xcode:** Разные проекты могут требовать разные версии Xcode. Используйте `xcversion` или `xcode-select` для переключения.
+8.  **Проблемы с Keychain на M-сериях:** На Apple Silicon Macs могут возникать проблемы с доступом к Keychain. Используйте `security set-key-partition-list` для разрешения доступа.
 
 ### Безопасность секрета MATCH_PASSWORD
 Этот пароль используется для шифрования всех сертификатов в репозитории (AES-256). 

@@ -12,6 +12,56 @@
 
 **Спецификация аргументов (`argument_spec`)** — декларативное описание входных параметров роли в файле `meta/argument_specs.yml`, позволяющее Ansible автоматически проверять типы и обязательность переменных.
 
+## Предварительные требования
+
+Для работы с ролями Ansible необходимо выполнение следующих условий:
+
+### Версии программного обеспечения
+
+| Компонент | Минимальная версия | Рекомендуемая версия |
+| :--- | :--- | :--- |
+| **Python (контрольный узел)** | 3.10 (Ansible 2.17) | 3.11+ (Ansible 2.18+) |
+| **Python (управляемые узлы)** | 3.8 (Ansible 2.18) | 3.11+ |
+| **ansible-core** | 2.17 | 2.18+ |
+| **ansible-galaxy** | Входит в ansible-core | Последняя стабильная версия |
+
+### Начальная настройка
+
+```bash
+# Установка Ansible (через pip)
+pip install ansible-core
+
+# Проверка версии
+ansible --version  # → ansible [core 2.18.x]
+
+# Инициализация структуры проекта
+mkdir -p roles/ && cd roles/
+ansible-galaxy role init my_first_role  # → роль успешно создана
+```
+
+### Структура проекта
+
+Рекомендуемая структура для проекта с ролями:
+
+```text
+project/
+├── ansible.cfg          # Конфигурация Ansible
+├── inventory/
+│   ├── production/
+│   │   ├── hosts.yml    # Инвентарий production
+│   │   └── group_vars/
+│   │       └── all.yml  # Групповые переменные
+│   └── staging/
+├── roles/
+│   ├── common/          # Базовая роль
+│   ├── nginx/           # Роль веб-сервера
+│   └── app/             # Роль приложения
+├── playbooks/
+│   ├── site.yml         # Основной плейбук
+│   └── webservers.yml   # Плейбук для веб-серверов
+└── requirements.yml     # Зависимости (Galaxy, collections)
+```
+
 ## Основные концепции
 
 ### Создание и инициализация роли
@@ -83,7 +133,7 @@ tasks:
 | **Условия (`when`)** | Применяются к каждой задаче внутри | Проверяется один раз для всей роли |
 | **Теги из CLI** | Видны и доступны для фильтрации | Не видны до выполнения |
 | **Обработчики (`handlers`)** | Глобально доступны | Доступны после выполнения роли |
-| **Python Requirements** | N/A (Control Node) | Python 3.7+ (Target Node для 2.17+) |
+| **Python Requirements** | N/A (Control Node) | Python 3.8+ (Target Node для 2.18+), 3.11+ рекомендуется |
 
 ### Область видимости переменных (`public`)
 
@@ -206,6 +256,182 @@ tasks:
       name: community.postgresql.postgres_install
 ```
 
+### Сценарий 6: Тестирование ролей через ansible-lint
+
+Перед использованием ролей рекомендуется проверять их качество:
+
+```bash
+# Установка ansible-lint
+pip install ansible-lint
+
+# Проверка конкретной роли
+ansible-lint roles/nginx/
+
+# Проверка с профилем (рекомендуется)
+ansible-lint roles/nginx/ --profile production
+```
+
+Пример конфигурации `.ansible-lint` в корне проекта:
+
+```yaml
+# .ansible-lint
+profile: production  # Использовать профиль production
+skip_list:
+  - yaml[truthy]     # Разрешить yes/no в YAML
+  - name[template]   # Разрешить шаблоны в именах задач
+enable_list:
+  - fqcn             # Требовать FQCN для всех модулей
+```
+
+### Сценарий 7: Работа с секретами в ролях
+
+Использование Ansible Vault для хранения секретов в ролях:
+
+```bash
+# Шифрование переменных
+ansible-vault encrypt roles/myapp/defaults/vault.yml
+
+# Запуск плейбука с расшифровкой
+ansible-playbook site.yml --ask-vault-pass
+
+# Использование файла пароля
+ansible-playbook site.yml --vault-password-file ~/.vault_pass
+```
+
+СтруктураROLE для секретов:
+
+```text
+roles/myapp/
+├── defaults/
+│   ├── main.yml        # Обычные переменные
+│   └── vault.yml       # Зашифрованные секреты (не коммитить!)
+├── vars/
+│   └── vault.yml       # Секреты с высоким приоритетом
+└── tasks/
+    └── main.yml
+```
+
+Рекомендация: выносите секреты в `defaults/vault.yml` (низкий приоритет, переопределяется).
+
+### Сценарий 8: Интеграция ролей в CI/CD
+
+Пример использования ролей в GitLab CI:
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - lint
+  - test
+  - deploy
+
+ansible-lint:
+  stage: lint
+  image: cytopia/ansible-lint
+  script:
+    - ansible-lint roles/ --profile production
+
+molecule-test:
+  stage: test
+  image: quay.io/ansible/molecule
+  services:
+    - docker:dind
+  script:
+    - cd roles/nginx
+    - molecule test
+  only:
+    - merge_requests
+
+deploy-production:
+  stage: deploy
+  image: cytopia/ansible
+  script:
+    - ansible-playbook -i inventory/production site.yml
+  environment:
+    name: production
+  when: manual
+  only:
+    - main
+```
+
+### Сценарий 9: Отладка выполнения ролей
+
+Методы диагностики проблем при выполнении ролей:
+
+```bash
+# Вывод всех задач без выполнения
+ansible-playbook site.yml --list-tasks
+
+# Запуск с увеличенной детализацией
+ansible-playbook site.yml -vvv  # Очень подробный вывод
+
+# Запуск конкретной роли по тегу
+ansible-playbook site.yml --tags "nginx" --check  # Режим проверки
+
+# Ограничение по хостам
+ansible-playbook site.yml --limit "webserver1"
+
+# Вывод переменных роли
+ansible-playbook site.yml -e "ansible_debug=true"
+```
+
+Отладка переменных в задачах:
+
+```yaml
+tasks:
+  - name: Debug - show all role variables
+    ansible.builtin.debug:
+      var: hostvars[inventory_hostname]
+      verbosity: 1  # Показать только с -v
+
+  - name: Debug - show specific variable
+    ansible.builtin.debug:
+      msg: "nginx_port is {{ nginx_port | default('NOT SET') }}"
+```
+
+### Сценарий 10: Оптимизация производительности
+
+Для больших инфраструктур и ролей с ресурсоемкими задачами:
+
+```yaml
+# Параллельное выполнение с ограничением
+- name: Install updates on all servers
+  ansible.builtin.include_role:
+    name: system_update
+  throttle: 5  # Максимум 5 хостов одновременно
+
+# Асинхронное выполнение длительных задач
+- name: Run database backup
+  ansible.builtin.include_role:
+    name: db_backup
+  async: 3600  # Таймаут 1 час
+  poll: 0      # Не ждать завершения
+  register: backup_job
+
+# Проверка статуса асинхронной задачи
+- name: Wait for backup to complete
+  ansible.builtin.async_status:
+    jid: "{{ backup_job.ansible_job_id }}"
+  register: job_result
+  until: job_result.finished
+  retries: 60
+  delay: 60
+```
+
+Настройка `ansible.cfg` для оптимизации:
+
+```ini
+[defaults]
+forks = 20          # Количество параллельных потоков
+timeout = 30        # Таймаут подключения
+gathering = smart   # Сбор фактов только при необходимости
+fact_caching = jsonfile
+fact_caching_connection = /tmp/ansible_facts_cache
+fact_caching_timeout = 86400
+
+[ssh_connection]
+pipelining = True   # Включить pipelining для ускорения
+```
+
 ---
 
 ## Дополнительная информация
@@ -230,7 +456,160 @@ tasks:
 3. **Забытый `become: true`** — если роль выполняет системные задачи, убедитесь, что права повышены. Лучшая практика — использовать `apply` с `become` при динамическом включении.
 4. **Конфликт имен переменных** — если две роли используют переменную `port`, экспорт через `public: true` может привести к непредсказуемым результатам. Используйте префиксы (например, `nginx_port`).
 5. **Шаблоны в условиях `when`** — в Ansible 2.17+ использование `{{ }}` в `when` может вызвать предупреждения или ошибки безопасности (CVE-2023-5764). Используйте: `when: my_var == "value"`.
-6. **Контрольный узел и Python** — для Ansible 2.17 требуется Python 3.10+ на управляющей машине.
+6. **Контрольный узел и Python** — для Ansible 2.18+ требуется Python 3.11+ на управляющей машине, Python 3.8+ на управляемых.
+
+### Troubleshooting
+
+#### Проблема: Теги не работают с `include_role`
+
+**Симптом:** Запуск `ansible-playbook site.yml --tags "deploy"` не выполняет задачи внутри роли.
+
+**Причина:** `include_role` не наследует теги из CLI автоматически.
+
+**Решение:** Используйте `apply` для передачи тегов:
+
+```yaml
+- name: Deploy application
+  ansible.builtin.include_role:
+    name: app_deploy
+    apply:
+      tags: [deploy]
+  tags: [deploy]  # Тег для самого include_role
+```
+
+#### Проблема: Переменные роли не видны после выполнения
+
+**Симптом:** Ошибка `undefined variable` при обращении к переменной роли в последующих задачах.
+
+**Причина:** По умолчанию переменные ролей изолированы.
+
+**Решение:** Установите `public: true`:
+
+```yaml
+- name: Configure and export vars
+  ansible.builtin.include_role:
+    name: my_config
+    public: true
+```
+
+#### Проблема: Роль выполняется несколько раз
+
+**Симптом:** Зависимость выполняется повторно, хотя уже была вызвана.
+
+**Причина:** По умолчанию `allow_duplicates: false`, но при явных вызовах это может работать иначе.
+
+**Решение:** Контролируйте выполнение через `when` или используйте `allow_duplicates`:
+
+```yaml
+# В meta/main.yml зависимой роли
+allow_duplicates: true
+
+# Или контролируйте через条件
+- name: Run role only if not already applied
+  ansible.builtin.include_role:
+    name: my_role
+  when: not my_role_applied | default(false)
+```
+
+#### Проблема: Медленное выполнение плейбуков с ролями
+
+**Симптом:** Длительное время выполнения, особенно на большом количестве хостов.
+
+**Причина:** Неправильные настройки parallelism или отсутствие кэширования.
+
+**Решение:** Оптимизируйте `ansible.cfg`:
+
+```ini
+[defaults]
+forks = 50              # Увеличьте количество параллельных потоков
+gathering = smart       # Собирайте факты только при необходимости
+fact_caching = redis    # Используйте Redis для кэширования
+fact_caching_timeout = 86400
+
+[ssh_connection]
+pipelining = True       # Ускоряет выполнение на 30-50%
+control_path_dir = /tmp/.ansible-ssh-%%h-%%p-%%r
+```
+
+### Best Practices
+
+#### Структура и проектирование
+
+1. **Единая ответственность:** Одна роль = один компонент (nginx, postgresql, app).
+2. **Интерфейс через `argument_specs`:** Описывайте все входные параметры в `meta/argument_specs.yml`.
+3. **Префиксы переменных:** Все переменные роли должны начинаться с имени роли (`nginx_port`, `app_path`).
+4. **FQCN:** Всегда используйте полные имена модулей (`ansible.builtin.template`).
+
+#### Безопасность
+
+1. **Секреты в Vault:** Никогда не храните пароли в открытом виде.
+2. **`no_log: true`:** Скрывайте чувствительные данные в задачах.
+3. **Минимальные права:** Используйте `become` только где необходимо.
+4. **Проверка зависимостей:** Валидируйте роли из Galaxy перед использованием.
+
+#### Производительность
+
+1. **`pipelining`:** Включайте в `ansible.cfg` для ускорения SSH-соединений.
+2. **Факты:** Используйте `gathering: smart` или `lazy` для уменьшения количества запросов.
+3. **Кэширование:** Используйте Redis или JSON-file для кэширования фактов.
+4. **Throttle:** Ограничивайте параллельное выполнение для ресурсоемких ролей.
+
+#### Тестирование
+
+1. **ansible-lint:** Проверяйте роли перед коммитом.
+2. **Molecule:** Пишите интеграционные тесты для критических ролей.
+3. **Check mode:** Тестируйте_roles с `--check` перед реальным применением.
+4. **Dry run:** Используйте `--diff` для просмотра изменений.
+
+### Edge Cases
+
+#### Работа с несколькими ОС
+
+```yaml
+tasks:
+  - name: Load OS-specific variables
+    ansible.builtin.include_vars: "{{ lookup('first_found', params) }}"
+    vars:
+      params:
+        files:
+          - "{{ ansible_facts['os_family'] }}.yml"
+          - "default.yml"
+        paths:
+          - "../vars"
+
+  - name: Include OS-specific tasks
+    ansible.builtin.include_tasks: "{{ lookup('first_found', params) }}"
+    vars:
+      params:
+        files:
+          - "{{ ansible_facts['os_family'] | lower }}.yml"
+          - "default.yml"
+        paths:
+          - "../tasks"
+```
+
+#### Условное включение зависимостей
+
+```yaml
+# meta/main.yml
+dependencies:
+  - role: nginx
+    when: install_webserver | default(false)
+```
+
+**Примечание:** Условия в `meta/main.yml` поддерживаются с Ansible 2.18+.
+
+#### Динамические роли на основе фактов
+
+```yaml
+tasks:
+  - name: Select role based on cloud provider
+    ansible.builtin.include_role:
+      name: "{{ cloud_provider }}_setup"
+    vars:
+      cloud_provider: "{{ ansible_facts['ec2']['tags']['cloud_provider'] | default('aws') }}"
+    when: ansible_facts['ec2'] is defined
+```
 
 ### См. также
 
@@ -239,3 +618,4 @@ tasks:
 - [Стратегии и паттерны](strategies.md) — рекомендации по проектированию
 - [Продвинутые возможности плейбуков](../PlaybookStructure/advanced.md) — подробнее об `import` и `include`
 - [Паттерн Utility Role](utility_role_pattern.md) — использование ролей в качестве библиотек
+- [Тестирование через Molecule](../ansible_testing_with_molecule.md) — современный подход к тестированию

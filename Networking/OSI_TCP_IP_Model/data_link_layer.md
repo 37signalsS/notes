@@ -12,7 +12,59 @@
 2.  **Полезной нагрузки (Payload):** Пакет сетевого уровня (обычно IPv4 или IPv6).
 3.  **Трейлера (Trailer):** Контрольная сумма **FCS** (Frame Check Sequence), вычисляемая с помощью алгоритма CRC для проверки целостности.
 
+### Таблица PDU и размеров
+
+| Поле | Размер | Описание |
+| :--- | :--- | :--- |
+| **Preamble** | 7 байт | 10101010... — синхронизация тактовой частоты |
+| **SFD (Start Frame Delimiter)** | 1 байт | 10101011 — конец преамбулы, начало кадра |
+| **Destination MAC** | 6 байт | MAC-адрес получателя |
+| **Source MAC** | 6 байт | MAC-адрес отправителя |
+| **EtherType / Length** | 2 байт | Тип протокола верхнего уровня (0x0800=IPv4, 0x86DD=IPv6) |
+| **VLAN Tag (опционально)** | 4 байт | IEEE 802.1Q тег (если используется) |
+| **Payload** | 46–1500 байт | Данные (пакет L3) |
+| **FCS (CRC-32)** | 4 байт | Контрольная сумма для проверки целостности |
+| **Итого (min)** | **64 байта** | Минимальный размер Ethernet-кадра |
+| **Итого (max)** | **1518 байт** | Стандартный максимум (без Jumbo Frames) |
+| **Jumbo Frame** | до 9000 байт | Расширенный кадр для ЦОД (требует согласования на всех узлах) |
+
+### Пример инкапсуляции: L3 → L2 → L1
+
+```text
+IP-пакет (L3):
+  [IP Header (20-60 B)] [TCP Header (20 B)] [HTTP GET /index.html]
+
+        ↓ Инкапсуляция в Ethernet-кадр (L2)
+
+Ethernet-кадр:
+  [Preamble 7B][SFD 1B][Dst MAC 6B][Src MAC 6B][EtherType 0x0800 2B][IP Packet][FCS 4B]
+
+        ↓ Передача по физической среде (L1)
+
+L1 (биты):  10101010...10101011  [MAC-адреса] [IP-пакет] [CRC]
+```
+
 ## Базовые концепции
+
+### Связь с соседними уровнями
+
+```text
+L3 (Сетевой) — IP-адресация, маршрутизация
+    ↓ Пакеты (IP/IPv6)
+L2 (Канальный) — MAC-адресация, кадры, FCS, коммутация
+    ↓ Кадры (Ethernet/PPP/VLAN)
+L1 (Физический) — биты, сигналы, среда передачи
+```
+
+**Взаимодействие с L3 (Сетевой):**
+- L2 принимает от L3 пакеты (IP, IPv6) и инкапсулирует их в кадры
+- L2 не заботится о содержимом пакета — его задача: доставить кадр от MAC-адреса A до MAC-адреса B
+- ARP (L2.5) связывает IP (L3) и MAC (L2) адреса — без него инкапсуляция невозможна
+
+**Взаимодействие с L1 (Физический):**
+- L2 получает от L1 поток бит и собирает из них кадры (по преамбуле и SFD)
+- L1 сообщает L2 о состоянии линка (link up/down, скорость, duplex)
+- L2 использует статистику L1 (CRC errors, drops) для диагностики
 
 ### Подуровни (IEEE 802)
 
@@ -49,16 +101,70 @@
 - **Методы:**
   - **Store-and-Forward:** Читает весь кадр, проверяет CRC (надежно, но медленнее).
   - **Cut-Through:** Начинает пересылку сразу после чтения адреса получателя (минимальная задержка).
+  - **Fragment-Free:** Компромисс — читает первые 64 байта (проверяет на коллизии), затем пересылает.
+
+**Типы коммутаторов:**
+
+| Тип | Уровень OSI | Типичное использование |
+| :--- | :--- | :--- |
+| **L2 коммутатор** | L2 | Офисные сети, коммутация по MAC/VLAN |
+| **L3 коммутатор** | L2+L3 | Маршрутизация между VLAN (Inter-VLAN routing) |
+| **Multi-Layer Switch** | L2-L4 | QoS, ACL, балансировка на основе портов |
+| **Smart Managed** | L2 | Управляемый (SNMP, web-интерфейс) для SMB |
 
 ### VLAN и тегирование (802.1Q)
 
 Технология [VLAN](../Protocols/vlan.md) позволяет создавать несколько логических сетей на одной физической базе. Для передачи информации о VLAN между коммутаторами используется тег **IEEE 802.1Q** (4 байта), вставляемый в Ethernet-кадр:
 - **VID (VLAN ID):** 12 бит (до 4094 сетей).
 - **PCP (Priority Code Point):** 3 бита для QoS (CoS — Class of Service).
+- **DEI (Drop Eligible Indicator):** 1 бит — пометка кадров для приоритетного сброса при перегрузке.
+
+**Типы VLAN:**
+
+| Тип | Описание |
+| :--- | :--- |
+| **Port-based** | Порт коммутатора принадлежит одной VLAN (статическая) |
+| **MAC-based** | Устройство определяется по MAC-адресу (динамическая) |
+| **Protocol-based** | По типу протокола (IPv4/IPv6) |
+| **Voice VLAN** | Для IP-телефонов (приоритетный трафик) |
 
 ### Агрегация каналов (LACP)
 
 Технология **802.3ad (LACP)** позволяет объединить несколько физических линков в один логический (Bonding/EtherChannel). Это увеличивает пропускную способность и обеспечивает отказоустойчивость (при обрыве одного кабеля связь сохраняется).
+
+**Режимы балансировки:**
+
+| Режим | Описание |
+| :--- | :--- |
+| **round-robin** | Пакеты поочерёдно распределяются по линкам |
+| **active-backup** | Один линк активен, второй — резервный |
+| **LACP (802.3ad)** | Динамическое согласование с удалённой стороной |
+| **balance-xor** | XOR MAC/IP для фиксированных пар узлов |
+| **balance-alb** | Адаптивная балансировка приёма и передачи |
+
+### Flow Control (802.3x)
+
+Механизм предотвращения потери кадров при перегрузке буфера коммутатора:
+- **PAUSE Frame:** Если буфер заполнен, коммутатор отправляет PAUSE-кадр отправителю на 65 535 时间单位.
+- **Priority Flow Control (PFC, 802.1Qbb):** Пауза только для определённого класса трафика (критично для数据中心 FCoE).
+
+### Spanning Tree Protocol (STP) и его варианты
+
+Протокол **[STP](../Protocols/stp.md)** предотвращает петли (loops) в L2-топологиях:
+
+| Протокол | Стандарт | Время сходимости | Особенности |
+| :--- | :--- | :--- | :--- |
+| **STP** | 802.1D | 30–50 сек | Классический, медленный |
+| **RSTP** | 802.1w | 1–5 сек | Быстрая сходимость |
+| **MSTP** | 802.1s | 1–5 сек | Мульти实例 для разных VLAN |
+| **PVST+** | Cisco proprietary | 30–50 сек | Per-VLAN STP (только Cisco) |
+
+### Port Mirroring (SPAN)
+
+Механизм копирования трафика с одного или нескольких портов на зеркальный порт для анализа:
+- **Local SPAN:** Копирование в пределах одного коммутатора
+- **Remote SPAN (RSPAN):** Копирование через VLAN на удалённый коммутатор
+- **Encapsulated SPAN (ERSPAN):** Копирование в GRE-туннель для удалённого анализа
 
 ### ARP: Мост между L2 и L3
 
@@ -68,18 +174,64 @@
 
 По умолчанию коммутаторы рассылают мультикаст-трафик как широковещательный (на все порты). Механизм **IGMP Snooping** заставляет коммутатор «подслушивать» запросы узлов и отправлять мультикаст-группы только тем, кто на них подписан.
 
+### SmartNIC и DPDK/XDP
+
+| Технология | Описание | Где используется |
+| :--- | :--- | :--- |
+| **SmartNIC** | NIC с встроенным процессором для offload функций (checksum, tunneling, QoS) | ЦОД, облака |
+| **DPDK** | Библиотека для высокопроизводительной обработки пакетов в user-space | Функциональные устройства (NAT, firewall) |
+| **XDP (eXpress Data Path)** | eBPF-программы для обработки пакетов до ядра Linux (на уровне L2/L3) | Высокопроизводительные брандмауэры, балансировщики |
+| **SR-IOV** | Виртуализация NIC на уровне железа (Physical/Virtual Functions) | Виртуальные машины, облака |
+
 ## Безопасность на канальном уровне
 
 L2 уязвим для специфических атак:
-- **MAC Flooding:** Переполнение CAM-таблицы коммутатора для перевода его в режим хаба. Защита: `Port Security`.
-- **ARP Spoofing:** Подмена MAC-адреса шлюза. Защита: `Dynamic ARP Inspection (DAI)`.
-- **DHCP Starvation:** Исчерпание пула IP-адресов. Защита: `DHCP Snooping`.
+
+| Атака | Описание | Защита |
+| :--- | :--- | :--- |
+| **MAC Flooding** | Переполнение CAM-таблицы для перевода коммутатора в режим хаба (все кадры на все порты) | `Port Security`,限制 MAC-адресов на порту |
+| **ARP Spoofing** | Подмена MAC-адреса шлюза для перехвата трафика (MITM) | `Dynamic ARP Inspection (DAI)`, статические ARP |
+| **DHCP Starvation** | Исчерпание пула IP-адресов через поддельные DHCP-запросы | `DHCP Snooping` |
+| **VLAN Hopping** | Проникновение в другую VLAN через double-tagging или trunk | Отключение DTP, разделение native VLAN |
+| **STP Manipulation** | Отправка ложных BPDU для изменения топологии (Root Bridge takeover) | `BPDU Guard`, `Root Guard` |
+| **MAC Spoofing** | Подмена MAC-адреса другого устройства | Port Security + sticky MAC |
+| **CDP/LLDP Reconnaissance** | Сбор информации о сети через служебные протоколы | Отключение CDP/LLDP на ненужных портах |
+| **Broadcast Storm** | Широковещательный шторм, перегружающий сеть | Storm Control, ограничение broadcast |
+
+**Пример настройки Port Security (Cisco IOS):**
+```bash
+# Ограничение MAC-адресов на порту (макс. 2)
+switchport port-security
+switchport port-security maximum 2
+
+# При нарушении — заблокировать порт
+switchport port-security violation shutdown
+
+# Sticky MAC (запоминание первого MAC-адреса)
+switchport port-security mac-address sticky
+```
+
+**Пример DHCP Snooping (Cisco IOS):**
+```bash
+# Включение DHCP Snooping глобально
+ip dhcp snooping
+
+# На的信任 порту (к серверу DHCP)
+interface GigabitEthernet0/1
+  ip dhcp snooping trust
+
+# На нет trust-порту (к клиентам) — ограничение rate
+interface GigabitEthernet0/24
+  ip dhcp snooping limit rate 15
+```
 
 ## Практическая диагностика (Linux)
 
 Основные инструменты для анализа L2-состояния:
 
 ```bash
+# === Базовые команды ===
+
 # Просмотр состояния интерфейсов и MAC-адресов
 ip link show
 
@@ -91,17 +243,71 @@ ip neigh show
 
 # Статистика ошибок (дропы, коллизии)
 ethtool -S eth0
+
+# === Углублённая диагностика ===
+
+# Просмотр VLAN-тегов на интерфейсе
+bridge vlan show
+
+# Просмотр информации о мостах
+brctl show
+# или (iproute2):
+bridge link show
+
+# Проверка состояния LACP (агрегации каналов)
+cat /proc/net/bonding/bond0
+
+# Просмотр QoS/тегирования (PCP, DSCP)
+tc qdisc show dev eth0
+tc -s qdisc show dev eth0
+
+# Просмотр статистики ошибок L2 (CRC, framing)
+ethtool -S eth0 | grep -i "error\|crc\|frame\|drop\|collision"
+
+# Просмотр ON/OFF накопления (offload)
+ethtool -k eth0 | grep -i "checksum\|scatter\|gro\|lro\|tso"
+
+# === Практические сценарии ===
+
+# Проверка是否存在 дупликатов MAC-адресов
+bridge fdb show | awk '{print $1}' | sort | uniq -d
+
+# Поиск неизвестных MAC-адресов (potential rogue devices)
+bridge fdb show | grep -v "self\|master"
+
+# Мониторинг STP-состояния (если включён bridge)
+bridge link show | grep -i "forwarding\|blocking\|listening"
+
+# Проверка Port Mirroring (SPAN) — ловим зеркальный трафик
+tcpdump -i mirror0 -c 100 -nn
+
+# Диагностика MTU проблем (jumbo frames)
+ping -M do -s 8972 <destination>  # 8972 + 28 (ICMP+IP) = 9000
+
+# Просмотр статистики дропов на уровне ядра
+ip -s link show eth0 | grep -i "drop\|error"
 ```
 
 ## Дополнительная информация
+
+### Сводка по модели OSI
+
+| Характеристика | Описание |
+| :--- | :--- |
+| **PDU** | Кадр (Frame) |
+| **Ключевая задача** | Доставка данных между узлами в пределах одного L2-сегмента |
+| **Адресация** | MAC-адреса (48 бит / 6 байт) |
+| **Оборудование** | Коммутаторы (Switch), мосты (Bridge), NIC, OVS, Linux Bridge |
+| **Примеры стандартов** | IEEE 802.3 (Ethernet), 802.1Q (VLAN), 802.1D (STP), 802.1X (AUTH) |
 
 ### Сводка по протоколам и стандартам
 
 | Категория | Технологии |
 | :--- | :--- |
 | **Основные** | [Ethernet](../Protocols/ethernet.md), 802.11 (Wi-Fi), [VLAN (802.1Q)](../Protocols/vlan.md), PPP, HDLC |
-| **Служебные** | [ARP](../Protocols/arp.md), [STP](../Protocols/stp.md), [LACP (802.3ad)](../OSI_TCP_IP_Model/data_link_layer.md), [LLDP](../Protocols/lldp.md) |
-| **Виртуализация** | [VXLAN](../Tunnels/vxlan.md), SR-IOV, Linux Bridge, Open vSwitch |
+| **Служебные** | [ARP](../Protocols/arp.md), [STP](../Protocols/stp.md), [LACP (802.3ad)](../Concepts/vlan_l2_switching/definitions_and_concepts.md), [LLDP](../Protocols/lldp.md) |
+| **Виртуализация** | [VXLAN](../Tunnels/vxlan.md), SR-IOV, Linux Bridge, Open vSwitch, DPDK |
+| **Безопасность** | Port Security, DAI, DHCP Snooping, BPDU Guard, 802.1X |
 
 ### См. также
 
@@ -109,4 +315,7 @@ ethtool -S eth0
 - [Протокол STP](../Protocols/stp.md) — защита от петель в L2.
 - [Ethernet — формат кадра](../Protocols/ethernet.md) — детализация полей и структуры.
 - [VLAN — Обзор](../Protocols/vlan.md) — логическая сегментация сетей.
+- [Физический уровень (L1)](./physical_layer.md) — среды передачи и сигналы.
+- [Сетевой уровень (L3)](./Network_layer/Concepts/network_layer_overview.md) — маршрутизация и IP-адресация.
+- [L2 Switching и VLAN](../Concepts/vlan_l2_switching/definitions_and_concepts.md) — подробные концепции коммутации.
 - [Диагностика L2 в Linux](../../Linux/Networking/network_troubleshooting_order.md#1-физика-и-l2) — пошаговый алгоритм проверки.

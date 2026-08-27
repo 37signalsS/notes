@@ -14,6 +14,61 @@
 
 ---
 
+## Предварительные требования
+
+### Версии ядра и пакетов
+
+| Компонент | Минимальная версия | Рекомендуемая версия |
+| :--- | :--- | :--- |
+| **Ядро Linux** | 3.7 (базовая поддержка VXLAN) | 5.10+ (Geneve, offload, полный набор фич) |
+| **iproute2** | 3.12 | 5.15+ |
+| **FRRouting** (для EVPN) | 7.0 | 9.1+ |
+| **Open vSwitch** (опционально) | 2.5 | 3.0+ |
+
+### Установка зависимостей
+
+```bash
+# Debian/Ubuntu
+sudo apt update && sudo apt install iproute2 bridge-utils ethtool tcpdump
+
+# RHEL/CentOS/Rocky
+sudo dnf install iproute bridge-utils ethtool tcpdump
+
+# Для BGP EVPN (опционально)
+sudo apt install frr  # или dnf install frr
+```
+
+### Проверка поддержки ядра
+
+```bash
+# Проверка наличия модуля vxlan
+modinfo vxlan | head -5
+# → filename:       /lib/modules/$(uname -r)/kernel/drivers/net/vxlan.ko
+# → description:    VXLAN tunneling driver
+# → license:        GPL
+
+# Проверка загруженного модуля
+lsmod | grep vxlan
+# → vxlan                 53248  0
+
+# Проверка поддержки geneve (для сравнения)
+modinfo geneve | head -3
+# → filename:       /lib/modules/$(uname -r)/kernel/drivers/net/geneve.ko
+```
+
+### Включение IP-форвардинга
+
+```bash
+# Обязательно для работы VTEP
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# Сохранение
+echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/90-vxlan.conf
+sudo sysctl -p /etc/sysctl.d/90-vxlan.conf
+```
+
+---
+
 ## Основные концепции
 
 ### Формат заголовка VXLAN (8 байт)
@@ -53,16 +108,32 @@
     - **Symmetric IRB:** Трафик между узлами передается через специальный транзитный VNI, что упрощает масштабирование.
     - **Asymmetric IRB:** Маршрутизация выполняется только на входном VTEP, на выходе — только бриджинг.
 
-### Плоскость управления (Control Plane)
+### Механизмы обучения (Control Plane)
 
 Control Plane определяет, как VTEP узнают о расположении удаленных хостов.
 
-- **Flood and Learn (Multicast):** Традиционный метод. BUM-трафик (Broadcast, Unknown Unicast, Multicast) рассылается в мультикаст-группу. VTEP изучают соответствие MAC-адреса и IP-адреса источника.
-- **Static FDB:** Ручное прописывание таблиц Forwarding Database. Подходит для простых топологий точка-точка или статических кластеров.
-- **BGP EVPN (RFC 7432):** Современный индустриальный стандарт. 
-    - Использует BGP для обмена информацией о MAC и IP адресах (NLRI).
-    - **ARP Suppression:** VTEP перехватывает ARP-запросы и отвечает на них локально, используя базу данных EVPN, что радикально снижает широковещательный трафик.
-    - **Anycast Gateway:** Шлюз по умолчанию имеет одинаковый IP/MAC на всех узлах, обеспечивая оптимальную маршрутизацию.
+| Метод | Описание | Масштабируемость | Использование |
+| :--- | :--- | :--- | :--- |
+| **Flood-and-learn** | BUM-трафик (Broadcast, Unknown Unicast, Multicast) рассылается на все VTEP в VNI. VTEP изучают MAC-адреса из входящих пакетов. | Ограниченная (broadcast storm) | Legacy, небольшие сети |
+| **Multicast** | VXLAN-инкапсулированный multicast через IP-multicast в underlay. VTEP подписываются на multicast-группу. | Средняя | Cisco Nexus, OVN (multicast mode) |
+| **BGP EVPN (RFC 7432)** | Control-plane learning через BGP. VTEP анонсируют MAC/IP через BGP Route Type 2/5. **ARP Suppression:** VTEP кэширует ARP-ответы и отвечает локально. **Anycast Gateway:** Шлюз по умолчанию имеет одинаковый IP/MAC на всех узлах. | Высокая | Production DC (EVPN-VXLAN) |
+| **Static (HER)** | Head-End Replication: VTEP отправляет копии пакета на каждый VTEP в VNI (вместо multicast). | Низкая (<50 VTEP) | OVN default, Kubernetes |
+| **OVN southbound DB** | OVN-контроллер программит правила forwarding в OVS. Нет flooding — всё через control plane. | Высокая | OVN-Kubernetes |
+
+### BGP EVPN: Route Types
+
+| Route Type | Назначение | Пример использования |
+| :--- | :--- | :--- |
+| **Type 2 (MAC/IP Advertisement)** | Анонсирование MAC-адреса и IP-адреса хоста | VTEP сообщает о MAC/IP пода |
+| **Type 3 (Inclusive Multicast)** | Групповая подписка на VNI (аналог multicast group) | VTEP входит в L2-VNI |
+| **Type 5 (IP Prefix)** | Маршрутизация между VNI (L3-VNI) | Межсегментная маршрутизация |
+
+### Стек меток и инкапсуляция
+
+VXLAN может использоваться в связке с другими протоколами инкапсуляции:
+- **VXLAN over GRE:** Двойная инкапсуляция для сред с ограничениями по UDP.
+- **VXLAN over IPsec:** Шифрование трафика overlay (см. [IPsec](./ipsec/ipsec.md)).
+- **VXLAN over WireGuard:** Шифрование + простота настройки (см. [GRE vs WireGuard](./gre/gre_vs_wireguard.md)).
 
 ---
 
@@ -85,6 +156,13 @@ ip addr add 10.0.0.2/24 dev vxlan10
 ip link set vxlan10 up
 ```
 
+**Ожидаемый результат:**
+```bash
+ping 10.0.0.2
+# → PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
+# → 64 bytes from 10.0.0.2: icmp_seq=1 ttl=64 time=0.123 ms
+```
+
 ### 2. Режим Multicast (динамический)
 Позволяет множеству VTEP общаться через одну мультикаст-группу.
 
@@ -104,6 +182,97 @@ ip link set veth-container master br-vxlan
 ip link set br-vxlan up
 ```
 
+### 4. VXLAN с Head-End Replication (HER)
+Для небольших кластеров без multicast — каждый VTEP отправляет копии на все остальные.
+
+```bash
+# На VTEP1 (10.0.0.1) — отправляет на VTEP2 (10.0.0.2) и VTEP3 (10.0.0.3)
+ip link add vxlan100 type vxlan id 100 \
+    local 10.0.0.1 \
+    dstport 4789 \
+    nolearning
+
+ip link set vxlan100 up
+
+# Добавление remote VTEP в FDB (ручное)
+bridge fdb append 00:00:00:00:00:00 dst 10.0.0.2 dev vxlan100 self permanent
+bridge fdb append 00:00:00:00:00:00 dst 10.0.0.3 dev vxlan100 self permanent
+
+# Проверка
+bridge fdb show dev vxlan100
+# → 00:00:00:00:00:00 dst 10.0.0.2 dev vxlan100 self permanent
+# → 00:00:00:00:00:00 dst 10.0.0.3 dev vxlan100 self permanent
+```
+
+### 5. Тестирование в лаборатории (Network Namespaces)
+
+Для полного тестирования VXLAN не требуются физические устройства:
+
+```bash
+# Создание двух изолированных VTEP в network namespaces
+ip netns add vtep1
+ip netns add vtep2
+
+# Underlay: veth-пара между VTEP
+ip link add underlay1 netns vtep1 type veth peer name underlay2 netns vtep2
+ip netns exec vtep1 ip addr add 10.0.0.1/24 dev underlay1
+ip netns exec vtep1 ip link set underlay1 up
+ip netns exec vtep1 ip link set lo up
+ip netns exec vtep1 sysctl -w net.ipv4.ip_forward=1
+
+ip netns exec vtep2 ip addr add 10.0.0.2/24 dev underlay2
+ip netns exec vtep2 ip link set underlay2 up
+ip netns exec vtep2 ip link set lo up
+ip netns exec vtep2 sysctl -w net.ipv4.ip_forward=1
+
+# Overlay: VXLAN-интерфейсы
+ip netns exec vtep1 ip link add vxlan10 type vxlan id 10 \
+    remote 10.0.0.2 local 10.0.0.1 dev underlay1 dstport 4789
+ip netns exec vtep1 ip addr add 192.168.10.1/24 dev vxlan10
+ip netns exec vtep1 ip link set vxlan10 up
+
+ip netns exec vtep2 ip link add vxlan10 type vxlan id 10 \
+    remote 10.0.0.1 local 10.0.0.2 dev underlay2 dstport 4789
+ip netns exec vtep2 ip addr add 192.168.10.2/24 dev vxlan10
+ip netns exec vtep2 ip link set vxlan10 up
+
+# Тест
+ip netns exec vtep1 ping -c 2 192.168.10.2
+# → PING 192.168.10.2 (192.168.10.2) 56(84) bytes of data.
+# → 64 bytes from 192.168.10.2: icmp_seq=1 ttl=64 time=0.089 ms
+
+# Просмотр VXLAN-трафика
+ip netns exec vtep1 tcpdump -i underlay1 -nn port 4789 &
+ip netns exec vtep1 ping -c 1 192.168.10.2
+# → 12:34:56.789012 IP 10.0.0.1.54321 > 10.0.0.2.4789: UDP, length 90
+# →   VXLAN vni=10
+
+# Очистка
+ip netns del vtep1
+ip netns del vtep2
+```
+
+### 6. VXLAN + BGP EVPN (упрощённый пример)
+
+Для production-среды используется BGP EVPN вместо flood-and-learn. Полный пример с OVN и Kubernetes см. в [VXLAN и Geneve](../Concepts/sdn/vxlan_geneve.md).
+
+```text
+# Конфигурация FRR для VXLAN EVPN (vtysh)
+conf t
+ !
+ router bgp 65001
+  bgp router-id 10.0.0.1
+  bgp log-neighbor-changes
+  !
+  address-family l2vpn evpn
+   neighbor 10.0.0.2 activate
+   advertise-all-vni
+  exit-address-family
+ !
+end
+write memory
+```
+
 ---
 
 ## Эксплуатация и тюнинг
@@ -113,12 +282,19 @@ ip link set br-vxlan up
 Современные NIC (Intel, Mellanox) поддерживают разгрузку инкапсуляции:
 - **VXLAN Checksum Offload:** Расчет контрольных сумм внешнего UDP.
 - **RSS Over VXLAN:** Распределение входящего трафика по ядрам CPU на основе хеша внутреннего IP/Port (предотвращает перегрузку одного ядра туннелированным трафиком).
+- **VXLAN Segmentation Offload:** аппаратная инкапсуляция/деинкапсуляция.
 
 **Проверка:**
 ```bash
+# Проверка поддержки offload
 ethtool -k eth0 | grep vxlan
-# tx-vxlan-segmentation: on
-# tx-checksum-vxlan-non-generic: on
+# → tx-vxlan-segmentation: on
+# → tx-checksum-vxlan-non-generic: on
+# → rx-vxlan-port-specific-hash: on
+
+# Проверка RSS
+ethtool -k eth0 | grep rx-hash
+# → rx-hashing: on
 ```
 
 ### Тонкая настройка MTU
@@ -130,21 +306,84 @@ ethtool -k eth0 | grep vxlan
 3.  **Облачные спецификации:** 
     - GCP/AWS VPC часто имеют свои ограничения. При использовании VXLAN поверх VPC может потребоваться MTU **1442** или даже **1400**.
 
+**Проверка Path MTU:**
+```bash
+# Проверка MTU на VXLAN-интерфейсе
+ip link show vxlan10
+# → vxlan10: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1450 ...
+
+# Проверка Path MTU (с флагом DF)
+ping -M do -s 1422 -c 1 <remote-ip>
+# → 1422 + 28 (IP+ICMP headers) = 1450 = MTU overlay
+```
+
 ### Диагностика
 
 ```bash
 # Просмотр таблицы FDB (Forwarding Database)
 bridge fdb show dev vxlan10
+# → 00:00:00:00:00:00 dst 10.0.0.2 dev vxlan10 self permanent
+# → aa:bb:cc:dd:ee:ff dst 10.0.0.2 dev vxlan10 self
+
+# Просмотр всех FDB-записей
+bridge fdb show | grep vxlan
 
 # Проверка параметров интерфейса (VNI, порт, эндпоинты)
 ip -d link show vxlan10
+# → vxlan10: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1450 ...
+# →     vxlan id 10 local 10.0.0.1 srcport 0 0 dstport 4789 ...
 
 # Анализ внешнего трафика (порт 4789)
-tcpdump -ni eth0 udp port 4789 -vvv
+sudo tcpdump -ni eth0 udp port 4789 -vvv
+# → 12:34:56.789012 IP 10.0.0.1.12345 > 10.0.0.2.4789: UDP, length 1450
+# →   VXLAN vni=10
 
 # Анализ трафика внутри оверлея
-tcpdump -ni vxlan10 icmp
+sudo tcpdump -ni vxlan10 icmp
+
+# Просмотр статистики VXLAN
+ip -s link show vxlan10
+# → RX:  bytes=... packets=... errors=... dropped=...
+# → TX:  bytes=... packets=... errors=... dropped=...
+
+# Просмотр ARP-таблицы на VXLAN-интерфейсе
+ip neigh show dev vxlan10
+# → 10.0.0.2 lladdr aa:bb:cc:dd:ee:ff REACHABLE
 ```
+
+---
+
+## Типичные ошибки и их устранение
+
+| Симптом | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Фрагментация TCP, обрывы TLS** | MTU overlay > underlay MTU | `ping -M do -s 1472 <remote>` — fail | Установить MTU=1450 на VXLAN-интерфейсе |
+| **VXLAN-трафика нет** | Underlay между VTEP недоступен | `tcpdump -i eth0 port 4789` — пусто | Проверить маршрутизацию между VTEP; `ip route get <remote-vtep-ip>` |
+| **ARP storm (broadcast flooding)** | Нет ARP Suppression, много хостов в VNI | `tcpdump -i vxlan10 arp` — множество ARP request | Включить ARP Suppression (BGP EVPN / OVN); уменьшить количество VNI |
+| **MAC flapping** | MAC «прыгает» между VTEP | `bridge fdb show` — MAC на нескольких VTEP | Проверить duplicate VNI; исключить loop в underlay |
+| **FDB переполнена** | Количество MAC > hardware limit | `bridge fdb show \| wc -l` > platform limit | Использовать BGP EVPN вместо flood-and-learn |
+| **VTEP не видит удалённых хостов** | Flood-and-learn не работает (multicast отключён) | `bridge fdb show dev vxlan10` — нет записей | Настроить multicast-группу или использовать HER/BGP EVPN |
+| **Пакеты дропаются на兽ходе** | Отсутствует route к remote VTEP | `ip route get <remote-vtep-ip>` — no route | Добавить маршрут в underlay |
+
+---
+
+## Безопасность
+
+VXLAN не имеет встроенных механизмов шифрования и аутентификации. Любой узел в underlay-сети может:
+- Прослушивать трафик overlay (читать внутренние MAC/IP)
+- Подменять трафик (forging VXLAN-пакеты)
+- Атаковать через UDP-порт 4789
+
+### Рекомендации
+
+1. **Шифрование overlay:** Используйте [IPsec](./ipsec/ipsec.md) или WireGuard для шифрования трафика между VTEP.
+2. **Firewall на underlay:** Ограничьте доступ к UDP 4789 только между VTEP:
+   ```bash
+   sudo iptables -A INPUT -p udp --dport 4789 -s 10.0.0.0/24 -j ACCEPT
+   sudo iptables -A INPUT -p udp --dport 4789 -j DROP
+   ```
+3. **Изоляция VNI:** Не смешивайте трафик разных tenant-сетей (tenant networks) в одном VNI без ACL.
+4. **Мониторинг:** Отслеживайте аномалии в FDB (MAC flapping, неизвестные MAC).
 
 ---
 
@@ -159,11 +398,15 @@ tcpdump -ni vxlan10 icmp
 
 ---
 
-## Ограничения и риски
+## Ограничения и особенности
 
-- **Фрагментация:** При некорректном MTU пакеты фрагментируются, что резко снижает производительность.
-- **CPU Overhead:** Инкапсуляция без аппаратной разгрузки может потреблять до 15-20% ресурсов CPU при высоком трафике.
-- **Безопасность:** Отсутствие встроенного шифрования. Любой узел в Underlay-сети может прослушивать или подменять трафик оверлея.
+- **Фрагментация:** При некорректном MTU пакеты фрагментируются, что резко снижает производительность. VXLAN не поддерживает фрагментацию — oversized-пакеты отбрасываются.
+- **CPU Overhead:** Инкапсуляция без аппаратной разгрузки может потреблять до 15-20% ресурсов CPU при высоком трафике. Для 40+ Гбит/с требуется DPDK или NIC с VXLAN offload.
+- **Размер стека меток:** В ядре Linux поддерживается до 3 меток в стеке (ограничение ядра, не протокола). При использовании VXLAN + MPLS + IPsec стек может исчерпаться.
+- **MTU:** VXLAN добавляет 50 байт оверхеда (IPv4). При стеке из N протоколов инкапсуляции оверхед суммируется (VXLAN + WireGuard = 110 байт).
+- **FDB Limits:** Количество MAC-адресов в FDB ограничено аппаратно. На простых коммутаторах — до 16K записей. Для масштабирования используйте BGP EVPN.
+- **Convergence Time:** При failover VTEP время сходимости flood-and-learn может составлять 30-60 секунд (ожидание старения FDB). BGP EVPN обеспечивает сходимость за 1-3 секунды.
+- **Мультикаст:** В облачных средах (AWS, GCP) IP-multicast часто заблокирован. Используйте HER или BGP EVPN.
 
 ---
 
@@ -171,6 +414,7 @@ tcpdump -ni vxlan10 icmp
 
 - **[Обзор туннелирования](./tunneling_overview.md)** — сравнение с другими протоколами.
 - **[BGP и EVPN](../Protocols/bgp.md)** — глубокое погружение в современный сетевой дизайн ЦОД.
-- **[MTU и VPN](../../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — детальный разбор проблем фрагментации и MSS Clamping.
-- **[SDN в Proxmox](../../Proxmox/proxmox_networking.md)** — практическое применение VXLAN в виртуализации.
+- **[MTU и VPN](../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — детальный разбор проблем фрагментации и MSS Clamping.
+- **[VXLAN и Geneve](../Concepts/sdn/vxlan_geneve.md)** — сравнение VXLAN с Geneve, OVN-интеграция, трассировка пакетов.
 - **[Сетевой драйвер Overlay в Docker](../../Docker/Docker_network/drivers/overlay.md)** — реализация VXLAN в Swarm и контейнерах.
+- **[GRE vs WireGuard](./gre/gre_vs_wireguard.md)** — шифрование overlay: VXLAN поверх WireGuard.

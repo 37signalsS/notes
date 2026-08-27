@@ -59,6 +59,24 @@ Send Window = min(cwnd, rwnd)
 2.  **ECN (Explicit Congestion Notification):** Сетевое оборудование помечает пакеты флагом `CE`, если их очереди начинают расти. TCP-отправитель снижает скорость до того, как пакеты будут физически отброшены.
 3.  **L4S (Low Latency, Low Loss, Scalable throughput):** Новейший стандарт (RFC 9330), позволяющий достичь сверхнизких задержек в очередях за счет очень частой и точной маркировки ECN.
 4.  **TLP (Tail Loss Probe):** Механизм для быстрой отправки «пробного» пакета, если подтверждения перестали приходить в конце передачи, что экономит время на ожидании RTO.
+5.  **Pacing (Сглаживание):** Механизм равномерного распределения пакетов во времени. Предотвращает всплески трафика (bursts), которые могут вызвать потерю пакетов на коммутаторах с малыми буферами. Критически важен для BBR.
+
+### Параметр tcp_slow_start_after_idle
+
+По умолчанию Linux сбрасывает окно перегрузки обратно к `initcwnd`, если соединение простаивало (один RTO). Это критично для:
+- HTTP/1.1 с Keep-Alive
+- Долгоживущих API-соединений (gRPC, WebSocket)
+- Мобильных приложений с периодическими запросами
+
+**Настройка:**
+```bash
+# Отключение сброса окна при простое (рекомендуется для серверов)
+sudo sysctl -w net.ipv4.tcp_slow_start_after_idle=0
+
+# Постоянная настройка
+echo "net.ipv4.tcp_slow_start_after_idle=0" | sudo tee -a /etc/sysctl.d/99-tcp-tuning.conf
+sudo sysctl --system
+```
 
 ---
 
@@ -89,21 +107,210 @@ Send Window = min(cwnd, rwnd)
 - **Диагностика:** Сравнение `rtt` и `min_rtt` в выводе `ss -ti`.
 - **Лечение:** Переход на BBR или настройка AQM-дисциплин (`fq_codel`, `cake`) на маршрутизаторе.
 
+### Сценарий 4: Диагностика текущего алгоритма перегрузки
+
+**Задача:** Определить, какой алгоритм используется, и проверить его работоспособность.
+
+```bash
+# Просмотр алгоритма по умолчанию для новых соединений
+sysctl net.ipv4.tcp_congestion_control
+# → net.ipv4.tcp_congestion_control = bbr
+
+# Просмотр списка доступных алгоритмов
+sysctl net.ipv4.tcp_available_congestion_control
+# → net.ipv4.tcp_available_congestion_control = reno cubic bbr
+
+# Просмотр алгоритма для конкретного соединения
+ss -tin state established '( dport = :443 )' | head -n 5
+# → bbr wscale:7,7 rto:204 rtt:15.2/0.5 cwnd:120 pacing_rate 130Mbps
+
+# Проверка статистики перегрузок
+nstat -az | grep -E 'TcpExtTCP.*Retrans|TcpExtTCPSlowStart'
+```
+
+### Сценарий 5: Переключение алгоритма на BBRv3
+
+**Задача:** Включить BBRv3 для повышения производительности на высокоскоростных каналах.
+
+```bash
+# Шаг 1: Проверка доступности BBR в ядре
+modinfo tcp_bbr | head -n 3
+
+# Шаг 2: Загрузка модуля (если не загружен)
+sudo modprobe tcp_bbr
+
+# Шаг 3: Настройка sysctl
+sudo tee /etc/sysctl.d/99-tcp-bbr.conf << 'EOF'
+# Дисциплина очереди для Pacing (обязательно для BBR)
+net.core.default_qdisc = fq
+
+# Установка BBR по умолчанию
+net.ipv4.tcp_congestion_control = bbr
+
+# Отключение сброса окна при простое
+net.ipv4.tcp_slow_start_after_idle = 0
+EOF
+
+# Шаг 4: Применение настроек
+sudo sysctl -p /etc/sysctl.d/99-tcp-bbr.conf
+
+# Шаг 5: Валидация
+ss -tin state established | grep -oE 'bbr|cubic|reno' | sort | uniq -c
+```
+
+### Сценарий 6: Мониторинг ретрансмиссий и потерь
+
+**Задача:** Выявить проблемы с потерей пакетов в сети.
+
+```bash
+# Просмотр общей статистики ретрансмиссий
+nstat -az | grep -E 'TcpExtTCPRetrans|TcpExtTCPTimeouts'
+
+# Детальная статистика по соединениям
+ss -tin state established | awk '{print $1, $2, $3}' | head -n 10
+
+# Использование eBPF для трассировки (требует root)
+sudo tcpretrans -d
+# → PID COMM IP LADDR:LPORT TADDR:LPORT SEGNUM STATE REASON
+# → 1234 nginx 4 10.0.0.1:443 10.0.0.2:54321 123456 sack_rexmit timeout
+
+# Проверка счетчиков ошибок
+netstat -s | grep -i retrans
+# → 1234 segments retransmitted
+# → 567 timeouts
+```
+
+---
+
+## Практические команды
+
+### Просмотр и настройка алгоритма
+
+```bash
+# Текущий алгоритм по умолчанию
+sysctl net.ipv4.tcp_congestion_control
+
+# Доступные алгоритмы
+sysctl net.ipv4.tcp_available_congestion_control
+
+# Разрешенные алгоритмы (для непривилегированных процессов)
+sysctl net.ipv4.tcp_allowed_congestion_control
+
+# Установка нового алгоритма (временно)
+sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+
+# Установка qdisc (временно)
+sudo tc qdisc replace dev eth0 root fq
+```
+
+### Мониторинг через ss
+
+```bash
+# Детальная информация о TCP-соединениях
+ss -tin state established
+
+# Ключевые поля для анализа перегрузок:
+# - cwnd: текущее окно перегрузки (в MSS)
+# - ssthresh: порог медленного старта
+# - rtt: среднее время круговой задержки
+# - pacing_rate: скорость отправки (для BBR)
+# - delivery_rate: реальная скорость доставки
+# - app_limited: флаг ограничения приложением
+
+# Фильтрация по конкретным значениям
+ss -tin state established | grep -oE 'cwnd:[0-9]+|rtt:[0-9.]+|pacing_rate [0-9]+Mbps'
+```
+
+### Мониторинг через nstat
+
+```bash
+# Просмотр всех счетчиков TCP
+nstat -az | grep TcpExt
+
+# Ключевые счетчики:
+# - TcpExtTCPRetrans: ретрансмиссии (Fast Retransmit)
+# - TcpExtTCPTimeouts: таймауты (RTO)
+# - TcpExtTCPSlowStart: входы в Slow Start
+# - TcpExtTCPRenoRecovery: входы в Fast Recovery
+
+# Мониторинг в реальном времени (каждые 2 секунды)
+watch -n 2 'nstat -az | grep -E "TcpExtTCPRetrans|TcpExtTCPTimeouts"'
+```
+
 ---
 
 ## Дополнительная информация
 
+### Краткая таблица сравнения алгоритмов
+
+| Алгоритм | Тип | Основной сигнал | RTT-fairness | Bufferbloat | Использование |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Reno** | Loss-based | Потеря пакетов | Нет | Высокий | Устаревший (1990) |
+| **CUBIC** | Loss-based | Потеря пакетов | Да | Высокий | Linux по умолчанию (до 5.x) |
+| **BBRv3** | Model-based | Пропускная способность + RTT | Высокая | Низкий | Рекомендуется (2026) |
+| **DCTCP** | ECN-based | Маркировка ECN | Да | Очень низкий | ЦОД, Kubernetes |
+
+### Взаимодействие с дисциплинами очередей (qdisc)
+
+Выбор qdisc критически влияет на эффективность алгоритмов:
+
+| Алгоритм | Рекомендуемая qdisc | Обоснование |
+| :--- | :--- | :--- |
+| **BBR (v1/v2/v3)** | **`fq`** | BBR требует точный pacing через EDT. |
+| **CUBIC / Reno** | **`fq_codel`** | Эффективная изоляция потоков и борьба с Bufferbloat. |
+| **Edge / WAN Shaper** | **`cake`** | Наиболее совершенный для пограничных устройств. |
+
+### Контекст Docker и Kubernetes
+
+#### Docker
+
+```bash
+# Проверка алгоритма в контейнере
+docker exec <container> sysctl net.ipv4.tcp_congestion_control
+
+# Установка BBRv3 для всех контейнеров (на хосте)
+sudo tee /etc/sysctl.d/99-docker-bbr.conf << 'EOF'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+sudo sysctl --system
+```
+
+#### Kubernetes
+
+```bash
+# Проверка на ноде
+kubectl exec <pod> -- sysctl net.ipv4.tcp_congestion_control
+
+# Настройка через sysctl в поде (если разрешено)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tcp-tuning
+spec:
+  containers:
+  - name: app
+    image: nginx
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN"]
+    command: ["sysctl", "-w", "net.ipv4.tcp_congestion_control=bbr"]
+```
+
 ### См. также
 
-- [Алгоритмы управления перегрузкой TCP](./tcp_congestion_algorithms.md) — глубокий разбор CUBIC, BBRv3, Reno.
-- [Оптимизация initcwnd](./tcp_initcwnd_and_optimization.md) — детали настройки начального окна в Linux.
+- [Алгоритмы управления перегрузкой TCP](./tcp_congestion_algorithms.md) — глубокий разбор CUBIC, BBRv3, Reno, DCTCP.
+- [Оптимизация initcwnd](./tcp_initcwnd_and_optimization.md) — настройка начального окна передачи.
 - [Диагностика перегрузок](./tcp_congestion_diagnostics.md) — инструменты анализа (`ss`, `nstat`, eBPF).
+- [Дисциплины очередей (qdisc) в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_queueing_disciplines.md) — взаимосвязь BBR и `fq`.
 - [Настройка TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md) — практический тюнинг системных параметров.
 
 ### Стандарты (RFC)
 
 - **RFC 5681:** TCP Congestion Control (фундаментальный стандарт Reno).
 - **RFC 6675:** A Conservative Loss Recovery Algorithm based on SACK.
+- **RFC 6928:** Increasing TCP's Initial Window (правило 14 КБ, IW10).
 - **RFC 6937:** Proportional Rate Reduction (PRR) — современная замена Fast Recovery.
+- **RFC 8312:** CUBIC for Fast Long-Distance Networks.
 - **RFC 9293:** Transmission Control Protocol (актуальная спецификация протокола).
 - **RFC 9330:** Low Latency, Low Loss, and Scalable Throughput (L4S).

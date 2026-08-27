@@ -103,16 +103,68 @@ omshell
 
 ---
 
+## Диагностика Kea DHCP (для сравнения)
+
+При переходе с ISC DHCP на Kea ключевые команды отличаются:
+
+```bash
+# Проверка синтаксиса Kea
+kea-dhcp4 -t -c /etc/kea/kea-dhcp4.conf
+
+# Статус сервиса Kea
+systemctl status kea-dhcp4 kea-ctrl-agent
+
+# Просмотр логов Kea (включая DEBUG)
+journalctl -u kea-dhcp4 -f | grep -E "ALLOC|SUBNET|CLASS|DROP"
+
+# REST API Kea: все аренды
+curl -s -X POST http://localhost:8000/ \
+  -H "Content-Type: application/json" \
+  -d '{"command": "lease4-get-all"}' | jq '.arguments.leases | length'
+
+# REST API Kea: поиск по MAC
+curl -s -X POST http://localhost:8000/ \
+  -H "Content-Type: application/json" \
+  -d '{"command": "lease4-get-by-hw-address", "args": {"hw-address": "00:50:56:b1:22:33"}}' | jq
+
+# REST API Kea: статистика по подсети
+curl -s -X POST http://localhost:8000/ \
+  -H "Content-Type: application/json" \
+  -d '{"command": "statistic-get", "args": {"name": "subnet[1].assigned-addresses"}}' | jq
+
+# Kea: конфигурация логирования (временный DEBUG)
+# В kea-dhcp4.conf:
+# "loggers": [{"name": "kea-dhcp4", "severity": "DEBUG", "debuglevel": 99}]
+# После отладки: вернуть severity "INFO"
+```
+
+### Сравнение: ISC vs Kea Diagnostic Commands
+
+| Задача | ISC DHCP | Kea DHCP |
+| :--- | :--- | :--- |
+| **Проверка конфига** | `dhcpd -t -cf /etc/dhcp/dhcpd.conf` | `kea-dhcp4 -t -c /etc/kea/kea-dhcp4.conf` |
+| **Просмотр аренд** | `cat /var/lib/dhcp/dhcpd.leases` | `curl localhost:8000/ (REST API)` |
+| **Поиск по MAC** | `grep "00:50:56:b1:22:33" dhcpd.leases` | REST API `lease4-get-by-hw-address` |
+| **Статистика** | `grep -c "binding state active" dhcpd.leases` | REST API `statistic-get` |
+| **Debug-режим** | `dhcpd -d -f` (foreground) | `kea-dhcp4.conf: severity=DEBUG` |
+| **Перезагрузка конфига** | `systemctl restart isc-dhcp-server` | REST API `config-reload` (без перезапуска!) |
+| **Abandoned** | `grep "abandoned" dhcpd.leases` | REST API `lease4-get` (state field) |
+| **Failover статус** | `journalctl -u isc-dhcp-server \| grep failover` | REST API `statistic-get` (ha-state) |
+
+---
+
 ## Дополнительная информация
 
 ### Рекомендации по эксплуатации
 
-- **Валидация перед перезапуском:** Никогда не делайте `systemctl restart` без предварительного `dhcpd -t`. Одна ошибка в конфигурации остановит выдачу адресов во всей сети.
-- **Мониторинг:** Рекомендуется использовать внешний скрипт-экспортер (например, `dhcpd-leases-exporter`) для визуализации заполнения пулов в **Grafana**.
+- **Валидация перед перезапуском:** Никогда не делайте `systemctl restart` без предварительного `dhcpd -t` (ISC) или `kea-dhcp4 -t` (Kea). Одна ошибка в конфигурации остановит выдачу адресов во всей сети.
+- **Мониторинг:** Рекомендуется использовать внешний скрипт-экспортер (например, `dhcpd-leases-exporter` для ISC или `kea-exporter` для Kea) для визуализации заполнения пулов в **Grafana**.
 
 ### Связанные разделы
 
 - **[Обзор архитектуры ISC DHCP](./isc_dhcp_server_overview.md)** — компоненты и жизненный цикл.
 - **[Базовая настройка](./isc_dhcp_server_basic_config.md)** — структура и опции `dhcpd.conf`.
 - **[Настройка Failover](./isc_dhcp_server_failover.md)** — диагностика состояния синхронизации.
+- **[Kea DHCP: Архитектура и настройка](./kea_dhcp_overview.md)** — полный обзор Kea DHCP.
 - **[Диагностика DHCP — Теория](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md)** — глубокий разбор заголовков и DORA.
+- **[Мониторинг и наблюдаемость DHCP](../../../../Networking/Protocols/DHCP/dhcp_monitoring_observability.md)** — Prometheus, Grafana, SIEM.

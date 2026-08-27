@@ -370,7 +370,3 @@ iptables -I DOCKER-USER -i eth0 -p tcp --dport 23 -j REJECT --reject-with tcp-re
 5. **UFW/firewalld конфликтуют с Docker** — Docker управляет iptables напрямую, обходя UFW/firewalld. Используйте `DOCKER-USER` цепочку вместо UFW для фильтрации Docker-трафика.
 
 6. **Правила DOCKER-USER перезаписываются при обновлении Docker** —尽管 Docker обещает не перезаписывать DOCKER-USER, при мажорных обновлениях это может произойти. Сохраняйте правила отдельно и восстанавливайте после обновлений.
-
----
-**Reliability Score: 10 (Docker v28/v29 verified features)**
---- End of content ---

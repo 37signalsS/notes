@@ -53,21 +53,37 @@ IPv6 использует концепцию областей видимости
 
 ### Заголовок IPv6 (40 байт)
 
-1. **Version (4 бита):** значение `6`.
-2. **Traffic Class (8 бит):** управление QoS (поля DSCP и ECN).
-3. **Flow Label (20 бит):** маркировка пакетов одного потока для ускоренной обработки.
-4. **Payload Length (16 бит):** размер данных (без учета заголовка). Поддерживает **Jumbograms** (RFC 2675).
-5. **Next Header (8 бит):** тип следующего заголовка (L4 или Extension Header).
-6. **Hop Limit (8 бит):** аналог TTL в IPv4.
+1. **Version (4 бита):** значение `6`. Позволяет аппаратным средствам мгновенно определить версию протокола.
+2. **Traffic Class (8 бит):** управление QoS. Состоит из:
+   - **DSCP (6 бит):** Differentiated Services Code Point — определяет PHB (Per-Hop Behavior). Классы: BE (Best Effort = 0), EF (46 — VoIP), AF (4 класса x 3 уровня вероятности сброса), CS1–CS7.
+   - **ECN (2 бита):** Explicit Congestion Notification — сигнализация о перегрузке без отбрасывания пакетов (RFC 3168).
+3. **Flow Label (20 бит):** маркировка пакетов одного потока для ускоренной обработки. Позволяет маршрутизаторам балансировать трафик (ECMP) и обеспечивать QoS без глубокого разбора L4-заголовков. Источник устанавливает значение, маршрутизаторы не изменяют. Спецификация: RFC 6437.
+4. **Payload Length (16 бит):** размер данных (без учета заголовка). Максимальное значение 65535 байт. Для больших пакетов используются **Jumbograms** (RFC 2675) — расширение Payload Length до 32 бит через Hop-by-Hop Options.
+5. **Next Header (8 бит):** тип следующего заголовка. Определяет либо протокол транспортного уровня (TCP = 6, UDP = 17), либо тип Extension Header (согласно IANA Registry). Цепочка заголовков形成ется через последовательные значения Next Header.
+6. **Hop Limit (8 бит):** аналог TTL в IPv4. Каждый маршрутизатор уменьшает на 1. При достижении 0 пакет отбрасывается, отправителю направляется ICMPv6 Time Exceeded (Type 3). Значение по умолчанию: 64 (Linux), 128 (Windows).
 
 ### Расширенные заголовки (Extension Headers)
 
-Цепочка заголовков, следующих за основным. Порядок важен для аппаратного парсинга:
-- **Hop-by-Hop Options (0):** параметры для каждого узла.
-- **Routing (43):** задание пути (используется в SRv6).
-- **Fragment (44):** данные для сборки фрагментированного пакета.
-- **ESP/AH (50/51):** безопасность IPsec.
-- **Destination Options (60):** параметры только для конечного узла.
+Цепочка заголовков, следующих за основным. Порядок важен для аппаратного парсинга и строго регламентирован RFC 8200:
+
+| Заголовок | Тип | Назначение | Ключевые особенности |
+| :--- | :--- | :--- | :--- |
+| **Hop-by-Hop Options** | 0 | Параметры для каждого узла на пути | Обязателен для Jumbograms (RFC 2675) и Router Alert. Обрабатывается **всеми** промежуточными маршрутизаторами, что снижает производительность. |
+| **Routing** | 43 | Управление маршрутом пакета | Используется в SRv6 (Type 4 — Segment Routing Header). Позволяет задавать список промежуточных узлов (SID). |
+| **Fragment** | 44 | Фрагментация только отправителем | Маршрутизаторы **никогда** не создают этот заголовок. Содержит Offset, Identification и M-флаг (More Fragments). |
+| **Destination Options** | 60 | Параметры только для конечного узла | Используется для мобильности (RFC 6275) и передачи данных приложениеуровня. |
+| **ESP (Encapsulating Security Payload)** | 50 | Шифрование и аутентификация IPsec | Основной протокол безопасности. Поддерживает AES-GCM, ChaCha20-Poly1305. |
+| **Authentication Header (AH)** | 51 | Аутентификация без шифрования | Устарел из-за проблем с NAT. Предпочтительнее ESP. |
+
+**Порядок обработки (RFC 8200, §4.1):**
+1. Hop-by-Hop Options — **обязателен**, если присутствует, обрабатывается первым.
+2. Destination Options (перед Routing) — для промежуточных узлов.
+3. Routing — обработка маршрута.
+4. Fragment — сборка фрагментов.
+5. Destination Options (последний) — для конечного узла.
+6. ESP/AH — проверка безопасности.
+
+**Важно:** Маршрутизаторы **обязаны** обрабатывать только Hop-by-Hop Options. Все остальные заголовки обрабатываются только конечным узлом, что ускоряет маршрутизацию.
 
 ### Протокол обнаружения соседей (NDP)
 
@@ -117,37 +133,214 @@ NDP (RFC 4861) — критическая часть IPv6, работающая 
 
 ### Диагностика в Linux
 
+#### Базовые команды
+
 ```bash
 # Пинг Link-Local адреса (обязателен Zone Index)
 ping -6 fe80::1%eth0
 
-# Просмотр таблицы соседей
+# Просмотр таблицы соседей (аналог ARP-таблицы)
 ip -6 neigh show
+# Состояния: REACHABLE (связь подтверждена), STALE (требует проверки), FAILED (не отвечает)
 
 # Трассировка с обнаружением MTU на пути
 tracepath6 -n google.com
 
 # Просмотр параметров RA от маршрутизаторов
 rdisc6 eth0
+
+# Просмотр всех IPv6-адресов на интерфейсе
+ip -6 addr show dev eth0
+
+# Просмотр IPv6-маршрутов
+ip -6 route show
+```
+
+#### Продвинутая диагностика
+
+```bash
+# Ручной Neighbor Solicitation (запрос MAC по IPv6)
+ndisc6 2001:db8::1 eth0
+
+# Проверка состояния DAD (Duplicate Address Detection)
+ip -6 addr show | grep -E "tentative|dadfailed"
+# tentative -> проверка уникальности, адрес не активен
+# dadfailed -> конфликт, адрес занят другим устройством
+
+# Просмотр статистики ICMPv6 (ошибки протокола)
+cat /proc/net/snmp6 | grep -i icmp6
+# Icmp6InErrors -> ошибки во входящих ICMPv6
+# Icmp6InMsgs -> всего получено сообщений
+
+# Просмотр членства в мультикаст-группах
+ip -6 maddr show
+
+# Пинг всех узлов сегмента (multicast)
+ping6 -c 2 ff02::1%eth0
+
+# Просмотр IPv6-сокетов (слушающие TCP)
+ss -6 -lnt
+
+# Все установленные соединения с процессами
+sudo ss -6 -atp
+```
+
+#### Анализ трафика через tcpdump
+
+```bash
+# Перехват Neighbor Solicitation/Advertisement (NDP)
+sudo tcpdump -i eth0 -n "icmp6 && (ip6[40] == 135 || ip6[40] == 136)"
+
+# Перехват Router Advertisements (RA)
+sudo tcpdump -i eth0 -vvn "icmp6 && ip6[40] == 134"
+
+# Весь трафик ICMPv6 (ошибки, пинги, NDP)
+sudo tcpdump -i eth0 -n icmp6
+
+# Перехват трафика по EtherType IPv6
+sudo tcpdump -i eth0 -n ether proto 0x86DD
+```
+
+### Настройка адресов
+
+#### SLAAC (автоматическая конфигурация)
+
+SLAAC работает «из коробки» в большинстве дистрибутивов. Хост получает префикс через RA и генерирует адрес самостоятельно.
+
+```bash
+# Проверка включ ли SLAAC
+sysctl net.ipv6.conf.all.autoconf
+# → 1 (включено)
+
+# Включение Privacy Extensions (рекомендуется для клиентов)
+sudo sysctl -w net.ipv6.conf.all.use_tempaddr=2
+sudo sysctl -w net.ipv6.conf.default.use_tempaddr=2
+
+# Постоянная настройка (/etc/sysctl.d/60-ipv6-privacy.conf)
+net.ipv6.conf.all.use_tempaddr = 2
+net.ipv6.conf.default.use_tempaddr = 2
+```
+
+#### Статическая настройка (nmcli)
+
+```bash
+# Установка метода и адреса
+sudo nmcli connection modify "eth0" ipv6.method manual ipv6.addresses "2001:db8::10/64"
+
+# Настройка шлюза и DNS
+sudo nmcli connection modify "eth0" ipv6.gateway "2001:db8::1" ipv6.dns "2001:db8::ffff"
+
+# Применение
+sudo nmcli connection up "eth0"
+
+# Настройка Stable Privacy (RFC 7217) вместо EUI-64
+sudo nmcli connection modify "eth0" ipv6.addr-gen-mode stable-privacy
+```
+
+#### Статическая настройка (systemd-networkd)
+
+```ini
+# /etc/systemd/network/10-eth0.network
+[Match]
+Name=eth0
+
+[Network]
+Address=2001:db8::10/64
+Gateway=2001:db8::1
+
+# Или автоконфигурация:
+IPv6AcceptRA=yes
+IPv6PrivacyExtensions=kernel
+```
+
+#### Временная настройка (iproute2)
+
+```bash
+# Добавление адреса (до перезагрузки)
+sudo ip -6 addr add 2001:db8::50/64 dev eth0
+
+# Установка токена интерфейса (фиксированная часть для SLAAC)
+sudo ip token set ::dead:beef dev eth0
+
+# Удаление адреса
+sudo ip -6 addr del 2001:db8::50/64 dev eth0
 ```
 
 ### Механизмы перехода (Кратко)
 
-- **Happy Eyeballs (RFC 8305):** Алгоритм быстрой попытки соединения по обоим протоколам с приоритетом IPv6.
-- **NAT64 / DNS64:** Доступ из IPv6-only сетей к ресурсам IPv4.
+- **Happy Eyeballs (RFC 8305):** Алгоритм быстрой попытки соединения по обоим протоколам с приоритетом IPv6. ОС параллельно резолвит A (IPv4) и AAAA (IPv6), запускает таймер (~150–250 мс). Побеждает соединение, первым завершившее рукопожатие.
+- **NAT64 / DNS64:** Доступ из IPv6-only сетей к ресурсам IPv4. DNS64 синтезирует AAAA-запись с Well-Known Prefix `64:ff9b::/96`, NAT64 транслирует трафик. Инструменты: Tayga, Jool.
 - **464XLAT:** Двойная трансляция (CLAT на устройстве, PLAT у провайдера) для работы IPv4-only приложений.
+- **Dual-Stack Lite:** IPv4-in-IPv6 туннель. Клиент инкапсулирует IPv4-пакеты в IPv6, CGN на провайдере выполняет NAT.
+- **SIT (6in4):** Инкапсуляция IPv6 в IPv4 (протокол 41). Используется для туннелей к брокерам (Tunnelbroker).
+
+### Таблица устранения неисправностей
+
+| Симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| `Address family not supported` | IPv6 отключен в ядре или GRUB | Проверить `sysctl net.ipv6.conf.all.disable_ipv6` и параметры загрузки |
+| Адрес в `tentative` | Проблема с DAD или петля L2 | Проверить `tcpdump`, исключить петли в коммутаторах |
+| `Network is unreachable` | Нет маршрута по умолчанию | Проверить прием RA (`accept_ra`) или настроить статику |
+| Пинг проходит, TCP виснет | Проблема с Path MTU (PMTUD) | Проверить прохождение ICMPv6 Type 2. Уменьшить MTU или настроить MSS Clamping |
+| Адрес `dadfailed` | Конфликт IP в сети | Изменить статический IP или проверить DHCPv6/SLAAC |
+| Медленный DNS (time_namelookup) | AAAA не отвечает или timeout | Проверить флагом `-4`, отключить IPv6 если не нужен |
+| `Permission denied` в соединении | Блокировка в nftables/ip6tables | Разрешить ICMPv6 Type 2, NDP (133–136), MLD (130–132) |
+| RA не приходят | RA Guard или блокировка на коммутаторе | Проверить порт: должен быть trusted для RA |
+
+## Best Practices и Edge Cases
+
+### Рекомендации по развертыванию
+
+1. **Dual Stack — предпочтительный метод:** Поддержка обоих стеков обеспечивает обратную совместимость и плавный переход.
+2. **Размер подсети /64:** Обязателен для SLAAC. Использование префиксов длиннее /64 (например, /128) **ломает** автоконфигурацию.
+3. **Privacy Extensions:** Включать `use_tempaddr=2` на клиентских устройствах для защиты от трекинга.
+4. **Stable Privacy (RFC 7217):** Использовать вместо EUI-64 на серверах для баланса между стабильностью и приватностью.
+5. **ICMPv6 должен быть разрешен:** Полная блокировка ICMPv6 делает сеть неработоспособной (NDP, PMTUD, MLD).
+6. **MSS Clamping для туннелей:** Настроить `tcp option maxseg size set 1400` для трафика через туннели.
+
+### Безопасность
+
+1. **RA Guard (RFC 6105):** Блокировать Router Advertisement на портах, где не должно быть маршрутизаторов.
+2. **ND Inspection:** Аналог Dynamic ARP Inspection для IPv6. Проверка соответствия IPv6-MAC в таблице NDP.
+3. **Фильтрация Extension Headers:** Ограничивать Hop-by-Hop Options для предотвращения DoS-атак.
+4. **uRPF для IPv6:** Проверка обратного пути через `fib saddr . iif oif exists` в nftables.
+5. **bindv6only:** Параметр `net.ipv6.bindv6only=1` — сокет `[::]` слушает только IPv6, повышает изоляцию.
+
+### Edge Cases
+
+1. **MTU 1280 — минимальный обязательный размер:** Все узлы и туннели обязаны поддерживать пакеты этого размера без фрагментации.
+2. **Jumbograms (RFC 2675):** Пакеты >65535 байт. Требуют поддержки на всех узлах пути. Используются в высокоскоростных сетях (InfiniBand, backbone).
+3. **Loopback ::1:** Обязателен на каждом узле. Используется для локальных сервисов.
+4. **Unspecified (::/128):** Адрес источника до получения собственного. Используется в DAD и при старте стека.
+5. **IPv4-Mapped (::ffff:0:0/96):** Позволяет dual-stack приложениям работать с IPv4 через IPv6-сокеты. Проверка: `ss -6 -lnt | grep '::ffff:'`.
+6. **Zone Index обязателен для Link-Local:** Без `%interface` ядро не определит выходной интерфейс, так как `fe80::/10` есть на всех интерфейсах.
+7. **Preferred vs Valid Lifetime:** По истечении Preferred адрес переходит в `deprecated` (не для новых соединений). По истечении Valid — удаляется с интерфейса.
+8. **Optimistic DAD (RFC 4429):** Позволяет использовать адрес до завершения проверки DAD. Ускоряет роуминг, но создает риск кратковременного дублирования.
 
 ## Дополнительная информация
 
 ### Связанные документы
-- **[Диагностика IPv6 в Linux](../../Linux/Networking/Settings/ipv6_configuration/diagnostics.md)**.
-- **[Настройка адресов в Linux](../../Linux/Networking/Settings/ipv6_configuration/address_configuration.md)**.
-- **[ICMPv6: Детализация протокола](./ICMP/icmp_diagnostics_security.md)**.
+- **[Диагностика IPv6 в Linux](../../Linux/Networking/Settings/ipv6_configuration/diagnostics.md)** — глубокая отладка NDP, DAD и стека.
+- **[Настройка адресов в Linux](../../Linux/Networking/Settings/ipv6_configuration/address_configuration.md)** — SLAAC, DHCPv6, статика через nmcli/systemd-networkd.
+- **[Firewall для IPv6](../../Linux/Networking/Settings/ipv6_configuration/firewall.md)** — nftables, UFW, критические правила ICMPv6.
+- **[Туннелирование IPv6](../../Linux/Networking/Settings/ipv6_configuration/tunneling.md)** — SIT, WireGuard, MSS Clamping.
+- **[ICMPv6: Детализация протокола](./ICMP/icmp_diagnostics_security.md)** — типы сообщений и их назначение.
+- **[Dual Stack IPv4/IPv6](../OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md)** — сосуществование стеков.
 
 ### RFC и стандарты
-- **RFC 8200:** IPv6 Specification (Standard).
-- **RFC 4291:** IP Version 6 Addressing Architecture.
-- **RFC 4861:** Neighbor Discovery Protocol.
-- **RFC 4862:** IPv6 SLAAC.
-- **RFC 7217:** Semantically Opaque Interface Identifiers (Stable Privacy).
-- **RFC 8754:** IPv6 Segment Routing Header (SRH).
+
+| RFC | Название | Ключевое содержание |
+| :--- | :--- | :--- |
+| **RFC 8200** | IPv6 Specification | Основной стандарт. Формат заголовка, маршрутизация, фрагментация. |
+| **RFC 4291** | IP Version 6 Addressing Architecture | Типы адресов, префиксы, формат записи. |
+| **RFC 4861** | Neighbor Discovery Protocol | NDP: RS/RA, NS/NA, NUD, DAD. Замена ARP. |
+| **RFC 4862** | IPv6 SLAAC | Stateless Address Autoconfiguration. |
+| **RFC 4941** | Privacy Extensions | Временные случайные адреса для защиты от трекинга. |
+| **RFC 6437** | IPv6 Flow Label | Маркировка потоков для ECMP и QoS. |
+| **RFC 6724** | Default Address Selection | Правила выбора исходного адреса (Source Address Selection). |
+| **RFC 7217** | Semantically Opaque Interface Identifiers | Stable Privacy — замена EUI-64. |
+| **RFC 8305** | Happy Eyeballs v2 | Параллельная попытка IPv4/IPv6 с приоритетом IPv6. |
+| **RFC 8754** | IPv6 Segment Routing Header | SRv6: кодирование пути в заголовке IPv6. |
+| **RFC 2675** | Jumbograms | Пакеты >65535 байт через Hop-by-Hop Options. |
+| **RFC 3168** | ECN (Explicit Congestion Notification) | Сигнализация о перегрузке без отбрасывания. |
+| **RFC 6105** | RA Guard | Защита от ложных Router Advertisement на коммутаторах. |

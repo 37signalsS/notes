@@ -12,6 +12,10 @@
 
 **Хост (Host)** — любое оконечное устройство в сети (компьютер, сервер, сетевой интерфейс), имеющее уникальный IP-адрес.
 
+**CIDR (Classless Inter-Domain Routing)** — бесклассовая система записи маски подсети через количество бит (префикс). Запись `/N` указывает число единичных бит в маске. Подробнее: **[Специальные маски и CIDR](./special_masks.md)**.
+
+**SLAAC (Stateless Address Autoconfiguration)** — механизм автоконфигурации IPv6-адреса без DHCP-сервера. Хост генерирует адрес на основе префикса сети и своего MAC-адреса (или случайного значения с Privacy Extensions, RFC 4941).
+
 ## Основные концепции
 
 ### Версии IP-протокола
@@ -75,6 +79,417 @@ IP-адрес делится на две части: **Network ID** (сетев�
 
 Хосты могут общаться напрямую, если они находятся в одной подсети. Для проверки вычислите адреса сети для обоих хостов: если они совпадают, трафик пойдет по L2 через коммутатор. Если нет — потребуется маршрутизация (L3).
 
+### Просмотр и настройка IP-адресов в Linux
+
+**Просмотр текущих адресов:**
+```bash
+# Современный способ (iproute2)
+ip addr show
+ip -4 addr show  # только IPv4
+ip -6 addr show  # только IPv6
+
+# Устаревший способ (ifconfig)
+ifconfig -a
+```
+
+**Добавление статического IP-адреса:**
+```bash
+# Временное назначение (исчезнет после перезагрузки)
+ip addr add 192.168.1.100/24 dev eth0
+
+# Проверка
+ip addr show eth0 | grep "inet "
+# → inet 192.168.1.100/24 scope global eth0
+```
+
+**Настройка шлюза по умолчанию:**
+```bash
+# Просмотр текущего шлюза
+ip route show default
+# → default via 192.168.1.1 dev eth0
+
+# Добавление шлюза
+ip route add default via 192.168.1.1
+
+# Удаление шлюза
+ip route del default via 192.168.1.1
+```
+
+### Проверка вхождения IP в подсеть
+
+**Быстрая проверка через ipcalc:**
+```bash
+# Установка (Debian/Ubuntu)
+sudo apt install ipcalc
+
+# Проверка
+ipcalc 192.168.1.130/26
+# → Address:   192.168.1.130      11000000.10101000.00000001.10 000010
+# → Netmask:   255.255.255.192 = 26  11111111.11111111.11111111.11 000000
+# → Network:   192.168.1.128/26   11000000.10101000.00000001.10 000000
+# → HostMin:   192.168.1.129      11000000.10101000.00000001.10 000001
+# → HostMax:   192.168.1.190      11000000.10101000.00000001.10 111110
+# → Broadcast: 192.168.1.191      11000000.10101000.00000001.10 111111
+# → Hosts/Net: 62
+```
+
+**Ручная проверка через bash:**
+```bash
+# Функция проверки вхождения IP в CIDR
+ip_in_cidr() {
+    local ip=$1
+    local cidr=$2
+    local network=$(ipcalc -n "$cidr" | cut -d' ' -f2)
+    local mask=$(ipcalc -m "$cidr" | cut -d' ' -f2)
+    local ip_dec=$(echo "$ip" | awk -F'.' '{print $1*2^24+$2*2^16+$3*2^8+$4}')
+    local net_dec=$(echo "$network" | awk -F'.' '{print $1*2^24+$2*2^16+$3*2^8+$4}')
+    local mask_dec=$(echo "$mask" | awk -F'.' '{print $1*2^24+$2*2^16+$3*2^8+$4}')
+    [ $((ip_dec & mask_dec)) -eq $net_dec ]
+}
+
+# Использование
+ip_in_cidr 192.168.1.130 192.168.1.128/26 && echo "Yes" || echo "No"
+# → Yes
+```
+
+### Диагностика проблем с IP-адресацией
+
+**Проверка базовой связности:**
+```bash
+# Ping шлюза (проверка L2/L3)
+ping -c 3 192.168.1.1
+
+# Ping внешнего IP (проверка маршрутизации)
+ping -c 3 8.8.8.8
+
+# Traceroute (проверка пути)
+traceroute 8.8.8.8
+# или
+mtr 8.8.8.8
+```
+
+**Проверка ARP-таблицы (связка IP ↔ MAC):**
+```bash
+# Просмотр ARP-кеша
+arp -n
+# или
+ip neigh show
+
+# Пример вывода:
+# 192.168.1.1 dev eth0 lladdr 00:1a:2b:3c:4d:5e REACHABLE
+```
+
+**Проверка таблицы маршрутизации:**
+```bash
+# Просмотр всех маршрутов
+ip route show
+
+# Просмотр маршрута к конкретному адресу
+ip route get 8.8.8.8
+# → 8.8.8.8 via 192.168.1.1 dev eth0 src 192.168.1.100 uid 0
+```
+
+## Troubleshooting
+
+### Частые ошибки IP-адресации
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Адрес `169.254.x.x` (APIPA)** | DHCP-сервер недоступен или пул адресов исчерпан | Проверить DHCP-сервер, кабель, коммутатор |
+| **Нет связности между хостами в одной сети** | Разные маски подсети у хостов | Убедиться, что маски идентичны |
+| **Пакеты не доходят за пределы подсети** | Не настроен шлюз по умолчанию | Добавить маршрут `ip route add default via <gateway>` |
+| **Асимметричная маршрутизация** | Несколько шлюзов с разными метриками | Проверить `ip route show`, выровнять метрики |
+| **Duplicate Address Detection (DAD)** | Два устройства с одинаковым IP | Изменить адрес одного из устройств |
+| **MTU Black Hole** | Фрагментированные пакеты отбрасываются | Проверить MTU на всех хопах: `ping -M do -s 1472 8.8.8.8` |
+
+### Диагностические команды
+
+**Быстрый чеклист:**
+```bash
+# 1. Проверить интерфейсы и адреса
+ip addr show
+
+# 2. Проверить маршруты
+ip route show
+
+# 3. Проверить ARP-таблицу
+ip neigh show
+
+# 4. Проверить DNS
+cat /etc/resolv.conf
+nslookup google.com
+
+# 5. Проверить связность с шлюзом
+ping -c 3 <gateway_ip>
+
+# 6. Проверить внешнюю связность
+ping -c 3 8.8.8.8
+
+# 7. Проверить путь
+traceroute 8.8.8.8
+```
+
+**Сбор информации для анализа:**
+```bash
+# Экспорт текущей конфигурации
+ip addr show > /tmp/ip_addr.txt
+ip route show > /tmp/ip_route.txt
+ip neigh show > /tmp/ip_arp.txt
+cat /etc/resolv.conf > /tmp/dns.txt
+
+# Проверка логов системы
+journalctl -u NetworkManager --since "1 hour ago" | tail -50
+# или
+dmesg | grep -i "link"
+```
+
+### Типичные сценарии диагностики
+
+**Сценарий 1: Хост не получает IP по DHCP**
+```bash
+# Проверить статус DHCP-клиента
+systemctl status NetworkManager
+journalctl -u NetworkManager | tail -20
+
+# Принудительное обновление lease
+sudo dhclient -r eth0  # освободить
+sudo dhclient eth0     # получить новый
+
+# Проверить, какие адреса уже выданы
+sudo arp-scan --localnet
+```
+
+**Сценарий 2: Потеря связности после смены IP**
+```bash
+# Проверить, не изменился ли шлюз
+ip route show default
+
+# Проверить, не заблокирован ли трафик
+sudo iptables -L -n
+sudo nft list ruleset
+
+# Проверить ARP для шлюза
+ip neigh show | grep <gateway_ip>
+```
+
+**Сценарий 3: Медленная работа из-за DNS**
+```bash
+# Проверить время отклика DNS
+time nslookup example.com
+
+# Проверить текущий DNS-сервер
+resolvectl status
+
+# Временно сменить DNS
+sudo resolvectl dns eth0 8.8.8.8
+```
+
+## Best Practices
+
+### Планирование адресного пространства
+
+1. **Иерархическая структура:** Используйте единую схему нумерации подсетей. Пример:
+   - `10.0.0.0/8` — глобальная сеть
+   - `10.1.0.0/16` — ЦОД 1
+   - `10.1.1.0/24` — DMZ
+   - `10.1.2.0/24` — серверы приложений
+   - `10.1.3.0/24` — базы данных
+
+2. **Запас адресов:** Выделяйте подсети с запасом 20-30% для роста. Не заполняйте подсеть более чем на 80%.
+
+3. **Документирование:** Ведите реестр выданных адресов (NetBox, phpIPAM, или CSV-файл).
+
+### Безопасность
+
+- **Разделение сетей:** Изолируйте серверы, клиенты и управления в разные подсети.
+- **Control Plane Protection:** Управляющие интерфейсы (SSH, API) должны быть в отдельной VLAN/подсети с ограниченным доступом.
+- **ARP Inspection:** Включите Dynamic ARP Inspection (DAI) на коммутаторах для защиты от ARP-спуфинга.
+- **IP Source Guard:** Блокируйте IP-спуфинг на портах коммутаторов.
+
+### Статическая vs Динамическая адресация
+
+| Тип | Когда использовать | Примеры |
+| :--- | :--- | :--- |
+| **Статический** | Серверы, маршрутизаторы, сетевое оборудование, DNS-серверы | Web-серверы, БД, балансировщики нагрузки, мониторинг |
+| **DHCP** | Рабочие станции, мобильные устройства, IoT | Ноутбуки, телефоны, принтеры |
+| **DHCP Reservation** | Устройства, которым нужен фиксированный IP, но управление через DHCP | Принтеры, IP-камеры |
+
+### Рекомендации для IPv6
+
+- **Подсети `/64`:** Всегда используйте `/64` для сегментов с SLAAC.
+- **Дуал-стек:** При возможности включайте IPv4 + IPv6 одновременно.
+- **Link-Local:** Помните, что `fe80::` адреса обязательны и используются для NDP.
+
+### Валидация IP-адресов в скриптах
+
+```bash
+#!/bin/bash
+# validate_ip.sh — Валидация IPv4-адреса
+
+validate_ipv4() {
+    local ip=$1
+    
+    # Проверка формата: 4 октета через точку
+    if ! [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo "✗ Неверный формат: $ip"
+        return 1
+    fi
+    
+    # Проверка диапазона каждого октета (0-255)
+    IFS='.' read -r -a octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        if [ "$octet" -lt 0 ] || [ "$octet" -gt 255 ]; then
+            echo "✗ Октет вне диапазона: $octet"
+            return 1
+        fi
+    done
+    
+    echo "✓ $ip — валидный IPv4-адрес"
+    return 0
+}
+
+# Примеры
+validate_ipv4 "192.168.1.1"    # ✓
+validate_ipv4 "255.255.255.0"  # ✓
+validate_ipv4 "256.1.1.1"      # ✗
+validate_ipv4 "192.168.1"      # ✗
+```
+
+### Проверка доступности IP в подсети
+
+```bash
+#!/bin/bash
+# check_subnet_hosts.py — Проверка доступных IP в подсети
+
+import ipaddress
+import subprocess
+import sys
+
+def check_hosts_in_subnet(subnet_str, timeout=1):
+    """Проверка доступных хостов в подсети"""
+    try:
+        network = ipaddress.ip_network(subnet_str, strict=False)
+    except ValueError as e:
+        print(f"Ошибка: {e}")
+        return
+    
+    print(f"=== Проверка хостов в {subnet_str} ===")
+    print(f"Всего адресов: {network.num_addresses}")
+    print()
+    
+    available = []
+    unreachable = []
+    
+    for ip in network.hosts():
+        # Ping с таймаутом
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout), str(ip)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        if result.returncode == 0:
+            available.append(ip)
+        else:
+            unreachable.append(ip)
+    
+    print(f"Доступных хостов: {len(available)}")
+    for ip in available[:10]:  # Показать первые 10
+        print(f"  ✓ {ip}")
+    if len(available) > 10:
+        print(f"  ... и ещё {len(available) - 10}")
+    
+    print()
+    print(f"Недоступных хостов: {len(unreachable)}")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Использование: python3 check_subnet_hosts.py <subnet>")
+        print("Пример: python3 check_subnet_hosts.py 192.168.1.0/24")
+        sys.exit(1)
+    
+    check_hosts_in_subnet(sys.argv[1])
+```
+
+### Сравнение двух IP-адресов
+
+```bash
+#!/bin/bash
+# compare_ips.sh — Сравнение двух IP-адресов
+
+compare_ips() {
+    local ip1=$1
+    local ip2=$2
+    
+    # Преобразование в числа
+    local num1=$(echo "$ip1" | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    local num2=$(echo "$ip2" | awk -F. '{print ($1*2^24)+($2*2^16)+($3*2^8)+$4}')
+    
+    if [ $num1 -eq $num2 ]; then
+        echo "$ip1 == $ip2"
+    elif [ $num1 -lt $num2 ]; then
+        echo "$ip1 < $ip2"
+    else
+        echo "$ip1 > $ip2"
+    fi
+}
+
+# Примеры
+compare_ips "192.168.1.1" "192.168.1.2"
+compare_ips "10.0.0.1" "192.168.1.1"
+```
+
+## Edge Cases
+
+### APIPA и самоназначение адресов
+
+Когда DHCP недоступен, ОС автоматически назначает адрес из диапазона `169.254.0.0/16` (APIPA). Это позволяет работать в локальной сети без ручной настройки, но ограничивает доступность:
+- Нет доступа к шлюзу и интернету
+- Доступны только устройства с APIPA в том же сегменте
+- Автоматическое обнаружение других APIPA-устройств через Bonjour/mDNS
+
+### Двойной NAT (CGNAT)
+
+Провайдер использует адрес из `100.64.0.0/10` (RFC 6598), создавая двойную трансляцию:
+- Домашний роутер: `192.168.1.x` → `100.64.x.x`
+- Провайдерский NAT: `100.64.x.x` → публичный IP
+
+**Следствия:** Прямой доступ из интернета невозможен (port forwarding не работает).
+**Решения:** VPN, Cloudflare Tunnel, аренда белого IP.
+
+### Разные маски в одной сети
+
+Если два хоста в одном физическом сегменте настроены с разными масками (например, `/24` и `/25`):
+- Хост с `/24` видит сеть как `192.168.1.0/24`
+- Хост с `/25` видит сеть как `192.168.1.0/25`
+- Результат: асимметричная маршрутизация, потеря пакетов
+
+**Решение:** Всегда проверяйте согласованность масок в сегменте.
+
+### Loopback и привязка сервисов
+
+- `bind 127.0.0.1` — сервис доступен только локально (безопасно для БД).
+- `bind 0.0.0.0` — сервис слушает все интерфейсы (опасно без firewall).
+- `bind ::` — IPv6 equivalent (включает IPv4 через dual-stack).
+
+### MTU и фрагментация
+
+- **Ethernet:** Стандартный MTU 1500 байт.
+- **VPN-туннели:** Уменьшают MTU (IPsec: ~1400, WireGuard: ~1420).
+- **PPPoE:** MTU 1492 (8 байт заголовок PPP).
+- **Проблема:** Если пакет больше MTU и установлен флаг DF (Don't Fragment), пакет отбрасывается.
+
+**Диагностика:**
+```bash
+# Проверка MTU интерфейса
+ip link show eth0 | grep mtu
+# → mtu 1500
+
+# Тест MTU до хоста
+ping -M do -s 1472 8.8.8.8
+# 1472 + 28 (IP+ICMP headers) = 1500 = MTU
+```
+
 ## Дополнительная информация
 
 ### Навигация по разделу
@@ -88,12 +503,24 @@ IP-адрес делится на две части: **Network ID** (сетев�
 
 - **[Протокол ARP](../arp.md)** — связка IP и MAC-адресов.
 - **[Протокол DHCP](../DHCP/dhcp_overview.md)** — автоматизация выдачи адресов.
-- **[NAT (Network Address Translation)](../../Concepts/nat/overview.md)** — технология трансляции адресов.
+- **[NAT (Network Address Translation)](../../Concepts/nat/nat_and_vpn.md)** — технология трансляции адресов и взаимодействие с VPN.
 - **[Протокол ICMP](../ICMP/icmp_overview.md)** — диагностика (ping, traceroute).
+- **[Сетевой уровень (L3)](../../OSI_TCP_IP_Model/Network_layer/Concepts/network_layer_overview.md)** — маршрутизация и IP-адресация.
+- **[IPv4/IPv6 Dual-Stack](../../OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md)** — параллельная работа двух протоколов.
 
 ### Инструменты
 
 - **[Сетевые калькуляторы](../ServicesAndTools/network_calculation_tools.md)** — обзор `ipcalc`, `sipcalc` и библиотек Python.
+- **[ip addr — управление адресами](../../../Linux/Networking/Tools/iproute2/ip_address.md)** — добавление, удаление, просмотр IP-адресов.
+- **[ip route — таблица маршрутизации](../../../Linux/Networking/Tools/iproute2/ip_route.md)** — настройка маршрутов.
+- **[ip neigh — ARP-таблица](../../../Linux/Networking/Tools/iproute2/ip_neighbour.md)** — просмотр и управление ARP-кешем.
+
+### Диагностика
+
+- **[ping и ICMP](../../../Linux/Diagnostics/Networking/ping.md)** — базовая проверка связности.
+- **[traceroute и mtr](../../../Linux/Diagnostics/Networking/traceroute_mtr.md)** — трассировка маршрута.
+- **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — захват и анализ пакетов.
+- **[ss и netstat](../../../Linux/Diagnostics/Networking/ss.md)** — просмотр активных соединений.
 
 ### RFC и стандарты
 
@@ -101,4 +528,5 @@ IP-адрес делится на две части: **Network ID** (сетев�
 - **RFC 1918:** Распределение адресов для частных сетей.
 - **RFC 3021:** Использование префиксов `/31` на Point-to-Point линках.
 - **RFC 4632:** Спецификация CIDR.
+- **RFC 6598:** IANA-Reserved IPv4 Prefix for Shared Address Space (CGNAT).
 - **RFC 8200:** Спецификация IPv6.

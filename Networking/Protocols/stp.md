@@ -1,7 +1,5 @@
 # STP — протокол связующего дерева
 
-> **Reliability Score: 10** (SSoT + Verified IEEE Standards + SRE Practice)
-
 ## Определения
 
 **Сетевая петля (Network Loop)** — ситуация в коммутируемых сетях L2 (Layer 2 — канальный уровень), когда между устройствами существует более одного активного физического пути. Это приводит к широковещательным штормам и нестабильности таблиц MAC-адресов.
@@ -26,6 +24,43 @@
 4. Каждый проход кадра через коммутатор может порождать дополнительные копии, что приводит к лавинообразному росту трафика.
 
 **Последствия:** отказ сети, высокая нагрузка на CPU коммутаторов, «прыгающие» MAC-адреса в таблицах коммутации (один и тот же адрес видится за разными портами).
+
+### Формат BPDU (Bridge Protocol Data Unit)
+
+Коммутаторы обмениваются двумя типами BPDU:
+
+**Configuration BPDU (802.1D):**
+
+| Поле | Байты | Описание |
+| :--- | :--- | :--- |
+| Protocol ID | 2 | Всегда 0 (STP) |
+| Version | 1 | 0 = 802.1D, 2 = RSTP/MSTP |
+| Message Type | 1 | 0x00 = Config, 0x02 = TCN, 0x80 = RSTP |
+| Flags | 1 | TC (Topology Change), TCA, Proposal, Agreement, Role, Forwarding, Learning |
+| Root ID | 8 | Bridge ID корневого коммутатора |
+| Root Path Cost | 4 | Стоимость пути от отправителя до Root Bridge |
+| Sender Bridge ID | 8 | Bridge ID отправителя |
+| Port ID | 2 | Идентификатор порта отправителя (приоритет + номер) |
+| Message Age | 2 | Текущий «возраст» BPDU (в 1/256 сек). Увеличивается на 1 при прохождении через коммутатор. Max Age = 20 сек |
+| Max Age | 2 | Максимальный допустимый возраст BPDU (по умолчанию 20 сек). Если BPDU не приходит > Max Age, порт считается недоступным |
+| Hello Time | 2 | Интервал отправки BPDU (по умолчанию 2 сек). Root Bridge рассылает Configuration BPDU каждые Hello Time |
+| Forward Delay | 2 | Задержка в состояниях Listening → Learning → Forwarding (по умолчанию 15 сек). Используется дважды: 2 × Forward Delay = 30 сек до Forwarding |
+
+**TCN BPDU (Topology Change Notification):**
+- Отправляется от изменённого порта в сторону Root Bridge.
+- Содержит только Protocol ID, Version и Message Type (0x80).
+- Root Bridge отвечает Configuration BPDU с флагом TCA (Topology Change Acknowledge).
+
+#### Таймеры STP
+
+| Таймер | Значение по умолчанию | Описание |
+| :--- | :--- | :--- |
+| **Hello Time** | 2 сек | Интервал рассылки Configuration BPDU от Root Bridge |
+| **Forward Delay** | 15 сек | Время пребывания в Listening и Learning перед переходом в Forwarding |
+| **Max Age** | 20 сек | Время ожидания BPDU; при превышении — пересчёт топологии |
+| **Message Age** | 0 → Max Age | Текущий возраст BPDU; увеличивается на 1 сек на каждом хопе |
+
+**Важно:** Таймеры (Hello, Forward Delay, Max Age) наследуются от Root Bridge во всех Configuration BPDU. Все коммутаторы в домене STP работают с одинаковыми значениями.
 
 ### Алгоритм работы STP
 
@@ -84,6 +119,23 @@ RSTP вводит дополнительные роли для ускорени�
 - **Point-to-Point:** Полнодуплексный линк между двумя коммутаторами (мгновенная сходимость через Proposal/Agreement).
 - **Shared:** Полудуплексный линк (через хаб), работает по медленным таймерам 802.1D.
 
+#### Механизм Proposal/Agreement (быстрая сходимость RSTP)
+
+Ключевой механизм, обеспечивающий сходимость RSTP за 1 RTT:
+
+1. **Proposal:** Designated Port отправляет BPDU с флагом Proposal на Root Port другого коммутатора.
+2. **Agreement:** Получив Proposal, коммутатор проверяет, что предложенный путь лучше текущего, и немедленно отвечает Agreement.
+3. **Synchronized:** Все портыполучившего коммутатора (кроме Edge Port) переводятся в Discarding. Это предотвращает петли на время переконфигурации.
+4. **Forwarding:** После обмена Proposal/Agreement оба порта переходят в Forwarding без задержки Forward Delay.
+
+**Сравнение сходимости:**
+
+| Сценарий | STP (802.1D) | RSTP (802.1w) |
+| :--- | :--- | :--- |
+| Падение Root Port | 30–50 сек (Max Age + 2×Forward Delay) | <1 сек (через Alternate Port) |
+| Падение Designated Port | 30–50 сек | <1 сек (через Proposal/Agreement) |
+| Новый коммутатор в топологии | 30–50 сек | <1 сек (Proposal/Agreement) |
+
 ### Эволюция протокола
 
 | Протокол | Стандарт | Сходимость | Особенности |
@@ -137,17 +189,114 @@ sudo bridge link set dev eth0 edgeport on
 
 ### Настройка на промышленном коммутаторе
 
-**Пример настройки MSTP (Cisco IOS):**
+#### Cisco IOS
+
+**Пример настройки MSTP:**
 
 ```cisco
+! Включение MSTP
 spanning-tree mode mst
+
+! Настройка региона MSTP
 spanning-tree mst configuration
  name REGION1
  revision 1
  instance 1 vlan 10, 20
  instance 2 vlan 30, 40
 exit
+
+! Приоритет Root Bridge для Instance 1
 spanning-tree mst 1 priority 4096
+
+! Приоритет Root Bridge для Instance 2
+spanning-tree mst 2 priority 8192
+
+! BPDU Guard на access-порту
+interface GigabitEthernet0/1
+ description to-server
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+
+! Root Guard на порту к чужому сегменту
+interface GigabitEthernet0/24
+ description to-partner-switch
+ switchport mode trunk
+ spanning-tree guard root
+
+! Loop Guard (глобально)
+spanning-tree loopguard default
+
+! Recovery err-disabled порта
+interface GigabitEthernet0/1
+ errdisable recovery cause bpduguard
+ errdisable recovery interval 300
+```
+
+#### Juniper Junos
+
+**Пример настройки RSTP:**
+
+```juniper
+# Включение RSTP
+set protocols rstp interface ge-0/0/0 edge
+set protocols rstp interface ge-0/0/0 bpdu-guard
+
+# Настройка MSTP
+set protocols mstp bridge instance 1 vlan [vlan10 vlan20]
+set protocols mstp bridge instance 2 vlan [vlan30 vlan40]
+set protocols mstp bridge mst-id 1 priority 4096
+set protocols mstp region REGION1
+set protocols mstp region revision 1
+set protocols mstp region vlan-regex "^(10|20|30|40)$"
+
+# BPDU Guard на access-порту
+set protocols rstp interface ge-0/0/1 edge
+set protocols rstp interface ge-0/0/1 bpdu-guard
+
+# Root Guard
+set protocols rstp interface ge-0/0/24 no-root-port
+```
+
+**Проверка состояния (Junos):**
+
+```bash
+show spanning-tree bridge           # Состояние моста
+show spanning-tree interface         # Состояния портов
+show spanning-tree statistics         # Статистика BPDU
+show spanning-tree mstp instance 1   # MSTP Instance 1
+```
+
+#### Linux (iproute2)
+
+**Настройка VLAN-aware Bridge с MSTP:**
+
+```bash
+# Создание моста с VLAN filtering и STP
+sudo ip link add br0 type bridge vlan_filtering 1 stp_state 1
+
+# Установка приоритета (Instance 0)
+sudo ip link set br0 type bridge priority 4096
+
+# Настройка таймеров
+sudo ip link set br0 type bridge hello_time 200 \
+  max_age 2000 forward_delay 1500
+
+# Настройка Edge Port
+sudo bridge link set dev eth0 edge on
+
+# Настройка стоимости (для 10Gbps)
+sudo bridge link set dev eth0 cost 200
+
+# Просмотр полного состояния STP
+bridge -d link show
+# → 2: eth0@eth0: <BROADCAST,MULTICAST,UP> ...
+#   cost 200 priority 128.2 state forwarding
+
+# Просмотр MSTP (если поддерживается ядром)
+cat /sys/class/net/br0/bridge/stp_state
+# → 1
 ```
 
 ### Диагностика проблем
@@ -161,6 +310,19 @@ spanning-tree mst 1 priority 4096
 - **Cisco:** `show spanning-tree summary`, `show spanning-tree mst`.
 - **Juniper:** `show spanning-tree bridge`.
 - **Linux:** `bridge vlan show`, `ip -s link show type bridge`.
+
+#### Типичные ошибки и их диагностика
+
+| Проблема | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Потеря связи на 30–50 сек | STP пересчитывает топологию (802.1D) | `show spanning-tree summary` — проверить время сходимости | Переход на RSTP: `spanning-tree mode rapid-pvst` |
+| «Root Bridge» неожиданно сменился | Неконтролируемый коммутатор с приоритетом 0 | `show spanning-tree root` — кто Root? | `spanning-tree vlan X root primary` на нужном коммутаторе |
+| Порт в err-disabled | BPDU Guard сработал | `show interfaces status err-disabled` | Убрать BPDU Guard или устранить источник BPDU; `shutdown`/`no shutdown` |
+| Петля несмотря на STP | BPDU не доходят (однонаправленный линк) | Проверить связность: `ping` + `show spanning-tree inconsistentports` | Включить Loop Guard: `spanning-tree loopguard default` |
+| MAC-адрес «прыгает» | Флапающий порт или петля | `show mac address-table` — MAC мигрирует между портами | Найти флапающий порт: `show interface | inc errors` |
+| MSTP-инстансы не синхронизируются | Разные имена регионов | `show spanning-tree mst configuration` на всех коммутаторах | Привести имя региона, ревизию и маппинг к единому значению |
+| 0-RTT RSTP не работает | Shared-лиinks или не все порты Point-to-Point | `show spanning-tree detail` — проверить тип линка | Переключить на полный дуплекс; `spanning-tree link-type point-to-point` |
+| Высокий CPU при 500+ VLAN | PVST+ — отдельный экземпляр на каждый VLAN | `show spanning-tree summary` — количество инстансов | Переход на MSTP: группировка VLAN в инстансы |
 
 **Флап порта:** частая смена топологии может быть вызвана флапающим портом. Подробнее — [Ethernet — флап порта](./ethernet.md#флап-порта-port-flapping).
 
@@ -219,6 +381,57 @@ watch -n 1 'ip -s link show eth0 | grep -A1 RX'
 | **UDLD (UniDirectional Link Detection)** | Детектирует физическую однонаправленность линка на L2 (дополнение к Loop Guard) | Оптические линки |
 | **BPDU Filter** | Игнорирует входящие и исходящие BPDU | Крайне осторожное применение для изоляции |
 
+#### Конфигурация безопасности STP
+
+**Cisco IOS:**
+
+```cisco
+! BPDU Guard — глобально на всех Edge Port
+spanning-tree portfast bpduguard default
+
+! BPDU Guard — на конкретном порту
+interface GigabitEthernet0/1
+ spanning-tree bpduguard enable
+
+! Root Guard — на порту к внешнему сегменту
+interface GigabitEthernet0/24
+ spanning-tree guard root
+
+! Loop Guard — глобально
+spanning-tree loopguard default
+
+! BPDU Filter — глобально (ОСТОРОЖНО: отключает STP на Edge Port)
+spanning-tree portfast bpdufilter default
+
+! Recovery err-disabled портов
+errdisable recovery cause bpduguard
+errdisable recovery cause udld
+errdisable recovery interval 300
+
+! Проверка заблокированных портов
+show spanning-tree summary
+show interfaces status err-disabled
+show spanning-tree inconsistentports
+```
+
+**Juniper Junos:**
+
+```juniper
+# BPDU Guard на Edge Port
+set protocols rstp interface ge-0/0/1 edge
+set protocols rstp interface ge-0/0/1 bpdu-guard
+
+# Root Guard (no-root-port)
+set protocols rstp interface ge-0/0/24 no-root-port
+
+# BPDU Filter (ОСТОРОЖНО!)
+set protocols rstp interface ge-0/0/1 no-bpdu-send
+
+# Проверка
+show spanning-tree interface detail
+show spanning-tree statistics
+```
+
 ## Альтернативы STP в современных ЦОД
 
 В крупных инфраструктурах (Leaf-Spine топологии) STP часто отключают или минимизируют его влияние, так как блокировка портов снижает общую пропускную способность и увеличивает время сходимости.
@@ -242,13 +455,27 @@ watch -n 1 'ip -s link show eth0 | grep -A1 RX'
 - **[VLAN](../vlan.md)** — виртуальные локальные сети.
 - **[Ethernet](./ethernet.md)** — основы канального уровня.
 - **[L2 Switching и VLAN](../Concepts/vlan_l2_switching/definitions_and_concepts.md)** — концепции коммутации.
+- **[Жёсткая защита L2: BPDU Guard, Root Guard](../VLAN/vlan_security_hardening.md)** — production hardening на access и trunk портах.
 - **[ARP](./arp.md)** — протокол разрешения адресов.
 - **[VLAN Trunk/Native](./VLAN/vlan_trunk_native.md)** — работа с тегированным трафиком.
 - **[Linux Bridge](../../Linux/Networking/Concepts/linux_bridge.md)** — STP в программных мостах.
 
 ### Стандарты и спецификации
 
-- **IEEE 802.1D** — классический STP.
-- **IEEE 802.1w** — спецификация RSTP.
-- **IEEE 802.1s** — спецификация MSTP.
-- **RFC 5227** — упоминание в контексте IPv4 Address Conflict Detection.
+| Стандарт | Описание |
+| :--- | :--- |
+| **IEEE 802.1D** | Классический STP (802.1D-2004 — интеграция RSTP) |
+| **IEEE 802.1w** | RSTP — быстрая сходимость (встроен в 802.1D-2004) |
+| **IEEE 802.1s** | MSTP — мультиинстансов STP для групп VLAN |
+| **IEEE 802.1Q-2018** | VLAN + STP взаимодействие (§13) |
+| **IEEE 802.1AB** | LLDP — обнаружение соседей (дополнение к STP) |
+| **RFC 5227** | IPv4 Address Conflict Detection (упоминание в контексте STP) |
+
+### Лучшие практики 2026
+
+1. **RSTP вместо классического STP** — всегда используйте `rapid-pvst` или `mst` вместо `spanning-tree mode pvst`.
+2. **BPDU Guard на всех Access-портах** — предотвращает подключение несанкционированных коммутаторов.
+3. **Root Bridge на ядре** — назначайте приоритет 4096 на 가장 производительном коммутаторе ядра.
+4. **MSTP для больших VLAN** — группируйте VLAN в инстансы вместо PVST+ при >100 VLAN.
+5. **Loop Guard на Uplink-портах** — защита от однонаправленных линков, которые не видят BPDU Guard.
+6. **Документирование топологии** — фиксируйте Root Bridge, роли портов и таймеры в CMDB.

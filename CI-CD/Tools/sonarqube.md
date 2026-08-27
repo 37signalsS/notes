@@ -64,9 +64,9 @@
 
 ### Версионирование и поддержка
 
-- **LTS (Long-Term Support):** Каждая вторая мажорная версия получает статус LTS (например, 10.x). Рекомендуется для production.
+- **LTA (Long-Term Active):** Мажорная версия с расширенным жизненным циклом (например, 2026.1 LTA). Рекомендуется для production. Поддержка до 18 месяцев.
 - **Active:** Промежуточные версии с новыми функциями, поддержка ~6 месяцев.
-- **Миграция:** Обновление между LTS версиями поддерживается напрямую. Обновление с non-LTS на LTS может требовать промежуточных шагов.
+- **Миграция:** Обновление между LTA версиями поддерживается напрямую. Обновление с non-LTA на LTA может требовать промежуточных шагов. Рекомендуется проверять [LTA Update Hub](https://www.sonarsource.com/products/sonarqube/lta-update-hub/) перед обновлением.
 
 ## Основные концепции
 
@@ -82,7 +82,7 @@ Quality Profile определяет набор активных правил д
 
 Quality Gate вычисляется **асинхронно** после завершения фонового анализа (Compute Engine). Результат — бинарный статус `PASSED` или `FAILED`.
 
-**Стандартные условия (SonarQube 10.x / SonarCloud 2026):**
+**Стандартные условия (SonarQube Server 2026.x / SonarCloud 2026):**
 - **Reliability Rating:** `A` или `B` (отсутствие критических и блокирующих багов на новом коде).
 - **Security Rating:** `A` или `B` (отсутствие критических уязвимостей на новом коде).
 - **Maintainability Rating:** `A` или `B` (технический долг < 5% на новом коде).
@@ -136,7 +136,7 @@ Quality Gate вычисляется **асинхронно** после заве
 ```yaml
 services:
   sonarqube:
-    image: sonarqube:10.8-community
+    image: sonarqube:2026.1-community
     container_name: sonarqube
     restart: unless-stopped
     ports:
@@ -144,7 +144,8 @@ services:
     environment:
       - SONAR_JDBC_URL=jdbc:postgresql://db:5432/sonarqube
       - SONAR_JDBC_USERNAME=sonarqube
-      - SONAR_JDBC_PASSWORD=<SECRET_3b23309b>      volumes:
+      - SONAR_JDBC_PASSWORD=<SECRET>
+    volumes:
       - sonarqube_data:/opt/sonarqube/data
       - sonarqube_extensions:/opt/sonarqube/extensions
       - sonarqube_logs:/opt/sonarqube/logs
@@ -158,7 +159,8 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_USER=sonarqube
-      - POSTGRES_PASSWORD=<SECRET_3b23309b>      - POSTGRES_DB=sonarqube
+      - POSTGRES_PASSWORD=<SECRET>
+      - POSTGRES_DB=sonarqube
     volumes:
       - postgresql_data:/var/lib/postgresql/data
     healthcheck:
@@ -241,7 +243,98 @@ GitLab нативно не блокирует Merge Request при падени�
 2. **Merge Request Widget:** SonarQube Developer Edition отображает статус в боковой панели MR, но не блокирует кнопку "Merge".
 3. **Approval Rules:** Настройка Approval Rules, где статус Quality Gate является одним из условий (требует кастомной интеграции или использования GitLab Ultimate Policies).
 
-### Сценарий 3: Конфигурация Quality Gate
+### Сценарий 3: Интеграция в GitHub Actions
+
+**Настройка секретов и переменных в GitHub:**
+
+1. В SonarQube: **My Account → Security → Generate Tokens** — создать токен проекта.
+2. В GitHub: **Settings → Secrets and variables → Actions**:
+   - **Repository secret:** `SONAR_TOKEN` — токен аутентификации SonarQube.
+   - **Organization variable:** `SONAR_HOST_URL` — URL SonarQube Server (например, `https://sonarqube.example.com`).
+
+**Базовый workflow (`.github/workflows/sonarqube.yml`):**
+
+```yaml
+name: SonarQube Analysis
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  sonarqube:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Полная история для корректного анализа веток
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=my-project
+            -Dsonar.sources=src
+            -Dsonar.exclusions=**/test/**,**/vendor/**
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+
+      # Блокировка деплоя при падении Quality Gate (опционально)
+      # - name: Quality Gate Check
+      #   uses: SonarSource/sonarqube-quality-gate-action@v1
+      #   timeout-minutes: 5
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+```
+
+**Важные параметры GitHub Actions:**
+- `fetch-depth: 0` — отключает shallow clone для корректного вычисления blame-информации и анализа веток.
+- `SonarSource/sonarqube-scan-action@v8` — официальная GitHub Action (поддерживает Java 21, GPG-верификацию).
+- `SonarSource/sonarqube-quality-gate-action@v1` — опциональный шаг для блокировки workflow при `FAILED` Quality Gate.
+
+**Mono-repo конфигурация (Enterprise Edition+):**
+
+```yaml
+jobs:
+  scan-project-a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan Project A
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_A }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: projects/project-a/
+
+  scan-project-b:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan Project B
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_B }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: projects/project-b/
+```
+
+**Включение PR Decoration (Developer Edition+):**
+Начиная с Developer Edition, SonarQube автоматически определяет ветку и номер PR в GitHub Actions — явная передача `sonar.pullrequest.key` и `sonar.pullrequest.branch` не требуется. Достаточно указать `sonar.projectKey`.
+
+### Сценарий 4: Конфигурация Quality Gate
 
 **Создание кастомного Quality Gate через UI:**
 
@@ -298,9 +391,9 @@ create_quality_gate("My Corporate Gate", conditions)
 # → Quality Gate created with 3 conditions
 ```
 
-### Сценарий 4: Установка и настройка плагинов (Extensions)
+### Сценарий 5: Установка и настройка плагинов (Extensions)
 
-**Установка плагина через Marketplace (SonarQube 10+):**
+**Установка плагина через Marketplace (SonarQube 2026.x+):**
 
 1. **Administration → Marketplace.**
 2. Найти нужный плагин (например, `SonarJava`, `SonarPython`, `SonarJS`).
@@ -319,10 +412,10 @@ docker cp sonar-java-plugin-7.28.1.33619.jar sonarqube:/opt/sonarqube/extensions
 docker compose restart sonarqube
 ```
 
-**Список поддерживаемых языков (встроенно, 10.x):**
-Java, C#, Python, JavaScript/TypeScript, Go, C/C++, Kotlin, Ruby, PHP, Swift, Scala, Apex, COBOL, PL/SQL, T-SQL, HTML, CSS, XML.
+**Список поддерживаемых языков (встроенно, 2026.x):**
+Java, C#, Python, JavaScript/TypeScript, Go, C/C++, Kotlin, Ruby, PHP, Swift, Scala, Apex, COBOL, PL/SQL, T-SQL, HTML, CSS, XML, ABAP, Cobol, т.д. Полный список доступен в [документации](https://docs.sonarqube.org/latest/analysis/languages/overview/).
 
-### Сценарий 5: Анализ конфигурации IaC (Terraform, Dockerfile, Kubernetes)
+### Сценарий 6: Анализ конфигурации IaC (Terraform, Dockerfile, Kubernetes)
 
 **Важно:** SonarQube анализирует конфигурационные файлы как код. Для Terraform, Dockerfile и Kubernetes манифестов используются отдельные плагины/правила.
 
@@ -351,6 +444,120 @@ sonar-scanner \
   -Dsonar.exclusions=**/*.test.js,**/*_test.go,**/vendor/**,**/node_modules/** \
   -Dsonar.python.coverage.reportPaths=coverage/coverage.xml \
   -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+```
+
+### Сценарий 7: SonarQube Web API — получение метрик и управление Issues
+
+SonarQube предоставляет REST API для автоматизации получения метрик и управления найденными проблемами. Документация API доступна по адресу: `http://<sonarqube-url>/web_api`.
+
+**Получение метрик проекта (curl):**
+
+```bash
+# Получение ключевых метрик проекта
+curl -s -u <login>:<token> \
+  "http://localhost:9000/api/measures/component?component=my-project&metricKeys=ncloc,code_smells,bugs,vulnerabilities,coverage,duplicated_lines_density,security_hotspots" \
+  | jq .
+# → {
+#     "component": {
+#       "key": "my-project",
+#       "measures": [
+#         {"metric": "ncloc", "value": "12345"},
+#         {"metric": "coverage", "value": "82.3"},
+#         {"metric": "bugs", "value": "3"},
+#         {"metric": "vulnerabilities", "value": "1"},
+#         {"metric": "security_hotspots", "value": "7"}
+#       ]
+#     }
+#   }
+```
+
+**Получение списка Issues проекта (Python):**
+
+```python
+import requests
+
+SONAR_HOST = "http://localhost:9000"
+SONAR_TOKEN = "<your-token>"
+PROJECT_KEY = "my-project"
+
+def get_project_issues(severity=None, status="OPEN", page_size=100):
+    """Получение Issues проекта с фильтрацией по серьёзности и статусу."""
+    params = {
+        "componentKeys": PROJECT_KEY,
+        "status": status,
+        "ps": page_size
+    }
+    if severity:
+        params["severities"] = severity
+
+    issues = []
+    page = 1
+    while True:
+        params["p"] = page
+        r = requests.get(
+            f"{SONAR_HOST}/api/issues/search",
+            auth=(SONAR_TOKEN, ""),
+            params=params
+        )
+        data = r.json()
+        issues.extend(data["issues"])
+        if page >= data["paging"]["pages"]:
+            break
+        page += 1
+    return issues
+
+# Пример: получить все Blocker и Critical Issues
+critical_issues = get_project_issues(severity="BLOCKER,CRITICAL")
+for issue in critical_issues:
+    print(f"[{issue['severity']}] {issue['message']} → {issue['component']}:{issue['line']}")
+```
+
+**Проверка статуса Quality Gate (bash):**
+
+```bash
+# Проверка последнего анализа проекта
+LAST_ANALYSIS=$(curl -s -u <login>:<token> \
+  "http://localhost:9000/api/project_analyses/search?project=my-project&ps=1" \
+  | jq -r '.analyses[0].key')
+
+curl -s -u <login>:<token> \
+  "http://localhost:9000/api/qualitygates/project_status?analysisId=${LAST_ANALYSIS}" \
+  | jq '.projectStatus.status'
+# → "OK" или "ERROR"
+```
+
+**Автоматическая проверка в CI/CD перед деплоем:**
+
+```bash
+#!/bin/bash
+# check-quality-gate.sh — проверка Quality Gate перед деплоем
+SONAR_HOST="http://sonarqube.example.com"
+PROJECT_KEY="my-project"
+TOKEN="$SONAR_TOKEN"
+
+# Ожидание завершения анализа (макс. 10 минут)
+for i in $(seq 1 60); do
+  STATUS=$(curl -s -u "${TOKEN}:" \
+    "${SONAR_HOST}/api/project_analyses/search?project=${PROJECT_KEY}&ps=1" \
+    | jq -r '.analyses[0].status')
+  if [ "$STATUS" = "COMPLETE" ]; then
+    break
+  fi
+  echo "Ожидание завершения анализа... ($i/60)"
+  sleep 10
+done
+
+# Проверка Quality Gate
+GATE_STATUS=$(curl -s -u "${TOKEN}:" \
+  "${SONAR_HOST}/api/qualitygates/project_status?project=${PROJECT_KEY}" \
+  | jq -r '.projectStatus.status')
+
+if [ "$GATE_STATUS" != "OK" ]; then
+  echo "ERROR: Quality Gate FAILED — деплой блокируется."
+  exit 1
+fi
+
+echo "OK: Quality Gate PASSED."
 ```
 
 ## Дополнительная информация
@@ -405,6 +612,67 @@ sonar-scanner \
 4.  **Custom Quality Profiles:** Не используйте стандартные профили "как есть". Адаптируйте их под корпоративные стандарты кодирования, отключая нерелевантные для проекта правила.
 5.  **IaC Scanning:** Включите анализ Dockerfile, Terraform, Kubernetes манифестов и GitHub Actions workflows — уязвимости в инфраструктурном коде часто критичнее, чем в прикладном.
 6.  **Technical Debt Budget:** Установите лимит на приемлемый технический долг на нового кода (например, < 5%). Это предотвращает "долговую ловушку" в Legacy-проектах.
+7.  **Версионирование Quality Profiles:** Копируйте стандартные профили перед изменением, чтобы иметь возможность отката. Используйте именование `<Language> Corporate` для корпоративных профилей.
+8.  **Мониторинг ресурсов:** Отслеживайте потребление CPU/RAM Compute Engine — на больших проектах (>500K LOC) CE может становиться узким местом.
+
+### Типичные ошибки и их решение
+
+| Проблема | Причина | Решение |
+|:---|:---|:---|
+| `SonarQube Server не запускается` | Недостаточно памяти или порт 9000 занят. | Проверить `docker compose logs sonarqube`, увеличить RAM в `docker-compose.yml`, убедиться что порт 9000 свободен. |
+| `Cannot contact host` при сканировании | Scanner не может достучаться до Server. | Проверить `SONAR_HOST_URL`, убедиться что firewall не блокирует порт 9000, проверить `curl http://sonarqube:9000/api/system/status`. |
+| `Not authorized` / `401 Unauthorized` | Невалидный или отозванный токен. | Пересоздать токен в **My Account → Security**, убедиться что переменная `SONAR_TOKEN` передана корректно. |
+| `Quality Gate не отображается` | Анализ ещё не завершён или Compute Engine не обработал отчёт. | Проверить статус через API: `/api/project_analyses/search?project=<key>&ps=1`, ожидать статуса `COMPLETE`. |
+| `False Positives захламляют отчёт` | Стандартные правила не адаптированы под специфику проекта. | Настроить Quality Profile: отключить нерелевантные правила или пометить Issue как `Won't Fix` / `False Positive`. |
+| `Coverage не отображается` | Неправильный путь к отчёту покрытия. | Убедиться что файл `coverage.xml` (или `lcov.info`) существует и путь в `sonar.python.coverage.reportPaths` указан относительно `sonar.sources`. |
+| `Duplicate Issues после слияния веток` | Каждая ветка анализируется отдельно, Issues не дедуплицируются автоматически. | Использовать `sonar.scm.exclusions.disabled=true` или настроить `sonar.newCodeReferenceBranch` для инкрементального анализа. |
+| `Elasticsearch: high disk watermark` | Закончилось место на диске для индексов Elasticsearch. | Расширить том данных (`sonarqube_data`), очистить старые анализы через API: `/api/project_analyses/delete`. |
+
+### Диагностические команды
+
+```bash
+# Проверка статуса SonarQube Server
+curl -s http://localhost:9000/api/system/status | jq .
+# → {"status":"UP","version":"2026.1.0.12345"}
+
+# Просмотр логов Compute Engine (Docker)
+docker compose logs -f --tail=100 sonarqube | grep -i "compute"
+
+# Проверка доступных плагинов
+curl -s -u admin:password http://localhost:9000/api/plugins/installed | jq '.plugins[].name'
+
+# Проверка качества последнего анализа через API
+curl -s -u <token>: http://localhost:9000/api/project_analyses/search?project=my-project&ps=1 | jq .
+
+# Очистка старых данных (освобождение места)
+curl -s -u admin:password -X POST \
+  "http://localhost:9000/api/project_analyses/clean?project=my-project&to=2025-01-01"
+
+# Проверка использования ресурсов (Linux)
+docker stats sonarqube --no-stream
+```
+
+### Очистка и откат изменений
+
+**Удаление проекта:**
+```bash
+curl -s -u <token>: -X POST "http://localhost:9000/api/projects/delete?project=my-project"
+```
+
+**Откат Quality Gate на стандартный:**
+1. **Quality Gates** → выбрать проект → назначить `Sonar way` (стандартный гейт).
+
+**Откат Quality Profile на стандартный:**
+1. **Quality Profiles** → выбрать язык → **Restore Built-in** (сбросить к стандартному профилю).
+
+**Остановка и удаление Docker-окружения:**
+```bash
+# Остановка контейнеров
+docker compose down
+
+# Удаление данных (ВНИМАНИЕ: необратимо!)
+docker compose down -v
+```
 
 ### Связанные темы
 

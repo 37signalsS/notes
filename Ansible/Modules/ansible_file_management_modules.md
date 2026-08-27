@@ -8,6 +8,18 @@
 
 **FQCN (Fully Qualified Collection Name)** — полное имя модуля (например, `ansible.builtin.template`). Использование FQCN является обязательным стандартом для предотвращения конфликтов имен и обеспечения предсказуемости выполнения во всех современных версиях Ansible.
 
+### Механизм сравнения файлов
+Ansible использует алгоритмы контрольных сумм для определения необходимости обновления файлов:
+- **Для текстовых файлов**: Сравнение содержимого после рендеринга шаблона с текущим файлом на хосте
+- **Для бинарных файлов**: Использование MD5 или SHA-1 (в зависимости от платформы)
+- **Для remote_src**: Сравнение контрольных сумм локально на управляемом хосте
+
+### Временные файлы и их управление
+Ansible создает временные файлы в директории `~/.ansible/tmp/` на управляемых хостах:
+- Имена файлов формата: `ansible-tmp-<timestamp>-<random>`
+- Автоматическая очистка после успешного выполнения
+- При ошибке файлы сохраняются для отладки ( можно включить `ANSIBLE_KEEP_REMOTE_FILES=1`)
+
 ## Основные концепции
 
 ### Группы модулей по назначению
@@ -49,6 +61,9 @@
 -   **`unsafe_writes`**: Позволяет Ansible изменять файлы, когда атомарная перезапись невозможна (например, при монтировании файлов напрямую в Docker-контейнеры через `bind mount` или на сетевых FS без поддержки `rename`). **Внимание**: Использование повышает риск повреждения файла при сбое в момент записи.
 -   **`backup`**: Создает резервную копию файла с временной меткой в той же директории перед внесением изменений.
 -   **`force`**: В модуле `copy` определяет, нужно ли перезаписывать файл, если он уже существует, но имеет другое содержимое.
+-   **`follow`**: В модуле `copy` и `template` определяет, следовать ли по символическим ссылкам при копировании (по умолчанию `false`).
+-   **`directories_only`**: В модуле `find` — искать только директории, игнорируя файлы.
+-   **`files_only`**: В модуле `find` — искать только файлы, игнорируя директории.
 
 ### Права доступа, атрибуты и SELinux
 
@@ -63,6 +78,14 @@
 Файловые модули полноценно поддерживают флаги диагностики:
 - **`--check`**: Показывает, будет ли файл изменен, не применяя изменений на практике.
 - **`--diff`**: Показывает детальную разницу (unified diff) между текущим состоянием файла и планируемым. Очень полезно для валидации работы `template` и `lineinfile`.
+
+### Кросс-платформенные особенности
+
+Модули управления файлами работают на разных платформах, но с отличиями:
+- **Linux (ext4, xfs)**: Полная поддержка атрибутов (`immutable`, `append`)
+- **macOS**: Ограниченная поддержка расширенных атрибутов, особый синтаксис прав (ocl)
+- **FreeBSD**: Отличия в управлении ACL и расширенными атрибутами
+- **Windows**: Использование модулей `ansible.windows.win_*` вместо `ansible.builtin.*`
 
 ## Практические сценарии
 
@@ -165,9 +188,189 @@
       setting_b = false
 ```
 
+### Массовая замена текста с помощью replace
+Использование регулярных выражений для патчинга конфигурационных файлов.
+
+```yaml
+- name: "Замена IP-адреса в конфигурации"
+  ansible.builtin.replace:
+    path: /etc/hosts
+    regexp: '(192\.168\.1\.)\d+'
+    replace: '\g<1>100'
+    backup: yes
+```
+
+### Проверка файловых атрибутов через stat
+Использование фактов из `stat` для условного выполнения задач.
+
+```yaml
+- name: "Проверка существования файла конфигурации"
+  ansible.builtin.stat:
+    path: /etc/myapp/config.yml
+  register: config_stat
+
+- name: "Создание файла конфигурации если не существует"
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: /etc/myapp/config.yml
+    owner: root
+    group: root
+    mode: '0644'
+  when: not config_stat.stat.exists
+```
+
+### Загрузка файлов с аутентификацией
+Использование `get_url` с заголовками авторизации для скачивания артефактов.
+
+```yaml
+- name: "Загрузка приватного артефакта"
+  ansible.builtin.get_url:
+    url: "https://artifacts.example.com/v1.0/app.tar.gz"
+    dest: /tmp/app.tar.gz
+    headers:
+      Authorization: "Bearer {{ lookup('env', 'ARTIFACT_TOKEN') }}"
+    mode: '0644'
+    timeout: 60
+  register: download_result
+
+- name: "Проверка успешности загрузки"
+  ansible.builtin.debug:
+    msg: "Артефакт загружен успешно: {{ download_result.status_code }}"
+  when: download_result.status_code == 200
+```
+
+### Распаковка различных форматов архивов
+Примеры работы с разными форматами архивов.
+
+```yaml
+- name: "Распаковка zip-архива"
+  ansible.builtin.unarchive:
+    src: /tmp/backup.zip
+    dest: /var/backup
+    remote_src: yes
+    list_files: yes
+  register: zip_contents
+
+- name: "Распаковка tar.xz архива"
+  ansible.builtin.unarchive:
+    src: https://releases.example.com/package.tar.xz
+    dest: /opt/packages
+    remote_src: yes
+    creates: /opt/packages/package/
+```
+
+### Сборка файла из фрагментов (assemble)
+Конкатенация нескольких файлов в один конфигурационный файл.
+
+```yaml
+- name: "Сборка конфигурации из фрагментов"
+  ansible.builtin.assemble:
+    src: /etc/myapp/conf.d/
+    dest: /etc/myapp/myapp.conf
+    owner: root
+    group: root
+    mode: '0644'
+    delimiter: '# --- fragment boundary ---'
+    regexp: '^# FRAGMENT:'
+```
+
+### Управление правами через символический формат
+Использование символьного формата для более читаемого описания прав.
+
+```yaml
+- name: "Установка прав через символьный формат"
+  ansible.builtin.file:
+    path: /var/www/html
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: 'u=rwx,g=rx,o=rx'
+```
+
+### Удаление файлов с созданием резервных копий
+Безопасное удаление файлов с предварительным бэкапом.
+
+```yaml
+- name: "Удаление старого конфига с бэкапом"
+  ansible.builtin.file:
+    path: /etc/old_config.yml
+    state: absent
+    backup: yes
+```
+
+## Обработка ошибок
+
+### Типичные ошибки и их решение
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `Permission denied` | Недостаточно прав | Используйте `become: yes` или проверьте права |
+| `No such file or directory` | Несуществующий путь | Проверьте `creates`/`removes` для идемпотентности |
+| `Module failed` | Невалидный шаблон Jinja2 | Проверьте синтаксис шаблона и переменные |
+| `Checksum mismatch` | Изменение файла после рендеринга | Проверьте конфликты параллельного доступа |
+| `Unable to set permissions` | Несуществующий пользователь/группа | Убедитесь что пользователь существует на хосте |
+
+### Паттерны обработки ошибок
+
+```yaml
+- name: "Загрузка конфигурации с обработкой ошибок"
+  ansible.builtin.get_url:
+    url: "https://config.example.com/app.yml"
+    dest: /etc/app/config.yml
+    timeout: 30
+    validate_certs: yes
+  register: download
+  retries: 3
+  delay: 5
+  until: download.status_code | default(500) | int < 400
+  failed_when: download.status_code | default(500) | int >= 500
+  changed_when: download.status_code | default(500) | int == 200
+```
+
+## Оптимизация производительности
+
+### Пакетная обработка файлов
+Для обработки большого количества файлов используйте пакетные операции вместо итераций:
+
+```yaml
+- name: "Пакетное обновление прав"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: deploy
+    group: deploy
+    mode: '0644'
+  loop: "{{ list_of_files }}"
+  batch_size: 100
+```
+
+### Параллельное выполнение
+Увеличьте параллелизм для ускорения работы с файлами:
+
+```yaml
+- name: "Параллельная загрузка файлов"
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.dest }}"
+  loop: "{{ files_to_download }}"
+  async: 300
+  poll: 0
+  register: download_jobs
+
+- name: "Ожидание завершения всех загрузок"
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  loop: "{{ download_jobs.results }}"
+  register: async_results
+  until: async_results.finished
+  retries: 60
+  delay: 5
+```
+
 ## Дополнительная информация
 
 - **[Основные концепции Ansible](../ansible_core_concepts.md)** — архитектура и идемпотентность.
 - **[Шаблонизация Jinja2](../ansible_jinja_templating.md)** — динамическая генерация файлов.
 - **[Синхронизация файлов](ansible_file_synchronization_modules.md)** — эффективная передача больших объемов данных через `rsync`.
 - **[Безопасность в Ansible](../ansible_security_best_practices.md)** — управление правами и секретами.
+- **[Action-плагины](../ansible-action-plugins.md)** — как работают `template`, `copy`, `fetch` на уровне плагинов.
+- **[Антипаттерны Ansible](../ansible_bad_practices.md)** — избегание ошибок при работе с файлами.

@@ -4,6 +4,18 @@
 
 **DHCP Relay (Dynamic Host Configuration Protocol Relay)** — механизм, позволяющий DHCP-клиентам и серверам находиться в разных подсетях (разных широковещательных доменах). Ретранслятор (обычно маршрутизатор или L3-коммутатор) перехватывает широковещательные запросы клиентов и пересылает их серверу в виде направленного (unicast) трафика.
 
+**DHCP Relay Agent** — промежуточный узел (устройство), реализующий функции ретрансляции. В реальных инфраструктурах это может быть:
+- **Маршрутизатор** (Cisco IOS, Juniper, MikroTik) — наиболее распространённый вариант.
+- **L3-коммутатор** — с настроенным SVI (Switch Virtual Interface) для каждого VLAN.
+- **Linux-сервер** — с использованием утилиты `dhcrelay` (ISC DHCP) или встроенного модуля `systemd-networkd`.
+- **Балансировщик нагрузки** (F5 BIG-IP, HAProxy) — для обеспечения отказоустойчивости.
+
+**giaddr (Gateway IP Address)** — критически важное поле в заголовке DHCP-пакета (IPv4), в которое ретранслятор записывает IP-адрес своего интерфейса, принявшего запрос. DHCP-сервер использует этот адрес для:
+1. Определения подсети (subnet), из которой нужно выделить IP-адрес.
+2. Отправки ответа (`DHCPOFFER`, `DHCPACK`) обратно ретранслятору.
+
+**Relay Agent Information Option (Option 82)** — опция DHCP, добавляемая ретранслятором для передачи метаданных о физическом расположении клиента (номер порта, VLAN, идентификатор коммутатора). Используется для безопасности и тонкой настройки выдачи адресов.
+
 **Проблема:** Маршрутизаторы по умолчанию не передают broadcast-сообщения. Без ретранслятора DHCP-запросы клиента не покинут пределы локальной подсети, что потребовало бы наличия DHCP-сервера в каждом сегменте сети.
 
 ## Основные концепции
@@ -23,13 +35,29 @@
 - Если бит установлен в **0**: Ретранслятор может отправить ответ как unicast на MAC-адрес клиента, используя IP-адрес из пакета.
 
 ### DHCPv6 Relay: Инкапсуляция
-В отличие от v4, в IPv6 ретранслятор не меняет пакет клиента, а **инкапсулирует** его в специальные сообщения.
+В отличие от v4, в IPv6 ретранслятор не меняет пакет клиента, а **инкапсулирует** его в специальные сообщения. Это связано с тем, что DHCPv6 использует multicast-адресацию и не зависит от broadcast.
 
 - **Relay-Forward (Type 12):** Ретранслятор упаковывает сообщение клиента (Solicit) внутрь опции **Relay Message (Option 9)**.
   - Поле `Link-Address`: Содержит глобальный адрес интерфейса ретранслятора (аналог `giaddr`), по которому сервер понимает топологию.
   - Поле `Peer-Address`: Содержит адрес клиента или предыдущего ретранслятора.
   - Пакет отправляется на адрес `All_DHCP_Servers` (`ff05::1:3`) или unicast-адрес сервера.
 - **Relay-Reply (Type 13):** Сервер отвечает ретранслятору, упаковывая ответ для клиента внутрь сообщения. Ретранслятор извлекает ответ и передаёт его клиенту на основе опции **Interface-ID (Option 18)**.
+
+**Ключевые отличия DHCPv6 Relay от DHCPv4:**
+- **Отсутствие broadcast:** В IPv6 все сообщения являются unicast или multicast, поэтому ретранслятору не нужно обрабатывать broadcast-флаги.
+- **Инкапсуляция вместо модификации:** Пакет клиента не изменяется, а оборачивается в новое сообщение.
+- **Поддержка цепочки ретрансляторов:** Несколько ретрансляторов могут быть последовательно вложены друг в друга (Nested Relay).
+
+### Взаимодействие с PXE Boot
+DHCP Relay играет критическую роль в сетях с **PXE (Preboot Execution Environment)** загрузкой:
+1. Клиент отправляет `DHCPDISCOVER` с опцией **Vendor Class Identifier (Option 60)** = "PXEClient".
+2. Ретранслятор пересылает запрос серверу, который определяет, что клиент требует PXE-загрузку.
+3. Сервер отвечает с опциями **Boot Server (Option 66)** и **Bootfile (Option 67)**, указывая TFTP-сервер и файл загрузчика.
+4. Клиент загружает образ через TFTP и начинает установку ОС.
+
+**Важно:** Для корректной работы PXE через ретранслятор необходимо настроить:
+- Доступность TFTP-сервера из подсети клиента (маршрутизация или дополнительный ретранслятор).
+- Правильные опции DHCP для PXE (66, 67, 60).
 
 ## Информационные опции (SRE и безопасность)
 
@@ -40,12 +68,18 @@
 | :--- | :--- | :--- | :--- |
 | **Circuit ID** | Sub-option 1 | Option 18 | Идентификатор порта/VLAN на коммутаторе доступа. |
 | **Remote ID** | Sub-option 2 | Option 37 | Идентификатор самого устройства доступа (MAC, DUID). |
+| **Subscriber ID** | Sub-option 6 | - | Идентификатор абонента (например, логин пользователя в 802.1X). |
 
 **Цепочка ретрансляции (Relay Chaining):**
 Если в сети несколько ретрансляторов, каждый последующий может добавлять свою Option 82. Поведение при наличии существующей опции настраивается:
 - **Replace:** Заменить старую опцию новой.
 - **Keep:** Сохранить и добавить свою (создается список).
 - **Drop:** Отбросить пакет, если опция уже есть (защита от недоверенных источников).
+
+**Использование Option 82 в реальных сценариях:**
+1. **Привязка IP к порту коммутатора:** Сервер выдает IP только если запрос пришел с определенного порта (защита от перемещения устройств).
+2. **Динамическая VLAN-маршрутизация:** На основе Circuit ID сервер определяет VLAN клиента и выдает адрес из соответствующего пула.
+3. **Мониторинг и аудит:** Remote ID позволяет отслеживать, с какого устройства пришел запрос.
 
 ## Безопасность и отказоустойчивость
 
@@ -55,16 +89,33 @@ DHCP Relay работает в связке с механизмом **DHCP Snoop
 2. На клиентских портах блокируются ответы от серверов (`DHCPOFFER`, `DHCPACK`).
 3. При включении Option 82 коммутатор вставляет информацию о порте, а Relay Agent пересылает её серверу.
 
+### Защита от атак через DHCP Relay
+Ретранслятор может быть точкой уязвимости, если не настроена должная защита:
+
+**Основные угрозы:**
+- **Rogue DHCP Relay:** Несанкционированный ретранслятор, перехватывающий запросы клиентов.
+- **DHCP Snooping Bypass:** Использование ретранслятора для обхода DHCP Snooping на коммутаторах.
+- **Option 82 Spoofing:** Подмена метаданных в Option 82 для перехвата IP-адресов.
+
+**Методы защиты:**
+1. **Аутентификация ретрансляторов:** На сервере настроить список доверенных IP-адресов ретрансляторов.
+2. **Rate Limiting:** Ограничение количества DHCP-пакетов в секунду на интерфейсах ретранслятора.
+3. **IPsec:** Шифрование DHCP-трафика между ретранслятором и сервером в небезопасных сетях.
+4. **Мониторинг:** Настройка алертинга на подозрительную активность (множественные DHCP-запросы с одного порта).
+
 ### Отказоустойчивость (High Availability)
 Для обеспечения доступности DHCP-сервиса используются следующие стратегии:
 - **Redundant Helper Addresses:** Настройка нескольких IP-адресов серверов на интерфейсе ретранслятора. Пакеты дублируются всем серверам.
 - **Anycast DHCP:** Несколько серверов имеют один IP-адрес. Ретранслятор отправляет запрос на этот адрес, а маршрутизация доставляет его к ближайшему серверу.
 - **VRRP/HSRP:** Ретранслятор настраивается на виртуальном IP-адресе шлюза, обеспечивая бесшовное переключение при отказе физического узла.
+- **Географическая отказоустойчивость:** В распределённых сетях используются ретрансляторы в разных дата-центрах с маршрутизацией через Anycast или BGP.
 
 ### Рекомендации по безопасности
 - **Rate Limiting:** Ограничение количества DHCP-пакетов в секунду на интерфейсах ретранслятора для защиты от атак типа DHCP Starvation.
-- **Trusted Relay:** На серверe рекомендуется принимать запросы только от доверенных IP-адресов ретрансляторов.
+- **Trusted Relay:** На сервере рекомендуется принимать запросы только от доверенных IP-адресов ретрансляторов.
 - **IPsec:** Для передачи DHCP-трафика через публичные сети следует использовать IPsec для защиты от перехвата и модификации полей опций.
+- **Логирование:** Настройка централизованного логирования всех DHCP-событий для аудита и расследования инцидентов.
+- **Регулярный аудит:** Периодическая проверка конфигурации ретрансляторов и обновление прошивок.
 
 ## Практические примеры настройки
 
@@ -77,6 +128,32 @@ interface GigabitEthernet0/1
  ip helper-address 10.0.0.101
  # Настройка вставки Option 82
  ip dhcp relay information option
+```
+
+### Juniper JunOS
+```junos
+# Настройка DHCP Relay на интерфейсе
+set interfaces ge-0/0/1 unit 0 family inet address 192.168.10.1/24
+set forwarding-options dhcp-relay group vlan10 interface ge-0/0/1.0
+set forwarding-options dhcp-relay group vlan10 server-address 10.0.0.100
+set forwarding-options dhcp-relay group vlan10 server-address 10.0.0.101
+set forwarding-options dhcp-relay relay-option-82 information option
+
+# Включение DHCP Relay
+set forwarding-options dhcp-relay server-group dhcp-servers 10.0.0.100
+set forwarding-options dhcp-relay relay-option-82 information option
+```
+
+### MikroTik RouterOS
+```routeros
+# Добавление интерфейса в DHCP-ретрансляцию
+/ip dhcp-relay add name=dhcp-relay1 interface=ether1 dhcp-server=10.0.0.100
+
+# Настройка Option 82 (в MikroTik поддерживается через DHCP Option)
+/ip dhcp-server option add code=82 name=option82 value=0x010400000001
+
+# Применение опции к интерфейсу
+/ip dhcp-server config set interface=ether1 insert-classes=option82
 ```
 
 ### Linux (systemd-networkd)
@@ -102,6 +179,32 @@ dhcrelay -i eth0 -i eth1 10.0.0.100
 ```
 Подробная настройка — [ISC DHCP Relay](../../../Linux/Networking/Services/DHCP/isc_dhcp_server_relay.md).
 
+### Linux (Kea DHCP Relay)
+**Kea DHCP** — современная замена ISC DHCP с поддержкой REST API и модульной архитектурой. Для ретрансляции используется отдельный компонент `kea-dhcp-relay`:
+
+```bash
+# Установка Kea DHCP Relay (Debian/Ubuntu)
+sudo apt install kea-dhcp-relay -y
+
+# Конфигурация (/etc/kea/kea-dhcp-relay.conf)
+{
+    "DhcpRelay": {
+        "interfaces": ["eth1"],
+        "server-ips": ["10.0.0.100", "10.0.0.101"],
+        "relay-sources": ["eth0"]
+    }
+}
+
+# Запуск службы
+sudo systemctl enable --now kea-dhcp-relay
+```
+
+**Преимущества Kea DHCP Relay:**
+- **Модульность:** Подключаемые плагины (hooks) для расширения функционала.
+- **REST API:** Управление конфигурацией без перезапуска сервиса.
+- **Логирование:** Структурированные логи в формате JSON для интеграции с SIEM.
+- **Поддержка DHCPv6:** Полноценная поддержка ретрансляции IPv6.
+
 ## Диагностика и типичные проблемы
 
 ### Типичные проблемы
@@ -109,6 +212,8 @@ dhcrelay -i eth0 -i eth1 10.0.0.100
 2. **Блокировка UDP 67/68:** Межсетевые экраны между ретранслятором и сервером должны разрешать трафик DHCP.
 3. **MTU Issues:** Инкапсуляция в DHCPv6 или добавление Option 82 в v4 может привести к превышению MTU, что вызовет фрагментацию или отбрасывание пакетов.
 4. **Конфликт Option 82:** Если коммутатор добавляет опцию, а ретранслятор настроен на `drop` при наличии опции, пакеты не дойдут до сервера.
+5. **Двойная ретрансляция:** Если в сети два ретранслятора, необходимо правильно настроить цепочку (relay chaining), иначе запросы могут зациклиться.
+6. **Неверный IP-адрес ретранслятора:** Если IP-адрес интерфейса ретранслятора изменился, а сервер ожидает старый адрес — пакеты будут отброшены.
 
 ### Команды для диагностики
 - **Linux (tcpdump):**
@@ -117,19 +222,59 @@ dhcrelay -i eth0 -i eth1 10.0.0.100
   tcpdump -i eth1 port 67 or port 68 -n
   # Проверка исходящих unicast пакетов к серверу
   tcpdump -i eth0 host 10.0.0.100 and udp port 67 -n
+  # Анализ giaddr в реальном времени
+  tcpdump -i any port 67 -vv | grep "giaddr"
+  # Захват всех DHCP-пакетов с детализацией опций
+  tcpdump -i any port 67 or port 68 -X -vv
   ```
 - **Cisco IOS:**
   ```cisco
   show ip dhcp relay binding  # Просмотр активных привязок (если поддерживается)
   debug ip dhcp server events # Отладка взаимодействия с сервером
+  show ip helper-address      # Просмотр настроенных helper-адресов
+  show ip interface brief     # Проверка состояния интерфейсов
   ```
+- **Проверка маршрутизации на сервере:**
+  ```bash
+  # Убедитесь, что сервер имеет маршрут к giaddr
+  ip route show | grep <giaddr_network>
+  # Добавьте маршрут, если его нет
+  ip route add <giaddr_network>/<mask> via <gateway>
+  ```
+
+### Wireshark фильтры для анализа DHCP Relay
+```
+# Все DHCP-пакеты с ненулевым giaddr (прошедшие через relay)
+dhcp.ip.gateway != 0.0.0.0
+
+# Только DHCP-запросы (Discover, Request)
+bootp.option.dhcp == 1 || bootp.option.dhcp == 3
+
+# DHCP-ответы (Offer, Ack)
+bootp.option.dhcp == 2 || bootp.option.dhcp == 5
+
+# Option 82 (Relay Agent Information)
+bootp.option.option82
+
+# DHCPv6 Relay-Forward/Relay-Reply
+dhcpv6.type == 12 || dhcpv6.type == 13
+```
 
 ## Дополнительная информация
 
 - [Обзор DHCP](./dhcp_overview.md) — базовые принципы и процессы DORA/SARR.
 - [Безопасность DHCP](./dhcp_security.md) — детали атак и механизмов защиты (Snooping).
+- [Диагностика DHCP](./dhcp_analysis_troubleshooting.md) — анализ трафика в Wireshark.
 - [Настройка ISC DHCP Relay](../../../Linux/Networking/Services/DHCP/isc_dhcp_server_relay.md) — практическое руководство для Linux.
 - **Спецификации:**
-  - [RFC 3046](https://datatracker.ietf.org/doc/html/rfc3046) — DHCP Relay Agent Information Option.
-  - [RFC 8415](https://datatracker.ietf.org/doc/html/rfc8415) — DHCPv6 Relay Agent Behavior.
-  - [RFC 2131](https://datatracker.ietf.org/doc/html/rfc2131) — Dynamic Host Configuration Protocol.
+  - [RFC 2131](https://datatracker.ietf.org/doc/html/rfc2131) — Dynamic Host Configuration Protocol (DHCPv4).
+  - [RFC 3046](https://datatracker.ietf.org/doc/html/rfc3046) — DHCP Relay Agent Information Option (Option 82).
+  - [RFC 6939](https://datatracker.ietf.org/doc/html/rfc6939) — Client Link-Layer Address Option in DHCPv6 Relay Agent Messages.
+  - [RFC 8415](https://datatracker.ietf.org/doc/html/rfc8415) — Dynamic Host Configuration Protocol for IPv6 (DHCPv6).
+  - [RFC 3315](https://datatracker.ietf.org/doc/html/rfc3315) — Dynamic Host Configuration Protocol for IPv6 (DHCPv6) (устаревший, заменён RFC 8415).
+  - [RFC 4242](https://datatracker.ietf.org/doc/html/rfc4242) — Information Refresh Time Option for DHCPv6.
+
+### Связанные темы
+- **Inter-VLAN Routing:** DHCP Relay часто используется совместно с Inter-VLAN маршрутизацией — [VLAN Inter-VLAN Routing](../../VLAN/vlan_inter_vlan_routing.md).
+- **DHCP Snooping:** Компонент безопасности, работающий в связке с DHCP Relay — [DHCP Security](./dhcp_security.md).
+- **PXE Boot:** Загрузка операционных систем через DHCP Relay — [PXE Boot](../../../Linux/Networking/Concepts/pxe_boot.md).

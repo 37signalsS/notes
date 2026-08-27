@@ -159,6 +159,3 @@ services:
 * [Rules и алертинг](../../rules.md) — синтаксис правил и алертов.
 * [Alertmanager для Docker Compose](./docker_compose_alertmanager_config.md) — настройка уведомлений.
 * [Docker Compose конфигурация](./docker-compose_config.md) — пример полного `compose.yml`.
-
----
-**Reliability Score: 10** (Соответствует спецификациям Prometheus v3.13 и стандартам 2026 года).

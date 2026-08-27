@@ -8,6 +8,8 @@
 - **Прогрессивная поставка (Progressive Delivery)** — методология, развивающая Continuous Delivery, которая включает Canary-релизы и автоматизированное управление трафиком на основе метрик.
 - **Анализ канарейки (Canary Analysis)** — процесс автоматического сравнения метрик новой версии с эталонной (Baseline) для принятия решения о продвижении или откате.
 - **Гейтинг (Gating)** — механизм блокировки или разрешения перехода на следующий этап раскатки на основе результатов анализа.
+- **Взвешенная маршрутизация (Weighted Routing)** — распределение трафика между версиями пропорционально заданным весам (например, 90/10). В Nginx/HAProxy задаётся через `weight` и `split_clients`; на традиционных средах это основной механизм Canary без оркестратора.
+- **Сегментация по атрибутам (Attribute-based Routing)** — направление конкретных запросов на Canary по признакам: заголовок (`X-Canary: true`), cookie, query-параметр или источник (внутренний IP). Позволяет реализовать «opt-in canary» для внутренних пользователей без изменения доли случайного трафика.
 
 ## Основные концепции
 
@@ -52,6 +54,25 @@
 - **Контроллеры прогрессивной доставки:**
   - **Argo Rollouts** — заменяет стандартный Deployment на объект `Rollout`, управляющий стратегиями.
   - **Flagger** — оператор, использующий Service Mesh или Ingress для автоматизации Canary.
+
+Развёрнутое сравнение подходов — в **[обзоре стратегий развертывания](../Core_Concepts/deployment_strategies.md)**.
+
+### Реализация в традиционной инфраструктуре (Bare Metal / VM)
+
+Вне Kubernetes Canary базируется на L7-маршрутизаторе (Nginx, HAProxy, Traefik), стоящем перед пулом серверов. Ключевые отличия от облачных контроллеров:
+
+1.  **Маршрутизатор — единая точка правды.** Веса и правила задаются в его конфиге; изменение веса = редактирование конфига + reload или сокет-команда (HAProxy), а не патч кастомного ресурса.
+2.  **Метрики разделяются по лейблу версии.** Приложение должно отдавать метрики с лейблом `version` (через exposition или relabeling в Prometheus), чтобы Canary Analysis сравнивал `version="canary"` с `version="stable"`.
+3.  **Graceful shutdown обязателен.** При смещении веса с узла он продолжает дожимать активные запросы; без корректного перехвата `SIGTERM` часть ответов обрывается (502/504).
+4.  **Балансировщик как гейт.** Решение об увеличении веса принимается оператором или CI-скриптом на основе метрик, собранных из HAProxy stats / Prometheus / nginx-exporter.
+
+**Минимальный набор компонентов в on-prem среде:**
+- L7-маршрутизатор с поддержкой весов и health checks (Nginx / HAProxy / Traefik).
+- Сборщик метрик (Prometheus + node_exporter + nginx/haproxy exporters).
+- Механизм доставки артефакта на canary-узлы (rsync / Ansible).
+- Health-эндпоинт, реально проверяющий зависимости (БД, кэш, внешние API).
+
+Подробности по механике балансировки и health checks — в материале **[Балансировка нагрузки HTTP](../../Networking/Protocols/HTTP/http_load_balancing.md)** (в частности, «Сценарий 7: Traffic splitting (canary) в HAProxy»).
 
 ## Практические сценарии
 
@@ -147,7 +168,7 @@ spec:
 
 ### 3. Реализация через Istio (Service Mesh)
 
-Istio позволяет управлять весами трафика на уровне виртуальной сети, не изменяя физическое количество реплик.
+Istio позволяет управлять весами трафика на уровне виртуальной сети, не изменяя физическое количество реплик. Подробнее про маршрутизацию в mesh — **[Управление трафиком в Service Mesh](../../Service_Mesh/traffic_management.md)**.
 
 ```yaml
 # DestinationRule определяет подмножества на основе меток
@@ -233,6 +254,183 @@ services:
 
 Альтернатива на уровне приложения — управление логикой через [флаги функций](../Testing/feature_toggles/scenarios.md). Позволяет реализовать Canary для конкретных пользователей (например, по ID или региону) даже без поддержки на уровне сети.
 
+### 7. Canary через Nginx (open source, без оркестратора)
+
+Nginx поддерживает Canary двумя способами: по доле трафика (`split_clients`) и по атрибуту запроса (`map` + заголовок/cookie).
+
+**A. Долевой canary (`split_clients`):**
+```nginx
+upstream app_stable {
+    server 10.0.1.10:8080;
+    server 10.0.1.11:8080;
+}
+upstream app_canary {
+    server 10.0.1.20:8080;
+}
+
+server {
+    listen 80;
+    # Детерминированное распределение по ключу (IP) → один клиент стабильно на одной версии
+    split_clients "${remote_addr}AAA" $upstream_variant {
+        10%     app_canary;
+        *       app_stable;
+    }
+    location / {
+        proxy_pass http://$upstream_variant;
+        proxy_set_header Host $host;
+    }
+}
+```
+Сдвиг доли — изменение процента и `nginx -s reload` (предварительно `nginx -t`).
+
+**B. Opt-in canary по заголовку/cookie (для внутренних тестов):**
+```nginx
+map $http_x_canary $canary_by_header {
+    "true"   app_canary;
+    default  app_stable;
+}
+map $cookie_canary $canary_backend {
+    "1"      app_canary;
+    default  $canary_by_header;
+}
+server {
+    location / {
+        proxy_pass http://$canary_backend;
+    }
+}
+```
+
+**Валидация:**
+```bash
+nginx -t && nginx -s reload   # → syntax is ok / configuration test passed
+for i in $(seq 1 100); do curl -s -H "X-Canary: true" http://lb/version; done | sort | uniq -c
+# → все запросы с заголовком попадают на canary-версию
+```
+
+### 8. Canary через HAProxy (weighted + opt-in cookie)
+
+HAProxy позволяет задавать веса серверам и переключать их «на лету» через UNIX-сокет, а также реализовать opt-in canary по cookie.
+
+```haproxy
+backend app_servers
+    balance roundrobin
+    # Opt-in: запросы с cookie canary=1 идут сразу на canary-бэкенд
+    acl opt_in_cookie cook(canary) -m found
+    use_backend app_canary if opt_in_cookie
+
+    server stable1 10.0.1.10:8080 check weight 90
+    server stable2 10.0.1.11:8080 check weight 90
+
+backend app_canary
+    server canary1 10.0.1.20:8080 check weight 10
+```
+
+**Поэтапный сдвиг веса через сокет (без reload):**
+```bash
+for w in 5 10 25 50 100; do
+  echo "set server app_servers/stable1 weight $((100-w))" | socat - UNIX-CONNECT:/var/run/haproxy.sock
+  echo "set server app_servers/stable2 weight $((100-w))" | socat - UNIX-CONNECT:/var/run/haproxy.sock
+  echo "set server app_canary/canary1 weight $w"          | socat - UNIX-CONNECT:/var/run/haproxy.sock
+  sleep 60   # окно наблюдения за Golden Signals
+done
+```
+
+**Валидация:**
+```bash
+echo "show stat" | socat - UNIX-CONNECT:/var/run/haproxy.sock | grep -E "app_servers|app_canary"
+# → status=UP, колонка weight отражает текущие значения
+```
+
+### 9. Canary через Traefik (standalone / bare metal)
+
+Вне Swarm/K8s Traefik настраивается через file provider. Взвешенная доставка реализуется `weighted` сервисом, а opt-in — отдельным router с middleware.
+
+```yaml
+http:
+  services:
+    app-stable:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.1.10:8080"
+          - url: "http://10.0.1.11:8080"
+    app-canary:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.1.20:8080"
+    app-weighted:
+      weighted:
+        services:
+          - name: app-stable
+            weight: 90
+          - name: app-canary
+            weight: 10
+  routers:
+    app:
+      rule: "Host(`api.example.com`)"
+      service: app-weighted
+    app-canary-optin:
+      rule: "Host(`api.example.com`) && Headers(`X-Canary`, `true`)"
+      service: app-canary
+```
+Сдвиг веса = правка `weight` в динамическом конфиге и перезагрузка/сигнал Traefik. Подробнее — в **[обзоре Traefik](../../WebServers/Traefik/traefik_overview.md)**.
+
+### 10. Canary через Ansible (управление весами Nginx)
+
+Ansible может держать canary-вес в переменной и пересобирать upstream Nginx через шаблон с последующим reload (проверка конфига встроенным `validate`).
+
+```yaml
+- name: Shift canary weight
+  hosts: lb
+  vars:
+    canary_weight: 10
+  tasks:
+    - name: Render nginx upstream
+      ansible.builtin.template:
+        src: app_upstreams.j2
+        dest: /etc/nginx/conf.d/app_upstreams.conf
+        validate: "nginx -t -c /etc/nginx/nginx.conf"
+      notify: reload nginx
+  handlers:
+    - name: reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+```
+Шаблон `app_upstreams.j2`:
+```jinja
+upstream app_stable { server 10.0.1.10:8080; server 10.0.1.11:8080; }
+upstream app_canary { server 10.0.1.20:8080; }
+# split_clients использует {{ canary_weight }}% → app_canary
+split_clients "${remote_addr}AAA" $variant {
+    {{ canary_weight }}%  app_canary;
+    *                    app_stable;
+}
+```
+Полный паттерн с `block`/`rescue` автооткатом — в SSoT: **[Стратегии деплоя и rolling updates в Ansible](../../Ansible/ansible_deployment_strategies.md)**.
+
+### 11. Доставка артефакта на canary-узлы (rsync)
+
+Новую версию доставляют на выделенный canary-хост инкрементально, после чего он уже находится в отдельном upstream с малым весом:
+
+```bash
+rsync -av --checksum-choice=xxh3 --compress-choice=zstd \
+  deploy@repo:/opt/app/2.4.0/ /opt/app/2.4.0/
+# canary-хост уже прописан в upstream app_canary с весом 10
+curl -sf http://10.0.1.20:8080/healthz   # → OK, затем увеличиваем вес
+```
+Детали флагов и `--link-dest` для истории — в SSoT: **[rsync — синхронизация файлов](../../Linux/SystemAdministration/rsync.md)**.
+
+### 12. Canary через DNS (взвешенные записи) — ограниченно
+
+Некоторые DNS-серверы (PowerDNS с `weighted-round-robin`) позволяют отдавать разные A-записи с весами. Это простейший, но грубый canary.
+
+**Ограничения (критично):**
+- **TTL и кэши:** клиенты и резолверы кэшируют ответ на всё время TTL, мгновенного отката нет.
+- **Нет per-request контроля:** нельзя направить конкретного пользователя.
+- **Смешивание версий в пуле:** health checks на уровне DNS отсутствуют.
+
+Предпочтительны L7-веса (Nginx/HAProxy) или Anycast/VRRP, а не DNS-switch, для настоящего Canary.
+
 ## Автоматизация трафика в CI-пайплайнах (Push-метод)
 
 В 2026 году, если не используются специализированные операторы (ArgoCD/Flagger), управление трафиком в Push-модели (например, через GitLab CI или GitHub Actions) реализуется путем императивного обновления манифестов управления трафиком (`VirtualService` в Istio или `HTTPRoute` в Gateway API/Cilium) напрямую из пайплайна.
@@ -309,6 +507,7 @@ echo "Canary deployment successful!"
 ```
 
 ### Особенности для Cilium
+
 При использовании Cilium в качестве Service Mesh (через Gateway API), пайплайн взаимодействует с теми же ресурсами `HTTPRoute`. Cilium на базе eBPF обеспечивает мгновенное применение новых весов без перезагрузки прокси-серверов, что делает Push-модель очень отзывчивой.
 
 ## Устранение неполадок (Troubleshooting)
@@ -317,9 +516,14 @@ echo "Canary deployment successful!"
 | :--- | :--- | :--- |
 | **Недостаточно трафика для анализа** | Слишком малый процент Canary (1%) при низкой нагрузке. | Увеличить вес до 5–10% или продлить время анализа. |
 | **Ложные срабатывания (False Positives)** | Сравнение Canary с общим пулом Stable, а не с Baseline. | Запустить Baseline-инстанс одновременно с Canary. |
-| **"Отравление" данных (Data Poisoning)** | Canary пишет несовместимые данные в общую БД. | Использовать обратно-совместимые миграции (Expand-Contract). |
+| **"Отравление" данных (Data Poisoning)** | Canary пишет несовместимые данные в общую БД. | Использовать обратно-совместимые миграции ([Expand-Contract](../../Databases/Concepts/migrations/expand_contract.md)). |
 | **Sticky Session Issues** | Пользователи "прыгают" между версиями при ротации. | Использовать `Session Affinity` на уровне балансировщика. |
 | **Лаг метрик (Metrics Lag)** | Prometheus собирает метрики раз в 60с, а анализ идет каждые 30с. | Согласовать интервал анализа с интервалом сбора метрик. |
+| **Canary не получает трафик (Nginx)** | `split_clients` не применён или reload не прошёл. | `nginx -t && nginx -s reload`; проверить ключ в `split_clients`. |
+| **Вес HAProxy не применился** | UNIX-сокет недоступен или имя сервера указано неверно. | `ls -l /var/run/haproxy.sock`; `echo "show servers state" \| socat - UNIX-CONNECT:/var/run/haproxy.sock`. |
+| **Cookie affinity крадёт canary** | Пользователи с session cookie попадают на stable из общего пула. | Отдельный canary-хост + opt-in cookie, внешнее хранилище сессий. |
+| **Метрики не разделены по версии** | Отсутствует лейбл `version` в экспозиции метрик. | Добавить `version` в метрики приложения или relabeling Prometheus. |
+| **Split-brain после reload Nginx** | Некорректный конфиг принят частично. | Всегда `nginx -t` перед `reload`; откат конфига из VCS. |
 
 ## Дополнительная информация
 
@@ -346,6 +550,31 @@ echo "Canary deployment successful!"
 - **Latency (p99)** — замедление ответов.
 - **Resource Usage** — утечки памяти или аномальное потребление CPU на новой версии.
 
+### Методы Canary Analysis (SRE) — статистика и пороги
+
+Глубокие PromQL-запросы и паттерн Baseline описаны в SSoT **[Мониторинг и оценка трафика при Canary](./canary_monitoring_and_gating.md)**. Здесь — принципы, применимые вне облака:
+
+- **Относительное сравнение (Ratio), а не абсолютные пороги.** Сравнивайте `error_rate(canary) / error_rate(baseline)`; абсолютный «ошибок < 1%» некорректен при плавающей нагрузке.
+- **Минимальный объём выборки.** При < 50–100 RPS за окно анализа выводы недостоверны: продлите окно или запустите синтетические smoke-тесты для поддержания Baseline-уровня трафика.
+- **Error Budget gate.** Canary продолжается, только если burn rate (скорость расхода бюджета ошибок) ниже порога; превышение — остановка и откат.
+- **Последовательный гейтинг.** Между шагами (10% → 25% → 50%) — пауза на сбор метрик; решение принимается по итогам окна, а не мгновенно.
+
+**Команды проверки в традиционной среде (без облака):**
+```bash
+# HAProxy: число ответов и ошибок по бэкендам
+echo "show stat" | socat - UNIX-CONNECT:/var/run/haproxy.sock \
+  | awk -F, '/app_canary/{print $1, $2, "resp="$9, "err="$36}'
+
+# Nginx Prometheus exporter
+curl -s http://localhost:9113/metrics | grep -E "nginx_upstream_responses_total|nginx_http_requests_total"
+
+# Prometheus: доля 5xx canary по лейблу version
+curl -s "http://prometheus:9090/api/v1/query?query=\
+sum(rate(http_requests_total{version=\"canary\",status=~\"5..\"}[5m]))\
+/sum(rate(http_requests_total{version=\"canary\"}[5m]))"
+# → значение < 0.01 (1%) при норме
+```
+
 ### Сравнение Canary и A/B тестирования
 
 | Характеристика | Canary Deployment | A/B Testing |
@@ -363,11 +592,21 @@ echo "Canary deployment successful!"
 - **Автоматизируйте откат:** Ручное вмешательство при сбое Canary нивелирует преимущества скорости; используйте автоматические пороги.
 - **Проверка на "отравление" кэша:** Если Canary пишет в БД или кэш несовместимые данные, это может аффектить Stable версию.
 - **Долгоживущие соединения:** Настраивайте `Connection Draining` для WebSocket и gRPC при переключении трафика.
+- **Изолируйте состояние:** внешнее хранилище сессий (Redis) вместо sticky sessions, чтобы переключения весов не рвали сессии.
+- **Собственный health endpoint:** `/healthz` должен проверять БД/кэш/внешние API, а не только факт запуска процесса.
+- **Всегда проверяйте конфиг перед reload:** `nginx -t` / валидация HAProxy перед применением — некорректный конфиг даст 502 на всех версиях сразу.
+- **Синтетический трафик при низкой нагрузке:** ночью/в выходные анализ недостоверен без генератора нагрузки для поддержания Baseline.
+
+### Граничные случаи и ограничения (традиционная среда)
+
+- **TTL DNS/кэш CDN:** переключения на L7-уровне предпочтительнее DNS-switch.
+- **Cookie/Session Affinity крадёт canary:** пользователи с session cookie могут «застрять» на stable; используйте отдельный canary-хост + opt-in cookie, а не общий пул.
+- **Метрики не размечены по версии:** без лейбла `version` Canary Analysis невозможен; добавьте его в экспозицию/relabeling.
+- **Долгоживущие соединения (WebSocket/gRPC):** при смещении веса настраивайте connection draining, иначе активные каналы обрываются.
+- **Нехватка canary-мощности:** при малом пуле canary (1 узел) его падение = 100% потери для canary-сегмента; держите ≥2 узла.
 
 ### Рекомендованные ссылки
 
-- [Мониторинг и оценка трафика при Canary](./canary_monitoring_and_gating.md) — детализация процесса анализа и PromQL примеры.
-- [Управление трафиком в Service Mesh](../../Service_Mesh/traffic_management.md) — современные стандарты (Gateway API/GAMMA) для Canary.
-- [Обзор стратегий развертывания](../Core_Concepts/deployment_strategies.md) — сравнение с Blue/Green и Rolling Update.
-- [Сравнение стратегий развертывания](./comparison.md) — матрица выбора подходов.
-- [Expand-Contract: миграции БД](../../Databases/Concepts/migrations/expand_contract.md) — обеспечение совместимости данных.
+- [Мониторинг и оценка трафика при Canary](./canary_monitoring_and_gating.md) — глубокий анализ метрик, PromQL и паттерн Baseline.
+- [Сравнение стратегий развертывания](./comparison.md) — матрица выбора стратегий.
+- [Балансировка нагрузки HTTP](../../Networking/Protocols/HTTP/http_load_balancing.md) — механика весов, health checks и traffic splitting на Nginx/HAProxy.

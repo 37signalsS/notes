@@ -11,6 +11,8 @@
 - **SCA (Software Composition Analysis):** анализ сторонних библиотек и зависимостей. Современный SCA работает по принципу **Living SBOM**, отслеживая уязвимости в реальном времени.
 - **ASPM (Application Security Posture Management):** мета-слой оркестрации, который собирает данные от всех AST-инструментов, устраняет дубликаты и приоритизирует риски на основе **анализа достижимости (Reachability Analysis)**.
 
+> Наряду с вендорскими AI-направлениями, в реальных on-prem и self-hosted внедрениях AST строится на конкретных open-source инструментах (см. раздел «Конкретные инструменты AST» ниже). Описанные далее практические сценарии демонстрируют именно этот, воспроизводимый без облака и без ИИ, вариант.
+
 ## Базовые концепции
 
 ### Сравнительная матрица AST-технологий (2026)
@@ -27,7 +29,7 @@
 
 ### Зоны ответственности и классы уязвимостей
 
-Каждый метод эффективен против определенных классов угроз, описанных в **OWASP Top 10 (2025/2026)**:
+Каждый метод эффективен против определенных классов угроз, описанных в **OWASP Top 10 (2021)** для веб-приложений и **OWASP API Security Top 10 (2023)** для API:
 
 - **Преимущества SAST:**
   - Поиск секретов и жестко закодированных ключей.
@@ -50,6 +52,31 @@
 3. **eBPF-IAST** сообщает, что в процессе тестирования эта функция ни разу не была вызвана.
 4. **Результат:** Приоритет уязвимости снижается, блокировка пайплайна отменяется (VEX-аттестация).
 
+### Конкретные инструменты AST (open-source, self-hosted)
+
+В дополнение к вендорским AI-платформам производственные внедрения опираются на проверяемые open-source сканеры, которые можно развернуть локально без облака и без ИИ-компонентов. Распределение по методам:
+
+| Инструмент | Метод | Объект анализа | Назначение (on-prem вариант) |
+| :--- | :--- | :--- | :--- |
+| **Semgrep** | SAST | мультиязычный исходный код | быстрый анализ по правилам (yaml), инкрементальный diff, экспорт SARIF |
+| **Bandit** | SAST | Python | поиск небезопасных паттернов в Python-коде |
+| **ESLint** (+ security-плагины, напр. `eslint-plugin-security`) | SAST | JS/TS | линтинг и правила безопасности фронтенда/Node.js |
+| **SpotBugs + FindSecBugs** | SAST | JVM (Java/Kotlin/Scala) | статический анализ байт-кода |
+| **SonarQube CE** | SAST | мультиязычный | self-hosted качество кода + безопасность (Community Edition) |
+| **gitleaks** / **trufflehog** | SAST-класс (секреты) | любые репозитории | детект жестко закодированных секретов и ключей |
+| **OWASP ZAP** (`zap2docker-stable`) | DAST | HTTP / API / GraphQL | baseline/active/API-скан, встроенный fuzzer, генерация отчетов |
+| **Nuclei** | DAST / OAST | HTTP / API | шаблонные проверки + внеполосные (OOB) уведомления через Interactsh |
+| **ffuf** / **wfuzz** | DAST (fuzzing) | HTTP-параметры и эндпоинты | фаззинг параметров, vhost-брастинг, аномалии ответов |
+| **feroxbuster** | DAST (discovery) | HTTP | каталог-брастинг (content discovery) |
+| **sqlmap** | DAST / exploitation | SQL-эндпоинты | автоматизация поиска и эксплуатации SQL-инъекций |
+| **Nikto** | DAST | HTTP-серверы | проверка конфигурации и известных уязвимостей веб-сервера |
+| **Trivy** | SCA + IaC + секреты | образы / файловые системы / IaC | уязвимости зависимостей, секреты, misconfiguration |
+| **Syft + Grype** | SCA / SBOM | образы / файловые системы | генерация SBOM и сканирование уязвимостей по нему |
+| **OWASP dependency-check** | SCA | Java / Python / JS / .NET | сопоставление зависимостей с CPE и NVD |
+| **Interactsh** (server) | OAST | сетевые коллбэки | self-hosted сервер внеполосных уведомлений для blind-уязвимостей |
+
+> **По IAST:** большинство IAST-решений коммерческие и требуют агента в рантайм; в чисто open-source on-prem практике IAST на уровне ядра обычно заменяют связкой SAST + DAST + SCA, что даёт достаточное покрытие для большинства команд.
+
 ## Практические сценарии
 
 ### Комбинированный конвейер безопасности (DevSecOps 2026)
@@ -64,7 +91,7 @@
 
 ### Пример: Конфигурация GitLab CI с SARIF-интеграцией
 
-Использование единого формата SARIF позволяет ASPM-платформам (например, Cycode или DefectDojo) бесшовно агрегировать результаты.
+Использование единого формата SARIF позволяет ASPM-платформам (например, Cycode или DefectDojo) бесшовно агрегировать результаты. Образы в примере условные; на практике вместо `sast-ai`/`dast-ai` подставляются конкретные сканеры (Semgrep, OWASP ZAP и т.д., см. раздел «Конкретные инструменты AST»).
 
 ```yaml
 stages: [test, security, deploy]
@@ -103,6 +130,183 @@ aspm_sync:
     - ./check-quality-gate.sh --project $CI_PROJECT_ID
 ```
 
+### Практические примеры запуска сканеров (локально и в CI, без облака)
+
+Ниже — воспроизводимые примеры для self-hosted окружений. Для каждого сценария указаны предусловия, команда, проверка результата и типичные проблемы. Все инструменты запускаются локально или на self-hosted раннере, без внешних облачных сервисов и без ИИ-компонентов.
+
+#### Сценарий A: Semgrep (SAST)
+
+**Предусловия:** Python 3.8+ и `pip install semgrep`, либо Docker-образ `returntocorp/semgrep`. Доступ к исходникам репозитория.
+
+```bash
+# Полный скан по набору правил CI с выводом SARIF
+semgrep --config p/ci --sarif --output report.sast.sarif
+
+# Инкрементальный скан — только изменения относительно базовой ветки
+semgrep --config p/ci --baseline-commit=origin/main \
+  --sarif --output report.sast.sarif
+```
+
+**Validation:** файл `report.sast.sarif` непустой; число находок:
+```bash
+jq '[.runs[].results[]?] | length' report.sast.sarif   # → число находок
+```
+
+**Troubleshooting:**
+- `semgrep: command not found` — проверить `PATH` либо использовать контейнер: `docker run --rm -v "$PWD":/src returntocorp/semgrep semgrep --config p/ci`.
+- Слишком много ложных срабатываний (FP) — сузить `--config` до конкретных rulepack'ов и применять подавление `# nosemgrep` только с обоснованием и review.
+- Нехватка памяти на больших монорепо — увеличить лимит или сканировать подкаталогами.
+
+#### Сценарий B: Bandit (SAST, Python)
+
+**Предусловия:** `pip install bandit`. Проект на Python с `.py`-файлами.
+
+```bash
+bandit -r ./app -f sarif -o bandit.sarif -ll -ii
+# -ll  : учитывать только средний и высокий уровень серьёзности
+# -ii  : учитывать только среднюю и высокую уверенность
+```
+
+**Validation:** `bandit.sarif` содержит `results`; в консоли выводится `Issue: N`.
+
+**Troubleshooting:**
+- Bandit не находит файлы — убедиться, что путь содержит `.py` и не исключён `.bandit`.
+- Шум от тестов/venv — исключить: `bandit -r ./app -x ./app/tests,./venv`.
+
+#### Сценарий C: gitleaks (SAST-класс, поиск секретов)
+
+**Предусловия:** бинарь `gitleaks` (или `docker run --rm zricethezav/gitleaks`).
+
+```bash
+gitleaks detect --source . --report-format sarif --report-path gitleaks.sarif
+# код возврата 0 — секретов не найдено; 1 — найдены (настраивается --exit-code)
+```
+
+**Validation:** `gitleaks.sarif` содержит найденные секреты; для pre-commit хука используется `gitleaks protect --staged`.
+
+**Troubleshooting:**
+- Ложные срабатывания — добавить `.gitleaks.toml` с `[[rules]]` и `allowlist` (например, тестовые ключи).
+- Хочет сканировать историю целиком — `gitleaks detect --no-git` для только рабочей копии.
+
+#### Сценарий D: OWASP ZAP — baseline-скан (DAST)
+
+**Предусловия:** целевое приложение доступно по сети с хоста раннера (`curl -I http://app:8080` проходит); Docker доступен для `owasp/zap2docker-stable`.
+
+```bash
+docker run --rm owasp/zap2docker-stable zap-baseline.py \
+  -t http://app:8080 \
+  -r zap-report.html -x zap-report.xml -J zap-report.json \
+  -m 5 \
+  -z "-config api.disablekey=true"
+# -t        : цель
+# -m 5      : до 5 минут на spider (обход ссылок)
+# -r/-x/-J  : отчёты HTML/XML/JSON
+# -z        : доп. опции ZAP (отключить ключ API для упрощения)
+```
+
+**Validation:** `zap-report.json` содержит массив `alerts`; код возврата `0` (есть warnings) или `1` (есть high) по умолчанию.
+
+**Troubleshooting:**
+- `Target not reachable` — проверить сетевую связность с хоста раннера, правильность порта, что стенд поднят до запуска DAST.
+- Много FP на staging — оставить только passive (baseline) либо задать `-a` для осторожного active-скана.
+- Скан слишком долгий — увеличить `-m` или ограничить область через `-u` (включения).
+
+#### Сценарий E: Nuclei + локальный Interactsh (DAST / OAST)
+
+**Предусловия:** Docker; целевое приложение должно иметь возможность достучаться до OAST-сервера (необходимы исходящие DNS/HTTP с приложения к раннеру).
+
+```bash
+# 1. Self-hosted OAST-сервер (без внешних зависимостей)
+docker run -d --name interactsh \
+  -p 53:53/udp -p 80:80 -p 443:443 \
+  projectdiscovery/interactsh-server
+
+# 2. Nuclei с указанием локального сервера для OOB-коллбэков
+nuclei -u http://app:8080 \
+  -severity critical,high \
+  -interactsh-server http://<IP_хоста_раннера>:80 \
+  -o nuclei.txt -json
+```
+
+**Validation:** в `nuclei.txt` — matched templates; для blind SSRF/SSRF — записи коллбэков на локальном Interactsh-сервере (логи контейнера).
+
+**Troubleshooting:**
+- OOB не срабатывает — проверить, что приложение может достучаться до `IP_хоста_раннера` по 53/80/443; фаервол раннера не блокирует входящие коллбэки.
+- Пустой вывод — убедиться, что `-u` указывает живой endpoint, добавить `-silent=false` для диагностики.
+
+#### Сценарий F: ffuf — фаззинг параметров (DAST / fuzzing)
+
+**Предусловия:** бинарь `ffuf`, словарь (например, `seclists`).
+
+```bash
+ffuf -u http://app:8080/api?FUZZ=test \
+  -w /usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt \
+  -mc all -t 40 -p 0.0 -s
+# FUZZ     : место подстановки из словаря
+# -mc all  : показывать все коды ответа (далее фильтруем аномалии)
+# -t 40    : параллелизм
+# -p 0.0   : без задержки (осторожно на prod-подобных стендах)
+```
+
+**Validation:** вывод показывает ответы, отличающиеся от базового (аномалии по коду/длине) — кандидаты на уязвимые параметры.
+
+**Troubleshooting:**
+- Высокий шум — фильтровать: `-fc 404`, `-fs <baseline_len>`.
+- Rate-limit/WAF блокирует раннер — снизить `-t`, добавить `-rate` или заголовки через `-H`.
+
+#### Сценарий G: Trivy + Syft/Grype (SCA и SBOM)
+
+**Предусловия:** бинари `trivy`, `syft`, `grype` (или соответствующие Docker-образы).
+
+```bash
+# Комплексное сканирование файловой системы проекта
+trivy fs --scanners vuln,secret,config ./app -f sarif -o trivy.sarif
+
+# Генерация SBOM и сканирование по нему (воспроизводимо и офлайн)
+syft -o spdx-json ./app > sbom.spdx.json
+grype sbom:sbom.spdx.json -f sarif -o grype.sarif
+```
+
+**Validation:** SARIF содержит CVE; состав пакетов проверяется `trivy image --list-all-pkgs` (для образов) или просмотром `sbom.spdx.json`.
+
+**Troubleshooting:**
+- Пустая база уязвимостей — выполнить `trivy db update` (или подложить offline DB при air-gapped окружении).
+- SBOM не собирается — проверить, что `syft` поддерживает тип артефакта (dir, image, alpine и т.д.).
+
+### Интеграция в CI на self-hosted раннерах
+
+Полные примеры пайплайнов приведены в [интеграции SAST/DAST в CI/CD](./sast_dast_cicd_integration.md). Ключевые принципы для on-prem развертывания без облака:
+
+- Использовать **self-hosted раннеры** (GitLab Runner в режиме `shell`/`docker` или GitHub Actions self-hosted), а не облачные агенты.
+- Артефакты (SARIF/JSON/HTML) сохранять как CI artifacts и при необходимости копировать в локальное хранилище.
+- Реализовать **quality gate** скриптом, который читает отчёты и завершает сборку при критических находках.
+
+Пример минимального quality-gate на bash:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+FAIL=0
+
+# SAST (Semgrep, SARIF)
+semgrep --config p/ci --sarif --output sast.sarif
+HIGH=$(jq '[.runs[].results[]? | select(.level=="error")] | length' sast.sarif || echo 0)
+
+# DAST (ZAP, JSON) — считаем alerts с high riskcode
+DAST_HIGH=$(jq '[.alerts[]? | select(.riskcode=="3")] | length' zap-report.json || echo 0)
+
+echo "SAST high: $HIGH | DAST high: $DAST_HIGH"
+[ "$HIGH" -gt 0 ] && FAIL=1
+[ "$DAST_HIGH" -gt 0 ] && FAIL=1
+
+exit $FAIL
+```
+
+**Обработка ложных срабатываний:**
+- SAST: файл подавления (`.semgrepignore`), baseline-файл с известным техдолгом, triage через code review (пометка `won't fix` с обоснованием).
+- DAST: исключение тестовых/staging-специфичных находок через конфиг ZAP (`context`/`alert filter`), регулярный пересмотр базовой линии.
+
 ## Дополнительная информация
 
 ### AI-Driven Remediation: автоисправление уязвимостей
@@ -117,10 +321,20 @@ aspm_sync:
 - **DAST:** Для современных Single Page Applications (SPA) и микросервисов необходимы инструменты, умеющие работать с OpenAPI/Swagger схемами и поддерживающие состояние (stateful scanning).
 - **Ресурсы:** SAST дешевле в эксплуатации, так как не требует инфраструктуры для запуска приложения. DAST требует выделенных мощностей и настройки тестовых данных.
 
+> **Практическое уточнение (on-prem):** SAST достаточно запускать на раннере с 1 vCPU и умеренной памятью (она растёт на крупных репозиториях). DAST (ZAP/Nuclei) требует 2+ vCPU и 4 ГБ RAM, а также доступа к развёрнутому стенду — его разумно ставить параллельно деплою review/staging окружения, а не на этап сборки.
+
+### Операционные рекомендации для DevOps/SRE/Sysadmin
+
+- **Где в SDLC запускать:** SAST — на этапе pre-commit и сборки (быстро, не требует рантайма); DAST — на review/staging, после того как приложение задеплоено и доступно раннеру; SCA — на этапе сборки и при обновлении зависимостей; OAST — вместе с DAST для blind-уязвимостей.
+- **Сетевая изоляция:** раннер DAST должен видеть стенд, но стенд не должен иметь выхода в прод (egress allowlist). Используйте отдельный network namespace / VLAN / docker network для динамического сканирования, чтобы фаззинг не затронул смежные системы.
+- **Приоритизация находок:** комбинируйте CVSS, достижимость (reachability) и наличие эксплойта. Не блокируйте релиз ради теоретической находки в коде, который не исполняется (см. раздел «Анализ достижимости»).
+- **Хранение и ротация отчётов:** сохраняйте артефакты в локальном хранилище (например, MinIO/S3-совместимое или NFS) с ротацией; отчёты SARIF — единый формат для агрегации разными инструментами.
+- **Процесс triage:** каждая находка уровня High+ → тикет; подавление (suppression) только через review с обоснованием; регулярный пересмотр базовой линии технического долга.
+- **Анализ зависимостей и SBOM:** см. [Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md) — SCA тесно связан с SAST/DAST и должен быть частью общего конвейера.
+- **Типичные уязвимости:** классы, ловимые SAST/DAST, разобраны в [Типичные уязвимости SAST и DAST](./sast_dast_vulnerabilities.md).
+
 ## См. также
 
-- [Интеграция SAST/DAST в CI/CD](./sast_dast_cicd_integration.md)
-- [Типичные уязвимости SAST и DAST](./sast_dast_vulnerabilities.md)
-- [Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)
-- [Динамический анализ безопасности — DAST](./dast_overview.md)
 - [Статический анализ безопасности — SAST](./sast_overview.md)
+- [Динамический анализ безопасности — DAST](./dast_overview.md)
+- [Интеграция SAST/DAST в CI/CD](./sast_dast_cicd_integration.md)

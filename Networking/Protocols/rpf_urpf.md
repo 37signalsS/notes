@@ -127,8 +127,18 @@ nft add rule inet filter input fib saddr . iif type != { unicode, unicast } drop
 ```cisco
 # Просмотр счетчиков дропов uRPF
 show ip traffic | include unicast RPF
+
 # Проверка настроек интерфейса
 show ip interface Gi0/0 | include verify
+
+# Детальная статистика uRPF
+show ip interface Gi0/0 | include verify|drops|errors
+
+# Логирование uRPF-дропов
+debug ip verify
+
+# Просмотр всех интерфейсов с uRPF
+show run | include "ip verify"
 ```
 
 ### Linux
@@ -138,9 +148,67 @@ show ip interface Gi0/0 | include verify
 # Просмотр счетчиков сброшенных пакетов (IPReversePathFilter)
 nstat -az | grep -i filter
 # → IpReversePathFilter 1234
+
+# Детальная статистика фильтрации
+nstat -az | grep -E "Filter|Martian|ReversePath"
+
+# Проверка Martian-пакетов (пакеты с невалидным Source IP)
+nstat -az | grep -i martian
+# → IpInDelivers 12345
+# → IpInDiscards 123
 ```
 
-Если пакеты дропаются при использовании PBR или ECMP:
+### Диагностический скрипт (Linux)
+
+```bash
+#!/bin/bash
+# RPF/uRPF Diagnostics Script
+IFACE="${1:-eth0}"
+
+echo "=== RPF/uRPF Diagnostics for $IFACE ==="
+
+# 1. Текущий режим RPF
+echo ""
+echo "--- RPF Mode ---"
+echo "  all: $(sysctl -n net.ipv4.conf.all.rp_filter)"
+echo "  default: $(sysctl -n net.ipv4.conf.default.rp_filter)"
+echo "  $IFACE: $(sysctl -n net.ipv4.conf.$IFACE.rp_filter)"
+
+# 2. Статистика фильтрации
+echo ""
+echo "--- Filter Statistics ---"
+nstat -az 2>/dev/null | grep -E "Filter|Martian|ReversePath" || echo "  nstat not available"
+
+# 3. Таблица маршрутизации (проверка асимметрии)
+echo ""
+echo "--- Routing Table ---"
+ip route show | head -10
+
+# 4. Проверка для конкретного IP
+echo ""
+echo "--- Route Check for 8.8.8.8 ---"
+ip route get 8.8.8.8
+
+# 5. Проверка интерфейсов
+echo ""
+echo "--- Interfaces ---"
+ip -br link show | grep -v "lo"
+
+# 6. Проверка nftables (если есть правила)
+echo ""
+echo "--- nftables Rules ---"
+if command -v nft &>/dev/null; then
+    nft list ruleset 2>/dev/null | grep -i "fib\|rpf\|rp_filter" || echo "  No RPF rules found"
+else
+    echo "  nft not installed"
+fi
+
+echo ""
+echo "=== Diagnostics Complete ==="
+```
+
+### Если пакеты дропаются при PBR или ECMP
+
 1. Убедитесь, что установлен `rp_filter = 2`.
 2. Используйте `ip route get <SOURCE_IP> iif <INCOMING_IFACE>` для эмуляции проверки ядром.
 3. Проверьте `journalctl -k` на наличие сообщений "martian source".
@@ -162,6 +230,53 @@ sysctl net.ipv4.conf.eth1.rp_filter
 
 Если пакет виден на интерфейсе, но не достигает приложения, а обратный маршрут указывает на другой интерфейс — причина в strict-фильтрации, а не в маршрутизации как таковой.
 
+### Сценарий: ISP с ECMP (асимметричная маршрутизация)
+
+**Проблема:** ISP использует ECMP для балансировки трафика между двумя провайдерами. Strict uRPF блокирует трафик, приходящий через "неправильный" провайдер.
+
+**Решение:**
+```cisco
+! На входном интерфейсе от провайдера
+interface GigabitEthernet0/0
+ description Uplink-Provider-A
+ ip verify unicast source reachable-via any  ! Loose mode
+```
+
+**Проверка:**
+```cisco
+! Проверка, что uRPF не дропает пакеты
+show ip traffic | include unicast RPF
+! → 0 unicast RPF drops
+```
+
+### Сценарий: DHCP-сервер с несколькими интерфейсами
+
+**Проблема:** DHCP-сервер на Linux с двумя интерфейсами (eth0 — management, eth1 — clients) получает DHCP-запросы от клиентов на eth1, но ответы отправляет через eth0 (из-за default route). Strict uRPF на eth1 отбрасывает входящие DHCP-запросы.
+
+**Решение:**
+```bash
+# Установить Loose mode для всех интерфейсов
+sudo sysctl -w net.ipv4.conf.all.rp_filter=2
+sudo sysctl -w net.ipv4.conf.default.rp_filter=2
+
+# Или создать статический маршрут для клиентской подсети
+sudo ip route add 192.168.1.0/24 dev eth1
+```
+
+### Сценарий: Docker/Kubernetes (veth-пары)
+
+**Проблема:** В Docker-сетях с bridge-режимом veth-пары могут вызывать RPF-фейлы, если контейнеры используют разные bridge-интерфейсы.
+
+**Решение:**
+```bash
+# Включить Loose mode для Docker-интерфейсов
+sudo sysctl -w net.ipv4.conf.docker0.rp_filter=2
+sudo sysctl -w net.ipv4.conf.br-*.rp_filter=2
+
+# Или отключить RPF для bridge (менее безопасно)
+sudo sysctl -w net.ipv4.conf.docker0.rp_filter=0
+```
+
 ## Дополнительная информация
 
 ### RFC и стандарты
@@ -172,3 +287,6 @@ sysctl net.ipv4.conf.eth1.rp_filter
 - **[Мультикаст и IGMP Snooping](./multicast.md)** — основы и RPF-проверки в PIM.
 - **[Policy Based Routing (PBR) в Linux](../../Linux/Networking/Policy_Based_Routing/scenarios.md)** — решение проблем асимметрии.
 - **[Настройка nftables](../../Linux/Networking/Settings/tools/nftables/migration_and_reference.md)** — реализация RPF для IPv6.
+- **[ARP — протокол разрешения адресов](./arp.md)** — L2/L3 связность.
+- **[BGP — протокол граничного шлюза](./bgp.md)** — маршрутизация в ISP-сетях.
+- **[IP-адресация и подсети](./IP_addressing/subnetting_calculation.md)** — проектирование подсетей с учетом uRPF.

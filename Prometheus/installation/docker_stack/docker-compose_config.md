@@ -197,6 +197,3 @@ networks:
 | **Prometheus OOM** | Нет лимитов или `--auto-gomemlimit` | Добавьте лимиты в `deploy` и флаг запуска. |
 | **cAdvisor 0 metrics** | Нет доступа к `docker.sock` | Проверьте монтирование `/var/run:/var/run:ro`. |
 | **Grafana Login Fail** | Неверный пароль в `.env` | Проверьте переменную `GF_SECURITY_ADMIN_PASSWORD`. |
-
----
-**Reliability Score: 10** (Соответствует стандартам Prometheus v3.13 и Docker Compose Spec 2026).

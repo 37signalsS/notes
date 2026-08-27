@@ -11,6 +11,11 @@
 - **KMS (Key Management Service)**: Облачный сервис для управления ключами шифрования (например, AWS KMS, Azure Key Vault, Google Cloud KMS).
 - **External Secrets Operator (ESO)**: Оператор Kubernetes, синхронизирующий секреты из внешних систем (Vault, AWS Secrets Manager) в нативные объекты Secret.
 - **Sidecar-инъекция**: Метод доставки секретов напрямую в файловую систему или переменные окружения контейнера без создания объектов Secret в Kubernetes.
+- **SecretStore / ClusterSecretStore**: CRD оператора ESO, описывающий подключение к внешнему хранилищу (провайдер, аутентификация). `ClusterSecretStore` — кластеро-область действия (для всего кластера), `SecretStore` — в пределах одного неймспейса (изоляция команд).
+- **ExternalSecret**: CRD ESO — декларативная ссылка на конкретный секрет во внешнем хранилище. Именно этот объект хранится в Git вместо самих данных.
+- **SealedSecret**: CRD инструмента Sealed Secrets — секрет, зашифрованный асимметричным публичным ключом конкретного кластера. Приватный ключ существует только внутри кластера.
+- **Rekey (перешифрование)**: Пересоздание шифротекстов с использованием нового мастер-ключа при сохранении тех же открытых данных. Выполняется при компрометации или плановой ротации KEK.
+- **Шифрование на уровне etcd (Encryption at Rest)**: Механизм Kubernetes (`EncryptionConfiguration`), шифрующий все объекты (включая Secret) перед записью в хранилище etcd. Не заменяет GitOps-шифрование, а дополняет его.
 
 ## Базовые концепции
 
@@ -18,6 +23,22 @@
 
 Стандартный ресурс **Kubernetes** `Secret` использует кодирование Base64, которое не является шифрованием. Публикация таких манифестов в Git эквивалентна открытому доступу. 
 **Важно:** Если секрет был закоммичен в открытом виде, простое его удаление или шифрование в следующем коммите не поможет — он останется в истории Git. Требуется полная ротация секрета и очистка истории (например, через `bfg-repo-cleaner` или `git filter-repo`).
+
+**Правильный порядок действий при утечке (важна последовательность!):**
+
+1. **Ротация скомпрометированного секрета у провайдера** (смена пароля БД, перевыпуск API-ключа). Пока старое значение валидно, очистка истории бессмысленна — злоумышленник мог скопировать его ранее.
+2. **Очистка истории Git** — только после того, как утечетное значение стало недействительным:
+
+```bash
+# Замена утекшего значения во всей истории репозитория
+printf 'REAL_PASSWORD==>REDACTED\n' > replacements.txt
+git filter-repo --replace-text replacements.txt --force
+
+# Форс-пуш перезаписанной истории и повторное клонирование всеми участниками
+git push origin --force --all
+```
+
+3. **Ужесточение защиты**: включение secret-scanning в CI и pre-commit хуков (см. [Предотвращение утечек](#предотвращение-утечек)), чтобы инцидент не повторился.
 
 ### Архитектурные модели доставки
 
@@ -30,6 +51,11 @@
     *   GitOps-контроллер (ArgoCD, Flux) использует плагин для расшифровки манифеста перед его применением в API Kubernetes.
     *   Пример: ArgoCD Vault Plugin, плагин SOPS для Flux.
     *   *Плюс:* Секреты подставляются динамически в процессе рендеринга манифестов.
+3.  **Модель прямой доставки (Sidecar/CSI)**:
+    *   Секрет вообще не становится объектом Kubernetes: приложение получает его напрямую из хранилища (Vault Agent Sidecar) или через смонтированный том (Secrets Store CSI Driver).
+    *   *Плюс:* Данные не попадают в etcd и не видны через `kubectl get secrets`.
+
+Выбор модели определяет требования к инфраструктуре: модели 1–2 работают поверх объектов Secret (нужно шифрование etcd как второй эшелон), модель 3 требует доступности хранилища в момент старта пода (зависимость от SLA Vault).
 
 ### Сравнение подходов
 
@@ -39,6 +65,32 @@
 | **Ключ расшифровки** | Внутри K8s | KMS / PGP / Age | KMS / Vault Token | Vault Policy |
 | **Ротация данных** | Сложная (перевыпуск) | Средняя (rekey) | **Автоматическая** | **Автоматическая** |
 | **Сложность внедрения** | Низкая | Средняя | Средняя | Высокая |
+
+Дополнительные критерии выбора:
+
+| Критерий | Sealed Secrets | SOPS | ESO | Vault Injector / CSI |
+| :--- | :--- | :--- | :--- | :--- |
+| **Зависимость от внешней инфраструктуры** | Нет | KMS/age-ключи | Обязательна (Vault/Cloud SM) | Обязательна (Vault) |
+| **Аудит чтения секрета** | Нет | Нет | На стороне хранилища | Полный (Vault audit log) |
+| **Компрометация ключа** | Потеря приватного ключа контроллера | Перешифровать все файлы (`updatekeys`) | Отозвать токен/роль | Отозвать политику |
+| **Работа без интернета (air-gapped)** | Да | Да (age) | Ограничена | Только self-hosted Vault |
+
+Актуальное состояние инструментов (август 2026):
+
+- **Sealed Secrets** — активная разработка под `bitnami/sealed-secrets`; актуальный релиз v0.39.1; официально поддерживается только последняя версия.
+- **SOPS** — проект передан сообществу и находится в CNCF Sandbox (организация `getsops`); актуальный релиз v3.13.2; `age` рекомендуется вместо PGP.
+- **External Secrets Operator** — актуальный релиз v2.9.0; поддерживаются Kubernetes 1.34–1.36; поддерживается только последний минорный релиз (предыдущие объявляются EOL при выходе следующего).
+
+### Эшелонированная защита (defense-in-depth)
+
+Шифрование секретов в Git решает проблему репозитория, но не отменяет защиту самого кластера. Полная схема:
+
+1.  **В Git:** шифротексты или ссылки (этот документ).
+2.  **В etcd:** шифрование на уровне хранилища (`EncryptionConfiguration` с провайдером `kms` v2 или `aescbc`) — защищает от компрометации etcd и бэкапов.
+3.  **RBAC:** запрет на чтение Secret всем, кроме операторов и целевых ServiceAccount (`verbs: [get]` на ограниченный набор ресурсов).
+4.  **Аудит:** логирование чтения секретов через Kubernetes Audit Policy.
+
+Детали настройки шифрования etcd и ротации его ключей — в [Хранение Secret в etcd](../Kubernetes/Base/secrets/etcd_storage.md); общая стратегия управления секретами — в [Обзоре управления секретами](../Security/Concepts/secrets_management_overview.md).
 
 ## Практические сценарии
 
@@ -52,6 +104,63 @@
   2. Зашифрованный файл коммитится в Git.
   3. Flux или ArgoCD (с плагином) расшифровывают его, используя доступ к Cloud KMS или `age` ключу, хранящемуся в Secret кластера.
 
+**Полный рабочий процесс с age (актуально для SOPS v3.13.x):**
+
+```bash
+# 1. Генерация ключа age (один раз, ключ хранится вне Git!)
+age-keygen -o ~/.config/sops/age/keys.txt
+# → Public key: age1yt3tfqlfrwdwx0z0ynwplcr6qxcxfaqycuprpmy89nr83ltx74tqdpszlw
+
+# 2. Файл правил шифрования в корне репозитория
+cat > .sops.yaml <<'EOF'
+creation_rules:
+  # Прод: отдельный ключ + резервный получатель (страховка от потери)
+  - path_regex: clusters/prod/.*\.enc\.ya?ml$
+    age: >-
+      age1prodkeyxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,
+      age1backupkeyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+  # Дев: общий ключ команды
+  - path_regex: clusters/dev/.*\.enc\.ya?ml$
+    age: age1devkeyzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+EOF
+
+# 3. Шифрование (правила применяются автоматически по пути файла)
+sops encrypt --in-place clusters/prod/db.enc.yaml     # короткая форма: sops -i
+# → данные заменяются на SOPS-блок с метаданными и шифротекстами
+
+# 4. Повседневные операции
+sops decrypt clusters/prod/db.enc.yaml                # просмотр в stdout
+sops edit clusters/prod/db.enc.yaml                   # правка значений в редакторе
+sops updatekeys clusters/prod/db.enc.yaml             # перешифрование после смены получателей
+```
+
+**Подключение к Flux (нативная расшифровка в kustomize-controller):**
+
+```yaml
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-prod
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/prod
+  prune: true
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age   # Secret с приватным ключом age (поле .data."keys.txt")
+```
+
+Приватный ключ кладется в кластер один раз:
+
+```bash
+kubectl -n flux-system create secret generic sops-age \
+  --from-file=age.agekey=~/.config/sops/age/keys.txt
+```
+
+**Особенность ArgoCD:** нативной поддержки SOPS нет — требуется плагин (KSOPS) или переход на ESO/AVP. Для новых проектов на ArgoCD связка ESO + Vault обычно проще в сопровождении.
+
 > **Подробности и примеры:** см. **[SOPS overview](../Security/Tools/sops_overview.md)**.
 
 ### Сценарий 2: External Secrets Operator (ESO) (Облачный стандарт)
@@ -60,6 +169,60 @@
 
 - **Механизм**: В Git хранится только ресурс `ExternalSecret`, который указывает на путь во внешнем хранилище.
 - **Преимущество**: Секреты управляются централизованно через UI облачного провайдера или Vault. Разработчики не имеют доступа к сырым секретам, только к их именам.
+
+**Полный пример (ESO v2.x, API external-secrets.io/v1): подключение к Vault через Kubernetes auth:**
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: vault-backend
+spec:
+  provider:
+    vault:
+      server: https://vault.internal:8200
+      path: kvv2            # движок KV v2
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          roles:
+            - name: gitops-role
+              serviceAccountRef:
+                name: eso-vault   # SA с правом аутентификации в Vault
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: db-credentials
+  namespace: app
+spec:
+  refreshInterval: 15m            # период синхронизации с Vault
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: vault-backend
+  target:
+    name: db-credentials          # имя создаваемого нативного Secret
+    creationPolicy: Owner         # ESO владеет объектом (обновляет и удаляет)
+  data:
+    - secretKey: password         # ключ внутри итогового Secret
+      remoteRef:
+        key: app/db               # путь в Vault (kvv2/data/app/db)
+        property: password        # поле внутри JSON-секрета
+```
+
+**Валидация:**
+
+```bash
+kubectl describe externalsecret db-credentials -n app
+# → Status: Ready=True, SecretSynced... — секрет создан и синхронизирован
+kubectl get secret db-credentials -n app -o jsonpath='{.data.password}' | base64 -d
+```
+
+Нюансы эксплуатации:
+- **Политика поддержки агрессивная**: предыдущий минор объявляется EOL сразу при выходе нового — планируйте регулярные обновления.
+- **Generators**: ESO умеет генерировать значения для Helm-чартов и других потребителей без промежуточных Secret (например, пароль администратора для установки чарта).
+- **PushSecret**: обратный сценарий — публикация значения из кластера во внешнее хранилище.
 
 > **Подробное руководство:** см. **[Внешние системы управления секретами](../Kubernetes/Base/secrets/external_managers.md)**.
 
@@ -70,7 +233,19 @@
 - **Механизм**: Вместо реальных значений в манифестах используются плейсхолдеры (например, `<path:secret/data/db#password>`). Плагин находит их и заменяет на реальные данные перед `kubectl apply`.
 - **Особенность**: Не требует создания `ExternalSecret` для каждого ключа, работает прозрачно с Helm и Kustomize.
 
-> **Подробная интеграция:** см. **[Интеграция ArgoCD с Vault](../ArgoCD/argocd_vault_integration.md)**.
+```yaml
+# Фрагмент манифеста с плейсхолдером — реальное значение не покидает Vault
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-db
+stringData:
+  password: <path:secret/data/app/db#password>
+```
+
+**Компромиссы против ESO:** плейсхолдеры рендерятся в момент каждой синхронизации — контроллер ArgoCD должен иметь креденшилы Vault (расширение поверхности атаки) и каждая сверка дольше. ESO переносит получение данных в отдельный постоянно работающий оператор и считается более чистым паттерном; AVP удобен при миграции legacy-приложений с большим количеством inline-секретов.
+
+> **Подробная интеграция:** см. **[Интеграция ArgoCD с Vault](./ArgoCD/argocd_vault_integration.md)**.
 
 ### Сценарий 4: Secrets Store CSI Driver (Максимальная защита)
 
@@ -78,6 +253,69 @@
 
 - **Механизм**: Секреты монтируются как тома (volumes) в `tmpfs` (оперативную память) пода. 
 - **Результат**: Секреты никогда не сохраняются в etcd кластера в открытом виде и не видны через `kubectl get secrets`.
+
+**Пример подключения тома:**
+
+```yaml
+spec:
+  containers:
+    - name: app
+      volumeMounts:
+        - name: secrets-store
+          mountPath: /mnt/secrets
+          readOnly: true
+  volumes:
+    - name: secrets-store
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: vault-db-app   # CRD с описанием источника и путей
+```
+
+**Ограничения:** обновление секрета требует перезапуска пода (том монтируется при старте), если не включена синхронизация в K8s Secret через поле `secretObjects` в SecretProviderClass. Также усложняется диагностика: содержимое не видно стандартными средствами `kubectl`.
+
+> **Детали и сравнение с Vault Agent Sidecar:** см. **[Внешние системы управления секретами](../Kubernetes/Base/secrets/external_managers.md)** и [Vault внутри Kubernetes](../Vault/overview.md).
+
+### Сценарий 5: Sealed Secrets (быстрый старт без внешней инфраструктуры)
+
+Инструмент, не требующий ни Vault, ни облачного KMS: приватный ключ генерируется контроллером внутри кластера, в Git попадает только шифротекст.
+
+**Рабочий процесс (Sealed Secrets v0.39.x):**
+
+```bash
+# 1. Установка контроллера (кластерная часть, kube-system)
+kubectl apply -f https://github.com/bitnami/sealed-secrets/releases/download/v0.39.1/controller.yaml
+
+# 2. Установка клиента kubeseal
+brew install kubeseal        # macOS; для Linux — бинарник из релизов GitHub
+
+# 3. Создание обычного Secret на лету и шифрование в SealedSecret
+kubectl create secret generic db-password \
+  --from-literal=password='S3cr3t-Pass!' \
+  --dry-run=client -o yaml \
+  | kubeseal --scope strict -o yaml > db-password.sealed.yaml
+```
+
+Флаг `--scope strict` (по умолчанию) привязывает шифротекст к имени и неймспейсу — переименование объекта сделает расшифровку невозможной, что исключает подмену назначения секрета.
+
+**Ротация ключей:**
+
+```bash
+kubeseal --fetch-cert > pub-cert.pem   # получить публичный сертификат кластера
+kubeseal --rotate-keys                 # выпустить новую пару ключей
+kubeseal --re-encrypt                  # перешифровать все существующие SealedSecret свежим ключом
+```
+
+Контроллер автоматически создает новый ключ каждые 30 дней; старые ключи сохраняются для расшифровки уже закоммиченных SealedSecret до их перешифрования. Резервное копирование приватных ключей обязательно: без них восстановленный из Git кластер не сможет расшифровать секреты.
+
+```bash
+# Бэкап приватных ключей (выполнять сразу после установки)
+kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key \
+  -o yaml > sealed-secrets-master-keys.backup.yaml
+```
+
+> **Криптографическая схема и детали:** см. **[Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md)**.
 
 ## Безопасность и лучшие практики
 
@@ -93,23 +331,84 @@
     *   ESO автоматически подхватывает новое значение и обновляет нативный Secret (по умолчанию раз в 1-5 минут).
     *   Приложение должно уметь перечитывать секрет (hot-reload) или перезапускаться (через `stakater/reloader`).
 
+Конкретика по инструментам:
+
+- **SOPS**: после добавления/удаления получателей в `.sops.yaml` выполните `sops updatekeys <file>` для каждого затронутого файла (можно автоматизировать скриптом по всему репозиторию). Компрометация age-ключа = полный rekey всех файлов этого правила.
+- **Sealed Secrets**: `kubeseal --rotate-keys && kubeseal --re-encrypt` — новая пара ключей + перешифровка существующих объектов; затем коммит обновленных SealedSecret.
+- **ESO**: ротация бесшовна — достаточно изменить значение в Vault; новое значение подтянется в течение `refreshInterval`. Автоперезапуск приложения настраивается аннотацией на Deployment/Pod:
+
+```yaml
+metadata:
+  annotations:
+    reloader.stakater.com/auto: "true"   # Reloader перезапустит под при изменении Secret
+```
+
 ### Предотвращение утечек
 
 - **Pre-commit hooks**: Используйте `trufflehog` или `gitleaks` для блокировки коммитов с открытыми секретами.
 - **.gitignore**: Всегда добавляйте паттерны для временных файлов секретов (например, `*.dec.yaml`).
 - **Минимизация привилегий**: GitOps-контроллер должен иметь права только на `decrypt` (расшифровку) конкретных ключей KMS, но не на управление ими.
 
+**Пример pre-commit конфигурации:**
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: <VERSION>  # укажите актуальную версию из репозитория gitleaks
+    hooks:
+      - id: gitleaks
+```
+
+**Пример стадии сканирования в CI:**
+
+```yaml
+# .gitlab-ci.yml (фрагмент)
+secret-scan:
+  stage: test
+  script:
+    - gitleaks detect --source . --redact --exit-code 1
+    # --redact прячет найденные значения в логе пайплайна
+```
+
+Дополнительные меры:
+
+- **Отдельный репозиторий для секретов** с жестким CODEOWNERS и обязательным ревью — снижает радиус доступа по сравнению с монолитным инфраструктурным репозиторием.
+- **Запрет plaintext в PR-описаниях**: шаблоны MR с предупреждением; секреты передаются через менеджер, а не в тексте задачи.
+- **Регулярный аудит истории**: периодический запуск `trufflehog git <repo> --only-verified` по всей истории для поиска забытых утечек.
+
 ## Дополнительная информация
 
 **Связанные документы:**
 - [Обзор управления секретами](../Security/Concepts/secrets_management_overview.md) — общая стратегия.
 - [Внешние менеджеры секретов](../Kubernetes/Base/secrets/external_managers.md) — детали ESO и CSI Driver.
-- [Интеграция ArgoCD с Vault](../ArgoCD/argocd_vault_integration.md) — использование AVP.
+- [Интеграция ArgoCD с Vault](./ArgoCD/argocd_vault_integration.md) — использование AVP.
 - [Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md) — специфика Bitnami Sealed Secrets.
 - [SOPS overview](../Security/Tools/sops_overview.md) — глубокое погружение в SOPS.
+- [Хранение Secret в etcd](../Kubernetes/Base/secrets/etcd_storage.md) — шифрование на уровне кластера.
+- [Обзор HashiCorp Vault](../Vault/overview.md) — Vault Secrets Operator и Agent Sidecar.
 
 **Рекомендации по выбору:**
 - Если нужно быстро и без внешней инфраструктуры → **Sealed Secrets**.
 - Если нужен стандарт индустрии и гибкость → **SOPS**.
 - Если секреты уже в AWS/GCP/Vault → **External Secrets Operator**.
 - Если секреты не должны попадать в etcd → **Secrets Store CSI Driver**.
+
+**Уточнение по мультикластеру:** при управлении несколькими кластерами SOPS выигрывает за счет разных ключей на окружение (правила `creation_rules` в `.sops.yaml`), а ESO — за счет единого хранилища с покластерными политиками доступа. Sealed Secrets требует отдельного бэкапа ключей на каждый кластер.
+
+## Вопросы для собеседования
+
+### Почему нельзя просто зашифровать секреты и хранить ключ шифрования там же в репозитории?
+Ключ вместе с шифротекстом не защищает ничего: доступ к репозиторию = доступ к секретам. Ключ age/KMS-ключ живет вне Git — в KMS, менеджере секретов или офлайн-хранилище; в Git попадает только публичная часть (для age) или ссылка на ключ KMS.
+
+### Утечил секрет в историю Git. Что делать помимо force-push с переписанной историей?
+Переписывание истории (`git filter-repo`/BFG) обязательно, но недостаточно: репозиторий мог быть склонирован, форки и CI-кэши сохраняют старые объекты. Главный шаг — **ротация самого значения секрета** во всех потребителях; история при этом теряет ценность для атакующего.
+
+### Что произойдет при потере ключа Sealed Secrets контроллера и как это предотвратить?
+Все SealedSecret станут невосстановимыми: расшифровать их нечем, а исходные значения нигде больше не хранятся. Предотвращение — немедленный после установки и регулярный бэкап мастер-сертификата контроллера (`kubeseal --fetch-cert` не поможет — нужен приватный ключ из секрета контроллера).
+
+### ESO против AVP против Secrets Store CSI Driver — как выбрать?
+ESO — pull-модель: контроллер синхронизирует внешнее хранилище в нативные Secret (стандарт для GitOps, ротация через refreshInterval). AVP — подстановка значений в момент рендера манифестов Argo CD (секреты проходят через repo-server). CSI Driver — монтирование напрямую в pod без создания Secret (минимальный след в etcd). По умолчанию ESO; CSI — когда секреты не должны существовать как Kubernetes Secret.
+
+### Как ротировать ключ SOPS без простоя доставки?
+Сгенерировать новый ключ → добавить его в `.sops.yaml` (creation_rules) и во все кластеры одновременно со старым → перекодировать файлы (`sops rotate -i`) → убедиться, что все агенты расшифровали новым ключом → отозвать старый ключ. Окно сосуществования двух ключей делает миграцию прозрачной.

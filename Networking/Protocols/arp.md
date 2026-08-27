@@ -2,13 +2,13 @@
 
 ## Определения
 
-**ARP (Address Resolution Protocol)** — протокол разрешения адресов, используемый для сопоставления IP-адресов (сетевой уровень, L3) с MAC-адресами (канальный уровень, L2) в сетях IPv4. ARP инкапсулируется непосредственно в Ethernet-кадры (EtherType `0x0806`) и фактически работает на уровне 2.5 модели OSI, обеспечивая взаимодействие между сетевым и канальным уровнями.
+**ARP (Address Resolution Protocol)** — протокол разрешения адресов, используемый для сопоставления IP-адресов (сетевой уровень, L3) с MAC-адресами (канальный уровень, L2) в сетях IPv4. ARP инкапсулируется непосредственно в Ethernet-кадры (EtherType `0x0806`) и фактически работает на уровне 2.5 модели OSI, обеспечивая взаимодействие между сетевым и канальный уровнями.
 
 Когда устройству необходимо отправить данные другому хосту в той же локальной сети, оно отправляет широковещательный ARP-запрос. Хост с искомым IP отвечает unicast-сообщением, сообщая свой MAC-адрес, после чего начинается обмен данными.
 
 > **Важно:** В сетях **IPv6** протокол ARP отсутствует. Его функции (разрешение адресов, обнаружение соседей) выполняет **NDP (Neighbor Discovery Protocol)** на базе ICMPv6. См.: **[Обзор IPv6](./ipv6_overview.md)**.
 
-> **См. также:** [Модель OSI](../OSI_TCP_IP_Model/osi_model.md), [Ethernet](./ethernet.md), [IP](./IP_addressing/ip_overview.md)
+> **См. также:** [Модель OSI](../OSI_TCP_IP_Model/osi_model.md), [Ethernet](./ethernet.md), [IP](./IP_addressing/ip_overview.md), [ip neighbour](../../Linux/Networking/Tools/iproute2/ip_neighbour.md)
 
 ## Основные концепции
 
@@ -75,6 +75,30 @@
 
 > **См. также:** [Диагностика ping](../../Linux/Diagnostics/Networking/ping.md).
 
+### Визуализация процесса ARP
+
+```
+┌─────────────┐                              ┌─────────────┐
+│   Хост A    │                              │   Хост B    │
+│ IP: 10.0.1.5│                              │ IP: 10.0.1.10│
+│MAC:AA:BB:CC │                              │MAC:DD:EE:FF │
+└──────┬──────┘                              └──────┬──────┘
+       │                                           │
+       │ 1. ARP Request (Broadcast)                │
+       │ "Who has 10.0.1.10? Tell 10.0.1.5"       │
+       │ ─────────────────────────────────────────>│
+       │    dst: FF:FF:FF:FF:FF:FF                 │
+       │                                           │
+       │        2. ARP Reply (Unicast)             │
+       │ <─────────────────────────────────────────│
+       │ "10.0.1.10 is at DD:EE:FF"                │
+       │    src: DD:EE:FF                           │
+       │                                           │
+       │ 3. Данные (Unicast)                       │
+       │ ─────────────────────────────────────────>│
+       │    dst: DD:EE:FF                           │
+```
+
 ## Практические сценарии
 
 ### Переполнение ARP-таблицы
@@ -104,9 +128,31 @@ sysctl -w net.ipv4.neigh.default.gc_thresh3=16384
 - `gc_thresh2` — порог, после которого очистка запускается через 5 секунд.
 - `gc_thresh3` — жёсткий предел, новые записи не добавляются.
 
+**Сохранение изменений (автозагрузка):**
+```bash
+# Добавить в /etc/sysctl.d/99-arp.conf
+net.ipv4.neigh.default.gc_thresh1=4096
+net.ipv4.neigh.default.gc_thresh2=8192
+net.ipv4.neigh.default.gc_thresh3=16384
+
+# Применить
+sudo sysctl --system
+```
+
+**Верификация:**
+```bash
+sysctl net.ipv4.neigh.default.gc_thresh3
+# → 16384
+```
+
 ### Проблема ARP Flux (Multi-homed хосты)
 
 Возникает на Linux-серверах с несколькими интерфейсами в одной подсети. По умолчанию ядро может ответить на ARP-запрос для IP1 через интерфейс eth2, если он считает этот путь доступным. Это сбивает с толку коммутаторы (MAC flapping) и нарушает симметрию трафика.
+
+**Симптомы:**
+- MAC-адрес «прыгает» между интерфейсами в ARP-таблице коммутатора.
+- Нестабильная связность, особенно при работе сveral сервисами на одном хосте.
+- Логи коммутатора содержат сообщения о MAC flapping.
 
 **Решение:**
 ```bash
@@ -116,12 +162,59 @@ sysctl -w net.ipv4.conf.all.arp_ignore=1
 sysctl -w net.ipv4.conf.all.arp_announce=2
 ```
 
+**Сохранение изменений:**
+```bash
+# Добавить в /etc/sysctl.d/99-arp.conf
+net.ipv4.conf.all.arp_ignore=1
+net.ipv4.conf.all.arp_announce=2
+
+# Применить
+sudo sysctl --system
+```
+
+**Верификация:**
+```bash
+sysctl net.ipv4.conf.all.arp_ignore net.ipv4.conf.all.arp_announce
+# → 1
+# → 2
+```
+
+> **См. также:** [Proxy ARP](../../Concepts/nat/proxy_arp.md) — детали настройки и кросс-доменные взаимодействия.
+
 ### ARP в контейнерах и виртуализации
 
 В средах Docker и Kubernetes ARP-трафик проходит через виртуальные сущности:
 - **Veth-пары:** Контейнер отправляет ARP-запрос, который через veth-пару попадает на мост хоста (`docker0`, `br0`). Подробная схема прохождения трафика через veth-пары в Docker приведена в заметке **[Packet Flow в Docker Bridge](../../Docker/Docker_network/drivers/bridge.md#жизненный-цикл-пакета-packet-flow)**.
 - **Bridge Learning:** Мост хоста обучается MAC-адресам контейнеров аналогично физическому коммутатору.
 - **ARP Suppression (VXLAN/SDN):** В облачных сетях (VXLAN с BGP EVPN) широковещательный ARP подавляется. VTEP-терминалы перехватывают запросы и отвечают на них сами (Proxy ARP), используя информацию из распределенной базы данных, что предотвращает "штормы" в туннелях.
+
+**Диагностика ARP в Docker:**
+```bash
+# Просмотр ARP-таблицы на хосте (видны контейнеры)
+ip neigh show
+
+# Просмотр ARP-таблицы внутри контейнера
+docker exec <container> ip neigh show
+
+# Проверка veth-пары
+bridge fdb show dev <veth_interface>
+
+# Мониторинг ARP-трафика на мосте
+tcpdump -i docker0 -e arp
+```
+
+**Диагностика ARP в Kubernetes:**
+```bash
+# Просмотр ARP-таблицы на узле
+ip neigh show
+
+# Проверка MAC-адресов подов
+kubectl get pods -o wide | grep <node>
+ip neigh show | grep <pod_ip>
+
+# Мониторинг ARP на конкретном интерфейсе
+tcpdump -i <interface> -e arp
+```
 
 ### ARP-флуд и диагностика таймаутов
 
@@ -135,6 +228,36 @@ tcpdump -i eth0 -e arp
 
 # Фильтрация запросов к конкретному IP
 tcpdump -i eth0 arp and dst host 192.168.1.1
+
+# Подсчет ARP-пакетов в секунду
+tcpdump -i eth0 arp -c 1000 | wc -l
+
+# Анализ только ARP-запросов (без ответов)
+tcpdump -i eth0 'arp[6:2] == 1'
+
+# Анализ только ARP-ответов
+tcpdump -i eth0 'arp[6:2] == 2'
+```
+
+**Wireshark фильтры для анализа ARP:**
+```
+# Все ARP-пакеты
+arp
+
+# Только ARP-запросы
+arp.opcode == 1
+
+# Только ARP-ответы
+arp.opcode == 2
+
+# ARP-запросы к конкретному IP
+arp.dst.hw_mac == ff:ff:ff:ff:ff:ff && arp.dst.proto == 192.168.1.1
+
+# ARP-ответы от конкретного IP
+arp.src.proto == 192.168.1.10
+
+# Поиск потенциальных атак (много ARP-ответов от одного IP)
+arp.opcode == 2 && arp.src.proto == 192.168.1.100
 ```
 
 ### Диагностика микро-фризов и ARP Resolve Timeout
@@ -156,7 +279,7 @@ tcpdump -ni eth0 "arp or icmp"
 *Интерпретация:* Если `ping` висит, а в дампе видны ARP Requests без ответов — таймаут найден.
 
 **3. Анализ «флапающих» состояний NUD**
-В Linux записи могут часто менять состояние, что указывает на нестабильность L2.
+Вinux записи могут часто менять состояние, что указывает на нестабильность L2.
 - **Команда:** `ip -s neigh`
 - **Признаки проблемы:**
   - Резкий рост счетчиков в колонке `FAILED`.
@@ -173,6 +296,14 @@ show mac address-table dynamic | include <MAC_адрес_соседа>
 **5. Резюме диагностики**
 Если в дампе видны ARP-запросы без ARP-ответов, а `ip n` показывает `FAILED` — проблема локализована на уровне L2 (неправильный VLAN, изоляция портов (Private VLAN), выключен узел или перегрузка CPU на стороне ответчика).
 
+**Пошаговый алгоритм диагностики:**
+1. `ip neigh show` — проверить состояние записей (FAILED, INCOMPLETE).
+2. `tcpdump -i <intf> arp` — перехватить ARP-трафик.
+3. Сравнить: есть ли ARP-ответы на отправленные запросы.
+4. Проверить физику: `ethtool <intf>`, кабель, порт коммутатора.
+5. Проверить VLAN: `bridge vlan show`, `show vlan brief`.
+6. Проверить файрвол: `nft list ruleset`, `iptables -L -v -n`.
+
 ### Отслеживание пути пакетов на L2 (MAC-level)
 
 Для диагностики проблем на канальном уровне (неправильная VLAN-конфигурация, потеря трафика между коммутаторами) используется комбинация `arping` и `tcpdump`:
@@ -186,14 +317,41 @@ tcpdump -i eth0 -e arp
 ```
 Опция `-e` позволяет увидеть source/destination MAC, что критично для отладки "невидимых" на IP-уровне проблем.
 
+**Практические примеры использования arping:**
+```bash
+# Проверка доступности хоста на L2 (в обход файрвола)
+arping -I eth0 -c 3 192.168.1.10
+
+# Проверка дубликатов IP (Duplicate Address Detection)
+arping -D -I eth0 -c 3 192.168.1.10
+# → Если exit code 0 — конфликт обнаружен
+
+# Определение MAC-адреса по IP
+arping -I eth0 192.168.1.10 | grep "reply from"
+
+# Проверка связности через конкретный интерфейс
+arping -I eth1 -c 3 10.0.0.1
+```
+
+**Опции arping:**
+| Опция | Описание |
+| :--- | :--- |
+| `-I <interface>` | Интерфейс для отправки |
+| `-c <count>` | Количество запросов |
+| `-f` | Остановиться после первого ответа |
+| `-D` | Режим обнаружения дубликатов IP (DAD) |
+| `-w <deadline>` | Таймаут в секундах |
+| `-s <source>` | Исходный IP-адрес |
+
 ## Дополнительная информация
 
 ### Разновидности ARP
 
-- **Proxy ARP (RFC 1027):** Маршрутизатор отвечает своим MAC на запросы для узлов в другом сегменте. Используется для объединения сетей без перенастройки хостов или в VPN/туннелях.
+- **Proxy ARP (RFC 1027):** Маршрутизатор отвечает своим MAC на запросы для узлов в другом сегменте. Используется для объединения сетей без перенастройки хостов или в VPN/туннелях. Подробнее: **[Proxy ARP](../../Concepts/nat/proxy_arp.md)**.
 - **Gratuitous ARP (GARP):** Анонс собственного IP/MAC без явного запроса.
   - **Failover:** Используется в **VRRP/Keepalived** для мгновенного перехвата VIP при переключении Master-узла.
   - **Конфликты:** Позволяет хосту проверить, не занят ли его IP кем-то еще при загрузке.
+  - **Обнаружение:** `tcpdump -i eth0 'arp[6:2] == 2 && arp.src.proto == <IP>'` — перехват GARP.
 - **Inverse ARP (InARP):** Определение IP по MAC (использовалось в Frame Relay).
 - **Reverse ARP (RARP):** Устаревший протокол получения IP по MAC. Заменён на [DHCP](./DHCP/dhcp_overview.md).
 
@@ -204,11 +362,31 @@ tcpdump -i eth0 -e arp
 | **arp_ignore** | `1` | Отвечать на ARP-запрос только если целевой IP настроен на интерфейсе приема. |
 | **arp_announce** | `2` | При отправке ARP-запроса использовать IP-адрес интерфейса вылета. |
 | **arp_filter** | `1` | Позволяет иметь несколько сетевых интерфейсов в одной подсети и корректно отвечать на ARP. |
+| **proxy_arp** | `1` (при необходимости) | Включить Proxy ARP на интерфейсе. |
+
+**Полный список параметров ARP:**
+```bash
+# Просмотр всех параметров ARP для интерфейса
+sysctl -a | grep arp
+
+# Просмотр для конкретного интерфейса
+sysctl -a | grep net.ipv4.conf.eth0.arp
+```
 
 ### ARP в отказоустойчивых системах (HA)
 
 #### Bonding и ARP Monitoring
 В Linux Bonding (режимы 0, 1, 5, 6) используется **ARP Monitoring** (`arp_interval` и `arp_ip_target`) для проверки живой связности. В отличие от MII-мониторинга (проверяет только линк), ARP-мониторинг гарантирует прохождение трафика через вышестоящий коммутатор.
+
+**Настройка ARP Monitoring в Bonding:**
+```bash
+# Просмотр текущей конфигурации bonding
+cat /proc/net/bonding/bond0
+
+# Настройка ARP-мониторинга
+echo "arp_interval=100" > /sys/class/net/bond0/bonding/arp_interval
+echo "arp_ip_target=192.168.1.1,192.168.1.2" > /sys/class/net/bond0/bonding/arp_ip_target
+```
 
 #### Обнаружение дубликатов IP (DAD)
 Для предотвращения конфликтов используется `arping`:
@@ -218,21 +396,215 @@ arping -D -I eth0 192.168.1.10
 # → Если exit code 0 — конфликт обнаружен.
 ```
 
+**Автоматическая проверка DAD при запуске интерфейса:**
+```bash
+# Добавить в /etc/network/interfaces (Debian/Ubuntu)
+auto eth0
+iface eth0 inet static
+    address 192.168.1.10
+    netmask 255.255.255.0
+    pre-up arping -D -I eth0 $address || exit 1
+```
+
 ### Безопасность: ARP Spoofing
 
 Атака, при которой злоумышленник рассылает поддельные ARP-ответы, связывая свой MAC с IP жертвы (обычно шлюза) для реализации MITM.
 
+**Схема атаки:**
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Жертва    │     │Злоумышленник│     │    Шлюз     │
+│ IP: 10.0.1.5│     │ IP: 10.0.1.100│   │ IP: 10.0.1.1│
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       │ 1. ARP Spoofing   │                   │
+       │ "10.0.1.1 is at   │                   │
+       │  AA:BB:CC:DD:EE:FF"│                  │
+       │ <─────────────────│                   │
+       │                   │                   │
+       │ 2. ARP Spoofing   │                   │
+       │ "10.0.1.5 is at   │                   │
+       │  AA:BB:CC:DD:EE:FF"│                  │
+       │                   │ <─────────────────│
+       │                   │                   │
+       │ 3. Трафик идет через злоумышленника   │
+       │ ─────────────────>│ ─────────────────>│
+```
+
 **Обнаружение и защита:**
 1. **Мониторинг:** использование `arpwatch` или анализ через `tcpdump -e arp`.
+   ```bash
+   # Установка и запуск arpwatch
+   sudo apt install arpwatch
+   sudo arpwatch -i eth0 -f /var/lib/arpwatch/arp.dat
+
+   # Просмотр логов
+   tail -f /var/log/syslog | grep arpwatch
+   ```
+
 2. **Dynamic ARP Inspection (DAI):** Функция коммутаторов, проверяющая ARP-пакеты на соответствие базе DHCP Snooping. См. **[DHCP Security](./DHCP/dhcp_security.md)**.
+
 3. **Фильтрация:** `arptables` или `nftables` для ограничения ARP-трафика на уровне хоста.
    ```bash
    # Пример arptables: разрешить ARP только от известного MAC шлюза
    arptables -A INPUT --src-mac ! 00:11:22:33:44:55 -j DROP
+
+   # Пример nftables: фильтрация ARP
+   nft add table arp filter
+   nft add chain arp filter input { type filter hook input priority 0 \; policy accept \; }
+   nft add rule arp filter input ether saddr != 00:11:22:33:44:55 drop
    ```
 
+4. **Статические ARP-записи** для критичных хостов:
+   ```bash
+   # Добавление статической записи
+   sudo ip neigh add 192.168.1.1 lladdr 00:11:22:33:44:55 dev eth0 permanent
+
+   # Проверка
+   ip neigh show | grep 192.168.1.1
+   ```
+
+**Признаки ARP Spoofing:**
+- MAC-адрес шлюза в ARP-таблице часто меняется.
+- Один MAC-адレス отвечает за несколько IP (особенно шлюз и другие хосты).
+- Дублирование IP в логах `arpwatch`.
+- Нестабильная связность, особенно при доступе к внешним ресурсам.
+
+### Типичные ошибки и решения
+
+| Проблема | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| Хост не отвечает на ARP | Файрвол блокирует ARP | Разрешить ARP в файрволе хоста |
+| ARP-таблица переполнена | Много хостов в сегменте | Увеличить `gc_thresh3` |
+| MAC-адрес «прыгает» | ARP Flux (multi-homed) | Настроить `arp_ignore` и `arp_announce` |
+| Микро-фризы SSH | ARP Resolve Timeout | Проверить NUD-состояния, статические ARP |
+| Нет связности после миграции | ARP-кэш не обновился | `ip neigh flush dev eth0` или подождать таймаут |
+| ARP Spoofing | Злоумышленник в сегменте | DAI, статические ARP, мониторинг |
+
 ### RFC
+
 - **RFC 826** — базовая спецификация Ethernet ARP.
 - **RFC 5227** — IPv4 Address Conflict Detection (Gratuitous ARP).
 - **RFC 2002** — Proxy ARP.
 - **RFC 4861** — Neighbor Discovery for IPv6 (замена ARP).
+
+> **См. также:** [ip neighbour](../../Linux/Networking/Tools/iproute2/ip_neighbour.md), [Proxy ARP](../../Concepts/nat/proxy_arp.md), [DHCP Security](./DHCP/dhcp_security.md), [MAC-адрес](../Concepts/mac_address.md)
+
+## Пошаговая диагностика ARP-проблем
+
+### Алгоритм диагностики
+
+```
+1. Определите проблему
+   ├── Нет связности с хостом
+   │   ├── Проверьте ARP-таблицу: ip neigh show
+   │   ├── Если запись есть → проблема выше L2 (файрвол, маршрутизация)
+   │   └── Если записи нет → отправьте ARP-запрос вручную
+   ├── Микро-фризы/задержки
+   │   ├── Проверьте NUD-состояния: ip -s neigh
+   │   ├── Ищите циклы REACHABLE → STALE → FAILED
+   │   └── Проверьте стабильность линка: ethtool <intf>
+   └── MAC flapping
+       ├── Проверьте ARP-таблицу коммутатора
+       ├── Ищите дублирующиеся MAC
+       └── Проверьте VLAN-конфигурацию
+```
+
+### Базовые команды диагностики
+
+```bash
+# 1. Просмотр ARP-таблицы
+ip neigh show                    # Краткий формат
+ip -s neigh show                 # Со статистикой
+ip -br neigh show                # Компактный формат
+
+# 2. Проверка конкретного IP
+ip neigh show | grep 192.168.1.10
+
+# 3. Принудительный запрос ARP
+arping -I eth0 -c 3 192.168.1.10
+
+# 4. Мониторинг ARP-трафика
+tcpdump -i eth0 -e arp -n
+
+# 5. Проверка физического уровня
+ethtool eth0
+ip -s link show eth0
+
+# 6. Проверка статистики ошибок
+ip -s link show eth0 | grep -E "errors|dropped|overruns"
+```
+
+### Диагностика特定ных проблем
+
+#### Проблема: Хост не пингуется, но должен работать
+
+```bash
+# Шаг 1: Проверьте ARP-таблицу
+ip neigh show | grep 192.168.1.10
+# → Если запись есть с MAC → проблема не в ARP
+
+# Шаг 2: Отправьте ARP-запрос вручную
+arping -I eth0 -c 3 192.168.1.10
+# → Если ответов нет → проблема на L2
+
+# Шаг 3: Проверьте файрвол на целевом хосте
+ssh 192.168.1.10 "iptables -L -v -n | grep -E 'ICMP|ARP'"
+
+# Шаг 4: Проверьте VLAN
+bridge vlan show dev eth0
+```
+
+#### Проблема: Периодические разрывы SSH-сессий
+
+```bash
+# Шаг 1: Мониторинг ARP + ICMP
+tcpdump -ni eth0 "arp or icmp" -c 1000
+
+# Шаг 2: Проверка NUD-состояний в реальном времени
+watch -n 1 "ip -s neigh show | grep 192.168.1.10"
+
+# Шаг 3: Проверка стабильности линка
+ethtool eth0 | grep -E "Speed|Duplex|Link detected"
+dmesg | grep -i eth0 | tail -20
+```
+
+#### Проблема: ARP Spoofing атака
+
+```bash
+# Шаг 1: Поиск дублирующихся MAC
+ip neigh show | awk '{print $5}' | sort | uniq -d
+
+# Шаг 2: Мониторинг ARP-ответов
+tcpdump -i eth0 'arp[6:2] == 2' -e | awk '{print $NF, $(NF-1)}' | sort | uniq -c | sort -rn
+
+# Шаг 3: Проверка arpwatch
+grep "flip flop" /var/log/syslog
+
+# Шаг 4: Временная защита (statik ARP)
+sudo ip neigh change 192.168.1.1 lladdr 00:11:22:33:44:55 dev eth0 permanent
+```
+
+### Экспорт и анализ данных
+
+```bash
+# Экспорт ARP-таблицы для анализа
+ip neigh show > /tmp/arp_table_$(date +%Y%m%d).txt
+
+# Экспорт статистики
+ip -s neigh show > /tmp/arp_stats_$(date +%Y%m%d).txt
+
+# Захват пакетов для глубокого анализа
+tcpdump -i eth0 arp -w /tmp/arp_capture_$(date +%Y%m%d).pcap -c 10000
+
+# Анализ захваченных данных в Wireshark
+# wireshark /tmp/arp_capture_*.pcap
+```
+
+### Связанные документы
+
+- **[ip neighbour](../../Linux/Networking/Tools/iproute2/ip_neighbour.md)** — управление ARP/NDP-таблицами
+- **[Proxy ARP](../../Concepts/nat/proxy_arp.md)** — настройка и диагностика Proxy ARP
+- **[DHCP Security](./DHCP/dhcp_security.md)** — Dynamic ARP Inspection (DAI)
+- **[MAC-адрес](../Concepts/mac_address.md)** — управление MAC-адресами
+- **[Диагностика ping](../../Linux/Diagnostics/Networking/ping.md)** — базовая диагностика связности

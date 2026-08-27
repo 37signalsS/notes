@@ -8,20 +8,60 @@
 
 ## Основные концепции
 
+### Структура сообщения ICMP Redirect
+
+ICMP Redirect наследует общую структуру ICMP, но содержит дополнительное поле — адрес шлюза, через который следует отправлять трафик. Полное тело сообщения включает также начало оригинального IP-пакета, который стал причиной перенаправления (для идентификации конкретного потока).
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     Type      |     Code      |          Checksum             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                  Gateway Internet Address                     |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+~            Rest of IP Header + Leading Data                   ~
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+| Поле | Размер | Описание |
+| :--- | :--- | :--- |
+| **Type** | 8 бит | 5 (IPv4 Redirect) / 137 (IPv6 Redirect). |
+| **Code** | 8 бит | Подтип перенаправления (см. таблицу ниже). |
+| **Checksum** | 16 бит | Контрольная сумма всего ICMP-сообщения. |
+| **Gateway Internet Address** | 32 бита | IP-адрес более эффективного шлюза (IPv4). Для IPv6 аналогично, но адрес 128-битный. |
+| **Rest of IP Header + Leading Data** | 128+ бит | Минимум первые 64 бита (8 байт) оригинального IP-пакета, который вызвал Redirect. Используется хостом для идентификации конкретного потока/соединения. |
+
+> **Важно:** Поле Gateway содержит IP-адрес нового шлюза в той же локальной сети, что и отправитель сообщения. Хост НЕ должен устанавливать маршрут на шлюз, находящийся вне его локальной подсети — это критерий валидации.
+
 ### Механизм ICMP Redirect
 
 Протокол IP предполагает, что конечные хосты обладают минимальными знаниями о топологии сети и обычно полагаются на шлюз по умолчанию (Default Gateway). ICMP Redirect позволяет маршрутизаторам динамически оптимизировать пути без использования протоколов динамической маршрутизации (OSPF, BGP) на стороне клиента.
 
+Когда маршрутизатор получает пакет от хоста, направленный к определённому назначению, и обнаруживает, что оптимальный next-hop находится в той же локальной сети, что и источник пакета, он может:
+
+1. Переслать пакет на более эффективный шлюз (как обычно).
+2. Дополнительно отправить хосту **ICMP Redirect**, чтобы тот запомнил более короткий путь для будущих пакетов в этом направлении.
+
+Это экономит один hop на пути туда и обратно, так как хост больше не будет отправлять пакеты на исходный шлюз, а сразу отправит их на более эффективный.
+
 #### Условия генерации Redirect:
+
 1. Пакет поступает на тот же интерфейс, через который он должен быть отправлен дальше.
 2. Адрес источника и адрес следующего перехода (next-hop) находятся в одной IP-подсети.
 3. Маршрутизатор не настроен на использование Source Routing.
 4. Маршрутизация пакета не изменяется правилами Policy Based Routing (PBR).
 5. Пакет не является многоадресным (multicast/broadcast).
+6. Адрес источника является действительным хостом в локальной сети (а не широковещательным или зарезервированным).
 
 **Важное правило (RFC 1812):** Маршрутизаторы (router/gateway) обязаны **игнорировать** входящие сообщения ICMP Redirect. Механизм предназначен только для конечных узлов (hosts).
 
 #### Коды ICMPv4 Redirect (Type 5):
+
 | Код | Название | Описание |
 | :--- | :--- | :--- |
 | **0** | Redirect for Network | Перенаправление для всей целевой сети (устарело, трактуется как Host). |
@@ -30,38 +70,110 @@
 | **3** | Redirect for ToS & Host | Перенаправление с учетом ToS для конкретного хоста. |
 
 #### ICMPv6 Redirect (Type 137):
+
 В IPv6 Redirect является частью протокола **Neighbor Discovery (NDP)**.
+
 *   Работает аналогично IPv4, но включает в себя **Target Link-Layer Address** (канальный адрес нового шлюза). Это позволяет хосту сразу обновить запись в Neighbor Cache, избегая этапа Neighbor Solicitation.
+*   Адрес шлюза в сообщении IPv6 Redirect является **link-local** адресом маршрутизатора, а не глобальным.
 *   Должно быть защищено с помощью SEND (Secure Neighbor Discovery) в доверенных средах.
+*   В отличие от IPv4, где Redirect может быть сетевым (Code 0/2), в IPv6 Redirect всегда является перенаправлением для конкретного хоста (аналог Code 1).
+
+### ICMP Redirect и Policy Based Routing (PBR)
+
+ICMP Redirect **не генерируется**, если маршрутизация пакета определяется PBR (`ip rule`). Это важное ограничение, часто встречающееся в продакшене.
+
+**Сценарий:** хост использует `ip rule` для маршрутизации трафика в VPN-туннель или через отдельный шлюз. Маршрутизатор не знает о PBR и видит, что пакет должен уходить через default gateway. Он генерирует Redirect, но хост его игнорирует, потому что PBR имеет приоритет над таблицей main.
+
+**Диагностика:**
+
+```bash
+# Проверить PBR-правила
+ip rule show
+# → 0:      from all lookup local
+# → 32766:  from all lookup main
+# → 32767:  from all lookup default
+
+# Проверить, есть ли custom routing table
+ip route show table 100
+# → 10.0.0.0/8 via 192.168.1.1 dev eth0
+
+# Если Redirect игнорируется — проверьте accept_redirects
+sysctl net.ipv4.conf.all.accept_redirects
+```
+
+**Проблема:** при использовании PBR классический ICMP Redirect не работает, и хост продолжает слать трафик через default gateway, даже если есть более короткий путь через PBR.
+
+**Решение:** либо явно настроить маршруты в PBR-таблицах, либо отключить accept_redirects, чтобы избежать конфликтов.
+
+### TTL / Hop Limit поведение Redirect
+
+Сообщения ICMP Redirect генерируются маршрутизатором с **TTL = 255** (IPv4) или **Hop Limit = 255** (IPv6) и отправляются не на шлюз по умолчанию, а **напрямую отправителю** пакета, который вызвал перенаправление. Это важно для валидации: если сообщение Redirect пришло не с TTL 255, оно, скорее всего, поддельное.
 
 ### Проблемы безопасности и валидация
 
 Сообщения ICMP Redirect часто используются в атаках **Man-in-the-Middle (MITM)**. Злоумышленник может отправить поддельный Redirect, заставив хост направлять трафик через подконтрольный узел.
 
 #### Критерии валидации в современных ОС:
+
 Для принятия сообщения хост должен проверить условия:
+
 1. Сообщение получено от **текущего шлюза**, который используется для данного маршрута.
 2. Адрес нового шлюза находится в той же локальной подсети, что и хост.
 3. Сообщение содержит часть исходного пакета (IP-заголовок + данные), подтверждающую легитимность.
-4. В Linux дополнительно проверяется параметр `secure_redirects` (прием только от известных шлюзов по умолчанию).
+4. TTL сообщения равен 255 (защита от подмены на промежуточных узлах).
+5. В Linux дополнительно проверяется параметр `secure_redirects` (прием только от известных шлюзов по умолчанию).
+
+#### Атака: подменённый ICMP Redirect (MITM)
+
+**Сценарий атаки:**
+
+1. Злоумышленник подключается к той же локальной сети, что и жертва (например, через rogue Wi-Fi).
+2. Жертва отправляет пакет на внешний хост (например, 8.8.8.8) через шлюз 10.0.0.1.
+3. Злоумышленник отправляет поддельный ICMP Redirect с указанием, что более эффективный шлюз — 10.0.0.99 (его собственный IP).
+4. Жертва обновляет таблицу маршрутизации: `8.8.8.8 via 10.0.0.99`.
+5. Весь последующий трафик жертвы к 8.8.8.8 проходит через 10.0.0.99, где его можно перехватить.
+
+**Диагностика подозрительных Redirect:**
+
+```bash
+# Захватить все ICMP Redirect в реальном времени
+sudo tcpdump -i eth0 -nn 'icmp[0] == 5'
+# → 12:34:56.789 IP 10.0.0.1 > 10.0.0.5: ICMP redirect, length 32
+#   gateway 10.0.0.99, length 20
+#   4500 001c 0000 4000 4001 ffff 0a00 0005 0a00 0063 ...
+
+# Проверить таблицу маршрутизации на наличие host-маршрутов (установленных Redirect)
+ip route show | grep 'proto redirect\|proto 2'
+# → 8.8.8.8 dev eth0 proto redirect scope link  metric 100
+#   via 10.0.0.99 dev eth0 proto redirect metric 100
+
+# Очистить кэш маршрутов и установленные Redirect
+ip route flush cache
+# → (без вывода — успешное выполнение)
+```
 
 ### ICMP Source Quench (deprecated) и ECN
 
 Механизм официально объявлен устаревшим в **RFC 6633**.
 
 **Причины отказа:**
+
 1. **Неэффективность:** Сообщения сами потребляют полосу пропускания, усиливая заторы.
-2. **Дублирование:** Современные алгоритмы TCP (Cubic, BBR) справляются лучше.
+2. **Дублирование:** Современные алгитры TCP (Cubic, BBR) справляются лучше.
 3. **Безопасность:** Риск DoS-атак через принудительное замедление трафика.
 4. **Отсутствие обратной связи:** UDP-приложения часто игнорируют эти сообщения.
 
-**Современная замена:**
-Вместо Source Quench используется **ECN (Explicit Congestion Notification)**. Маршрутизаторы помечают биты в заголовках IP-пакетов (флаг CE), а протоколы L4 (TCP/SCTP) реагируют на это снижением скорости.
-*   [Подробнее об управлении перегрузкой TCP](../../TCP/congestion/tcp_congestion_control_overview.md).
+**Современная замена — ECN (Explicit Congestion Notification):**
+
+ECN использует 2 бита в заголовке IP (ECT — ECN Congestion Encountered). Вместо отправки отдельного ICMP-сообщения маршрутизатор просто выставляет бит CE (Congestion Experienced) в уже существующем пакете. Получатель возвращает сигнал обратно через TCP ACK с установленным флагом ECE, и отправитель снижает скорость.
+
+*   **Преимущество:** Нет дополнительных пакетов, сигнал проходит внутри обычного трафика.
+*   **Требование:** Поддержка ECN на всех узлах пути (источник, маршрутизаторы, получатель).
+*   [Подробнее об управлении перегрузкой TCP](../TCP/congestion/tcp_congestion_control_overview.md).
 
 ## Практические сценарии
 
-### Сценарий: Оптимизация маршрута в локальной сети
+### Сценарий 1: Оптимизация маршрута в локальной сети
 
 1. **Конфигурация:** В сети два маршрутизатора: R1 (10.0.0.1, шлюз по умолчанию) и R2 (10.0.0.2, доступ к сети 192.168.1.0/24).
 2. **Действие хоста:** Хост А (10.0.0.5) отправляет пакет в сеть 192.168.1.0 через R1.
@@ -69,23 +181,122 @@
 4. **Оптимизация:** R1 пересылает пакет на R2 и отправляет Хосту А **ICMP Redirect (v4 Type 5 Code 1)**.
 5. **Результат:** Хост А добавляет в кэш маршрутизации запись `192.168.1.0/24 via 10.0.0.2` и далее отправляет трафик напрямую.
 
+**Проверка результата:**
+
+```bash
+# До получения Redirect — трафик идёт через шлюз по умолчанию
+ip route get 192.168.1.100
+# → 192.168.1.100 via 10.0.0.1 dev eth0 ...
+
+# После получения Redirect — хост знает более короткий путь
+ip route get 192.168.1.100
+# → 192.168.1.100 via 10.0.0.2 dev eth0 proto redirect metric 100
+#   ^^^ proto redirect — маршрут установлен на основе ICMP Redirect
+```
+
+### Сценарий 2: Обнаружение и диагностика подозрительных Redirect (MITM)
+
+Если вы подозеваете атаку или хотите понять, какие Redirect-сообщения ваш хост принимает:
+
+```bash
+# 1. Непрерывный захват ICMP Redirect
+sudo tcpdump -i any -nn 'icmp[0] == 5 or icmp6 and icmp6[0] == 137'
+# → каждый раз, когда приходит Redirect, выводится источник, шлюз и длина
+
+# 2. Проверить, есть ли установленные Redirect-маршруты
+ip route show | grep -E 'proto redirect|proto 2'
+# → пустой вывод = Redirect не используются
+# → непустой вывод = проверьте, доверяете ли вы этим шлюзам
+
+# 3. Включить логирование в ядре для анализа
+echo 1 | sudo tee /proc/sys/net/ipv4/conf/all/log_martians
+# → ядро будет логировать подозрительные пакеты, включая поддельные Redirect
+
+# 4. Просмотр логов
+journalctl -k | grep -i redirect
+# → [12345.678] IPv4: redirect message from 10.0.0.99 dropped
+```
+
+### Сценарий 3: Redirect в контейнерных средах (Docker)
+
+В контейнерах на базе Linux-моста (bridge networking) ICMP Redirect могут появляться из-за двойного NAT и наличия нескольких шлюзов:
+
+```bash
+# Docker bridge создаёт subnet 172.17.0.0/16, gateway 172.17.0.1
+# Если на хосте есть дополнительный шлюз, Docker может посылать Redirect
+# внутрь контейнера, что приводит к нарушению маршрутизации.
+
+# Проверить маршруты внутри контейнера
+docker exec <container_name> ip route show
+# → 172.17.0.0/16 dev eth0 proto kernel scope link src 172.17.0.2
+
+# Отключить Redirect на уровне Docker bridge
+# в /etc/docker/daemon.json:
+# {
+#   "ipv6": false,
+#   "ip-forward": false,
+#   "ip-masq": false
+# }
+# Или через docker network create с флагом --opt com.docker.network.bridge.enable_icc=false
+```
+
+**Edge Case:** В Kubernetes с CNI-плагинами (Calico, Cilium) Redirect обычно блокируются на уровне CNI-политик. Если перенаправление всё же происходит, проверьте `sysctl` на нодах и настройки CNI-плагина.
+
+### Настройка маршрутизатора (Cisco IOS) для отправки Redirect
+
+На маршрутизаторах Cisco ICMP Redirect включены по умолчанию, но могут быть отключены или настроены:
+
+```bash
+# Просмотр текущей конфигурации Redirect
+show ip interface GigabitEthernet0/0
+# → ICMP redirects are always sent
+
+# Отключить отправку Redirect на интерфейсе
+interface GigabitEthernet0/0
+  no ip redirects
+  exit
+
+# Отключить прием Redirect (на хостах/конечных устройствах)
+no ip redirects
+```
+
+```bash
+# Juniper JunOS — отключить Redirect на интерфейсе
+set interfaces ge-0/0/0 unit 0 family inet redirect off
+```
+
 ### Настройка в Linux (Hardening)
 
 В современных системах рекомендуется отключать прием Redirect из соображений безопасности.
 
 **Проверка статуса:**
+
 ```bash
+# Проверить текущие значения
 sysctl net.ipv4.conf.all.accept_redirects
+# → net.ipv4.conf.all.accept_redirects = 1  (по умолчанию — включено)
+
 sysctl net.ipv4.conf.all.secure_redirects
+# → net.ipv4.conf.all.secure_redirects = 1
+
 sysctl net.ipv6.conf.all.accept_redirects
+# → net.ipv6.conf.all.accept_redirects = 1
+
+# Проверить, есть ли активные Redirect-маршруты
+ip route show | grep 'proto redirect'
+# → 8.8.8.8 via 10.0.0.99 dev eth0 proto redirect metric 100
 ```
 
 **Настройка через `/etc/sysctl.d/99-network-hardening.conf`:**
+
 ```bash
+# === /etc/sysctl.d/99-network-hardening.conf ===
+
 # Запретить прием Redirect
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
 net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
 
 # Включить строгую валидацию (принимать только от шлюзов по умолчанию)
 net.ipv4.conf.all.secure_redirects = 1
@@ -93,23 +304,113 @@ net.ipv4.conf.all.secure_redirects = 1
 # Запретить отправку (для обычных хостов)
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
+
+# Защита от log_martians (логирование подозрительных пакетов)
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+```
+
+```bash
+# Применить настройки
+sudo sysctl --system
+# → ...
+# → net.ipv4.conf.all.accept_redirects = 0
+# → net.ipv4.conf.default.accept_redirects = 0
+# → ...
+# → sysctl: loading entries from /etc/sysctl.d/99-network-hardening.conf
+```
+
+**Управление кэшем Redirect:**
+
+Linux кэширует установленные через Redirect маршруты. По умолчанию кэш маршрутов (включая Redirect) очищается через параметр `route/flush` при сбое сети. Для принудительной очистки:
+
+```bash
+# Очистить кэш маршрутов (включая Redirect)
+sudo ip route flush cache
+# → (без вывода в случае успеха)
+
+# Проверить, что Redirect-маршруты удалены
+ip route show | grep 'proto redirect'
+# → (пустой вывод — маршруты удалены)
 ```
 
 ### Настройка в Windows
 
 В Windows параметр настраивается через реестр.
+
 **Путь:** `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`
 **Параметр:** `EnableICMPRedirect` (тип DWORD).
+
 *   `0` — полностью отключает обработку.
 *   `1` — разрешает обработку (по умолчанию).
 
+```powershell
+# Проверить текущее значение через PowerShell
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "EnableICMPRedirect"
+# → EnableICMPRedirect : 1
+
+# Отключить ICMP Redirect
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "EnableICMPRedirect" -Value 0
+
+# Просмотр маршрутов, установленных Redirect
+route PRINT -4
+# → 192.168.1.0  255.255.255.0  10.0.0.99  10.0.0.5  1
+#   ^^^ Последний столбец — ID метрики; Redirect-маршруты имеют тип "на постоянной основе"
+
+# Очистить таблицу маршрутов (удалит динамические, включая Redirect)
+route -f
+# → (без вывода — успешное выполнение)
+```
+
+**Windows Event Log:** события, связанные с ICMP Redirect, можно просматривать через журнал безопасности и системный журнал:
+
+```powershell
+# Просмотр событий, связанных с перенаправлением
+Get-WinEvent -FilterHashtable @{LogName='System'; ID=4200,4201} | Where-Object { $_.Message -like "*redirect*" }
+```
+
+### Настройка в macOS
+
+В macOS параметры аналогичны Linux, но управляются через `sysctl`:
+
+```bash
+# Проверить статус приема Redirect
+sysctl net.inet.icmp.log_redirect
+# → net.inet.icmp.log_redirect: 0
+
+# Включить логирование Redirect (для аудита)
+sudo sysctl -w net.inet.icmp.log_redirect=1
+# → net.inet.icmp.log_redirect: 0 -> 1
+
+# Отключить прием Redirect
+sudo sysctl -w net.inet.ip.accept_rtexpl=0
+# → net.inet.ip.accept_rtexpl: 1 -> 0
+
+# Просмотр маршрутов
+netstat -rn -f inet | grep -i redir
+# → (пустой вывод = Redirect не используются)
+```
+
+### Таблица устранения неполадок
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| `ip route show` содержит `proto redirect` для незнакомых шлюзов | MITM-атака или misconfigured router | Отключить прием: `sysctl -w net.ipv4.conf.all.accept_redirects=0`; проверить ARP-таблицу на rogue-устройства |
+| Redirect-маршруты исчезают через 10–20 минут | Стандартный таймаут кэша маршрутов в Linux | Ожидание; либо использовать постоянные маршруты (`ip route add ... proto static`) |
+| В контейнере Docker трафик не проходит | Bridge-интерфейс генерирует Redirect к недоступному шлюзу | Отключить `send_redirects`: `sysctl -w net.ipv4.conf.all.send_redirects=0` |
+| Windows не применяет настройку реестра `EnableICMPRedirect` | Требуется перезагрузка или служба не перезапущена | Перезагрузить компьютер или перезапустить службу TCP/IP (`netsh int ip reset`) |
+| traceroute показывает hop с TTL=255 вместо 1 | Это не Redirect — это ICMP Time Exceeded от промежуточного узла | Это нормальное поведение; TTL=255 имеет значение только для самих Redirect-сообщений |
+
 ## Дополнительная информация
 
-- **[Обзор ICMP](./icmp_overview.md)** — общая структура протокола.
-- **[ICMP: Диагностика и безопасность](./icmp_diagnostics_security.md)** — методы защиты.
-- **[Маршрутизация в Linux](../../../Linux/SystemAdministration/routing.md)** — управление таблицами и sysctl.
-- **Стандарты (RFC):**
-    - **RFC 792 / 4443:** Спецификации ICMP.
-    - **RFC 1122:** Requirements for Internet Hosts.
-    - **RFC 1812:** Requirements for IP Routers (запрет Redirect для роутеров).
-    - **RFC 6633:** Deprecation of ICMP Source Quench.
+*   **[Обзор ICMP](./icmp_overview.md)** — общая структура протокола.
+*   **[ICMP: Диагностика и безопасность](./icmp_diagnostics_security.md)** — методы защиты.
+*   **[Маршрутизация в Linux](../../../Linux/SystemAdministration/routing.md)** — управление таблицами и sysctl.
+*   **[MTU, PMTUD и диагностика в VPN](../../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — связь Redirect с проблемами MTU.
+*   **[Сетевая диагностика Linux](../../../Linux/Diagnostics/Networking/ping.md)** — использование `ping` и `mtr`.
+*   **Стандарты (RFC):**
+*   **RFC 792 / 4443:** Спецификации ICMP (IPv4 / IPv6).
+*   **RFC 1122:** Requirements for Internet Hosts — клиентская обработка Redirect.
+*   **RFC 1812:** Requirements for IP Routers — запрет Redirect для маршрутизаторов.
+*   **RFC 6633:** Deprecation of ICMP Source Quench.
+*   **RFC 4861:** Neighbor Discovery for IPv6 (включая Redirect).

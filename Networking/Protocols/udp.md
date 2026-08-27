@@ -1,7 +1,5 @@
 # UDP — протокол пользовательских датаграмм
 
-> **Reliability Score: 10** (SSoT + RFC Verified + Linux Networking Stack)
-
 ## Определения
 
 **UDP (User Datagram Protocol — протокол пользовательских датаграмм)** — простейший протокол транспортного уровня (L4) стека TCP/IP, определенный в **RFC 768**. Он обеспечивает передачу данных между приложениями с минимальными накладными расходами, без установления соединения, подтверждения доставки и контроля порядка пакетов.
@@ -67,6 +65,56 @@ UDP использует те же диапазоны портов, что и TC
 - **Фрагментация IP:** Если UDP-пакет > MTU (обычно 1500), ядро дробит его на фрагменты. Потеря одного фрагмента = потеря всей датаграммы.
 - **Path MTU Discovery (PMTUD):** UDP не поддерживает PMTUD нативно. Приложения должны либо использовать безопасный размер (**1472 байта** для Ethernet), либо реализовывать механизмы проверки пути.
 
+#### Безопасный размер UDP-пакета
+
+| Тип соединения | MTU | Максимальный payload UDP |
+| :--- | :--- | :--- |
+| **Ethernet** | 1500 | 1472 байт (1500 - 20 IP - 8 UDP) |
+| **Ethernet + VLAN** | 1504 | 1468 байт |
+| **PPPoE** | 1492 | 1464 байт |
+| **Loopback** | 65535 | 65507 байт (максимум UDP датаграммы) |
+
+**Важно:** Если IP-фрагментация нежелательна (например, для RTP), приложение должно проверять размер и отправлять датаграммы, не превышающие Path MTU. В Linux это реализуется через `IP_PMTUDISC_DO` или `IP_PMTUDISC_WANT` на сокете.
+
+### Обработка ошибок и контроль целостности
+
+#### Механизмы обнаружения ошибок
+
+UDP предоставляет минимальный набор средств обнаружения ошибок:
+
+1. **Контрольная сумма (Checksum):**
+   - Покрывает заголовок UDP, данные и псевдозаголовок (IP-адреса назначения/источника).
+   - При ошибке вChecksum пакет молча отбрасывается ядром — приложение не получает уведомления.
+   - В IPv6 контрольная сумма обязательна (RFC 8200). В IPv4 — опциональна (нонастойчиво рекомендуется).
+
+2. **ICMP Port Unreachable:**
+   - Если UDP-пакет приходит на закрытый порт, ядро отправляет ICMP Type 3, Code 3 (Port Unreachable) обратно отправителю.
+   - Многие приложения игнорируют эти ICMP-ответы (firewall может их блокировать).
+   - Реализовано не на всех платформах одинаково (Linux отправляет с rate-limiting).
+
+3. **ICMP Fragmentation Needed:**
+   - Если UDP-пакет слишком велик и DF (Don't Fragment) установлен, ядро отправляет ICMP Type 3, Code 4.
+   - Используется в PMTUD для UDP.
+
+#### Состояния при приёме ошибок
+
+| Ситуация | Поведение ядра Linux | Уведомление приложению |
+| :--- | :--- | :--- |
+| Неверная контрольная сумма | Пакет отброшен | Нет (молча) |
+| Порт не слушается | Пакет отброшен | ICMP Port Unreachable отправителю |
+| DF + превышение MTU | Пакет отброшен | ICMP Frag Needed отправителю |
+| Нехватка буфера приёма | Пакет отброшен | Увеличивается `UdpInErrors` |
+| Дубликат датаграммы | Доставляется (нет механизма дедупликации) | Да (дубликат) |
+
+#### Потери пакетов и их последствия
+
+Поскольку UDP не обеспечивает восстановления, потеря пакетов обрабатывается на прикладном уровне:
+
+- **DNS:** Таймаут + повторный запрос (обычно 2–5 секунд, до 3 ретрансмиссий).
+- **RTP/VoIP:** Пакеты с опозданием (>200 мс) отбрасываются; применяется PLC (Packet Loss Concealment).
+- **QUIC:** Собственные механизмы ретрансмиссии (ACK-based) поверх UDP.
+- **Games:** Интерполяция состояний; потерянные пакеты игнорируются (актуально только текущее состояние).
+
 ## Практические сценарии
 
 ### Области применения
@@ -87,6 +135,84 @@ UDP использует те же диапазоны портов, что и TC
 3.  **SO_BUSY_POLL:** Снижение задержек за счет исключения ожидания прерываний (CPU активно опрашивает сетевую карту).
 4.  **msg_zerocopy:** (Linux 4.14+) Позволяет отправлять данные без копирования из пространства пользователя в пространство ядра (требует поддержки в сетевой карте).
 5.  **XDP (eBPF):** Обработка UDP-пакетов на самом раннем этапе (в драйвере сетевой карты), минуя весь сетевой стек ядра.
+
+#### Конфигурация sysctl для UDP
+
+```bash
+# Увеличение размеров буферов приёма/передачи
+# Формат: min pressure max (в страницах, 1 страница = 4 КБ)
+# min — минимальный размер при старте ядра
+# pressure — порог, при котором ядро начинает освобождать память
+# max — абсолютный максимум для всех UDP-сокетов
+
+# Приёмный буфер (rmem)
+sysctl -w net.core.rmem_max=26214400
+sysctl -w net.core.rmem_default=26214400
+
+# Передающий буфер (wmem)
+sysctl -w net.core.wmem_max=26214400
+sysctl -w net.core.wmem_default=26214400
+
+# UDP-specific буферы (в страницах)
+# min: 8192 (32 МБ), pressure: 12582912 (48 ГБ), max: 16777216 (64 ГБ)
+sysctl -w net.ipv4.udp_mem="8192 12582912 16777216"
+
+# Лимит на один сокет (в байтах)
+sysctl -w net.ipv4.udp_rmem_min=8192
+sysctl -w net.ipv4.udp_wmem_min=8192
+
+# Увеличение лимита файловых дескрипторов
+sysctl -w fs.file-max=2097152
+
+# Количество очередей пакетов (для NAPI)
+sysctl -w net.core.netdev_max_backlog=300000
+
+# GRO (Generic Receive Offload) для UDP
+sysctl -w net.ipv4.udp_gro=1
+
+# Количество одновременных UDP-соединений ( Hash размер )
+sysctl -w net.ipv4.udp_hash=1000000
+```
+
+#### Пример приложения с SO_REUSEPORT
+
+```c
+// Сервер с SO_REUSEPORT для балансировки между ядрами
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+int servers[4];
+for (int i = 0; i < 4; i++) {
+    servers[i] = socket(AF_INET, SOCK_DGRAM, 0);
+    int optval = 1;
+    setsockopt(servers[i], SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(5353),
+        .sin_addr.s_addr = INADDR_ANY
+    };
+    bind(servers[i], (struct sockaddr*)&addr, sizeof(addr));
+}
+// Ядро автоматически распределяет входящие пакеты между сокетами
+// по хешу 4-х тулов (source IP, source port, dest IP, dest port)
+```
+
+#### Проверка эффективности
+
+```bash
+# Мониторинг UDP-буферов в реальном времени
+watch -n 1 'cat /proc/net/udp | head -5'
+
+# Проверка UdpInErrors после настройки
+nstat -az | grep Udp
+
+# Тест производительности UDP (отправка 1Gbps)
+iperf3 -u -c <target> -b 1G -t 30 -l 1400
+
+# Проверка потерь на стороне клиента
+iperf3 -u -c <target> -b 1G -t 30 | grep -i loss
+```
 
 ### Диагностика UDP
 
@@ -112,6 +238,37 @@ sysctl -w net.core.rmem_max=26214400
 sysctl -w net.ipv4.udp_mem="262144 524288 1048576"
 ```
 
+**Мониторинг UDP через /proc:**
+```bash
+# Детальная статистика UDP
+cat /proc/net/snmp | grep Udp
+# → Udp: InDatagrams NoPorts InErrors RcvbufErrors SndbufErrors InCsumErrors
+
+# Текущие подключения UDP
+cat /proc/net/udp
+# sl  local_address rem_address   st tx_queue rx_queue ...
+# 0: 00000000:0035 00000000:0000  7 00000000:00000000 ...  (DNS на порту 53)
+
+# Проверка_UDP hash table размера
+cat /proc/net/sockstat | grep UDP
+# → UDP: inuse X orphan 0 tw 0 alloc Y mem Z
+```
+
+#### Типичные ошибки и их диагностика
+
+| Проблема | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `UdpInErrors` растет | Буфер приёма переполнен | `nstat -az UdpInErrors`; `ss -unp` — проверить `rcvbuf` | Увеличить `net.core.rmem_max` и `net.ipv4.udp_mem` |
+| `UdpSndbufErrors` растет | Буфер передачи переполнен | `nstat -az UdpSndbufErrors`; проверить `wmem` | Увеличить `net.core.wmem_max` |
+| Пакеты отброшены ядром | Нет listening-сокета на порту | `tcpdump -i any udp port <port>` | Убедиться, что сервис слушает UDP; проверить firewall |
+| Высокий jitter (>50мс) | Конкуренция за CPU; прерывания NIC | `mpstat -P ALL 1`; `cat /proc/interrupts` | Включить RSS/RPS; увеличить `netdev_budget` |
+| Потери при <1% нагрузки | Переполнение ring buffer NIC | `ethtool -S eth0 | grep drop` | Увеличить `netdev_max_backlog`; включить GRO |
+| Приложение не видит ICMP-ошибки | Firewall блокирует ICMP | `iptables -L -n -v \| grep icmp` | Разрешить ICMP Type 3 в firewall |
+| Фрагментация UDP | Payload > MTU | `tcpdump -i any udp port <port> -v` — флаг MF | Уменьшить размер payload или разрешить фрагментацию |
+| SO_REUSEPORT не балансирует | Не все сокеты используют SO_REUSEPORT | `ss -unp` — проверить все сокеты | Убедиться, что все listener'ы используют `SO_REUSEPORT` |
+
+**Флап UDP-соединений:** В отличие от TCP, UDP не имеет состояния соединения. «Флап» проявляется как периодические потери пакетов. Проверяйте `ss -s` для общих счетчиков и `/proc/net/snmp` для дельты.
+
 ## Дополнительная информация
 
 ### Сравнение с TCP
@@ -123,13 +280,194 @@ sysctl -w net.ipv4.udp_mem="262144 524288 1048576"
 | **Скорость** | Ниже (из-за подтверждений и контроля) | Максимально возможная |
 | **Заголовок** | 20–60 байт | 8 байт |
 | **Режим** | Потоковый (Streaming) | Сообщения (Datagrams) |
+| **Flow Control** | Окнополучателя (Receive Window) | Отсутствует |
+| **Congestion Control** | AIMD, Cubic, BBR | Отсутствует (RFCC 2309 рекомендует avoiding) |
+| **Порядок байтов** | Гарантирован | Не гарантирован |
+| **Дубликаты** | Отсеиваются | Доставляются |
+| **Закрытие соединения** | 4-way handshake (FIN/ACK) | Нет (просто прекращение отправки) |
+| **Keep-alive** | Встроено (TCP Keepalive) | Нет (реализуется приложением) |
+
+#### Когда выбирать UDP
+
+| Сценарий | Почему UDP | Альтернатива |
+| :--- | :--- | :--- |
+| **DNS-запросы** | Малый размер запроса/ответа; 1 RTT; повтор при ошибке | TCP для zone transfer или >512 байт |
+| **VoIP / RTP** | Задержка критичнее надежности; потеря пакетов допустима | SRTP поверх UDP |
+| **Онлайн-игры** | Текущее состояние важнее прошлого; 0-RTT критичен | QUIC для важных событий |
+| **QUIC / HTTP/3** | Транспорт для надежного протокола поверх UDP | Прямой TCP (без QUIC) |
+| **VPN (WireGuard)** | Шифрование поверх UDP; прохождение через NAT | IPSec (AH/ESP) |
+| **VXLAN** | Туннелирование L2 поверх L3 | Geneve (аналог) |
+| **Метрики (StatsD)** | Потеря метрик не критична; задержка нежелательна | TCP для guaranteed delivery |
+
+#### Когда НЕ выбирать UDP
+
+| Сценарий | Почему не UDP | Протокол |
+| :--- | :--- | :--- |
+| **Файловые передачи** | Нужна гарантия доставки и порядка | TCP, SCTP |
+| **Веб-страницы** | Каждый ресурс должен дойти полностью | TCP (или QUIC поверх UDP) |
+| **Email** | Гарантированная доставка обязательна | TCP |
+| **Базы данных** | Транзакции требуют надежности | TCP |
+| **SSH / Telnet** | Каждая команда должна дойти | TCP |
+
+### Мулькаст и широковещание
+
+UDP является основным протоколом для доставки данных нескольким получателям одновременно.
+
+#### Широковещание (Broadcast)
+
+```bash
+# Отправка broadcast на порт 9999
+echo "hello" | nc -u -b 255.255.255.255 9999
+
+# Приём broadcast на порту 9999
+nc -u -l -p 9999
+```
+
+**Ограничения:**
+- Broadcast не маршрутизируется (остается в пределах L2-сегмента).
+- Все узлы в подсети получают пакет (CPU overhead).
+- Фильтруется маршрутизаторами по умолчанию.
+
+#### Мулькаст (Multicast)
+
+```bash
+# Присоединение к мулькаст-группе 239.0.0.1
+ip maddr add 239.0.0.1 dev eth0
+
+# Приём мулькаст-трафика
+socat UDP-LISTEN:1234,bind=0.0.0.0,reuseaddr STDOUT
+
+# Отправка мулькаст-пакета
+echo "stream" | socat - UDP4-DATAGRAM:239.0.0.1:1234,bind=:1234
+
+# Настройка интерфейса для мулькаста
+ip link set eth0 multicast on
+ip route add 239.0.0.0/8 dev eth0
+```
+
+**IGMP (Internet Group Management Protocol):**
+- Управляет вступлением/выходом из мулькаст-групп.
+- IGMPv2: Leave Group = мгновенный выход.
+- IGMPv3: Source-Specific Multicast (SSM) — фильтрация по источнику.
+
+**Применение мулькаста:**
+- IPTV / стриминг видео.
+- Финансовые данные (рыночные котировки).
+- Обнаружение сервисов (mDNS / Bonjour).
+- VRRP / HSRP (Heartbeat на мулькаст).
+
+### Firewall правила для UDP
+
+#### nftables (современный)
+
+```bash
+# Базовые правила для UDP-сервисов
+nft add table inet filter
+nft add chain inet filter input { type filter hook input priority 0 \; }
+
+# Разрешить DNS
+nft add rule inet filter input udp dport 53 accept
+
+# Разрешить NTP
+nft add rule inet filter input udp dport 123 accept
+
+# Разрешить DHCP (клиент)
+nft add rule inet filter input udp dport 67 accept
+nft add rule inet filter input udp dport 68 accept
+
+# Разрешить WireGuard
+nft add rule inet filter input udp dport 51820 accept
+
+# Разрешить QUIC (HTTP/3)
+nft add rule inet filter input udp dport 443 accept
+
+# Разрешить.vxlan
+nft add rule inet filter input udp dport 4789 accept
+
+# Ограничение UDP-флуда (rate limiting)
+nft add rule inet filter input udp dport 53 limit rate 1000/second accept
+nft add rule inet filter input udp dport 53 drop
+
+# Блокировка неизвестного UDP-трафика
+nft add rule inet filter input udp dport != {53, 123, 67, 68, 443, 4789, 51820} drop
+```
+
+#### iptables (legacy)
+
+```bash
+# Разрешить DNS
+iptables -A INPUT -p udp --dport 53 -j ACCEPT
+
+# Разрешить NTP
+iptables -A INPUT -p udp --dport 123 -j ACCEPT
+
+# Разрешить WireGuard
+iptables -A INPUT -p udp --dport 51820 -j ACCEPT
+
+# Rate limiting DNS
+iptables -A INPUT -p udp --dport 53 -m limit --limit 1000/s --limit-burst 2000 -j ACCEPT
+iptables -A INPUT -p udp --dport 53 -j DROP
+
+# Разрешить UDP-трафик к localhost
+iptables -A INPUT -i lo -p udp -j ACCEPT
+```
+
+#### firewalld
+
+```bash
+# Разрешить DNS
+firewall-cmd --permanent --add-port=53/udp
+
+# Разрешить WireGuard
+firewall-cmd --permanent --add-port=51820/udp
+
+# Разрешить QUIC
+firewall-cmd --permanent --add-port=443/udp
+
+# Применить изменения
+firewall-cmd --reload
+
+# Просмотр разрешенных UDP-портов
+firewall-cmd --list-ports
+```
+
+#### conntrack (NAT / Stateful Firewall)
+
+```bash
+# Просмотр UDP-сессий в conntrack
+conntrack -L -p udp
+# udp      17 170 src=192.168.1.10 dst=8.8.8.8 sport=54321 dport=53 src=8.8.8.8 dst=192.168.1.10 sport=53 dport=54321 [ASSURED] mark=0 use=1
+
+# Таймауты UDP в conntrack (по умолчанию 30 сек)
+sysctl -w net.netfilter.nf_conntrack_udp_timeout=30
+sysctl -w net.netfilter.nf_conntrack_udp_timeout_stream=180
+```
+
+**Важно для NAT:** UDP- NAT traversal работает через изменение адресов в заголовке (port translation). Для протоколов, встраивающих IP-адрес в payload (SIP, FTP, H.323), необходимы ALG (Application Layer Gateway) или прокси.
 
 ### RFC и стандарты
 
-- **RFC 768** — базовая спецификация UDP.
+- **RFC 768** — базовая спецификация UDP (1980).
 - **RFC 3828** — Lightweight User Datagram Protocol (UDP Lite).
 - **RFC 9000** — QUIC (Транспорт на базе UDP).
-- **RFC 2460 / 8200** — Особенности UDP в IPv6.
+- **RFC 2460 / 8200** — Особенности UDP в IPv6 (обязательная контрольная сумма).
+- **RFC 8085** — UDP Usage Guidelines (рекомендации по использованию UDP в приложениях).
+- **RFC 5405** — Unicast UDP Usage Guidelines для Multicast/Broadcast.
+- **RFC 6525** — Enhanced UDP Hash (Linux specific).
+
+### UDP в IPv6
+
+В IPv6 UDP работает с рядом отличий от IPv4:
+
+| Параметр | IPv4 | IPv6 |
+| :--- | :--- | :--- |
+| **Контрольная сумма** | Опциональна (0x0000 = не вычислялась) | Обязательна (RFC 8200) |
+| **Псевдозаголовок** | IPv4-адреса, Protocol=17 | IPv6-адреса, Next Header=17 |
+| **Фрагментация** | Ядро может фрагментировать (если DF=0) | Только отправитель (fragmentation extension header) |
+| **Размер заголовка** | 20 байт (IPv4) + 8 (UDP) = 28 | 40 байт (IPv6) + 8 (UDP) = 48 |
+| **Приоритет** | TOS/DSCP | Traffic Class / Flow Label |
+
+**Важно:** В IPv6 отсутствует опция «Don't Fragment» в заголовке. Если UDP-датаграмма слишком велика, отправитель должен выполнить фрагментацию самостоятельно или использовать Path MTU Discovery.
 
 ### Связанные документы
 
@@ -137,3 +475,4 @@ sysctl -w net.ipv4.udp_mem="262144 524288 1048576"
 - **[DNS](./DNS/dns.md)** — ключевой потребитель UDP.
 - **[VXLAN](../Tunnels/vxlan.md)** — туннелирование L2 поверх UDP.
 - **[Тюнинг сетевого стека Linux](../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)**.
+- **[Сравнение TCP и UDP](./TCP/overview.md)** — детали транспортных протоколов.

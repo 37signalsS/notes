@@ -34,7 +34,7 @@
 
 ### Безопасная доставка: модели получения секретов
 
-Хранение секретов в переменных окружения CI/CD (даже маскированных) является антипаттерном. См. **[Антипаттерны управления секретами](../../Vault/common_antipatterns.md)**.
+Хранение секретов в переменных окружения CI/CD (даже маскированных) является антипаттерном. См. **[Антипаттерны управления секретами](../../Vault/common_antipatterns.md)** и **[обзор архитектуры HashiCorp Vault](../../Vault/overview.md)** для понимания того, как устроено централизованное хранилище.
 
 1.  **Модель Push (Injection):** секреты извлекаются один раз при старте задачи и записываются в `env` или временный файл (`tmpfs`). Высокий риск утечки в логи.
 2.  **Модель Pull (Just-in-Time):** задача сама запрашивает секреты через API хранилища в момент использования. Секрет живет только в памяти процесса.
@@ -52,6 +52,50 @@
 
 - **Конфигурационные переменные:** флаги, URL, названия окружений хранятся открыто в Git или переменных CI/CD.
 - **Секретные переменные:** пароли, токены хранятся исключительно во внешнем менеджере. Доступ жестко ограничен через политики, чтобы пайплайн `dev` физически не мог прочитать секреты `prod`.
+
+### Жизненный цикл секрета (Secret Lifecycle)
+
+Секрет проходит через несколько стадий, и безопасность определяется тем, насколько коротко и контролируемо он существует на каждой из них:
+
+1.  **Генерация (Generation):** высокоэнтропийные значения (CSPRNG, `openssl rand`, встроенные генераторы хранилища), без ручного ввода.
+2.  **Хранение (Storage):** шифрование при хранении (encryption at rest), доступ строго по политике, разделение на окружения.
+3.  **Доставка (Distribution):** только в память процесса или временный `tmpfs`/файл, поверх TLS; никогда — в `ENV` навсегда или в образ.
+4.  **Использование (Usage):** минимальное время жизни, маскирование в логах.
+5.  **Ротация (Rotation):** плановая или по событию (см. ниже).
+6.  **Отзыв (Revocation):** немедленный отзыв при компрометации.
+7.  **Уничтожение (Destruction):** безопасное удаление из памяти/диска и из истории Git.
+8.  **Аудит (Audit):** логирование каждого обращения.
+
+Общий принцип: секрет должен существовать *ровно столько и только там*, где он нужен. Стратегии хранения (централизованное хранилище, шифрование в Git, нативные механизмы платформ) подробно разобраны в **[обзоре управления секретами](../../Security/Concepts/secrets_management_overview.md)**.
+
+### Модель угроз для секретов (Threat Model)
+
+Понимание того, *где* секреты реально утекают, определяет выбор контрмер. Основные векторы:
+
+| Вектор | Как секрет попадает наружу | Контрмера |
+| :--- | :--- | :--- |
+| **Переменные окружения** | видны в `ps auxe`, `/proc/<pid>/environ`, дампах при падении, дочерних процессах | JIT/OIDC, инъекция в память, маскирование |
+| **Логи CI/build** | печать переменной, трассировки, архивы логов job'а | маскирование, запрет `set -x` для секретных шагов |
+| **Слои образа Docker** | `ENV`/`COPY` ключей остаются в истории слоёв даже после `rm` | BuildKit `--secret`, multi-stage без ключей |
+| **Кэш CI / shared runners** | секрет попадает в кэш зависимостей или workspace другого джоба | эфемерные раннеры, изолированный кэш |
+| **Swap / pagefile / core dump** | секрет из памяти сбрасывается на диск | `swap off`/`encrypted swap`, `ulimit -c 0`, `IPC_LOCK` |
+| **Process listing / IPC** | `ps`, `/proc`, shared memory | наименьшие привилегии, read-only rootfs |
+| **История Git** | случайный коммит | pre-commit сканирование, push protection, `git filter-repo` |
+
+### Стратегии ротации (Rotation)
+
+- **Плановая (Scheduled):** по календарю (30/90/180 дней) — снижает окно компрометации.
+- **По событию (Event-driven / JIT):** при увольнении, подозрении, после инцидента.
+- **Динамические секреты:** хранилище (например, Vault Database Secrets Engine) генерирует пароль на время сессии с авто-отзывом по TTL.
+- **Бесшовная ротация (Zero-downtime Dual-write):** новый и старый секреты действуют *одновременно* в течение периода переключения; приложение переходит на новый, старый отзывается только после истечения его TTL. Критично для stateful-сервисов (СУБД, очереди).
+- **Автоматизация:** ротация через CI schedule / `systemd timer` / `cron` + API хранилища (см. Практические сценарии, Пример 4).
+
+### Аудит и соответствие (Audit & Compliance)
+
+- **Логирование доступа:** каждое чтение секрета фиксируется (Vault Audit Devices, аудит CI-системы, системные логи). Без аудита невозможно расследовать инцидент.
+- **Инвентаризация:** что является секретом, где используется, кто владелец, когда ротировался, используется ли он вообще (stale secrets = риск).
+- **Соответствие:** PCI DSS (требует ротации и ограничения доступа к ключам), DORA (управление доступом и операционная устойчивость), российские регуляторные требования (152-ФЗ для персональных данных, ФСТЭК/ФСБ для ключей).
+- **Регулярный review:** пересмотр политик доступа и вывод из эксплуатации неиспользуемых секретов.
 
 ## Практические сценарии
 
@@ -154,14 +198,212 @@ jobs:
 - **Masking:** если внешний Vault недоступен, всегда включайте маскирование в GitLab/GitHub.
 - **Variables типа `File`:** используйте для многострочных данных (SSH-ключи, сертификаты). GitLab запишет их во временный файл и удалит после завершения задачи.
 
+### Пример 1: Локальный pre-commit с detect-secrets (альтернатива gitleaks)
+
+`detect-secrets` от Yelp строит *бейзлайн* известных секретов и ловит только новые, что снижает ложные срабатывания по сравнению с простым регекс-поиском.
+
+**Предусловия:** `python3` (>=3.8) и `pip`/`pipx`.
+
+**1. Установить и создать бейзлайн:**
+
+```bash
+pipx install detect-secrets
+detect-secrets scan > .secrets.baseline   # просканировать текущий код, зафиксировать известные находки
+```
+
+**2. Подключить pre-commit хук:**
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+```
+
+```bash
+pre-commit install
+```
+
+**Validation:** при попытке закоммитить файл с новым секретом хук блокирует коммит; `detect-secrets scan` сравнивает результат с бейзлайном.
+
+**Troubleshooting:**
+- *Ложное срабатывание:* добавьте исключение в бейзлайн (`detect-secrets addnewsecret <file>:<line>:<col>`) либо инлайн-комментарий `# pragma: allowlist secret`.
+- *Бейзлайн неактуален:* после обоснованных изменений обновляйте `detect-secrets scan --update .secrets.baseline` и коммитьте его.
+
+### Пример 2: Настройка Vault со стороны сервера для self-hosted раннера (JWT-auth, без облака)
+
+В сценариях выше показано, как CI-задача *получает* секрет через OIDC. Здесь — как SRE/Sysadmin **настроить сам Vault**, чтобы выдавать токены self-hosted раннеру без статического Secret-Zero. Применимо к локальному GitLab/Jenkins внутри периметра.
+
+**Предусловия:** административный доступ к Vault, раннер умеет выпускать OIDC-токен (GitLab `id_tokens`, Jenkins с плагином OIDC).
+
+```bash
+# 1. Включить метод аутентификации JWT
+vault auth enable jwt
+
+# 2. Политика: только чтение пути kv/data/ci/*
+cat > ci-policy.hcl <<'EOF'
+path "kv/data/ci/*"    { capabilities = ["read"] }
+path "kv/metadata/ci/*" { capabilities = ["list", "read"] }
+EOF
+vault policy write ci-policy ci-policy.hcl
+
+# 3. Роль, привязанная к claims раннера (project + branch + audience)
+vault write auth/jwt/role/ci-role \
+  bound_audiences="https://gitlab.internal.corp" \
+  bound_claims="project_id=123,ref=main" \
+  user_claim="user_email" \
+  policies="ci-policy" \
+  ttl=15m
+```
+
+**Validation:** `vault read auth/jwt/role/ci-role` выводит конфигурацию; CI-джоб успешно обменивает свой JWT на Vault-токен и читает `kv/data/ci/*`.
+
+**Troubleshooting:**
+- *403 / permission denied:* проверьте, что `bound_claims` точно совпадают с выпущенным JWT (декодируйте через `jwt.io`); частая ошибка — несовпадение `audience`.
+- *Политика не даёт доступ:* убедитесь, что путь в политике (`kv/data/ci/*`) совпадает с запрашиваемым.
+- *Токен истёк слишком быстро:* увеличьте `ttl`, либо настройте auto-renew через Vault Agent.
+
+### Пример 3: Jenkins + Vault через AppRole (M2M, self-hosted)
+
+AppRole — классический machine-to-machine метод для self-hosted CI без OIDC. Секрет доступа к хранилищу never лежит в репозитории, а выдаётся через одноразовую обёртку.
+
+**Предусловия:** Jenkins с плагином HashiCorp Vault (или `curl`); Vault с включённым `approle`.
+
+```bash
+# На стороне Vault: включить метод и создать роль
+vault auth enable approle
+vault write auth/approle/role/jenkins \
+  token_policies="ci-policy" \
+  token_ttl=10m bind_secret_id=true
+
+# RoleID — стабильный идентификатор; SecretID выдаётся через wrapping (одноразовый)
+vault read auth/approle/role/jenkins/role-id
+vault write -wrap-ttl=60s auth/approle/role/jenkins/secret-id
+```
+
+```groovy
+// Jenkinsfile (через плагин HashiCorp Vault)
+pipeline {
+  agent any
+  environment { VAULT_ADDR = 'https://vault.internal.corp' }
+  stages {
+    stage('Get secret') {
+      steps {
+        withVault([vaultSecrets: [
+          [path: 'kv/data/ci/db', secretKey: 'password', envVar: 'DB_PASSWORD']
+        ]]) {
+          sh 'echo "используем \$DB_PASSWORD (маскируется Jenkins)"'
+        }
+      }
+    }
+  }
+}
+```
+
+**Validation:** джоб печатает маскированный пароль; в Vault audit-логе видно чтение под сущностью `jenkins`.
+
+**Troubleshooting:**
+- *SecretID истёл:* wrap-токен живёт `wrap-ttl` секунд — перевыпустите; для долгоживущих агентов используйте Vault Agent с `auto-auth`.
+- *RoleID неверен:* перепроверьте `vault read auth/approle/role/jenkins/role-id`.
+- *Политика не покрывает путь:* добавьте нужный `path` в `ci-policy`.
+
+### Пример 4: Автоматизация ротации без простоя (Dual-write, systemd timer)
+
+Для stateful-сервисов (СУБД, брокеры) недопустима ротация «выключить — сменить — включить». Применяется dual-write: старый и новый пароли валидны одновременно, затем старый отзывается по TTL.
+
+**Предусловия:** Vault KV v2 (версионирование) или Database Secrets Engine; права администратора на сервис.
+
+```ini
+# /etc/systemd/system/vault-rotate-db.timer
+[Timer]
+OnCalendar=weekly
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+```ini
+# /etc/systemd/system/vault-rotate-db.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rotate_db.sh
+```
+
+```bash
+#!/usr/bin/env bash
+# /usr/local/bin/rotate_db.sh
+set -euo pipefail
+# 1. Vault выдаёт новый динамический пароль БД
+NEW=$(vault read -field=password database/creds/app-role)
+# 2. Применяем NEW, оставляя СТАРЫЙ валидным (dual-write) — перезапись пароля пользователя
+psql "$ADMIN_DSN" -c "ALTER USER app WITH PASSWORD '$NEW';"
+# 3. Перечитываем пул соединений приложения без даунтайма
+systemctl reload app
+# 4. Старый пароль отзовётся автоматически по TTL движка БД
+```
+
+**Validation:** `vault read database/creds/app-role` возвращает новый пароль; приложение продолжает работать; старый недоступен после истечения TTL.
+
+**Troubleshooting:**
+- *Приложение не видит новый пароль:* убедитесь, что пул соединений действительно перечитывается (`reload`, webhook или `SIGUSR`); иначе используйте KV v2 и храните обе версии, удаляя старую через `vault kv metadata delete -versions=N kv/ci/db` только после подтверждения.
+- *Гонка при параллельной ротации:* ставьте блокировку (`flock`) в скрипте.
+
+### Пример 5: Разбор аудит-логов Vault при инциденте (jq)
+
+После подозрения на утечку SRE/Sysadmin должен локализовать, кто и когда читал секрет, используя audit device.
+
+**Предусловия:** включён `file` audit device в JSON-формате; утилита `jq`.
+
+```bash
+# Включить аудит (если ещё не включён)
+vault audit enable file file_path=/var/log/vault/audit.log
+
+# Найти все обращения к конкретному секрету за окно инцидента
+jq -r 'select(.request.path=="kv/data/ci/aws") |
+       "\(.time) \(.auth.display_name) \(.request.operation)"' \
+   /var/log/vault/audit.log
+
+# Сгруппировать по сущности-клиенту: кто сколько раз читал
+jq -r '.auth.display_name' /var/log/vault/audit.log | sort | uniq -c
+```
+
+**Validation:** вывод содержит метки времени и имена сущностей — это позволяет локализовать инцидент и передать IOС в «Что делать при утечке».
+
+**Troubleshooting:**
+- *Лог пустой:* audit device не включён — проверьте `vault audit list`.
+- *Формат не JSON:* убедитесь, что `file` device настроен с `format=json` (по умолчанию JSON для file).
+
+**Платформо-специфичные механизмы** (профильные разделы, здесь не дублируются): [GitLab CI Variables/Secrets](../GitLab_CI/Concepts/gitlab_ci_variables_secrets.md), [GitHub Actions Secrets](../../Github_CI/secrets_management.md), [Docker Secrets](../../Docker/Docker_security/secrets_management.md), [Kubernetes Application Secrets](../../Kubernetes/Security/application_secrets_management.md).
+
 ## Дополнительная информация
+
+### Операционные рекомендации для DevOps/SRE/Sysadmin
+
+- **Где хранить:** централизованный менеджер (Vault) вместо переменных CI/CD; self-hosted раннеры разворачиваются внутри периметра, чтобы API Vault не публиковался наружу (см. Сценарий 3 «Гибридная архитектура»).
+- **Способ инъекции:** предпочтительно secretless/JIT (OIDC, AppRole) — без статических ключей доступа к хранилищу; если невозможно, — маскированные переменные с коротким TTL.
+- **Изоляция раннеров:** эфемерные раннеры, наименьшие привилегии, egress allowlist, шифрование диска, обязательная очистка workspace между джобами.
+- **Ротация:** автоматизировать для всех долгоживущих секретов (см. Пример 4), вести инвентаризацию и удалять stale-секреты.
+- **Аудит:** включить audit device в Vault, собирать и ревьюировать логи (см. Пример 5), настраивать алерты на аномальное число выдач токенов или чтений секретов.
+- **Мониторинг рантайма:** аномалии доступа к секретам отслеживаются средствами на базе eBPF (Falco, Tetragon) и аудит-логами инфраструктуры.
+- **Инцидент-респонс:** задокументированный runbook отзыва/ротации (см. «Что делать при утечке секрета»), blameless postmortem.
+- **Связь с DevSecOps:** секреты — часть shift-left (сканирование утечек) и supply-chain (подписи/ключи артефактов), см. **[обзор методологии DevSecOps](./devsecops_overview.md)**.
+
+### Чек-лист внедрения управления секретами
+
+1.  **Запрещены секреты в коде/Git:** pre-commit (`gitleaks`/`detect-secrets`) + push protection + сканирование истории.
+2.  **Централизованное хранилище** развёрнуто (Vault) с политиками минимальных привилегий.
+3.  **Secretless/JIT доступ из CI** (OIDC/AppRole) настроен — нет статических ключей доступа к хранилищу (решён Secret-Zero).
+4.  **Маскирование и переменные типа `File`** включены в CI.
+5.  **Эфемерные раннеры и сетевая изоляция** настроены.
+6.  **Ротация автоматизирована** (плановая + по событию), ведётся инвентаризация.
+7.  **Audit device включён**, логи собираются и ревьюируются.
+8.  **Runbook реагирования на утечку** задокументирован и проверен на учениях.
 
 ### См. также
 
-- **[Обзор методологии DevSecOps](./devsecops_overview.md)**
-- **[Обзор HashiCorp Vault](../../Vault/overview.md)**
-- **[Переменные и секреты в GitLab CI](../GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**
-- **[Управление секретами в GitHub Actions](../../Github_CI/secrets_management.md)**
-- **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)**
-- **[Управление секретами в Kubernetes](../../Kubernetes/Security/application_secrets_management.md)**
-- **[Антипаттерны управления секретами](../../Vault/common_antipatterns.md)**
+- [Обзор методологии DevSecOps](./devsecops_overview.md)
+- [Обзор HashiCorp Vault](../../Vault/overview.md)
+- [Антипаттерны управления секретами](../../Vault/common_antipatterns.md)

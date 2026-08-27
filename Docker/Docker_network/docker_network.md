@@ -104,7 +104,3 @@ Docker управляет правилами **iptables/nftables** автома�
 - **[iperf3](../../Linux/Diagnostics/Networking/iperf3.md)** — benchmarking throughput. В Docker: `docker run netstatic/iperf3` для замера скорости между контейнерами.
 - **[tcpdump](../../Linux/Diagnostics/Networking/tcpdump.md)** — захват пакетов. В Docker: `nsenter -t <PID> -n tcpdump` или `--net=host` для захвата трафика контейнера.
 - **[MTU и VPN](../../Networking/OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — jumbo frames. В Docker: VXLAN overhead = 50 байт, MTU overlay сети = 1450 при физическом MTU 1500.
-
----
-**Reliability Score: 10 (SSoT + Docker v28 verified features)**
---- End of content ---

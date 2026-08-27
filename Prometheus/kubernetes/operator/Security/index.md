@@ -113,4 +113,3 @@ spec:
 - **[Управление секретами](./secrets_best_practices.md)** — ротация, ESO и интеграция с Vault.
 - **[Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md)** — реализация SSO, OAuth2-proxy и защита Grafana.
 - **[High Availability](../high_availability.md)** — влияние отказоустойчивости на безопасность и Gossip-протокол.
-- **[Reliability Scores](../../../GEMINI.md)** — методология оценки достоверности контента.
