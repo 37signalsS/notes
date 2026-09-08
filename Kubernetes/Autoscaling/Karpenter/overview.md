@@ -96,26 +96,79 @@
     * Поднимает узлы за <60 секунд.
 5. **Scale Down**: Когда очередь пуста, HPA удаляет поды. Karpenter видит недоутилизированные узлы и консолидирует их, возвращая лишние инстансы облаку.
 
-### Масштабирование GenAI и LLM нагрузок
+### Масштабирование ресурсоёмких вычислительных нагрузок
 
-Сценарий ориентирован на динамическое управление дорогостоящими GPU-ресурсами для задач инференса (LLM) и обучения моделей.
+Сценарий ориентирован на динамическое управление ресурсами для вычислительно intensive приложений (например, пакетная обработка данных, высоконагруженные базы данных), где стоимость простоя оборудования значительна.
 
-1.  **Just-in-Time GPU Provisioning**: Karpenter создает узлы с GPU (например, семейства `p4`, `g5`, H100) только при наличии задач в очереди. Это критично для GenAI, так как простой GPU стоит значительно дороже CPU-узлов.
-2.  **Поддержка специализированного железа**: В NodePool настраиваются требования к производителю (`nvidia`) и конкретным моделям ускорителей. Karpenter учитывает **MIG (Multi-Instance GPU)** и **MPS (Multi-Process Service)** (через DRA) при планировании, позволяя эффективно использовать дробные части GPU для небольших моделей.
-3.  **Оптимизация затрат с Kubecost**: Интеграция с **[Kubecost](../../MonitoringLogging/kubecost.md)** позволяет отслеживать расходы на GPU в реальном времени, соотнося их с конкретными командами или проектами GenAI. В v1.x Karpenter также предоставляет **Native Cost Metrics** прямо на уровне NodePool.
-4.  **Spot для обучения**: Использование Spot-инстансов для длительных задач обучения с сохранением чекпоинтов, что снижает затраты до 70–90%.
+1.  **Just-in-Time Provisioning**: Karpenter создает узлы с специализированными характеристиками (например, локальное NVMe хранилище, высокочастотные CPU) только при наличии задач в очереди. Это критично для дорогостоящего оборудования, простой которого напрямую влияет на TCO.
+2.  **Поддержка специализированного железа**: В NodePool настраиваются требования к локальным дискам (`local SSD`), сетевой производительности (`100 GbE`) или конкретным архитектурам. Karpenter учитывает эти требования при планировании, позволяя эффективно использовать фрагментированные ресурсы.
+3.  **Оптимизация затрат с Kubecost**: Интеграция с **[Kubecost](../../MonitoringLogging/kubecost.md)** позволяет отслеживать расходы на специализированные узлы в реальном времени, соотнося их с конкретными командами или проектами. В v1.x Karpenter также предоставляет **Native Cost Metrics** прямо на уровне NodePool.
+4.  **Spot для пакетных задач**: Использование Spot-инстансов для длительных задач обработки данных с сохранением чекпоинтов, что снижает затраты.
 
 ## Дополнительная информация
 
-### Интеграции
+### Мониторинг и алертинг
 
-**[HPA (Horizontal Pod Autoscaler)](../HPA/index.md)** — основной триггер для работы Karpenter.
+Karpenter экспортирует метрики Prometheus на порту `:8080/metrics`. Для production-сред критично настроить следующие сигналы:
 
-**[VPA (Vertical Pod Autoscaler)](../vpa_detailed.md)** — уточняет запросы подов, что позволяет Karpenter точнее подбирать размер узлов.
+| Метрика | Назначение | Критичность |
+|---------|-----------|-------------|
+| `karpenter_nodeclaims_created_total` | Общее количество созданных запросов на узлы | Информативно |
+| `karpenter_nodeclaims_terminated_total` | Количество удаленных/прерванных узлов | Высокая (churn rate) |
+| `karpenter_nodeclaims_failed_total` | Ошибки создания (Insufficient Capacity, IAM, квоты) | КРИТИЧЕСКИ |
+| `karpenter_provisioning_scheduling_duration_seconds` | Время от `Pending` пода до создания `NodeClaim` | Средняя |
+| `karpenter_voluntary_disruption_decisions_total` | Решения о консолидации/удалении узлов | Высокая |
+| `karpenter_interruption_actions_total` | Реакции на прерывания (Spot, drift) | Высокая |
+| `karpenter_cloudprovider_errors_total` | Ошибки API облака (throttling, quota exhaustion) | КРИТИЧЕСКИ |
+| `karpenter_scheduler_queue_depth` | Количество подов, ожидающих provisioning | Средняя |
 
-**[KEDA (Kubernetes Event-driven Autoscaling)](../keda/keda_concepts.md)** — позволяет масштабировать узлы на основе внешних событий.
+**Рекомендуемые алерты:**
+*   **Provisioning bottleneck:** `karpenter_provisioning_scheduling_duration_seconds` p95 > 60 секунд.
+*   **Consolidation storm:** резкий рост `karpenter_voluntary_disruption_decisions_total`.
+*   **Registration delta:** разница между `karpenter_nodeclaims_created_total` и `karpenter_nodes_created_total` за последние 15 минут > 0 (инстанс создан, но не зарегистрировался в кластере).
+*   **Cloud provider errors:** рост `karpenter_cloudprovider_errors_total` с label `error="InsufficientInstanceCapacity"`.
 
-**[Pod Disruption Budget (PDB)](../pod_disruption_budget.md)** — Karpenter строго соблюдает PDB при проведении любых операций оптимизации (consolidation/drift).
+### Диагностика и устранение неисправностей
+
+**Проверка логики планирования**:
+Если поды висят в `Pending`, проверьте логи контроллера (причина отказа подбора, например "no instance types found").
+```bash
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100 -f
+```
+
+**Работа с NodeClaims**:
+Если инстанс не создается в облаке, `NodeClaim` покажет ошибку API (например, квоты или IAM).
+```bash
+kubectl get nodeclaims
+kubectl describe nodeclaim <name>
+```
+
+**Защита от прерываний (Disruption)**:
+Для временного запрета удаления узла (например, при миграции БД):
+```bash
+kubectl annotate node <node-name> karpenter.sh/do-not-disrupt=true
+```
+
+### Типичные проблемы и решения
+
+| Симптом | Возможная причина | Решение |
+|---------|-----------------|---------|
+| Поды `Pending`, NodeClaim не создается | Требования пода не соответствуют ни одному NodePool | Проверьте `nodeSelector`, `tolerations`, `affinity` |
+| NodeClaim создан, но узел не появляется | Ошибка kubelet, AMI, IAM, сеть | Проверьте `kubectl describe nodeclaim`, логи kubelet через SSM |
+| Консолидация не запускается | PDB блокирует eviction, `do-not-disrupt` annotation | Проверьте `karpenter_voluntary_disruption_eligible_nodes` |
+| Частые Spot-прерывания | Слишком узкий выбор типов инстансов | Расширьте `requirements` в NodePool |
+| Двойной drain (Karpenter + NTH) | AWS Node Termination Handler запущен параллельно | Отключите NTH, Karpenter handles interruptions natively |
+
+### Лучшие практики эксплуатации
+
+1.  **Drift Mechanism**: Дрейф включен по умолчанию. Любое изменение в `NodeClass` (смена SG, VNet, AMI) приведет к планомерному пересозданию всех узлов.
+2.  **Spot Diversity**: В `requirements` NodePool указывайте как можно больше типов инстансов. Ограничение пула одним типов приведет к отказу при его дефиците.
+3.  **Over-provisioning**: Используйте `Pause Pods` (поды с низким приоритетом) для резервирования места. Karpenter вытеснит их и мгновенно разместит критичную нагрузку.
+4.  **Limits**: Обязательно устанавливайте `spec.limits` в NodePool для защиты от бесконечного спавна узлов при ошибках конфигурации деплоймента.
+5.  **NodePool Isolation**: Разделяйте NodePool по типам workloads (system, web, batch) с разными taints. Один универсальный NodePool для всех нагрузок — антипаттерн.
+6.  **Controller Placement**: Запускайте контроллер Karpenter на системных узлах, которые он не управляет (не на Karpenter-пуле). Это предотвращает bootstrap-зависимость при пересоздании узлов.
+7.  **Scheduled Disruption Budgets**: Замораживайте консолидацию во время пиковой нагрузки (например, `nodes: "0"` в рабочие часы).
+8.  **Termination Grace Period**: Настраивайте `terminationGracePeriod` на уровне NodePool с запасом на graceful shutdown приложений.
 
 ### Ограничения
 
@@ -127,23 +180,42 @@
 
 **Сложность отладки** — из-за высокой динамичности кластера требуется качественный мониторинг (Grafana Dashboard) для отслеживания причин создания и удаления узлов.
 
+**Нет pod-level rightsizing** — Karpenter оптимизирует узлы на основе `requests`, а не реального потребления. Для коррекции requests используйте VPA.
+
+### Интеграции
+
+**[HPA (Horizontal Pod Autoscaler)](../HPA/index.md)** — основной триггер для работы Karpenter.
+
+**[VPA (Vertical Pod Autoscaler)](../vpa_detailed.md)** — уточняет запросы подов, что позволяет Karpenter точнее подбирать размер узлов.
+
+**[KEDA (Kubernetes Event-driven Autoscaling)](../keda/keda_concepts.md)** — позволяет масштабировать узлы на основе внешних событий.
+
+**[Pod Disruption Budget (PDB)](../pod_disruption_budget.md)** — Karpenter строго соблюдает PDB при проведении любых операций оптимизации (consolidation/drift).
+
 ### Ссылки
 
-**[Официальная документация Karpenter](https://karpenter.sh/)** — актуальные инструкции и справочник по NodePool.
-
-**[Best Practices (AWS)](https://aws.github.io/aws-eks-best-practices/karpenter/)** — рекомендации по настройке для производственных сред.
+*   **[Официальная документация Karpenter](https://karpenter.sh/)** — актуальные инструкции и справочник по NodePool.
+*   **[Best Practices (AWS)](https://aws.github.io/aws-eks-best-practices/karpenter/)** — рекомендации по настройке для production-сред.
+*   **[Karpenter Workshop (CNCF)](https://www.youtube.com/watch?v=3v7Srpx1HVc)** — практическое руководство от CNCF.
+*   **[Karpenter Story — Deep Dive (YouTube)](https://www.youtube.com/watch?v=m5sqDgX2Lf8)** — архитектурный разбор от создателей проекта.
 
 ---
 
 ## Советы для собеседования
 
 **Вопрос:** Что такое NodePool в Karpenter и какие два ключевых ограничения вы можете определить внутри него для контроля подготовки узлов?
-**Ответ:** NodePool — это ресурс Karpenter (стабильный API в v1.x), который определяет правила управления незапланированными подами и характеристиками создаваемых узлов. Два ключевых ограничения:
+**Ответ:** NodePool — это ресурс Karpenter (стабильный API в v1.x), который определяет правила управления незапланированными подами и характеристики создаваемых узлов. Два ключевых ограничения:
 1.  **Типы экземпляров (Instance Types)**: можно указать список разрешенных семейств (например, `t3`, `m5`) для контроля стоимости и производительности.
 2.  **Зоны (Zones)**: ограничение предоставления узлов определенными зонами доступности, что критично для приложений с Persistent Volumes или зональными зависимостями.
 
 **Вопрос:** В чем разница между NodePool и NodeClass (например, EC2NodeClass)?
 **Ответ:** NodePool определяет «что» нам нужно (требования к CPU, RAM, архитектуре, лимиты, политики прерываний). NodeClass определяет «как» это реализовать в конкретном облаке (какой AMI использовать, в каких подсетях запускать, какие роли назначать). Это разделение позволяет использовать один NodePool для разных облаков или разных конфигураций сети.
 
----
+**Вопрос:** Как работает механизм Consolidation в Karpenter?
+**Ответ:** Karpenter постоянно анализирует утилизацию узлов. Если узел пуст (`WhenEmpty`) или недоутилизирован (`WhenEmptyOrUnderutilized`), Karpenter симулирует выселение подов и проверяет, можно ли разместить их на меньшем числе узлов или более дешевых типах инстансов. При успешной симуляции старый узел удаляется. Скорость консолидации ограничена `consolidateAfter` и бюджетами прерываний.
 
+**Вопрос:** В чем разница между Drift и Expiration в Karpenter?
+**Ответ:** Drift — это реакция на изменение желаемого состояния (обновился AMI, метка или K8s версия). Узлы дрейфуют относительно `NodePool`/`NodeClass` и заменяются автоматически. Expiration — это плановое удаление узлов по таймауту (`expireAfter`), необходимое для периодической ротации и снижения рисков утечек памяти/фрагментации. Оба механизма являются частью Disruption Controller.
+
+**Вопрос:** Почему Karpenter быстрее Cluster Autoscaler?
+**Ответ:** Cluster Autoscaler работает через абстракцию Node Groups (ASG/VMSS), что добавляет задержку на валидацию шаблона и запуск новых экземпляров группой. Karpenter вызывает API облака напрямую (EC2 Fleet, Azure VM API), минуя группу, и использует собственную симуляцию планировщика вместо ожидания событий от kube-scheduler. Это сокращает время появления нового узла с 3-4 минут до 45-60 секунд.

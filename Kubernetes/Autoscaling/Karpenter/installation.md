@@ -4,31 +4,40 @@
 
 **Karpenter Helm Chart** — официальный пакет для развёртывания контроллера Karpenter в кластере Kubernetes. Он управляет установкой бинарного файла контроллера, Admission Webhooks (для валидации CRD) и необходимых ресурсов RBAC (ClusterRole, RoleBinding). Начиная с ветки v1.x, установка производится исключительно из OCI-репозиториев (Amazon ECR для AWS, Microsoft Container Registry для Azure).
 
-**NodePool** — ресурс CRD (Custom Resource Definition), пришедший на замену `Provisioner` (v1 API). Он определяет «намерения» (intent) кластера по созданию узлов. NodePool позволяет задать жесткие лимиты на суммарные ресурсы (CPU, Memory), требования к инстансам (архитектура, тип, поколение) и политики прерывания (Disruption).
+**NodePool** — основной CRD Karpenter, определяющий правила создания и управления узлами. Подробнее: **[Обзор и основные концепции](./overview.md#определения)**.
 
-**NodeClass (EC2NodeClass / AKSNodeClass)** — специализированный CRD, который связывает логику NodePool с конкретной инфраструктурой облака. Отвечает за выбор подсетей, групп безопасности, образов ОС (AMI / ImageID), настройку дисков и привязку ролей доступа (IAM / Managed Identity).
+**NodeClass (EC2NodeClass / AKSNodeClass)** — ресурс, описывающий инфраструктурные параметры узла для конкретного облака. Подробнее: **[Обзор и основные концепции](./overview.md#определения)**.
 
-**NodeClaim** — объект, представляющий запрос на создание конкретного инстанса. В отличие от своего предшественника `Machine`, NodeClaim является неизменяемым (immutable). Если параметры в NodePool или NodeClass меняются, Karpenter создаёт новый NodeClaim вместо обновления существующего (механизм Drift).
+**NodeClaim** — immutable-объект, представляющий запрос на создание конкретного инстанса. Подробнее: **[Обзор и основные концепции](./overview.md#определения)**.
 
-## Основные концепции
+**Interruption Queue (AWS)** — очередь Amazon SQS, через которую Karpenter получает события прерывания инстансов (Spot Interruption, Scheduled Maintenance, Instance Rebalance). Позволяет начать graceful drain за 2 минуты до принудительного удаления узла.
 
-### Предварительные требования
+## Предварительные требования
 
 **Версия Kubernetes** — для стабильной работы ветки v1.14.x требуется Kubernetes версии **1.30+**. Для поддержки In-Place Pod Resizing в связке с VPA необходимы современные версии планировщика.
 
-**Аутентификация в облаке**:
-- **AWS (Amazon Web Services):** Рекомендуется использовать **EKS Pod Identity**. В отличие от IRSA (IAM Roles for Service Accounts), Pod Identity не требует сложной настройки Trust Policy с OIDC-провайдером. Права передаются через `aws-eks-pod-identity-agent`.
-- **Azure (Microsoft Azure):** Требуется включенный **Workload Identity** и User-Assigned Managed Identity с ролями `Virtual Machine Contributor`, `Network Contributor` и `Managed Identity Operator`.
+**Инструменты CLI:**
+- `kubectl` версии, совместимой с кластером
+- `helm` v3.12+ (поддержка OCI-репозиториев)
+- `aws-cli` / `az-cli` с настроенной аутентификацией и достаточными правами
 
-**IAM-роли (AWS)**:
-1.  **KarpenterControllerRole**: Должна обладать правами на `ec2:RunInstances`, `ec2:CreateFleet`, `ec2:TerminateInstances`, а также на чтение параметров из SSM и доступ к SQS.
-2.  **KarpenterNodeRole**: IAM-роль, назначаемая узлам. Включает политики `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy` и `AmazonEC2ContainerRegistryReadOnly`.
+**Аутентификация в облаке:**
+- **AWS:** Рекомендуется **EKS Pod Identity**. В отличие от IRSA, Pod Identity не требует сложной настройки Trust Policy с OIDC-провайдером. Права передаются через `aws-eks-pod-identity-agent`.
+- **Azure:** Требуется включенный **Workload Identity** и User-Assigned Managed Identity с ролями `Virtual Machine Contributor`, `Network Contributor` и `Managed Identity Operator`.
 
-**Interruption Handling (AWS SQS)** — механизм подписки на события AWS (Spot Interruption, Instance Rebalance, Scheduled Maintenance). Реализуется через очередь Amazon SQS и правило EventBridge. Позволяет Karpenter начать перенос подов за 2 минуты до принудительного удаления узла.
+**Сетевая связность:**
+- Узлы должны иметь доступ к API облачного провайдера (EC2 Fleet / Azure VM API) для запуска инстансов.
+- Для AWS Interruption Handling: контроллер должен иметь доступ к SQS и EventBridge.
 
-### Архитектура развёртывания
+**IAM-роли (AWS):**
+1. **KarpenterControllerRole**: права на `ec2:RunInstances`, `ec2:CreateFleet`, `ec2:TerminateInstances`, чтение параметров из SSM и доступ к SQS.
+2. **KarpenterNodeRole**: политики `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy` и `AmazonEC2ContainerRegistryReadOnly`.
 
-Karpenter работает как Deployment, обычно с 2 репликами для высокой доступности (HA). Он не использует стандартный `kube-scheduler` для создания узлов, а реализует собственный цикл «мониторинг -> бинпакинг -> вызов Cloud API». Это позволяет сократить время появления нового узла с 2-3 минут (Cluster Autoscaler) до 45-60 секунд в AWS и <3 минут в Azure.
+## Архитектура развёртывания
+
+Karpenter работает как Deployment, обычно с 2 репликами для высокой доступности (HA). Рекомендуется размещать контроллер на системных узлах, которые он не управляет (например, на узлах managed-пула EKS/AKS), чтобы избежать bootstrap-зависимости при пересоздании узлов.
+
+Контроллер не использует стандартный `kube-scheduler` для создания узлов, а реализует собственный цикл «мониторинг -> бинпакинг -> вызов Cloud API». Это позволяет сократить время появления нового узла с 2-3 минут (Cluster Autoscaler) до 45-60 секунд в AWS и <3 минут в Azure.
 
 ## Практические сценарии
 
@@ -37,8 +46,17 @@ Karpenter работает как Deployment, обычно с 2 репликам
 #### Шаг 1: Создание инфраструктуры и Pod Identity
 
 ```bash
-# Создание роли контроллера (пример упрощен)
-aws iam create-role --role-name KarpenterControllerRole --assume-role-policy-document ...
+# Создание роли контроллера
+aws iam create-role --role-name KarpenterControllerRole --assume-role-policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "pods.eks.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}'
 
 # Создание ассоциации Pod Identity (связывает ServiceAccount 'karpenter' с IAM-ролью)
 aws eks create-pod-identity-association \
@@ -75,7 +93,7 @@ kind: EC2NodeClass
 metadata:
   name: default
 spec:
-  amiFamily: AL2023 # Рекомендуемый стандарт для EKS
+  amiFamily: AL2023
   amiSelectorTerms:
     - alias: al2023@latest
   role: KarpenterNodeRole
@@ -94,12 +112,22 @@ spec:
         deleteOnTermination: true
   metadataOptions:
     httpEndpoint: enabled
-    httpTokens: required # Обязательно для IMDSv2
+    httpTokens: required
+```
+
+#### Шаг 4: Валидация
+
+```bash
+# Проверка, что контроллер запущен
+kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter
+
+# Проверка наличия CRD
+kubectl get crd nodeclaims.karpenter.sh nodeclasses.karpenter.k8s.aws nodepools.karpenter.sh
 ```
 
 ### Сценарий 2: Установка в Azure AKS
 
-В 2026 году Karpenter для Azure достиг статуса GA. Установка производится из официального OCI-репозитория Microsoft.
+Karpenter для Azure достиг статуса GA в 2026 году. Установка производится из официального OCI-репозитория Microsoft.
 
 #### Шаг 1: Установка контроллера через Helm (Azure OCI)
 
@@ -129,11 +157,21 @@ kind: AKSNodeClass
 metadata:
   name: default
 spec:
-  imageFamily: Ubuntu # Или AzureLinux
+  imageFamily: Ubuntu
   vnetSubnetID: "/subscriptions/.../resourceGroups/.../providers/Microsoft.Network/virtualNetworks/.../subnets/aks-subnet"
   osDiskSizeGB: 128
   tags:
     ManagedBy: Karpenter
+```
+
+#### Шаг 3: Валидация
+
+```bash
+# Проверка контроллера
+kubectl get pods -n kube-system -l app.kubernetes.io/name=karpenter
+
+# Проверка CRD
+kubectl get crd nodeclaims.karpenter.sh nodeclasses.karpenter.azure.com nodepools.karpenter.sh
 ```
 
 ### Сценарий 3: Конфигурация универсального NodePool
@@ -168,15 +206,15 @@ spec:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 1m
     budgets:
-      - nodes: "15%" # Разрешить прерывание не более 15% узлов
+      - nodes: "15%"
       - nodes: "0"
         schedule: "@daily"
         duration: 15m
 ```
 
-### Сценарий 4: Изоляция критических нагрузок и GPU
+### Сценарий 4: GPU-вычислительные нагрузки
 
-Karpenter позволяет создавать пулы для AI/ML.
+Karpenter позволяет динамически подготавливать узлы с графическими ускорителями для задач рендеринга, научных расчётов, обработки видео и других вычислений, где стоимость простоя оборудования значительна.
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -187,66 +225,230 @@ spec:
   template:
     spec:
       requirements:
-        - key: "karpenter.k8s.aws/instance-gpu-manufacturer" # AWS-specific
+        - key: "karpenter.k8s.aws/instance-gpu-manufacturer"
           operator: In
           values: ["nvidia"]
         - key: "karpenter.sh/capacity-type"
           operator: In
-          values: ["on-demand"] # Spot для обучения, On-demand для инференса
+          values: ["on-demand"]
       taints:
         - key: "nvidia.com/gpu"
           value: "true"
           effect: "NoSchedule"
   disruption:
-    consolidationPolicy: WhenEmpty # Не прерывать обучение при недогрузе CPU
+    consolidationPolicy: WhenEmpty
 ```
 
-**Особенности для GenAI:**
-- **MIG (Multi-Instance GPU)**: Указание типов инстансов, поддерживающих нарезку GPU на изолированные инстансы.
-- **MPS (Multi-Process Service)**: Karpenter может подготавливать узлы с MPS для высокой плотности инференса мелких LLM (через DRA).
+**Особенности:**
+- Указание типов инстансов, поддерживающих несколько GPU-устройств на одном хосте.
+- Использование `WhenEmpty` для консолидации, чтобы не прерывать длительные вычислительные задачи при недогрузе CPU.
 
-## Дополнительная информация
+### Сценарий 5: Air-gapped развёртывание
 
-### Диагностика и устранение неисправностей
+В закрытых контурах без доступа в интернет используется зеркалирование OCI-репозиториев или загрузка чартов в локальный registry.
 
-**Проверка логики планирования**:
+#### Шаг 1: Экспорт чарта на машине с доступом в интернет
+
+```bash
+helm pull oci://public.ecr.aws/karpenter/karpenter --version 1.14.0
+# Получен архив karpenter-1.14.0.tgz
+```
+
+#### Шаг 2: Импорт в локальный registry
+
+```bash
+# Загрузка в локальный registry (например, Harbor или Nexus)
+helm push karpenter-1.14.0.tgz oci://registry.internal/helm-charts
+```
+
+#### Шаг 3: Установка из локального registry
+
+```bash
+helm upgrade --install karpenter oci://registry.internal/helm-charts/karpenter \
+  --version 1.14.0 \
+  --namespace karpenter --create-namespace \
+  --set settings.clusterName=my-cluster \
+  --wait
+```
+
+Для Azure аналогичный процесс через `mcr.microsoft.com/aks/karpenter/karpenter`.
+
+### Сценарий 6: Обновление и откат версии
+
+#### Обновление
+
+```bash
+export NEW_VERSION="1.15.0"
+
+helm upgrade karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version "${NEW_VERSION}" \
+  --namespace karpenter \
+  --set settings.clusterName=my-cluster \
+  --wait
+```
+
+#### Откат
+
+```bash
+export PREVIOUS_VERSION="1.14.0"
+
+helm rollback karpenter ${PREVIOUS_VERSION} -n karpenter --wait
+```
+
+Перед обновлением проверяйте [Release Notes](https://karpenter.sh/docs/upgrading/) на предмет breaking changes в CRD API.
+
+### Сценарий 7: GitOps-развёртывание (ArgoCD / Flux)
+
+Karpenter поддерживает установку через стандартные Helm-чарты, что делает его совместимым с любым GitOps-инструментом.
+
+**ArgoCD Application (фрагмент):**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/org/infra-charts.git'
+    targetRevision: HEAD
+    path: charts/karpenter
+    helm:
+      releaseName: karpenter
+      values: |
+        settings:
+          clusterName: my-cluster
+          interruptionQueue: my-cluster-sqs-queue
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: karpenter
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+Для Flux используйте `HelmRepository` и `HelmRelease` из источника `oci://`.
+
+## Валидация установки
+
+После установки проверьте работоспособность Karpenter:
+
+```bash
+# 1. Контроллер готов
+kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter
+# → Ожидаемый результат: STATUS Running, READY 1/1
+
+# 2. CRD зарегистрированы
+kubectl get crd nodeclaims.karpenter.sh nodeclasses.karpenter.k8s.aws nodepools.karpenter.sh
+# → Ожидаемый результат: Established True
+
+# 3. Логи контроллера без ошибок
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=50
+# → Ожидаемый результат: нет ERROR/WARN за последние 10 строк
+
+# 4. Потенциальный прогон provisioning
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: karpenter-test
+spec:
+  containers:
+  - name: pause
+    image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
+    resources:
+      requests:
+        cpu: 1
+        memory: 1Gi
+  nodeSelector:
+    karpenter.sh/nodepool: default
+EOF
+
+# 5. Убедитесь, что NodeClaim создан и узел зарегистрировался
+kubectl get nodeclaims
+kubectl get nodes -l karpenter.sh/nodepool=default
+# → Ожидаемый результат: узел в статусе Ready
+
+# 6. Очистка тестового пода
+kubectl delete pod karpenter-test
+```
+
+## Диагностика и устранение неисправностей
+
+**Проверка логики планирования:**
 Если поды висят в `Pending`, проверьте логи контроллера (причина отказа подбора, например "no instance types found").
 ```bash
 kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100 -f
 ```
 
-**Работа с NodeClaims**:
+**Работа с NodeClaims:**
 Если инстанс не создается в облаке, `NodeClaim` покажет ошибку API (например, квоты или IAM).
 ```bash
 kubectl get nodeclaims
 kubectl describe nodeclaim <name>
 ```
 
-**Защита от прерываний (Disruption)**:
+**Защита от прерываний (Disruption):**
 Для временного запрета удаления узла (например, при миграции БД):
 ```bash
 kubectl annotate node <node-name> karpenter.sh/do-not-disrupt=true
 ```
 
-### Ключевые метрики Prometheus
+**Типичные проблемы установки:**
 
-| Метрика | Значение | Критичность |
-|---------|----------|-------------|
-| `karpenter_nodeclaims_created_total` | Общее количество созданных запросов | Информативно |
-| `karpenter_nodeclaims_terminated_total` | Количество удаленных узлов | Высокая (мониторинг Churn rate) |
-| `karpenter_nodeclaims_failed_total` | Ошибки создания (Insufficient Capacity, IAM errors) | КРИТИЧЕСКИ |
-| `karpenter_provisioning_scheduling_duration_seconds` | Время от Pending пода до создания NodeClaim | Средняя |
-| `karpenter_interruption_actions_total` | Количество реакций на события прерывания | Высокая (статистика Spot) |
+| Симптом | Возможная причина | Решение |
+|---------|-----------------|---------|
+| Контроллер не стартует (ImagePullBackOff) | Ошибка OCI-репозитория или авторизации | Проверьте `helm registry login`, доступность репозитория |
+| Pod Identity ассоциация не применяется | Несовпадение namespace/serviceAccount | Убедитесь, что SA `karpenter` существует в namespace `karpenter` |
+| NodePool не создается | CRD не установлены | Проверьте `kubectl get crd` |
+| EC2NodeClass отклонен вебхуком | Отсутствуют обязательные поля | Проверьте `role`, `subnetSelectorTerms` |
+| Узлы создаются, но не Ready | Проблемы с AMI, kubelet, сетью | Проверьте `kubectl describe node`, логи kubelet |
 
-### Лучшие практики эксплуатации
+Общую диагностику работы кластера см. в **[Обзор и основные концепции](./overview.md#диагностика-и-устранение-неисправностей)**.
 
-1.  **Drift Mechanism**: Дрейф включен по умолчанию. Любое изменение в `NodeClass` (смена SG, VNet, AMI) приведет к планомерному пересозданию всех узлов.
-2.  **Spot Diversity**: В `requirements` NodePool указывайте как можно больше типов инстансов. Ограничение пула одним типом приведет к отказу при его дефиците.
-3.  **Over-provisioning**: Используйте `Pause Pods` (поды с низким приоритетом) для резервирования места. Karpenter вытеснит их и мгновенно разместит критичную нагрузку.
-4.  **Limits**: Обязательно устанавливайте `spec.limits` в NodePool для защиты от бесконечного спавна узлов при ошибках конфигурации деплоймента.
+## Лучшие практики эксплуатации (установка)
 
-### Ссылки
+1. **Controller Placement**: Запускайте контроллер Karpenter на системных узлах, которые он не управляет (не на Karpenter-пуле). Это предотвращает bootstrap-зависимость при пересоздании узлов.
+2. **Helm Values as Code**: Храните `values.yaml` в Git. Используйте差异化 параметров для окружений (dev/staging/prod).
+3. **OCIRegistry Auth**: Для продакшена автоматизируйте аутентификацию в ECR/MCR через IRSA или Workload Identity, а не через статические ключи.
+4. **Resource Limits**: Устанавливайте `requests` и `limits` на pod контроллера Karpenter для предотвращения прерывания самого автоскейлера.
+5. **Namespace Isolation**: Устанавливайте Karpenter в отдельный namespace (`karpenter`), не используйте `default`.
 
-- **[Обзор и основные концепции Karpenter](./overview.md)** — теоретическая база и архитектура.
-- **[Официальная документация (v1.x)](https://karpenter.sh/)** — справочник API.
+## Откат и очистка
+
+#### Полное удаление Karpenter
+
+```bash
+# Удаление Helm-релиза
+helm uninstall karpenter -n karpenter
+
+# Удаление CRD (при полном удалении Karpenter из кластера)
+kubectl delete crd nodeclaims.karpenter.sh nodeclasses.karpenter.k8s.aws nodepools.karpenter.sh
+
+# Удаление namespace (опционально)
+kubectl delete namespace karpenter
+```
+
+#### AWS: удаление Pod Identity ассоциации
+
+```bash
+aws eks delete-pod-identity-association \
+  --cluster-name my-cluster \
+  --association-id <association-id>
+```
+
+#### Azure: удаление Managed Identity
+
+```bash
+az identity delete -n karpenter-identity -g $RG
+```
+
+## Ссылки
+
+- **[Обзор и основные концепции Karpenter](./overview.md)** — теоретическая база, архитектура, сравнение с CA.
+- **[Официальная документация (v1.x)](https://karpenter.sh/)** — справочник API и инструкции.
+- **[AWS Best Practices](https://aws.github.io/aws-eks-best-practices/karpenter/)** — рекомендации по настройке для production-сред.
 - **[Karpenter Blueprints](https://github.com/aws-samples/karpenter-blueprints)** — готовые шаблоны от AWS.

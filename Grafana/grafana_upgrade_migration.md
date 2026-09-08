@@ -127,6 +127,165 @@ done
 
 Пользователи и их пароли через API не переносятся (хеши привязаны к БД) — заведите их заново через SSO/RBAC или экспорт/импорт через провиженинг.
 
+### Сценарий 7. Миграция SQLite → PostgreSQL (Docker Compose)
+
+При интенсивной нагрузке на систему оповещений (начиная с Grafana 8.0.0 Unified Alerting) встроенная SQLite может блокироваться из-за ограничений на конкурентную запись. Симптом — в логах `error="database is locked"`. Временное решение — аварийное клонирование файла БД, постоянное — переход на PostgreSQL.
+
+#### Временное решение (аварийный бэкап)
+
+```bash
+sqlite3 grafana.db '.clone grafana-new.db'
+mv grafana.db grafana-old.db
+mv grafana-new.db grafana.db
+```
+
+Работает при внезапной блокировке (падение контейнера/хоста), но не решает проблему при росте числа алертов и частых обновлений.
+
+#### Постоянное решение: миграция в PostgreSQL
+
+##### 1. Развёртывание PostgreSQL
+
+Добавляем сервис в `docker-compose.yml`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: always
+    container_name: postgres-grafana
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=<strong-password>
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+```
+
+Запускаем и создаём БД:
+
+```bash
+docker compose up -d postgres
+docker exec -ti postgres-grafana psql -U postgres -c "CREATE DATABASE grafana;"
+```
+
+##### 2. Подготовка Grafana
+
+Временно добавляем сервис Grafana с подключением к пустой PostgreSQL, чтобы накатить миграции схемы:
+
+```yaml
+  grafana:
+    image: grafana/grafana:13.1.3
+    container_name: grafana
+    user: "472:472"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres:5432
+      GF_DATABASE_NAME: grafana
+      GF_DATABASE_USER: postgres
+      GF_DATABASE_PASSWORD=<strong-password>
+      GF_DATABASE_SSL_MODE: disable
+    ports:
+      - "3000:3000"
+```
+
+Запускаем и ждём завершения миграций:
+
+```bash
+docker compose up -d grafana
+docker logs -f grafana
+# → "migrations completed"
+```
+
+Останавливаем Grafana перед переносом данных:
+
+```bash
+docker compose stop grafana
+```
+
+##### 3. Перенос данных
+
+**Вариант A: pgloader** (не рекомендуется для продакшена). Утилита пытается импортировать hex-значения напрямую, что ломает авторизацию. На PostgreSQL 14+ по умолчанию используется `scram-sha-256`, с которым pgloader не работает без ручной настройки аутентификации.
+
+**Вариант B: grafana-migrate** (рекомендуется). Утилита сообщества корректно обрабатывает hex-поля:
+
+```bash
+wget https://github.com/wbh1/grafana-sqlite-to-postgres/releases/download/v2.2.3/grafana-migrate_linux_amd64-v2.2.3
+chmod +x grafana-migrate_linux_amd64-v2.2.3
+
+./grafana-migrate_linux_amd64-v2.2.3 /var/lib/grafana/grafana.db \
+  'postgres://postgres:<strong-password>@127.0.0.1:5432/grafana?sslmode=disable'
+```
+
+Если до этого использовался pgloader, удалите БД и создайте заново.
+
+Проверка: в PostgreSQL появились таблицы с данными дашбордов, пользователей и алертов.
+
+##### 4. Финальная конфигурация
+
+Убираем временный сервис, оставляем постоянный:
+
+```yaml
+  grafana:
+    image: grafana/grafana:13.1.3
+    container_name: grafana
+    user: "472:472"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres:5432
+      GF_DATABASE_NAME: grafana
+      GF_DATABASE_USER: postgres
+      GF_DATABASE_PASSWORD=<strong-password>
+      GF_DATABASE_SSL_MODE: disable
+    ports:
+      - "3000:3000"
+```
+
+Запускаем:
+
+```bash
+docker compose up -d grafana
+docker logs -f grafana
+# → "migrations completed"
+```
+
+##### 5. Проверка
+
+```bash
+curl -s http://localhost:3000/api/health
+# → {"database":"ok","status":"ok","version":"13.1.3"}
+```
+
+Проверьте авторизацию и отображение дашбордов.
+
+##### Производительность миграции
+
+Время зависит от типа диска:
+- HDD: >12 часов для БД ~150 МБ
+- SSD: несколько часов
+- NVMe: ~30 минут для БД ~150 МБ
+
+Если миграция занимает слишком долго на production-хосте, выполните её на временном сервере с быстрым диском, затем перенесите том PostgreSQL.
+
+#### Ограничения и особые случаи
+
+- Пароли пользователей не мигрируют автоматически (хеши привязаны к `secret_key` и механизму хранения). Перенастройте аутентификацию через SSO/RBAC.
+- `secret_key` должен быть сохранён; иначе зашифрованные секреты источников данных не расшифруются.
+- Миграция схемы БД при старте Grafana выполняется автоматически, но только вперёд.
+
 ## Дополнительная информация
 
 ### Рекомендации по эксплуатации
@@ -151,7 +310,7 @@ done
 ### Ограничения и особые случаи
 
 - Миграция схемы необратима; не запускайте новую версию без бэкапа.
-- Переход между СУБД требует ручного переноса через API, пароли пользователей не мигрируют.
+- Переход MySQL ↔ PostgreSQL требует переноса через API (см. Сценарий 6); миграция SQLite → PostgreSQL возможна напрямую через grafana-migrate (см. Сценарий 7). В обоих случаях пароли пользователей не мигрируют автоматически.
 - При обновлении в HA все реплики должны в итоге иметь одинаковую версию; допускается кратковременное сосуществование разных патч-версий, но не мажоров.
 - Некоторые фичи (например, dashboard query caching) появились в 11.x — их настройка имеет смысл только на актуальных версиях.
 

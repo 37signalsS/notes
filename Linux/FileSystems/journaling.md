@@ -116,3 +116,4 @@ sudo xfs_repair -L /dev/sda1
 - [Проверка и восстановление ФС (fsck)](./fsck.md) — детально про работу `e2fsck` и `xfs_repair`.
 - [Настройка производительности I/O](./performance_tuning.md) — влияние планировщиков и очередей на журналирование.
 - [Журнал предзаписи (WAL) в СУБД](../../Databases/Concepts/write_ahead_log.md) — аналогия механизмов на уровне приложений.
+- [Устранение неполадок: ФС в режиме read-only](./read_only_filesystem_troubleshooting.md) — почему `ext4`/`JBD2` переводят ФС в RO после ошибок ввода-вывода.

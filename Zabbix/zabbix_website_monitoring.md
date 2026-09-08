@@ -248,6 +248,104 @@ try {
 
 ---
 
+### Метод 4: Мониторинг SSL-сертификатов через шаблон Website Certificate by Zabbix Agent 2
+
+Данный метод позволяет отслеживать срок действия SSL/TLS-сертификатов веб-сайтов без написания скриптов. Используется встроенный шаблон `Website certificate by Zabbix agent 2`.
+
+#### Архитектура мониторинга
+
+| Компонент | Назначение |
+| :--- | :--- |
+| **Хост (Host)** | Сущность в Zabbix, к которой прикреплен шаблон и указан адрес агента |
+| **Шаблон (Template)** | Содержит элементы данных и триггеры; в макросе `{$CERT.WEBSITE.HOSTNAME}` указывается целевой сайт |
+| **Zabbix Agent 2** | Сбор данных о сертификате с хоста, имеющего стабильный доступ в интернет |
+
+Zabbix Agent 2 с одного из мониторинговых хостов выполняет проверку SSL-сертификата удаленного сайта.
+
+#### Установка шаблона
+
+Шаблон `Website certificate by Zabbix agent 2` может отсутствовать в системе (особенно после обновления Zabbix).
+
+1. Проверьте наличие шаблона: `Configuration` → `Templates`.
+2. При отсутствии загрузите шаблон с [официального репозитория Zabbix](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/app/zabbix_agent2) (выберите версию, соответствующую вашей инсталляции).
+3. Импортируйте: `Configuration` → `Templates` → `Import` → выберите YAML-файл → `Import`.
+
+> **Возможная ошибка импорта:** `Invalid tag "/zabbix_export/version": unsupported version number`. В этом случае вручную измените версию в YAML-файле шаблона на совместимую (например, `6.2` или `6.4`).
+
+#### Установка Zabbix Agent 2
+
+Агент должен быть установлен на хосте со стабильным интернет-доступом (изолированный периметр не подойдет). При наличии старого агента — остановите его.
+
+**Установка на Ubuntu 20.04 / Zabbix 6.4:**
+
+```bash
+wget https://repo.zabbix.com/zabbix/6.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.4-1+ubuntu20.04_all.deb
+dpkg -i zabbix-release_6.4-1+ubuntu20.04_all.deb
+apt update
+apt install zabbix-agent2 zabbix-agent2-plugin-*
+systemctl restart zabbix-agent2
+systemctl enable zabbix-agent2
+```
+
+Актуальные ссылки для других ОС и версий — на [официальном сайте Zabbix](https://www.zabbix.com/download?zabbix=6.4).
+
+#### Добавление хоста для мониторинга
+
+1. Перейдите: `Configuration` → `Hosts` → `Create new host`.
+2. Заполните параметры:
+   * **Host name:** рекомендуется использовать имя мониторимого сайта (например, `example.com-cert`).
+   * **Templates:** прикрепите `Website certificate by Zabbix agent 2`.
+   * **Groups:** добавьте хост в группу (например, `SSL Certificates`).
+   * **Interfaces:** `Add` → `Agent`, укажите адрес или DNS хоста с Zabbix Agent 2.
+3. Перейдите на вкладку **Macros** → **Inherited and host macros**.
+4. Найдите макрос `{$CERT.WEBSITE.HOSTNAME}` и нажмите **Change** → введите домен сайта (например, `example.com`).
+5. Сохраните хост.
+
+Проверьте поступление данных: `Monitoring` → `Latest data`.
+
+#### Настройка порога срабатывания триггера
+
+Встроенный триггер срабатывает при приближении даты окончания сертификата. Порог определяется макросом `{$CERT.EXPIRY.WARN}`.
+
+| Вариант | Область действия | Путь настройки |
+| :--- | :--- | :--- |
+| **Глобальный** | Все хосты с шаблоном | `Configuration` → `Templates` → `Website certificate by Zabbix agent 2` → `Macros` |
+| **Хост-специфичный** | Конкретный хост | `Configuration` → `Hosts` → выберите хост → `Macros` → `Inherited and host macros` → **Change** |
+
+Значение указывается в днях (по умолчанию обычно `14` или `21`).
+
+#### Добавление поля Days Left (Calculated Item)
+
+Шаблон содержит дату окончания (`cert.not_after`), но не отображает количество оставшихся дней. Для визуализации добавьте вычисляемый элемент данных (**Calculated Item**) в шаблон:
+
+1. `Configuration` → `Templates` → `Website certificate by Zabbix agent 2` → `Items` → `Create item`.
+2. Заполните параметры:
+   * **Name:** `Cert: Days left`
+   * **Type:** `Calculated`
+   * **Key:** `cert.days_left`
+   * **Type of information:** `Numeric (float)`
+   * **Formula:**
+     ```bash
+     round(((last(//cert.not_after) - now()) / 86400),1)
+     ```
+   * **Units:** `days`
+   * **Update interval:** `1m` (или требуемый интервал)
+
+Теперь в `Latest data` появится элемент с количеством дней до истечения сертификата.
+
+#### Создание виджета на дашборде
+
+1. Объедините хосты мониторинга SSL в одну группу (например, `SSL Certificates`).
+2. Перейдите: `Monitoring` → `Dashboard` → `Create Dashboard` (или откройте существующий).
+3. Добавьте виджет **Data overview**:
+   * **Data set:** выберите группу хостов `SSL Certificates`.
+   * **Items:** выберите `Cert: Days left` (или `cert.not_after`).
+4. Сохраните дашборд.
+
+Виджет отобразит оставшиеся дни для всех мониторимых сертификатов.
+
+---
+
 ## Настройка SLA и оповещений
 
 Данные механизмы применимы к любому из выбранных выше методов.

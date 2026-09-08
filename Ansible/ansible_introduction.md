@@ -6,7 +6,7 @@
 - **Infrastructure as Code (IaC)** — подход, при котором инфраструктура описывается в виде машиночитаемого кода (YAML, JSON, HCL), а не настраивается вручную. Позволяет версионировать конфигурацию, воспроизводить среды и автоматизировать изменения через CI/CD-пайплайны. Ansible реализует IaC через декларативные плейбуки.
 - **Декларативность** — основной подход Ansible, при котором пользователь описывает *желаемое состояние* системы (Desired State), а инструмент самостоятельно определяет необходимые действия для его достижения. Это избавляет инженера от написания сложных императивных скриптов с обработкой ошибок каждого шага. Подробнее см. в [Основных концепциях](./ansible_core_concepts.md).
 - **Agentless (безагентная архитектура)** — архитектурная особенность, при которой для управления узлами не требуется установка на них специального ПО (агентов). Связь осуществляется через стандартные протоколы: **SSH** для Linux/Unix, **WinRM** или **SSH** для Windows. Это упрощает внедрение и снижает накладные расходы на ресурсы.
-- **Идемпотентность** — свойство операции, гарантирующее, что повторное выполнение не изменит систему, если она уже находится в желаемом состоянии. Фундаментальный принцип надежности автоматизации. Подробнее см. **[Идемпотентность](../../Concepts/idempotency.md)**.
+- **Идемпотентность** — свойство операции, гарантирующее, что повторное выполнение не изменит систему, если она уже находится в желаемом состоянии. Фундаментальный принцип надежности автоматизации. Подробнее см. **[Идемпотентность](../Concepts/idempotency.md)**.
 - **Push-архитектура** — модель работы, при которой Узел управления (Control Node) инициирует соединение и «проталкивает» конфигурацию на управляемые узлы. Это противоположность Pull-модели (Ansible Pull), где хосты сами запрашивают конфигурацию из репозитория.
 
 ## Основные концепции
@@ -514,23 +514,22 @@ ansible-config dump | grep roles_path
 
 #### Таблица сравнения
 
-| Критерий | Ansible | Puppet | Chef | SaltStack | Terraform |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Архитектура** | Agentless | Agent/Agentless | Agent | Agent/Agentless | Agentless |
-| **Язык** | YAML | DSL (Puppet DSL) | Ruby (ERB) | YAML + Jinja2 | HCL |
-| **Подход** | Push | Pull | Pull | Push/Pull | Push |
-| **Кривая обучения** | Низкая | Высокая | Высокая | Средняя | Средняя |
-| **Сообщество** | Огромное | Большое | Большое | Среднее | Огромное |
-| **Лицензия** | GPLv3 | Apache 2.0 | Apache 2.0 | Apache 2.0 | MPL 2.0 |
-| **Фокус** | Configuration Management | Configuration Management | Configuration Management | Configuration Management + Event-driven | Provisioning |
-| **Протокол** | SSH/WinRM | Agent (8140) | Agent (443) | ZeroMQ (4505/4506) | API (HTTP/HTTPS) |
+| Критерий | Ansible | Puppet | Chef | SaltStack |
+| :--- | :--- | :--- | :--- | :--- |
+| **Архитектура** | Agentless | Agent/Agentless | Agent | Agent/Agentless |
+| **Язык** | YAML | DSL (Puppet DSL) | Ruby (ERB) | YAML + Jinja2 |
+| **Подход** | Push | Pull | Pull | Push/Pull |
+| **Кривая обучения** | Низкая | Высокая | Высокая | Средняя |
+| **Сообщество** | Огромное | Большое | Большое | Среднее |
+| **Лицензия** | GPLv3 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| **Фокус** | Configuration Management | Configuration Management | Configuration Management | Configuration Management + Event-driven |
+| **Протокол** | SSH/WinRM | Agent (8140) | Agent (443) | ZeroMQ (4505/4506) |
+
+Сравнение Ansible с Terraform/OpenTofu — в [Обзоре CM-инструментов](../Concepts/configuration_management_tools.md#terraform--opentofu--ansible).
 
 #### Когда использовать Terraform vs Ansible
 
-- **Terraform** — для **provisioning**: создание VM, сетей, хранилищ, Kubernetes-кластеров, DNS-записей, IAM-политик. Реализует цикл `create → update → destroy`.
-- **Ansible** — для **configuration management**: настройка ПО, управление конфигами, деплой приложений, оркестрация. Гарантирует идемпотентность и Desired State.
-
-**Рекомендуемый подход:** Terraform создаёт инфраструктуру, Ansible настраивает её. Не используйте Ansible для provisioning облаков (нет state management), не используйте Terraform для сложной конфигурации ПО (нет conditionals/loops на уровне YAML).
+См. раздел [Terraform / OpenTofu + Ansible](../Concepts/configuration_management_tools.md#terraform--opentofu--ansible).
 
 #### Puppet vs Chef vs Ansible: различия в подходе
 
@@ -547,40 +546,7 @@ ansible-config dump | grep roles_path
 
 #### Интеграция Ansible с Terraform
 
-```yaml
-# Terraform создаёт инфраструктуру
-# terraform.tf
-resource "aws_instance" "web" {
-  count         = 3
-  ami           = "ami-0c55b159cbfafe1f0"
-  instance_type = "t3.micro"
-  tags = {
-    Name = "web-${count.index + 1}"
-    Group = "webservers"
-  }
-}
-
-# inventory.ini (динамический инвентарь Terraform)
-# Генерируется через terraform-inventory или output
-```
-
-```bash
-# Пайплайн: Terraform → Ansible
-terraform init && terraform apply -auto-approve
-terraform-inventory inventory > inventory.ini
-ansible-playbook -i inventory.ini site.yml
-```
-
-**Пример Terraform provisioner (локальный Ansible):**
-```hcl
-resource "aws_instance" "web" {
-  # ...
-
-  provisioner "local-exec" {
-    command = "ansible-playbook -i '${self.private_ip},' --private-key ~/.ssh/id_ed25519 configure.yml"
-  }
-}
-```
+Подробное описание рабочих процессов, разделения ответственности и практических сценариев совместного использования Terraform/OpenTofu и Ansible — в [Обзоре CM-инструментов: комбинирование Terraform и Ansible](../Concepts/configuration_management_tools.md#terraform--opentofu--ansible).
 
 ## Дополнительная информация
 

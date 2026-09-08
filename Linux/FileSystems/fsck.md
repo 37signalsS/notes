@@ -122,3 +122,4 @@ sudo btrfs check --repair /dev/sdXN
 - [Логическое восстановление данных](./data_recovery.md) — действия, если `fsck` не справилась.
 - [Утилита dd](./dd.md) — создание образов перед операциями восстановления.
 - [Inode и Dentry](./links_inodes_dentries.md) — внутреннее устройство проверяемых объектов.
+- [Устранение неполадок: ФС в режиме read-only](./read_only_filesystem_troubleshooting.md) — диагностика и восстановление после автоматического перехода `ext4` в RO.

@@ -104,13 +104,15 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM users WHERE id = 42;
 | `checkpoint_timeout` | 15min - 30min | Увеличивает производительность, но замедляет восстановление после сбоя. |
 | `checkpoint_completion_target` | 0.9 | Размывает нагрузку записи на весь интервал чекпоинта. |
 
-### Сценарий 2: Управление соединениями (PgBouncer)
+### Сценарий 2: Управление соединениями
 
-PostgreSQL создает отдельный процесс на соединение. При большом количестве клиентов накладные расходы на переключение контекста (Context Switch) снижают RPS.
+PostgreSQL использует модель **Process-per-connection**: каждое подключение порождает отдельный backend-процесс. При большом количестве клиентов накладные расходы на переключение контекста снижают RPS, а потребление RAM растет линейно.
 
-- **PgBouncer** в режиме `transaction pooling` — оптимальный выбор для Web-приложений.
-- Позволяет держать `max_connections` в PostgreSQL на уровне 100-300, обслуживая тысячи внешних соединений.
-- Подробнее: **[Настройка PgBouncer](./pgbouncer_setup.md)**.
+**Ключевые подходы:**
+- **Внешний пулер (PgBouncer)** — оптимален для веб-приложений и ORM. Позволяет держать `max_connections` на уровне 100–300, обслуживая тысячи внешних соединений. Подробнее: **[Настройка PgBouncer](./pgbouncer_setup.md)**.
+- **Нативная оптимизация** — настройка `max_connections`, `idle_in_transaction_session_timeout`, `tcp_keepalives_*`, мониторинг `pg_stat_activity`. Полное руководство: **[Управление соединениями PostgreSQL](./connection_management.md)**.
+
+**Правило:** сумма `default_pool_size` всех пулов PgBouncer **меньше** `max_connections` PostgreSQL (оставляем запас на админов и миграции).
 
 ### Сценарий 3: Секционирование (Partitioning)
 

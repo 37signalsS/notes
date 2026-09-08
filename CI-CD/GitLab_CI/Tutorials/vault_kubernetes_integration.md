@@ -47,6 +47,27 @@
 
 ## Практические сценарии
 
+### Предварительные требования
+
+**Инфраструктура:**
+- **Kubernetes:** Кластер версии 1.27+ с доступом через `kubectl`.
+- **Vault:** Версия 1.15+ (HA-кластер с Raft рекомендуется для production).
+- **GitLab:** Версия 17.0+ (для поддержки `id_tokens`).
+- **Helm:** Версии 3.12+ для управления чартами.
+- **DNS:** Vault должен быть доступен по имени `vault.example.com` из подов Kubernetes и из GitLab Runner'ов.
+
+**Переменные CI/CD (Settings > CI/CD > Variables):**
+| Переменная | Тип | Назначение |
+| :--- | :--- | :--- |
+| `VAULT_ADDR` | Variable | URL Vault сервера (например, `https://vault.example.com`). |
+| `VAULT_AUTH_ROLE` | Variable | Имя роли JWT-аутентификации в Vault. |
+| `SSH_PRIVATE_KEY` | **File** | Приватный ключ для доступа к серверу Vault (если Self-hosted). |
+
+**Базовые знания:**
+- Основы HashiCorp Vault: политики, роли, KV v2.
+- Основы Kubernetes: Deployment, Service, Secret, RBAC.
+- Основы GitLab CI/CD: stages, variables, id_tokens.
+
 ### Шаг 1: Развертывание Vault в Kubernetes
 
 В 2026 году стандартом является использование официального Helm-чарта `hashicorp/vault` с включенным Injector и VSO.
@@ -215,11 +236,121 @@ Vault записывает метаданные OIDC в свои аудит-ло
 | **JWKS fetch failed** | Vault не видит GitLab по сети | Проверьте DNS и Firewall внутри пода Vault. Используйте `kubectl exec vault-0 -- curl -v https://gitlab.example.com/-/jwks`. |
 | **Token audience mismatch** | `aud` не совпадает | Значение `aud` в `.gitlab-ci.yml` должно строго совпадать с настроенным `audience` в Vault. |
 | **Secret injection failed** | Ошибка в пути секрета | Проверьте, что в пути указано `data/` (для KV-V2) и правильный mount point (например, `@secret`). |
+| **Vault is sealed** | Vault находится в sealed-состоянии | Выполните `vault operator unseal` на каждом ноде кластера (минимум 3 ключа для HA). |
+| **ServiceAccount не найден** | Неверный namespace или имя SA в Vault | Проверьте: `vault read auth/kubernetes/role/<role>`. Убедитесь, что `bound_service_account_names` и `bound_service_account_namespaces` совпадают. |
+| **VSO не обновляет секрет** | Ошибка в VaultStaticSecret CR | Проверьте логи: `kubectl logs -l app.kubernetes.io/name=vault-secrets-operator`. Состояние CR: `kubectl get vaultstaticsecrets -A`. |
+| **Certificate verify failed** | Self-signed сертификат Vault | Добавьте CA Vault в的信任存储 GitLab Runner или используйте `VAULT_CACERT` в переменных. |
+| **Lease not found** | Динамический секрет истёк | Проверьте TTL роли: `vault read auth/jwt/role/<role>`. Увеличьте `token_ttl` или используйте `renewable=true`. |
+| **Permission denied (VSO)** | VaultAuth CR не привязан к роли | Убедитесь, что `vaultConnectionRef`, `mount` и `role` в VaultAuth совпадают с настройками Vault. |
+| **CI_JOB_JWT deprecated** | Используется устаревший токен | Замените `CI_JOB_JWT` на `id_tokens` (стандарт с v17.0+). Старый токен удалён в GitLab 18.0. |
+
+## Лучшие практики (Best Practices)
+
+**Безопасность:**
+- Используйте Bound Claims с `ref_protected: "true"` — секреты должны быть доступны только из защищённых веток (main, release/*).
+- Никогда не передавайте статические токены Vault через переменные GitLab — используйте OIDC или JWT Auth Method.
+- Включите аудит Vault: `vault audit enable file file_path=/var/log/vault/audit.log`.
+- Регулярно ротируйте ключи JWKS в GitLab (автоматически каждые 90 дней).
+- Используйте `token_ttl` не более 30 минут для CI/CD задач.
+
+**Производительность:**
+- Используйте `token_type="batch"` для высоконагруженных сред — batch tokens не записываются на диск.
+- Кэшируйте секреты на стороне приложения, но не дольше TTL токена.
+- Для VSO настройте `refreshAfter` не чаще 1 раза в час — избегайте нагрузки на Vault.
+- Используйте KV v2 вместо KV v1 — поддержка версионирования и rollback.
+
+**Надёжность:**
+- Разверните Vault в HA-режиме (минимум 3 ноды для Raft) — это обеспечивает отказоустойчивость.
+- Настройте `max_ttl` роли в соответствии с длительностью самого долгого пайплайна.
+- Используйте `backup` для Raft: `vault operator raft snapshot save backup.db`.
+- Тестируйте интеграцию в staging перед продакшеном.
+
+**Мониторинг:**
+- Экспортируйте метрики Vault в Prometheus: `vault telemetry { prometheus_retention_time = "30s" }`.
+- Мониторьте количество активных токенов: `vault token lookup -format=json | jq '.data.num_uses'`.
+- Настраивайте алерты на sealed Vault и failed login attempts.
+
+## Очистка и откат (Cleanup)
+
+**Отзыв токена Vault (если скомпрометирован):**
+```bash
+# Отзыв конкретного токена по accessor
+vault token revoke -accessor <token_accessor>
+
+# Отзыв всех токенов роли
+vault write -f auth/jwt/role/<role>/token/revoke
+
+# Полная очистка сессий
+vault token revoke -accessor $(vault token lookup -format=json | jq -r '.data.accessor')
+```
+
+**Удаление роли JWT-аутентификации:**
+```bash
+# Удаление роли
+vault delete auth/jwt/role/<role>
+
+# Отключение метода аутентификации
+vault auth disable jwt/
+
+# Удаление политики
+vault policy delete gitlab-app-policy
+```
+
+**Откат VSO-ресурсов:**
+```bash
+# Удаление VaultStaticSecret
+kubectl delete vaultstaticsecret <name> -n <namespace>
+
+# Откат через Helm
+helm rollback vault-secrets-operator -n vault
+
+# Остановка оператора
+helm uninstall vault-secrets-operator -n vault
+```
+
+**Очистка GitLab CI/CD:**
+```bash
+# Удаление переменных Vault через API
+curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/variables/VAULT_ADDR"
+
+# Удаление всех секретов проекта из Vault
+vault kv delete -versions=0 secret/projects/<project-path>/
+```
+
+## Граничные случаи (Edge Cases)
+
+**Несколько Kubernetes-кластеров:**
+- Используйте разные `bound_service_account_namespaces` в роли Vault для каждого кластера.
+- Или создайте отдельные роли Vault для каждого кластера с уникальными Bound Claims.
+
+**Vault Namespaces (Enterprise):**
+- В Vault Enterprise используйте `namespace` в URL: `VAULT_NAMESPACE=team-a`.
+- Bound Claims должны включать `namespace_path` GitLab для изоляции между командами.
+
+**Мульти-Tenant GitLab:**
+- Для нескольких инстансов GitLab (self-hosted + gitlab.com) настройте разные `bound_issuer` в разных ролях Vault.
+- Используйте `bound_claims_type="glob"` для масок: `"namespace_path": "my-org/*"`.
+
+**Работа с dockertless Runner'ами:**
+- Если GitLab Runner работает на Kubernetes Executor, OIDC-токен доступен напрямую в поде.
+- Если Runner на Docker Executor — пробросьте `VAULT_ADDR` как переменную окружения.
+
+**Высокая нагрузка:**
+- При >100 задачах в минуту используйте `token_type="batch"` и увеличьте `max_ttl`.
+- Настройте `vault telemetry` для мониторинга latency JWT-валидации.
+
+**Версионирование Vault:**
+- При обновлении Vault (например, 1.14 → 1.15) выполняйте `vault operator migrate` перед обновлением.
+- Не пропускайте major-версии — миграции могут быть несовместимы.
 
 ## Дополнительная информация
 
 ### Смотрите также
 
-- **[Интеграция Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md)** — основной SSoT по работе Vault в K8s (VSO, CSI, Injector).
-- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — подробнее об `id_tokens` и маскировании данных.
+- **[Интеграция Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md)** — основной SSoT по работе Vault в K8s (VSO, CSI, Injector, Sidecar).
+- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — подробнее об `id_tokens`, маскировании и OIDC.
+- **[Vault Agent Injector](../../../Vault/guides/vault_agent/injector.md)** — автоматическое внедрение sidecar для секретов.
+- **[Zero Trust Architecture](../../../Vault/zero_trust.md)** — принципы Zero Trust в управлении секретами.
+- **[ArgoCD + Vault Integration](../../../GitOps/ArgoCD/argocd_vault_integration.md)** — синхронизация секретов через ArgoCD.
 - **[Официальная документация GitLab: Vault Integration](https://docs.gitlab.com/ee/ci/secrets/hashicorp_vault.html)**

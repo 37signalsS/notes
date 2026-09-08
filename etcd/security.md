@@ -76,25 +76,9 @@ etcdctl auth enable
 
 ### Encryption at Rest
 
-etcd 3.7+ поддерживает шифрование данных на диске через KMS или встроенный encryption provider.
+etcd 3.7+ поддерживает шифрование данных на диске через KMS или встроенный encryption provider. На уровне Kubernetes шифрование реализуется через `EncryptionConfiguration` в `kube-apiserver` и применяется **до** отправки данных в etcd.
 
-**Встроенный provider (AES):**
-```yaml
-# В etcd.conf.yml
-experimental-encryption-provider: aes
-experimental-encryption-provider-config: |
-  key: <base64-encoded-32-byte-key>
-```
-
-**KMS provider (рекомендуется для production):**
-```yaml
-kms-provider: aws
-kms-provider-config: |
-  kmskey: arn:aws:kms:...
-  region: us-east-1
-```
-
-**Best Practice:** Используйте KMS для управления ключами. AES-key в конфиге = single point of failure (если конфиг украдут, данные расшифруются).
+**Best Practice:** Используйте KMS (KMS v2) для управления ключами. Локальный AES-key в конфиге — single point of failure (если конфиг украдут, данные расшифровываются). Настройка EncryptionConfiguration, процедура включения шифрования на работающем кластере, ротация ключей и полная шпаргалка по `etcdctl` — см. **[Хранение Secret в etcd](../Kubernetes/Base/secrets/etcd_storage.md)** (SSoT).
 
 ---
 

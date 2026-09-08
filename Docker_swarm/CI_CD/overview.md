@@ -110,6 +110,7 @@ services:
 - **[app_deployment.md](./app_deployment.md)** — шаблоны пайплайнов и примеры для GitLab/GitHub.
 - **[app_lifecycle.md](./app_lifecycle.md)** — стратегии Rolling Update и Health Checks.
 - **[best_practices.md](./best_practices.md)** — лучшие практики безопасности и оптимизации.
+- **[gitlab_runner_swarm.md](./gitlab_runner_swarm.md)** — деплой GitLab Runner в Swarm с автокеллингом через Docker Executor.
 - **[../docker_swarm_overview.md](../docker_swarm_overview.md)** — общий обзор возможностей Swarm.
 - **[../swarm_secrets_configs.md](../swarm_secrets_configs.md)** — работа с секретами и конфигами.
 - **[../swarm_ingress_traefik.md](../swarm_ingress_traefik.md)** — детальная настройка Traefik в кластере.

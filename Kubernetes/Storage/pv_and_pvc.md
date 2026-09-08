@@ -204,6 +204,262 @@ Kubernetes предотвращает случайное удаление исп
 
 ## Практические сценарии
 
+### Сценарий 1: Статическое выделение (NFS)
+
+Администратор заранее знает параметры NFS-сервера и создаёт PV вручную:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-static-pv
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    path: /srv/nfs/data
+    server: 192.168.1.100
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+```
+
+```bash
+kubectl get pv,pvc
+# → NAME                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM
+# → nfs-static-pv              100Gi      RWX            Retain           Bound    default/nfs-pvc
+# → NAME                        STATUS   VOLUME         CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+# → nfs-pvc                     Bound    nfs-static-pv  100Gi      RWX                           5s
+```
+
+### Сценарий 2: Динамическое выделение (CSI-драйвер)
+
+При использовании CSI-драйвера (Longhorn, Ceph, NFS provisioner) Kubernetes автоматически создаёт PV при создании PVC:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dynamic-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 20Gi
+```
+
+```bash
+# После создания PVC автоматически создаётся PV
+kubectl get pv,pvc
+# → NAME                    CAPACITY   RECLAIM POLICY   STATUS   CLAIM               STORAGECLASS
+# → pvc-8f2a1b3c-...       20Gi       Delete           Bound    default/dynamic-pvc longhorn
+```
+
+### Сценарий 3: Локальные диски (Local PV)
+
+Для томов, привязанных к конкретному узлу, используется `nodeAffinity` и `volumeBindingMode: WaitForFirstConsumer`:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-ssd-pv
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /mnt/disks/ssd1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - node-worker-1
+```
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-fast
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+```
+
+**Ключевой момент:** без `WaitForFirstConsumer` диск может быть создан на узле A, а под запланирован на узел B — под не сможет примонтировать том.
+
+### Сценарий 4: StatefulSet с volumeClaimTemplates
+
+Автоматическое создание томов для каждого пода StatefulSet:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: "postgres"
+  replicas: 3
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 50Gi
+```
+
+**Важно:**
+- Под `postgres-0` всегда получает PVC `data-postgres-0` (Stable ID)
+- При удалении StatefulSet его PVC **сохраняются** по умолчанию (можно изменить через `persistentVolumeClaimRetentionPolicy`)
+
+### Сценарий 5: Расширение тома (Volume Expansion)
+
+```bash
+# 1. Проверьте, что StorageClass разрешает расширение
+kubectl get sc longhorn -o yaml | grep allowVolumeExpansion
+# → allowVolumeExpansion: true
+
+# 2. Увеличьте размер PVC
+kubectl patch pvc dynamic-pvc -p '{"spec":{"resources":{"requests":{"storage":"40Gi"}}}}'
+
+# 3. Проверьте результат
+kubectl get pvc dynamic-pvc
+# → NAME           STATUS   VOLUME        CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+# → dynamic-pvc    Bound    pvc-8f2a...   40Gi       RWO            longhorn       5m
+
+# 4. Проверьте файловую систему в поде (если под запущен)
+kubectl exec <pod-name> -- df -h /data
+# → /dev/longhorn/pvc-xxx  40G  1.2G  38G  3% /data
+```
+
+**Важно:** расширение возможно только вверх. Уменьшение размера тома **не поддерживается**.
+
+### Сценарий 6: Снимки и восстановление
+
+```yaml
+# 1. Создание VolumeSnapshot
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: prod-snapshot-2026-08-06
+spec:
+  volumeSnapshotClassName: longhorn
+  source:
+    persistentVolumeClaimName: dynamic-pvc
+---
+# 2. Восстановление из снимка
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restored-pvc
+spec:
+  dataSource:
+    name: prod-snapshot-2026-08-06
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 40Gi
+```
+
+### Сценарий 7: Клонирование тома
+
+Создание копии существующего PVC для тестирования:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-clone
+spec:
+  dataSource:
+    name: source-db-pvc
+    kind: PersistentVolumeClaim
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 50Gi
+```
+
+### Сценарий 8: Generic Ephemeral Volume
+
+Временный том, привязанный к жизненному циклу пода:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+spec:
+  containers:
+  - name: worker
+    image: worker:latest
+    volumeMounts:
+    - name: scratch
+      mountPath: /scratch
+  volumes:
+  - name: scratch
+    ephemeral:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: fast-ssd
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+```
+
+**Отличие от `emptyDir`:** поддерживает все возможности CSI (шифрование, снимки, high-performance SSD). PVC автоматически удаляется при завершении пода.
+
+### Сценарий 9: Топология и мультизональные кластеры
+
+Для кластеров, растянутых между несколькими зонами доступности:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: regional-ssd
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowedTopologies:
+- matchLabelExpressions:
+  - key: topology.ebs.csi.aws.com/zone
+    values:
+    - us-east-1a
+    - us-east-1b
+parameters:
+  type: gp3
+  encrypted: "true"
+```
+
 ### Топология и локальные диски (Node Affinity)
 
 Для томов, привязанных к узлу (Local PV) или зоне (AWS EBS), используется `nodeAffinity`. При этом в StorageClass обязательно должен быть установлен `volumeBindingMode: WaitForFirstConsumer`.
@@ -225,19 +481,173 @@ Kubernetes предотвращает случайное удаление исп
 
 ---
 
+## Безопасность
+
+### RBAC для storage-ресурсов
+
+По умолчанию обычные пользователи **не могут** управлять PV (cluster-scoped ресурс). PVC доступны в рамках Namespace.
+
+```yaml
+# Разрешить создание PVC в конкретном Namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pvc-creator
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["create", "get", "list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pvc-creator-binding
+  namespace: production
+subjects:
+- kind: User
+  name: developer
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: pvc-creator
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### Защита от потери данных
+
+| Механизм | Назначение | Как активировать |
+|----------|------------|------------------|
+| **`reclaimPolicy: Retain`** | Сохраняет данные при удалении PVC | В StorageClass или PV |
+| **Finalizers** | Блокирует удаление используемых PVC/PV | Автоматически |
+| **`ReclaimPolicy: Delete` + backup** | Автоматическое удаление + резервное копирование | Настроить backup до использования Delete |
+| **Volume Snapshots** | Точки восстановления | VolumeSnapshot + VolumeSnapshotClass |
+| **ResourceQuota** | Лимит на количество PVC/объём хранилища | ResourceQuota в Namespace |
+
+### Шифрование томов
+
+```yaml
+# Пример: шифрование через CSI-драйвер (AWS EBS)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: encrypted-ssd
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+  # Для использования собственного ключа KMS:
+  # kmsKeyId: arn:aws:kms:us-east-1:123456789:key/xxx
+```
+
+### Network Policies для storage-компонентов
+
+Ограничение сетевого доступа к CSI-драйверам и storage-сервисам:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-longhorn-only
+  namespace: longhorn-system
+spec:
+  podSelector:
+    matchLabels:
+      app: longhorn-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: longhorn-system
+```
+
+---
+
 ## Устранение неполадок
 
-Если PVC "завис" в статусе `Pending`:
+### Диагностические команды
 
-1. **Проверьте события**: `kubectl describe pvc <name>`.
-2. **Проверьте StorageClass**: существует ли он и правильно ли настроен провижинер.
-3. **Проверьте Node Affinity**: если используются локальные диски, шедулер может не находить подходящий узел.
-4. **Проверьте лимиты**: не исчерпаны ли `ResourceQuota` в данном Namespace.
+```bash
+# Проверка состояния PVC
+kubectl get pvc --all-namespaces
+kubectl describe pvc <name>
+
+# Проверка состояния PV
+kubectl get pv
+kubectl describe pv <name>
+
+# Проверка StorageClass
+kubectl get storageclass
+kubectl describe storageclass <name>
+
+# Логи CSI-драйвера
+kubectl logs -n kube-system <csi-controller-pod>
+kubectl logs -n kube-system <csi-node-pod>
+
+# Проверка событий
+kubectl get events --field-selector reason=ProvisioningFailed
+```
+
+### Типичные проблемы
+
+| Проблема | Симптомы | Причины | Решение |
+|----------|----------|---------|---------|
+| **PVC в Pending** | `kubectl describe pvc` показывает `Waiting for a volume to be created` | Нет подходящего PV и не работает динамическое provisionining | Проверьте наличие StorageClass и статус provisioner |
+| **PVC в Pending (AZ mismatch)** | Под не запускается, диск создан в другой зоне | `volumeBindingMode: Immediate` в мультизонном кластере | Измените на `WaitForFirstConsumer` |
+| **Multi-Attach error** | Под не может примонтировать RWO-том на другом узле | Предыдущий под ещё не завершил detach | Дождитесь завершения detach или используйте `WaitForFirstConsumer` |
+| **PVC в Lost** | PV удалён или недоступен | Физический диск удалён, ошибка CSI-драйвера | Проверьте CSI-драйвер и физическое хранилище |
+| **Расширение тома не работает** | `kubectl describe pvc` показывает `Waiting for resize` | CSI-драйвер не поддерживает онлайн-расширение | Перезапустите под или проверьте версию CSI |
+| **Недостаточно места** | ProvisioningFailed: no space | Исчерпано физическое место в СХД | Освободите место или добавьте узлы |
+| **Permission denied** | Под не может писать в том | Неправильные права доступа (UID/GID) | Используйте `fsGroup` в `securityContext` пода |
+
+### Проверка Pending PVC
+
+```bash
+# 1. Посмотреть события
+kubectl describe pvc <name>
+# → Events:
+#   Warning  ProvisioningFailed  failed to provision volume...
+
+# 2. Проверить StorageClass
+kubectl get sc
+# → NAME                 PROVISIONER                    RECLAIMPOLICY   VOLUMEBINDINGMODE
+# → longhorn (default)   driver.longhorn.io             Delete          Immediate
+
+# 3. Проверить, что provisioner работает
+kubectl get pods -n longhorn-system
+# → longhorn-manager-xxxxx   1/1     Running
+
+# 4. Проверить лимиты ResourceQuota
+kubectl get resourcequota -n <namespace>
+```
+
+### Восстановление после сбоя узла
+
+```bash
+# 1. Проверьте статус томов
+kubectl get pv,pvc -o wide | grep Released
+# → pvc-xxx   50Gi   Retain   Released   pvc-xxx   fast-ssd
+
+# 2. Если PV в Released — удалите claimRef для возврата в Available
+kubectl patch pv <pv-name> -p '{"spec":{"claimRef": null}}'
+
+# 3. Дождитесь связывания с новым PVC
+kubectl get pv <pv-name> -w
+# → STATUS: Available → Bound
+```
 
 ---
 
 ## Дополнительная информация
 
+- Базовые концепции: [StorageClass](./storageclass.md).
+- Практические примеры: [Практические сценарии PV и PVC](./pv_and_pvc_scenarios.md).
+- Продвинутые механизмы: [Расширенные сценарии](./pv_pvc_advanced.md).
 - Локальное хранилище: [Local Path Provisioner](./local-path-provisioner.md).
 - Динамический NFS: [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md).
 - Сравнение драйверов: [Сравнение CSI-драйверов](./CSI/csi_drivers_comparison.md).

@@ -57,7 +57,7 @@
 # /etc/default/grub — базовый набор для DPDK
 GRUB_CMDLINE_LINUX_DEFAULT="default_hugepagesz=1G hugepagesz=1G hugepages=8 \
   intel_iommu=on iommu=pt"
-# Для HFT добавить: isolcpus=2-15 nohz_full=2-15 rcu_nocbs=2-15 intel_pstate=disable
+# Для HFT добавить параметры CPU-изоляции (isolcpus, nohz_full, rcu_nocbs). Подробности: **[Ядерная изоляция](../../../Linux/Core/kernel/cpu_isolation.md)**.
 ```
 
 **Настройка HugePages:**
@@ -537,7 +537,8 @@ sudo dpdk-devbind.py --bind=ice 0000:01:00.0
 # GRUB: изоляция ядер под UPF
 # /etc/default/grub
 GRUB_CMDLINE_LINUX_DEFAULT="default_hugepagesz=1G hugepagesz=1G hugepages=16 \
-  intel_iommu=on iommu=pt isolcpus=4-19 nohz_full=4-19 rcu_nocbs=4-19"
+  intel_iommu=on iommu=pt"
+# Параметры CPU-изоляции (isolcpus, nohz_full, rcu_nocbs) описаны в **[Ядерная изоляция](../../../Linux/Core/kernel/cpu_isolation.md)**.
 
 # Выделение HugePages
 echo 16 > /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
@@ -664,11 +665,11 @@ sudo dpdk-devbind.py --bind=ice 0000:01:00.1
 # /etc/default/grub — максимальная изоляция
 GRUB_CMDLINE_LINUX_DEFAULT="default_hugepagesz=1G hugepagesz=1G hugepages=4 \
   intel_iommu=on iommu=pt \
-  isolcpus=2-15 nohz_full=2-15 rcu_nocbs=2-15 \
   intel_pstate=disable \
   processor.max_cstate=0 intel_idle.max_cstate=0 \
   mitigations=off \
   tsc=reliable clocksource=tsc"
+# Параметры CPU-изоляции (isolcpus, nohz_full, rcu_nocbs) описаны в **[Ядерная изоляция](../../../Linux/Core/kernel/cpu_isolation.md)**.
 
 # После reboot: проверка изоляции
 cat /sys/devices/system/cpu/isolated

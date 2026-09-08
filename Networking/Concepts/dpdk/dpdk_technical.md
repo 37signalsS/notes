@@ -779,13 +779,8 @@ cat /sys/devices/system/memory/block_size_bytes
 ### Практические сценарии настройки
 
 #### 1. Тюнинг параметров загрузки (GRUB)
-Для максимальной изоляции ядер и стабильности Hugepages:
-```bash
-# /etc/default/grub
-GRUB_CMDLINE_LINUX_DEFAULT="... default_hugepagesz=1G hugepagesz=1G hugepages=32 isolcpus=2-15 nohz_full=2-15 rcu_nocbs=2-15"
-```
-- `isolcpus`: Планировщик Linux не будет ставить обычные задачи на эти ядра.
-- `nohz_full`: Отключение тиков системного таймера на изолированных ядрах.
+
+Для максимальной изоляции ядер и стабильности Hugepages используйте параметры `isolcpus`, `nohz_full` и `rcu_nocbs`. Полный обзор параметров, их назначение и caveats приведены в **[Ядерная изоляция](../../../Linux/Core/kernel/cpu_isolation.md)**.
 
 #### 2. Проверка NUMA-топологии
 ```bash

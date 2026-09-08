@@ -4,14 +4,28 @@
 
 ## Определения
 
-**NFS Subdir External Provisioner** — это динамический провизионер (provisioner) для Kubernetes, который использует существующий NFS-сервер для автоматического создания объектов `PersistentVolume` (PV) через поддиректории.
+**`NFS Subdir External Provisioner`** — динамический провизионер для Kubernetes, который автоматически создаёт `PersistentVolume` (PV) через поддиректории на существующем NFS-сервере.
 
-При поступлении запроса на создание `PersistentVolumeClaim` (PVC), провизионер автоматически создает новую поддиректорию на общем NFS-ресурсе по шаблону `<namespace>-<pvc-name>-<pv-name>` (настраивается) и предоставляет её как сетевой том.
+**`Provisioner Name`** — уникальное имя провизионера (например, `cluster.local/nfs-client-provisioner`), которое должно совпадать с полем `provisioner` в `StorageClass`. Используется контроллером для обнаружения PVC, требующих динамического выделения.
+
+**`pathPattern`** — параметр StorageClass, определяющий шаблон именования поддиректорий на NFS-сервере. Поддерживает переменные `${.PVC.namespace}`, `${.PVC.name}`, `${.PV.name}` и другие аннотации PVC.
+
+**`archiveOnDelete`** — параметр StorageClass, определяющий поведение при удалении PVC: `false` — физическое удаление поддиректории, `true` — переименование в `archived-<name>` (безопасное удаление с сохранением данных).
+
+**`mountOptions`** — параметр StorageClass, определяющий опции монтирования NFS на узлах (nfsvers, rsize, wsize, hard, noatime и др.).
+
+**`ReadWriteMany` (RWX)** — режим доступа, позволяющий нескольким подам на разных узлах одновременно читать и писать данные в один и тот же том.
 
 **Назначение:**
 - Простое решение для dev/test сред и локальных лабораторий.
 - Использование существующих NFS-хранилищ без поддержки CSI.
 - Обеспечение доступа `ReadWriteMany` (RWX) для подов.
+
+**Смежные темы:**
+- [PersistentVolume и PVC](./pv_and_pvc.md) — базовые концепции, lifecycle, AccessModes.
+- [StorageClass](./storageclass.md) — параметры динамического провижининга.
+- [NFS CSI Driver](./CSI/csi_drivers_comparison.md) — современная CSI-альтернатива.
+- [NFS Server Provisioner (устаревший Helm-чарт)](./nfs-server-provisioner-helm.md) — встроенный NFS-сервер.
 
 ---
 
@@ -39,7 +53,88 @@
 | Параметр | Описание | Почему это важно |
 | :--- | :--- | :--- |
 | `rw` | Чтение и запись | Поды должны иметь возможность писать данные. |
+| `sync` | Синхронная запись | Гарантирует целостность данных при сбоях. |
+| `no_subtree_check` | Отключает проверку поддеревьев | Улучшает производительность и стабильность. |
 | `no_root_squash` | Отключает подмену root | Провизионер создает папки от лица root. Без этого параметра возникнет ошибка `Permission Denied`. |
+
+**Применение изменений:**
+```bash
+# После изменения /etc/exports
+exportfs -ra
+# Проверить текущие экспорты
+exportfs -v
+```
+
+### Шаблоны именования (pathPattern)
+
+Параметр `pathPattern` в StorageClass определяет структуру каталогов на NFS-сервере. Поддерживаются переменные:
+
+| Переменная | Описание | Пример |
+| :--- | :--- | :--- |
+| `${.PVC.namespace}` | Namespace PVC | `production` |
+| `${.PVC.name}` | Имя PVC | `database-pvc` |
+| `${.PV.name}` | Имя PV (генерируется) | `pvc-a1b2c3d4-...` |
+| `${.PVC.annotations.<key>` | Аннотация из PVC | `${.PVC.annotations.example.com/team}` |
+
+**Примеры pathPattern:**
+```yaml
+# По умолчанию (обратная совместимость)
+pathPattern: "${.PVC.namespace}-${.PVC.name}-${.PV.name}"
+# → /var/nfs/kubedata/default-my-pvc-pvc-a1b2c3d4
+
+# Группировка по namespace
+pathPattern: "${.PVC.namespace}/${.PVC.name}"
+# → /var/nfs/kubedata/production/database-pvc
+
+# С аннотациями (для multi-tenant)
+pathPattern: "${.PVC.annotations.com.team/name}/${.PVC.name}"
+# → /var/nfs/kubedata/team-alpha/app-data
+```
+
+**Создание аннотации в PVC:**
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data
+  annotations:
+    com.team/name: "team-alpha"
+spec:
+  storageClassName: managed-nfs-storage
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+```
+
+### Поведение при удалении (archiveOnDelete)
+
+| Значение | Поведение | Когда использовать |
+| :--- | :--- | :--- |
+| `"false"` | Физическое удаление поддиректории со всем содержимым | Dev/Test, временные данные |
+| `"true"` | Переименование в `archived-<namespace>-<pvc-name>-<pv-name>` | Production, важные данные (требует ручной очистки) |
+
+```yaml
+# Пример StorageClass с archiveOnDelete
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-nfs-storage
+provisioner: cluster.local/nfs-client-provisioner
+parameters:
+  archiveOnDelete: "true"
+  pathPattern: "${.PVC.namespace}/${.PVC.name}"
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+mountOptions:
+  - nfsvers=4.1
+  - hard
+  - rsize=1048576
+  - wsize=1048576
+  - noatime
+```
+
+**Важно:** При `archiveOnDelete: "true"` и `reclaimPolicy: Retain` данные сохраняются, но PV требует ручной очистки перед повторным использованием.
 
 ### Переменные окружения (Environment Variables)
 
@@ -81,6 +176,69 @@
 | **Производительность** | Ограничена скоростью сети и возможностями NFS-сервера | Не использовать для high-IOPS workload |
 | **Блокировки** | Нет механизмов блокировок на уровне файлов | Осторожно с параллельной записью |
 | **Зависимость от NFS** | Требуется доступный NFS-сервер | Настроить мониторинг NFS |
+| **Нет снимков** | Не поддерживает Volume Snapshots | Использовать CSI-драйвер или внешние инструменты |
+| **Нет расширения** | Нет поддержки Volume Expansion | Использовать CSI-драйвер |
+
+### Безопасность NFS-сервера
+
+**Ограничение доступа на уровне Firewall:**
+```bash
+# iptables: разрешить NFS только с узлов кластера
+iptables -A INPUT -p tcp --dport 2049 -s 192.168.1.0/24 -j ACCEPT
+iptables -A INPUT -p tcp --dport 2049 -j DROP
+
+# Ограничить по UID/GID (если нужно)
+# В /etc/exports добавить root_squash для production
+/var/nfs/kubedata  192.168.1.0/24(rw,sync,no_subtree_check,root_squash)
+```
+
+**Изоляция через квоты:**
+```bash
+# Установить лимит дискового пространства на NFS-сервере ( quotas)
+# 1. Включить квоты в /etc/fstab
+/dev/sda1  /var/nfs  ext4  defaults,usrquota,grpquota  0  2
+
+# 2. Создать квоту для пользователя/группы
+edquota -u nfsnobody  # или группу
+# Ограничение: 10G soft, 15G hard
+```
+
+**Мониторинг NFS-сервера:**
+```bash
+# Проверить активные подключения
+exportfs -v
+nfsstat -s
+nfsiostat
+
+# Проверить использование диска
+df -h /var/nfs/kubedata
+du -sh /var/nfs/kubedata/*
+```
+
+### Производительность NFS
+
+**Оптимальные mountOptions:**
+```yaml
+mountOptions:
+  - nfsvers=4.1    # NFS 4.1 для параллельных операций
+  - hard           # Отказоустойчивость (безопаснее чем soft)
+  - rsize=1048576  # Максимальный размер блока чтения (1MB)
+  - wsize=1048576  # Максимальный размер блока записи (1MB)
+  - noatime        # Отключить обновление времени доступа
+  - noresvport     # Не использовать зарезервированный порт
+  - connect=8      # Количество TCP-соединений (для NFS 4.1+)
+```
+
+**Тестирование производительности:**
+```bash
+# Бенчмарк NFS с пода
+kubectl run nfs-bench --rm -it --image=alpine -- sh
+
+# Внутри пода:
+apk add --no-cache fio
+fio --name=nfs-test --rw=randwrite --bs=4k --size=100M --numjobs=1 \
+    --runtime=30 --group_reporting --directory=/mnt/nfs
+```
 
 ---
 
@@ -303,26 +461,79 @@ spec:
 
 ### Диагностика и отладка
 
-При возникновении проблем с созданием томов рекомендуется проверить:
+**Полная диагностика проблем с NFS-провизионером:**
 
-1. **Логи провизионера:**
-   ```bash
-   kubectl logs -n nfs-provisioner -l app=nfs-client-provisioner
-   ```
-   *Ожидаемые сообщения:* `successfully created PV`, `waiting for PVC to be bound`.
-   *Ошибки:* `permission denied` (проблемы с правами на NFS), `timeout` (сетевая недоступность сервера).
+```bash
+# 1. Логи провизионера
+kubectl logs -n nfs-provisioner -l app=nfs-client-provisioner --tail=100
 
-2. **Статус PVC:**
-   ```bash
-   kubectl describe pvc <pvc-name>
-   ```
-   В разделе `Events` будет указана причина, если провизионер не смог создать PV.
+# 2. Статус PVC
+kubectl describe pvc <pvc-name>
+# → Секция Events: причина ошибки
 
-3. **Монтирование внутри пода провизионера:**
-   Проверьте, что под провизионера сам успешно смонтировал NFS-корень:
-   ```bash
-   kubectl exec -it -n nfs-provisioner <pod-name> -- df -h /persistentvolumes
-   ```
+# 3. Статус пода провизионера
+kubectl get pods -n nfs-provisioner -o wide
+kubectl describe pod -n nfs-provisioner <pod-name>
+
+# 4. Монтирование NFS внутри пода провизионера
+kubectl exec -it -n nfs-provisioner <pod-name> -- df -h /persistentvolumes
+
+# 5. Проверка NFS-доступности с узла
+showmount -e <nfs-server-ip>
+mount -t nfs4 <nfs-server-ip>:/var/nfs/kubedata /mnt/test
+
+# 6. Проверка StorageClass
+kubectl get storageclass managed-nfs-storage -o yaml
+
+# 7. Проверка PV
+kubectl get pv | grep nfs
+kubectl describe pv <pv-name>
+
+# 8. Проверка событий ProvisioningFailed
+kubectl get events --field-selector reason=ProvisioningFailed
+
+# 9. Проверка финализаторов (если PVC в Terminating)
+kubectl get pvc <name> -o jsonpath='{.metadata.finalizers}'
+
+# 10. Проверка NFS-клиента на узле
+kubectl debug node/<node-name> -it --image=alpine
+# Внутри контейнера:
+apk add --no-cache nfs-utils
+showmount -e <nfs-server-ip>
+```
+
+**Типичные ошибки и решения:**
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `permission denied` | `no_root_squash` не включен | Добавьте `no_root_squash` в `/etc/exports`, выполните `exportfs -ra` |
+| `timeout` | NFS-сервер недоступен | Проверьте сетевую доступность, firewall, статус NFS-сервера |
+| `Unable to mount volume` | NFS-клиент не установлен на узле | Установите `nfs-common` (Debian) или `nfs-utils` (RHEL) |
+| `PV not created` | Провизионер не может подключиться к NFS | Проверьте `NFS_SERVER` и `NFS_PATH`, логи провизионера |
+| `Multi-Attach error` | RWO-том на нескольких узлах | Используйте `ReadWriteMany` или `WaitForFirstConsumer` |
+| `End of directory` | Путь NFS не существует или не экспортирован | Проверьте `exportfs -v`, создайте директорию вручную |
+| `Stale file handle` | NFS-сервер перезагружен или экспорт изменён | Примонтируйте заново или перезапустите поды |
+
+---
+
+## Миграция на NFS CSI Driver
+
+Для миграции с nfs-subdir-external-provisioner на современный NFS CSI Driver:
+
+**Преимущества CSI:**
+- Активная поддержка и безопасность
+- Поддержка Volume Snapshots
+- Поддержка Volume Expansion
+- Лучшая интеграция с RBAC и сетевыми политиками
+
+**Процесс миграции:**
+1. Установите NFS CSI Driver: `helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs --namespace kube-system`
+2. Создайте StorageClass с CSI-драйвером: `nfs.csi.k8s.io`
+3. Постепенно переносите PVC с旧 StorageClass на новую
+4. Скопируйте данные с旧 томов на новые (rsync, cp)
+5. Удалите旧 StorageClass и Provisioner
+
+> **Подробности:** См. [NFS CSI Driver в сравнении драйверов](./CSI/csi_drivers_comparison.md).
 
 ---
 
@@ -342,7 +553,11 @@ spec:
 
 ### См. также
 
+- [PersistentVolume и PVC в Kubernetes](./pv_and_pvc.md) — базовые концепции, lifecycle, AccessModes
+- [Практические сценарии PV и PVC](./pv_and_pvc_scenarios.md) — YAML-манифесты для разных сценариев
+- [StorageClass](./storageclass.md) — параметры динамического провижининга
+- [NFS CSI Driver (современная альтернатива)](./CSI/csi_drivers_comparison.md) — сравнение CSI-драйверов
+- [Local Path Provisioner (для RWO)](./local-path-provisioner.md) — локальный провижинер
+- [Ceph CephFS (распределенное RWX)](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md) — CephFS
 - [NFS: Сетевая файловая система (настройка сервера)](../../Linux/Networking/Services/nfs/index.md)
-- [PersistentVolume и PVC в Kubernetes](./pv_and_pvc.md)
-- [Local Path Provisioner (для RWO)](./local-path-provisioner.md)
-- [Ceph CephFS (распределенное RWX)](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md)
+- [Официальная документация: NFS Subdir External Provisioner](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner)

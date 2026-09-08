@@ -186,10 +186,10 @@ spec:
       auth:
         kubernetes:
           mountPath: kubernetes
-          roles:
-            - name: gitops-role
-              serviceAccountRef:
-                name: eso-vault   # SA с правом аутентификации в Vault
+          role: gitops-role               # имя роли Kubernetes Auth в Vault
+          serviceAccountRef:
+            name: eso-vault               # SA с правом аутентификации в Vault
+            namespace: external-secrets   # обязателен для ClusterSecretStore
 ---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret

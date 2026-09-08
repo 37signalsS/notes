@@ -70,7 +70,11 @@ remote_user = deploy
 # Отключение проверки ключей хостов (только для dev/test!)
 host_key_checking = False
 
+# Стратегия выполнения по умолчанию (free — асинхронно, без ожидания всех хостов)
+strategy = free
+
 # Количество параллельных потоков (сколько хостов одновременно)
+# Для небольших инвентарей 10-20, для крупных 40-100
 forks = 10
 
 # Таймаут подключения к хосту (секунды)
@@ -83,6 +87,15 @@ gathering = smart
 fact_caching = jsonfile
 fact_caching_connection = /tmp/ansible_facts_cache
 fact_caching_timeout = 86400
+
+# Отключение уведомлений о deprecated-функционале
+deprecation_warnings = False
+
+# Callback-плагины (подробнее — [Callback-плагины](./ansible_monitoring_callbacks.md))
+# callbacks_enabled = timer, profile_roles
+
+# Форматирование вывода в YAML
+stdout_callback = yaml
 
 # Логирование (опционально)
 # log_path = /var/log/ansible.log
@@ -110,6 +123,33 @@ retries = 3
 # Плагины инвентаря по умолчанию
 enable_plugins = host_list, script, yaml, ini, auto
 ```
+
+### Переменные окружения
+
+Любую настройку из `ansible.cfg` можно переопределить переменной окружения. Это полезно в CI/CD, когда конфиг хранится в репозитории, а чувствительные или специфичные для среды параметры прокидываются извне.
+
+| Переменная | Описание |
+| :--- | :--- |
+| `ANSIBLE_CONFIG` | Путь к конкретному файлу конфигурации (переопределяет весь поиск). |
+| `ANSIBLE_VAULT_PASSWORD_FILE` | Путь к файлу или скрипту с паролем Vault. Подробнее — [Ansible Vault: Лучшие практики](./Vault/best_practices.md). |
+| `ANSIBLE_DISPLAY_OK_HOSTS` | Отключить вывод хостов со статусом `ok` (`False`). |
+| `ANSIBLE_DISPLAY_SKIPPED_HOSTS` | Отключить вывод хостов со статусом `skipped` (`False`). |
+| `ANSIBLE_STDOUT_CALLBACK` | Плагин вывода (`yaml`, `json`, `minimal`, `debug`). |
+| `ANSIBLE_FORKS` | Количество параллельных соединений (переопределяет `forks` в `ansible.cfg`). |
+| `ANSIBLE_HOST_KEY_CHECKING` | Отключение проверки SSH-ключей (`False`). |
+| `ANSIBLE_TIMEOUT` | Таймаут подключения (секунды). |
+| `ANSIBLE_PIPELINING` | Включение SSH Pipelining (`True`). |
+
+```bash
+# Пример запуска в CI/CD с минимизацией вывода
+export ANSIBLE_DISPLAY_OK_HOSTS=False
+export ANSIBLE_DISPLAY_SKIPPED_HOSTS=False
+export ANSIBLE_VAULT_PASSWORD_FILE=/tmp/vault.pass
+
+ansible-playbook site.yml
+```
+
+> **Важно:** При работе в CI/CD (Jenkins, GitLab CI, GitHub Actions) храните `ansible.cfg` в корне репозитория. Секреты (пароли, ключи) передавайте через переменные окружения или внешние секрет-менеджеры (Infisical, HashiCorp Vault), а не коммитьте их в Git.
 
 ### Управление инвентарем
 
@@ -531,5 +571,6 @@ ssh deploy@10.0.0.10 "python3 --version"
 - [Переменные и факты](./PlaybookStructure/variables.md) — детальное описание иерархии и приоритетов.
 - [Динамический инвентарь](./dynamic_inventory.md) — интеграция с AWS, Yandex Cloud и NetBox.
 - [Оптимизация производительности](./ansible_performance_tuning.md) — SSH pipelining, Forks и стратегии выполнения.
+- [Callback-плагины для мониторинга](./ansible_monitoring_callbacks.md) — настройка `callbacks_enabled` и `stdout_callback`.
 - [Ansible Vault: работа с секретами](./Vault/basics.md) — защита конфиденциальных данных.
 - [Основные концепции Ansible](./ansible_core_concepts.md) — архитектура, идемпотентность, FQCN.

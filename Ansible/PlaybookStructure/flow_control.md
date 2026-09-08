@@ -152,6 +152,30 @@
 
 **Примечание:** `loop.index` (начинается с 1) и `loop.index0` (начинается с 0) также доступны без явного указания `index_var`. Однако `index_var` предпочтителен для вложенных циклов, где `loop.*` переменные перезаписываются внешним циклом.
 
+### Запуск задачи N раз с разными параметрами
+
+Для генерации числовой последовательности используйте `lookup('sequence', ...)`:
+
+```yaml
+- name: Запуск таски с 10 параметрами
+  ansible.builtin.command: /opt/script.sh --param {{ item }}
+  loop: "{{ lookup('sequence', 'start=1', 'end=10') | list }}"
+  register: results
+```
+
+Или с использованием простого списка:
+
+```yaml
+- name: Обработка списка хостов
+  ansible.builtin.command: /opt/check.sh {{ item }}
+  loop:
+    - host1.example.com
+    - host2.example.com
+    - host3.example.com
+```
+
+Подробнее: **[Переменные и приоритеты](../../Ansible/PlaybookStructure/variables.md)**.
+
 ### Регистрация и переопределение статусов
 
 Ansible определяет успешность задачи по коду возврата (RC). Это поведение можно переопределить:

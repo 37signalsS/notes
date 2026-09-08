@@ -83,17 +83,7 @@ echo performance > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
 
 ### CPU Isolation (isolcpus)
 
-Для критически важных ядер:
-
-```bash
-# /etc/default/grub
-GRUB_CMDLINE_LINUX="... isolcpus=2,3 systemd.cpu_affinity=0,1"
-
-# После изменения
-update-grub && reboot
-```
-
-**Обоснование:** Ядра 2,3 выделяются для etcd. Никакой другой процесс не может их занимать, что гарантирует мгновенную обработку heartbeat-сообщений.
+Для критически важных ядер используйте параметры загрузки `isolcpus`, `nohz_full` и `rcu_nocbs`. Детальная настройка и обоснование приведены в **[Изоляция CPU](../Linux/Core/kernel/cpu_isolation.md)**.
 
 ### Лимиты файловых дескрипторов
 

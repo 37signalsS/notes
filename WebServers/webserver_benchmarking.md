@@ -147,7 +147,7 @@ bombardier -d 10s -r 1000 https://example.com/
 
 ### Современное нагрузочное тестирование с k6 (v2.2.0)
 
-k6 версии 2.2.0 поддерживает нативный TypeScript и расширенные возможности gRPC-стриминга.
+Обзор ключевых концепций k6: [Нагрузочное тестирование с помощью k6](../Testing/k6_load_testing.md). k6 версии 2.2.0 поддерживает нативный TypeScript и расширенные возможности gRPC-стриминга.
 
 ```typescript
 import http from 'k6/http';
@@ -200,5 +200,6 @@ export default function () {
 
 - [Настройка Angie для высоких нагрузок](../WebServers/Angie/High_Load/index.md) — архитектурные паттерны и тюнинг.
 - [Интеграция k6 в CI/CD пайплайны](../Testing/testing_cicd_integration.md#нагрузочное-тестирование-в-ci-k6-и-quality-gates) — настройка Quality Gates и автоматизация порогов.
+- [Нагрузочное тестирование с помощью k6](../Testing/k6_load_testing.md) — обзор k6, концепции, практические сценарии.
 - [RSS, RPS, RFS в Linux](../../Linux/Networking/Concepts/rss_rps_rfs.md) — многопоточная обработка трафика на уровне ядра.
 - [Диагностика HTTP-задержек](../../Linux/Diagnostics/Networking/curl_network_diagnostics.md) — использование curl для анализа Tail Latency.

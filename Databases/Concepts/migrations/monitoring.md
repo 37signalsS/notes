@@ -166,6 +166,13 @@ atlas schema diff --from "file://schema.hcl" --to "file://current.hcl"
     - Лаг репликации.
 - **Audit-логи:** Храните историю выполнения миграций с указанием исполнителя. Используйте `SET application_name = 'migration_job_123'` перед запуском для удобства фильтрации в логах.
 - **Линтинг схем:** Интегрируйте инструменты мониторинга дрейфа схемы в CI/CD (например, `sqlfluff` или `atlas lint`) для раннего обнаружения опасных паттернов.
+- **Алертинг на долгоживущие транзакции:** Настройте алерт, когда сессия находится в статусе `idle in transaction` дольше порога (например, 30s). Такие сессии удерживают `AccessShareLock` и могут стать причиной каскадного зависания миграций. Запрос для детекта:
+  ```sql
+  SELECT pid, usename, xact_start, query
+  FROM pg_stat_activity
+  WHERE state = 'idle in transaction'
+    AND xact_start < now() - interval '30s';
+  ```
 
 ### Смежные темы
 

@@ -101,6 +101,8 @@ dast_scan:
 
 ### Пример Jenkins Pipeline (Declarative)
 
+> Примечание: данный пример приведён в синтаксисе Jenkins Declarative Pipeline. Общее сравнение декларативного и скриптового подходов к построению пайплайнов см. в **[Глоссарии пайплайнов](../Core_Concepts/pipeline_glossary.md#декларативный-pipeline)**.
+
 ```groovy
 pipeline {
   agent any

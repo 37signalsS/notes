@@ -11,11 +11,13 @@ from rag_config import (
     RERANKER_MAX_CHARS,
     HF_HUB_TIMEOUT,
     ENGINES,
+    MAX_MEMORY_MB,
 )
 
 log = logging.getLogger("rag")
 
-_THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+# Reduce thread pool size to limit parallel model operations
+_THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 import atexit
 atexit.register(lambda: _THREAD_POOL.shutdown(wait=False))
@@ -35,16 +37,19 @@ class _EmbedderProtocol(Protocol):
 
 
 class _DocPrefixEmbeddings:
-    def __init__(self, inner: _EmbedderProtocol, doc_prefix: str) -> None:
+    def __init__(self, inner: _EmbedderProtocol, doc_prefix: str, inference_lock: threading.Lock) -> None:
         self._inner = inner
         self._doc_prefix = doc_prefix
+        self._inference_lock = inference_lock
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         prefixed = [self._doc_prefix + t for t in texts]
-        return self._inner.embed_documents(prefixed)
+        with self._inference_lock:
+            return self._inner.embed_documents(prefixed)
 
     def embed_query(self, text: str) -> list[float]:
-        return self._inner.embed_query(text)
+        with self._inference_lock:
+            return self._inner.embed_query(text)
 
 
 def _load_with_timeout(func: Any, timeout: int) -> Any:
@@ -88,6 +93,29 @@ def _with_hf_offline_fallback(func: Any, timeout: int, error_msg: str = "") -> A
 
 
 _EMBEDDING_MODEL_LOCK = threading.Lock()
+_EMBEDDING_INFERENCE_LOCKS: dict[str, threading.Lock] = {}
+_EMBEDDING_INFERENCE_LOCKS_LOCK = threading.Lock()
+
+
+def _get_embedding_inference_lock(model_name: str) -> threading.Lock:
+    with _EMBEDDING_INFERENCE_LOCKS_LOCK:
+        if model_name not in _EMBEDDING_INFERENCE_LOCKS:
+            _EMBEDDING_INFERENCE_LOCKS[model_name] = threading.Lock()
+        return _EMBEDDING_INFERENCE_LOCKS[model_name]
+
+
+class _LockedEmbedder:
+    def __init__(self, inner: _EmbedderProtocol, inference_lock: threading.Lock) -> None:
+        self._inner = inner
+        self._inference_lock = inference_lock
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        with self._inference_lock:
+            return self._inner.embed_documents(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        with self._inference_lock:
+            return self._inner.embed_query(text)
 
 
 def _load_embedding_model(model_name: str, device: str) -> "HuggingFaceEmbeddings":
@@ -122,20 +150,44 @@ def _clear_model_caches() -> None:
     _sparse_embedding_cache = None
 
 
+def _check_and_clear_models_if_needed() -> None:
+    """Clear model caches if memory usage is too high."""
+    try:
+        import psutil
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024 * 1024)
+        if memory_mb > MAX_MEMORY_MB * 0.8:  # Clear at 80% of limit
+            log.warning("Memory usage %.1f MB, clearing model caches", memory_mb)
+            _clear_model_caches()
+            # Force garbage collection
+            import gc
+            gc.collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
 def get_embeddings(model_name: str, device: Optional[str] = None, doc_prefix: str = "") -> Any:
+    _check_and_clear_models_if_needed()
     if device is None:
         device = get_device()
     emb = _load_embedding_model(model_name, device)
+    inference_lock = _get_embedding_inference_lock(model_name)
     if doc_prefix:
-        return _DocPrefixEmbeddings(emb, doc_prefix)
-    return emb
+        return _DocPrefixEmbeddings(emb, doc_prefix, inference_lock)
+    return _LockedEmbedder(emb, inference_lock)
 
 
 _RERANKER_LOCK = threading.Lock()
+_RERANKER_INFERENCE_LOCK = threading.Lock()
 _reranker_cache: Optional[Any] = None
 
 
 def get_reranker() -> Optional[Any]:
+    _check_and_clear_models_if_needed()
     global _reranker_cache
     if _reranker_cache is not None:
         return _reranker_cache
@@ -163,10 +215,12 @@ def get_reranker() -> Optional[Any]:
 
 
 _SPARSE_EMBEDDING_LOCK = threading.Lock()
+_SPARSE_INFERENCE_LOCK = threading.Lock()
 _sparse_embedding_cache: Optional[Any] = None
 
 
 def get_sparse_embedding_model() -> "SparseTextEmbedding":
+    _check_and_clear_models_if_needed()
     global _sparse_embedding_cache
     if _sparse_embedding_cache is not None:
         return _sparse_embedding_cache
@@ -181,3 +235,11 @@ def get_sparse_embedding_model() -> "SparseTextEmbedding":
             return _sparse_embedding_cache
         except Exception as exc:
             raise RuntimeError("Failed to load SparseTextEmbedding") from exc
+
+
+def get_reranker_inference_lock() -> threading.Lock:
+    return _RERANKER_INFERENCE_LOCK
+
+
+def get_sparse_inference_lock() -> threading.Lock:
+    return _SPARSE_INFERENCE_LOCK

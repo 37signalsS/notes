@@ -57,18 +57,31 @@ kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
 
 Внедрять KEDA без мониторинга — значит летать вслепую: автоскейлер может молча перестать получать метрики или упереться в лимит реплик.
 
-Ключевые метрики оператора в Prometheus:
+### Ключевые метрики оператора в Prometheus
 
 ```text
+# Метрики масштабирования
 keda_scaler_active                # Количество активных ScaledObjects
 keda_scaledobject_replicas        # Текущее количество реплик
 keda_scaledobject_max_replicas    # Максимальное количество реплик (из spec)
+keda_scaledobject_ready_replicas  # Количество готовых реплик
+
+# Метрики скейлеров
 keda_scaler_metrics_value         # Текущее значение метрики скейлера
-rate(keda_scaler_errors_total[5m])  # Ошибки скейлера
+keda_scaler_metrics_target        # Целевое значение метрики
 keda_scaler_metrics_latency       # Latency проверки скейлера
+
+# Ошибки и здоровье
+keda_scaler_errors_total          # Общее количество ошибок скейлера
+rate(keda_scaler_errors_total[5m])  # Ошибки скейлера в секунду
+keda_operator_errors_total        # Ошибки оператора
+
+# Производительность
+keda_scaler_latency               # Время получения метрики
+keda_operator_reconcile_duration  # Время согласования
 ```
 
-Обязательные алерты.
+### Готовые алерты
 
 **1. Упор в maxReplicaCount:**
 
@@ -124,6 +137,32 @@ keda_scaler_metrics_latency       # Latency проверки скейлера
   annotations:
     summary: "Cold start taking too long"
     description: "App scaled from 0 but startup is slow. Check image size, probes."
+```
+
+**5. KEDA Operator не здоров:**
+
+```yaml
+- alert: KEDANotHealthy
+  expr: up{job="keda-operator"} == 0
+  for: 2m
+  labels:
+    severity: critical
+  annotations:
+    summary: "KEDA operator is down"
+    description: "KEDA operator is not responding. Autoscaling may be broken."
+```
+
+**6. Высокая задержка метрик:**
+
+```yaml
+- alert: KEDAMetricsLatencyHigh
+  expr: histogram_quantile(0.95, rate(keda_scaler_metrics_latency_bucket[5m])) > 10
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "KEDA metrics latency is high"
+    description: "Scaler metrics collection is taking too long (>10s)."
 ```
 
 ## Типичные проблемы и решения
@@ -303,8 +342,489 @@ resources:
 
 Методика выбора значения `maxReplicaCount` и финансовая сторона лимитов описаны в [KEDA: FinOps-гардрейлы и измерение экономии](./keda-finops.md).
 
+## Продвинутая диагностика
+
+### Проверка компонентов KEDA
+
+```bash
+# Статус всех подов KEDA
+kubectl get pods -n keda -o wide
+
+# Детальная информация о поде оператора
+kubectl describe pod -l app=keda-operator -n keda
+
+# Проверка readiness и liveness проб
+kubectl get pods -n keda -o jsonpath='{.items[*].status.conditions}' | jq .
+
+# Проверка использования ресурсов
+kubectl top pods -n keda
+```
+
+### Проверка Admission Webhook
+
+```bash
+# Проверка наличия webhook
+kubectl get validatingwebhookconfigurations | grep keda
+
+# Проверка логов webhook
+kubectl logs -n keda deployment/keda-admission-webhooks -f
+
+# Тестирование webhook (если есть ошибки при создании ScaledObject)
+kubectl apply -f test-scaledobject.yaml --dry-run=server
+```
+
+### Отладка в реальном времени
+
+```bash
+# Мониторинг метрик в реальном времени
+kubectl port-forward -n keda svc/keda-metrics-server 8080:8080
+curl http://localhost:8080/metrics | grep keda_
+
+# Проверка HPA в реальном времени
+watch kubectl get hpa -n <namespace>
+
+# Просмотр событий KEDA
+kubectl get events -n keda --watch
+```
+
+## Анализ задержки масштабирования (scaling latency)
+
+### Этапы задержки
+
+```text
+1. Обнаружение события (pollingInterval)
+   └── Задержка: 0 до pollingInterval секунд
+
+2. Получение метрики (scaler check)
+   └── Задержка: keda_scaler_metrics_latency
+
+3. Рассчёт desired replicas (HPA)
+   └── Задержка: ~10 секунд (stabilization window)
+
+4. Создание пода (kube-scheduler)
+   └── Задержка: зависит от Image pull, resource availability
+
+5. Инициализация пода (readiness probe)
+   └── Задержка: initialDelaySeconds + periodSeconds × failureThreshold
+```
+
+### Измерение задержки
+
+```promql
+# Время от обнаружения события до создания пода
+time() - kube_pod_created{namespace="app"}
+
+# Время готовности пода
+kube_pod_status_ready_time - kube_pod_created
+
+# Общая задержка масштабирования
+histogram_quantile(0.95, rate(keda_scaler_metrics_latency_bucket[5m]))
+```
+
+### Оптимизация задержки
+
+```yaml
+# Агрессивная политика масштабирования
+advanced:
+  horizontalPodAutoscalerConfig:
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+      scaleDown:
+        stabilizationWindowSeconds: 300
+```
+
+## Траблшутинг сетевой политики
+
+### Проблема: KEDA не может подключиться к источнику метрик
+
+Симптомы: `error getting metric: connection refused` или `timeout`
+
+```bash
+# Проверка сетевой политики
+kubectl get networkpolicies -n keda
+
+# Проверка DNS разрешения из пода KEDA
+kubectl exec -n keda deployment/keda-operator -- nslookup prometheus.monitoring.svc
+
+# Проверка доступности сервиса
+kubectl exec -n keda deployment/keda-operator -- curl -v http://prometheus.monitoring.svc:9090
+
+# Проверка трафика (если есть CNI с поддержкой flow logs)
+kubectl logs -n keda deployment/keda-operator | grep -i "connection\|timeout\|refused"
+```
+
+### Решение: Разрешить доступ через NetworkPolicy
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keda-egress
+  namespace: keda
+spec:
+  podSelector:
+    matchLabels:
+      app: keda-operator
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+    - to:  # DNS
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+```
+
+## Продвинутая работа с Prometheus scaler
+
+### Оптимизация запросов
+
+```promql
+# Плохо: высокая кардинальность
+rate(http_requests_total{pod=~".*"}[2m])
+
+# Хорошо: агрегация по deployment
+sum(rate(http_requests_total{deployment="api"}[2m]))
+
+# Еще лучше: использование recording rules
+# В Prometheus создать rule:
+# - record: api:request_rate:5m
+#   expr: sum(rate(http_requests_total{deployment="api"}[5m]))
+
+# В KEDA использовать:
+# query: api:request_rate:5m
+```
+
+### Обработка разрывов данных (metric gaps)
+
+```yaml
+# Если Prometheus временно недоступен, KEDA может получить пустой результат
+# Решение: настроить fallback
+fallback:
+  failureThreshold: 3
+  replicas: 2
+  behavior: currentReplicas
+```
+
+### Диагностика сложных запросов
+
+```bash
+# Тестирование PromQL запроса
+kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
+  curl "http://prometheus.monitoring.svc:9090/api/v1/query" \
+  --data-urlencode "query=sum(rate(http_requests_total{deployment=\"api\"}[5m]))"
+
+# Проверка cardinality метрик
+kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
+  curl "http://prometheus.monitoring.svc:9090/api/v1/label/__name__/values"
+```
+
+## Масштабирование с несколькими триггерами (multi-trigger)
+
+### Особенности отладки
+
+При нескольких триггерах в ScaledObject KEDA использует MAX логику. Отладка усложняется:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: multi-trigger
+spec:
+  triggers:
+    - type: rabbitmq
+      metadata:
+        queueLength: "10"
+    - type: prometheus
+      metadata:
+        query: "sum(rate(http_requests_total[5m]))"
+        threshold: "100"
+```
+
+### Диагностика каждого триггера
+
+```bash
+# Проверка метрик всех триггеров
+kubectl describe scaledobject multi-trigger -n app
+
+# Смотрим на Status.Conditions:
+# - TriggerActive: true/false для каждого триггера
+# - CurrentMetrics: текущие значения для каждого триггера
+
+# Проверка логов оператора
+kubectl logs -n keda deployment/keda-operator -f | grep -A5 -B5 multi-trigger
+```
+
+### Типичные проблемы multi-trigger
+
+```text
+1. Конфликтующие триггеры
+   - Симптом: масштабирование происходит неожиданно
+   - Причина: один триггер требует 0 реплик, другой — 10
+   - Решение: проверить activationThreshold для каждого триггера
+
+2. Разная частота опроса
+   - Симптом: нестабильное поведение
+   - Причина: pollingInterval مختلف для триггеров
+   - Решение: установить единый pollingInterval
+
+3. Ошибка в одном триггере блокирует другие
+   - Симптом: масштабирование прекращается
+   - Причина: fallback не настроен
+   - Решение: добавить fallback для каждого триггера
+```
+
+## Обновление и миграция KEDA
+
+### Порядок обновления
+
+```bash
+# 1. Проверить текущую версию
+helm list -n keda
+
+# 2. Обновить репозиторий
+helm repo update
+
+# 3. Проверить доступные версии
+helm search repo kedacore/keda --versions
+
+# 4. Обновить (с сохранением конфигурации)
+helm upgrade keda kedacore/keda \
+  --namespace keda \
+  --version 2.20.0 \
+  --reuse-values
+
+# 5. Проверить статус
+kubectl get pods -n keda
+kubectl get scaledobject,scaledjob -A
+```
+
+### Откат при проблемах
+
+```bash
+# 1. Вернуть предыдущую версию
+helm rollback keda <REVISION> -n keda
+
+# 2. Проверить статус
+kubectl get pods -n keda
+
+# 3. Проверить ScaledObject
+kubectl get scaledobject -A
+kubectl describe scaledobject <name> -n <namespace>
+```
+
+### Проверки после обновления
+
+```bash
+# Проверка совместимости API
+kubectl api-resources | grep keda
+
+# Проверка CRD
+kubectl get crd | grep keda
+
+# Проверка логов на ошибки
+kubectl logs -n keda deployment/keda-operator -f | grep -i error
+
+# Тестирование масштабирования
+kubectl apply -f test-scaledobject.yaml
+kubectl get hpa -n <namespace> -w
+```
+
+## Исчерпание ресурсов KEDA Operator
+
+### Симптомы
+
+```text
+- KEDA Operator в статусе CrashLoopBackOff
+- Метрики перестают обновляться
+- ScaledObject не масштабируется
+- Ошибки в логах: "out of memory" или "CPU throttling"
+```
+
+### Диагностика
+
+```bash
+# Проверка использования ресурсов
+kubectl top pods -n keda
+
+# Проверка лимитов
+kubectl get pod -n keda -o jsonpath='{.items[*].spec.containers[*].resources}'
+
+# Проверка событий OOMKilled
+kubectl get events -n keda --field-selector reason=OOMKilling
+
+# Проверка CPU throttling
+kubectl get pod -n keda -o jsonpath='{.items[*].status.conditions}' | jq .
+```
+
+### Решение
+
+```yaml
+# Увеличение ресурсов KEDA Operator
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keda-operator
+  namespace: keda
+spec:
+  template:
+    spec:
+      containers:
+        - name: keda-operator
+          resources:
+            requests:
+              cpu: 200m    # было 100m
+              memory: 256Mi  # было 128Mi
+            limits:
+              cpu: 1000m   # было 500m
+              memory: 1Gi   # было 512Mi
+```
+
+## Специфика ScaledJob
+
+### Отличия от ScaledObject
+
+```text
+ScaledObject:
+- Управляет Deployment/StatefulSet
+- HPA масштабирует существующие поды
+- Поды перезапускаются при масштабировании
+
+ScaledJob:
+- Управляет Job
+- Создаёт новые Job при масштабировании
+- Job завершаются после обработки
+```
+
+### Типичные проблемы ScaledJob
+
+```bash
+# Проверка статуса Job
+kubectl get jobs -n <namespace>
+
+# Проверка логов завершённых Job
+kubectl logs job/<job-name> -n <namespace>
+
+# Проверка почему Job не запускаются
+kubectl describe scaledjob <name> -n <namespace>
+```
+
+### Решение проблем
+
+```yaml
+# Проблема: Job создаются, но не запускаются
+# Причина: не хватает ресурсов или quota
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: batch-processor
+spec:
+  pollingInterval: 30
+  maxReplicaCount: 10
+  scalingStrategy:
+    strategy: default  # или "custom" для ручной настройки
+  jobTargetRef:
+    template:
+      spec:
+        containers:
+          - name: processor
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+        restartPolicy: Never
+  triggers:
+    - type: rabbitmq
+      metadata:
+        queueLength: "5"
+```
+
+## Дашборды для мониторинга KEDA
+
+### Основной дашборд (Grafana)
+
+```json
+{
+  "panels": [
+    {
+      "title": "KEDA ScaledObjects Active",
+      "targets": [{"expr": "keda_scaler_active"}],
+      "type": "stat"
+    },
+    {
+      "title": "Replicas vs Max",
+      "targets": [
+        {"expr": "keda_scaledobject_replicas", "legendFormat": "Current"},
+        {"expr": "keda_scaledobject_max_replicas", "legendFormat": "Max"}
+      ],
+      "type": "timeseries"
+    },
+    {
+      "title": "Scaler Errors Rate",
+      "targets": [{"expr": "rate(keda_scaler_errors_total[5m])"}],
+      "type": "timeseries"
+    },
+    {
+      "title": "Metrics Latency P95",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(keda_scaler_metrics_latency_bucket[5m]))"}],
+      "type": "timeseries"
+    }
+  ]
+}
+```
+
+### Готовые дашборды
+
+- **KEDA Operator Dashboard**: https://grafana.com/grafana/dashboards/16880
+- **KEDA Scaler Dashboard**: https://grafana.com/grafana/dashboards/16881
+
+## Чек-лист production-развёртывания
+
+### До развёртывания
+
+```text
+□ Установлен и настроен Prometheus
+□ Настроены алерты (минимум 4 базовых)
+□ Настроен Grafana дашборд
+□ KEDA установлен в отдельный namespace
+□ Настроены RBAC разрешения
+□ Настроены Network Policies
+□ Тестовые ScaledObject работают в dev/staging
+```
+
+### После развёртывания
+
+```text
+□ Все поды KEDA в Running статусе
+□ Метрики поступают в Prometheus
+□ Алерты протестированы (инжектнутые ошибки)
+□ Мониторинг 24/7 первый неделю
+□ Документация для on-call команды
+□ Runbook для типовых проблем
+```
+
 ## См. также
 
+* **[KEDA: Основные концепции](./keda_concepts.md)** — архитектура, компоненты, глоссарий
 * **[KEDA: Практические сценарии](./practical_scenarios.md)** — установка и конфигурация триггеров
+* **[KEDA + Kafka](./kafka-keda-scaler.md)** — масштабирование по consumer lag
+* **[KEDA + Redis](./redis-keda-scaler.md)** — масштабирование по длине очереди/стрима
 * **[KEDA: FinOps-гардрейлы и измерение экономии](./keda-finops.md)** — пилот и замер эффекта
+* **[KEDA: Тестирование и валидация](./keda-testing-validation.md)** — проверка масштабирования, chaos
+* **[KEDA: Вопросы для собеседования](./keda-interview-questions.md)** — систематизация вопросов
 * **[Horizontal Pod Autoscaler (HPA): Практические сценарии](../HPA/hpa_scenarios.md)** — стандартное масштабирование

@@ -6,8 +6,13 @@
 
 **403 Forbidden (Admission Control)** — отказ, возникающий на этапе контроля допуска. Даже если RBAC разрешает действие, запрос может быть заблокирован политиками безопасности (например, **Pod Security Admission**), квотами (**ResourceQuotas**) или внешними вебхуками.
 
+**NonResourceURLs** — отдельный класс правил RBAC, действующий только в `ClusterRole`. Определяет доступ к URL-путям, не являющимся ресурсами Kubernetes (например, `/healthz`, `/metrics`, `/version`, `/openapi/v2`). Отсутствие правила для `nonResourceURLs` приводит к 403 Forbidden даже при наличии прав на все ресурсы.
+
+**Wildcard-подстановки (`*`)** — символ `*` в полях `apiGroups`, `resources`, `verbs` означает «любое значение» этого поля. Позволяет создавать максимально широкие роли (например, аналог `cluster-admin`) и автоматически покрывать новые ресурсы и глаголы будущих версий Kubernetes. В `nonResourceURLs` звёздочка работает как суффиксный glob-шаблон: `/foo/*` соответствует всем подпутям `/foo/`.
+
 > Подробное сравнение 401 vs 403: [definitions.md](definitions.md)
 > Теория и архитектура RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
+> Детали wildcard и resourceNames: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
 
 ## Основные концепции
 
@@ -42,6 +47,47 @@ kubectl auth can-i get pods/log \
   --as=system:serviceaccount:prod-ns:app-sa \
   -n prod-ns
 # → yes / no
+```
+
+> **Важно (ложное «да» от can-i):** команда `kubectl auth can-i create configmap/fluentd-extra-config` может вернуть `yes`, хотя фактический `kubectl create` завершится `403 Forbidden`. Причина — `can-i` проверяет разрешение на «именованный» эндпоинт (с указанием имени объекта в URL), а реальный `POST`-запрос идёт на коллекцию без имени. При отладке всегда проверяйте реальное действие, а не только `can-i`. Подробнее: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md).
+
+### Справочник команд диагностики RBAC
+
+| Задача | Команда |
+|--------|---------|
+| Проверка конкретного права SA | `kubectl auth can-i <verb> <resource> --as=system:serviceaccount:<ns>:<sa> -n <ns>` |
+| Полный список прав SA | `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<sa> -n <ns>` |
+| Проверка nonResourceURL | `kubectl auth can-i get /healthz --as=<user>` |
+| Проверка с группой | `kubectl auth can-i create deployments --as=<user> --as-group=<group> -n <ns>` |
+| Определение API-группы ресурса | `kubectl api-resources -o wide \| grep <resource>` |
+| Список всех RoleBinding в NS | `kubectl get rolebindings -n <ns> -o wide` |
+| Список всех ClusterRoleBinding | `kubectl get clusterrolebindings -o wide` |
+| Сырой HTTP-ответ с Audit-Id | `kubectl get <resource> -v=8 2>&1 \| grep -E "Audit-Id\|HTTP/"` |
+
+### Пошаговый workflow диагностики 403
+
+```text
+Получен 403 Forbidden
+    ↓
+Шаг 1: Извлечь код и Audit-Id
+    kubectl <command> -v=8 2>&1 | grep -E "Audit-Id|HTTP/"
+    ↓
+Шаг 2: Проверить, является ли проблема RBAC
+    kubectl auth can-i <verb> <resource> --as=<subject> -n <ns>
+    ├── NO  → проблема в RBAC (Шаг 3)
+    └── YES → проблема в Admission Control (см. advanced.md)
+    ↓
+Шаг 3: Локализация RBAC-проблемы
+    3a. Проверить API-группу: kubectl api-resources -o wide | grep <resource>
+    3b. Проверить все привязки SA:
+        kubectl get rolebindings,clusterrolebindings -A -o wide | grep <sa-name>
+    3c. Проверить наличие кросс-неймспейс привязки:
+        kubectl get rolebinding <name> -n <ns> -o jsonpath='{.subjects}'
+    3d. Проверить ClusterRole vs Role (кластерные ресурсы требуют ClusterRole)
+    ↓
+Шаг 4: Применить исправление и валидировать
+    kubectl apply -f < corrected-rbac.yaml
+    kubectl auth can-i <verb> <resource> --as=<subject> -n <ns>  # → yes
 ```
 
 > Полный алгоритм и пошаговая диагностика: [diagnostics.md](diagnostics.md)
@@ -176,6 +222,139 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
+### Сценарий 7: Wildcard-подстановки и ловушки с `resourceNames`
+
+**Контекст:** Использование `*` в правилах RBAC для автоматического покрытия будущих ресурсов.
+
+**Правило с wildcard:**
+```yaml
+rules:
+- apiGroups: ["apps"]
+  resources: ["*"]
+  verbs: ["*"]
+```
+
+**Ловушка:** Wildcard `verbs: ["*"]` покрывает все текущие и будущие глаголы, но **не** работает как «любое действие для конкретного resourceNames». Если указан `resourceNames`, глаголы `create` и `deletecollection` **игнорируют** ограничение по именам (объект не существует на момент авторизации). Также `list`/`watch` с `resourceNames` требуют указания field selector:
+
+```bash
+# Ошибка — вернёт 403, хотя get разрешён:
+kubectl get configmaps
+
+# Правильно — с field selector:
+kubectl get configmaps --field-selector=metadata.name=my-configmap
+```
+
+> Подробнее о поведении `resourceNames`: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
+
+### Сценарий 8: Доступ к нересурсным URL (nonResourceURLs)
+
+**Контекст:** Мониторинг, health-check агенты или внешние инструменты обращаются к `/healthz`, `/metrics`, `/version` и получают 403.
+
+**Ошибка:** `User "system:serviceaccount:monitoring:prometheus" is forbidden: User "..." cannot get path "/metrics"`
+
+**Особенность:** `nonResourceURLs` доступны **только** в `ClusterRole` и не зависят от namespace. Role не поддерживает этот тип правил.
+
+**Решение:**
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: metrics-reader
+rules:
+- nonResourceURLs: ["/metrics", "/healthz", "/version"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-metrics
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: metrics-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### Сценарий 9: Интеграция с Prometheus Operator (системы мониторинга)
+
+**Контекст:** Prometheus Operator или Geneva DaemonSet не может собирать метрики с подов или узлов.
+
+**Типичные ошибки:**
+- `cannot list resource "pods" in API group ""` — нет прав на Service Discovery.
+- `cannot list resource "endpointslices" in API group "discovery.k8s.io"` — устаревшие правила без endpointslices.
+- `cannot get resource "nodes/metrics" in API group "metrics.k8s.io"` — нет доступа к агрегированному API.
+
+**Решение — минимальный набор прав для Prometheus:**
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-server
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "nodes/metrics", "services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+  verbs: ["get"]
+```
+
+**Валидация:**
+```bash
+# Проверка прав Prometheus SA на скрапинг
+kubectl auth can-i list pods --as=system:serviceaccount:monitoring:prometheus-server
+# → yes
+kubectl auth can-i list endpointslices --as=system:serviceaccount:monitoring:prometheus-server
+# → yes
+```
+
+### Сценарий 10: CI/CD пайплайн и деплой через ServiceAccount
+
+**Контекст:** GitLab Agent, ArgoCD Application Controller или другой CD-инструмент пытается применить манифесты.
+
+**Ошибка:** `deployments.apps "my-app" is forbidden: User "system:serviceaccount:argocd:argocd-application-controller" cannot patch resource "deployments" in API group "apps" in the namespace "prod"`
+
+**Типичная причина:** RoleBinding ссылается на Role с правами `get`/`list`/`watch`, но не включает `create`/`update`/`patch`/`delete`.
+
+**Решение для CD-контроллера:**
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cd-deployer
+  namespace: prod
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "services"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+```
+
+### Сводная таблица типичных ошибок 403 (RBAC)
+
+| Сообщение об ошибке | Вероятная причина | Решение |
+|----------------------|-------------------|---------|
+| `cannot list resource "pods" in API group ""` | Отсутствует RoleBinding для SA | Создать Role + RoleBinding с `verbs: ["get", "list", "watch"]` |
+| `cannot patch resource "deployments" in API group "apps"` | Неверная API-группа (`""` вместо `"apps"`) | Исправить `apiGroups: ["apps"]` |
+| `cannot create resource "pods/exec" in API group ""` | Нет глагола `create` для подресурса | Добавить `resources: ["pods/exec"]` с `verbs: ["create"]` |
+| `cannot get resource "nodes/metrics" in API group "metrics.k8s.io"` | Нет прав на агрегированное API | ClusterRoleBinding на `system:metrics-server` или свой ClusterRole |
+| `secrets "my-secret" is forbidden: ... resourceNames` | `list` без field selector | Использовать `get` или `--field-selector=metadata.name=...` |
+| `User "system:anonymous" cannot ...` | Анонимный доступ без прав | Включить аутентификацию или предоставить права `system:unauthenticated` |
+| `namespaces "prod" is forbidden` | Role вместо ClusterRole для кластерного ресурса | Использовать ClusterRole + ClusterRoleBinding |
+
 ## Дополнительная информация
 
 ### Справочник API-групп и ресурсов
@@ -194,11 +373,32 @@ roleRef:
 ### Чек-лист для устранения 403 Forbidden
 
 1.  **Множественное число:** Ресурсы в правилах ВСЕГДА во множественном числе (`pods`, а не `pod`).
-2.  **API Group:** Проверьте группу через `kubectl api-resources`. Для ядра — `""`.
+2.  **API Group:** Проверьте группу через `kubectl api-resources`. Для ядра — `""`, для деплоев — `"apps"`, для сетевых политик — `"networking.k8s.io"`.
 3.  **Namespace Match:** Убедитесь, что `ServiceAccount`, `Role` и `RoleBinding` находятся в одном пространстве имен (если не используется ClusterRole).
 4.  **Verbs для подресурсов:** Помните, что `exec` и `portforward` требуют глагола `create`.
 5.  **Impersonation:** Всегда проверяйте гипотезу через `kubectl auth can-i --as=...`.
 6.  **Admission Control:** Если RBAC настроен верно, но ошибка сохраняется — проверьте события неймспейса (`kubectl get events`) на предмет блокировок PSA или квот.
+7.  **automountServiceAccountToken:** Проверьте, что ServiceAccount не монтирует токен «по умолчанию» (`automountServiceAccountToken: false`), если приложению не нужен доступ к API.
+8.  **Кросс-неймспейс доступ:** `RoleBinding` в namespace A может ссылаться на `ServiceAccount` из namespace B — это валидный паттерн, но его легко пропустить при аудите.
+9.  **roleRef immutable:** Поле `roleRef` в RoleBinding/ClusterRoleBinding неизменяемо. Для смены роли необходимо удалить и пересоздать биндинг.
+10. **nonResourceURLs:** Для доступа к `/healthz`, `/metrics`, `/version` требуется `ClusterRole` с полем `nonResourceURLs` (Role не поддерживает).
+
+### Сторонние инструменты для анализа RBAC
+
+| Инструмент | Назначение | Установка |
+|------------|-----------|-----------|
+| **kubectl-who-can** | Интерактивный вывод всех субъектов, имеющих право на действие | `kubectl krew install who-can` |
+| **rbac-lookup** | Визуализация графа связей Role→Subject, поиск по SA/User/Group | `brew install FairwindsOps/tap/rbac-lookup` |
+| **police** | Статический анализ RBAC-политик на наличие опасных связей | `go install github.com/elek/rbac-police@latest` |
+| **kubectl-access-matrix** | Вывод полной матрицы доступа для SA/пользователя | `kubectl krew install access-matrix` |
+
+```bash
+# Пример: кто имеет доступ к secrets в namespace prod?
+kubectl who-can list secrets -n prod
+
+# Пример: полная матрица прав SA
+kubectl access-matrix serviceaccount/prometheus -n monitoring
+```
 
 ### Связанные ресурсы
 
@@ -206,4 +406,5 @@ roleRef:
 - [Определения и модель безопасности API](definitions.md)
 - [Расширенные сценарии (Admission, NodeRestriction)](advanced.md)
 - [Объекты RBAC: детальный разбор](rbac_objects.md)
-- [Официальная документация по RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+- [Лучшие практики и превентивные меры](best_practices.md)
+- [Детали wildcard и resourceNames](../../../Security/rbac/roles.md)

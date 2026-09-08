@@ -210,4 +210,5 @@ pg_verifybackup /var/lib/pgbackrest/backup/main/latest
 - **[Теория бэкапов и восстановления](../Concepts/backup_and_recovery.md)** — концептуальный SSoT: RPO/RTO, PITR и уровни копирования.
 - **[Управление ролями и правами доступа (RBAC)](./role_management.md)** — настройка прав для сервисного пользователя.
 - **[Наблюдаемость PostgreSQL](./observability.md)** — интеграция бэкапов в общую панель мониторинга.
+- **[Мета-мониторинг: Dead Man's Switch для бэкапов](../../Concepts/Observability_and_Monitoring/meta-monitoring.md)** — мониторинг выполнения резервного копирования через heartbeat-сервисы (Healthchecks.io, Cronitor).
 - **[Журнал предзаписи (WAL)](../../Concepts/write_ahead_log.md)** — как работает механизм архивации.

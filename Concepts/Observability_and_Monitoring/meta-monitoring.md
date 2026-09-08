@@ -133,6 +133,290 @@ Zabbix использует [Internal checks](../../Zabbix/zabbix_troubleshootin
     summary: "Alertmanager notification latency is high"
 ```
 
+### Сценарий 5: Мониторинг пайплайна логов (Vector + Loki)
+
+**Задача:** обеспечить надежную доставку логов из Vector в Loki и отслеживать backpressure.
+
+**Ключевые метрики Vector для мета-мониторинга:**
+
+| Метрика | Описание | Порог алерта |
+| :--- | :--- | :--- |
+| `vector_buffer_utilization` | Заполненность буфера (0-1) | > 0.8 (warning), > 0.95 (critical) |
+| `vector_buffer_bytes` | Размер буфера в байтах | > 80% от max_size |
+| `vector_component_errors_total` | Ошибки компонента | Рост > 0 за 5 минут |
+| `vector_component_discarded_events_total` | Отброшенные события | > 0 (critical) |
+| `vector_sink_requests_failed` | Неудачные попытки отправки | > 3 за 5 минут |
+
+**Алерт-правило для Prometheus:**
+```yaml
+groups:
+- name: vector-meta-monitoring
+  rules:
+  - alert: VectorBufferHighUtilization
+    expr: vector_buffer_utilization > 0.8
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Vector buffer utilization > 80%"
+      
+  - alert: VectorEventsDiscarded
+    expr: rate(vector_component_discarded_events_total[5m]) > 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Vector is discarding events - data loss imminent"
+```
+
+**Метрики Loki для мета-мониторинга:**
+
+| Метрика | Описание | Порог алерта |
+| :--- | :--- | :--- |
+| `loki_ingester_streams_created_total` | Потоки, создаваемые в ingester | Рост аномалий |
+| `loki_ingester_chunk_entries` | Записи в чанках | Снижение активности |
+| `loki_query_duration_seconds` | Время выполнения запросов | p99 > 10s |
+| `loki_ingester_memory_chunks` | Чанки в памяти | > 80% от лимита |
+
+### Сценарий 6: Самомониторинг Prometheus сервера
+
+**Задача:** гарантировать, что Prometheus собирает метрики и выполняет правила.
+
+**Ключевые метрики:**
+
+| Метрика | Описание | Порог алерта |
+| :--- | :--- | :--- |
+| `prometheus_tsdb_head_series` | Активные временные ряды | Рост > 20% за час |
+| `prometheus_tsdb_head_chunks` | Чанки в head | > 80% от max_chunks |
+| `prometheus_rule_group_last_duration_seconds` | Время выполнения правила | > interval правила |
+| `prometheus_notifications_failed_total` | Ошибки уведомлений | > 0 за 5 минут |
+| `prometheus_notifications_queue_length` | Длина очереди уведомлений | > 1000 |
+
+**Алерт-правило:**
+```yaml
+groups:
+- name: prometheus-meta-monitoring
+  rules:
+  - alert: PrometheusRuleEvaluationSlow
+    expr: prometheus_rule_group_last_duration_seconds > prometheus_rule_group_interval_seconds
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Prometheus rule evaluation is slower than interval"
+      
+  - alert: PrometheusNotificationsFailing
+    expr: rate(prometheus_notifications_failed_total[5m]) > 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Prometheus notifications are failing"
+```
+
+### Сценарий 7: Мониторинг Fluent Bit DaemonSet в Kubernetes
+
+**Задача:** обеспечить сбор логов со всех нод и отслеживать потери.
+
+**Ключевые метрики Fluent Bit:**
+
+| Метрика | Описание | Порог алерта |
+| :--- | :--- | :--- |
+| `fluentbit_output_errors_total` | Ошибки вывода | > 0 за 5 минут |
+| `fluentbit_output_retries_total` | Повторные попытки | Рост > 10 за минуту |
+| `fluentbit_output_bytes_total` | Объем отправленных данных | Снижение > 50% |
+| `fluentbit_input_records_total` | Входящие записи | Снижение > 30% |
+
+**Пример Deployment для мета-мониторинга Fluent Bit:**
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit-monitoring
+  namespace: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit-monitoring
+  template:
+    metadata:
+      labels:
+        app: fluent-bit-monitoring
+    spec:
+      containers:
+      - name: prometheus-exporter
+        image: prom/fluent-bit-exporter:latest
+        ports:
+        - containerPort: 9200
+          name: metrics
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+```
+
+### Сценарий 8: Мониторинг VictoriaMetrics (кластерный режим)
+
+**Задача:** обеспечить надежность сбора и хранения метрик в кластере VictoriaMetrics.
+
+**Ключевые метрики для кластера:**
+
+| Компонент | Метрика | Описание |
+| :--- | :--- | :--- |
+| **vmselect** | `vm_active_queries` | Активные запросы |
+| **vmselect** | `vm_slow_queries` | Медленные запросы |
+| **vminsert** | `vm_rows_inserted_total` | Вставленные строки |
+| **vminsert** | `vm_dropped_rows_total` | Отброшенные строки |
+| **vmstorage** | `vm_rows` | Всего строк в хранилище |
+| **vmstorage** | `vm_parts` | Количество частей |
+
+**Алерт-правило:**
+```yaml
+groups:
+- name: victoriametrics-meta-monitoring
+  rules:
+  - alert: VictoriaMetricsDroppedRows
+    expr: rate(vm_dropped_rows_total[5m]) > 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "VictoriaMetrics is dropping rows - data loss"
+      
+  - alert: VictoriaMetricsActiveQueriesHigh
+    expr: vm_active_queries > 1000
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Too many active queries in VictoriaMetrics"
+```
+
+### Сценарий 9: Внешний watchdog на bare-metal (Healthchecks.io self-hosted)
+
+**Задача:** реализовать Dead Man's Switch без облачных сервисов.
+
+**Варианты self-hosted решений:**
+
+| Решение | Описание | Протокол |
+| :--- | :--- | :--- |
+| **[Healthchecks.io](https://healthchecks.io/)** (self-hosted) | Python-приложение, проверяет heartbeat | HTTP/ICMP |
+| **[Cronitor](https://cronitor.io/)** (self-hosted) | Альтернатива Healthchecks | HTTP |
+| **Custom Script** | Скрипт на Python/Go, проверяющий endpoint | HTTP/SMTP |
+
+**Пример Docker Compose для self-hosted Healthchecks.io:**
+```yaml
+version: '3.8'
+services:
+  healthchecks:
+    image: healthchecks/healthchecks:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - SITE_ROOT=http://localhost:8000
+      - SITE_NAME=Meta-Monitoring
+      - DEFAULT_FROM_EMAIL=alerts@example.com
+      - EMAIL_HOST=smtp.example.com
+      - EMAIL_PORT=587
+      - EMAIL_HOST_USER=alerts@example.com
+      - EMAIL_HOST_PASSWORD=secret
+    volumes:
+      - healthchecks-data:/var/lib/healthchecks
+    restart: unless-stopped
+
+volumes:
+  healthchecks-data:
+```
+
+**Конфигурация Alertmanager для отправки heartbeat:**
+```yaml
+receivers:
+- name: watchdog
+  webhook_configs:
+  - url: 'http://healthchecks:8000/ping/your-uuid-here'
+    send_resolved: true
+    
+route:
+  routes:
+  - match:
+      meta_target: healthchecks_io
+    receiver: watchdog
+    group_wait: 0s
+    group_interval: 1m
+    repeat_interval: 1m
+```
+
+### Сценарий 10: Мониторинг выполнения резервного копирования (Backup Dead Man's Switch)
+
+**Задача:** гарантировать, что скрипты резервного копирования выполняются по расписанию и не "забываются" в crontab.
+
+**Проблема:** обычный запуск скрипта в cron не даёт информации о том, работает ли он. Если скрипт упадёт до начала бэкапа, или зависнет, или cron перестанет работать — об этом можно не узнать до момента восстановления.
+
+**Решение — Dead Man's Switch для бэкапов:**
+
+На каждое успешное выполнение скрипта отправляется "пинг" во внешнюю систему. Если пинг не приходит в ожидаемое временное окно — система инициирует алерт.
+
+**Интеграция с Healthchecks.io:**
+
+```bash
+# Внутри скрипта, либо через pipe в cron-команде
+curl -fsS -m 10 --retry 5 -o /dev/null https://healthchecks.io/ping/efe3-da-ffdsfsd-qqsdfsf
+```
+
+**Измерение времени выполнения:**
+
+Сервис умеет замерять время выполнения скрипта. Отправляем пинг в начале и в конце:
+
+```bash
+# Начало выполнения
+curl -fsS -m 10 --retry 3 https://healthchecks.io/ping/start/your-uuid-here
+
+# Выполнение бэкапа
+pg_dump -Fc mydb > /backups/mydb.dump
+
+# Успешное завершение
+curl -fsS -m 10 --retry 3 https://healthchecks.io/ping/your-uuid-here
+
+# Или через pipe в cron:
+# */30 * * * * /usr/local/bin/backup.sh | curl -fsS -m 10 --retry 5 -o /dev/null https://healthchecks.io/ping/your-uuid-here
+```
+
+**Запись логов ошибок:**
+
+Через POST-запрос можно передать текст ошибки для диагностики:
+
+```bash
+# Если бэкап упал с ошибкой
+curl -fsS -m 10 --retry 3 \
+  -X POST \
+  -d "Ошибка: pg_dump завершился с кодом $?" \
+  https://healthchecks.io/ping/your-uuid-here/fail
+```
+
+**Альтернативные сервисы:**
+
+| Сервис | Особенности |
+| :--- | :--- |
+| **[Healthchecks.io](https://healthchecks.io/)** | Self-hosted/SaaS, HTTP/ICMP, подробная документация |
+| **[Cronitor](https://cronitor.io/)** | Self-hosted/SaaS, HTTP, простой API |
+| **Sentry** | Можно использовать для cron-мониторинга через SDK |
+| **Better Stack** | Uptime-мониторинг с поддержкой heartbeat |
+
+**Пример cron-задачи с мониторингом:**
+
+```bash
+# crontab -e
+0 2 * * * /usr/local/bin/pg_backup.sh >> /var/log/pg_backup.log 2>&1 && \
+  curl -fsS -m 10 --retry 5 -o /dev/null https://healthchecks.io/ping/your-uuid-here
+```
+
+**См. также:**
+* [Автоматизация резервного копирования PostgreSQL](../../Databases/PostgreSQL/Operations/backup_automation.md) — практическая реализация бэкапов с метриками.
+* [Стратегии резервного копирования БД](../../Databases/Concepts/backups.md) — теоретические основы (3-2-1, PITR).
+
 ## Диагностика и устранение неполадок
 
 | Проблема | Причина | Решение |
@@ -141,6 +425,41 @@ Zabbix использует [Internal checks](../../Zabbix/zabbix_troubleshootin
 | **Растет Ingestion Lag** | Нехватка ресурсов CPU/IOPS в хранилище | Увеличить лимиты ресурсов, включить шардирование (sharding) или уменьшить частоту сбора (scrape interval). |
 | **Cardinality Explosion** | Неконтролируемое добавление меток в приложении | Использовать `relabel_configs` для удаления динамических меток, ограничить количество серий на таргет. |
 | **Backpressure в агентах** | Хранилище не успевает принимать данные | Оптимизировать производительность TSDB, проверить сетевую пропускную способность. |
+| **Watchdog-алерт не доходит** | Блокировка HTTP-запросов firewall или proxy | Проверить маршрутизацию,白elistы firewall, настройки proxy. |
+| **Prometheus не собирает метрики** | Проблемы с Service Discovery или DNS | Проверить `up` метрику, логи Prometheus, доступность target'ов. |
+| **Vector buffer переполнен** | Loki/Elasticsearch не принимает данные | Проверить здоровье хранилища, увеличить buffer.max_size, оптимизировать производительность запросов. |
+| **Loki не индексирует логи** | Переполнение_ingester или проблемы с чанками | Проверить `loki_ingester_memory_chunks`, увеличить лимиты памяти. |
+| **Alertmanager теряет алерты** | Переполнение очереди или ошибки интеграций | Проверить `alertmanager_notifications_queue_length`, оптимизировать route rules. |
+| **Фейковые алерты (False Positives)** | Нестабильные target'ы или network jitter | Добавить `for` duration в правила, использовать `label_replace` для стабилизации. |
+| **DDoS на мета-мониторинг** | Чрезмерно частые scrape-запросы | Ограничить `scrape_interval`, использовать discovery limits, настроить rate limiting. |
+| **Временные сбои watchdog** | Микросервисы временно недоступны | Увеличить `repeat_interval`, настроить `group_wait` для агрегации. |
+
+### Диагностические команды
+
+```bash
+# Prometheus: проверка состояния
+curl -s http://localhost:9090/-/healthy
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.health!="up")'
+
+# Alertmanager: проверка статуса
+curl -s http://localhost:9093/-/healthy
+curl -s http://localhost:9093/api/v2/alerts | jq 'length' # Количество активных алертов
+
+# Vector: проверка метрик
+curl -s http://localhost:9598/metrics | grep "vector_buffer"
+
+# Loki: проверка готовности
+curl -s http://localhost:3100/ready
+curl -s http://localhost:3100/loki/api/v1/labels | jq '.data'
+
+# Fluent Bit: проверка статуса
+fluent-bit -L
+fluent-bit -b /fluent-bit/etc
+
+# kubectl: диагностика DaemonSet
+kubectl get daemonset -n logging
+kubectl logs -n logging -l app=fluent-bit --tail=100
+```
 
 ## Дополнительная информация
 
@@ -153,6 +472,11 @@ Zabbix использует [Internal checks](../../Zabbix/zabbix_troubleshootin
 - [ ] Мониторится количество активных сайленсов в Alertmanager.
 - [ ] Проверяется лимит открытых дескрипторов файлов (`fd_utilization`) для процессов мониторинга.
 - [ ] Настроен мониторинг API хранилища (Synthetics).
+- [ ] Внешний watchdog работает без зависимости от основного мониторинга.
+- [ ] Настроен мониторинг буферов агентов (Vector, Fluent Bit).
+- [ ] Проверяется латентность уведомлений Alertmanager.
+- [ ] Настроены алерты на cardinality explosion в Prometheus/VictoriaMetrics.
+- [ ] Мониторится производительность запросов к хранилищу (Loki, Elasticsearch).
 
 ### SLO для системы мониторинга
 
@@ -161,6 +485,101 @@ Zabbix использует [Internal checks](../../Zabbix/zabbix_troubleshootin
 - **Availability:** 99.9% времени сервер мониторинга должен отвечать на запросы.
 - **Alert Latency:** 95% алертов должны быть доставлены провайдеру уведомлений в течение 30 секунд после срабатывания правила.
 - **Data Freshness:** 99% метрик должны иметь возраст не более 60 секунд.
+- **Buffer Utilization:** буферы агентов не должны превышать 80% заполненности.
+- **Ingestion Lag:** задержка появления данных в хранилище не должна превышать 30 секунд.
+
+### Архитектурные паттерны мета-мониторинга
+
+| Паттерн | Описание | Когда использовать |
+| :--- | :--- | :--- |
+| **Self-contained** | Каждый компонент мониторит себя сам | Малые системы, простые инфраструктуры |
+| **Cross-region** | Компоненты в разных зонах мониторят друг друга | Средние системы, высокая доступность |
+| **External watchdog** | Внешняя система проверяет heartbeat | Критические системы, compliance |
+| **Hybrid** | Комбинация всех трех паттернов | Large-scale, mission-critical |
+
+### Инструменты для мета-мониторинга
+
+| Инструмент | Назначение | Тип |
+| :--- | :--- | :--- |
+| **[Healthchecks.io](https://healthchecks.io/)** | Dead Man's Switch, heartbeat мониторинг | Self-hosted / SaaS |
+| **[Grafana OnCall](https://grafana.com/products/oncall/)** | Управление инцидентами, эскалация | Self-hosted / SaaS |
+| **[PagerDuty](https://www.pagerduty.com/)** | Управление инцидентами, эскалация | SaaS |
+| **[Better Stack](https://betterstack.com/)** | Мониторинг uptime, логи | SaaS |
+| **[Uptime Kuma](https://uptime.kuma.pet/)** | Самостоятельный мониторинг uptime | Self-hosted |
+| **[Cachet](https://cachethq.io/)** | Статус-страницы, инциденты | Self-hosted |
+| **[Prometheus](https://prometheus.io/)** | Сбор и хранение метрик | Self-hosted |
+| **[VictoriaMetrics](https://victoriametrics.com/)** | Высокопроизводительное хранилище метрик | Self-hosted |
+| **[Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/)** | Маршрутизация и группировка алертов | Self-hosted |
+
+### Мета-мониторинг для bare-metal инфраструктуры
+
+В отсутствие облачных сервисов (AWS CloudWatch, GCP Monitoring) необходимо реализовывать мета-мониторинг самостоятельно:
+
+**Рекомендуемый стек:**
+
+1. **Сбор метрик:** Prometheus (pull-модель) + Node Exporter + процессорные экспортеры.
+2. **Хранение метрик:** VictoriaMetrics (单机 или кластер) или Thanos.
+3. **Алертинг:** Alertmanager с интеграциями в self-hosted решения (Healthchecks.io, Uptime Kuma).
+4. **Визуализация:** Grafana с дашбордами для мета-мониторинга.
+5. **Логирование:** Loki + Vector/Fluent Bit для логов компонентов мониторинга.
+6. **Внешний watchdog:** Healthchecks.io (self-hosted) или Uptime Kuma.
+
+**Пример Docker Compose для полного стека мета-мониторинга:**
+```yaml
+version: '3.8'
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+    restart: unless-stopped
+
+  healthchecks:
+    image: healthchecks/healthchecks:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - SITE_ROOT=http://localhost:8000
+      - SITE_NAME=Meta-Monitoring
+    volumes:
+      - healthchecks-data:/var/lib/healthchecks
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  healthchecks-data:
+```
 
 ### См. также
 
@@ -168,3 +587,9 @@ Zabbix использует [Internal checks](../../Zabbix/zabbix_troubleshootin
 - **[Механизмы Failover и Heartbeat](../High_Availability/ha_failover_mechanisms.md)** — теория отказоустойчивости.
 - **[Проектирование высоконагруженного мониторинга](./designing_high-load_monitoring_in_distributed_systems.md)** — архитектура шардирования и федерации.
 - **[Наблюдаемость Vector](../../Vector/vector_overview.md#мониторинг-самого-vector)** — мониторинг пайплайнов передачи логов.
+- **[Loki: обзор](../../Loki/loki_overview.md)** — хранилище логов и его мета-мониторинг.
+- **[Prometheus: обзор](../../Prometheus/overview.md)** — основы Prometheus и самомониторинг.
+- **[VictoriaMetrics: обзор](../../VictoriaMetrics/overview.md)** — высокопроизводительное хранилище метрик.
+- **[Рекомендации по алертингу](./monitoring_alerting_recommendations.md)** — настройка Alertmanager и борьба с Alert Fatigue.
+- **[Наблюдаемость в контейнерах](./observability_in_containers.md)** — мониторинг Kubernetes и Docker.
+- **[Четыре столпа Observability](./four_pillars_of_observability.md)** — фундаментальные концепции наблюдаемости.

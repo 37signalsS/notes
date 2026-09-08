@@ -12,7 +12,7 @@
 
 Безопасность оператора строится на интеграции нативных механизмов Kubernetes и специфических настроек Custom Resources:
 
-| Уровень | Механизм | Назначение | SSoT |
+| Уровень | Механизм | Назначение | Источник |
 |:---|:---|:---|:---|
 | **Управление секретами** | Kubernetes Secrets, External Secrets (ESO) | Безопасное хранение токенов, паролей и ключей с автоматической ротацией. | [secrets_best_practices.md](./secrets_best_practices.md) |
 | **Контроль доступа** | RBAC, ServiceAccounts | Авторизация запросов Prometheus к K8s API; использование `status` subresource для гранулярных прав. | [access_control.md](./access_control.md) |
@@ -20,7 +20,7 @@
 | **Валидация ресурсов** | Admission Webhooks | Проверка корректности CRD (ServiceMonitor, PrometheusRule) перед применением; защита от SSRF. | Настоящий файл |
 | **Безопасность подов** | SecurityContext, Pod Security Standards | Ограничение привилегий контейнеров (Non-root, Read-only FS). | Настоящий файл |
 | **Инфраструктурный TLS** | `spec.web.tlsConfig`, cert-manager | Шифрование Web UI и API (Prometheus, Alertmanager). | Настоящий файл |
-| **Аутентификация** | Basic Auth, OAuth2 Proxy, IAP | Идентификация пользователей; защита нового UI Prometheus 3.0. | [Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md) |
+| **Аутентификация** | Basic Auth, OAuth2 Proxy, IAP | Идентификация пользователей; защита нового UI Prometheus 3.0. | [Web Authentication](../../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md) |
 
 ---
 
@@ -107,9 +107,9 @@ spec:
 
 ## Дополнительная информация
 
-Безопасность Prometheus Operator является динамической областью. Для реализации специфических мер следуйте специализированным SSoT-руководствам:
+Безопасность Prometheus Operator является динамической областью. Для реализации специфических мер следуйте профильным руководствам:
 
 - **[Контроль доступа](./access_control.md)** — глубокая настройка RBAC, NetworkPolicy и защита Admission Webhook.
 - **[Управление секретами](./secrets_best_practices.md)** — ротация, ESO и интеграция с Vault.
-- **[Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md)** — реализация SSO, OAuth2-proxy и защита Grafana.
+- **[Web Authentication](../../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md)** — реализация SSO, OAuth2-proxy и защита Grafana.
 - **[High Availability](../high_availability.md)** — влияние отказоустойчивости на безопасность и Gossip-протокол.

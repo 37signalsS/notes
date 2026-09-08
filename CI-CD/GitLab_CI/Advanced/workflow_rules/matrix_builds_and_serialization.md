@@ -8,6 +8,33 @@
 
 **Группа ресурсов (`resource_group`)** — серверный механизм синхронизации (мьютекс), гарантирующий эксклюзивный доступ задачи к внешнему ресурсу. Он обеспечивает сериализацию выполнения, предотвращая конкуренцию за ресурсы (Race Conditions) при развертывании или обновлении баз данных.
 
+## Предварительные требования
+
+### Версия GitLab и поддержка функций
+
+| Функция | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| `parallel: N` (шардирование) | 11.0+ | Базовый параллелизм |
+| `parallel:matrix` | 11.5+ | Матричные сборки |
+| `exclude` в матрице | 12.0+ | Исключение комбинаций |
+| `needs:parallel:matrix` | 16.3+ | Матричная адресация (1:1 связь) |
+| `$[[ matrix.VAR ]]` в `needs` | 18.6+ | Выражения в матричных зависимостях |
+| `resource_group` | 11.9+ | Базовая сериализация |
+| `resource_group_process_mode` | 15.3+ | 4 режима обработки очереди |
+| `resource_group` priority | 18.x+ | Приоритизация внутри группы |
+
+### Необходимые знания
+
+- Базовый синтаксис YAML и структура `.gitlab-ci.yml`
+- Концепции стадий (`stages`), задач (`jobs`) и зависимостей (`needs`)
+- Предопределённые переменные (`$CI_NODE_INDEX`, `$CI_NODE_TOTAL`, `$CI_PIPELINE_IID`)
+- Работа с артефактами и кэшированием
+- Принцип DRY и переиспользование шаблонов через скрытые задачи (`.template`)
+
+### Целевая аудитория
+
+Данный справочник предназначен для DevOps-инженеров, SRE и системных администраторов, работающих с on-premise и гибридной инфраструктурой. Примеры ориентированы на кросс-платформенное тестирование, мульти-окружения деплоя и безопасную сериализацию критических операций (миграции БД, деплой на физические серверы).
+
 ## Основные концепции
 
 ### Параллелизм и матрицы (parallel:matrix)
@@ -206,7 +233,432 @@ test:
   script: ./test.sh $PROVIDER
 ```
 
-## Дополнительная информация
+## DevOps/SRE и on-premise сценарии
+
+### Кросс-платформенное тестирование инфраструктурных инструментов
+
+Тестирование Ansible-плейбуков на разных ОС и версиях Python в on-premise среде.
+
+```yaml
+test:ansible:
+  stage: test
+  image: ${TEST_IMAGE}
+  parallel:
+    matrix:
+      - TEST_IMAGE: ["python:3.10", "python:3.11", "python:3.12"]
+        TARGET_OS: [centos9, rocky9, ubuntu2204]
+        exclude:
+          - TEST_IMAGE: "python:3.12"
+            TARGET_OS: centos9  # Python 3.12 не входит в репозиторий CentOS 9
+  before_script:
+    - pip install ansible-core==2.16
+    - ansible --version
+  script:
+    - ansible-playbook --syntax-check -i inventory/${TARGET_OS} site.yml
+    - ansible-lint playbooks/
+  artifacts:
+    paths:
+      - lint-results.txt
+    when: always
+```
+
+### Матричная сборка Terraform-модулей для мульти-окружений
+
+Сборка и валидация Terraform-модулей для разных провайдеров (on-premise: vSphere, libvirt, Proxmox).
+
+```yaml
+stages:
+  - validate
+  - plan
+  - apply
+
+.terraform_validate:
+  stage: validate
+  image: hashicorp/terraform:1.9
+  script:
+    - cd modules/$MODULE_NAME
+    - terraform init -backend=false
+    - terraform validate
+    - terraform fmt -check -recursive
+
+validate:modules:
+  extends: .terraform_validate
+  parallel:
+    matrix:
+      - MODULE_NAME: [networking, compute, storage, monitoring]
+        PROVIDER: [vsphere, libvirt]
+  artifacts:
+    paths:
+      - validation-results/${MODULE_NAME}-${PROVIDER}.json
+    expire_in: 1 hour
+
+plan:environments:
+  stage: plan
+  extends: .terraform_validate
+  needs: ["validate:modules"]
+  parallel:
+    matrix:
+      - DEPLOY_ENV: [staging, production]
+        PROVIDER: [vsphere]
+  script:
+    - cd environments/$DEPLOY_ENV
+    - terraform init
+    - terraform plan -out=tfplan -var="provider=${PROVIDER}"
+    - terraform show -json tfplan > plan-${DEPLOY_ENV}.json
+  artifacts:
+    paths:
+      - environments/$DEPLOY_ENV/tfplan
+      - environments/$DEPLOY_ENV/plan-${DEPLOY_ENV}.json
+```
+
+### Параллельное тестирование Salt-состояний
+
+Проверка Salt-состояний на разных версиях Salt и целевых ОС.
+
+```yaml
+test:salt:
+  stage: test
+  image: python:${PYTHON_VERSION}
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.10", "3.11"]
+        SALT_VERSION: ["3006", "3007"]
+        TARGET: [master, minion]
+        exclude:
+          - PYTHON_VERSION: "3.11"
+            SALT_VERSION: "3006"  # Salt 3006 не поддерживает Python 3.11
+  before_script:
+    - pip install salt==${SALT_VERSION}
+  script:
+    - salt-call --local state.show_highstate --out=json > highstate-${TARGET}.json
+    - salt-call --local state.apply test=True --out=yaml
+  artifacts:
+    paths:
+      - highstate-${TARGET}.json
+    expire_in: 1 day
+```
+
+### Деплой на физические серверы с resource_group
+
+Безопасное последовательное развертывание на bare-metal серверы через IPMI/iLO.
+
+```yaml
+deploy:baremetal:
+  stage: deploy
+  resource_group: baremetal_deploy
+  resource_group_process_mode: oldest_first
+  variables:
+    SERVERS: "web01,web02,web03"
+    DEPLOY_TIMEOUT: "30m"
+  script:
+    - for SERVER in $(echo $SERVERS | tr ',' '\n'); do
+        echo "Deploying to $SERVER...";
+        ipmitool -I lanplus -H $SERVER.IPMI -U admin -P $IPMI_PASS power cycle;
+        sleep 10;
+        ./wait_for_server.sh $SERVER;
+        ansible-playbook -i "$SERVER," -e "target_host=$SERVER" deploy.yml;
+      done
+  after_script:
+    - ./cleanup_temp_files.sh
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+```
+
+### Шардирование интеграционных тестов с агрегацией результатов
+
+Разбиение большого набора интеграционных тестов на шарды с последующей агрегацией отчётов.
+
+```yaml
+test:integration:sharded:
+  stage: test
+  image: python:3.12
+  parallel: 8
+  script:
+    - pytest --shard=$CI_NODE_INDEX/$CI_NODE_TOTAL
+      --junitxml=results-${CI_NODE_INDEX}.xml
+      tests/integration/
+  artifacts:
+    reports:
+      junit: results-${CI_NODE_INDEX}.xml
+    paths:
+      - results-${CI_NODE_INDEX}.xml
+    expire_in: 1 day
+
+aggregate:results:
+  stage: report
+  image: python:3.12
+  needs: ["test:integration:sharded"]
+  script:
+    - pip install junitparser
+    - python3 aggregate_results.py results-*.xml
+    - junitparser merge results-*.xml > combined-results.xml
+  artifacts:
+    reports:
+      junit: combined-results.xml
+```
+
+### Матричный деплой Helm-чартов с Depends-On
+
+Деплой зависимости между сервисами через `needs:parallel:matrix`.
+
+```yaml
+build:helm:
+  stage: build
+  parallel:
+    matrix:
+      - SERVICE: [api, worker, nginx]
+  script:
+    - helm package charts/$SERVICE --version $CI_PIPELINE_IID
+  artifacts:
+    paths:
+      - $SERVICE-*.tgz
+
+deploy:services:
+  stage: deploy
+  parallel:
+    matrix:
+      - SERVICE: [api, worker, nginx]
+  needs:
+    - job: build:helm
+      parallel:
+        matrix:
+          - SERVICE: ["$SERVICE"]  # Каждый сервис ждет свою сборку
+    - job: deploy:services
+      parallel:
+        matrix:
+          - SERVICE: [api]  # worker и nginx ждут деплой api
+        optional: true
+  script:
+    - helm upgrade --install $SERVICE charts/$SERVICE
+      --namespace $KUBE_NAMESPACE
+      --set image.tag=$CI_COMMIT_SHA
+```
+
+## Валидация и отладка матричных сборок
+
+### Просмотр сгенерированных задач
+
+Перед запуском пайплайна можно проверить, какие именно задачи будут созданы матрицей:
+
+```bash
+# Через CI Lint API — покажет все сгенерированные инстансы
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  --data "content=$(cat .gitlab-ci.yml | base64)" \
+  "https://gitlab.example.com/api/v4/ci/lint" | jq '.jobs | length'
+
+# Количество задач = произведение длин всех массивов минус исключения
+# Пример: 3 * 2 - 1 exclude = 5 задач
+```
+
+### Отладка переменных в матричных задачах
+
+```yaml
+debug:matrix:
+  stage: .pre
+  parallel:
+    matrix:
+      - TARGET: [web01, web02, web03]
+        ENV: [staging, production]
+  script:
+    - echo "=== Матричная переменная ==="
+    - echo "TARGET=$TARGET"
+    - echo "ENV=$ENV"
+    - echo "CI_NODE_INDEX=$CI_NODE_INDEX"
+    - echo "CI_NODE_TOTAL=$CI_NODE_TOTAL"
+    - echo "CI_JOB_NAME=$CI_JOB_NAME"
+    - echo "CI_PIPELINE_IID=$CI_PIPELINE_IID"
+  rules:
+    - when: always
+```
+
+### Проверка `needs:parallel:matrix` перед запуском
+
+```bash
+# Валидация: убедитесь, что переменные в needs совпадают с переменными в матрице build
+# Ошибка: PROVIDER в needs не объявлен в матрице build
+# Правильно: PROVIDER объявлен в обеих матрицах
+
+# Проверка через glab
+glab ci lint --dry-run --variable CI_COMMIT_BRANCH=main
+```
+
+### Мониторинг выполнения матричных задач
+
+```bash
+# Просмотр статуса всех задач матрицы через API
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/jobs" | \
+  jq '[.[] | select(.name | startswith("test:python"))] | 
+    {name, status, duration, runner_description}'
+```
+
+## Лучшие практики
+
+### Оптимизация матричных сборок
+
+| Практика | Описание | Приоритет |
+| :--- | :--- | :--- |
+| **Минимальные артефакты** | `expire_in: 1 hour` для промежуточных результатов | Высокий |
+| **Уникальные ключи кэша** | `cache:key: $CI_JOB_NAME-$TARGET` для каждой комбинации | Высокий |
+| **`needs:parallel:matrix`** | Связывание 1:1 вместо ожидания всей матрицы | Высокий |
+| **`exclude`** | Исключайте несовместимые комбинации заранее | Средний |
+| **Динамические матрицы** | Генерация через API при >50 комбинациях | Средний |
+| **Группировка по stages** | Не смешивайте критичные и некритичные задачи в одной стадии | Средний |
+
+### Сериализация и безопасность
+
+| Практика | Описание | Приоритет |
+| :--- | :--- | :--- |
+| **`interruptible: false`** | Для критических операций с `resource_group` | Критический |
+| **`resource_group_process_mode`** | `oldest_first` для миграций, `newest_first` для деплоев | Высокий |
+| **Таймауты** | Устанавливайте `timeout` для задач с `resource_group` | Высокий |
+| **Очистка в `after_script`** | Удаляйте временные файлы, токены, ключи | Средний |
+| **Мониторинг очереди** | Отслеживайте длину очереди `resource_group` через API | Средний |
+
+### Производительность
+
+| Практика | Описание | Приоритет |
+| :--- | :--- | :--- |
+| **Разбиение тестов** | `parallel: N` для шардинга >1000 тестов | Высокий |
+| **Кэширование зависимостей** | `cache` для pip, npm, go mod в матричных задачах | Средний |
+| **Минимальные образы** | Используйте альпайны и slim-образы для быстрого старта | Средний |
+| **Агрегация результатов** | Собирайте отчёты в одной задаче после матрицы | Средний |
+
+## Устранение неполадок
+
+### Типичные ошибки
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `Job(s) disabled` | Более 200 задач в одной матрице | Разбейте на несколько матриц или динамическую генерацию |
+| `needs:job not found` | Имя задачи в `needs` не совпадает с реальным именем | Проверьте `CI_JOB_NAME` (формат `name: [var1, var2]`) |
+| `Variable not defined` | Переменная матрицы не объявлена в блоке `matrix` | Добавьте переменную в `parallel:matrix` |
+| `Artifact not found` | Задача в `needs` не создала артефакт | Проверьте `paths` в `artifacts` и имя файла |
+| `Resource group timeout` | Очередь `resource_group` не освобождается | Проверьте `resource_group_process_mode` и таймауты |
+| `Cache collision` | Разные матричные задачи перезаписывают кэш | Добавьте переменную матрицы в `cache:key` |
+
+### Диагностика проблем с `resource_group`
+
+```bash
+# Проверка активных задач в группе ресурсов
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/resource_groups" | \
+  jq '.[] | {key, process_mode, jobs: [.jobs[] | {id, name, status}]}'
+
+# Просмотр истории выполнения
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/resource_groups/$RESOURCE_GROUP/jobs" | \
+  jq '.[] | {id, name, status, created_at, started_at, finished_at}'
+```
+
+### Диагностика матричных зависимостей
+
+```yaml
+# Проблема: test: [web01] не ждет build: [web01]
+# Причина: неправильное использование $PROVIDER в needs
+
+# НЕПРАВИЛЬНО:
+needs:
+  - job: build
+    parallel:
+      matrix:
+        - PROVIDER: [aws, gcp, azure]  # Все инстансы ждут ВСЕ инстансы build
+
+# ПРАВИЛЬНО:
+needs:
+  - job: build
+    parallel:
+      matrix:
+        - PROVIDER: [$PROVIDER]  # Каждый инстанс ждет только свой
+```
+
+### Отладка `exclude`
+
+```yaml
+# Проблема: exclude не работает
+# Причина: exclude должен точно совпадать с комбинацией в matrix
+
+# ПРОВЕРКА: убедитесь, что ключи и значения идентичны
+parallel:
+  matrix:
+    - OS: [linux, windows, macos]
+      ARCH: [amd64, arm64]
+      exclude:
+        - OS: macos      # Точное совпадение с matrix
+          ARCH: amd64
+```
+
+## Граничные случаи и ограничения
+
+### Технические лимиты
+
+| Параметр | Лимит | Рекомендация |
+| :--- | :--- | :--- |
+| Задач в `parallel:matrix` | 200 | Разбейте на несколько матриц или используйте динамическую генерацию |
+| `parallel: N` (шардов) | 100 | Используйте `pytest --shard` или аналогичные механизмы |
+| Глубина вложенности `needs` | 100 | Избегайте цепочек длиннее 10 задач |
+| Артефактов на задачу | Квота проекта | `expire_in` для промежуточных результатов |
+| Записей кэша на задачу | 4 | Используйте `cache:key` с переменными матрицы |
+| Размер dotenv файла | 5 KB, 20 переменных | Передавайте только необходимые значения |
+
+### Особые сценарии
+
+**Матрица с `rules` и `resource_group`:**
+```yaml
+# ВАЖНО: rules вычисляются ДО матрицы
+# Каждая комбинация матрицы проверяется отдельно
+deploy:
+  resource_group: production
+  parallel:
+    matrix:
+      - SERVICE: [api, worker]
+        ENV: [staging, production]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+    - if: $CI_COMMIT_BRANCH == "develop"
+      variables:
+        ENV: staging  # Принудительно staging для develop
+```
+
+**Кэширование в матричных задачах:**
+```yaml
+# Проблема: все матричные задачи делят один кэш
+# Решение: уникальный ключ для каждой комбинации
+test:
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.10", "3.11", "3.12"]
+  cache:
+    key: py${PYTHON_VERSION}-deps  # Уникальный ключ
+    paths:
+      - .venv/
+```
+
+**Матрица и `needs` с опциональными зависимостями:**
+```yaml
+# Опциональные зависимости (17.4+): задача не ждет, если зависимость отсутствует
+deploy:
+  parallel:
+    matrix:
+      - TARGET: [web01, web02]
+  needs:
+    - job: migrate
+      optional: true  # Если migrate не существует или пропущен
+    - job: build
+      parallel:
+        matrix:
+          - TARGET: ["$TARGET"]
+```
+
+## Смотрите также
+
+- **[DAG с использованием needs](./dag_with_needs.md)** — управление графом зависимостей и матричные связи.
+- **[Артефакты в GitLab CI](../gitlab_ci_caching/gitlab_ci_artifacts.md)** — артефакты, кэширование, dotenv.
+- **[Правила запуска задач](./job_rules.md)** — логика условного включения задач.
+- **[Переменные и секреты GitLab CI](../../Concepts/gitlab_ci_variables_secrets.md)** — иерархия переменных и безопасность.
 
 ### Выбор метода: Матрица vs Дочерние пайплайны
 

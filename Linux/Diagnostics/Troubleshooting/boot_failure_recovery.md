@@ -136,3 +136,4 @@ grub rescue> normal
 - [**Загрузчик GRUB**](../../SystemAdministration/grub.md) — глубокая настройка и структура конфига.
 - [**Проверка целостности ФС (fsck)**](../../FileSystems/fsck.md) — ключи и сценарии исправления дисков.
 - [**Chroot — смена корневого каталога**](../../Core/chroot.md) — детали реализации и безопасности.
+- [**Устранение неполадок: ФС в режиме read-only**](../../FileSystems/read_only_filesystem_troubleshooting.md) — пошаговое восстановление корневой ФС после перехода `ext4` в RO.

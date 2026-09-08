@@ -51,7 +51,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s         # Не проверять в первые 2 минуты — время старта JVM
 
   autoheal:
     image: willfarrell/autoheal:latest
@@ -60,8 +60,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock # Критически важно для доступа к API
     environment:
       - AUTOHEAL_CONTAINER_LABEL=autoheal   # Искать контейнеры с этой меткой
-      - AUTOHEAL_INTERVAL=5                 # Частота проверки в секундах
-      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=10    # Таймаут остановки перед рестартом
+      - AUTOHEAL_START_PERIOD=180           # Дать контейнеру 3 минуты на старт (без ложных срабатываний)
+      - AUTOHEAL_INTERVAL=30                # Проверка раз в 30 секунд (а не каждые 5)
+      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=30    # 30 секунд на корректное завершение перед рестартом
 ```
 
 ### Сценарий 2: Глобальный запуск через CLI
@@ -118,6 +119,71 @@ docker run -d \
   alpine sleep 3600
 ```
 
+### Сценарий 5: Предотвращение ложных перезапусков при медленном старте
+
+Autoheal со стандартными настройками проверяет состояние контейнеров каждые **5 секунд** с **нулевым стартовым периодом**. Если приложение долго стартует (например, Java-сервис, который нуждается в 30–60 секунд на инициализацию JVM), Autoheal ошибочно переводит его в `unhealthy` и перезапускает — создавая бесконечный цикл рестартов.
+
+**Пример из практики:** При сбое DNS в Yandex Cloud контейнеры, для которых Autoheal критичен, начали падать в `unhealthy` и перезапускаться. Однако при одновременном перезапуске 20 контейнеров CPU был утилизирован на 100%, а Java-приложения не успевали стартовать, деля эти ресурсы. В итоге система захлёбывалась сама в себя — контейнеры постоянно находились в перезапуске.
+
+**Шаг 1: Проверка текущих настроек**
+
+```bash
+docker logs autoheal
+```
+
+Если вывод содержит строки `AUTOHEAL_START_PERIOD`, `AUTOHEAL_INTERVAL`, `AUTOHEAL_DEFAULT_STOP_TIMEOUT` — настройки уже применены. Если их нет — Autoheal работает со встроными значениями по умолчанию (интервал 5 секунд, без стартового периода).
+
+**Шаг 2: Три ключевые переменные**
+
+| Переменная | Значение | Что делает |
+| :--- | :--- | :--- |
+| `AUTOHEAL_START_PERIOD` | `180` | Даёт контейнеру 3 минуты на запуск — никаких ложных срабатываний. Autoheal не начинает проверять контейнер, пока не пройдёт этот период. |
+| `AUTOHEAL_INTERVAL` | `30` | Интервал между проверками — раз в 30 секунд вместо 5. Снижает нагрузку на хост. |
+| `AUTOHEAL_DEFAULT_STOP_TIMEOUT` | `30` | Время на корректное завершение приложения перед `docker restart`. Предотвращает жесткие SIGKILL. |
+
+**Шаг 3: Применение изменений**
+
+```bash
+docker compose -f /path_to_file/docker-compose.yml down
+docker compose -f /path_to_file/docker-compose.yml up -d
+```
+
+**Шаг 4: Проверка, что параметры применились**
+
+```bash
+docker logs autoheal 2>&1 | grep "AUTOHEAL"
+# Ожидаемо:
+# AUTOHEAL_CONTAINER_LABEL=autoheal
+# AUTOHEAL_START_PERIOD=180
+# AUTOHEAL_INTERVAL=30
+# AUTOHEAL_DEFAULT_STOP_TIMEOUT=30
+```
+
+**Важно:** переменные Autoheal (`AUTOHEAL_START_PERIOD`, `AUTOHEAL_INTERVAL`) действуют на уровне самого монитора, тогда как `start_period` и `interval` в секции `healthcheck` контейнера действуют на уровне Docker Engine (см. [HEALTHCHECK: параметры конфигурации](../Dockerfile/Instructions/health_signals.md#параметры-конфигурации-options)). Оба уровня работают независимо — настройки здесь дополняют, а не заменяют Healthcheck:
+
+- **Container-level (`healthcheck.start_period`, `healthcheck.interval`):** контролирует, когда Docker Engine помечает контейнер `unhealthy` в `docker ps`.
+- **Autoheal-level (`AUTOHEAL_START_PERIOD`, `AUTOHEAL_INTERVAL`):** контролирует, когда сам Autoheal просыпается, чтобы проверить статус и, при необходимости, перезапустить контейнер.
+
+**Визуальная схема:**
+
+```
+Контейнер стартует
+    │
+    ▼
+[Container-level: HEALTHCHECK start_period=120s]
+│  Docker НЕ помечает container как unhealthy до 120с
+│
+    ▼
+[Autoheal-level: AUTOHEAL_START_PERIOD=180]
+│  Autoheal НЕ проверяет container до 180с (отсчёт идёт с момента старта контейнера)
+│
+    ▼
+Через 180с: Autoheal начинает проверять каждые 30с (AUTOHEAL_INTERVAL)
+│  Если container → unhealthy → graceful stop за 30с (AUTOHEAL_DEFAULT_STOP_TIMEOUT) → restart
+```
+
+**Практическое правило:** если приложение стартует дольше 5 секунд (особенно Java, ML-модели, сервисы с миграциями БД), **всегда** задавайте `AUTOHEAL_START_PERIOD` больше времени старта. Используйте `docker logs autoheal` для проверки применённых настроек после перезапуска контейнера Autoheal.
+
 ## Дополнительная информация
 
 ### Сравнение методов восстановления
@@ -132,7 +198,7 @@ docker run -d \
 ### Нюансы использования
 
 *   **Безопасность:** Монтирование Docker Socket дает полный контроль над хостом. В 2026 году рекомендуется ограничивать доступ через **Docker Contexts** или использовать защищенные прокси (например, `tecnativa/docker-socket-proxy`) для предоставления только RO-доступа (хотя для рестарта Autoheal нужны права на запись).
-*   **Логирование:** Всегда проверяйте логи Autoheal/Surgeon при отладке цикличных рестартов (Restart Loops). Если приложение падает сразу после запуска, увеличьте `start_period` в Healthcheck.
+*   **Логирование:** Всегда проверяйте логи Autoheal/Surgeon при отладке цикличных рестартов (Restart Loops). Если приложение падает сразу после запуска, увеличьте `start_period` в Healthcheck и `AUTOHEAL_START_PERIOD` на уровне Autoheal — см. [Сценарий 5](#Сценарий-5-Предотвращение-ложных-перезапусков-при-медленном-старте).
 *   **Оркестрация:** В **Docker Swarm** и **Kubernetes** внешние инструменты не нужны. Оркестратор сам убивает и пересоздает задачи/поды, если пробы здоровья (`livenessProbe`) не проходят.
 *   **Podman:** При использовании Podman вместо Autoheal рекомендуется использовать **systemd** таймеры и опцию `--restart-policy`, либо встроенный `podman auto-update`.
 

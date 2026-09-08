@@ -78,28 +78,59 @@ integration-tests:
     - npm test
 ```
 
-### Сценарий 3: Compliance-изоляция деплоя (Secure Deployment)
+### Сценарий 4: CI-driven деплой в Argo CD (GitOps Alternative)
 
-Разделение прав доступа: разработчики имеют доступ только к коду приложения, а логика деплоя и доступ к инфраструктурным секретам вынесены в отдельный защищенный проект.
+В некоторых инфраструктурах GitLab CI используется как точка входа для динамической доставки манифестов в Argo CD через его REST API. Этот паттерн применяется, когда стандартный GitOps-подход (Argo CD следит за репозиторием) недостаточно гибок для динамической генерации конфигурации.
 
-**Преимущества:**
-- Минимизация поверхности атаки.
-- Единая точка управления деплоем для десятков микросервисов.
-- Полный аудит инфраструктурных изменений.
+**Принцип работы:**
+1. Upstream-пайплайн собирает артефакт (Helm-чарт, Kustomize overlay, YAML-манифест).
+2. Downstream-пайплайн вызывает Argo CD API для синхронизации Application.
+3. Argo CD применяет манифест в целевом кластере.
 
 ```yaml
-# Приложение (app-repo)
-deploy-production:
+# upstream-project/.gitlab-ci.yml
+trigger_argocd_sync:
   stage: deploy
   trigger:
-    project: 'ops/secure-deploy'
+    project: 'platform/argocd-delivery'
+    branch: main
     strategy: mirror
   variables:
-    SERVICE_NAME: "auth-api"
-    DEPLOY_TAG: $CI_COMMIT_TAG
+    APP_NAME: $CI_PROJECT_NAME
+    IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+    ENVIRONMENT: production
 ```
 
-### Сценарий 4: Динамическое развертывание Review Apps
+```yaml
+# platform/argocd-delivery/.gitlab-ci.yml
+sync_to_argocd:
+  stage: deploy
+  image: curlimages/curl:latest
+  script:
+    - |
+      ARGOCD_TOKEN=$(curl -s -X POST https://argocd.example.com/api/v1/session \
+        -d '{"username":"admin","password":"'"$ARGOCD_PASSWORD"'"}' \
+        | jq -r '.token')
+      
+      curl -s -X POST "https://argocd.example.com/api/v1/applications/$APP_NAME/sync" \
+        -H "Authorization: Bearer $ARGOCD_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"name":"'"$APP_NAME"'","prune":true,"selfHeal":true}'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "trigger"
+```
+
+**Преимущества:**
+- **Гибкость:** Динамическое изменение параметров деплоя (image tag, replica count) на основе внешних данных.
+- **Централизация:** Логика взаимодействия с Argo CD в одном проекте (`platform/argocd-delivery`).
+- **Интеграция:** Легко добавить pre-sync проверки (миграции БД, smoke-тесты).
+
+**Недостатки:**
+- **Потеря GitOps-прозрачности:** Изменения не отслеживаются через Git-историю Argo CD.
+- **Сложность отладки:** Требуется доступ к логам GitLab CI и API Argo CD.
+- **Безопасность:** Токен Argo CD должен храниться в переменных проекта или внешнем менеджере секретов.
+
+### Сценарий 5: Динамическое развертывание Review Apps
 
 Создание временных окружений для тестирования каждой ветки (MR) с использованием динамически генерируемой конфигурации.
 

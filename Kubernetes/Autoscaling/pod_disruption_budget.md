@@ -220,6 +220,47 @@ kafka-pdb     N/A             3         3         1                     5m
 
 Установка `maxUnavailable: 0` или `minAvailable: 100%` **полностью блокирует** все добровольные выселения для данного PDB. Команда `kubectl drain` на нодах с такими подами завершится ошибкой. Для Deployment с единственной репликой это означает невозможность обновления.
 
+## Предварительные требования
+
+### Версии Kubernetes и feature gates
+
+| Версия Kubernetes | Статус API | Feature gates | Примечания |
+|-------------------|-----------|---------------|------------|
+| 1.4+ | `policy/v1beta1` | PDB включён по умолчанию | Начальная реализация |
+| 1.21+ | `policy/v1` (stable) | PDB стабилизирован | Рекомендуемая версия для production |
+| 1.25+ | только `policy/v1` | — | `policy/v1beta1` удалён |
+| 1.27+ | — | `PDBUnhealthyPolicy=true` (beta) | `spec.unhealthyPodEvictionPolicy` |
+| 1.30+ | — | `PDBUnhealthyPolicy` (GA) | Политика нездоровых подов стабилизирована |
+| 1.31+ | — | `PodDisruptionConditions` (GA) | `DisruptionTarget` condition на подах |
+| 1.32+ | — | — | `policy/v1` единственная версия |
+
+### Требования к окружению
+
+**Перед использованием PDB убедитесь:**
+
+```bash
+# Проверка версии API (должна быть policy/v1)
+kubectl api-versions | grep policy/v1
+# → policy/v1
+
+# Проверка наличия CRD/Resource
+kubectl api-resources | grep poddisruptionbudgets
+# → poddisruptionbudgets   pdb   policy/v1   true   PodDisruptionBudget
+
+# Проверка feature gates (на master-ноде)
+kubectl get --raw '/metrics' | grep -i pdb
+# → наличие метрик controller подтверждает работу PDB
+```
+
+### Влияние ResourceQuota на PDB
+
+**Порядок проверок при выселении:**
+1. ResourceQuota проверяет, есть ли квота на создание нового пода (при перезапуске на другой ноде)
+2. PDB проверяет бюджет доступности
+3. Если квота исчерпана — под не может быть пересоздан, PDB блокирует drain (ожидание)
+
+**Рекомендация:** При использовании ResourceQuota убедитесь, что квота позволяет временное превышение реплик (для перемещения подов при drain). Иначе drain зависнет даже при корректном PDB.
+
 ## Практические сценарии
 
 ### Сценарий 1: Базовый PDB с minAvailable
@@ -379,6 +420,288 @@ spec:
 * После восстановления бюджета drain автоматически продолжает работу
 * Ошибки eviction в выводе drain (`error: evicting pod ... violates PodDisruptionBudget`) — **нормальное поведение**, drain повторяет попытку после восстановления бюджета
 
+### Взаимодействие PDB с PriorityClass (Preemption)
+
+**Preemption (вытеснение по приоритету)** — механизм, при котором kube-scheduler удаляет поды с низким приоритетом для размещения подов с высоким приоритетом.
+
+**Важно:** По умолчанию Preemption **игнорирует PDB**. Это может привести к неожиданной потере доступности.
+
+**Настройка учёта PDB при Preemption (Kubernetes 1.21+):**
+
+Feature gate `PreferNominatedNodeWithPDB` (alpha в 1.26) и настройка `preemptionPolicy` на уровне PriorityClass:
+
+```yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000000
+preemptionPolicy: PreemptLowerPriority  # По умолчанию
+# preemptionPolicy: Never  # Запретить preemption для этого класса
+globalDefault: false
+description: "Высокий приоритет для критических сервисов"
+```
+
+**Рекомендации:**
+
+| Ситуация | Рекомендация |
+|----------|--------------|
+| Критичный сервис с жёстким PDB | Установите `preemptionPolicy: Never` для его PriorityClass |
+| Необходимость preemption с учётом PDB | Включите feature gate `PreferNominatedNodeWithPDB` (1.26+) |
+| Множественные PriorityClass | Тестируйте сценарии preemption в staging-окружении |
+
+### Взаимодействие PDB с HPA (Horizontal Pod Autoscaler)
+
+HPA и PDB работают на разных уровнях:
+- **HPA** управляет количеством реплик (scale up/down)
+- **PDB** ограничивает выселение подов
+
+**Конфликты и решения:**
+
+| Сценарий | Проблема | Решение |
+|----------|----------|---------|
+| HPA scale-down + жёсткий PDB | HPA не может удалить поды, так как PDB блокирует | Настройте `behavior.scaleDown` в HPA с учётом PDB |
+| HPA scale-up + недостаток ресурсов | Новые поды не создаются, PDB не освобождается | Увеличьте ресурсы узлов или снизьте `minAvailable` |
+| Одновременный drain + HPA scale-down | Двойное давление на доступность | Координируйте окна обслуживания с HPA |
+
+**Пример настройки HPA с учётом PDB:**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 3
+  maxReplicas: 20
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10          # Не более 10% реплик за раз (учитывает PDB)
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+**Проверка совместимости HPA и PDB:**
+
+```bash
+# Проверка текущего количества реплик и PDB
+kubectl get hpa web-hpa
+# → REFERENCE          TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+# → Deployment/web     45%/70%   3         20        5          10m
+
+kubectl get pdb web-pdb
+# → NAME      MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+# → web-pdb   3               N/A               2                     10m
+
+# Если ALLOWED DISRUPTIONS = 0 — HPA не сможет уменьшить количество реплик
+```
+
+### Обновление PDB в -runtime
+
+**Атомарное обновление PDB через `kubectl replace`:**
+
+```bash
+# Получить текущий PDB
+kubectl get pdb web-pdb -o yaml > pdb-backup.yaml
+
+# Редактировать локально
+vim pdb-backup.yaml
+
+# Применить изменения
+kubectl replace -f pdb-backup.yaml
+```
+
+**Быстрое изменение через `kubectl patch`:**
+
+```bash
+# Изменить minAvailable
+kubectl patch pdb web-pdb -p '{"spec":{"minAvailable":2}}' --type=merge
+
+# Переключить на maxUnavailable
+kubectl patch pdb web-pdb -p '{"spec":{"minAvailable":null,"maxUnavailable":1}}' --type=merge
+
+# Изменить unhealthyPodEvictionPolicy
+kubectl patch pdb web-pdb -p '{"spec":{"unhealthyPodEvictionPolicy":"AlwaysAllow"}}' --type=merge
+```
+
+**Важно:** PDB не поддерживает `kubectl apply` с `last-applied-configuration` — используйте `replace` или `patch`.
+
+### Мониторинг PDB через Prometheus
+
+**Метрики PDB (встроенные в kube-controller-manager):**
+
+| Метрика | Описание |
+|---------|----------|
+| `pod_disruption_budgets` | Общее количество PDB в кластере |
+| `pod_disruption_budgets_sync_total` | Количество успешных синхронизаций PDB |
+| `pod_disruption_budgets_sync_errors_total` | Ошибки синхронизации PDB |
+
+**PromQL-запросы для мониторинга:**
+
+```promql
+# Все PDB с нулевыми разрешёнными disruptions (заблокированные)
+kube_poddisruptionbudget_status_desired_healthy - kube_poddisruptionbudget_status_current_healthy > 0
+
+# Процент доступных disruptions по PDB
+(kube_poddisruptionbudget_status_desired_healthy - kube_poddisruptionbudget_status_current_healthy) / kube_poddisruptionbudget_status_desired_healthy * 100
+
+# PDB с ошибками синхронизации
+rate(pod_disruption_budgets_sync_errors_total[5m]) > 0
+```
+
+**Алерт для Prometheus (пример):**
+
+```yaml
+groups:
+  - name: pdb-alerts
+    rules:
+      - alert: PDBBlocked
+        expr: kube_poddisruptionbudget_status_desired_healthy - kube_poddisruptionbudget_status_current_healthy > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PDB {{ $labels.poddisruptionbudget }} заблокирован"
+          description: "PDB в namespace {{ $labels.namespace }} не позволяет выселения уже 5 минут. Проверьте состояние подов."
+
+      - alert: PDBAtRisk
+        expr: kube_poddisruptionbudget_status_current_healthy / kube_poddisruptionbudget_status_desired_healthy < 1.2
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "PDB {{ $labels.poddisruptionbudget }} близок к лимиту"
+          description: "Запас здоровых подов менее 20% от желаемого."
+```
+
+### Расширенный статус PDB (DisruptionTarget)
+
+**Kubernetes 1.29+** добавил поле `status.disruptionTarget` — список подов, выселение которых одобрено, но ещё не завершено.
+
+**Диагностика зависших выселений:**
+
+```bash
+# Проверка disruptionTarget
+kubectl get pdb web-pdb -o jsonpath='{.status.disruptionTarget}'
+# → [{"name":"web-abc12","uid":"..."}]
+
+# Если список непустой, но поды не удаляются — возможные причины:
+# - Finalizers блокируют удаление
+# - PreStop hook завис
+# - Проблемы с сетью (API server не может подтвердить удаление)
+```
+
+**Очистка зависших выселений:**
+
+```bash
+# Принудительное удаление пода с finalizers
+kubectl patch pod web-abc12 -p '{"metadata":{"finalizers":null}}' --type=merge
+
+# Или прямое удаление (обход PDB)
+kubectl delete pod web-abc12 --grace-period=0 --force
+```
+
+### Edge Cases и особые сценарии
+
+#### PDB и Ephemeral Containers
+
+Ephemeral Containers (временные контейнеры для отладки) **не учитываются** в PDB. Они не влияют на `currentHealthy` и не защищаются PDB.
+
+#### PDB и Admission Webhooks
+
+Если в кластере настроены **Validating/Mutating Webhooks**:
+- PDB проверяется **после** admission webhooks
+- Webhook может заблокировать создание нового пода, что косвенно влияет на PDB (под не создаётся, бюджет не освобождается)
+
+#### PDB и Pod Priority and Preemption
+
+При использовании **Priority Classes**:
+- PDB не учитывает приоритет подов при выселении
+- Preemption может удалить под независимо от PDB (по умолчанию)
+- Для защиты критичных подов используйте `preemptionPolicy: Never`
+
+#### PDB и Topology Spread Constraints
+
+**Topology Spread Constraints** (распределение подов по зонам) работает совместно с PDB:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 6
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: web
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-pdb
+spec:
+  minAvailable: 4  # Гарантирует, что при drain зоны останется достаточно подов
+  selector:
+    matchLabels:
+      app: web
+```
+
+**Рекомендация:** Используйте PDB + topologySpreadConstraints для максимальной отказоустойчивости при обслуживании зон доступности.
+
+#### PDB и Leader Election
+
+Для приложений с **leader election** (например, Kubernetes controllers, кастомные операторы):
+- PDB защищает от одновременного выселения всех реплик
+- При выселении leader-пода происходит перевыбор лидера
+- Используйте `maxUnavailable: 1` для минимизации частоты перевыборов
+
+#### PDB и Graceful Shutdown
+
+**Graceful Shutdown** (корректное завершение работы) влияет на PDB:
+- `terminationGracePeriodSeconds` определяет время на завершение
+- Под остаётся в статусе `Terminating` и учитывается в PDB как доступный
+- Долгий graceful shutdown может замедлить drain
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: web
+---
+# В Deployment:
+# spec.template.spec.terminationGracePeriodSeconds: 60  # Достаточно для завершения запросов
+```
+
 ### Рекомендации по типам приложений
 
 | Тип приложения | Рекомендация | Обоснование |
@@ -404,13 +727,17 @@ spec:
 * **Баланс между minAvailable и maxUnavailable**:
     * **Stateless-сервисы**: Могут использовать более агрессивную политику через `maxUnavailable` (например, разрешить отсутствие 20-30% подов).
     * **Stateful-сервисы**: Требуют строгой политики через `minAvailable` (например, размер кворума + 1).
-* **Интеграция с HPA**: При использовании горизонтального масштабирования настраивайте PDB так, чтобы он корректно отражал текущее количество реплик. Предпочтительнее использовать **процентные значения** (`minAvailable: 80%`), чтобы бюджет автоматически адаптировался при изменении количества реплик от 3 до 10 и более.
+* **Интеграция с HPA**: При использовании горизонтального масштабирования настраивайте PDB так, чтобы он корректно отражал текущее количество реплик. Предпочтительнее использовать **процентные значения** (`minAvailable: 80%`), чтобы бюджет автоматически адаптировался при изменении количества реплик от 3 до 10 и более. Настраивайте `behavior.scaleDown` в HPA с учётом PDB.
 * **Мониторинг во время обслуживания**: Всегда проверяйте состояние PDB (`ALLOWED DISRUPTIONS`) перед и во время проведения работ (обновление узлов, rolling update), чтобы убедиться, что бюджеты применяются корректно и не блокируют процесс надолго.
 * **Учитывайте время запуска пода** — если под запускается долго, используйте `maxUnavailable: 1`.
 * **Тестируйте перед production** — проверяйте поведение PDB при drain.
 * **Используйте с Pod Anti-Affinity** — для максимальной отказоустойчивости.
 * **Избегайте `minAvailable: 100%`** — это заблокирует любые плановые операции.
 * **Для StatefulSet используйте `maxUnavailable: 1`** — обеспечивает последовательное обновление.
+* **Настройте `unhealthyPodEvictionPolicy: AlwaysAllow`** для системных сервисов и приложений с нестабильным стартом, чтобы избежать блокировки drain из-за подов в `CrashLoopBackOff`.
+* **Координируйте PDB с ResourceQuota** — убедитесь, что квота позволяет временное превышение реплик при перемещении подов.
+* **Используйте PDB с Topology Spread Constraints** для защиты при обслуживании зон доступности.
+* **Мониторьте PDB через Prometheus** — настройте алерты на заблокированные PDB и низкий запас здоровых подов.
 
 ### Интеграции
 
@@ -419,6 +746,10 @@ PDB взаимодействует с другими компонентами э
 * **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — проверяет PDB перед удалением узла
 * **[Karpenter](Karpenter/overview.md)** — учитывает PDB при консолидации узлов
 * **[Node Maintenance](../Operations/node_maintenance.md)** — drain использует Eviction API с учётом PDB
+* **[HPA (Horizontal Pod Autoscaler)](HPA/hpa_advanced.md)** — координация при scale-down
+* **[PriorityClass](../Concepts/priorityclass.md)** — влияние preemption на PDB
+* **[ResourceQuota](../Scheduling/qos_limit_and_requests.md)** — порядок проверок при выселении
+* **[Taints и Tolerations](../Scheduling/taints_and_tolerations.md)** — taint-based eviction игнорирует PDB
 
 ### Условия прерывания пода (Pod Disruption Conditions)
 
@@ -557,7 +888,9 @@ PDB защищает **только** от добровольных прерыв
 4.  **Экстренное решение (Break-glass):**
     Если необходимо срочно освободить узел (например, из-за критического сбоя железа), администратор может временно удалить PDB (`kubectl delete pdb <name>`), выполнить drain и пересоздать PDB.
 
-## Дополнительная информация
+### Внешние ссылки
 
 * [Официальная документация: Pod Disruption Budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/)
 * [Документация: Eviction API](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/#eviction-api)
+* [Блокировка PDB при drain](../Troubleshooting/Common_Errors/PodTerminating/pdb_blocking.md) — диагностика и решение проблем
+* [Taints и Tolerations](../Scheduling/taints_and_tolerations.md) — taint-based eviction и его влияние на PDB

@@ -28,6 +28,49 @@
 -   **Валидация типов:** Поддержка `string`, `number`, `boolean`, `array`.
 -   **Compile-time check:** Ошибки в параметрах обнаруживаются в момент создания пайплайна, а не во время выполнения скриптов.
 
+### Несовместимость `needs` и `trigger`
+
+Bridge Job не может быть зависимостью для других задач. Если задача использует `trigger`, она **не может** иметь `needs`:
+```yaml
+# ОШИБКА:这样的 конфигурация не работает
+build-app:
+  stage: build
+  script: echo "build"
+  trigger:
+    include: 'ci/build.yml'
+  needs:
+    - lint  # ОШИБКА: Bridge Jobs не поддерживают needs
+```
+
+**Решение:** Используйте `stages` для порядка выполнения или `strategy: depend/mirror` для связи через статус.
+
+### Debug Bridge Jobs через API
+
+Мониторинг состояния Bridge Jobs выполняется через GitLab API:
+
+```bash
+# Получить список Bridge Jobs родительского пайплайна
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/bridges" | \
+  jq '.[] | {id, name, status, downstream_pipeline: .downstream_pipeline.id}'
+```
+
+**Использование в CI/CD для обнаружения deadlock:**
+```yaml
+check-bridges:
+  stage: .post
+  script:
+    - |
+      ACTIVE=$(curl -s --header "PRIVATE-TOKEN: $TOKEN" \
+        "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$CI_PIPELINE_ID/bridges" | \
+        jq '[.[] | select(.status == "running")] | length')
+      echo "Active Bridge Jobs: $ACTIVE"
+      if [ "$ACTIVE" -gt 3 ]; then
+        echo "WARNING: Potential deadlock risk - too many active bridges"
+      fi
+  when: always
+```
+
 ## Практические сценарии
 
 ### Сценарий 1: Селективный CI для монорепозитория
@@ -85,6 +128,138 @@ deploy-to-prod:
     strategy: mirror
 ```
 
+### Сценарий 3: Security scan как дочерний пайплайн
+
+Изоляция security-сканирования в отдельном child pipeline для параллельного выполнения и изоляции контекста.
+
+```yaml
+# .gitlab-ci.yml (Родитель)
+security-sast:
+  stage: test
+  trigger:
+    include: security/sast.yml
+    strategy: mirror
+
+security-dast:
+  stage: test
+  trigger:
+    include: security/dast.yml
+    strategy: mirror
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# security/sast.yml (Дочерний)
+sast-scan:
+  image: security scanners/sast:latest
+  script:
+    - run-sast-scanner --project $CI_PROJECT_PATH --ref $CI_COMMIT_SHA
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+```
+
+### Сценарий 4: Multi-level override (parent-child-grandchild)
+
+В иерархии из трёх уровней переменные переопределяются на каждом уровне. Дочерний пайплайн наследует все `yaml_variables` родителя, но может переопределить их.
+
+```yaml
+# Родитель (grandparent)
+variables:
+  DEPLOY_ENV: production
+  IMAGE_TAG: v1.0
+
+trigger-parent:
+  trigger:
+    include: parent.yml
+    strategy: mirror
+
+# Ребёнок (parent.yml)
+variables:
+  DEPLOY_ENV: staging  # Переопределяет DEPLOY_ENV
+
+trigger-child:
+  trigger:
+    include: child.yml
+    strategy: mirror
+
+# Внук (child.yml)
+script:
+  - echo "Deploying to $DEPLOY_ENV" # Выведет: staging
+```
+
+### Сценарий 5: Manual approval workflow
+
+Когда в дочернем пайплайне есть задачи `when: manual`, родительское задание будет висеть в статусе `running` (при `mirror`), пока пользователь не нажмет кнопку в дочернем интерфейсе.
+
+```yaml
+# Родитель
+trigger-production-deploy:
+  stage: deploy
+  trigger:
+    include: ci/deploy.yml
+    strategy: mirror
+
+# Дочерний (ci/deploy.yml)
+deploy-prod:
+  script:
+    - ./deploy.sh
+  when: manual
+  allow_failure: false
+```
+
+### Сценарий 6: Matrix parent-child с агрегацией отчетов
+
+Использование `parallel:matrix` совместно с `strategy: mirror` для запуска нескольких инстансов дочернего пайплайна и агрегации результатов.
+
+```yaml
+# Родитель
+test-matrix:
+  stage: test
+  trigger:
+    include: ci/test.yml
+    strategy: mirror
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.9", "3.10", "3.11"]
+
+# Дочерний (ci/test.yml)
+test-job:
+  image: python:$PYTHON_VERSION
+  script:
+    - pytest --junitxml=report.xml
+  artifacts:
+    reports:
+      junit: report.xml
+```
+
+**Важно:** При использовании `parallel:matrix` совместно с `strategy: mirror` Bridge Job ждет завершения **всех** инстансов матрицы. Общий статус будет `failed`, если хотя бы один инстанс упал.
+
+### Сценарий 7: Rules с changes + trigger
+
+Паттерн для запуска дочернего пайплайна только при изменении определенных файлов, с динамическим выбором конфигурации.
+
+```yaml
+# .gitlab-ci.yml
+test-backend:
+  stage: test
+  trigger:
+    include: backend/.gitlab-ci.yml
+    strategy: mirror
+  rules:
+    - changes:
+        - backend/**/*
+        - shared/**/*
+
+test-frontend:
+  stage: test
+  trigger:
+    include: frontend/.gitlab-ci.yml
+    strategy: mirror
+  rules:
+    - changes:
+        - frontend/**/*
+```
+
 ## Управление ресурсами и риски
 
 ### Проблема Deadlock (Взаимная блокировка)
@@ -94,10 +269,50 @@ deploy-to-prod:
 *   **Риск:** Если лимит Runner'а равен 5, и вы запустили 5 родительских заданий с `mirror`, дочерние задания не смогут запуститься из-за нехватки слотов. Возникает бесконечное ожидание.
 *   **Решение:** Увеличьте `concurrency` в `config.toml` Runner'а или используйте разные теги (`tags`) для Bridge Jobs и рабочих задач.
 
+### Ресурсная изоляция Bridge Jobs
+
+Для предотвращения deadlock рекомендуется выделять отдельные Runner'ы (или теги) для Bridge Jobs и рабочих задач:
+
+```yaml
+# В config.toml Runner'а, выделенного для Bridge Jobs
+concurrent = 10
+[[runners]]
+  name = "Bridge Runner"
+  tags = ["bridge", "parent-child"]
+  # Не требует Docker/Kubernetes executor - Bridge Jobs не выполняют код
+```
+
+```yaml
+# В .gitlab-ci.yml
+trigger-child:
+  trigger:
+    include: 'ci/child.yml'
+    strategy: mirror
+  tags:
+    - bridge  # Использует Bridge Runner
+```
+
 ### Отмена и прерывание
 
 -   **Auto-cancel:** При отмене родительского пайплайна GitLab автоматически останавливает дочерние процессы (если они не помечены как `interruptible: false`).
 -   **Manual Bridge:** Если в дочернем пайплайне есть задачи `when: manual`, родительское задание будет висеть в статусе `running` (при `mirror`), пока пользователь не нажмет кнопку в дочернем интерфейсе.
+
+### Валидация конфигурации перед коммитом
+
+Используйте `glab ci lint` для проверки синтаксиса и валидации конфигурации parent-child пайплайнов:
+
+```bash
+# Быстрая проверка синтаксиса
+glab ci lint
+
+# Раскрытый YAML (со всеми include/extends/inputs)
+glab ci lint --show-expanded
+
+# Dry run - глубокая валидация (GitLab 16.11+)
+glab ci lint --dry-run --variable CI_PIPELINE_SOURCE=merge_request_event
+```
+
+**Рекомендация:** Запускайте `glab ci lint --show-expanded` перед каждым коммитом в CI/CD конфигурацию, особенно при изменении `trigger:include`.
 
 ## Диагностика и устранение неполадок
 
@@ -107,6 +322,21 @@ deploy-to-prod:
 | `Status stuck in Running` | Дочерний пайплайн ждет Runner или ручное действие. | Проверьте состояние дочернего пайплайна в Pipeline Graph. |
 | `Recursion limit exceeded` | Попытка запустить 3-й уровень вложенности. | Используйте Pipeline Triggers API для глубоких иерархий. |
 | `Variables not passed` | Неверная настройка `trigger:forward`. | Убедитесь, что `yaml_variables` установлены в `true`. |
+| Bridge Job "завис" в Running | Downstream ждет `manual` действия при `mirror`. | Нажмите кнопку в дочернем пайплайне или уберите `strategy: mirror`. |
+| Статус Always Success | Не добавлен `strategy: mirror` или `depend`. | Без стратегии Bridge Job всегда завершается `success` после запуска. |
+| `needs` + `trigger` конфликт | Bridge Job не может быть зависимостью. | Используйте `stages` для порядка или `strategy: depend` для связи через статус. |
+| Deadlock при большом количестве триггеров | Все слоты Runner'а заняты Bridge Jobs. | Увеличьте `concurrency` или выделите отдельные Runner'ы для Bridge Jobs. |
+
+## Рекомендации по эксплуатации
+
+1. **Используйте `strategy: mirror`** для критических процессов (деплой, security-сканирование) — это гарантирует, что статус родителя отражает результат дочернего пайплайна.
+2. **Не используйте `needs` с `trigger`** — Bridge Jobs не поддерживают зависимостей. Используйте `stages` или `strategy: depend/mirror`.
+3. **Выделяйте отдельные Runner'ы** для Bridge Jobs для предотвращения deadlock.
+4. **Валидируйте конфигурацию** через `glab ci lint --show-expanded` перед каждым коммитом.
+5. **Настройте `interruptible: false`** для критических дочерних пайплайнов, чтобы предотвратить их отмену при auto-cancel родителя.
+6. **Мониторьте Bridge Jobs** через API (`GET /api/v4/projects/:id/pipelines/:pipeline_id/bridges`) для раннего обнаружения deadlock.
+7. **Используйте `rules:changes`** для selective CI — запускайте дочерние пайплайны только при изменении соответствующих файлов.
+8. **Ограничивайте глубину** до 2 уровней — для более сложных иерархий используйте Pipeline Triggers API.
 
 ## См. также
 

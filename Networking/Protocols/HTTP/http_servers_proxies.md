@@ -50,18 +50,99 @@ Nginx работает по асинхронному событийному ци
 | Hash | `hash $request_id consistent` | Хэш по произвольному ключу (URL, cookie, header) |
 | Random | `random two least_conn` | Случайный выбор с fallback на least-conn |
 
-### Nginx: proxy_set_header и передача заголовков
+### Nginx: управление заголовками запроса и ответа
 
-При reverse proxy Nginx по умолчанию передаёт upstream только минимальный набор заголовков. Важно явно передавать `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`:
+#### Стандартные заголовки ответа
+
+Nginx формирует набор стандартных заголовков (`Server`, `Date`, `Content-Type`, `Content-Length` и др.). Их поведение настраивается на уровне блока `http` или `server`:
+
+| Директива | Назначение |
+| :--- | :--- |
+| `default_type` | Content-Type по умолчанию для контента неизвестного типа или динамического контента, у которого не выставлен заголовок явно. Обычно `text/plain` или `application/octet-stream` (для скачивания). |
+| `charset` | Автоматически добавляет `charset=utf-8` к заголовку `Content-Type` для текстовых документов. |
+| `charset_types` | Перечень MIME-типов, к которым применяется charset (по умолчанию включает `text/html`, `text/css`, `text/javascript` и др.). |
+| `etag on/off` | Включает или отключает генерацию заголовка `ETag` (хэш контента на основе mtime и размера), влияющего на кэширование. |
+| `server_tokens on/off` | Включает или отключает вывод версии Nginx в заголовке `Server` (`Server: nginx/1.25.1`). `off` скрывает версию, уменьшая поверхность атаки. В Nginx Open Source это единственный способ модифицировать заголовок `Server`. В Nginx Plus/Pro доступна директива `server` для полной замены значения заголовка. |
+
+#### Директива `add_header` и наследование
+
+`add_header` добавляет кастомный заголовок в ответ. Важная особенность Nginx: директива **не наследуется** при переопределении на вложенном уровне. Если `add_header` определён в `server`, а в `location` добавлен новый `add_header`, то заголовок с уровня `server` исчезает из ответа этого location. Для вывода нескольких заголовков необходимо продублировать директивы на каждом уровне:
 
 ```nginx
-proxy_set_header Host              $host;
-proxy_set_header X-Real-IP         $remote_addr;
-proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-proxy_set_header X-Forwarded-Proto $scheme;
+server {
+    listen 80;
+    server_name example.com;
+
+    add_header Alt-Svc 'h3=":443"' always;
+
+    location / {
+        # Переопределили add_header на уровне location — Alt-Svc больше не наследуется
+        add_header X-Static "true" always;
+    }
+
+    location /static/ {
+        # Чтобы вывести оба заголовка, дублируем Alt-Svc здесь
+        add_header Alt-Svc 'h3=":443"' always;
+        add_header X-Static "true" always;
+    }
+}
 ```
 
-Без `X-Forwarded-Proto` бэкенд не может знать, пришёл ли запрос по HTTP или HTTPS, что ломает редиректы и CSP.
+Параметр `always` гарантирует отправку заголовка даже при ответах с ошибками (404, 500).
+
+#### Модуль `headers-more-nginx-module`
+
+Стандартный модуль `ngx_http_headers_module` поддерживает только `add_header` и `expires`. Для детального управления заголовками используется сторонний модуль `headers-more-nginx-module` (пакет `libnginx-mod-http-headers-more` или сборка из исходников):
+
+| Директива | Назначение |
+| :--- | :--- |
+| `more_set_headers` | Устанавливает или перезаписывает заголовки ответа. Может смешиваться с `add_header` из разных модулей, но при одинаковых именах возникает дубликат заголовка. |
+| `more_clear_headers` | Явно удаляет указанный заголовок из ответа. |
+| `more_set_input_headers` | Модифицирует заголовки входящего запроса. |
+| `more_clear_input_headers` | Удаляет указанные заголовки запроса перед обработкой. |
+
+Модуль поддерживает условную установку заголовков:
+- `-t` — фильтр по Content-Type ответа
+- `-s` — фильтр по HTTP-коду ответа (например, добавить заголовок только для `200`)
+
+Комбинируя `-t` и `-s`, можно формировать сложные правила (например, заголовок только для `200` при `application/json`).
+
+#### Управление заголовками в reverse proxy
+
+При работе в режиме reverse proxy Nginx выступает в роли клиента по отношению к бэкенду: создаёт новый HTTP-запрос и обрабатывает ответ от upstream. Это даёт детальный контроль над заголовками запроса и ответа:
+
+```nginx
+location / {
+    proxy_pass http://backend;
+
+    # Передача заголовков запроса бэкенду
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Передача дополнительных заголовков
+    proxy_set_header Date              $date_gmt;
+
+    # Отключение стандартных заголовков запроса (при необходимости)
+    proxy_set_header Connection "";
+
+    # Скрытие заголовков ответа бэкенда от клиента
+    proxy_hide_header Server;
+    proxy_hide_header X-Powered-By;
+    proxy_hide_header Expires;
+
+    # Игнорирование заголовков кэширования бэкенда
+    # (принудительное кэширование на уровне прокси)
+    proxy_ignore_headers Expires X-Accel-Expires Cache-Control Set-Cookie;
+}
+```
+
+**Важные нюансы:**
+- `proxy_set_header` передаёт заголовок бэкенду с указанным значением. Если заголовок отсутствует в исходном запросе, Nginx передаёт пустую строку. Для гарантированной генерации значения используйте переменные (например, `$request_id`).
+- `proxy_hide_header` относится к заголовкам **ответа** от бэкенда и скрывает их от конечного клиента.
+- `proxy_ignore_headers` заставляет Nginx игнорировать указанные заголовки кэширования бэкенда (`Expires`, `X-Accel-Expires`, `Cache-Control`, `Set-Cookie`). Это позволяет принудительно кэшировать ответ даже если бэкенд явно запрещает кэширование.
+- В многослойных прокси-цепочках для корректного заполнения `X-Forwarded-For` используют `$proxy_add_x_forwarded_for` (добавляет IP предыдущего прокси) вместо `$remote_addr`.
 
 ### HAProxy: базовые концепции
 

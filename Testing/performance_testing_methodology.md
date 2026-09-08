@@ -63,7 +63,7 @@
 
 ## 4. Инструментальный стек
 
-*   **k6:** Основной инструмент для Performance Testing as Code (JS/TypeScript).
+*   **k6:** [Основной инструмент](./k6_load_testing.md) для Performance Testing as Code (JS/TypeScript).
 *   **Lighthouse CI:** Контроль клиентских метрик (Core Web Vitals) для фронтенда.
 *   **Prometheus & Grafana:** Сбор системных метрик во время теста и визуализация трендов.
 *   **Pyroscope / Parca:** Непрерывное профилирование (Continuous Profiling) для поиска горячих путей в коде под нагрузкой.

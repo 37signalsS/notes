@@ -510,6 +510,61 @@ spec:
 
 Такая конфигурация готова к production: быстро растет под нагрузкой, медленно сжимается при спаде. Отдельно `cooldownPeriod` управляет только уходом в 0 после прекращения активности триггеров; поведением 1 ↔ N управляет HPA.
 
+### Сценарий 11: Масштабирование StatefulSet (read-replicas PostgreSQL)
+
+KEDA поддерживает `scaleTargetRef` на StatefulSet. Типичный сценарий: масштабирование read-replicas PostgreSQL по нагрузке на чтение. Важно: масштабировать только replica, а не мастер.
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: postgres-read-replica-scaler
+  namespace: databases
+spec:
+  scaleTargetRef:
+    kind: StatefulSet
+    name: postgres-replica
+  minReplicaCount: 1      # Минимум 1 replica всегда (не 0 — реплика нужна для чтения)
+  maxReplicaCount: 5
+  cooldownPeriod: 600     # Длинный cooldown для StatefulSet (защита от перезапуска)
+  pollingInterval: 30
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        query: |
+          sum(pg_stat_activity_count{state="active", datname="maindb"})
+        threshold: "50"   # 50 активных соединений на реплику
+    - type: cron
+      metadata:
+        timezone: Europe/Moscow
+        start: "0 8 * * 1-5"
+        end: "0 20 * * 1-5"
+        desiredReplicas: "2"   # В рабочее время минимум 2 replica
+```
+
+**Важные особенности:**
+
+* `minReplicaCount: 1` вместо 0 — реплика всегда должна быть готова к чтению (cold start реплики PostgreSQL занимает минуты из-за recovery WAL-логов).
+* `cooldownPeriod: 600` — длиннее чем для Deployment, потому что перезапуск StatefulSet disruptsread-only трафик.
+* `kind: StatefulSet` в `scaleTargetRef` — KEDA корректно управляет `/scale` подресурсом StatefulSet.
+* PDB обязателен: `minAvailable: 1` для guarantees что хотя бы одна replica доступна.
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-replica-pdb
+  namespace: databases
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres-replica
+```
+
+**Альтернатива: масштабирование через Patroni + KEDA.** Если используется Patroni для управления HA PostgreSQL, масштабирование replica через KEDA должно согласовываться с Patroni (Patroni управляет `spec.replicas` StatefulSet через свой контроллер). В этом случае KEDA лучше использовать через Prometheus scaler для мониторинга, а не для прямого управления replica count.
+
 ## Дополнительная информация
 
 Диагностика, мониторинг с алертами и решения типовых проблем (cold start, flapping, недоступность метрик, упор в лимиты) вынесены в отдельный материал:
@@ -540,7 +595,11 @@ helm upgrade keda kedacore/keda \
 ## См. также
 
 * **[KEDA: Основные концепции](./keda_concepts.md)** — архитектура и определения
+* **[KEDA + Kafka](./kafka-keda-scaler.md)** — масштабирование по consumer lag, аутентификация
+* **[KEDA + Redis](./redis-keda-scaler.md)** — масштабирование по длине очереди/стрима
 * **[KEDA: Эксплуатация — мониторинг и troubleshooting](./keda-operations.md)** — диагностика, алерты, типовые проблемы
 * **[KEDA: FinOps-гардрейлы и измерение экономии](./keda-finops.md)** — scale-to-zero, выбор лимитов, пилот и замер эффекта
+* **[KEDA: Тестирование и валидация](./keda-testing-validation.md)** — проверка масштабирования, chaos
+* **[KEDA: Вопросы для собеседования](./keda-interview-questions.md)** — систематизация вопросов
 * **[Паттерн Workers + Queue](../workers_queue_pattern.md)** — проектирование систем обработки очередей
 * **[Horizontal Pod Autoscaler (HPA): Практические сценарии](../HPA/hpa_scenarios.md)** — стандартное масштабирование

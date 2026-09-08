@@ -237,6 +237,7 @@ openssl x509 -in kubelet.crt -text -noout
 * **[Управление сертификатами через kubeadm](../Operations/certificate_management.md)** — команды ротации и продления.
 * **[cert-manager](../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md)** — автоматизация выпуска сертификатов через Let's Encrypt и другие CA.
 * **[Kubelet — агент Kubernetes](../Concepts/kubelet.md)** — детальное описание работы агента.
+* **[Безопасность Kubelet](./kubelet_security.md)** — полный гайд по аутентификации, авторизации, TLS и CIS Benchmark для kubelet.
 * **[Etcd: практические сценарии](../Concepts/etcd_operations.md)** — управление и обслуживание хранилища.
 * **[Обзор PKI в Kubernetes](../../Security/Concepts/pki_overview.md)** — иерархия центров сертификации.
 * Подробное описание структуры `kubeconfig` см. в **[Kubeconfig: Подключение к кластеру Kubernetes](../Operations/kubeconfig_and_connection.md)**.

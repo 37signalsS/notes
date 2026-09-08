@@ -91,3 +91,214 @@ spec:
 * [Инструменты Chaos Engineering](chaos_engineering_tools.md) — обзор Chaos Mesh, Litmus, Gremlin и Steadybit.
 * [SRE: SLA, SLO, SLI и метрики надежности](../Concepts/sre_concepts_main.md) — фундамент для гипотез.
 * [Управление трафиком в Service Mesh](../Service_Mesh/traffic_management.md) — механизмы Fault Injection на уровне L7.
+
+---
+
+## Хаос-тестирование Gateway API
+
+### Сценарий 1: Падение Control Plane
+
+**Гипотеза:** При падении контроллера Gateway API существующая маршрутизация продолжает работать, но новые изменения не применяются.
+
+**Эксперимент (Chaos Mesh):**
+```yaml
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: kill-gateway-controller
+  namespace: chaos-testing
+spec:
+  action: pod-kill
+  mode: all
+  selector:
+    namespaces:
+    - envoy-gateway-system
+    labelSelectors:
+      control-plane: envoy-gateway-controller
+  scheduler:
+    cron: "@every 5m"
+  duration: "30s"
+```
+
+**Проверка:**
+- Существующие HTTPRoute продолжают маршрутизировать трафик
+- Новые HTTPRoute не применяются до восстановления контроллера
+- Алерт GatewayAPIControllerDown срабатывает
+
+### Сценарий 2: Падение Data Plane Pod
+
+**Гипотеза:** При падении одного Envoy-под трафик автоматически переключается на оставшиеся поды без потерь.
+
+**Эксперимент (Chaos Mesh):**
+```yaml
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: kill-envoy-pod
+  namespace: chaos-testing
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+    - envoy-gateway-system
+    labelSelectors:
+      gateway.envoyproxy.io/owning-gateway-name: external-gw
+  scheduler:
+    cron: "@every 10m"
+```
+
+**Проверка:**
+- Error rate не превышает 1% за 30-секундное окно
+- P95 latency не увеличивается более чем на 20%
+- Все поды восстанавливаются через 60 секунд
+
+### Сценарий 3: Сетевая задержка к бэкендам
+
+**Гипотеза:** При задержке 500 мс от бэкенда BackendTrafficPolicy с таймаутами и retry корректно обрабатывает ситуацию.
+
+**Эксперимент (Chaos Mesh):**
+```yaml
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: delay-to-backend
+  namespace: chaos-testing
+spec:
+  action: delay
+  mode: one
+  selector:
+    namespaces:
+    - production
+    labelSelectors:
+      app: api-service
+  delay:
+    latency: "500ms"
+    jitter: "100ms"
+    correlation: "50"
+  duration: "5m"
+  direction: to
+```
+
+**Проверка:**
+- HTTPRoute с retry política автоматически повторяет запросы
+- Circuit Breaker не срабатывает при малой доле задержек
+- Error rate не превышает SLO
+
+### Сценарий 4: Потеря пакетов
+
+**Гипотеза:** При потере 10% пакетов Envoy корректно обрабатывает TCP retransmissions.
+
+**Эксперимент (Chaos Mesh):**
+```yaml
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: packet-loss
+  namespace: chaos-testing
+spec:
+  action: loss
+  mode: one
+  selector:
+    namespaces:
+    - envoy-gateway-system
+    labelSelectors:
+      gateway.envoyproxy.io/owning-gateway-name: external-gw
+  loss:
+    loss: "10"
+    correlation: "25"
+  direction: both
+  duration: "3m"
+```
+
+**Проверка:**
+- TCP retransmissions корректно обрабатываются
+- Error rate не превышает допустимые пороги
+- Мониторинг фиксирует аномалию
+
+### Сценарий 5: Падение DNS
+
+**Гипотеза:** При недоступности CoreDNS Envoy использует кэш DNS-записей.
+
+**Эксперимент (Litmus):**
+```yaml
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: dns-chaos
+  namespace: chaos-testing
+spec:
+  appinfo:
+    appns: envoy-gateway-system
+    applabel: gateway.envoyproxy.io/owning-gateway-name
+    appkind: deployment
+  chaosServiceAccount: litmus-admin
+  experiments:
+  - name: pod-delete
+    spec:
+      components:
+        env:
+        - name: TOTAL_CHAOS_DURATION
+          value: "60"
+        - name: TARGET_PODS
+          value: "coredns"
+      probe:
+      - name: check-gateway-status
+        type: httpProbe
+        httpProbe/inputs:
+          url: http://localhost:19000/ready
+          insecureSkipVerify: true
+          method:
+            get:
+              criteria: ==
+              responseCode: "200"
+        mode: Edge
+        runProperties:
+          probeTimeout: 5s
+          interval: 10s
+          retry: 3
+```
+
+### Практические инструменты для chaos-тестирования Gateway API
+
+| Инструмент | Тип сценария | Преимущество |
+|:---|:---|:---|
+| **Chaos Mesh** | Pod kill, Network delay/loss | natively поддерживает label selectors |
+| **Litmus Chaos** | Pod delete, DNS failure | Простые манифесты, быстрый старт |
+| **Toxiproxy** | TCP proxy anomalies | Точная инъекция сбоев на уровне TCP |
+| **k6** | Нагрузка + chaos | Комбинирование нагрузки и сбоев |
+
+### Автоматизация chaos-тестирования
+
+```yaml
+# GitHub Actions workflow для chaos-тестирования Gateway API
+name: Gateway API Chaos Tests
+
+on:
+  schedule:
+  - cron: "0 2 * * 1"  # Каждый понедельник в 02:00
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Deploy chaos tests
+      run: |
+        kubectl apply -f chaos/gateway-api-chaos.yaml
+        sleep 300  # Ждём 5 минут
+
+    - name: Validate steady state
+      run: |
+        ERROR_RATE=$(curl -s http://prometheus:9090/api/v1/query?query=sum(rate(envoy_cluster_upstream_rq_xx{code=~"5.."}[5m]))/sum(rate(envoy_cluster_upstream_rq_total[5m])) | jq '.data.result[0].value[1]' -r)
+        if (( $(echo "$ERROR_RATE > 0.05" | bc -l) )); then
+          echo "FAIL: Error rate $ERROR_RATE exceeds 5% threshold"
+          exit 1
+        fi
+        echo "PASS: Error rate $ERROR_RATE within SLO"
+
+    - name: Cleanup
+      if: always()
+      run: kubectl delete -f chaos/gateway-api-chaos.yaml
+```

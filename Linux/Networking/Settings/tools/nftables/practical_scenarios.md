@@ -146,7 +146,204 @@ table ip nat {
 }
 ```
 
-### 7. Оптимизация через Flowtables
+### 7. Безопасная настройка nftables на удалённом сервере
+
+Настройка файрвола на удалённой машине через SSH — рискованная операция. Одно неверное движение, и доступ потерян. В этом разделе разобраны методики безопасного применения правил nftables без риска потерять SSH-соединение.
+
+#### Почему nftables и при чём тут iptables
+
+Nftables — современный фреймворк пакетной фильтрации, доступный начиная с ядра Linux 3.13. Он предлагает:
+*   Единый синтаксис для IPv4, IPv6, ARP и других семейств протоколов (не нужно отдельно писать правила для `iptables` и `ip6tables`).
+*   Атомарную загрузку правил — замена всего набора правил одной транзакцией.
+*   Более читаемый синтаксис и удобные наборы (sets).
+
+Важный нюанс: во многих дистрибутивах утилита `iptables` является прослойкой, транслирующей команды в nftables. Убедиться в этом можно так:
+
+```bash
+nft list ruleset
+# → Если есть таблицы с предупреждением `managed by iptables-nft`,
+#   вы уже работаете поверх nftables.
+```
+
+#### Политика DROP и порядок правил
+
+Самый частый способ потерять доступ — установить политику `drop` для цепочки `input` до того, как было добавлено правило, разрешающее SSH.
+
+Опасный сценарий:
+
+```bash
+# Применяем цепочку с policy drop — ВСЕ соединения обрываются
+nft add chain inet filter input { type filter hook input priority 0; policy drop; }
+```
+
+В отличие от политики `accept` (разрешает всё, что не запрещено), политика `drop` запрещает всё, что не разрешено явно.
+
+**Безопасный подход:** сначала добавить правило для SSH, и только потом устанавливать политику `drop`.
+
+#### Метод 1: Атомарная загрузка правил
+
+Главное преимущество nftables — возможность атомарной замены всего набора правил одной командой. В рамках одной транзакции `flush ruleset` и `policy drop` срабатывают одновременно, поэтому разрыва соединения не происходит, если правило для SSH уже находится в том же файле.
+
+```bash
+cat > /etc/nftables.conf <<'EOF'
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        # Разрешаем loopback
+        iif lo accept
+
+        # Разрешаем установленные соединения (критично для сохранения SSH!)
+        ct state established,related accept
+
+        # Отбрасываем некорректные пакеты
+        ct state invalid drop
+
+        # Разрешаем SSH
+        tcp dport 22 accept
+
+        # Разрешаем HTTP/HTTPS при необходимости
+        tcp dport { 80, 443 } accept
+
+        # Разрешаем ICMP (ping)
+        ip protocol icmp accept
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}
+EOF
+
+# Применяем атомарно
+sudo nft -f /etc/nftables.conf
+```
+
+После успешной загрузки проверьте, что SSH-соединение всё ещё живо. Если в конфигурации синтаксическая ошибка, nftables не применит её.
+
+#### Метод 2: Автоматический откат при потере соединения
+
+Атомарная загрузка не гарантирует отсутствие ошибок (например, неверный номер порта SSH или забытый `ct state established,related`). Для защиты используется автоматический откат.
+
+**Вариант А: Таймер с подтверждением**
+
+Идея: после применения правил запускается таймер. Если вы не подтвердите, что соединение работает, правила автоматически откатываются.
+
+```bash
+#!/bin/bash
+RULES_FILE="/etc/nftables.conf"
+BACKUP_FILE="/tmp/nftables-backup-$(date +%s).conf"
+
+# 1. Сохраняем текущие правила
+nft list ruleset > "$BACKUP_FILE"
+
+# 2. Применяем новые правила
+nft -f "$RULES_FILE"
+
+# 3. Запускаем таймер отката (5 минут)
+(
+    sleep 300
+    echo "Timeout! Rolling back..."
+    nft flush ruleset
+    nft -f "$BACKUP_FILE"
+) &
+ROLLBACK_PID=$!
+
+# 4. Ждём подтверждения от администратора
+echo "Does SSH still work? (yes/no)"
+read answer
+
+if [[ "$answer" == "yes" ]]; then
+    kill "$ROLLBACK_PID" 2>/dev/null
+    echo "Configuration confirmed."
+else
+    echo "Rolling back..."
+    nft flush ruleset
+    nft -f "$BACKUP_FILE"
+fi
+```
+
+**Вариант Б: Специализированные утилиты**
+
+Существуют инструменты, автоматизирующие процесс безопасного применения:
+
+*   `nftables-apply` — утилита для Fedora, RHEL, Ubuntu и других дистрибутивов:
+
+```bash
+# Установка (Ubuntu)
+sudo add-apt-repository ppa:setenforce1/nftables-apply
+sudo apt install nftables-apply
+
+# Применение с таймаутом 15 секунд
+sudo nftables-apply -s /etc/nftables/candidate.nft -t 15
+```
+
+Утилита применяет правила, ожидает подтверждения и автоматически откатывает изменения при потере соединения.
+
+#### Особый случай: проблемы с conntrack
+
+При первой загрузке правил SSH-соединение может оборваться, хотя правила корректны. Причина: conntrack не был активен до загрузки правил, и для текущего SSH-соединения не было записи в таблице состояний, поэтому `ct state established,related accept` не сработало.
+
+Решение — добавить на этапе загрузки системы правило, активирующее conntrack заранее:
+
+```bash
+table inet filter {
+    chain input {
+        type filter hook input priority filter;
+        ct state { established, related } accept
+    }
+}
+```
+
+#### Проверка существующих правил
+
+Прежде чем вносить изменения, всегда полезно посмотреть, что уже настроено:
+
+```bash
+# Весь текущий набор правил
+sudo nft list ruleset
+
+# Конкретная таблица
+sudo nft list table inet filter
+
+# Конкретная цепочка
+sudo nft list chain inet filter input
+```
+
+Если вы переходите с iptables, можно преобразовать существующие правила в формат nftables:
+
+```bash
+iptables-translate -A INPUT -p tcp --dport 22 -j ACCEPT
+# → nft add rule ip filter INPUT tcp dport 22 accept
+```
+
+Подробнее о миграции: [nftables — миграция и справочник синтаксиса](./migration_and_reference.md).
+
+#### Чего делать НЕ стоит
+
+*   Не выполняйте команды по одной через SSH без страховки — между `nft add chain... policy drop` и добавлением разрешающего правила.
+*   Не используйте `nft flush ruleset` в интерактивном режиме на удалённом сервере — если у вас не было явного разрешающего правила для SSH, вы останетесь без защиты (и без доступа). Вместо этого используйте `nft -f` с полным набором правил.
+*   Не забывайте про правило для установленных соединений — без `ct state established,related accept` даже правильно настроенный SSH может оборваться, если таблица conntrack была очищена.
+
+#### Чек-лист безопасной настройки
+
+1.  Подготовьте файл правил с `flush ruleset`, правилом для SSH и политикой `drop`.
+2.  Проверьте синтаксис: `sudo nft --check --file /etc/nftables.conf`.
+3.  Примените атомарно: `sudo nft -f /etc/nftables.conf`.
+4.  Сохраните правила для загрузки при старте: `sudo nft list ruleset | sudo tee /etc/nftables.conf`.
+5.  Настройте автоматический запуск: `sudo systemctl enable --now nftables`.
+6.  Оставьте себе запасное окно — не закрывайте текущую SSH-сессию, пока не проверите, что новое подключение работает.
+
+---
+
+### 8. Оптимизация через Flowtables
 
 Для маршрутизаторов с высокой нагрузкой (L3 Forwarding).
 

@@ -1,5 +1,16 @@
 # Механизмы переключения при отказе (Failover) и пульс (Heartbeat)
 
+## Предварительные требования
+
+Для полноценного понимания данного раздела предполагается знакомство с:
+- Протоколами VRRP, BFD, ARP и базовыми концепциями сетевого взаимодействия (TCP/IP)
+- Принципами **[высокой доступности](./ha_overview.md)**: RTO, RPO, MTTR, SPOF
+- Основами **[кластеризации и балансировки нагрузки](./ha_clustering_and_load_balancing.md)**: Active-Active, Active-Passive, кворум
+- Концепциями **[консенсуса (Raft/Paxos)](../../etcd/raft_consensus.md)** и кворума
+- Инструментами мониторинга (Prometheus, Zabbix) и средствами диагностики сети (tcpdump, ip, ss)
+
+---
+
 ## Определения
 
 **Failover (Переключение при отказе)** — автоматизированный процесс передачи функций от отказавшего компонента (сервера, сервиса, сетевого интерфейса или целого региона) к резервному. Это фундамент **[высокой доступности](./ha_overview.md)**, задача которого — минимизация **MTTR** (Mean Time To Repair) и обеспечение непрерывности бизнеса в рамках заданного **RTO** (Recovery Time Objective).
@@ -35,6 +46,55 @@
 *   **Слишком низкая чувствительность:** система будет простаивать минуты, пока мониторинг не поймет, что сервер мертв.
 
 **Решение в 2026 году:** Использование **Hold-off таймеров** и экспоненциальных задержек для возврата роли (Preemption Delay), чтобы предотвратить циклические переключения.
+
+**Практическая настройка anti-flapping в Keepalived:**
+
+```keepalived
+vrrp_instance VI_1 {
+  state MASTER
+  interface eth0
+  virtual_router_id 51
+  priority 150
+  advert_int 1
+
+  # Защита от дребезга: 3 провала (3 сек) для исключения, 5 успехов (5 сек) для возврата
+  # + nopreempt предотвращает возврат роли без подтверждения стабильности
+  nopreempt
+
+  # Увеличение advert_int до 2-3 сек для сред с нестабильной сетью
+  # advert_int 2
+
+  authentication {
+    auth_type PASS
+    auth_pass secure_password
+  }
+
+  virtual_ipaddress {
+    192.168.1.100/24
+  }
+
+  track_script {
+    check_service
+  }
+}
+
+vrrp_script check_service {
+  script "/usr/bin/curl -sf http://localhost/health || exit 1"
+  interval 2
+  fall 3      # 3 неудачи = переход в BACKUP (6 сек при interval=2)
+  rise 5      # 5 успехов = возврат в строй (10 сек) — медленнее чем fall
+  weight -20  # Снижение приоритета при провале (для плавного переключения)
+}
+```
+
+**Параметры anti-flapping для разных сценариев:**
+
+| Сценарий | `interval` | `fall` | `rise` | `nopreempt` | Пояснение |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Критичный сервис (мгновенный)** | 1 | 3 | 2 | No | Быстрое переключение (3 сек), возврат через 2 сек |
+| **Веб-сервис** | 2 | 3 | 5 | Yes | Сбалансированное (6 сек detection, 10 сек recovery) |
+| **База данных** | 2 | 5 | 5 | Yes | Медленное (10 сек), чтобы не терять соединения |
+| **Нестабильная сеть** | 3 | 5 | 10 | Yes | Максимальная устойчивость к ложным срабатываниям |
 
 ## Механизмы реализации на разных уровнях
 
@@ -117,44 +177,154 @@ vrrp_instance VI_1 {
 
 ### Кластерное управление ресурсами (Pacemaker + Corosync)
 
-Стек для управления сложными Stateful-сервисами (PostgreSQL, NFS, iSCSI).
+Стек для управления сложными Stateful-сервисами (PostgreSQL, NFS, iSCSI). Pacemaker выступает оркестратором ресурсов, Corosync обеспечивает обнаружение узлов и межпроцессное общение (messaging layer).
 
-**Основные операции администрирования (pcs):**
+**Шаг 1: Подготовка узлов (оба узла)**
 
 ```bash
-# Инициализация кластера на двух узлах
-pcs cluster setup my_ha_cluster node1 node2
-pcs cluster start --all
+# Установка пакетов (RHEL/Debian)
+sudo yum install -y pacemaker corosync pcs fence-agents ipmilan
+# или
+sudo apt install -y pacemaker corosync pcs fence-agents
 
-# Настройка STONITH (Критически важно для защиты от Split-Brain)
-pcs property set stonith-enabled=true
-pcs stonith create fence_node1 fence_ipmilan ipaddr="10.0.0.1" login="admin" passwd="password" pcmk_host_list="node1"
+# Настройка пароля для pcs-директора (одинаковый на обоих узлах)
+sudo passwd hacluster
 
-# Создание ресурсов: VIP и Apache
-pcs resource create virtual_ip IPaddr2 ip=192.168.1.100 cidr_netmask=24
-pcs resource create web_app ocf:heartbeat:apache configfile="/etc/httpd/conf/httpd.conf"
-
-# Установка ограничений (Constraints)
-# 1. Colocation: Веб-приложение должно быть там же, где и VIP
-pcs constraint colocation add web_app with virtual_ip INFINITY
-# 2. Order: Сначала запускается VIP, затем приложение
-pcs constraint order virtual_ip then web_app
+# Запуск и автозапуск pcsd
+sudo systemctl enable --now pcsd
 ```
 
-### Облачные механизмы Failover (Cloud-native)
+**Шаг 2: Инициализация кластера**
 
-В 2026 году в облачных средах (AWS, GCP, Azure) классический VRRP часто заменяется на:
-- **Cloud Load Balancer Health Checks:** Балансировщик сам является "свидетелем" и перенаправляет трафик на живые целевые группы (Target Groups).
-- **Route53 / Cloud DNS Failover:** Автоматическое изменение DNS-записей при провале Health Check эндпоинта.
+```bash
+# Авторизация узлов (выполняется с любого узла)
+sudo pcs host auth node1 node2 -u hacluster -p <пароль_hacluster>
+
+# Создание кластера
+sudo pcs cluster setup my_ha_cluster node1 node2
+sudo pcs cluster start --all
+sudo pcs cluster enable --all
+```
+
+**Шаг 3: Настройка STONITH (Критически важно для защиты от Split-Brain)**
+
+```bash
+# Включение STONITH
+sudo pcs property set stonith-enabled=true
+
+# Пример: fencing через IPMI
+sudo pcs stonith create fence_node1 fence_ipmilan \
+  ipaddr="10.0.0.1" login="admin" passwd="ipmi_password" \
+  pcmk_host_list="node1" lanplus=1
+
+sudo pcs stonith create fence_node2 fence_ipmilan \
+  ipaddr="10.0.0.2" login="admin" passwd="ipmi_password" \
+  pcmk_host_list="node2" lanplus=1
+
+# Разрешить запуск ресурсов на любом узле (после настройки STONITH)
+sudo pcs property set no-quorum-policy=ignore
+```
+
+**Шаг 4: Создание ресурсов и ограничений**
+
+```bash
+# VIP
+sudo pcs resource create virtual_ip IPaddr2 ip=192.168.1.100 cidr_netmask=24
+
+# Сервис (пример: Apache)
+sudo pcs resource create web_app ocf:heartbeat:apache \
+  configfile="/etc/httpd/conf/httpd.conf"
+
+# Colocation: web_app всегда там же, где virtual_ip
+sudo pcs constraint colocation add web_app with virtual_ip INFINITY
+
+# Order: virtual_ip запускается ДО web_app
+sudo pcs constraint order virtual_ip then web_app
+
+# Таймаут: если web_app не запустится за 60 сек, перезапуск на другом узле
+sudo pcs resource op defaults timeout=60s
+```
+
+**Валидация:**
+
+```bash
+# Состояние кластера
+sudo pcs status
+# → Online: [ node1 node1 ]
+# → Full list of resources:
+#   virtual_ip    (ocf::heartbeat:IPaddr2):   Started node1
+#   web_app       (ocf::heartbeat:apache):    Started node1
+
+# Детали ресурсов
+sudo pcs resource status
+
+# Проверка STONITH
+sudo pcs stonith status
+# → fence_node1 (fence_ipmilan): Started node2
+# → fence_node2 (fence_ipmilan): Started node1
+
+# Проверка ограничений
+sudo pcs constraint show
+```
+
+**Тестирование failover:**
+
+```bash
+# Имитация отказа: остановка.cluster на node1
+sudo pcs cluster stop node1
+# → Ресурсы должны перенестись на node2 в течение 30-60 сек
+# → Проверьте: sudo pcs status на node2
+
+# Имитация kernel panic (для проверки STONITH)
+sudo echo c > /proc/sysrq-trigger
+# → fence_ipmilan должен выключить/перезагрузить node1
+# → Ресурсы запустятся на node2
+
+# Восстановление node1
+sudo pcs cluster start node1
+# → Ресурсы НЕ должны вернутся на node1 (если nopreempt или default-behavior)
+```
+
+### DNS-level Failover (GSLB для on-premise)
+
+Для географически распределенных кластеров без облачных провайдеров:
+
+- **DNS-based failover:** Балансировщик DNS (PowerDNS, BIND с health-check плагинами) отдает A/SRV-записи только живых узлов.
+- **Ограничение TTL:** Минимальные значения TTL 10-30 сек для быстрого переключения, но клиенты могут кешировать старые записи.
+- **Альтернатива:** Anycast через BGP (требует собственного AS и IP-пространства) — маршрут BGP автоматически переключается на ближайший живой узел при отказе.
 
 ## Диагностика и устранение неисправностей
 
-| Проблема | Вероятная причина | Первые шаги |
-| :--- | :--- | :--- |
-| **Flapping (Дребезг)** | Нестабильный линк или малый таймаут Heartbeat. | Увеличить `advert_int` или `fall` count. Проверить загрузку CPU (планировщик может задерживать пакеты). |
-| **Оба узла MASTER** | Split-Brain (заблокирован UDP/VRRP трафик). | Проверить правила Firewall (iptables/nftables). Проверить Unicast/Multicast настройки. |
-| **Узел не отдает MASTER** | Hold-off таймер или `nopreempt`. | Проверить флаг `nopreempt` в конфиге. Проверить логи на наличие ошибок `vrrp_script`. |
-| **Fencing Loop** | Циклическая перезагрузка узла по STONITH. | Проверить связь с QDevice. Убедиться, что узел успевает загрузиться и войти в кластер до таймаута. |
+| Проблема | Вероятная причина | Первые шаги | Диагностические команды |
+| :--- | :--- | :--- | :--- |
+| **Flapping (Дребезг)** | Нестабильный линк или малый таймаут Heartbeat. | Увеличить `advert_int` или `fall` count. Проверить загрузку CPU (планировщик может задерживать пакеты). | `journalctl -u keepalived -f` — мониторинг VRRP-событий; `tcpdump -i eth0 vrrp` — перехват VRRP-пакетов; `ping -c 100 -i 0.1 <VIP>` — проверка доступности VIP |
+| **Оба узла MASTER** | Split-Brain (заблокирован UDP/VRRP трафик). | Проверить правила Firewall (iptables/nftables). Проверить Unicast/Multicast настройки. | `iptables -L -n -v \| grep 112` — проверка правил для VRRP (протокол 112); `ip maddr show dev eth0` — проверка multicast-группы; `sudo pcs status` — состояние кластера Pacemaker |
+| **Узел не отдает MASTER** | Hold-off таймер или `nopreempt`. | Проверить флаг `nopreempt` в конфиге. Проверить логи на наличие ошибок `vrrp_script`. | `sudo crm_verify -L -V` — проверка конфигурации CIB; `sudo pcs resource failcount show` — счетчики отказов ресурсов |
+| **Fencing Loop** | Циклическая перезагрузка узла по STONITH. | Проверить связь с QDevice. Убедиться, что узел успевает загрузиться и войти в кластер до таймаута. | `sudo pcs stonith history` — история fencing-событий; `ipmitool -H <BMC_IP> -U admin -P pass power status` — проверка доступности BMC; `sudo journalctl -u corosync` — логи Corosync |
+| **VIP не мигрирует** | Проблема с track_script или сетью. | Проверить, что скрипт проверки возвращает exit 0 на BACKUP. Проверить доступность VIP через `ip addr`. | `ip addr show <iface> \| grep <VIP>` — проверка привязки VIP; `sudo keepalived --dont-fork --log-console` — отладочный запуск Keepalived; `sudo pcs constraint show -a` — проверка ограничений |
+
+## Лучшие практики (Best Practices)
+
+1. **STONITH обязателен для кластеров:** Без fencing любой failover ненадежен — «мертвый» узел может продолжать писать в общее хранилище. Для on-premise: IPMI/BMC; для виртуальных машин: `fence_virt` / `fence_xvm`.
+2. **nopreempt для production-сред:** Предотвращает возврат роли восстановившимся узлом до полной стабильности. Исключение — среды с строгими требованиями к производительности, где master-узел значительно мощнее.
+3. **Мониторинг health-check скриптов:** Убедитесь, что скрипт проверки возвращает корректный exit code на обоих узлах. Тестируйте: `sudo /path/to/check_script && echo "OK" || echo "FAIL"`.
+4. **Регулярное тестирование failover:** Минимум 1 раз в квартал выполняйте плановый failover. Используйте Chaos Engineering-подходы: `iptables -A INPUT -p vrrp -j DROP`, `kill -9 <pid>`, `echo c > /proc/sysrq-trigger`.
+5. **Разделение VLAN для кластерного трафика:** Выделите отдельный VLAN (или L3-сеть) для VRRP/Corosync/Pacemaker, чтобы обнаружение узлов не зависело от общего сетевого трафика.
+6. **Логирование и алертинг:** Настройте алерты на:
+   - Смену ролей VRRP (`journalctl -u keepalived | grep "Transition to MASTER"`)
+   - Fencing-события (`pcs stonith history`)
+   - Кворум кластера (`pcs status | grep "Current DC"`)
+7. **Автозапуск кластера после ребута:** Убедитесь, что `pcs cluster enable --all` выполнен и сервисы `corosync`/`pacemaker`/`keepalived` добавлены в автозапуск (`systemctl enable`).
+8. **Документирование IPMI/BMC:** Ведите реестр IP-адресов, логинов и паролей BMC для всех узлов. fencing-устройства — критическая инфраструктура, их недоступность блокирует failover.
+
+## Граничные случаи и ограничения (Edge Cases)
+
+- **Кластер из 2 узлов без QDevice:** При падении одного узла второй теряет кворум и не может обслуживать запросы на запись. Решение: добавить QDevice ( witness) или перейти на 3+ узла.
+- **Сеть с высокой задержкой (cross-datacenter):** Если RTT между узлами > 100 мс, стандартные интервалы VRRP (1 сек) будут вызывать ложные failover. Увеличьте `advert_int` до 3-5 сек и `fall` до 5-10.
+- **Split-Brain при асимметричной сети:** Если узлы видят друг друга, но один из маршрутов однонаправленный (асимметрия), VRRP-пакеты могут не доходить. Проверяйте однонаправленную связь: `ping` в обе стороны + `tcpdump` на обоих узлах.
+- **Fencing через IPMI с задержкой:** Если BMC-интерфейс отвечает медленно (> 5 сек), fencing может завершиться до фактического отключения узла. Увеличьте `pcmk_delay_max` в конфигурации stonith.
+- **Приоритет VRRP и preempt:** Если MASTER-узел имеет приоритет 200, а BACKUP — 100, и на BACKUP установлен `nopreempt`, BACKUP никогда не вернет роль MASTER после восстановления. Используйте `preempt_delay` вместо полного `nopreempt`, если нужен возврат с задержкой.
+- **Дребезг при восстановлении питания:** Если в стойке отключалось питание и все узлы включились одновременно, они могут начать борьбу за MASTER. Решение: `vrrp_script` с `weight` + `nopreempt` или рандомизация задержки запуска Keepalived.
 
 ## Дополнительная информация
 
@@ -173,8 +343,20 @@ pcs constraint order virtual_ip then web_app
 3. **Ресурсный сбой:** Остановка процесса через `kill -9`. Проверка способности Pacemaker/Kubernetes перезапустить сервис локально перед выполнением Failover.
 
 **См. также:**
-- **[Обзор High Availability](./ha_overview.md)** — базовые метрики (RTO, RPO) и архитектурные принципы.
-- **[Кластеризация и балансировка нагрузки](./ha_clustering_and_load_balancing.md)** — сравнение моделей Active-Passive и Active-Active.
-- **[Репликация баз данных](../../Databases/Concepts/replication.md)** — глубокий разбор Split-Brain и механизмов согласованности данных.
-- **[Законы масштабируемости](./scalability_laws.md)** — почему Failover влияет на производительность.
-- **[Кластеризация в Proxmox](../../Proxmox/proxmox_cluster.md)** — пример реализации HA и Fencing на базе Corosync.
+- **[Обзор High Availability](./ha_overview.md)** — базовые метрики (RTO, RPO) и архитектурные принципы HA.
+- **[Кластеризация и балансировка нагрузки](./ha_clustering_and_load_balancing.md)** — сравнение моделей Active-Passive и Active-Active, алгоритмы балансировки.
+- **[Управление задержками (Tail Latency)](./tail_latency_mitigation.md)** — паттерны Circuit Breaker, Retry Budget и их связь с failover.
+
+---
+
+## Контрольный список проектирования Failover
+
+- [ ] Определены критичные сервисы и их RTO/RPO
+- [ ] Выбран механизм обнаружения отказа (BFD / VRRP / Health Check)
+- [ ] Настроен fencing (STONITH или equivalent) для всех узлов
+- [ ] Кворум обеспечен (3+ узла или QDevice для 2-узловых кластеров)
+- [ ] Настроены anti-flapping параметры (fall/rise/nopreempt)
+- [ ] Протестирован failover вручную (kill процесса, остановка кластера, iptables-блокировка)
+- [ ] Настроен мониторинг fencing-событий и смены ролей
+- [ ] Документированы IPMI/BMC-данные для всех узлов
+- [ ] Автозапуск кластерных сервисов после ребута проверен

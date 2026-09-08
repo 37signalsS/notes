@@ -112,6 +112,8 @@ export VISUAL='vim'
 ```
 
 ### См. также
+- [Управление файлами: создание, удаление, копирование и перемещение](./file_operations.md) — SSoT по работе с файлами и каталогами (`touch`, `rm`, `rmdir`, `cp`, `mv`, `rename`).
+- [Команда ls](./ls.md) — SSoT по флагам, скрытым файлам и форматам вывода.
 - [Поиск файлов и программ](./file_and_program_search.md)
 - [Шорткаты и горячие клавиши Shell](./shell_shortcuts.md)
 - [Введение в Shell](./shell_intro.md)

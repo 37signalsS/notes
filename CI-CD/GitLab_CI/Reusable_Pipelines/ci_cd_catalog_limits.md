@@ -10,6 +10,8 @@
 
 **Раскрытая конфигурация (Expanded YAML)** — итоговый объект конфигурации, полученный после завершения всех операций импорта (`include`), наследования (`extends`) и разрешения параметров (`inputs`). Именно этот объект проходит финальную валидацию на стороне сервера.
 
+**Impact budget** — стратегический подход к управлению лимитами CI/CD, при котором выделяется «бюджет» на каждую категорию ограничений (компоненты, вложенность, размер YAML) с учетом запаса прочности 20–30% для роста.
+
 ## Основные концепции
 
 ### Количественные ограничения (Актуально на 2026 год)
@@ -26,6 +28,17 @@
 | **Максимум входов (spec:inputs)** | **50** | 16.10+ | Лимит уникальных параметров в секции спецификации одного файла. |
 | **Рекурсия переменных** | **10** | Все | Глубина разрешения вложенных переменных в блоке `variables`. |
 
+### Практический контекст лимитов для DevOps/SRE
+
+Для инженера DevOps/SRE лимиты каталога компонентов — это не абстрактные ограничения, а параметры, влияющие на реальную производительность CI/CD:
+
+| Лимит | Влияние на производительность | Порог критичности |
+| :--- | :--- | :--- |
+| **150 include** | Каждый include увеличивает время компиляции пайплайна на 0.5–2 секунды. При 150 узлах задержка может достигать 5 минут. | > 100 узлов (67% от лимита) |
+| **100 компонентов** | Большое количество компонентов замедляет обнаружение в каталоге и увеличивает время валидации. | > 70 компонентов (70% от лимита) |
+| **1000 заданий** | Генерация более 500 заданий квадратично увеличивает время построения графа зависимостей. | > 500 заданий (50% от лимита) |
+| **5 МБ YAML** | Парсинг больших конфигов потребляет пропорционально больше памяти на стороне GitLab Rails. | > 3 МБ (60% от лимита) |
+
 ### Структурные ограничения и изоляция
 
 Для обеспечения «чистоты» компонентов и исключения побочных эффектов при их подключении, GitLab накладывает жесткие правила на содержимое YAML-файлов компонентов (секция после разделителя `---`):
@@ -39,6 +52,17 @@
     - Нельзя использовать `include` внутри `spec:`. Все зависимости компонента должны описываться в секции реализации (после `---`).
 3.  **Порядок интерполяции:**
     - `inputs` разрешаются на самом раннем этапе — **до** обработки `variables` и `extends`. Это делает невозможным динамическое формирование имен переменных через инпуты внутри одного и того же блока `variables`.
+
+### Экономика ограничений (TCO Analysis)
+
+Приближение к лимитам увеличивает стоимость владения CI/CD инфраструктурой:
+
+| Сценарий | Стоимость при 50% от лимита | Стоимость при 90% от лимита | Множитель |
+| :--- | :--- | :--- | :--- |
+| Время компиляции пайплайна | 30 сек | 3–5 мин | ×6–10 |
+| Время отладки при сбоях | 5 мин | 30–60 мин | ×6–12 |
+| Риск случайного превышения | Низкий | Критический | ×10+ |
+| Стоимость инцидента (дowntime) | $500 | $5 000–50 000 | ×10–100 |
 
 ## Практические сценарии
 
@@ -66,6 +90,40 @@ du -h full_pipeline.yml
 
 # 4. Анализ количества заданий после раскрытия (лимит 1000)
 grep "^[a-zA-Z0-9_-]\+:" full_pipeline.yml | grep -v "inputs:" | wc -l
+
+# 5. Автоматизированный аудит с проверкой порогов
+AUDIT_SCRIPT='
+#!/bin/bash
+MAX_COMPONENTS=100
+MAX_INCLUDES=150
+MAX_JOBS=1000
+MAX_SIZE_MB=5
+
+# Подсчет компONENTОВ
+COMPONENT_COUNT=$(find templates/ -name "*.yml" | grep -v "test" | wc -l)
+echo "Компонентов: ${COMPONENT_COUNT}/${MAX_COMPONENTS}"
+
+# Проверка размера
+SIZE_MB=$(du -m full_pipeline.yml | cut -f1)
+echo "Размер YAML: ${SIZE_MB}МБ/${MAX_SIZE_MB}МБ"
+
+# Проверка количества заданий
+JOB_COUNT=$(grep "^[a-zA-Z0-9_-]\+:" full_pipeline.yml | grep -v "inputs:" | wc -l)
+echo "Заданий: ${JOB_COUNT}/${MAX_JOBS}"
+
+# Алерт при приближении к лимиту
+if [ ${COMPONENT_COUNT} -gt $((MAX_COMPONENTS * 80 / 100)) ]; then
+  echo "ПРЕДУПРЕЖДЕНИЕ: Использовано более 80% лимита компонентов!"
+fi
+'
+echo "${AUDIT_SCRIPT}" | bash
+```
+
+**Ожидаемый вывод:**
+```
+Компонентов: 45/100
+Размер YAML: 2МБ/5МБ
+Заданий: 120/1000
 ```
 
 ### Сценарий 2: Стратегии обхода лимита вложенности (Include optimization)
@@ -75,6 +133,48 @@ grep "^[a-zA-Z0-9_-]\+:" full_pipeline.yml | grep -v "inputs:" | wc -l
 1.  **Паттерн «Плоская композиция»:** Вместо иерархии `App -> Library -> Base -> OS`, подключайте все зависимости параллельно в корневом `.gitlab-ci.yml`. Это уменьшает глубину дерева и делает связи явными.
 2.  **Использование `!reference`:** Вместо выноса каждой мелкой функции в отдельный YAML-файл (создающий `include`), используйте один «файл-словарь» со скрытыми заданиями. Подключайте его один раз и вставляйте блоки кода через `!reference`.
 3.  **OCI-компоненты (Будущее):** Рассмотрите возможность публикации компонентов как артефактов в Container Registry (если поддерживается версией), что ускоряет загрузку по сравнению с Git-протоколом.
+
+**Практический пример оптимизации:**
+
+```bash
+# До оптимизации: 120 include узлов
+glab ci lint --show-expanded | grep -c "include:"
+# → 120
+
+# После рефакторинга: плоская структура с !reference
+# 1. Создаем единый файл-словарь
+cat > templates/all-stages.yml << 'EOF'
+.build_template:
+  image: docker:27.0
+  before_script:
+    - echo "Build started"
+
+.test_template:
+  image: python:3.12
+  before_script:
+    - pip install pytest
+EOF
+
+# 2. Используем !reference вместо include
+cat > .gitlab-ci.yml << 'EOF'
+include:
+  - template: all-stages.yml  # Один include вместо 20
+
+build:
+  extends: .build_template
+  script:
+    - make build
+
+test:
+  extends: .test_template
+  script:
+    - pytest
+EOF
+
+# После оптимизации: 1 include узел
+glab ci lint --show-expanded | grep -c "include:"
+# → 1
+```
 
 ### Сценарий 3: Решение конфликтов стадий
 
@@ -105,12 +205,171 @@ include:
       stage: compile # Явное сопоставление со стадией проекта
 ```
 
+### Сценарий 4: Мониторинг лимитов в продакшене
+
+Для SRE-команд критически важно отслеживать приближение к лимитам до возникновения инцидентов.
+
+**Настройка мониторинга через GitLab API:**
+
+```bash
+# Скрипт мониторинга лимитов каталога
+#!/bin/bash
+# monitor_catalog_limits.sh
+
+GITLAB_URL="https://gitlab.example.com"
+TOKEN="${CATALOG_TOKEN}"
+PROJECT_ID="12345"
+
+# Получение информации о каталоге
+CATALOG_INFO=$(glab api "projects/${PROJECT_ID}" | jq '{
+  name: .name,
+  components: (.repository_tree | length),
+  last_activity: .last_activity_at
+}')
+
+# Проверка лимита компонентов
+COMPONENT_COUNT=$(echo "${CATALOG_INFO}" | jq -r '.components')
+MAX_COMPONENTS=100
+THRESHOLD=$((MAX_COMPONENTS * 80 / 100))
+
+if [ ${COMPONENT_COUNT} -gt ${THRESHOLD} ]; then
+  echo "ALERT: Каталог использует ${COMPONENT_COUNT}/${MAX_COMPONENTS} компонентов"
+  echo "Рекомендация: Рассмотрите разделение каталога на специализированные библиотеки"
+fi
+```
+
+**Интеграция с Prometheus:**
+
+```yaml
+# monitoring/gitlab-catalog-metrics.yml
+gitlab_catalog_components_total:
+  help: "Общее количество компонентов в каталоге"
+  type: gauge
+  value: ${COMPONENT_COUNT}
+
+gitlab_catalog_include_nodes_total:
+  help: "Количество узлов include в пайплайне"
+  type: gauge
+  value: ${INCLUDE_COUNT}
+
+gitlab_catalog_yaml_size_bytes:
+  help: "Размер раскрытого YAML в байтах"
+  type: gauge
+  value: ${YAML_SIZE}
+```
+
+### Сценарий 5: Стратегии масштабирования при приближении к лимитам
+
+Когда организация приближается к системным лимитам, необходимо применять стратегии масштабирования:
+
+| Уровень | Стратегия | Описание | Сложность |
+| :--- | :--- | :--- | :--- |
+| **1** | Оптимизация кода | Использование `!reference`, плоская композиция, объединение мелких файлов | Низкая |
+| **2** | Разделение каталога | Разбиение монолитного каталога на специализированные (infra, app, security) | Средняя |
+| **3** | Декомпозиция по командам | Выделение каталогов для каждой команды с централизованным governance | Высокая |
+| **4** | Polyrepo архитектура | Полный переход на распределенную модель с API-контрактами | Очень высокая |
+
+**Пример реализации стратегии уровня 2:**
+
+```bash
+# Разделение каталога на специализированные библиотеки
+# Было: 1 каталог с 95 компонентами
+
+# Создаем три специализированных каталога
+glab repo create org/infra-catalog \
+  --description "Инфраструктурные компоненты (Docker, K8s, Terraform)"
+
+glab repo create org/app-catalog \
+  --description "Прикладные компоненты (сборка, тесты, деплой)"
+
+glab repo create org/security-catalog \
+  --description "Компоненты безопасности (SAST, DAST, сканирование)"
+
+# Миграция компонентов
+for component in infrastructure/*; do
+  glab repo mirror org/infra-catalog --source "${component}"
+done
+```
+
+### Сценарий 6: CI/CD пайплайн для валидации лимитов
+
+Автоматическая проверка лимитов перед каждым коммитом в каталог компонентов:
+
+```yaml
+# .gitlab-ci.yml (в проекте каталога компонентов)
+stages:
+  - validate
+  - test
+  - publish
+
+validate_limits:
+  stage: validate
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache bash jq
+  script:
+    - |
+      echo "=== Валидация лимитов каталога ==="
+      
+      # Проверка количества компонентов
+      COMPONENT_COUNT=$(find templates/ -name "*.yml" | wc -l)
+      MAX_COMPONENTS=100
+      if [ ${COMPONENT_COUNT} -gt ${MAX_COMPONENTS} ]; then
+        echo "ОШИБКА: Превышен лимит компонентов (${COMPONENT_COUNT}/${MAX_COMPONENTS})"
+        exit 1
+      fi
+      
+      # Проверка размера YAML
+      for file in templates/*.yml; do
+        FILE_SIZE=$(wc -c < "${file}")
+        MAX_SIZE=10240  # 10KB на файл
+        if [ ${FILE_SIZE} -gt ${MAX_SIZE} ]; then
+          echo "ПРЕДУПРЕЖДЕНИЕ: Файл ${file} превышает ${MAX_SIZE} байт"
+        fi
+      done
+      
+      # Проверка глубины вложенности
+      INCLUDE_COUNT=$(grep -r "include:" templates/ | wc -l)
+      MAX_INCLUDES=150
+      if [ ${INCLUDE_COUNT} -gt ${MAX_INCLUDES} ]; then
+        echo "ОШИБКА: Превышен лимит include (${INCLUDE_COUNT}/${MAX_INCLUDES})"
+        exit 1
+      fi
+      
+      echo "=== Все проверки пройдены ==="
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+test_components:
+  stage: test
+  image: python:3.12
+  before_script:
+    - pip install yamllint
+  script:
+    - |
+      echo "=== Тестирование компонентов ==="
+      for component in templates/*.yml; do
+        echo "Проверка ${component}..."
+        yamllint -d relaxed "${component}"
+        if [ $? -ne 0 ]; then
+          echo "ОШИБКА: Найдены проблемы в ${component}"
+          exit 1
+        fi
+      done
+      echo "=== Все компоненты прошли тестирование ==="
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+```
+
 ## Валидация и устранение неполадок
 
 ### Инструменты диагностики
 
 - **CI Lint API:** Основной инструмент для проверки лимитов до коммита. Возвращает детальные сообщения о нарушении структурных ограничений.
 - **Pipeline Editor:** Вкладка "View merged YAML" визуально подсвечивает ошибки интерполяции `inputs`.
+- **`glab ci lint --show-expanded`:** Локальная проверка с раскрытием всех include и inputs для анализа итоговой конфигурации.
 
 ### Типичные ошибки и способы решения
 
@@ -122,6 +381,186 @@ include:
 | `Expanded YAML too large` | Итоговый конфиг > 5 МБ. | Сократите количество комментариев в шаблонах. Используйте наследование `extends` вместо копирования блоков. |
 | `Maximum levels of inheritance` | Глубина `extends` > 11. | Упростите иерархию шаблонов. Старайтесь не превышать 3-4 уровня вложенности. |
 
+### Диагностические команды
+
+```bash
+# Быстрая диагностика лимитов
+echo "=== Диагностика лимитов каталога ==="
+
+# 1. Проверка количества компонентов
+COMPONENTS=$(find templates/ -name "*.yml" | wc -l)
+echo "Компоненты: ${COMPONENTS}/100"
+
+# 2. Проверка размера YAML
+YAML_SIZE=$(du -sh . | cut -f1)
+echo "Размер: ${YAML_SIZE}"
+
+# 3. Проверка глубины вложенности
+INCLUDES=$(grep -r "include:" . --include="*.yml" | wc -l)
+echo "Include узлы: ${INCLUDES}/150"
+
+# 4. Проверка количества заданий
+JOBS=$(grep -E "^[a-zA-Z0-9_-]+:" .gitlab-ci.yml | wc -l)
+echo "Задания: ${JOBS}/1000"
+
+# 5. Валидация через glab
+glab ci lint --show-expanded > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+  echo "Статус: OK"
+else
+  echo "Статус: ОШИБКА"
+fi
+```
+
+## DevOps/SRE-специфичные сценарии
+
+### Влияние лимитов на SLA/SLO
+
+Для SRE-команд лимиты CI/CD напрямую влияют на метрики надежности:
+
+| Метрика | Влияние лимитов | Целевое значение |
+| :--- | :--- | :--- |
+| **Lead Time for Changes** | Увеличение времени компиляции пайплайна при приближении к лимитам | < 15 минут |
+| **Deployment Frequency** | Задержки при превышении лимита блокируют частые деплои | > 10 в день |
+| **Change Failure Rate** | Ошибки при превышении лимита увеличивают долю сбоев | < 5% |
+| **Time to Restore Service** | Сложность отладки при лимитах увеличивает MTTR | < 30 минут |
+
+**Формула расчета влияния на SLA:**
+
+```
+SLA Impact = (Current Usage / Limit) × 100%
+
+Если SLA Impact > 80%:
+  - Риск инцидента: Высокий
+  - Рекомендация: Немедленное масштабирование
+
+Если SLA Impact > 60%:
+  - Риск инцидента: Средний
+  - Рекомендация: Планирование оптимизации
+
+Если SLA Impact < 60%:
+  - Риск инцидента: Низкий
+  - Рекомендация: Мониторинг
+```
+
+### Интеграция с системами мониторинга
+
+Для полноценного мониторинга лимитов интегрируйте GitLab CI с существующими системами:
+
+**Prometheus + Grafana:**
+
+```yaml
+# monitoring/gitlab-ci-limits.json
+{
+  "dashboard": {
+    "title": "GitLab CI Catalog Limits",
+    "panels": [
+      {
+        "title": "Component Usage",
+        "type": "gauge",
+        "targets": [{
+          "expr": "gitlab_catalog_components_total / 100",
+          "legendFormat": "{{instance}}"
+        }],
+        "thresholds": {
+          "steps": [
+            {"value": 0, "color": "green"},
+            {"value": 0.6, "color": "yellow"},
+            {"value": 0.8, "color": "red"}
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+**Alertmanager правила:**
+
+```yaml
+# prometheus/alerts/gitlab-ci-alerts.yml
+groups:
+  - name: gitlab-ci-limits
+    rules:
+      - alert: GitLabCIComponentLimitHigh
+        expr: gitlab_catalog_components_total > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High component usage in GitLab CI catalog"
+          description: "Component count is {{ $value }}/100"
+
+      - alert: GitLabCIIncludeLimitHigh
+        expr: gitlab_pipeline_include_nodes > 120
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical include node usage"
+          description: "Include nodes: {{ $value }}/150"
+```
+
+### Стратегия реагирования на инциденты
+
+При превышении лимитов CI/CD необходим формализованный процесс реагирования:
+
+**Уровень 1: Автоматическое реагирование**
+```bash
+#!/bin/bash
+# incident_response.sh
+
+# Обнаружение превышения лимита
+if [ ${COMPONENT_COUNT} -gt 90 ]; then
+  # 1. Уведомление в Slack
+  curl -X POST "${SLACK_WEBHOOK}" \
+    -H 'Content-type: application/json' \
+    -d '{"text":"CRITICAL: GitLab CI catalog approaching component limit (90/100)"}'
+  
+  # 2. Блокировка новых коммитов (опционально)
+  glab api "projects/${PROJECT_ID}/protected_branches" \
+    -X POST \
+    -f name="main" \
+    -f push_access_level=0
+fi
+```
+
+**Уровень 2: Ручное вмешательство**
+1. Приоритизация компонентов по использованию
+2. Архивирование неиспользуемых компонентов
+3. Разделение каталога на специализированные библиотеки
+
+**Уровень 3: Стратегическое масштабирование**
+1. Разработка плана миграции на polyrepo архитектуру
+2. Внедрение API-контрактов между каталогами
+3. Настройка федеративного каталога компонентов
+
+## Чек-листы
+
+### Чек-лист мониторинга лимитов
+
+- [ ] Настроен Prometheus/Grafana для метрик лимитов
+- [ ] Настроены алерты при превышении 80% от лимита
+- [ ] Регулярный аудит лимитов (еженедельно)
+- [ ] Документированный процесс реагирования на инциденты
+- [ ] Обучение команд использованию инструментов мониторинга
+
+### Чек-лист оптимизации при приближении к лимитам
+
+- [ ] Анализ текущего использования лимитов
+- [ ] Идентификация неиспользуемых компонентов
+- [ ] Применение паттернов оптимизации (!reference, плоская композиция)
+- [ ] Тестирование оптимизированной конфигурации
+- [ ] Документирование изменений
+
+### Чек-лист масштабирования
+
+- [ ] Оценка потребности в масштабировании
+- [ ] Разработка плана разделения каталога
+- [ ] Миграция компонентов поэтапно
+- [ ] Валидация работы после миграции
+- [ ] Обновление документации и обучение команд
+
 ## Дополнительная информация
 
 ### Связанные документы
@@ -129,6 +568,8 @@ include:
 - **[Обзор и основные концепции каталога](./ci_cd_catalog_components.md)** — архитектура и стандарты именования.
 - **[Справочная информация по компонентам](./ci_cd_catalog_reference.md)** — синтаксис `spec:inputs` и типы данных.
 - **[Механизм include](./include_keyword.md)** — глубокое погружение в работу базового инструмента импорта.
+- **[Продвинутые сценарии](./ci_cd_catalog_advanced_scenarios.md)** — миграция и сложные цепочки.
+- **[Управление парком раннеров](../../runner-fleet-management.md)** — оптимизация ресурсов для CI/CD.
 
 ### Внешние ресурсы
 

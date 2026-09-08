@@ -21,6 +21,36 @@
 - **`variables`**: Переопределение переменных окружения специально для конкретного сработавшего правила. Имеет приоритет над глобальными переменными, но ниже ручного запуска (см. иерархию 19.x).
 - **`needs`**: Динамическое переопределение зависимостей (DAG). Позволяет подменять массив родительских задач (артефактов) в зависимости от сработавшего условия (GitLab 16.0+).
 
+## Предварительные требования
+
+### Версия GitLab и поддержка ключей
+
+| Ключ / Возможность | Минимальная версия GitLab | Примечание |
+| :--- | :--- | :--- |
+| `rules` (базовый синтаксис) | 11.0+ | Полная замена `only`/`except` |
+| `rules:changes:compare_to` (литералы) | 12.3+ | Сравнение с фиксированной веткой |
+| `rules:changes:compare_to` (переменные) | 17.2+ | Критично для динамических MR-пайплайнов |
+| `rules:exists:project` / `rules:exists:ref` | 17.0+ | Кросс-проектные проверки |
+| `rules:needs` | 16.0+ | Динамическое переопределение DAG |
+| `rules:allow_failure:exit_codes` | 12.8+ | Игнорирование специфических кодов завершения |
+| `rules:variables` | 13.9+ | Переопределение переменных в правилах |
+| `when: delayed` + `start_in` | 13.7+ | Отложенный запуск |
+
+### Необходимые знания
+
+- Базовый синтаксис YAML и структура `.gitlab-ci.yml`
+- Концепции стадий, задач и артефактов
+- Предопределённые переменные GitLab (`CI_*`)
+- Работа с Merge Request и ветками в Git
+- Основы shell-скриптинга для написания команд
+
+### Инструменты диагностики
+
+- **CI Lint API/UI** — валидация конфигурации до запуска пайплайна
+- **Pipeline Editor** — визуальный редактор с предпросмотром графа задач
+- **`glab ci lint`** — CLI-утилита для локальной проверки конфигурации
+- **CI_DEBUG_TRACE** — включение отладочного вывода для анализа переменных
+
 ## Основные концепции
 
 По умолчанию задачи запускаются согласно разделу `stages`. Директива `rules` переопределяет это поведение:
@@ -202,6 +232,261 @@ stop_review:
     action: stop
 ```
 
+### DevOps/SRE и on-premise сценарии
+
+**Terraform: дифференциальный план для изменений инфраструктуры:**
+```yaml
+terraform:plan:
+  stage: plan
+  image: hashicorp/terraform:1.9
+  script:
+    - terraform init -backend-config="backend.hcl"
+    - terraform plan -out=tfplan -var-file="production.tfvars"
+  artifacts:
+    paths: ["tfplan"]
+    expire_in: 1 day
+  rules:
+    - changes:
+        paths: ["terraform/**/*.tf"]
+        compare_to: '${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-main}'
+      when: always
+
+terraform:apply:
+  stage: deploy
+  image: hashicorp/terraform:1.9
+  script:
+    - terraform apply -auto-approve tfplan
+  dependencies: ["terraform:plan"]
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "web"'
+      when: manual
+    - when: never
+```
+
+**Ansible: каскадное развертывание с последовательными окружениями:**
+```yaml
+ansible:lint:
+  stage: lint
+  image: cytopia/ansible-lint
+  script:
+    - ansible-lint roles/
+    - ansible-lint playbooks/
+  rules:
+    - changes:
+        paths: ["ansible/**/*"]
+        compare_to: 'main'
+
+ansible:deploy:staging:
+  stage: deploy
+  image: cytopia/ansible:2.14
+  script:
+    - ansible-playbook -i inventory/staging playbooks/deploy.yml
+  environment:
+    name: staging
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+
+ansible:deploy:production:
+  stage: deploy
+  image: cytopia/ansible:2.14
+  script:
+    - ansible-playbook -i inventory/production playbooks/deploy.yml
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - when: never
+  needs: ["ansible:deploy:staging"]
+```
+
+**Конфигурация серверов (Salt/Puppet) с валидацией:**
+```yaml
+salt:validate:
+  stage: validate
+  image: saltstack/salt:latest
+  script:
+    - salt-call --local state.show_highstate --retcode-passthrough
+  rules:
+    - changes:
+        paths: ["salt/**/*"]
+        compare_to: 'main'
+
+salt:apply:
+  stage: apply
+  image: saltstack/salt:latest
+  script:
+    - salt-call --local state.highstate
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  needs: ["salt:validate"]
+```
+
+**Проверка конфигурации сетевых устройств (NAPALM/Netmiko):**
+```yaml
+network:validate:
+  stage: validate
+  image: python:3.12
+  before_script:
+    - pip install napalm
+  script:
+    - python validate_configs.py configs/
+  rules:
+    - changes:
+        paths: ["configs/**/*"]
+        compare_to: 'main'
+
+network:deploy:
+  stage: deploy
+  image: python:3.12
+  before_script:
+    - pip install napalm
+  script:
+    - python deploy_configs.py configs/ --dry-run
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  needs: ["network:validate"]
+```
+
+## Валидация и отладка правил
+
+### Методы проверки конфигурации
+
+**1. CI Lint (API/UI):**
+Проверка конфигурации на этапе создания пайплайна. Обнаруживает синтаксические ошибки и невалидные ключи.
+```bash
+# Через API
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  --data "content=$(cat .gitlab-ci.yml | base64)" \
+  "https://gitlab.example.com/api/v4/ci/lint"
+
+# Результат: {"valid": true} или {"valid": false, "errors": [...]}
+```
+
+**2. CLI-валидация (glab):**
+Локальная проверка без отправки в GitLab.
+```bash
+# Базовая проверка
+glab ci lint
+
+# С имитацией переменных окружения
+glab ci lint --dry-run --variable CI_PIPELINE_SOURCE=merge_request_event
+glab ci lint --dry-run --variable CI_COMMIT_BRANCH=main
+glab ci lint --dry-run --variable CI_COMMIT_BRANCH=feature/new-api
+```
+
+**3. Pipeline Editor:**
+Визуальный интерфейс GitLab для проверки конфигурации с предпросмотром графа задач и симуляцией выполнения.
+
+### Отладка переменных в правилах
+
+**Проблема:** Правило `if` не работает как ожидалось.
+
+**Диагностика:**
+1. Добавьте отладочный вывод переменных в начало секции `script`:
+```yaml
+debug_vars:
+  stage: .pre
+  script:
+    - echo "CI_PIPELINE_SOURCE=$CI_PIPELINE_SOURCE"
+    - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
+    - echo "CI_MERGE_REQUEST_ID=$CI_MERGE_REQUEST_ID"
+    - echo "CI_MERGE_REQUEST_TARGET_BRANCH_NAME=$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+  rules:
+    - when: always
+```
+
+2. Проверьте значение переменных через API:
+```bash
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/variables"
+```
+
+3. Используйте `CI_DEBUG_TRACE` для полного вывода окружения:
+```yaml
+debug_trace:
+  script:
+    - env | sort | grep CI_
+  variables:
+    CI_DEBUG_TRACE: "true"
+  rules:
+    - when: always
+```
+
+### Валидация логики правил
+
+**Тестирование всех веток логики:**
+```bash
+# Имитация различных сценариев
+for BRANCH in main develop feature/test; do
+  echo "Testing branch: $BRANCH"
+  glab ci lint --dry-run --variable CI_COMMIT_BRANCH=$BRANCH
+done
+
+# Имитация_MR событий
+for TARGET in main staging; do
+  echo "Testing MR to: $TARGET"
+  glab ci lint --dry-run \
+    --variable CI_PIPELINE_SOURCE=merge_request_event \
+    --variable CI_MERGE_REQUEST_TARGET_BRANCH_NAME=$TARGET
+done
+```
+
+## Миграция с only/except на rules
+
+### Причины миграции
+
+- `only`/`except` объявлены устаревшими в GitLab 12.0+
+- `rules` поддерживают сложную логику, `changes`, `exists`, `variables`
+- `rules` позволяют изменять атрибуты задачи (`when`, `allow_failure`, `variables`, `needs`)
+- `rules` совместимы с `workflow` для контроля над пайплайнами
+
+### Таблица соответствия
+
+| only/except | rules эквивалент | Примечание |
+| :--- | :--- | :--- |
+| `only: [branches]` | `if: '$CI_COMMIT_BRANCH == "name"'` | Точное имя ветки |
+| `except: [branches]` | `if: '$CI_COMMIT_BRANCH != "name"'` + fallback | Инверсия логики |
+| `only: [merge_requests]` | `if: '$CI_PIPELINE_SOURCE == "merge_request_event"'` | Источник триггера |
+| `only: [tags]` | `if: '$CI_COMMIT_TAG'` | Наличие тега |
+| `only: [schedules]` | `if: '$CI_PIPELINE_SOURCE == "schedule"'` | Расписание |
+| `only: [web]` | `if: '$CI_PIPELINE_SOURCE == "web"'` | Ручной запуск |
+| `only: [api]` | `if: '$CI_PIPELINE_SOURCE == "api"'` | API-вызов |
+| `only: [pushes]` | `if: '$CI_PIPELINE_SOURCE == "push"'` | Пуш коммита |
+
+### Практический пример миграции
+
+**До (only/except):**
+```yaml
+deploy:production:
+  script: ./deploy.sh
+  only:
+    - main
+  except:
+    - /^feature\/.*$/
+  when: manual
+```
+
+**После (rules):**
+```yaml
+deploy:production:
+  script: ./deploy.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - when: never
+```
+
+**Ключевое отличие:** `rules` требует явного указания `when: never` для исключения сценариев, в то время как `except` делает это неявно.
+
 ## Дополнительная информация
 
 ### Ключевые условия (Детально)
@@ -224,14 +509,199 @@ stop_review:
 | `delayed` | Откладывает запуск на время `start_in`. | Максимум 1 неделя. |
 | `never` | Задача полностью исключается. | Блокирующее правило в начале списка. |
 
-### Типовые ошибки
-- **Regex без слэшей**: В `if` регулярные выражения ОБЯЗАТЕЛЬНО обрамляются `/.../`.
-- **Конфликт с only**: Нельзя использовать `rules` и `only`/`except` в одной задаче.
-- **Пустой результат**: Если ни одно правило не подошло, задача исчезнет. Всегда предусматривайте дефолтное поведение.
+### Типовые ошибки и устранение неполадок
+
+#### Синтаксические ошибки
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `Syntax error in "rules"` | Невалидный YAML или неверный ключ | Используйте CI Lint для валидации |
+| `Unexpected keyword "only"` | Конфликт `only`/`except` с `rules` | Удалите `only`/`except`, используйте только `rules` |
+| `Invalid regex pattern` | Неверный синтаксис регулярного выражения | Проверьте regex на regex101.com, используйте `/pattern/` |
+
+#### Логические ошибки
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **Regex без слэшей** | В `if` регулярные выражения ОБЯЗАТЕЛЬНО обрамляются `/.../` | `if: '$CI_COMMIT_BRANCH =~ /^feature\/.*/'` |
+| **Задача не появляется** | Ни одно правило не совпало | Добавьте `- when: on_success` в конец списка |
+| **Задача запускается дважды** | Два правила совпали с `when: on_success` | Используйте `when: never` для исключения |
+| **Неверная переменная** | Переменная из dotenv недоступна в `rules` | Проверьте иерархию приоритетов переменных |
+| **Конфликт переменных** | Разные приоритеты переменных | Используйте `rules:variables` для переопределения |
+
+#### Проблемы с переменными
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **Переменная не раскрывается** | Использование `${VAR}` вместо `$VAR` в `if` | В `if` используйте `$VAR` без фигурных скобок |
+| **Regex не работает** | Отсутствие кавычек вокруг выражения | Оберните `if` в одинарные кавычки: `if: '$VAR =~ /pattern/'` |
+| **Переменная пуста** | Переменная не определена в данном контексте | Проверьте scope: project, group, instance, predefined |
+
+#### Проблемы с compare_to и changes
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **changes не срабатывает** | Отсутствует `compare_to` для обычных пушей | Добавьте `compare_to: 'main'` или используйте `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+| **Сравнение с собой** | `compare_to` указывает на текущую ветку | Убедитесь, что `compare_to` указывает на БАЗОВУЮ ветку, а не на текущую |
+| **Неверный ref** | `compare_to` принимает только полные refs | Используйте `refs/heads/main`, а не `main` |
+
+#### Проблемы с workflow:rules
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **Дублирование пайплайнов** | Отсутствует исключение для MR+Push | Добавьте правило с `when: never` для комбинации |
+| **Пустой пайплайн** | Все задачи отфильтрованы через `rules` | Проверьте `workflow:rules` на наличие fallback-правила |
+| **Пайплайн не создается** | `workflow:rules` не включает источник | Добавьте `if: '$CI_PIPELINE_SOURCE == "push"'` |
+
+### Устранение неисправностей (Troubleshooting)
+
+**1. Задача не запускается:**
+- Проверьте, что `workflow:rules` не исключает пайплайн
+- Используйте CI Lint для валидации конфигурации
+- Добавьте отладочный вывод переменных
+- Проверьте, что переменные в `if` используют синтаксис `$VAR`, а не `${VAR}`
+
+**2. Задача запускается, когда не должна:**
+- Проверьте порядок правил: первое совпадение определяет поведение
+- Убедитесь, что нет дублирующихся правил с `when: on_success`
+- Добавьте `- when: never` в конец списка как catch-all
+
+**3. Переменные в rules не работают:**
+- Переменные из `artifacts:reports:dotenv` недоступны в `rules` (вычисляются в Pipeline Creation Time)
+- Проверьте иерархию приоритетов переменных
+- Используйте `rules:variables` для переопределения в конкретном правиле
+
+**4. changes не отслеживает изменения:**
+- Для обычных пушей (не MR) необходим `compare_to`
+- `compare_to` поддерживает переменные только с GitLab 17.2+
+- Убедитесь, что пути в `paths` используют glob-паттерны (`**/*`)
+
+**5. compare_to не работает с переменными:**
+- Версия GitLab должна быть 17.2 или выше
+- Переменная должна быть определена до вычисления `rules`
+- Используйте логическое ИЛИ для fallback: `${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-main}`
+
+## Лучшие практики
+
+### Структура правил
+
+1. **Порядок правил важен:** Первое совпадение определяет поведение. Ставьте наиболее специфичные правила в начало.
+2. **Явное исключение:** Всегда завершайте список правил явным `- when: never`, если не все сценарии должны запускать задачу.
+3. **Fallback-правило:** Если задача должна запускаться "всегда, если не сработали другие правила", последним элементом ставьте `- when: on_success`.
+
+### Переменные и условия
+
+1. **Не используйте переменные из script в rules:** Переменные из `artifacts:reports:dotenv` недоступны в `rules` (вычисляются в Pipeline Creation Time).
+2. **Избегайте глобальных переменных для логики:** Используйте `rules:variables` для переопределения в конкретных условиях.
+3. **Кавычки для if:** Всегда оборачивайте `if` в одинарные кавычки, если используете операторы сравнения или регулярные выражения.
+
+### Монорепозитории
+
+1. **Используйте compare_to:** Для отслеживания изменений в монорепозиториях всегда указывайте `compare_to` для `changes`.
+2. **Комбинируйте if и changes:** Используйте логическое И для комбинирования условий ветки и изменений файлов.
+3. **Динамическое сравнение:** С GitLab 17.2+ используйте `${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-main}` для автоматического выбора целевой ветки.
+
+### Безопасность и compliance
+
+1. **Принудительные задачи:** Используйте `workflow:rules` для блокировки пайплайнов в нежелательных условиях.
+2. **Ручной запуск для production:** Всегда используйте `when: manual` для задач деплоя в production.
+3. **Разрешение ошибок:** Используйте `allow_failure: exit_codes` для игнорирования специфических кодов завершения (например, OOM).
+
+### Производительность
+
+1. **Минимизируйте количество правил:** Каждое правило проверяется последовательно. Чем меньше правил, тем быстрее создание пайплайна.
+2. **Избегайте сложных regex:** Сложные регулярные выражения замедляют вычисление правил.
+3. **Кэшируйте результаты:** Используйте `cache` для избежания повторной загрузки зависимостей.
+
+## Граничные случаи и ограничения
+
+### Технические ограничения
+
+- **Лимит правил:** Нет формального лимита на количество правил, но слишком много правил замедляет создание пайплайна.
+- **Длина условия `if`:** Ограничение на длину строки YAML (обычно 2048 символов для ключа).
+- **Regex в `if`:** Поддерживаются только POSIX-совместимые регулярные выражения.
+- **`changes` без `compare_to`:** В обычных пушах (не MR) `changes` сравнивает только с предыдущим коммитом, что может давать ложные срабатывания.
+- **`exists` в разных ветках:** `exists` проверяет файл в текущем коммите, а не в целевой ветке.
+
+### Особые сценарии
+
+**WIP-коммиты (Work In Progress):**
+```yaml
+# Запрет запуска для WIP-коммитов
+rules:
+  - if: '$CI_COMMIT_TITLE =~ /^WIP:/'
+    when: never
+  - when: on_success
+```
+
+**Исключение определенных файлов:**
+```yaml
+# Запуск только при изменении определенных файлов
+rules:
+  - changes:
+      paths: ["src/**/*"]
+      compare_to: 'main'
+    when: on_success
+  - when: never
+```
+
+**Комбинирование условий ветки и изменений:**
+```yaml
+# Запуск только в main И при изменении определенных файлов
+rules:
+  - if: '$CI_COMMIT_BRANCH == "main"'
+    changes:
+      paths: ["deploy/**/*"]
+      compare_to: 'main'
+    when: manual
+  - when: never
+```
+
+**Приоритет переменных в rules:**
+```yaml
+# Переопределение переменных в конкретном правиле
+rules:
+  - if: '$CI_COMMIT_BRANCH == "main"'
+    variables:
+      ENVIRONMENT: "production"
+      REPLICAS: "3"
+  - if: '$CI_COMMIT_BRANCH == "develop"'
+    variables:
+      ENVIRONMENT: "staging"
+      REPLICAS: "1"
+```
+
+### Производительность
+
+**Влияние на время создания пайплайна:**
+- Каждое правило проверяется последовательно
+- Сложные regex и множественные `changes` замедляют вычисление
+- Рекомендуется минимизировать количество правил
+
+**Оптимизация:**
+- Используйте простые условия `if` вместо сложных regex
+- Комбинируйте условия в одном правиле с `&&`
+- Избегайте дублирующих правил с одинаковым результатом
+
+**Масштабирование:**
+- Для монорепозиториев с большим количеством сервисов используйте `workflow:rules` для фильтрации на уровне пайплайна
+- Используйте `include` для переиспользования правил между проектами
+
+### Несовместимость с другими директивами
+
+- **`rules` и `only`/`except`:** Нельзя использовать одновременно. Выберите один механизм.
+- **`rules` и `stage`:** `rules` переопределяет поведение стадий. Задача может запуститься в другой стадии, чем ожидается.
+- **`rules` и `when` на верхнем уровне:** `rules` переопределяет глобальный `when`.
+
+### Кросс-проектные ограничения
+
+- **`exists` с `project`:** Требует разрешения доступа через Inbound Allowlist (GitLab 17.0+).
+- **`changes` с `compare_to`:** `compare_to` не работает с кросс-проектными сравнениями.
+- **`needs` с кросс-проектными зависимостями:** Требует настройки Job Token Permissions.
 
 ## См. также
 
 - **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые принципы и синтаксис.
-- **[Продвинутые рабочие процессы](../gitlab_ci_advanced_workflow.md)** — описание `workflow` и отличия.
+- **[Продвинутые рабочие процессы](../gitlab_ci_advanced_workflow.md)** — описание `workflow`, `auto_cancel` и оптимизация.
 - **[Справочник директив](./directives_definitions.md)** — детализация смежных ключевых слов.
 - **[Построение DAG с needs](./dag_with_needs.md)** — глубокое погружение в зависимости.

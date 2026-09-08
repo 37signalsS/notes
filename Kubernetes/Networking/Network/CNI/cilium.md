@@ -29,6 +29,25 @@
 
 ## Основные концепции
 
+### Архитектура eBPF в Cilium
+
+Cilium использует несколько точек подключения (hooks) в сетевом стеке ядра Linux:
+
+1.  **XDP (eXpress Data Path):** Обработка пакетов на уровне драйвера сетевой карты, до их поступления в стек TCP/IP. Используется для защиты от DDoS и высокопроизводительного Ingress.
+2.  **TC (Traffic Control):** Гибкая точка для реализации NetworkPolicy и маршрутизации. Инспектирует пакеты на входе и выходе из veth-пары пода.
+3.  **SOCKMAP/SOCKHASH:** «Сшивает» сокеты приложения и прокси (Envoy, Ztunnel) внутри ядра, минуя сетевой стек. Это снижает задержки на 15–20% и является ключевым компонентом Ambient Mesh.
+4.  **LSM (Linux Security Modules):** Используется Tetragon для блокировки вредоносных действий (например, `execve` в недоверенном поде) на уровне ядра.
+
+**BPF Maps** — структуры данных ядра для обмена информацией между eBPF-программами и пользовательским пространством. В Cilium BPF Maps хранят:
+- Состояния соединений (connection tracking)
+- Маршруты подов
+- Политики безопасности
+- Метрики и счетчики
+
+**Механизмы совместимости:**
+- **CO-RE (Compile Once – Run Everywhere):** Позволяет запускать одни eBPF-программы на разных версиях ядер без перекомпиляции.
+- **BTF (BPF Type Format):** Необходим для CO-RE; обеспечивает переносимость программ между ядрами.
+
 ### Архитектура
 
 Cilium реализует распределенную архитектуру, состоящую из следующих компонентов:
@@ -82,7 +101,7 @@ Cilium обеспечивает полную поддержку:
     - **Область действия:** Шифруется трафик между узлами. Внутри одного узла (Pod-to-Pod на той же ноде) трафик по умолчанию **не шифруется**.
     - **Node-to-Node Encryption:** Дополнительный режим (`encryption.nodeEncryption=true`), позволяющий шифровать системный трафик хоста (kubelet, метрики).
     - **Deadlock Prevention:** По умолчанию шифрование отключено для трафика к Control Plane узлам, чтобы избежать блокировки при обновлении ключей через API-сервер.
-- **BGP Control Plane:** Современная реализация BGP (заменяет старый BGP mode), позволяющая гибко анонсировать LoadBalancer IP и Pod CIDR внешним маршрутизаторам через `CiliumBGPPeeringPolicy`.
+- **Native Routing и BGP Control Plane:** Режим `native-routing` исключает оверлейные туннели (VXLAN/Geneve), используя реальные IP-адреса подов и стандартную маршрутизацию ядра. Для анонсирования маршрутов во внешнюю сеть используется BGP Control Plane с CRD `CiliumBGPClusterConfig` (Cilium 1.16+). Подробнее: [Настройка native routing и BGP](#настройка-native-routing-и-bgp-control-plane).
 - **XDP Acceleration:** Возможность обработки пакетов на уровне драйвера сетевой карты (eXpress Data Path), что обеспечивает максимальную защиту от DDoS и минимальную задержку для NodePort-сервисов.
 - **Load Balancer (L2 & BGP):** Нативная поддержка сервисов типа `LoadBalancer`, заменяющая сторонние решения (например, MetalLB).
     - **L2 Mode:** Использует ARP/NDP-анонсы. IP-адрес приземляется на одну из нод (выбор лидера через Kubernetes Lease).
@@ -110,7 +129,7 @@ egress:
 ### Cilium Service Mesh и Gateway API
 
 Cilium поддерживает стандарт **Gateway API** (версия **1.6.1** в Cilium 1.20+) и может работать в режиме Service Mesh без sidecar-контейнеров:
-- **L7 Load Balancing:** Балансировка на основе путей, заголовков и весов через встроенный Envoy. Практический пример автоматизации весов из CI-пайплайна: **[Canary в Push-модели](../../../../CI-CD/Deployment_Strategies/canary_deployment.md#автоматизация-трафика-в-ci-пайплайнах-push-метод)**.
+- **L7 Load Balancing:** Балансировка на основе путей, заголовков и весов через встроенный Envoy. Практический пример автоматизации весов из CI-пайплайна: **[Canary в Push-модели](../../../../CI-CD/Deployment_Strategies/canary_deployment.md)**.
 - **L4 Acceleration (TCP/UDP):** В версии 1.20+ поддержка стабильного Gateway API v1.6 позволяет эффективно маршрутизировать TCP и UDP трафик через eBPF, минуя накладные расходы пользовательского пространства.
 - **Включение:** Требует установки Gateway API CRDs и активации параметра `gatewayAPI.enabled=true` в Helm-чарте.
 - **Mutual Auth (mTLS):** Автоматическое шифрование и проверка подлинности между подами на уровне ядра (через Ztunnel).
@@ -140,6 +159,60 @@ Cilium поддерживает стандарт **Gateway API** (версия *
 - **Требования к ядру:** Для полной функциональности (kube-proxy replacement, WireGuard) требуется ядро 5.10+ (рекомендуется 6.x для современных функций).
 - **Сложность:** Глубокая отладка eBPF требует специфических навыков и инструментов (`cilium monitor`, `bpftool`).
 - **Ресурсы:** BPF-карты потребляют фиксированный объем памяти в ядре.
+
+---
+
+## Предварительные требования
+
+### Аппаратные требования
+
+- **Процессор:** x86_64 (Intel/AMD) или ARM64. Поддержка инструкций BMI/BMI2 желательна для JIT-компиляции eBPF.
+- **Сеть:** NIC с драйверами, поддерживающими XDP-режим (для полной функциональности DDoS-защиты и Ingress-ускорения).
+- **Память:** Минимум 4 GB RAM на узел; для кластеров >1000 подов рекомендуется 8+ GB (BPF Maps занимают невытесняемую память ядра).
+
+### Программные требования
+
+- **Ядро Linux:**
+  - Минимум 5.10 для базового режима (kube-proxy replacement).
+  - Минимум 6.1+ для полноценной работы LSM, Ring Buffer и современных хуков.
+  - Рекомендуется 6.6+ LTS для production (стабильность BTF и CO-RE).
+- **Конфигурация ядра:**
+  ```bash
+  # Проверка обязательных параметров
+  zgrep CONFIG_BPF /boot/config-$(uname -r)
+  # → CONFIG_BPF=y
+  # → CONFIG_BPF_SYSCALL=y
+  # → CONFIG_BPF_JIT=y
+  # → CONFIG_DEBUG_INFO_BTF=y (требуется для CO-RE)
+  ```
+- **Файловая система BPF:**
+  ```bash
+  # Проверка монтирования bpffs
+  mount | grep /sys/fs/bpf
+  # → bpffs on /sys/fs/bpf type bpffs (rw,nosuid,nodev,noexec,relatime)
+
+  # При отсутствии монтирования
+  sudo mount -t bpf bpf /sys/fs/bpf
+  ```
+- **Kubernetes:** Версия 1.28+ (рекомендуется 1.30+ для полной поддержки Gateway API и MCS API).
+- **Сетевые сервисы:** Отключение конфликтующих служб файервола (`ufw`, `firewalld`) и отключение swap.
+
+### Проверка готовности узлов
+
+```bash
+# Версия ядра
+uname -r
+# → 6.1.0-18-amd64 (минимум 5.10)
+
+# Наличие bpffs
+mount | grep bpf
+
+# Доступные хуки eBPF
+sudo bpftool feature probe
+
+# Проверка загрузки модулей ядра
+lsmod | grep -E 'ip_vs|nf_conntrack'
+```
 
 ---
 
@@ -189,9 +262,123 @@ helm upgrade --install cilium cilium/cilium \
 kubectl rollout restart ds cilium -n kube-system
 ```
 
-### Настройка BGP Control Plane
+### Настройка native routing и BGP Control Plane
 
-Для анонсирования маршрутов внешним устройствам используется `CiliumBGPPeeringPolicy`:
+#### Теория: overlay vs native routing
+
+В стандартной конфигурации Cilium между узлами организуется оверлейная сеть (VXLAN или Geneve), инкапсулирующая трафик подов в UDP-пакеты узла. Альтернативой является **native routing** (нативная маршрутизация) — режим, при котором поды получают реально маршрутизируемые IP-адреса, а трафик между узлами передается без инкапсуляции, используя стандартную таблицу маршрутизации ядра Linux.
+
+**Преимущества native routing:**
+- Отсутствие инкапсуляции: нет накладных расходов (~50 байт на пакет), полный MTU 1500.
+- Поды видны из физической сети напрямую по IP-адресу.
+- Сохраняется Source IP подов при выходе во внешнюю сеть (без NAT/masquerade).
+- Упрощается отладка: `tcpdump` на узлах видит реальные IP подов без распаковки туннелей.
+
+**Ограничения native routing:**
+- IP-адреса подов эфемерны: при пересоздании пода IP меняется. Для стабильного внешнего доступа используйте `StatefulSet` + Headless Service с корректной трансляцией DNS наружу.
+- Требует BGP-совместимый маршрутизатор или статические маршруты в физической сети.
+- Диапазоны Pod CIDR не должны пересекаться с существующими сетями организации.
+- Параметр `autoDirectNodeRoutes=true` работает только когда все узлы находятся в одном L2-сегменте (одной подсети). При распределении кластера по нескольким подсетям этот параметр нужно отключить и использовать BGP для всей маршрутизации.
+
+#### Конфигурация Helm
+
+```yaml
+# Режим native routing без оверлея
+routingMode: native
+
+# Автоматические маршруты между узлами (только для L2-сегмента)
+autoDirectNodeRoutes: true
+
+# Включение BGP Control Plane
+bgpControlPlane:
+  enabled: true
+
+# Отключение masquerade для исходящего трафика (опционально)
+bpf:
+  masquerade: false
+```
+
+При распределении кластера по нескольким подсетям:
+
+```yaml
+routingMode: native
+autoDirectNodeRoutes: false
+bgpControlPlane:
+  enabled: true
+```
+
+#### Режимы BGP
+
+Для анонсирования маршрутов к Pod CIDR и сервисам внешним маршрутизаторам используется BGP. Cilium поддерживает два режима:
+
+- **eBGP (External BGP):** Разные автономные системы (ASN) для кластера и роутера. Рекомендуется для production — не требует full-mesh между узлами, автоматически масштабируется при добавлении/удалении нод.
+- **iBGP (Internal BGP):** Одна ASN для всего кластера. Требует full-mesh сессий между всеми узлами или использования Route Reflector, что усложняет эксплуатацию при росте кластера.
+
+#### CRD для BGP Control Plane (Cilium 1.16+)
+
+Начиная с Cilium 1.16, BGP управляется через декларативные ресурсы:
+
+```yaml
+# Переиспользуемый конфиг peered-параметров
+apiVersion: cilium.io/v2
+kind: CiliumBGPPeerConfig
+metadata:
+  name: standard-peer
+spec:
+  transport:
+    peerPort: 179
+  timers:
+    holdTimeSeconds: 90
+    keepAliveTimeSeconds: 30
+    connectRetryTimeSeconds: 120
+  gracefulRestart:
+    enabled: true
+    restartTimeSeconds: 120
+  families:
+    - afi: ipv4
+      safi: unicast
+      advertisements:
+        matchLabels:
+          advertise: "bgp"
+```
+
+```yaml
+# Определение анонсируемых префиксов
+apiVersion: cilium.io/v2
+kind: CiliumBGPAdvertisement
+metadata:
+  name: pod-cidr-advert
+  labels:
+    advertise: "bgp"
+spec:
+  advertisements:
+    - advertisementType: "PodCIDR"
+```
+
+```yaml
+# Кластерная конфигурация BGP
+apiVersion: cilium.io/v2
+kind: CiliumBGPClusterConfig
+metadata:
+  name: cilium-bgp
+spec:
+  nodeSelector:
+    matchLabels:
+      bgp-speaker: "true"
+  bgpInstances:
+    - name: "instance-65001"
+      localASN: 65001
+      peers:
+        - name: router-1
+          peerASN: 65000
+          peerAddress: "192.168.1.1"
+          peerConfigRef:
+            name: standard-peer
+```
+
+Cilium Operator автоматически создает per-node ресурс `CiliumBGPNodeConfig` для каждого узла, соответствующего `nodeSelector`.
+
+#### Устаревший CRD (Cilium <1.16)
 
 ```yaml
 apiVersion: "cilium.io/v2alpha1"
@@ -208,6 +395,38 @@ spec:
     neighbors:
     - peerAddress: "192.168.1.1/32"
       peerASN: 64512
+```
+
+#### Топологии подключения
+
+1. **Через внешний маршрутизатор (рекомендуется):** Узлы устанавливают eBGP-сессию только с роутером. При добавлении ноды достаточно пометить её label `bgp-speaker=true` — Cilium Operator автоматически создаст `CiliumBGPNodeConfig` и инициализирует сессию.
+2. **Full mesh между узлами:** Все узлы устанавливают BGP-сессии друг с другом. Применимо для небольших кластеров (<10 узлов), не требует внешнего роутера.
+3. **Статические маршруты:** Если BGP недоступен, маршруты к Pod CIDR можно прописать вручную на роутере. Это решение не масштабируется и требует ручного обновления при изменении топологии.
+
+#### Пример тестового стенда
+
+Конфигурация native routing тестировалась на стенде из пяти узлов Rocky Linux 10 (R1–R5), первые три — Control Plane. В качестве BGP-роутера использовался коммутатор MikroTik с операционной системой RouterOS:
+
+- **Автономная система кластера:** 6501
+- **Автономная система роутера (MikroTik):** 6520
+- **Физическая сеть узлов:** `192.168.2.0/24` (все узлы в одном L2-сегменте)
+- **Pod CIDR:** `10.244.0.0/16`
+- **Service CIDR:** `10.96.0.0/12`
+- **IP-пул для LoadBalancer-сервисов:** `192.168.2.0/24`
+
+BGP работает по TCP на порту 179; требуется открыть доступ между узлами кластера и роутером.
+
+#### Диагностика
+
+```bash
+# Проверка BGP-сессий
+cilium bgp peers
+
+# Просмотр per-node конфигурации
+kubectl get ciliumbgpnodeconfig
+
+# Статус BGP-инстанса на узле
+kubectl describe ciliumbgpnodeconfig <node-name>
 ```
 
 ### Настройка Load Balancer (L2 Mode)
@@ -492,6 +711,94 @@ kubectl -n kube-system exec -it ds/cilium -- cilium-dbg encrypt status
 1. **BPF Map Limits:** В крупных кластерах (>1000 сервисов) стандартных лимитов BPF-карт может быть недостаточно. Настройка `bpf-map-dynamic-size-ratio` позволяет Cilium автоматически масштабировать карты в зависимости от RAM узла.
 2. **MTU и фрагментация:** Для VXLAN MTU должен быть на 50 байт меньше физического (1450 при стандартном 1500). Для Geneve — также 50 байт. Несоответствие MTU приводит к труднодиагностируемым проблемам с установкой TLS-соединений.
 3. **Direct Routing:** Если инфраструктура поддерживает BGP, использование `native-routing` вместо `overlay` значительно снижает нагрузку на CPU (до 15-20% на пакет) за счет отсутствия инкапсуляции.
+
+## Диагностика
+
+### Типичные проблемы и решения
+
+| Проблема | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Pod в статуse ContainerCreating** | BPF Maps исчерпаны или ядро не поддерживает eBPF | `dmesg \| grep -i bpf`; `cilium status --verbose` | Увеличить `bpf-map-dynamic-size-ratio`; проверить `CONFIG_BPF=y` |
+| **Hubble не видит трафик** | Hubble отключен или буфер переполнен | `cilium status`; `hubble observe --type drop` | Проверить `hubble.enabled=true`; увеличить `hubble.buffer-max-size` |
+| **Сервисы не разрешают имена** | DNS-прокси Cilium не перехватывает запросы | `cilium-dbg bpf ct list global`; логи `cilium-agent` | Проверить `coredns` аннотации; убедиться что `toFQDNs` политика разрешает DNS-egress |
+| **Потеря связности после обновления** | Конфликт iptables и eBPF | `iptables-save \| grep -i kube`; `cilium status` | Использовать `kubeProxyReplacement=strict`; перезапустить DS |
+| **Высокий CPU на узле** | Слишком много BPF Maps или churn сервисов | `top`/`htop`; `cilium bpf metrics list` | Настроить `bpf-map-dynamic-size-ratio`; уменьшить количество сервисов |
+| **L7-политика не применяется** | Трафик идет через HTTPS или SNI mismatch | `hubble observe --verdict dropped`; `tcpdump` | Проверить SNI; для HTTPS требуется инспекция TLS или `matchName` в `toFQDNs` |
+
+### Проверка состояния eBPF
+
+```bash
+# Список загруженных программ Cilium
+sudo bpftool prog list | grep cilium
+
+# Инспекция BPF Maps
+sudo bpftool map list | grep cilium
+
+# Метрики BPF Maps
+cilium bpf metrics list
+
+# Проверка connection tracking
+cilium bpf ct list global
+# → показывает таблицу отслеживания соединений
+```
+
+### Валидация установки
+
+```bash
+# Общий статус
+cilium status
+# → результат: KVStore: Ok, Kubernetes: Ok, Cilium: Ok, Hubble: Ok
+
+# Проверка IPAM и маршрутизации
+cilium status --verbose
+
+# Просмотр всех Endpoint в кластере
+kubectl get ciliumendpoints -A
+
+# Проверка политик
+kubectl get ciliumnetworkpolicy -A
+```
+
+## Рекомендации и очистка
+
+### Best Practices
+
+1. **Всегда используйте `kubeProxyReplacement=strict`:** Это гарантирует полное удаление kube-proxy и исключает конфликты между iptables и eBPF-программами.
+2. **Настройте лимиты BPF Maps заранее:** В кластерах >500 узлов настройте `bpf-map-dynamic-size-ratio` до обновления production.
+3. **Используйте WireGuard для шифрования:** Вместо IPsec — меньше overhead, проще эксплуатация.
+4. **Включите Hubble в production:** Это первичный источник истины для диагностики сетевых проблем.
+5. **Мониторинг:** Интегрируйте `cilium bpf metrics list` и `hubble observe` в ваши панели мониторинга (Prometheus/Grafana).
+6. **Избегайте host-local IPAM без Integrated:** При сбое узла блок адресов остается зарезервированным. Используйте CRD/etcd для хранения состояния.
+
+### Очистка среды
+
+```bash
+# Удаление политик Cilium
+kubectl delete ciliumnetworkpolicy -A --all
+kubectl delete ciliumclusterwidenetworkpolicy --all
+
+# Удаление пулов IPAM
+kubectl delete ciliumpodippools --all
+
+# Полное удаление Cilium
+helm uninstall cilium -n kube-system
+
+# Очистка CRD Cilium (если не используются другие компоненты)
+kubectl delete crd ciliumpodippools.cilium.io ciliumendpoints.cilium.io ...
+
+# Очистка namespace
+kubectl delete namespace kube-system --ignore-not-found=true
+```
+
+## Крайние случаи
+
+1. **Исчерпание BPF Maps:** При росте количества сервисов (>5000) стандартные лимиты ядра могут быть исчерпаны. Настройте `bpf-map-dynamic-size-ratio` и мониторьте `cilium bpf metrics list`.
+2. **MTU и фрагментация:** Для VXLAN/Geneve MTU должен быть уменьшен на 50 байт. Несоответствие MTU приводит к труднодиагностируемым проблемам с TLS-соединениями.
+3. **Дублирование с kube-proxy:** Если `kubeProxyReplacement` не strict, iptables и eBPF могут конфликтовать. Всегда проверяйте отсутствие `kube-proxy` подов после установки.
+4. **IPv6-only режим:** Cilium поддерживает IPv6, но требует полной поддержки IPv6 в инфраструктуре (CNI, BGP, DNS64/NAT64 для внешнего доступа).
+5. **Режим `autoDirectNodeRoutes=true`:** Работает только в одном L2-сегменте. При распределении кластера по нескольким подсетям отключите его и используйте BGP.
+6. **L7-фильтрация и HTTPS:** Без инспекции TLS Cilium видит только SNI. Для фильтрации по методам/путям требуется либо HTTP, либо `TLS Inspection` с доверенными сертификатами.
+7. **Обновление ядра:** При обновлении ядра с BTF на версию без BTF eBPF-программы перестают работать. Всегда проверяйте `CONFIG_DEBUG_INFO_BTF=y` перед обновлением.
 
 ---
 

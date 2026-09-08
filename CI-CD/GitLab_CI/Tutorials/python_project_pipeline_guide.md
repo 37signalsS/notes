@@ -38,6 +38,32 @@
 
 ## Практические сценарии
 
+### Предварительные требования
+
+**Инфраструктура:**
+- **GitLab:** Версия 16.0+ (для KAS и `id_tokens`).
+- **Kubernetes:** Кластер 1.27+ с доступом через kubectl или GitLab Agent (KAS).
+- **Docker/Kaniko:** Раннер с Docker Executor или Kubernetes Executor (Kaniko работает без特权).
+- **Python:** Версии 3.11+ (для `uv` и современных возможностей типа `type` hints).
+
+**Инструменты (автоматически устанавливаются в CI через Docker-образы):**
+- `uv` — менеджер пакетов (образ `ghcr.io/astral-sh/uv:python3.13-bookworm-slim`).
+- `ruff` — линтер и форматер (устанавливается через `uvx`).
+- `Kaniko` — безопасная сборка Docker без привилегий (образ `gcr.io/kaniko-project/executor`).
+
+**Переменные CI/CD (Settings > CI/CD > Variables):**
+| Переменная | Тип | Назначение |
+| :--- | :--- | :--- |
+| `KUBE_CONTEXT` | Variable | Имя контекста Kubernetes в GitLab (формат: `group/project/k8s-agent:agent-name`). |
+| `CI_REGISTRY_PASSWORD` | **File** (опционально) | Пароль для приватного Registry (если не используется автоматическая авторизация). |
+| `SONAR_TOKEN` | **File** (опционально) | Токен для SonarQube (если включён SAST-анализ). |
+
+**Базовые знания:**
+- Основы Python: модули, пакеты, `pyproject.toml`, `uv`/`pip`.
+- Основы Docker: Dockerfile, multi-stage builds, `.dockerignore`.
+- Основы Kubernetes: Deployment, Service, HPA, Namespace.
+- Основы GitLab CI/CD: stages, rules, variables, artifacts, templates.
+
 ### Реализация пайплайна в `.gitlab-ci.yml`
 
 #### Шаг 1: Глобальные настройки и правила
@@ -204,12 +230,123 @@ deploy_prod:
 
 ## Устранение неисправностей (Troubleshooting)
 
+### Типичные ошибки и решения
+
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| **`uv sync` fails** | Несоответствие `uv.lock` и `pyproject.toml` | Обновите lock-файл локально: `uv lock` и закомитьте его. |
-| **`KAS Context not found`** | Ошибка в имени проекта или агента | Проверьте формат: `group/project:agent-name`. Убедитесь, что агент разрешен для текущего проекта. |
+| **`uv sync` fails** | Несоответствие `uv.lock` и `pyproject.toml` | Обновите lock-файл локально: `uv lock` и закомитьте его. Проверьте: `uv lock --check`. |
+| **`KAS Context not found`** | Ошибка в имени проекта или агента | Проверьте формат: `group/project:agent-name`. Убедитесь, что агент разрешен для текущего проекта в `config.yaml`. |
 | **`Permission denied` в Kaniko** | Неверные данные в `config.json` | Проверьте переменные `$CI_REGISTRY_USER` и пароль. Попробуйте использовать `id_tokens` для Registry. |
-| **Тесты падают по таймауту** | Недостаточно ресурсов у раннера | Оптимизируйте тесты или увеличьте лимиты в конфигурации GitLab Runner. |
+| **Тесты падают по таймауту** | Недостаточно ресурсов у раннера | Оптимизируйте тесты или увеличьте лимиты в конфигурации GitLab Runner (`concurrent`, `limit`). |
+| **`ModuleNotFoundError` в тестах** | Пакет не установлен в виртуальном окружении | Убедитесь, что `pyproject.toml` содержит все зависимости. Запустите `uv sync` локально. |
+| **`ruff` не находит файлы** | Неверная директория запуска | Убедитесь, что `working_directory` соответствует корню проекта. Проверьте наличие `pyproject.toml` в текущей директории. |
+| **Helm deploy падает с `timeout`** | Под не переходит в Ready | Проверьте `kubectl describe pod -n <ns>`. Увеличьте `--timeout` или добавьте `readinessProbe` в Deployment. |
+| **`id_tokens` не работает** | OIDC не настроен в Vault/Kubernetes | Убедитесь, что `KUBE_CONTEXT` указывает на правильный агент. Проверьте OIDC-проверку: `kubectl auth can-i create pods --as=system:serviceaccount:ns:sa`. |
+| **Docker-образ больше 1GB** | Нет multi-stage или не установлены dev-зависимости | Используйте `uv sync --no-dev` в runtime-стадии. Убедитесь, что `__pycache__` и `.git` исключены через `.dockerignore`. |
+| **SBOM пустой или некорректный** | Syft не может прочитать бинарник Python | Используйте `syft dir:.` вместо `syft bin/app`. Для Python SBOM анализируйте `pyproject.toml` и `uv.lock`. |
+| **`pip-audit` не находит уязвимости** | Устаревшая база данных | Обновите: `uv run pip-audit --strict --desc --fix`. Проверьте версию `pip-audit` — требуются свежие данные. |
+| **Кэш не восстанавливается** | Неверный `key` или изменение файлов манифеста | Используйте `cache:key:files` с привязкой к `uv.lock`. Не используйте `key: $CI_COMMIT_REF_SLUG` без `files`.
+
+## Лучшие практики (Best Practices)
+
+**Безопасность:**
+- Всегда используйте `uv sync --frozen` в CI — это гарантирует, что зависимости не изменятсяระหว сборкой.
+- Не храните пароли и токены в `CI/CD Variables` в открытом виде — используйте File-тип или Vault OIDC.
+- Включите Security-шаблоны: `SAST`, `Secret-Detection`, `Container-Scanning`, `Dependency-Scanning`.
+- Запускайте `pip-audit --strict` для проверки зависимостей на известные CVE.
+- Используйте `distroless` или `python-slim` для runtime-стадии — минимизация поверхности атаки.
+
+**Производительность:**
+- Кэшируйте `.uv-cache` — это сокращает время установки зависимостей на 80–90%.
+- Используйте `parallel:matrix` для тестирования на нескольких версиях Python одновременно.
+- Настройте `cache:key:files` с привязкой к `uv.lock` — кэш пересобирается только при изменении зависимостей.
+- Используйте `uvx ruff check --new-from-rev=HEAD~1` в MR — проверяет только изменённый код.
+
+**Надёжность:**
+- Используйте `extends: .pytest_base` для единообразия конфигурации тестирования.
+- Задавайте `timeout:` для каждой задачи — предотвращает зависание пайплайна.
+- Используйте `retry: 2` для network-dependent задач (pip install, helm pull).
+- Тестируйте Docker-образ локально перед коммитом: `docker build -t app:test . && docker run --rm app:test`.
+
+**Мониторинг и observability:**
+- Экспортируйте метрики Python-приложения через `prometheus_client` ('gc', 'http_requests_total').
+- Настройте `livenessProbe` и `readinessProbe` в Kubernetes Deployment.
+- Используйте structured logging (`structlog` или `logging` с JSON-форматом) для парсинга в Kibana/Grafana.
+
+## Очистка и откат (Cleanup)
+
+**Откат Docker-образа в Registry:**
+```bash
+# Удаление конкретного тега через API GitLab
+curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/registry/repositories/<repo_id>/tags/<tag>"
+
+# Полная очистка неиспользуемых образов ( garbage collection )
+# Включите Cleanup Policy в GitLab: Settings > Packages and Registries > Cleanup policy
+```
+
+**Откат Kubernetes-деплоя:**
+```bash
+# Откат на предыдущую ревизию
+kubectl rollout undo deployment/python-app -n app-prod
+
+# Откат на конкретную ревизию
+kubectl rollout undo deployment/python-app -n app-prod --to-revision=3
+
+# Проверка истории
+kubectl rollout history deployment/python-app -n app-prod
+```
+
+**Очистка артефактов CI:**
+```bash
+# Удаление артефактов через API (TTL)
+# Настройте в Settings > CI/CD > Artifacts expiration
+
+# Ручная очистка через крон
+kubectl delete jobs -l app=gitlab-runner -n gitlab-runner
+```
+
+**Очистка кэша Python:**
+```bash
+# Локальная очистка
+uv cache clean
+rm -rf .venv
+
+# В CI: автоматически через policy expiration в Settings > CI/CD > Caching
+```
+
+## Граничные случаи (Edge Cases)
+
+**Мультиплатформенная сборка (linux/amd64, linux/arm64):**
+- Используйте `docker buildx` с `--platform=linux/amd64,linux/arm64`.
+- Для Kaniko: `--platform=linux/amd64,linux/arm64` в `executor` args.
+- Не используйте QEMU-эмуляцию — нативная кросс-компиляция в 10 раз быстрее.
+
+**Монорепозиторий (несколько Python-проектов):**
+- Используйте `rules:changes` для запуска тестов только затронутых проектов.
+- Настройте `ruff` с `--project` для указания конкретного конфига.
+
+**Интеграция с Vault (секреты):**
+- Используйте OIDC для аутентификации GitLab → Vault (без статических секретов).
+- См. **[Vault + Kubernetes Integration](../../../Vault/guides/vault_kubernetes_integration.md)**.
+
+**Python-приложение с C-зависимостями (numpy, pandas):**
+- Используйте `python:3.13-bookworm` вместо `slim` — включает dev-пакеты для компиляции.
+- В Dockerfile: `RUN apt-get update && apt-get install -y gcc g++`.
+
+**Высокая нагрузка в CI (>100 коммитов/день):**
+- Используйте `rules:workflow` для дедупликации пайплайнов.
+- Настройте `interruptible: true` для MR — это отменяет предыдущие запуски.
+- Используйте distributed cache (S3/MinIO) вместо локального кэша раннера.
+
+**Интеграция с ArgoCD:**
+- Пайплайн CI только собирает образ и обновляет его версию в GitOps-репозитории.
+- ArgoCD синхронизирует состояние кластера через Pull-модель.
+- См. **[Обзор ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)**.
+
+**Дедупликация тестов в матрице:**
+- При `parallel:matrix` с несколькими версиями Python убедитесь, что `uv cache` разделяется между задачами.
+- Используйте `needs: [linting]` для параллельного запуска тестов на разных версиях.
 
 ## Дополнительная информация
 
@@ -217,4 +354,7 @@ deploy_prod:
 
 - **[Интеграция с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — детальная настройка KAS.
 - **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление доступом через OIDC.
-- **[Dockerfile для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md)** — глубокая оптимизация сборки.
+- **[Dockerfile для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md)** — глубокая оптимизация сборки, multi-stage, uv.
+- **[Python-менеджер: uv](../../../Linux/Development/python_management.md)** — установка, конфигурация, pyproject.toml.
+- **[Кэширование в GitLab CI](../Advanced/gitlab_ci_caching/cache_scenarios.md)** — стратегии кэширования для Python/uv.
+- **[Начальное руководство для Python](./beginner_guide_python_app.md)** — базовый пайплайн с Flask, pytest, Docker.

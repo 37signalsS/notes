@@ -58,6 +58,7 @@ sudo systemctl status iscsid
        ```ini
        node.session.timeo.replacement_timeout = 120
        ```
+    3. После стабилизации сети следуйте пошаговому плану восстановления: [Устранение неполадок: ФС в режиме read-only](../../FileSystems/read_only_filesystem_troubleshooting.md).
 
 ### 3. Зависание при выгрузке или выключении
 **Симптом:** Система "виснет" на этапе Stop Jobs для iSCSI.

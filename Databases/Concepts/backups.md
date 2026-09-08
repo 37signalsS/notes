@@ -107,5 +107,6 @@
 - **[Обзор Velero](../../Kubernetes/ToolsUtilities/velero-overview.md)** — резервное копирование в K8s.
 - **[Резервное копирование в Linux](../../Linux/SystemAdministration/backup_and_recovery.md)** — инструменты ОС (rsync, Borg).
 - **[Стратегии отката (Rollback Strategies)](./rollback_strategies.md)** — логическое восстановление и Undo.
+- **[Мета-мониторинг: Dead Man's Switch для бэкапов](../../Concepts/Observability_and_Monitoring/meta-monitoring.md)** — heartbeat-мониторинг выполнения резервного копирования.
 - **[Метрики надежности SRE](../../Concepts/sre_concepts_main.md)** — подробнее об RPO, RTO и SLA.
 

@@ -336,3 +336,4 @@ sed -n '/HTTP\/[0-9.]*" 5[0-9][0-9] /p' /var/log/nginx/access.log
 -   **[Диагностика TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md)** — решение специфических проблем с HTTPS.
 -   **[Логирование в Angie/Nginx](../../Angie/angie_logging.md)** — настройка форматов и переменных.
 -   **[Тюнинг производительности Nginx](../Performance/nginx_performance_tuning.md)** — подробнее об оптимизации ресурсов.
+-   **[Maintenance-режим в Nginx](../Scenarios/nginx_maintenance_mode.md)** — плановое переключение на страницу обслуживания через `include` и симлинк.

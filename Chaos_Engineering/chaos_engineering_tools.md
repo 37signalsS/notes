@@ -133,3 +133,4 @@ blade create docker jvm throwCustomException \
 * [Концепция Chaos Monkey](chaos_monkey_concept.md)
 * [Метрики в Chaos Engineering](chaos_engineering_metrics.md)
 * [Observability (Наблюдаемость)](../Concepts/Observability_and_Monitoring/observability_definitions.md)
+* **[Нагрузочное тестирование с помощью k6](../Testing/k6_load_testing.md)** — использование k6 для генерации реалистичной нагрузки во время инъекции сбоев (см. раздел "Тестирование хаоса с k6").

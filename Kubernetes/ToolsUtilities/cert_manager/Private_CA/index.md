@@ -4,11 +4,21 @@
 
 **Приватный CA (Private CA)** — собственный центр сертификации, развернутый внутри инфраструктуры (обычно в Kubernetes) для выпуска сертификатов, доверенных только внутри периметра организации. Используется для обеспечения безопасности межсервисного взаимодействия (mTLS), шифрования внутреннего трафика и аутентификации компонентов.
 
-**Intermediate CA (Промежуточный CA)** — удостоверяющий центр второго (или более) уровня, подписанный корневым (Root) CA. Позволяет изолировать корневой ключ и делегировать полномочия по выпуску конечных сертификатов.
+**Root CA (Корневой CA)** — удостоверяющий центр верхнего уровня в иерархии доверия. Является фундаментом доверия для всей PKI-инфраструктуры. Его закрытый ключ должен храниться максимально изолированно (офлайн, HSM). В cert-manager создается через `SelfSigned Issuer` один раз и далее ротируется вручную по регламенту.
 
-**trust-manager** — официальный аддон для cert-manager, предназначенный для дистрибуции доверия в кластере. Он автоматически распространяет публичные части сертификатов (CA bundles) в ConfigMap по всем необходимым Namespaces.
+**Intermediate CA (Промежуточный CA)** — удостоверяющий центр второго (или более) уровня, подписанный корневым (Root) CA. Позволяет изолировать корневой ключ и делегировать полномочия по выпуску конечных сертификатов. В cert-manager выпускается через `CA Issuer`, ссылающийся на Secret с корневым сертификатом.
+
+**SelfSigned Issuer** — тип Issuer в cert-manager, который выпускает самоподписанные сертификаты. Используется для создания корневого (Root) CA — первого звена в иерархии доверия. Не требует внешних CA или сервисов.
+
+**CA Issuer** — тип Issuer в cert-manager, который выпускает сертификаты, подписанные существующим CA. Ссылается на Kubernetes Secret, содержащий пару ключей (`tls.crt` + `tls.key`) вышестоящего CA. Используется для промежуточных и конечных сертификатов.
+
+**trust-manager** — официальный аддон для cert-manager, предназначенный для дистрибуции доверия в кластере. Автоматически распространяет публичные части сертификатов (CA bundles) в ConfigMap по всем необходимым Namespace.
 
 **mTLS (Mutual TLS)** — механизм взаимной аутентификации, при котором и клиент, и сервер проверяют сертификаты друг друга. Private CA является фундаментом для построения mTLS в кластере.
+
+**Issuer vs ClusterIssuer** — базовое различие в scope действия:
+- `Issuer` привязан к конкретному Namespace и выпускает сертификаты только для объектов в этом же Namespace.
+- `ClusterIssuer` — глобальный ресурс кластера, доступный из любого Namespace. Рекомендуется для общих CA (общекластерная mTLS-инфраструктура).
 
 ---
 
@@ -39,11 +49,61 @@ graph TD
 2.  **Cluster-wide Sync:** trust-manager отслеживает изменения в источниках и автоматически обновляет целевой ConfigMap во всех Namespace.
 3.  **Монтирование:** Приложения монтируют этот ConfigMap (например, в `/etc/ssl/certs/ca-certificates.crt`) для верификации цепочки.
 
-### Стандарты безопасности 2026
+### Безопасность корневого ключа
 
--   **Алгоритмы:** Полный переход на **Ed25519** и **ECDSA (P-256/384)**. RSA считается устаревшим для внутренних mTLS-сценариев из-за высокого потребления ресурсов.
--   **Ротация ключей:** Использование `rotationPolicy: Always` обязательно для всех уровней иерархии, кроме Root CA (где ротация выполняется вручную по регламенту).
--   **Сроки действия:** Внутренние сертификаты сервисов имеют короткий TTL (от 24 часов до 7 дней) для минимизации ущерба при утечке.
+Корневой ключ (Root CA private key) — самый чувствительный актив в PKI-инфраструктуре. Его компрометация позволяет выпустить любой сертификат от имени вашей организации.
+
+**Рекомендации по хранению:**
+
+| Метод | Уровень безопасности | Применение |
+| :--- | :--- | :--- |
+| **HSM (Hardware Security Module)** | Максимальный | Production, compliance (PCI DSS, SOC 2) |
+| **Оффлайн-машина** | Высокий | Корпоративные среды без HSM |
+| **Kubernetes Secret + RBAC** | Средний | Development, small-scale production |
+| **etcd (без шифрования)** | Низкий | Только dev/test, Never production |
+
+**Практические меры:**
+- Root CA Secret должен быть доступен ТОЛЬКО ServiceAccount cert-manager.
+- Ограничьте `resourceNames` для Secret через RBAC.
+- Настройте алертинг на любой доступ к Secret с корневым ключом.
+- Не храните `ca.key` в GitOps-репозиториях — используйте External Secrets Operator или Vault.
+
+### Выбор алгоритма ключа (Decision Guide)
+
+| Сценарий | Алгоритм | Размер ключа | Обоснование |
+| :--- | :--- | :--- | :--- |
+| **Root CA** | RSA или ECDSA | RSA 4096 / ECDSA P-384 | Максимальная совместимость, долгий срок жизни |
+| **Intermediate CA** | Ed25519 или ECDSA | Ed25519 / ECDSA P-256 | Баланс безопасности и производительности |
+| **Service mTLS** | Ed25519 | - | Максимальная скорость для короткоживущих сертификатов |
+| **Java/Kafka** | RSA 2048 | 2048 | Требование совместимости со старыми JVM |
+| **Внешние CA** | RSA 4096 | 4096 | Требование внешних стандартов |
+
+> **Важно:** В 2026 году Ed25519 является предпочтительным выбором для внутренних mTLS-сценариев. RSA считается устаревшим из-за высокого потребления ресурсов при同等ной безопасности.
+
+### Жизненный цикл и ротация
+
+| Тип ресурса | Рекомендуемый TTL | Окно продления (`renewBefore`) | Политика ключа |
+| :--- | :--- | :--- | :--- |
+| **Root CA** | 5–10 лет | 1 год | RSA 4096 / ECDSA 384 |
+| **Intermediate CA** | 1 год | 30–60 дней | Ed25519 / ECDSA 256 |
+| **Service (mTLS)** | 7–30 дней | 2–5 дней | Ed25519 (Always rotate) |
+
+**Ключевые правила:**
+- `rotationPolicy: Always` обязателен для всех уровней, кроме Root CA.
+- Root CA ротируется вручную по регламенту (не автоматически).
+- При ротации Intermediate CA рекомендуется немедленно перевыпустить все зависимые сертификаты через `cmctl renew --all`.
+
+### Мониторинг и алертинг
+
+Для обеспечения надежности Private CA необходимо отслеживать метрики cert-manager в Prometheus:
+
+| Метрика | Описание | Порог алерта |
+| :--- | :--- | :--- |
+| `certmanager_certificate_expiration_timestamp_seconds` | Время истечения | <14 дней для сервисов, <90 дней для CA |
+| `certmanager_certificate_ready_status` | Статус готовности | == 0 (немедленное вмешательство) |
+| `certmanager_certificate_renewal_timestamp_seconds` | Время следующего продления | Мониторинг пропущенных окон |
+
+Настройка алертов детально описана в [Administration/operations.md](../Administration/operations.md).
 
 ---
 
@@ -54,6 +114,38 @@ graph TD
 -   **[Сценарии Private CA](./scenarios.md)** — базовая иерархия, mTLS, настройка trust-manager Bundle.
 -   **[Операции и обслуживание](./operations.md)** — ротация корневого CA (Zero Downtime), проверка цепочек, диагностика.
 -   **[Установка cert-manager](../installation.md)** — параметры Helm для включения trust-manager.
+
+### Decision Guide: Какой сценарий выбрать?
+
+| Задача | Рекомендуемый сценарий | Файл |
+| :--- | :--- | :--- |
+| Новый кластер, нет CA | Сценарий 4 (Bootstrap) | scenarios.md |
+| Делегирование командам | Сценарий 1 (2-Tier) | scenarios.md |
+| Доставка CA всем подам | Сценарий 2 (trust-manager) | scenarios.md |
+| Java/Kafka/ES интеграция | Сценарий 3 (JKS/PKCS12) | scenarios.md |
+| Ротация Root CA | Операции (Zero Downtime) | operations.md |
+| Диагностика проблем | cmctl + openssl verify | operations.md |
+
+### Быстрая проверка иерархии
+
+После развертывания убедитесь, что цепочка доверия работает корректно:
+
+```bash
+# 1. Проверка состояния всех Certificate в кластере
+kubectl get certificates -A
+
+# 2. Проверка полной цепочки выпуска для конкретного сервиса
+cmctl status certificate my-app-tls -n production
+
+# 3. Верификация цепочки через openssl
+openssl verify -CAfile <(kubectl get secret root-ca-secret -o jsonpath='{.data.ca\.crt}' | base64 -d) \
+  -untrusted <(kubectl get secret intermediate-ca-secret -o jsonpath='{.data.tls\.crt}' | base64 -d) \
+  <(kubectl get secret service-tls-secret -o jsonpath='{.data.tls\.crt}' | base64 -d)
+# → OK
+
+# 4. Проверка формата ключа
+kubectl get secret service-tls-secret -o jsonpath='{.data.tls\.key}' | base64 -d | openssl pkey -noout -text
+```
 
 ---
 
@@ -68,14 +160,55 @@ graph TD
 | **Гибкость** | Любое количество иерархий и Issuer | Одна жесткая цепочка доверия |
 | **Изоляция** | Высокая (Root CA может быть оффлайн) | Низкая (Root CA на Master-узлах) |
 | **Доступность** | Доступен через Ingress/Gateway API | Ограничен внутренними нуждами |
+| **Managed K8s** | Полная поддержка | **Недоступен** (EKS, GKE, AKS не дают `ca.key`) |
 
 ### Особенности работы с trust-manager
 
 Использование ресурса `Bundle` позволяет объединять несколько источников доверия в один файл. Это критично при миграциях (когда нужно доверять и старому, и новому CA) или при работе с внешними сервисами, использующими публичные сертификаты (Let's Encrypt).
 
+**Пример Bundle с несколькими источниками:**
+```yaml
+apiVersion: trust.cert-manager.io/v1alpha2
+kind: Bundle
+metadata:
+  name: mixed-trust-bundle
+spec:
+  sources:
+  - useDefaultCAs: true        # Системные сертификаты (включая Let's Encrypt)
+  - secret:
+      name: root-ca-v1-secret  # Старый внутренний CA
+      key: ca.crt
+  - secret:
+      name: root-ca-v2-secret  # Новый внутренний CA
+      key: ca.crt
+  - configMap:
+      name: corporate-ca-bundle  # Корпоративный CA
+      key: ca.crt
+```
+
+### Интеграция с другими инструментами
+
+| Инструмент | Интеграция | Назначение |
+| :--- | :--- | :--- |
+| **HashiCorp Vault** | Issuer (Vault PKI) | Продвинутое управление ключами, HSM, audit |
+| **SPIFFE/SPIRE** | Сервисная Identity | mTLS для service mesh (Istio, Linkerd) |
+| **External Secrets Operator** | Secret Management | Синхронизация CA из внешних хранилищ |
+| **Prometheus/Grafana** | Мониторинг | Алертинг на истечение сертификатов |
+
+### Частые ошибки и решения
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `X509: certificate signed by unknown authority` | CA не доставлен в Trust Store пода | Проверить Bundle в trust-manager и монтирование |
+| `Invalid Intermediate Chain` | Intermediate CA не имеет `isCA: true` | Добавить `isCA: true` в Certificate |
+| `Algorithm mismatch` | Ed25519 сертификат подписан RSA Issuer | Привести алгоритмы в иерархии к единому стандарту |
+| `Secret not updated` | Зависший `CertificateRequest` | Очистить: `kubectl delete certificaterequest -l ...` |
+| `Order not found` | ACME-сервер не отвечает | Проверить сетевую доступность и rate limits |
+
+> **Подробнее:** Решение проблем описано в [Administration/troubleshooting.md](../Administration/troubleshooting.md) и [operations.md](./operations.md).
+
 ### Смотрите также
 
 -   **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов (Issuer, Certificate).
 -   **[Cert-manager: Администрирование](../Administration/index.md)** — мониторинг и общие операции.
--   **[Let's Encrypt](../LetsEncrypt/index.md)** — работа с внешними публичными CA.
 -   **[PKI — обзор и концепции](../../../../Security/Concepts/pki_overview.md)** — теоретическая база по иерархиям доверия.

@@ -26,6 +26,41 @@
 | **Влияние на нагрузку** | Высокое (блокировки DDL, нагрузка на CPU) | Умеренное (AIO минимизирует блокировки IO) |
 | **Поддержка PITR** | Отсутствует | Фундаментальная основа |
 
+#### Форматы логического бэкапа (`pg_dump`)
+
+PostgreSQL поддерживает несколько форматов выгрузки, каждый из которых имеет свою нишу:
+
+| Формат | Флаг | Описание | Восстановление | Когда использовать |
+| :--- | :--- | :--- | :--- | :--- |
+| **Plain** | `-F p` | Текстовый SQL-дамп. | `psql < dump.sql` | Миграции, version control, чтение человеком. |
+| **Custom** | `-F c` | Проприетарный сжатый архив. Поддерживает параллельную загрузку и выборку отдельных таблиц. | `pg_restore -j 4 db.dump` | **Production default**. Большие БД (>50 ГБ), частичное восстановление. |
+| **Tar** | `-F t` | Архив в формате tar. Не сжимается по умолчанию, но поддерживает `--compress`. | `pg_restore -j 4 db.tar` | Переносимость, совместимость со старыми инструментами. |
+| **Directory** | `-F d` | Каталог файлов. Поддерживает максимальный параллелизм экспорта и импорта. | `pg_restore -j 8 dir/` | Очень большие БД (>500 ГБ), многопоточная миграция. |
+
+**Компрессия:**
+- Начиная с PostgreSQL 17, `pg_dump` поддерживает нативное сжатие **ZSTD** через флаг `--compress=zstd:1` (уровень 1–22). ZSTD быстрее и эффективнее gzip.
+- Для формата `custom` используется сжатие по умолчанию (gzip). `--compress=0` отключает сжатие.
+
+**Параллелизм:**
+- Формат `directory` (`-F d`) обязателен для параллельного экспорта (`-j N`).
+- Формат `custom` (`-F c`) поддерживает параллельный импорт через `pg_restore -j N`, но экспорт всегда однопоточный.
+
+**Примеры:**
+```bash
+# Custom + ZSTD + параллельный restore (4 потока)
+pg_dump -h localhost -U backup_user -d mydb -F c --compress=zstd:3 -f /backups/mydb.dump
+pg_restore -h localhost -U postgres -d mydb_restored -j 4 /backups/mydb.dump
+
+# Directory + максимальный параллелизм (export и import)
+pg_dump -h localhost -U backup_user -d mydb -F d -j 8 --compress=zstd:1 -f /backups/mydb_dir
+pg_restore -h localhost -U postgres -d mydb_restored -j 8 /backups/mydb_dir
+
+# Plain для миграций и audit
+pg_dump -h localhost -U backup_user -d mydb -F p > /backups/mydb_20260817.sql
+```
+
+**Важно:** `pg_dump` не поддерживает PITR. Он создает снимок на момент начала выполнения дампа. Долгий `pg_dump` удерживает транзакцию, что может мешать `VACUUM` очищать старые версии строк (Bloat). Запускайте дампы в часы минимальной нагрузки.
+
 #### Почему восстановление из дампа замедляется с ростом БД
 
 Дамп под капотом — это не «копия базы», а набор инструкций по сборке базы заново: схема, `COPY`/`INSERT`, затем `CREATE INDEX`. При восстановлении данные сначала наливаются с нуля из SQL, и только потом начинается создание индексов. На большой базе построение индексов занимает значительное время и потребляет много ресурсов CPU и диска. Поэтому время восстановления растет вместе с размером БД, и для продукта это превращается в долгий простой. Параллельный `pg_restore -j N` ускоряет процесс, но не устраняет саму природу проблемы.
@@ -113,6 +148,7 @@ pg_basebackup -h 10.0.0.1 -U replicator -D /var/lib/postgresql/backup -P -X stre
 ---
 
 ### 4. Восстановление на точку времени (PITR)
+
 Алгоритм действий при критическом сбое (например, `DROP TABLE` в 14:05:00):
 
 #### Иллюстрация RPO
@@ -139,6 +175,79 @@ SELECT pg_create_restore_point('before_migration');
     ```
 6.  **Запуск:** `sudo systemctl start postgresql`. Следите за логом восстановления.
 
+#### Детальный сценарий PITR: откат после `DROP TABLE`
+
+**Ситуация:** в 14:05:00 было выполнено `DROP TABLE payments;`. Бэкапы: полный физический бэкап в 01:00, WAL-архив непрерывный.
+
+**Шаг 1. Определение целевого времени**
+```sql
+-- Найти время удаления (в логах или через pg_stat_activity если сессия еще жива)
+SELECT pg_read_file('postgresql.log') LIKE '%DROP TABLE%';
+-- Или через audit log
+```
+
+**Шаг 2. Остановка и очистка**
+```bash
+sudo systemctl stop postgresql
+sudo su - postgres
+rm -rf /var/lib/postgresql/data/*
+```
+
+**Шаг 3. Развертывание базового бэкапа**
+```bash
+# Если бэкап в tar-архиве
+tar -xzf /backups/full_base_backup.tar.gz -C /var/lib/postgresql/data
+
+# Или из pgBackRest
+pgbackrest restore --stanza=main --delta
+```
+
+**Шаг 4. Настройка восстановления**
+```ini
+# postgresql.auto.conf
+restore_command = 'cp /mnt/wal_archive/%f %p'
+recovery_target_time = '2026-08-17 14:04:59'
+recovery_target_action = 'promote'
+```
+
+**Шаг 5. Запуск и валидация**
+```bash
+sudo systemctl start postgresql
+# Проверить лог: tail -f /var/log/postgresql/postgresql-16-main.log
+# Должно быть: "recovery completed" или "database system was not properly shut down"
+
+# Проверить таблицу
+psql -c "SELECT count(*) FROM payments;"
+```
+
+**Шаг 6. Экспорт и повторный запуск**
+```bash
+# Сделать снимок восстановленной базы для аудита
+pg_dump -Fc mydb > /backups/mydb_before_incident.dump
+
+# Переключиться на новую базу
+sudo systemctl stop postgresql
+rm -rf /var/lib/postgresql/data/*
+# Развернуть заново уже без recovery_target_time
+```
+
+#### Восстановление отдельной таблицы из PITR
+
+PostgreSQL не поддерживает восстановление отдельной таблицы из PITR напрямую. Алгоритм:
+1. Восстановить базовый бэкап в отдельную директорию (`/var/lib/postgresql/data_pitr`).
+2. Настроить `postgresql.conf` с другим `port = 5433` и `data_directory = '/var/lib/postgresql/data_pitr'`.
+3. Запустить временный инстанс на порту 5433.
+4. Выполнить `pg_dump -t payments payments_db > payments.sql`.
+5. Остановить временный инстанс, применить дамп в основной базе.
+
+```bash
+# Временный инстанс
+sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/data_pitr -o "-p 5433" start
+pg_dump -h localhost -p 5433 -U postgres -t payments mydb > /tmp/payments.sql
+sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/data_pitr stop
+psql -h localhost -U postgres mydb -f /tmp/payments.sql
+```
+
 ---
 
 ### 5. Проверка целостности и валидация
@@ -157,7 +266,113 @@ SELECT pg_create_restore_point('before_migration');
 | `WAL segment ... has already been removed` | Слишком медленный бэкап или малый `max_wal_size`. | Используйте слоты репликации (`--create-slot`) при `pg_basebackup`. |
 | `archive_command failed with exit code 1` | Проблема с доступом к хранилищу (S3/NFS). | Проверьте монтирование диска и права записи для пользователя `postgres`. |
 | `recovery_target_time is not reached` | Нужный WAL отсутствует в архиве. | Проверьте `archive_command` и наличие всех файлов в `wal_archive`. |
-| `checksum verification failed` | Физическое повреждение данных на диске. | См. руководство по **[Corruption Recovery](./corruption_recovery.md)**. |
+| `checksum verification failed` | Физическое повреждение данных на диске. | См. руководство по **[Corruption Recovery](./corruption_recovery.md)** |
+
+## Валидация и проверка бэкапов
+
+Бэкап, который не проверен, — это не бэкап, а ложное чувство безопасности.
+
+### Обязательные проверки
+
+1.  **pg_verifybackup (физические бэкапы):**
+    ```bash
+    pg_verifybackup -m /backups/full/backup_manifest /backups/full
+    # → OK: all blocks verified
+    ```
+
+2.  **Тестовое восстановление ( Smoke Test ):**
+    - Восстанавливайте бэкап в изолированном окружении (Staging, отдельный хост).
+    - Запускайте `pg_dump --schema-only` и `pg_dump --data-only` для проверки консистентности.
+    - Для логических бэкапов: `pg_restore -l dump.dump | head` (список объектов).
+    - Для физических: проверьте, что кластер стартует и `SELECT 1` работает.
+
+3.  **Аудит размеров:**
+    ```bash
+    # Резкое уменьшение размера = возможная потеря данных
+    ls -lah /backups/*.dump
+    # → если вчера было 50GB, а сегодня 5GB — Alarm
+    ```
+
+4.  **Проверка WAL-архива:**
+    ```bash
+    # Количество файлов в архиве
+    ls /mnt/wal_archive/ | wc -l
+    # Проверка last WAL LSN
+    pg_controldata /var/lib/postgresql/data | grep "Database WAL"
+    ```
+
+### Автоматизация проверок
+
+```bash
+#!/bin/bash
+# /usr/local/bin/backup_verify.sh
+BACKUP="/backups/mydb.dump"
+pg_verifybackup -m /backups/full/backup_manifest /backups/full >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "CRITICAL: Backup verification failed" | mail -s "Backup Alert" ops@example.com
+    exit 1
+fi
+echo "OK: Backup verified"
+```
+
+## Частые ошибки и Production-ограничения
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| **`WAL segment ... has already been removed`** | Слишком медленный бэкап или малый `max_wal_size`. | Используйте слоты репликации (`--create-slot`) при `pg_basebackup`. Увеличьте `wal_keep_size`. |
+| **`archive_command failed with exit code 1`** | Проблема с доступом к хранилищу (S3/NFS). | Проверьте монтирование диска и права записи для пользователя `postgres`. |
+| **`recovery_target_time is not reached`** | Нужный WAL отсутствует в архиве. | Проверьте `archive_command` и наличие всех файлов в `wal_archive`. |
+| **Бэкап пустой/частичный** | Нет прав на чтение таблиц. | Выдайте `pg_read_all_data` или проверьте `GRANT SELECT`. |
+| **Восстановление занимает часы** | Нет параллелизма при pg_restore или `maintenance_work_mem` слишком мал. | Используйте `-j 8`, увеличьте `maintenance_work_mem` до 2–4GB. |
+| **Bloat после pg_dump** | Долгий дамп удерживает транзакцию. | Запускайте в часы минимума нагрузки или используйте `pg_dump --no-synchronized-snapshots` (PG 17+). |
+| **Large Objects потеряны** | Использован флаг `-t` без `--blobs`. | Всегда добавляйте `--blobs` при выборочном бэкапе. |
+| **PITR не работает после promote** | Отсутствует `recovery.signal` или старый таймлайн. | Удалите `recovery.signal` после успешного старта. |
+
+### Рекомендации по производительности
+
+- **Сжатие:** Используйте `--compress=zstd:3` (баланс скорости/размера). Для сети: сжимайте на лету (`pg_dump | gzip > file`).
+- **Параллелизм:** `-j 4` для дампов > 50 GB. Не ставьте больше ядер CPU, иначе дамп начнет thrashing.
+- **Сеть:** Для удаленного бэкапа используйте pipe + ssh:
+  ```bash
+  pg_dump -h localhost -U backup_user mydb | gzip | ssh backup@storage "cat > /backups/mydb.sql.gz"
+  ```
+- **IO:** Запускайте бэкапы на реплике, а не на мастере. Это снижает нагрузку на продакшен.
+
+## Вопросы на собеседованиях
+
+1.  **В чем разница между логическим и физическим бэкапом PostgreSQL?**
+    - Логический (`pg_dump`): SQL-дамп, медленное восстановление, переносимость между версиями, нет PITR.
+    - Физический (`pg_basebackup`): побайтовая копия, быстрое восстановление, только та же версия PG, основа для PITR.
+
+2.  **Что такое PITR и как он работает?**
+    - Восстановление на произвольный момент времени через комбинацию полного бэкапа + WAL-архив. WAL содержит все изменения, поэтому можно "проиграть" журнал до нужной секунды.
+
+3.  **Почему `pg_dump` не подходит для PITR?**
+    - `pg_dump` создает снимок на момент начала выполнения. Он не содержит журнала изменений. PITR требует непрерывного потока WAL-сегментов.
+
+4.  **Что такое Timeline ID и зачем он нужен?**
+    - Идентификатор ветки восстановления. При каждом PITR создается новый таймлайн, чтобы избежать конфликтов WAL-файлов и позволить откат к предыдущей точке восстановления.
+
+5.  **Как настроить WAL-архивацию?**
+    - `archive_mode = on`, `wal_level = replica`, `archive_command = 'test ! -f /archive/%f && cp %p /archive/%f'`, опционально `archive_timeout = 300`.
+
+6.  **В чем разница между `pg_dump` и `pg_basebackup`?**
+    - `pg_dump`: логический, одна база, поддерживает `-F c/d/t/p`, нет PITR.
+    - `pg_basebackup`: физический, весь кластер, бинарные файлы, основа для репликации и PITR.
+
+7.  **Что такое incremental backup в PostgreSQL 17+?**
+    - Нативная поддержка через WAL summarization. `pg_basebackup --incremental=manifest` создает дельта-бэкап. Собирается через `pg_combinebackup`.
+
+8.  **Как восстановить отдельную таблицу после PITR?**
+    - Восстановить кластер в отдельную директорию, запустить на другом порту, сделать `pg_dump -t table`, импортировать в основной кластер.
+
+9.  **Что проверять при failing WAL archiving?**
+    - `archive_command` в логах, права на директорию, место на диске, сетевая доступность до S3/NFS, `pg_stat_archiver`.
+
+10. **Какой формат `pg_dump` выбрать для production?**
+    - `-F c` (custom) — универсальный, сжатый, поддерживает частичный restore.
+    - `-F d` (directory) — для очень больших БД и максимального параллелизма.
+    - `-F p` (plain) — только для миграций и audit. |
 
 ## Сложные сценарии и ограничения
 ...

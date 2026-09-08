@@ -162,48 +162,9 @@ backend web_servers
 
 ### Connection Pool для PostgreSQL (PgBouncer)
 
-PgBouncer — это connection pooler для PostgreSQL, работающий как промежуточный процесс между приложением и базой данных.
+PgBouncer — это легковесный connection pooler для PostgreSQL, работающий на уровне протокола как прокси между приложением и базой данных. Подробное описание режимов пула, конфигурации и эксплуатации — в **[Настройка PgBouncer](../../Databases/PostgreSQL/Operations/pgbouncer_setup.md)**.
 
-```ini
-; /etc/pgbouncer/pgbouncer.ini
-
-[databases]
-mydb = host=127.0.0.1 port=5432 dbname=mydb
-
-[pgbouncer]
-listen_addr = 0.0.0.0
-listen_port = 6432
-
-; Режим пула: transaction — соединение возвращается в пул после каждой транзакции
-pool_mode = transaction
-
-; Максимальное количество клиентских соединений
-max_client_conn = 1000
-
-; Максимальное количество соединений к PostgreSQL
-default_pool_size = 20
-
-; Минимальное количество соединений в пуле
-min_pool_size = 5
-
-; Максимальное время простоя соединения в пуле
-server_idle_timeout = 300
-
-; Таймаут на установку соединения с PostgreSQL
-server_connect_timeout = 5
-
-; Проверка соединений перед выдачей
-server_check_query = SELECT 1
-server_check_delay = 10
-```
-
-**Режимы пула:**
-
-| Режим | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| **session** | Соединение закрепляется за клиентом на всё время сессии | Клиент использует `SET`, `PREPARE` и другие session-состояния |
-| **transaction** | Соединение возвращается после каждой транзакции | Большинство приложений (рекомендуется) |
-| **statement** | Соединение возвращается после каждого запроса | Только для простых запросов без транзакций |
+Управление нативными соединениями PostgreSQL (без внешнего пулера) описано в **[Управление соединениями PostgreSQL](../../Databases/PostgreSQL/Operations/connection_management.md)**.
 
 ### Connection Pool для MySQL (ProxySQL)
 

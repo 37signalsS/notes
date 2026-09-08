@@ -4,19 +4,28 @@
 
 ## Определения
 
-**NFS Server Provisioner (Helm-чарт)** — это способ развертывания NFS-сервера непосредственно внутри кластера Kubernetes в виде монолитного приложения (`StatefulSet`).
+**`In-cluster NFS Server`** — NFS-сервер, развернутый внутри кластера Kubernetes как под (обычно StatefulSet). Отличается от внешних NFS-тем, что серверный процесс и данные находятся в кластере, а не на выделенной машине.
 
-В отличие от классических решений (например, `nfs-subdir-external-provisioner`), где провизионер подключается к внешнему хранилищу, данный чарт объединяет в одном поде и серверную часть (на базе **NFS-Ganesha**), и логику взаимодействия с Kubernetes API.
+**`NFS-Ganesha`** — пользовательская (user-space) реализация NFS-сервера, используемая в данном Helm-чарте. В отличие от Kernel NFS, не требует модулей ядра и работает как обычный процесс внутри контейнера.
 
-**Основные характеристики:**
-- **Встроенный сервер:** NFS-экспорт создается внутри самого пода.
-- **Локальное хранение:** Использует `hostPath` или выделенный `PersistentVolume` на узле как основу для всех динамических томов.
-- **Динамический провижининг:** Автоматически создает поддиректории и PV при появлении PVC с соответствующим `StorageClass`.
+**`Kernel NFS`** — NFS-сервер, реализованный на уровне ядра Linux (пакет `nfs-kernel-server`). Требует доступа к модулям ядра хоста, поэтому не может быть запущен внутри стандартного контейнера без привилегий.
 
-**Назначение:**
+**`HostPath Provisioner`** — механизм, при котором NFS-сервер хранит данные на локальном диске узла через `hostPath` volume. Данные привязаны к конкретной ноде и не мигрируют при перемещении пода.
+
+**`ReadWriteMany` (RWX)** — режим доступа, позволяющий нескольким подам на разных узлах одновременно читать и писать данные в один и тот же том.
+
+**`StatefulSet`** — объект Kubernetes для управления подами с уникальными сетевыми идентификаторами и стабильным хранилищем. Используется для NFS-сервера для сохранения данных при перезапусках.
+
+**Назначение Helm-чарта `stable/nfs-server-provisioner`:**
 - Быстрое создание RWX-хранилища в однонодовых кластерах (Minikube, MicroK8s, K3s).
 - Тестирование механизмов динамического выделения томов без внешней инфраструктуры.
 - Обучающие сценарии и лабораторные работы.
+
+**Смежные темы:**
+- [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md) — работа с внешними NFS-серверами.
+- [PersistentVolume и PVC](./pv_and_pvc.md) — базовые концепции хранения.
+- [StorageClass](./storageclass.md) — параметры динамического провижининга.
+- [CSI Drivers Comparison](./CSI/csi_drivers_comparison.md) — сравнение CSI-драйверов.
 
 ---
 
@@ -34,6 +43,20 @@
 helm repo add nfs-ganesha-server-and-external-provisioner https://kubernetes-sigs.github.io/nfs-ganesha-server-and-external-provisioner/
 helm install nfs-server nfs-ganesha-server-and-external-provisioner/nfs-server-provisioner
 ```
+
+### NFS-Ganesha vs Kernel NFS: Сравнение
+
+| Характеристика | NFS-Ganesha | Kernel NFS |
+| :--- | :--- | :--- |
+| **Реализация** | User-space (пользовательское пространство) | Ядро Linux |
+| **Модули ядра** | Не требует | Требует `nfsd`, `nfs` модули |
+| **Запуск в контейнере** | Да, без привилегий | Только с привилегиями и модулями на хосте |
+| **Производительность** | Ниже (контекстные переключения user/kernel) | Выше (прямой доступ к ядру) |
+| **Безопасность** | Лучше (изоляция от ядра) | Хуже (доступ к ядру) |
+| **Надежность** | Зависит от стабильности процесса | Зависит от стабильности ядра |
+| **Рекомендация** | Kubernetes, контейнеры, dev/test | Production без контейнеров |
+
+> **Вывод:** Для in-cluster NFS-сервера NFS-Ganesha — предпочтительный выбор. Kernel NFS рекомендуется только для внешних NFS-серверов на выделенных машинах.
 
 ---
 
@@ -115,6 +138,32 @@ storageClass:
 nodeSelector:
   kubernetes.io/hostname: "worker-01" 
 ```
+
+**Полная таблица параметров values.yaml:**
+
+| Параметр | Значение по умолчанию | Описание |
+| :--- | :--- | :--- |
+| `persistence.enabled` | `true` | Включить персистентное хранилище (PersistentVolume) |
+| `persistence.size` | `8Gi` | Объем дискового пространства для NFS-экспорта |
+| `persistence.storageClass` | `""` | StorageClass для создания PVC. Пусто = использовать существующий PV |
+| `persistence.accessModes` | `["ReadWriteOnce"]` | AccessMode для создаваемого PVC |
+| `persistence.hostPath` | `"/srv/nfs-provisioner"` | Путь на файловой системе узла (только hostPath) |
+| `storageClass.name` | `nfs` | Имя создаваемого StorageClass |
+| `storageClass.defaultClass` | `false` | Сделать StorageClass по умолчанию |
+| `storageClass.provisionerName` | `cluster.local/nfs-server-provisioner` | Имя provisioner для StorageClass |
+| `storageClass.reclaimPolicy` | `Delete` | ReclaimPolicy: Delete или Retain |
+| `storageClass.volumeBindingMode` | `Immediate` | VolumeBindingMode: Immediate или WaitForFirstConsumer |
+| `storageClass.archiveOnDelete` | `true` | Переименовывать вместо удаления при Delete |
+| `nodeSelector` | `{}` | Привязка к узлу (обязательно для hostPath) |
+| `resources.requests.cpu` | `200m` | Минимальные CPU для NFS-сервера |
+| `resources.requests.memory` | `256Mi` | Минимальная память |
+| `service.type` | `ClusterIP` | Тип сервиса (ClusterIP/NodePort/LoadBalancer) |
+| `service.nfsTcpPort` | `2049` | Порт NFS TCP |
+| `service.nfsUdpPort` | `2049` | Порт NFS UDP |
+| `service.mountdPort` | `20048` | Порт mountd |
+| `service.rpcbindPort` | `111` | Порт rpcbind |
+| `securityContext.privileged` | `false` | Привилегированный контейнер (для Kernel NFS) |
+| `securityContext.capabilities.add` | `[]` | Дополнительные capabilities (например, `["SYS_ADMIN"]`) |
 
 #### Шаг 5: Создание базового PV (Подложка)
 
@@ -238,6 +287,7 @@ spec:
 ## Безопасность и конфигурация
 
 ### Привилегии контейнера
+
 Запуск NFS-сервера внутри контейнера требует расширенных привилегий для работы с системными вызовами монтирования и экспорта.
 
 **Рекомендуемый `securityContext`:**
@@ -248,7 +298,46 @@ securityContext:
     add: ["SYS_ADMIN", "DAC_READ_SEARCH"]
 ```
 
+**Минимальный `securityContext` (для NFS-Ganesha):**
+```yaml
+securityContext:
+  privileged: false
+  capabilities:
+    add: ["SYS_ADMIN"]
+```
+
+### RBAC и ServiceAccount
+
+Для безопасного управления NFS-сервером:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-server-provisioner
+  namespace: nfs-storage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nfs-server-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+```
+
 ### Сетевые политики (NetworkPolicies)
+
 Поскольку NFS-сервер открывает порты (2049) внутри кластера, рекомендуется ограничить доступ к нему только для тех пространств имен, которым действительно нужно хранилище.
 
 **Пример политики:**
@@ -281,11 +370,167 @@ spec:
 - **Ubuntu/Debian:** `sudo apt update && sudo apt install nfs-common -y`
 - **CentOS/RHEL/Rocky:** `sudo yum install nfs-utils -y`
 
+## Диагностика и отладка
+
+**Полная диагностика проблем с in-cluster NFS:**
+
+```bash
+# 1. Логи NFS-сервера
+kubectl logs -n nfs-storage nfs-server-provisioner-0 --tail=100
+
+# 2. Статус пода
+kubectl get pods -n nfs-storage -o wide
+kubectl describe pod -n nfs-storage nfs-server-provisioner-0
+
+# 3. Проверка NFS-экспорта внутри пода
+kubectl exec -it -n nfs-storage nfs-server-provisioner-0 -- showmount -e localhost
+
+# 4. Проверка файловой системы
+kubectl exec -it -n nfs-storage nfs-server-provisioner-0 -- df -h /export
+
+# 5. Проверка StorageClass
+kubectl get storageclass nfs-internal -o yaml
+
+# 6. Проверка PV и PVC
+kubectl get pv,pvc -n nfs-storage
+kubectl describe pv <pv-name>
+
+# 7. Проверка сетевой доступности с клиентского узла
+kubectl run nfs-client-test --rm -it --image=alpine -- sh
+# Внутри пода:
+apk add --no-cache nfs-utils
+showmount -e nfs-server-provisioner.nfs-storage.svc.cluster.local
+
+# 8. Проверка событий ProvisioningFailed
+kubectl get events --field-selector reason=ProvisioningFailed
+
+# 9. Проверка NFS-клиента на узле
+kubectl debug node/<node-name> -it --image=alpine
+# Внутри контейнера:
+apk add --no-cache nfs-utils
+showmount -e <nfs-server-ip>
+
+# 10. Проверка disk usage на NFS-сервере
+kubectl exec -it -n nfs-storage nfs-server-provisioner-0 -- du -sh /export/*
+```
+
+**Типичные ошибки и решения:**
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `Unable to mount volume` | NFS-клиент не установлен на узле | Установите `nfs-common` (Debian) или `nfs-utils` (RHEL) |
+| `Mounting arguments: ... mount.nfs` | NFS-сервер не отвечает | Проверьте статус пода, логи, сетевую доступность |
+| `Permission denied` | `no_root_squash` не включен | Добавьте `securityContext.privileged: true` или настройте экспорт |
+| `No such file or directory` | Путь `/export` не существует | Убедитесь, что `persistence.enabled: true` и путь корректен |
+| `NFS server not responding` | Под NFS-сервера завершился | Проверьте ресурсы узла, OOM Kill, restart policy |
+| `Stale file handle` | NFS-сервер перезапущен | Примонтируйте заново на клиентах |
+| `StorageClass not found` | Имя StorageClass не совпадает | Проверьте `storageClass.name` в values.yaml |
+| `Multi-Attach error` | RWO-том на нескольких узлах | Используйте `ReadWriteMany` вместо `ReadWriteOnce` |
+
 ---
 
 ## Дополнительная информация
 
-### Критические ограничения
+### Backup и восстановление
+
+**Бэкап NFS-данных (на стороне сервера):**
+```bash
+# 1. Остановить NFS-экспорт на время бэкапа
+kubectl exec -it -n nfs-storage nfs-server-provisioner-0 -- exportfs -ua
+
+# 2. Скопировать данные с локального диска узла
+# (на узле, где запущен под)
+tar -czf /backup/nfs-data-$(date +%Y%m%d).tar.gz -C /var/lib/nfs-export .
+
+# 3. Восстановить экспорт
+kubectl exec -it -n nfs-storage nfs-server-provisioner-0 -- exportfs -ra
+```
+
+**Бэкап через под с NFS-монтированием:**
+```yaml
+# backup-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nfs-backup
+  namespace: nfs-storage
+spec:
+  template:
+    spec:
+      containers:
+        - name: backup
+          image: alpine
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              apk add --no-cache nfs-utils tar
+              mkdir -p /mnt/nfs /backup
+              mount -t nfs4 nfs-server-provisioner.nfs-storage.svc.cluster.local:/export /mnt/nfs
+              tar -czf /backup/nfs-$(date +%Y%m%d).tar.gz -C /mnt/nfs .
+              umount /mnt/nfs
+          volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+      volumes:
+        - name: backup-storage
+          hostPath:
+            path: /backup
+      restartPolicy: Never
+```
+
+## Производительность NFS
+
+**Оптимальные mountOptions для клиента:**
+```yaml
+mountOptions:
+  - nfsvers=4.1    # NFS 4.1 для параллельных операций
+  - hard           # Отказоустойчивость (безопаснее чем soft)
+  - rsize=1048576  # Максимальный размер блока чтения (1MB)
+  - wsize=1048576  # Максимальный размер блока записи (1MB)
+  - noatime        # Отключить обновление времени доступа
+  - noresvport     # Не использовать зарезервированный порт
+```
+
+**Тестирование производительности:**
+```bash
+# Бенчмарк NFS с пода
+kubectl run nfs-bench --rm -it --image=alpine -- sh
+
+# Внутри пода:
+apk add --no-cache fio nfs-utils
+mount -t nfs4 nfs-server-provisioner.nfs-storage.svc.cluster.local:/export /mnt/nfs
+fio --name=nfs-test --rw=randwrite --bs=4k --size=100M --numjobs=1 \
+    --runtime=30 --group_reporting --directory=/mnt/nfs
+```
+
+## Миграция на внешний NFS или CSI
+
+**Почему мигрировать:**
+- In-cluster NFS-сервер не отказоустойчив (SPOF).
+- Данные привязаны к одной ноде (hostPath).
+- Нет поддержки Volume Snapshots и Expansion.
+
+**Процесс миграции:**
+1. Установите внешний NFS-сервер (выделенная машина или NAS).
+2. Настройте экспорт на внешнем сервере.
+3. Установите `nfs-subdir-external-provisioner` или NFS CSI Driver.
+4. Скопируйте данные с旧 пода на внешний NFS (rsync).
+5. Переключите PVC на новую StorageClass.
+6. Удалите旧 NFS-сервер и Helm-чарт.
+
+**Пример rsync-миграции:**
+```bash
+# С旧 in-cluster NFS
+kubectl exec -it -n nfs-storage nfs-server-provisioner-0 -- tar -czf /tmp/backup.tar.gz -C /export .
+kubectl cp nfs-storage/nfs-server-provisioner-0:/tmp/backup.tar.gz ./backup.tar.gz
+
+# На внешний NFS-сервер
+tar -xzf backup.tar.gz -C /mnt/nfs-export/
+```
+
+> **Подробности:** См. [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md).
+
+## Критические ограничения
 
 | Ограничение | Описание | Риски |
 | :--- | :--- | :--- |
@@ -293,6 +538,8 @@ spec:
 | **Отсутствие HA** | Сервер — это одиночный под (StatefulSet с 1 репликой). | Перезагрузка пода вызывает прерывание связи (I/O hang) у клиентов. |
 | **Устаревший код (stable)** | Оригинальный чарт `stable` не обновляется. | Проблемы безопасности и несовместимость с новыми K8s API (v1.25+). |
 | **Производительность** | Весь трафик идет через один под. | Ограничение пропускной способности сети одного узла. |
+| **Нет снимков** | Не поддерживает Volume Snapshots | Использовать CSI-драйвер или внешние инструменты |
+| **Нет расширения** | Не поддерживает Volume Expansion | Использовать CSI-драйвер |
 
 ### Рекомендации по выбору
 

@@ -22,10 +22,10 @@
 
 *   **Namespaced-ресурсы (внутри Namespace):**
     *   **Рабочие нагрузки:** [Pod](./Pod/pod_overview.md), [Deployment](./Deployment/index.md), [StatefulSet](./StatefulSet/statefulset_overview.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
-    *   **Конфигурация и сервисы:** [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [HTTPRoute](../Networking/gateway_api/httproute.md) (Gateway API), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
+    *   **Конфигурация и сервисы:** [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [HTTPRoute](../Networking/gateway_api/resources.md) (Gateway API), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
     *   **Политики и ограничения:** `NetworkPolicy`, `ResourceQuota`, `LimitRange`.
 *   **Общекластерные ресурсы (Cluster-wide):**
-    *   **Инфраструктура:** `Node` (узлы), `PersistentVolume` (физические тома), [Gateway](../Networking/gateway_api/gateway.md) (может быть как кластерным, так и namespaced в зависимости от реализации).
+    *   **Инфраструктура:** `Node` (узлы), `PersistentVolume` (физические тома), [Gateway](../Networking/gateway_api/resources.md) (может быть как кластерным, так и namespaced в зависимости от реализации).
     *   **Безопасность:** `ClusterRole`, `ClusterRoleBinding`, `ValidatingAdmissionPolicy`.
     *   **Системные метаданные:** `Namespace`, `StorageClass`, `PriorityClass`, `RuntimeClass`.
 
@@ -51,6 +51,24 @@ PSA настраивается через метки:
 1.  **Privileged**: Неограниченный доступ (обычно для `kube-system`).
 2.  **Baseline**: Запрет наиболее известных привилегированных настроек.
 3.  **Restricted**: Строгие ограничения (best practices по безопасности).
+
+**Практические команды работы с PSA:**
+
+```bash
+# Просмотр текущего enforced-уровня PSA для всех пространств имён
+kubectl get ns -o custom-columns=NAME:.metadata.name,PSA:.metadata.labels.pod-security\.kubernetes\.io/enforce,WARN:.metadata.labels.pod-security\.kubernetes\.io/warn
+
+# Быстрый список пространств имён с enforced=restricted
+kubectl get ns -l 'pod-security.kubernetes.io/enforce=restricted'
+
+# Установить/изменить уровень (двухэтапная стратегия) для конкретного namespace
+kubectl label ns my-project pod-security.kubernetes.io/enforce=baseline
+
+# Проверка, что манифест подд пройдёт политику, без реального создания
+kubectl create --dry-run=server -f pod.yaml -n my-project
+```
+
+**Практический совет:** включение строгого уровня лучше делать двухэтапно: сначала `audit` или `warn`, изучить нарушения, исправить их, и лишь затем переключать `enforce`. Иначе команды разработки получат внезапные отказы создания подов. Детали на уровне пода — в [Безопасность подов (Security Context)](../Security/pod_security_context.md).
 
 ### Автоматические метки (v1.21+)
 
@@ -114,6 +132,51 @@ kubectl api-resources --namespaced=true
 kubectl api-resources --namespaced=false
 ```
 
+### Проверка прав доступа в пространстве имён (RBAC)
+
+Перед развёртыванием или при диагностике `Forbidden` полезно проверить, какие операции доступны текущему пользователю/ServiceAccount в конкретном Namespace:
+
+```bash
+# Что текущий пользователь может делать в namespace my-project
+kubectl auth can-i --list -n my-project
+
+# Точечная проверка одного действия
+kubectl auth can-i create deployments -n my-project
+# → yes
+kubectl auth can-i delete secrets -n my-project
+# → no
+
+# Проверка от имени конкретного пользователя/ServiceAccount (без смены контекста)
+kubectl auth can-i get pods -n my-project --as system:serviceaccount:my-project:builder
+```
+
+Это не меняет глобальные разрешения, а лишь предсказывает реакцию авторизатора. Подробнее о модели — в [Обзор RBAC](../Security/rbac/rbac_overview.md).
+
+### Массовые операции и очистка (housekeeping)
+
+Namespace — естественная граница для массовых операций. Полезные идиомы для SRE/SysAdmin:
+
+```bash
+# Показать «всё» в namespace (объекты всех типов) — быстрый аудит содержимого
+kubectl get all -n my-project
+
+# Подсчитать поды по namespace (полезно для оценки загрузки API-сервера)
+kubectl get pods -A --no-headers | awk '{print $1}' | sort | uniq -c | sort -rn
+
+# Удалить все основные объекты в namespace (поды/сервисы/деплойменты) без удаления самого namespace
+kubectl -n my-project delete all --all
+
+# Удалить все объекты определённого типа (например, старые ConfigMap)
+kubectl -n my-project delete configmap --all
+
+# Найти namespace-ы без квот (риск бесконтрольного потребления)
+kubectl get resourcequota -A --no-headers | awk '{print $1}' | sort -u > /tmp/quota_ns.txt
+kubectl get ns --no-headers | awk '{print $1}' | sort -u > /tmp/all_ns.txt
+comm -23 /tmp/all_ns.txt /tmp/quota_ns.txt   # namespace-ы без ResourceQuota
+```
+
+**Важно:** `kubectl delete all --all` не удаляет ресурсы `autoscaling`/`batch`/`policy` и кастомные ресурсы. Для полной очистки от экспериментального стенда надёжнее удалить сам Namespace целиком (см. `Terminating` ниже), а не вычищать объекты вручную.
+
 ### Сценарии на собеседованиях: «Весь интернет в одном Namespace»
 
 Этот вопрос часто задается для проверки понимания ограничений масштабируемости Kubernetes и умения анализировать сложные системы.
@@ -153,6 +216,69 @@ kubectl api-resources --namespaced=false
 
 Подробнее о механизмах решения проблем с финализаторами см. в разделе **[Проблемы с финализаторами (Finalizers)](../Troubleshooting/Common_Errors/PodTerminating/finalizer_issues.md)**.
 
+## Мониторинг и алертинг Namespace (SRE/DevOps)
+
+Namespace-ы, ResourceQuota и стадии их жизненного цикла — всё это наблюдаемые сущности. Ниже — метрики `kube-state-metrics` и типовые алерты, которых чаще всего не хватает в продакшене.
+
+### Полезные метрики (kube-state-metrics)
+
+| Метрика | Назначение |
+| :--- | :--- |
+| `kube_namespace_status_phase{namespace, phase}` | Текущее состояние: `Active` (1) или `Terminating` (1). Ключевая для алерта на «зависшие» Namespace. |
+| `kube_namespace_created` | Время создания Namespace (unix). |
+| `kube_namespace_labels` | Метки Namespace — удобно для атрибуции (команда, среда) и тарификации. |
+| `kube_resourcequota` / `kube_resourcequota_status` | Квоты: `hard` и `used` по типам ресурсов. Позволяет алертить приближение к пределу. |
+
+### Типовые алерты (Prometheus)
+
+```yaml
+groups:
+- name: namespaces
+  rules:
+  # Namespace «застрял» в Terminating больше 10 минут — обычно блокируют финализаторы
+  - alert: NamespaceStuckInTerminating
+    expr: |
+      kube_namespace_status_phase{phase="Terminating"} == 1
+        and on(namespace) (time() - kube_namespace_created > 600)
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Namespace {{ $labels.namespace }} в Terminating дольше 10 минут"
+      description: "Вероятно, мешают финализаторы или неработающий APIService. Проверьте: kubectl get ns {{ $labels.namespace }} -o json | jq '.status.conditions'"
+
+  # Квота близка к исчерпанию — предупреждение до блокировки новых подов
+  - alert: ResourceQuotaAlmostExhausted
+    expr: |
+      kube_resourcequota_status{resource="pods", type="used"}
+        / kube_resourcequota_status{resource="pods", type="hard"} * 100 > 80
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Квота на поды в {{ $labels.namespace }} использована на {{ $value }}%"
+```
+
+### Ручная проверка без Prometheus
+
+```bash
+# Все namespace, кроме Active
+kubectl get ns -o custom-columns=NAME:.metadata.name,STATUS:.status.phase
+
+# Использование квот: какой ресурс близок к пределу
+kubectl get resourcequota -A --no-headers | sort | head
+kubectl describe quota <name> -n <ns>
+```
+
+Причина «квоты почти исчерпаны» часто выявляется не алертом, а жалобами «не могу создать под» с событием:
+
+```bash
+# Ищем события с ошибками в конкретном namespace
+kubectl get events -n my-project --sort-by=.lastTimestamp | grep -iE "quota|exceeded|forbidden"
+```
+
+Подробнее о мониторинге кластера в целом — [Kubernetes Monitoring & Logging](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md).
+
 ## Дополнительная информация
 
 ### Стандартные пространства имен
@@ -172,7 +298,11 @@ kubectl api-resources --namespaced=false
 1.  **По окружениям:** Разделяйте `dev`, `staging` и `prod`. Это минимизирует риск случайного удаления или изменения продуктовых ресурсов.
 2.  **По командам/проектам:** Используйте Namespace для делегирования прав доступа (RBAC) конкретным командам.
 3.  **Избегайте "Mega-Namespace":** Не размещайте сотни разнородных сервисов в одном пространстве имен. Это усложняет аудит, квотирование и может привести к деградации производительности API-сервера.
-4.  **Маркировка (Labels):** Всегда добавляйте метки с информацией о владельце, проекте и уровне критичности. Это критично для PSA и сетевых политик.
+4.  **Маркировка (Labels):** Всегда добавляйте метки с информацией о владельце, проекте и уровне критичности (`team`, `environment`, `cost-centre`). Это критично для PSA, сетевых политик и атрибуции затрат.
+5.  **Квоты на каждый Namespace:** Устанавливайте `ResourceQuota` и `LimitRange` даже для не продуктовых пространств. Это защищает кластер от «забытого» стенда разработчика, съедающего все ресурсы.
+6.  **Проверяйте PSA перед включением:** Переключайте `enforce` двумя этапами (через `warn`/`audit`), иначе команды получат внезапные отказы создания подов.
+7.  **Алерт на Terminating:** Ставьте алерт на Namespace, долго находящийся в `Terminating`, — обычно это симптом неработающего оператора или финализатора.
+8.  **Ограничьте Namespace-аудит:** Для очень больших кластеров используйте тэги/метки для выбора подмножеств при `kubectl get ns` вместо полного перебора.
 
 ### Ограничения изоляции
 
@@ -183,8 +313,7 @@ Namespace обеспечивает **логическую**, но не **физ�
 
 ### См. также
 
-*   **[Управление доступом RBAC](../Security/rbac/rbac_overview.md)** — разграничение прав на уровне Namespace.
+*   **[Обзор RBAC](../Security/rbac/rbac_overview.md)** — разграничение прав на уровне Namespace.
 *   **[Сетевые политики (Network Policies)](../Networking/Network/network_policy.md)** — реализация сетевой изоляции.
 *   **[Квоты и лимиты ресурсов](../Scheduling/qos_limit_and_requests.md)** — управление потреблением ресурсов.
-*   **[Приоритеты подов (PriorityClass)](../Concepts/priorityclass.md)** — влияние на планирование в условиях дефицита ресурсов.
-*   **[Gateway API](../Networking/gateway_api/definitions.md)** — современный стандарт управления трафиком.
+*   **[Мульти-тенантность](../Concepts/multi-tenancy.md)** — проектирование Namespace для команд и проектов в общем кластере.

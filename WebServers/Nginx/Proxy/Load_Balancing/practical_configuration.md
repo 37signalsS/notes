@@ -174,6 +174,8 @@ location = /custom_50x.html {
 }
 ```
 
+> **Примечание:** Для планового maintenance-режима (не ошибок бэкенда) используйте подход с `include` и симлинком. Подробнее — в **[Maintenance-режим в Nginx](../../Scenarios/nginx_maintenance_mode.md)**.
+
 ## Технические нюансы
 
 ### Таймауты

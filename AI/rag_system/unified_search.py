@@ -15,6 +15,11 @@ from qdrant_client import QdrantClient
 
 import rag_utils
 
+# Semaphore to limit parallel search queries
+_SEARCH_SEMAPHORE = threading.Semaphore(rag_utils.MAX_PARALLEL_SEARCHES)
+_MEMORY_CHECK_INTERVAL = 10  # Check memory every N seconds
+_last_memory_check = 0
+
 warnings.filterwarnings("ignore", message="Local mode is not recommended for collections", category=UserWarning)
 log = rag_utils.log
 
@@ -24,7 +29,7 @@ _SEARCH_CACHE_TTL = 300
 _SEARCH_CACHE_MAX = 128
 _SEARCH_CACHE_VERSION = 0
 _FORMAT_RESULT_MAX_CHARS = 400
-_MAX_INTERMEDIATE_RESULTS = 200
+_MAX_INTERMEDIATE_RESULTS = 100
 _MAX_PER_SOURCE = 3
 
 
@@ -33,6 +38,28 @@ def bust_cache() -> None:
     with _SEARCH_CACHE_LOCK:
         _SEARCH_CACHE_VERSION += 1
         _SEARCH_CACHE.clear()
+
+
+def _check_memory_usage() -> bool:
+    """Check if memory usage is below the limit. Returns True if OK."""
+    global _last_memory_check
+    now = time.time()
+    if now - _last_memory_check < _MEMORY_CHECK_INTERVAL:
+        return True
+    _last_memory_check = now
+    
+    try:
+        import psutil
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024 * 1024)
+        if memory_mb > rag_utils.MAX_MEMORY_MB:
+            log.warning("Memory usage %.1f MB exceeds limit %d MB", memory_mb, rag_utils.MAX_MEMORY_MB)
+            return False
+        elif memory_mb > rag_utils.MAX_MEMORY_MB * 0.7:  # Log warning at 70%
+            log.info("Memory usage: %.1f MB / %d MB", memory_mb, rag_utils.MAX_MEMORY_MB)
+        return True
+    except ImportError:
+        return True
 
 
 def _get_score(r: dict) -> float:
@@ -119,7 +146,8 @@ def hybrid_search(engine_name: str, query: str, top_k: int, client: QdrantClient
     dense_emb = rag_utils.get_embeddings(cfg["model"], rag_utils.get_device(), cfg.get("doc_prefix", "")).embed_query(dense_query)
     
     sparse_model = rag_utils.get_sparse_embedding_model()
-    sparse_iter = list(sparse_model.embed([query]))[0]
+    with rag_utils.get_sparse_inference_lock():
+        sparse_iter = list(sparse_model.embed([query]))[0]
     sparse_vector = models.SparseVector(indices=sparse_iter.indices.tolist(), values=sparse_iter.values.tolist())
 
     try:
@@ -140,7 +168,7 @@ def hybrid_search(engine_name: str, query: str, top_k: int, client: QdrantClient
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=top_k + rag_utils.HYBRID_EXTRA_K_OFFSET,
             with_payload=True,
-            with_vectors=["dense"]
+            with_vectors=False
         )
     except Exception:
         rag_utils.log.exception("Qdrant query failed")
@@ -159,7 +187,6 @@ def hybrid_search(engine_name: str, query: str, top_k: int, client: QdrantClient
             "source": source,
             "content": point.payload.get("page_content", ""),
             "score": round(point.score, 4),
-            "embedding": point.vector.get("dense") if point.vector else None
         })
 
     return scored[:top_k]
@@ -171,7 +198,8 @@ def rerank(query: str, results: list[dict[str, Any]], reranker: Optional[Any]) -
 
     pairs = [(query, r["content"][:rag_utils.RERANKER_MAX_CHARS]) for r in results]
     try:
-        scores = reranker.predict(pairs)
+        with rag_utils.get_reranker_inference_lock():
+            scores = reranker.predict(pairs)
         for r, s in zip(results, scores):
             r["rerank_score"] = round(float(s), 4)
         results.sort(key=lambda x: x["rerank_score"], reverse=True)
@@ -201,69 +229,80 @@ def perform_search(
             _SEARCH_CACHE[cache_key] = (now, cached[1])
             return cached[1]
 
-    def _search_engine(name: str) -> list[dict[str, Any]]:
-        try:
-            cfg = rag_utils.ENGINES.get(name)
-            if cfg is None:
+    # Check memory before acquiring semaphore
+    if not _check_memory_usage():
+        log.warning("Memory limit reached, returning empty results")
+        return []
+
+    # Acquire semaphore to limit parallel searches
+    if not _SEARCH_SEMAPHORE.acquire(blocking=False):
+        log.warning("Parallel search limit reached (%d), queuing", rag_utils.MAX_PARALLEL_SEARCHES)
+        _SEARCH_SEMAPHORE.acquire()  # Block if limit reached
+
+    try:
+        def _search_engine(name: str) -> list[dict[str, Any]]:
+            try:
+                cfg = rag_utils.ENGINES.get(name)
+                if cfg is None:
+                    return []
+                client, cfg = rag_utils.load_qdrant(name)
+                return hybrid_search(name, query, top_k, client, cfg)
+            except Exception as e:
+                log.error("Search error %s: %s", name, e)
                 return []
-            client, cfg = rag_utils.load_qdrant(name)
-            return hybrid_search(name, query, top_k, client, cfg)
-        except Exception as e:
-            log.error("Search error %s: %s", name, e)
-            return []
 
-    all_results: list[dict[str, Any]] = []
-    for name in engine_names:
-        all_results.extend(_search_engine(name))
+        all_results: list[dict[str, Any]] = []
+        for name in engine_names:
+            all_results.extend(_search_engine(name))
 
-    all_results = deduplicate(all_results)
+        all_results = deduplicate(all_results)
 
-    if len(all_results) > _MAX_INTERMEDIATE_RESULTS:
-        all_results = all_results[:_MAX_INTERMEDIATE_RESULTS]
+        if len(all_results) > _MAX_INTERMEDIATE_RESULTS:
+            all_results = all_results[:_MAX_INTERMEDIATE_RESULTS]
 
-    if use_rerank and len(all_results) > 1:
-        reranker = rag_utils.get_reranker()
-        if reranker:
-            all_results = rerank(query, all_results, reranker)
-            all_results = apply_score_threshold(all_results, rag_utils.RERANK_SCORE_THRESHOLD)
+        if use_rerank and len(all_results) > 1:
+            reranker = rag_utils.get_reranker()
+            if reranker:
+                all_results = rerank(query, all_results, reranker)
+                all_results = apply_score_threshold(all_results, rag_utils.RERANK_SCORE_THRESHOLD)
 
-    if len(all_results) > top_k:
-        mixed_dims = len({len(r.get("embedding", [])) for r in all_results if r.get("embedding")}) > 1
-        if mixed_dims:
-            mmr_per_engine: list[dict[str, Any]] = []
-            for name in engine_names:
-                eng_results = [r for r in all_results if r["engine"] == name]
-                if eng_results:
-                    mmr_per_engine.extend(mmr_diversify(eng_results, query, max(top_k // len(engine_names), 5)))
-            all_results = deduplicate(mmr_per_engine) if mmr_per_engine else all_results
-        else:
+        if len(all_results) > top_k:
             emb_matrix = None
             try:
-                if all(r.get("embedding") is not None for r in all_results):
-                    vecs = [r["embedding"] for r in all_results]
-                    emb_matrix = rag_utils.compute_cosine_sim_matrix(vecs)
-                else:
-                    eng_name = engine_names[0]
-                    eng_cfg = rag_utils.ENGINES[eng_name]
-                    embedder = rag_utils.get_embeddings(
-                        eng_cfg["model"],
-                        doc_prefix=eng_cfg.get("doc_prefix", ""),
-                    )
-                    vecs = embedder.embed_documents([r["content"] for r in all_results])
-                    emb_matrix = rag_utils.compute_cosine_sim_matrix(vecs)
+                eng_name = engine_names[0]
+                eng_cfg = rag_utils.ENGINES[eng_name]
+                embedder = rag_utils.get_embeddings(
+                    eng_cfg["model"],
+                    doc_prefix=eng_cfg.get("doc_prefix", ""),
+                )
+                vecs = embedder.embed_documents([r["content"] for r in all_results])
+                emb_matrix = rag_utils.compute_cosine_sim_matrix(vecs)
             except Exception as e:
-                log.warning("MMR embedding computation failed: %s", e)
+                log.warning("MMR embedding computation failed, using keyword overlap: %s", e)
             all_results = mmr_diversify(all_results, query, top_k, emb_matrix=emb_matrix)
 
-    all_results = limit_per_source(all_results)
+        all_results = limit_per_source(all_results)
 
-    with _SEARCH_CACHE_LOCK:
-        if len(_SEARCH_CACHE) >= _SEARCH_CACHE_MAX:
-            oldest = min(_SEARCH_CACHE.keys(), key=lambda k: _SEARCH_CACHE[k][0])
-            del _SEARCH_CACHE[oldest]
-        _SEARCH_CACHE[cache_key] = (now, all_results)
+        with _SEARCH_CACHE_LOCK:
+            if len(_SEARCH_CACHE) >= _SEARCH_CACHE_MAX:
+                oldest = min(_SEARCH_CACHE.keys(), key=lambda k: _SEARCH_CACHE[k][0])
+                del _SEARCH_CACHE[oldest]
+            _SEARCH_CACHE[cache_key] = (now, all_results)
 
-    return all_results
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+        return all_results
+    finally:
+        _SEARCH_SEMAPHORE.release()
 
 
 def format_result(r: dict[str, Any], max_chars: int = _FORMAT_RESULT_MAX_CHARS) -> dict[str, Any]:

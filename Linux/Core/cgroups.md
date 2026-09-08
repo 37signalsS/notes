@@ -86,6 +86,61 @@ Cgroups v2 интегрированы с механизмом **[Pressure Stall 
 - **RAM:** ~1–2 МБ структур данных ядра на каждую cgroup.
 - **I/O:** Минимальный оверхед, но может влиять на задержки при активном дросселировании.
 
+### Внутренняя структура унифицированной иерархии (v2)
+
+В cgroups v2 существует четкая иерархия подгрупп, каждая из которых имеет тип, определяемый в файле `cgroup.type`:
+
+| Тип | Описание | Файлы управления |
+| :--- | :--- | :--- |
+| **`domain`** | Стандартная группа. Может содержать только дочерние `domain`-группы (не потоки). | `cgroup.procs`, контроллеры |
+| **`threaded`** | Группа для управления потоками напрямую. Может содержать как `domain`-, так и `threaded`-группы. | `cgroup.procs`, `cgroup.threads`, контроллеры |
+| **`domain threaded`** | Наследуемый тип, когда родительская группа является `threaded`. | Аналогично `domain` |
+
+**Ключевое правило:** В подгруппе, содержащей процессы, можно включить только контроллеры, которые активны в родительской группе (через `cgroup.subtree_control`).
+
+### Делегирование и непривилегированный доступ
+
+Делегирование позволяет непривилегированным пользователям или сервисам управлять собственными подгруппами cgroups без root-прав.
+
+**Механизм:**
+1. **Активация контроллеров:** В родительской группе записываются нужные контроллеры в `cgroup.subtree_control`.
+2. **Наследование:** Все дочерние группы автоматически наследуют активные контроллеры.
+3. **Ограничение:** Процесс, уже находящийся в группе, не может получить доступ к контроллерам, которые не были активированы до его помещения в группу.
+
+```bash
+# Делегирование контроллеров пользовательской сессии (root)
+echo "+cpu +memory +io +pids" | sudo tee /sys/fs/cgroup/user.slice/cgroup.subtree_control
+
+# Настройка лимитов для конкретного пользователя (root)
+echo 2G | sudo tee /sys/fs/cgroup/user.slice/user-1000.slice/memory.max
+echo "200000 100000" | sudo tee /sys/fs/cgroup/user.slice/user-1000.slice/cpu.max
+```
+
+**В systemd:** Делегирование происходит автоматически для user instances (`user@.service`), если указано `Delegate=yes` в unit-файле.
+
+### cgroup Namespace
+
+**Cgroup Namespace** (`CLONE_NEWCGROUP`) — изолирует представление процесса об иерархии контрольных групп. Процесс внутри cgroup namespace видит только свою ветку дерева, что скрывает информацию о других контейнерах/сервисах.
+
+**Практическое значение:**
+- Защита от утечек информации о cgroup-иерархии хоста в контейнерах.
+- Упрощение миграции контейнеров между узлами (относительные пути cgroup).
+- Взаимодействие с **Mount Namespace:** без изолированного mount namespace процессы могут обойти cgroup namespace, монтируя `/sys/fs/cgroup` хоста.
+
+### Управление потоками (Threaded Mode)
+
+В cgroups v2 threaded mode позволяет помещать отдельные потоки (threads) в разные группы, в отличие от классического подхода, где вся группа процессов treated as a single unit.
+
+**Когда необходимо:**
+- **Go / Java приложения:** massive thread pools, где часть потоков должна иметь строгие лимиты.
+- **Web-серверы (nginx, Apache):** выделение отдельных worker'ов в отдельные группы для QoS.
+- **Database connections:** ограничение конкретных пулов соединений.
+
+**Ограничения:**
+- Только `domain` группы могут содержать процессы.
+- `threaded` группы содержат потоки, но не процессы напрямую.
+- Не все контроллеры поддерживают управление потоками (например, `pids` действует на уровне процессов).
+
 ---
 
 ## Практические сценарии
@@ -176,6 +231,240 @@ echo <PID> > /sys/fs/cgroup/isolated/cgroup.procs
 ```
 Подробнее: [**CPU Pinning**](./cpu_pinning.md).
 
+### Архитектура systemd Slice
+
+`systemd` строит иерархию cgroups автоматически. Понимание этой иерархии необходимо для корректной настройки лимитов:
+
+```
+/sys/fs/cgroup/
+├── system.slice/           # Системные сервисы
+│   ├── sshd.service/
+│   ├── nginx.service/
+│   └── docker-<id>.scope/
+├── user.slice/             # Пользовательские сессии
+│   └── user-1000.slice/
+│       └── user@1000.service/
+├── machine.slice/          # Виртуальные машины (systemd-nspawn)
+│   └── my-vm.scope/
+├── init.scope/             # PID 1
+└── /                        # Root cgroup (не делегировано)
+```
+
+**Ключевые slice:**
+- **`system.slice`:** все системные сервисы.
+- **`user.slice`:** сессии пользователей (UDC — User Derived Cgroups).
+- **`machine.slice`:** контейнеры и ВМ, управляемые через `machinectl`.
+
+### Лимиты для пользовательских сессий (Per-User Resource Limits)
+
+Для ограничения ресурсов конкретного пользователя или группы через systemd используйте drop-in конфигурации:
+
+```ini
+# /etc/systemd/system/user@.service.d/10-resource-limits.conf
+[Service]
+# Ограничение всего пользовательского инстанса
+MemoryMax=4G
+CPUQuota=200%           # 2 ядра на всю сессию
+TasksMax=512
+IOWeight=50
+```
+
+```ini
+# /etc/systemd/system/getty@tty1.service.d/10-limits.conf
+[Service]
+# Лимит конкретного сервиса
+MemoryMax=256M
+CPUQuota=50%
+```
+
+### Эфемерные задачи через systemd-run
+
+Для разовых задач с гарантированными ресурсами используйте `systemd-run` вместо `nohup`/`screen`:
+
+```bash
+# Запуск бэкапа с лимитами (автоматически создается transient scope)
+sudo systemd-run --unit=backup-job \
+  --scope \
+  --memory=1G \
+  --cpu-quota=25% \
+  --blockio-weight=200 \
+  /usr/local/bin/backup.sh
+
+# Проверка статуса
+systemctl status backup-job.scope
+
+# Просмотр cgroup
+systemd-cgls /system.slice/backup-job.scope
+```
+
+**Преимущества:**
+- Автоматическое создание cgroup с лимитами.
+- Логирование через journald.
+- Автоматическая очистка после завершения (`tmpfiles.d` для временных юнитов).
+
+### Изоляция пакетных задач (Batch Jobs)
+
+Для фоновых работ (рендеринг, бэкапы, сборка) создайте отдельный slice:
+
+```ini
+# /etc/systemd/system/batch-jobs.slice
+[Slice]
+CPUWeight=10             # Низкий приоритет относительно system.slice
+MemoryMax=8G
+IOWeight=50
+TasksMax=200
+```
+
+```ini
+# /etc/systemd/system/batch-worker@.service
+[Unit]
+Description=Batch Worker %i
+PartOf=batch-jobs.slice
+
+[Service]
+Slice=batch-jobs.slice
+ExecStart=/opt/scripts/batch-worker %i
+MemoryMax=512M
+CPUQuota=20%
+Nice=10
+IOSchedulingClass=idle
+```
+
+### Экстренное сдерживание ресурсов (Emergency Containment)
+
+При обнаружении "прожорливого" процесса без перезапуска:
+
+```bash
+# 1. Найти проблемный cgroup
+systemd-cgtop --batch --iterations=1 --order=memory | head -n 5
+
+# 2. Применить мягкий лимит (throttle)
+echo 500M | sudo tee /sys/fs/cgroup/system.slice/problem-app.service/memory.high
+
+# 3. Применить жесткий лимит (OOM protection для остальных)
+echo 1G | sudo tee /sys/fs/cgroup/system.slice/problem-app.service/memory.max
+
+# 4. Ограничить CPU (ядерный троттлинг)
+echo "20000 100000" | sudo tee /sys/fs/cgroup/system.slice/problem-app.service/cpu.max
+
+# 5. Мониторинг давления через PSI
+watch cat /sys/fs/cgroup/system.slice/problem-app.service/memory.pressure
+```
+
+### Миграция с cgroups v1 на v2
+
+**Проверка текущей версии:**
+```bash
+stat -fc %T /sys/fs/cgroup
+# cgroup2fs → v2 активна
+# tmpfs → требуется монтирование
+```
+
+**Включение v2 (для дистрибутивов с ядром 4.15+):**
+```bash
+# RHEL/CentOS 8+ / Ubuntu 22.04+ / Debian 11+ — обычно уже v2 по умолчанию
+# Для Ubuntu 20.04 / Debian 10:
+sudo grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=1"
+sudo reboot
+```
+
+**Валидация после перезагрузки:**
+```bash
+# Проверка типа ФС
+stat -fc %T /sys/fs/cgroup
+# → cgroup2fs
+
+# Проверка доступных контроллеров
+cat /sys/fs/cgroup/cgroup.controllers
+# → cpu io memory pids ...
+
+# Проверка, что systemd использует v2
+systemctl status | grep "CGroup:"
+# → CGroup: /system.slice (/sys/fs/cgroup/system.slice)
+```
+
+**Типичные проблемы при миграции:**
+- **Docker:** требуется `cgroupfs` или `systemd` driver (не `devicemapper` cgroup v1 style).
+- **Kubernetes:** kubelet автоматически определяет v2, но старые containerd требуют `SystemdCgroup=true`.
+- **Java приложения:** старые JVM (<15) не видят лимиты памяти, работают с объемом хоста.
+
+### Управление в системах без systemd (cgroup-tools)
+
+На минимальных системах (Alpine, container-оркестраторы) используйте утилиты `cgroup-tools`:
+
+```bash
+# Установка (Debian/Ubuntu)
+sudo apt install cgroup-tools
+
+# Создание группы иерархии
+sudo cgcreate -g cpu,memory,io:/mygroup
+
+# Установка лимитов
+sudo cgset -r cpu.shares=512 mygroup
+sudo cgset -r memory.limit_in_bytes=1G mygroup
+
+# Запуск процесса в группе
+sudo cgexec -g cpu,memory,io:mygroup /usr/bin/my-app
+
+# Просмотр статистики
+sudo cgget -g cpu,memory,io:mygroup
+```
+
+> **Примечание:** `cgroup-tools` работает только с **cgroups v1**. Для v2 используйте ручное управление файлами в `/sys/fs/cgroup/` или `systemd-run --scope`.
+
+### Взаимодействие с SELinux и AppArmor
+
+**SELinux (RHEL/Fedora/CentOS):**
+- Контексты cgroup-файлов должны соответствовать политике. Проверка: `ls -Z /sys/fs/cgroup/...`
+- При создании подгрупп от имени непривилегированного пользователя могут потребоваться `sudo restorecon` или `chcon`.
+- **`cgroup_disable=all`** или **`cgroup_no_v1=all`** в GRUB полностью отключают cgroups — несовместимо с современными контейнерами.
+
+**AppArmor (Ubuntu/Debian):**
+- Профили AppArmor для systemd-юнитов могут блокировать запись в cgroup-файлы. Проверяйте логи: `journalctl -u <service> | grep DENIED`.
+
+### Поиск и устранение неисправностей
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **OOMKilled** | Превышен `memory.max`. | См. `memory.events` (счетчик `oom_kill`). Увеличьте лимит или настройте `memory.high`. |
+| **Throttling** | Превышен `cpu.max`. | Проверьте `cpu.stat` (поле `nr_throttled`). Увеличьте квоту или используйте `cpu.max.burst`. |
+| **Internal Process Constraint** | Попытка включить контроллер в группе с процессами. | В v2 процессы могут быть только в листовых узлах, если включены контроллеры. |
+| **Контроллер недоступен** | Не включен в `cgroup.subtree_control`. | `echo "+cpu" > .../cgroup.subtree_control` в родительской группе. |
+| **Java OOM** | Старая JVM не видит лимиты. | Обновите JDK (11+ / 8u372+) или используйте `-Xmx`. |
+| **Cannot allocate memory при создании cgroup** | Достигнут лимит `pids.max` в родительской группе или недостаточно памяти в родительской `memory.max`. | Увеличьте `pids.max` в родителе или проверьте `memory.high`/`memory.max`. |
+| **Делегирование контроллеров не работает** | Контроллеры не активированы в `cgroup.subtree_control` родительской группы. | `echo "+cpu +memory" > /sys/fs/cgroup/parent/cgroup.subtree_control` (от root). |
+| **Конфликт systemd и containerd/docker** | Разные драйверы cgroup (cgroupfs vs systemd). | Установите `SystemdCgroup = true` в containerd. |
+| **Потоки (threads) не перемещаются** | Попытка переместить поток в группу без `cgroup.threads` (требуется threaded mode). | Перемещайте по PID через `cgroup.procs` или настройте threaded subtree. |
+| **No space left on device при создании cgroup** | Достигнут лимит `cgroup.max_depth` или `cgroup.max_descendants` в родителе. | Увеличьте лимиты в родительской группе. |
+| **I/O троттлинг не применяется** | `IOAccounting=no` или контроллер `io` не делегирован. | Включите `IOAccounting=yes` в unit-файле; проверьте `cgroup.subtree_control`. |
+| **SELinux denies cgroup write** | Политика SELinux блокирует запись в cgroup-файлы. | `audit2allow -w -a` для анализа; `restorecon -R /sys/fs/cgroup` для исправления контекстов. |
+
+### Best Practices
+
+1. **Иерархия:** Создавайте cgroup-дерево, отражающее архитектуру сервисов (по окружениям, приоритетам, командам). Не смешивайте временные и постоянные группы в одном пути.
+2. **Мягкие лимиты (`memory.high`, `cpu.max` burst):** Используйте для graceful degradation. Жесткие лимиты (`memory.max`) — для катастрофической защиты (OOM Kill).
+3. **Делегирование:** Для сервисов, управляемых через `systemd-run` или контейнеры, всегда включайте `Delegate=yes`, если приложение само управляет подгруппами (например, Kubernetes kubelet).
+4. **Мониторинг:** Включайте `CPUAccounting=yes`, `MemoryAccounting=yes`, `IOAccounting=yes` в production-юнитах. Оверхед минимален, но данные критичны для диагностики.
+5. **Атомарность операций:** Для изменения нескольких параметров одновременно используйте скрипты с `cat > file` (atomic write), а не множественные `echo >>` (append).
+6. **PIDs limit:** Всегда устанавливайте `TasksMax=` для сервисов, обрабатывающих внешний ввод (web, API). Рекомендуемое значение: 5–10x от ожидаемого числа воркеров.
+7. **Read-only корень:** Для контейнеров и chroot-окружений монтируйте корень как `ro` и используйте `memory.min` для защиты кэша от агрессивного reclaim.
+8. **Очистка:** Удаляйте неиспользуемые cgroup-группы. В systemd это происходит автоматически; в ручном режиме — `rmdir` после остановки всех процессов.
+9. **Версионирование:** Начиная с Ubuntu 24.04 / RHEL 10, cgroups v1 полностью удалена. Все новые конфигурации должны быть для v2.
+10. **Документация:** Комментируйте unit-файлы и скрипты, указывая **почему** установлены конкретные лимиты (SLA, тип нагрузки, количество пользователей).
+
+### Граничные случаи и ограничения
+
+- **Thread placement:** В v2 процесс может находиться только в одной `domain`-группе, но его потоки — в разных `threaded`-группах. Попытка переместить процесс в группу, где уже есть потоки, завершится `EBUSY`.
+- **Cgroup Namespace + Mount Namespace:** Без изолированного mount namespace процесс может обойти cgroup namespace, перемонтировав `/sys/fs/cgroup`. Для полной изоляции используйте `unshare --cgroup --mount`.
+- **Очистка `memory.reclaim`:** Файл `memory.reclaim` (ядро 5.19+) возвращает количество страниц, которые не удалось освободить (например, из-за активных анонимных страниц). Это нормально и не является ошибкой.
+- **`io.latency` controller:** Требует точной настройки `target` (например, `10ms`). Неправильное значение может привести к деградации производительности вместо улучшения.
+- **Hotplug и cgroups:** При добавлении нового устройства (диска, NIC) cgroup-лимиты (`io.max`, `io.weight`) не применяются автоматически. Требуется перезагрузка конфигурации или systemd daemon-reload.
+- **Root cgroup:** Нельзя установить лимиты напрямую в корневой cgroup (`/sys/fs/cgroup/`). Все ограничения применяются только в дочерних группах.
+- **`cgroup.kill`:** Уничтожает все процессы в группе (ядро 5.14+). Работает только для листовых узлов. Не работает, если группа содержит подгруппы.
+- **Виртуальные файловые системы:** `cgroupfs` не кэширует атрибуты. Каждое чтение файла `/sys/fs/cgroup/.../memory.current` вызывает syscall в ядро — не используйте в высокочастотных циклах без кэширования.
+- **Приоритет лимитов:** Если cgroup ограничивает `memory.max=512M`, а `RLIMIT_AS` (ulimit) установлен в `1G`, процесс будет убит при 512MB. Cgroups имеют приоритет над rlimits.
+- **Persistence:** Изменения в `/sys/fs/cgroup/` живут только до перезагрузки. Для persistence используйте systemd drop-ins, `/etc/tmpfiles.d/` или ини-скрипты.
+
 ---
 
 ## Дополнительная информация
@@ -189,16 +478,6 @@ echo <PID> > /sys/fs/cgroup/isolated/cgroup.procs
 | `cat /sys/fs/cgroup/.../cpu.stat` | Статистика дросселирования. | `cat /sys/fs/cgroup/user.slice/cpu.stat` |
 | `cat /proc/pressure/*` | Статистика давления PSI на хосте. | `cat /proc/pressure/memory` |
 
-### Поиск и устранение неисправностей
-
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| **OOMKilled** | Превышен `memory.max`. | См. `memory.events` (счетчик `oom_kill`). Увеличьте лимит или настройте `memory.high`. |
-| **Throttling** | Превышен `cpu.max`. | Проверьте `cpu.stat` (поле `nr_throttled`). Увеличьте квоту или используйте `cpu.max.burst`. |
-| **Internal Process Constraint** | Попытка включить контроллер в группе с процессами. | В v2 процессы могут быть только в листовых узлах, если включены контроллеры. |
-| **Контроллер недоступен** | Не включен в `cgroup.subtree_control`. | `echo "+cpu" > .../cgroup.subtree_control` в родительской группе. |
-| **Java OOM** | Старая JVM не видит лимиты. | Обновите JDK (11+ / 8u372+) или используйте `-Xmx`. |
-
 ### Связанные темы
 
 - **[Пространства имён (namespaces)](./namespaces.md)** — изоляция видимости.
@@ -207,6 +486,8 @@ echo <PID> > /sys/fs/cgroup/isolated/cgroup.procs
 - **[Давление на ресурсы (PSI)](./kernel/psi.md)** — детальный разбор метрик давления.
 - **[Концепции лимитов ресурсов (rlimits)](./processes/resource_limits_concepts.md)** — сравнение cgroups и ulimit.
 - **[Изоляция контейнеров](../../Docker/Concepts/linux_isolation.md)** — применение в Docker/K8s.
+- **[Эфемерные задачи (systemd-run)](./systemd/systemd_run.md)** — динамические юниты с автоматическим управлением cgroups.
+- **[Планирование процессов (scheduler)](./processes/scheduling.md)** — взаимодействие `cpu.max`/`cpu.weight` с CFS/EEVDF.
 
 ### Ресурсы
 

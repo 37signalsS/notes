@@ -109,3 +109,4 @@ btrfs restore /dev/sdb1 /mnt/external_recovery
   - [Утилита dd](./dd.md) — базовое копирование.
   - [Виртуальная ФС /proc](./virtual_fs_proc.md) — подробнее о механизме дескрипторов.
   - [Журналирование ФС](./journaling.md) — как журнал помогает в восстановлении.
+  - [Устранение неполадок: ФС в режиме read-only](./read_only_filesystem_troubleshooting.md) — когда `ext4` сама переводит ФС в RO после ошибок I/O.

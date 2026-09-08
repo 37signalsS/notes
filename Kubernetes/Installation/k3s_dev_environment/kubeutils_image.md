@@ -15,6 +15,8 @@
 | **Build Args** | Переменные, передаваемые в Dockerfile во время сборки (`--build-arg`). Позволяют изменять версии утилит без правки кода Dockerfile. |
 | **SBOM (Software Bill of Materials)** | Полный перечень всех программных компонентов и зависимостей в образе. Необходим для аудита безопасности. |
 | **OCI (Open Container Initiative)** | Стандарт для форматов образов и сред выполнения, обеспечивающий совместимость между Docker, Podman и другими инструментами. |
+| **Digest** | SHA256-хеш содержимого OCI-манифеста. Используется для точной идентификации образа, гарантируя неизменность артефакта (в отличие от тегов, которые могут перезаписываться). |
+| **Multi-arch Build** | Сборка образа для нескольких архитектур (amd64, arm64) из одного Dockerfile с использованием `$TARGETARCH` и манифест-листа. Позволяет одним образом обслуживать разные платформы. |
 
 Навигация: [Kaniko Overview](../../../Docker/Dockerfile/dockerfile_kaniko.md) | [Docker Best Practices](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md) | [GitLab CI Basics](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md)
 
@@ -61,18 +63,80 @@ Alpine Linux остается оптимальным выбором для ут�
 - **Безопасности:** Меньшее количество пакетов снижает поверхность атаки.
 - **Совместимости:** Большинство облачных инструментов (Go-бинарники) работают в среде `musl` напрямую или через `gcompat`.
 
+**Ограничение Alpine:** Некоторые Go-бинарники, скомпилированные с использованием `glibc`, могут не работать в Alpine без `gcompat`. В таких случаях:
+1. Используйте статически скомпилированные бинарники (см. Dockerfile — все утилиты в примере являются статическими).
+2. Установите `gcompat` как запасной вариант: `apk add --no-cache gcompat`.
+3. Проверяйте совместимость перед добавлением новой утилиты: `ldd /usr/local/bin/tool` — если показывает `not found`, требуется `gcompat`.
+
+### Стратегия фиксации версий (Version Pinning)
+
+В enterprise CI/CD критично фиксировать конкретные версии зависимостей, а не использовать floating tags (`latest`, `stable`).
+
+**Иерархия надежности (от наиболее к наименее надежной):**
+
+| Метод | Пример | Надежность | Когда использовать |
+| :--- | :--- | :--- | :--- |
+| **Digest** | `alpine:3.24.1@sha256:abc123...` | Максимальная | Продакшен-пайплайны, где критична воспроизводимость |
+| **SemVer тег** | `alpine:3.24.1` | Высокая | Стандартный CI/CD (рекомендуется) |
+| **Minor тег** | `alpine:3.24` | Средняя | Только dev/test окружения |
+| **Floating tag** | `alpine:latest` | Низкая | Запрещено в пайплайнах |
+
+**Почему Digest лучше тега:** Тег — это mutable-ссылка, которую владелец образа может перезаписать. Digest — это immutable SHA256-хеш содержимого. Использование Digest гарантирует, что между сборкой и деплоем не произойдет тайной подмены содержимого.
+
+**Пример с Digest в Dockerfile:**
+```dockerfile
+# Фиксация по Digest (максимальная надежность)
+FROM alpine:3.24.1@sha256:961a2e064f2c4c563e10cf5e2c3f2c4f8d4b2e1a3c5d6f7e8b9a0c1d2e3f4a5b
+
+# Фиксация по SemVer тегу (рекомендуется)
+FROM alpine:3.24.1
+```
+
+**Рекомендация для kubeutils:** Используйте SemVer теги для базовых образов и утилит. Digest-пиннинг применяйте только в критических продакшен-пайплайнах, где требуется полная воспроизводимость.
+
+### Мультиархитектурная стратегия (Multi-arch)
+
+Dockerfile поддерживает сборку для `amd64` и `arm64` через автоматическое определение архитектуры. Это позволяет использовать один образ как на x86-серверах, так и на ARM-устройствах (Apple Silicon, Raspberry Pi, ARM-серверы).
+
+**Механизм работы:**
+```dockerfile
+# Автоопределение архитектуры (Alpine уже поддерживает multi-arch)
+ARG TARGETARCH
+# Или черезuname:
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+```
+
+**Важные особенности:**
+- Kaniko, kubectl, helm — все предоставляют мультиархитектурные бинарники.
+- regctl и kubeconform доступны для обеих архитектур.
+- При использовании Kaniko в multi-arch пайплайне укажите `--platform` явно.
+
+### Жизненный цикл образа (Image Lifecycle)
+
+Регулярное обновление образа необходимо для:
+- Исправления CVE в утилитах и базовом образе.
+- Обновления версий kubectl/helm для поддержки новых API.
+- Соответствия политикам безопасности (non-root, read-only FS).
+
+**Рекомендуемый процесс:**
+1. **Ежемесячно:** Проверка новых версий утилит.
+2. **Ежеквартально:** Полная пересборка образа с обновлёнными зависимостями.
+3. **По событию:** Немедленное обновление при обнаружении критического CVE.
+4. **Автоматизация:** Настройте Renovate/Dependabot для автоматических PR с обновлениями версий.
+
 ### Безопасность цепочки поставок (Supply Chain)
 
 В 2026 году образ должен соответствовать стандартам безопасности:
 1.  **Non-root:** Запуск процессов от пользователя с UID 1000.
 2.  **SBOM Generation:** Генерация спецификации состава (например, через Syft в пайплайне) для загрузки в Harbor.
 3.  **Image Signing:** Подпись образа через Cosign для гарантии того, что в кластер попадет именно тот артефакт, который прошел CI.
+4.  **Minimal Base:** Использование максимально компактного базового образа для снижения поверхности атаки.
 
 ---
 
 ## Практические сценарии
 
-### Dockerfile для kubeutils (Версия Август 2026)
+### 1. Dockerfile для kubeutils (Версия Август 2026)
 
 Dockerfile поддерживает многоплатформенность (`amd64`/`arm64`) и настройку безопасности.
 
@@ -119,7 +183,13 @@ RUN kubectl version --client && \
     kubeconform -v
 ```
 
-### GitLab CI пайплайн для сборки (Kaniko + Multi-tag)
+**Пояснение к ключевым параметрам:**
+- `--no-cache` для `apk` — уменьшает размер образа, не кэшируя индекс пакетов.
+- `addgroup -S kube && adduser -S kube -G kube` — минимальный непривилегированный пользователь (SYSTEM GROUP, SYSTEM USER).
+- `set -x` — вывод каждой команды в лог для отладки при ошибке сборки.
+- `tar -xzO` — распаковка в stdout без создания промежуточных файлов (эффективнее по диску).
+
+### 2. Сборка через Kaniko (GitLab CI)
 
 Пример сборки с использованием актуального форка Kaniko и поддержкой Registry Harbor.
 
@@ -154,7 +224,51 @@ build-kubeutils:
       when: manual
 ```
 
-### Использование в пайплайнах (Валидация и Деплой)
+**Пояснение к флагам Kaniko:**
+- `--context "dir://..."` — контекст сборки (директория, git URL или tarball).
+- `--destination` — можно указать несколько раз для создания нескольких тегов одного образа.
+- `--registry-mirror` — зеркало реестра для ускорения pull базовых образов.
+- `--registry-certificate` — путь к CA-сертификату для TLS (self-signed Harbor).
+
+### 3. Сборка мультиархитектурного образа
+
+Сборка образа для обеих архитектур (amd64 + arm64) через Kaniko с манифест-листом.
+
+```yaml
+build-multiarch:
+  stage: build
+  tags:
+    - global
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$INTERNAL_REGISTRY\":{\"username\":\"$REGISTRY_USER\",\"password\":\"$REGISTRY_PASS\"}}}" > /kaniko/.docker/config.json
+    
+    # Сборка для amd64
+    - /kaniko/executor \
+        --context "dir://$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --destination "$INTERNAL_REGISTRY/library/kubeutils:latest-amd64" \
+        --platform=linux/amd64
+    
+    # Сборка для arm64
+    - /kaniko/executor \
+        --context "dir://$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --destination "$INTERNAL_REGISTRY/library/kubeutils:latest-arm64" \
+        --platform=linux/arm64
+    
+    # Объединение в манифест-лист (требует regctl)
+    - regctl manifest create "$INTERNAL_REGISTRY/library/kubeutils:latest" \
+        "$INTERNAL_REGISTRY/library/kubeutils:latest-amd64" \
+        "$INTERNAL_REGISTRY/library/kubeutils:latest-arm64"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+```
+
+**Примечание:** regctl использует OCI API для создания манифест-листа без использования Docker CLI. Это позволяет объединять образы разных архитектур в единый тег.
+
+### 4. Использование в пайплайнах (Валидация и Деплой)
 
 Пример использования образа для проверки манифестов и развертывания через Helm.
 
@@ -176,6 +290,100 @@ deploy-app:
     - if: '$CI_COMMIT_BRANCH == "main"'
 ```
 
+### 5. Интеграция regctl в пайплайны
+
+regctl позволяет работать с OCI-реестрами без Docker CLI. Типовые задачи:
+
+```yaml
+# Копирование образов между реестрами
+regctl copy harbor.internal/library/app:v1.0 harbor-backup.internal/library/app:v1.0
+
+# Инспекция манифеста (проверка размера, слоёв,.digest)
+regctl manifest get harbor.internal/library/app:v1.0 --format json
+
+# Тегирование существующего образа (без пересборки)
+regctl tag set harbor.internal/library/app:latest --digest sha256:abc123...
+
+# Удаление тега
+regctl tag rm harbor.internal/library/app:old-tag
+
+# Проверка доступности образа
+regctl manifest digest harbor.internal/library/app:v1.0
+```
+
+**Использование в CI для проверки публикации:**
+```yaml
+verify-publish:
+  stage: verify
+  image: $INTERNAL_REGISTRY/library/kubeutils:v1.36.3
+  script:
+    # Проверяем, что образ доступен в реестре
+    - regctl manifest digest $INTERNAL_REGISTRY/library/myapp:$CI_COMMIT_SHA
+    # Проверяем размер образа
+    - regctl manifest get $INTERNAL_REGISTRY/library/myapp:$CI_COMMIT_SHA --format json | jq '.config.size'
+```
+
+### 6. Настройка зеркала реестра для offline/air-gapped сред
+
+В изолированных средах требуется настроить зеркало реестра для ускорения pull базовых образов.
+
+```yaml
+# В .gitlab-ci.yml
+variables:
+  DOCKER_CONFIG: /kaniko/.docker
+
+build-with-mirror:
+  stage: build
+  image:
+    name: osscontainertools/kaniko:v1.28.2-debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$INTERNAL_REGISTRY\":{\"username\":\"$REGISTRY_USER\",\"password\":\"$REGISTRY_PASS\"}}}" > /kaniko/.docker/config.json
+    
+    # Настройка зеркала для Docker Hub
+    - |
+      cat > /kaniko/.docker/config.json <<EOF
+      {
+        "auths": {
+          "$INTERNAL_REGISTRY": {
+            "username": "$REGISTRY_USER",
+            "password": "$REGISTRY_PASS"
+          }
+        },
+        "mirrors": {
+          "docker.io": {
+            "mirrors": [{"host": "mirror.internal:5000"}]
+          }
+        }
+      }
+      EOF
+    
+    - /kaniko/executor \
+        --context "dir://$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --destination "$INTERNAL_REGISTRY/library/kubeutils:latest" \
+        --registry-mirror "mirror.internal:5000" \
+        --registry-certificate "/path/to/mirror-ca.crt"
+```
+
+**Примечание:** Зеркало реестра должно быть доступно из сети GitLab Runner. В air-gapped средах зеркало является единственным источником базовых образов.
+
+---
+
+## Типовые ошибки
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `exec: "docker": executable file not found` | Использование `docker build` вместо Kaniko в CI | Замените image на `osscontainertools/kaniko:v1.28.2-debug` |
+| `error building image: mkdir /kaniko/workspace/rootfs: read-only file system` | Kaniko запущен с read-only rootfs | Убедитесь, что volume `emptyDir` примонтирован в `/kaniko/workspace` |
+| `x509: certificate signed by unknown authority` | CA-сертификат Harbor не доверен | Монтируйте CA: `--registry-certificate /path/to/ca.crt` |
+| `Helm v4: "this is not a valid chart repository"` | Использование Helm v2/v3 команды с Helm v4 | Используйте `helm registry login` для OCI-чартов |
+| `kubeconform: unable to find schema for ...` | Отсутствие схемы для CRD | Добавьте флаг `-ignore-missing-schemas` или укажите `-schema-location` |
+| `no such host: harbor.internal` | DNS не резолвится в контейнере | Проверьте DNS в CI-runner или добавьте `/etc/hosts` в скрипт |
+| `permission denied: /home/kube/.cache/helm` | Права доступа к кэшу Helm от другого пользователя | Убедитесь, что `USER kube` установлен перед запуском Helm |
+| `Kaniko: signaled to cancel` | Timeout при сборке большого образа | Увеличьте `--timeout` или оптимизируйте слои Dockerfile |
+
 ---
 
 ## Дополнительная информация
@@ -191,13 +399,6 @@ deploy-app:
 | **kubeconform** | v0.8.0 | Stable | Стандарт де-факто для валидации схем OpenAPI. |
 | **Kaniko (fork)** | v1.28.2 | Active | Используйте `osscontainertools/kaniko`. |
 
-### См. также
-
-- **Kaniko:** [Обзор Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md), [Оптимизация сборки](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md).
-- **Безопасность:** [Безопасность Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md), [Supply Chain Security](../../../Security/supply_chain_security.md).
-- **GitLab CI:** [Основы GitLab CI](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md), [Интеграция с Kubernetes](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md).
-- **Dev-окружение:** [Архитектура K3s](./k3s_architecture.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md).
-
 ### Предупреждения
 
 | Аспект | Риск | Рекомендация |
@@ -207,3 +408,33 @@ deploy-app:
 | **Права доступа** | Ошибки записи в CI (например, Helm cache). | Helm в образе настроен на работу от `kube`, убедитесь в наличии прав на `/home/kube`. |
 | **TLS/SSL** | Ошибки сертификатов Harbor. | Всегда передавайте `--registry-certificate` или монтируйте CA в `/kaniko/ssl/certs/`. |
 | **Лимиты ресурсов** | `OOMKilled` при валидации больших чартов. | Выделяйте не менее 512Mi RAM для джобов с `kubeconform`. |
+| **Floating tags** | Невоспроизводимые сборки из-за перезаписи тегов `latest`. | Фиксируйте версии по SemVer или Digest. |
+| **Multi-arch** | Несовместимость бинарников с целевой архитектурой. | Проверяйте `uname -m` в Dockerfile перед установкой. |
+| **Kubernetes версия** | `kubectl` несовместим с API-сервером старше/младше на 2 минорных версии. | Обновляйте kubectl при обновлении кластера. |
+
+### Очистка и откат
+
+**Удаление kubeutils из Harbor:**
+```bash
+# Через regctl
+regctl tag rm harbor.internal/library/kubeutils:latest
+regctl tag rm harbor.internal/library/kubeutils:v1.36.3
+
+# Удаление всех тегов образа
+regctl tag ls harbor.internal/library/kubeutils | while read tag; do
+  regctl tag rm "harbor.internal/library/kubeutils:$tag"
+done
+```
+
+**Откат CI/CD на предыдущую версию:**
+1. Верните `KUBE_VERSION` и `HELM_VERSION` в предыдущие значения.
+2. Пересоберите образ через `build-kubeutils` пайплайн.
+3. Обновите `image:` во всех конфигурациях пайплайнов на новую версию.
+
+### См. также
+
+- **Kaniko:** [Обзор Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md), [Оптимизация сборки](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md).
+- **Безопасность:** [Безопасность Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md).
+- **GitLab CI:** [Основы GitLab CI](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md), [Интеграция с Kubernetes](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md).
+- **Dev-окружение:** [Архитектура K3s](./k3s_architecture.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md).
+- **Валидация:** [Обзор kubeconform](../../../Kubernetes/ToolsUtilities/kubeconform_overview.md) — детальное руководство по валидации манифестов.

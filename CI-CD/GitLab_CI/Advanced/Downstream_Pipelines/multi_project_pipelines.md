@@ -39,6 +39,22 @@
 
 Подробности см. в документе **[Наследование переменных](./variable_inheritance.md)**.
 
+### API-триггеры и управление через curl
+
+Помимо YAML-директивы `trigger:project`, межпроектные пайплайны можно запускать программно через Pipeline Triggers API:
+
+```bash
+# Запуск downstream-пайплайна через API
+curl --request POST \
+  --header "PRIVATE-TOKEN: $TRIGGER_TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/123/trigger/pipeline" \
+  --form "ref=main" \
+  --form "variables[SERVICE_ID]=auth-api" \
+  --form "variables[IMAGE_TAG]=v1.0"
+```
+
+**Контроль версий шаблонов:** API-триггеры позволяют явно указать `ref` дочернего пайплайна, что критично для pin-версий инфраструктурных конфигураций.
+
 ## Практические сценарии
 
 ### Сценарий 1: Синхронизация жизненного цикла через mirror
@@ -83,11 +99,147 @@ load-testing:
 - **Ограничение:** Работает только для **веток по умолчанию** (default branches).
 - **Применение:** Автоматическая пересборка Docker-образа приложения при обновлении базового образа в другом репозитории.
 
+```yaml
+# Проект: shared-base-images (Upstream)
+# При успешном пайплайне в main, автоматически запустится downstream
+build-base-image:
+  stage: build
+  script:
+    - docker build -t base-image:$CI_COMMIT_SHA .
+    - docker push base-image:$CI_COMMIT_SHA
+
+# Проект: app-service (Downstream, настроен через Pipeline Subscriptions)
+# Автоматически запустится при обновлении shared-base-images/main
+rebuild-with-new-base:
+  stage: build
+  script:
+    - docker build --build-arg BASE_IMAGE=base-image:$CI_COMMIT_SHA .
+```
+
+### Сценарий 4: Microservice orchestration (fan-out/fan-in)
+
+Параллельный триггер нескольких downstream-проектов с агрегацией результатов. Используется для координации зависимостей между микросервисами.
+
+```yaml
+# Проект: orchestrator
+trigger-auth-service:
+  stage: test
+  trigger:
+    project: 'backend/auth-service'
+    branch: main
+    strategy: mirror
+  variables:
+    DEPENDENCY_VERSION: $CI_COMMIT_SHA
+
+trigger-billing-service:
+  stage: test
+  trigger:
+    project: 'backend/billing-service'
+    branch: main
+    strategy: mirror
+  variables:
+    DEPENDENCY_VERSION: $CI_COMMIT_SHA
+
+integration-test:
+  stage: deploy
+  script:
+    - ./run-integration-tests.sh
+  needs:
+    - trigger-auth-service
+    - trigger-billing-service
+```
+
+**Важно:** При `parallel:matrix` совместно с `strategy: mirror` Bridge Job ждет завершения **всех** инстансов матрицы. Общий статус будет `failed`, если хотя бы один инстанс упал.
+
+### Сценарий 5: Infrastructure provisioning через multi-project
+
+Разделение ответственности: DevOps-команда управляет Terraform-конфигурацией, application-команда запускает деплой.
+
+```yaml
+# Проект: app-service
+trigger-infra-provision:
+  stage: deploy
+  trigger:
+    project: 'infra/terraform-deploy'
+    branch: main
+    strategy: mirror
+  variables:
+    TF_ACTION: apply
+    SERVICE_NAME: auth-api
+    ENVIRONMENT: production
+
+# Проект: infra/terraform-deploy
+provision:
+  script:
+    - cd environments/$ENVIRONMENT
+    - terraform init
+    - terraform apply -auto-approve -var="service_name=$SERVICE_NAME"
+  when: manual
+  allow_failure: false
+```
+
+### Сценарий 6: Compliance и audit (разделение прав)
+
+Паттерн для организаций с жесткими требованиями compliance: код приложения и код инфраструктуры находятся в разных проектах с разными правами доступа.
+
+```yaml
+# Проект: app-service (разработчики не имеют доступа к инфраструктуре)
+trigger-compliance-check:
+  stage: test
+  trigger:
+    project: 'compliance/security-scan'
+    branch: main
+    strategy: mirror
+  variables:
+    APP_REPO: $CI_PROJECT_PATH
+    COMMIT_SHA: $CI_COMMIT_SHA
+
+# Проект: compliance/security-scan (только DevOps/SRE)
+sast-scan:
+  script:
+    - run-sast-scanner --project $APP_REPO --ref $COMMIT_SHA
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+dast-scan:
+  script:
+    - run-dast-scanner --project $APP_REPO --ref $COMMIT_SHA
+  artifacts:
+    reports:
+      dast: gl-dast-report.json
+```
+
+### Сценарий 7: Shared Libraries как триггер
+
+Автоматическая пересборка всех зависимых проектов при обновлении общей библиотеки. Используется в combo с Pipeline Subscriptions.
+
+```yaml
+# Проект: shared-lib (библиотека)
+build-lib:
+  stage: build
+  script:
+    - npm publish
+  only:
+    - main
+
+# Проект: app-service (настроен через Pipeline Subscriptions на shared-lib)
+rebuild-app:
+  stage: build
+  trigger:
+    project: 'shared-lib/app-rebuild-trigger'
+    branch: main
+  variables:
+    LIB_VERSION: $CI_COMMIT_SHA
+```
+
 ## Технические нюансы и ограничения
 
 -   **Риск Runner Deadlock:** Каждое родительское задание со стратегией `mirror` или `depend` занимает слот Runner'а всё время ожидания. При массовых триггерах между десятками проектов это может полностью парализовать очередь задач.
 -   **Циклические зависимости:** GitLab имеет встроенные механизмы защиты, но при использовании API-вызовов риск создания бесконечной цепочки `A -> B -> A` сохраняется.
 -   **Таймауты:** Таймаут родительской Bridge Job должен быть больше суммарного времени выполнения дочернего пайплайна.
+-   **Лимит вложенности:** При использовании `trigger:project` максимальная глубина — **2 уровня**. Для более глубоких иерархий используйте Pipeline Triggers API.
+-   **`needs` + `trigger` несовместимость:** Bridge Job не может быть зависимостью для других задач. Если задача использует `trigger`, она не может иметь `needs`.
+-   **Fine-grained Permissions и scope:** При настройке Fine-grained Permissions (18.3+) убедитесь, что scope `api` или `read_api` включен для целевых операций (чтение артефактов, запуск пайплайнов).
 
 ## Диагностика и устранение неполадок
 
@@ -97,6 +249,20 @@ load-testing:
 | `Downstream pipeline not found` | Опечатка в пути к проекту или ветка не существует. | Проверьте путь (формат `group/subgroup/project`) и наличие ветки. |
 | `Status stuck in Running` | Дочерний пайплайн ждет ручного подтверждения. | Нажмите кнопку в дочернем пайплайне или уберите `strategy: mirror`. |
 | Артефакты не скачиваются | `CI_JOB_TOKEN` не имеет прав `read_api`. | Проверьте скоупы в Fine-grained Permissions (v18.3+). |
+| `Downstream pipeline could not be created` | Неверный синтаксис YAML или отсутствует Allowlist. | Проверьте дочерний файл через CI Lint и настройки Token Access. |
+| Deadlock при массовых триггерах | Все слоты Runner'а заняты Bridge Jobs. | Увеличьте `concurrency` или выделите отдельные Runner'ы для Bridge Jobs. |
+| Циклическая зависимость `A -> B -> A` | API-триггер создал бесконечный цикл. | В GitLab есть встроенная защита, но проверьте цепочку триггеров вручную. |
+
+## Рекомендации по эксплуатации
+
+1. **Настраивайте Inbound Allowlist** для каждого проекта, который получает триггеры — это обязательно для GitLab 18.0+.
+2. **Используйте Fine-grained Permissions** (18.3+) для ограничения scope `CI_JOB_TOKEN` только необходимыми правами.
+3. **Избегайте PAT** — передача персональных токенов через переменные небезопасна. Используйте `CI_JOB_TOKEN` или `id_tokens` (OIDC).
+4. **Мониторьте Bridge Jobs** через API (`GET /api/v4/projects/:id/pipelines/:pipeline_id/bridges`) для раннего обнаружения deadlock.
+5. **Валидируйте конфигурацию** через `glab ci lint` перед коммитом в YAML-файлы downstream-проектов.
+6. **Используйте `strategy: mirror`** для критических процессов (деплой, security-сканирование).
+7. **Разделяйте зоны ответственности** — application-команда не должна иметь доступ к infrastructure-проектам.
+8. **Настройте `interruptible: false`** для критических downstream-пайплайнов, чтобы предотвратить их отмену при auto-cancel родителя.
 
 ## См. также
 

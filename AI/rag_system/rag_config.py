@@ -67,6 +67,8 @@ MMR_LAMBDA_DEFAULT = 0.5
 BM25_K1_DEFAULT = 2.5
 BM25_B_DEFAULT = 0.75
 HF_HUB_TIMEOUT_DEFAULT = 180
+MAX_PARALLEL_SEARCHES_DEFAULT = 4
+MAX_MEMORY_MB_DEFAULT = 10240
 
 QDRANT_MODE_DEFAULT = "local"
 QDRANT_HOST_DEFAULT = "localhost"
@@ -105,6 +107,8 @@ def _merge_config(file_cfg: dict[str, Any]) -> dict[str, Any]:
         "bm25_k1": file_cfg.get("bm25", {}).get("k1", BM25_K1_DEFAULT),
         "bm25_b": file_cfg.get("bm25", {}).get("b", BM25_B_DEFAULT),
         "hf_hub_timeout": file_cfg.get("hf_hub_timeout", HF_HUB_TIMEOUT_DEFAULT),
+        "max_parallel_searches": file_cfg.get("concurrency", {}).get("max_parallel_searches", MAX_PARALLEL_SEARCHES_DEFAULT),
+        "max_memory_mb": file_cfg.get("concurrency", {}).get("max_memory_mb", MAX_MEMORY_MB_DEFAULT),
         "qdrant": {**QDRANT_DEFAULTS, **(file_cfg.get("qdrant") or {})},
     }
 
@@ -142,6 +146,8 @@ MMR_LAMBDA: float = _cfg["mmr_lambda"]
 BM25_K1: float = _cfg["bm25_k1"]
 BM25_B: float = _cfg["bm25_b"]
 HF_HUB_TIMEOUT: int = _cfg["hf_hub_timeout"]
+MAX_PARALLEL_SEARCHES: int = _cfg["max_parallel_searches"]
+MAX_MEMORY_MB: int = _cfg["max_memory_mb"]
 QDRANT_MODE: str = _cfg["qdrant"]["mode"]
 QDRANT_HOST: str = _cfg["qdrant"]["host"]
 QDRANT_PORT: int = _cfg["qdrant"]["port"]

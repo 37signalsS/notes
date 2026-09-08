@@ -229,9 +229,129 @@ kubectl logs -n kube-system <cilium-pod>  # Cilium agent logs
 - Для simple L3 connectivity используйте Submariner (без CNI changes).
 - Избегайте KubeFed (deprecated) - используйте Cluster API.
 
+---
+
+## Multi-cluster Gateway API
+
+### Концепция
+
+Gateway API поддерживает мультикластерные сценарии через несколько механизмов:
+
+1. **Multi-cluster Gateway:** Единый Gateway, маршрутизирующий трафик к сервисам в разных кластерах.
+2. **GAMMA (Gateway API for Mesh Management):** Управление East-West трафиком внутри и между кластерами.
+3. **Multi-Cluster Service (MCS) API:** Стандарт Kubernetes для cross-cluster service discovery через `ServiceImport`/`ServiceExport`.
+
+### Архитектура multi-cluster Gateway API
+
+```
+┌─────────────────┐    ┌─────────────────┐
+│   Cluster A     │    │   Cluster B     │
+│  ┌───────────┐  │    │  ┌───────────┐  │
+│  │ Gateway   │◄─┼────┼──┤ Gateway   │  │
+│  │ (Primary) │  │    │  │ (Secondary)│  │
+│  └─────┬─────┘  │    │  └─────┬─────┘  │
+│        │        │    │        │        │
+│  ┌─────▼─────┐  │    │  ┌─────▼─────┐  │
+│  │ Services  │  │    │  │ Services  │  │
+│  └───────────┘  │    │  └───────────┘  │
+└─────────────────┘    └─────────────────┘
+        ▲                      ▲
+        │                      │
+   ┌────┴──────────────────────┴────┐
+   │     Multi-Cluster Gateway      │
+   │   (Единая точка входа)         │
+   └────────────────────────────────┘
+```
+
+### Настройка Multi-Cluster Gateway (Envoy Gateway + KubeFed)
+
+**Gateway в primary кластере:**
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: multi-cluster-gw
+  namespace: gateway-system
+spec:
+  gatewayClassName: envoy
+  listeners:
+  - name: https
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: wildcard-cert
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            kubernetes.io/metadata.name: production
+```
+
+**HTTPRoute с cross-cluster backendRefs:**
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-route
+  namespace: production
+spec:
+  parentRefs:
+  - name: multi-cluster-gw
+    namespace: gateway-system
+  hostnames:
+  - "app.example.com"
+  rules:
+  - backendRefs:
+    - name: app-service
+      namespace: production
+      port: 8080
+      weight: 80
+    # Бэкенд из другого кластера (через MCS API)
+    - name: app-service-cluster-b
+      namespace: production
+      port: 8080
+      weight: 20
+```
+
+### Multi-Cluster Service (MCS) API
+
+```yaml
+# ServiceExport: помечает сервис как доступный из других кластеров
+apiVersion: multicluster.x-k8s.io/v1alpha1
+kind: ServiceExport
+metadata:
+  name: app-service
+  namespace: production
+
+---
+# ServiceImport: импортирует сервис из другого кластера
+apiVersion: multicluster.x-k8s.io/v1alpha1
+kind: ServiceImport
+metadata:
+  name: app-service
+  namespace: production
+spec:
+  type: ClusterSetIP
+  ports:
+  - port: 8080
+    protocol: TCP
+```
+
+### Сравнение подходов
+
+| Подход | Описание | Когда использовать |
+|:---|:---|:---|
+| **Multi-cluster Gateway** | Единый Gateway, весовая маршрутизация | Простые сценарии, fewer clusters |
+| **GAMMA + Service Mesh** | East-West трафик через HTTPRoute | Микросервисы, mTLS между кластерами |
+| **MCS API** | Стандарт Kubernetes service discovery | Стандартизированный подход,many clusters |
+
 **Связанные темы:**
 - **[Kubernetes CNI](./kubernetes_cni.md)** — CNI plugins для multi-cluster.
 - **[Cilium](./ebpf_xdp.md)** — Cilium Cluster Mesh.
 - **[Service Mesh](./sdn_overview.md#service-меш-как-расширение-sdn)** — Istio multi-cluster.
 - **[SD-WAN](./sd_wan.md)** — multi-site connectivity.
 - **[BGP EVPN](./bgp_evpn.md)** — multi-site DC fabrics.
+- **[Gateway API](../../Kubernetes/Networking/gateway_api/definitions.md)** — базовые концепции Gateway API.

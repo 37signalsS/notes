@@ -135,10 +135,35 @@ fio --name=randread --ioengine=libaio --iodepth=64 --rw=randread --bs=4k --direc
 
 | Паттерн | Возможная причина | Первый шаг диагностики |
 | :--- | :--- | :--- |
+| **Низкий CPU, высокий Latency, БД «жива»** | Исчерпание пула подключений | `SELECT count(*) FROM pg_stat_activity` — проверить занятость пула |
 | **Высокий CPU, низкий Throughput** | Плохой план (Missing Index), Context Switching | `EXPLAIN ANALYZE` запроса, `pidstat` |
 | **Низкий CPU, высокий Latency** | Блокировки, медленный Диск, Сеть | Проверка `pg_stat_activity` (wait_event) |
 | **Всплески Latency каждые N минут** | Сброс грязных страниц (Checkpointing) | Анализ логов БД на предмет `checkpoints occur too frequently` |
 | **Деградация после добавления RAM** | Неверная настройка Huge Pages или NUMA | `numastat`, проверка `vm.nr_hugepages` |
+
+### Исчерпание пула подключений (Connection Pool Exhaustion)
+
+Приложение держит к базе не отдельное соединение на каждый запрос, а заранее открытый набор — пул. Пул конечен, и если все подключения заняты, следующий запрос не идёт в базу вообще, а встаёт в очередь за свободным. При этом снаружи всё выглядит как просто медленная база, хотя сама база при этом может работать вполне штатно.
+
+Увидев исчерпанный пул, первым делом хочется его увеличить. Иногда это действительно помогает, но часто это сделает ситуацию ещё хуже: каждое подключение к базе стоит ей памяти и процессорного времени, а число одновременных запросов, которые она реально способна тянуть, ограничено её ядрами и дисками. Расширив пул, вы не увеличиваете пропускную способность базы — вы просто переносите очередь: до этого запросы ждали снаружи, а теперь ждут внутри базы и мешают друг другу.
+
+**Диагностика:**
+
+```sql
+-- PostgreSQL: количество активных и ожидающих соединений
+SELECT count(*) AS total,
+       count(*) FILTER (WHERE state = 'active') AS active,
+       count(*) FILTER (WHERE wait_event IS NOT NULL) AS waiting
+FROM pg_stat_activity;
+
+-- MySQL: текущие соединения и лимит
+SHOW STATUS LIKE 'Threads_connected';
+SHOW VARIABLES LIKE 'max_connections';
+```
+
+**Решение:** не увеличивайте пул, пока не убедитесь, что запросы быстро завершаются. Сначала оптимизируйте медленные запросы и найдите застрявшие транзакции. Первая очередь в базе — это не проблема пула, а проблема запросов.
+
+Подробнее о пулах соединений: [Connection Pooling](../../Networking/Concepts/connection_pooling.md).
 
 ---
 
@@ -159,5 +184,5 @@ fio --name=randread --ioengine=libaio --iodepth=64 --rw=randread --bs=4k --direc
 - **[Шардирование](./sharding.md)** — распределение данных между узлами.
 - **[SQLite: Обзор и SRE-операции](../SQLite/sqlite_overview.md)** — эксплуатация в Edge и IoT.
 - **[Write-Ahead Logging](./write_ahead_log.md)** — детали работы журнала транзакций.
-- **[Диагностика дискового узкого места](../../db_disk_bottleneck_troubleshooting.md)**.
+- **[Диагностика дискового узкого места](../db_disk_bottleneck_troubleshooting.md)**.
 - **[Тонкая настройка PostgreSQL](../PostgreSQL/Operations/performance_tuning.md)**.

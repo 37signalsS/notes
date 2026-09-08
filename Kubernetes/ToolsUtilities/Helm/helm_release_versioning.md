@@ -22,6 +22,50 @@ Helm управляет версиями на трёх уровнях: верс�
 
 ## Основные концепции
 
+### Жизненный цикл релиза и статусы
+
+Каждый релиз проходит через предсказуемые статусы. Понимание переходов между ними критично для диагностики и автоматизации.
+
+**Полная схема статусов:**
+
+```
+                    helm install
+                         │
+                         ▼
+                   ┌──────────┐
+                   │deployed  │ ◄─────── helm upgrade (успешно)
+                   └──────────┘         │
+                         │              │ (ошибка)
+                         │              ▼
+                   helm uninstall    ┌────────┐
+                         │          │ failed │
+                         ▼          └────────┘
+                   ┌──────────┐         │
+                   │superseded│ ◄─── helm rollback (успешно)
+                   └──────────┘         │
+                                        │ (ошибка при откате)
+                                        ▼
+                                  ┌──────────┐
+                                  │superseded│ (предыдущая версия становится superseded)
+                                  └──────────┘
+
+    промежуточные статусы:
+    pending-install → deployed / failed
+    pending-upgrade → deployed / failed
+    pending-rollback → deployed / failed
+```
+
+| Статус | Описание | Как возникает | Что делать |
+|--------|----------|---------------|------------|
+| `deployed` | Текущая активная версия. Ресурсы управления в кластере принадлежат этой ревизии. | Успешный `install` или `upgrade`. | Работает нормально. |
+| `superseded` | Предыдущая версия, замещённая более новой. | При каждом успешном `upgrade` или `rollback` предыдущая ревизия становится superseded. | Нормальное поведение; хранится для истории. |
+| `failed` | Ошибка при деплое, обновлении или откате. | Ошибка в шаблонах, нехватка ресурсов, timeout, ошибка хука. | Диагностика: `helm history`, `kubectl describe`, проверка Event'ов. |
+| `pending-install` | Ресурсы создаются, но процесс не завершён. | `install` начался, но ещё не завершился (ожидание readiness, хук). | Подождите завершения; если завис — проверьте Pod'ы хуков. |
+| `pending-upgrade` | Обновление в процессе. | `upgrade` начался, но не завершился. | Подождите завершения; если завис — `helm rollback`. |
+| `pending-rollback` | Откат в процессе. | `rollback` начался, но не завершился. | Подождите завершения; в крайнем случае — ручная очистка Secret'а. |
+
+**Важно для SRE:** Статус `pending-*` блокирует все последующие операции над релизом. Ошибка `another operation (install/upgrade/rollback) in progress` означает, что предыдущая операция не завершилась. Решение — либо дождаться завершения, либо откатить к предыдущей ревизии через `helm rollback`.
+
 ### Семантическое версионирование (SemVer)
 
 Версии чартов **обязаны** следовать формату `MAJOR.MINOR.PATCH`:
@@ -42,6 +86,8 @@ Helm поддерживает расширенный формат SemVer:
 # Специфичный для новых версий K8s манифест
 {{ end }}
 ```
+
+> **Важно:** Всегда используйте суффикс `-0` в строках сравнения (например, `>=1.22-0`). Это гарантирует, что версии с метаданными (например, `1.22.0-gke.100` или пре-релизы `1.23.0-alpha`) будут обработаны корректно согласно спецификации SemVer.
 
 **Диапазоны версий в зависимостях (`Chart.yaml`):**
 
@@ -67,6 +113,20 @@ dependencies:
 
 Этот подход гарантирует, что для каждой версии приложения существует уникальный, неизменяемый артефакт чарта, обеспечивая надежные откаты.
 
+**Практический пример синхронизации:**
+
+```bash
+# В CI/CD: инкрементPATCH при каждом коммите
+CURRENT_VERSION=$(helm show chart ./my-chart | grep "^version:" | awk '{print $2}')
+PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+NEW_PATCH=$((PATCH + 1))
+NEW_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1-2).$NEW_PATCH
+
+# Обновление Chart.yaml
+sed -i "s/version:.*/version: $NEW_VERSION/" ./my-chart/Chart.yaml
+sed -i "s/appVersion:.*/appVersion: \"$IMAGE_TAG\"/" ./my-chart/Chart.yaml
+```
+
 ### Версионирование в OCI-репозиториях
 
 В Helm v4 работа с OCI-реестрами является стандартом.
@@ -80,6 +140,8 @@ dependencies:
 helm install my-release oci://registry.example.com/charts/my-app@sha256:7f...
 ```
 
+**Почему Digest надёжнее тега:** Тег `:1.2.3` может быть перезаписан (tag moving), дигест — нет. При обновлении реестра (например, после пересборки чарта с той же версией) дигест остаётся уникальным идентификатором содержимого.
+
 ### История, ревизии и Server-Side Apply
 
 В Helm v4 каждая модификация (upgrade/rollback) создаёт новую ревизию, но процесс применения изменений делегируется Kubernetes API через **Server-Side Apply (SSA)**.
@@ -91,6 +153,13 @@ helm install my-release oci://registry.example.com/charts/my-app@sha256:7f...
     - `superseded` — предыдущая версия.
     - `failed` — ошибка при деплое.
 
+**Что хранится в Secret ревизии:**
+```bash
+# Просмотр секрета ревизии
+kubectl get secret sh.helm.release.v1.myapp.v3 -n prod -o yaml
+# Содержит: name, namespace, version, hooks, manifests, config (values), info (status)
+```
+
 ### Зависимости и lock-файл
 
 При использовании зависимостей Helm фиксирует точные версии в `Chart.lock`. Этот файл **обязательно** должен находиться под контролем версий (Git).
@@ -101,6 +170,39 @@ helm dependency update
 
 # Сборка зависимостей строго по Chart.lock (для CI/CD)
 helm dependency build
+```
+
+**Разница между `update` и `build`:**
+- `helm dependency update` — скачивает актуальные версии зависимостей (по диапазонам SemVer из `Chart.yaml`) и обновляет `Chart.lock`.
+- `helm dependency build` — восстанавливает зависимости строго по `Chart.lock`, без обращения к репозиториям. Используется в CI/CD и air-gapped средах.
+
+### Управление глубиной истории
+
+Каждая ревизия хранится как отдельный Secret. При большом количестве ревизий это перегружает etcd и замедляет операции API.
+
+**Как работает `--history-max`:**
+
+```bash
+# Ограничение: максимум 10 ревизий
+helm upgrade myapp ./chart --history-max 10 -n prod
+```
+
+При каждом `upgrade` или `rollback` Helm:
+1. Создаёт новую ревизию.
+2. Проверяет количество ревизий для данного релиза.
+3. Если количество превышает `--history-max`, удаляет **самые старые** ревизии (с наименьшим номером).
+4. Ревизии со статусом `deployed` или `failed` **никогда** не удаляются автоматически — удаляются только `superseded`.
+
+> **Рекомендация:** Устанавливайте `--history-max` в диапазоне 10–20. Этого достаточно для диагностики и отката, но не перегружает etcd.
+
+**Установка по умолчанию через переменную окружения:**
+```bash
+# В CI/CD или .bashrc
+export HELM_HISTORY_MAX=10
+
+# При обновлении
+helm upgrade myapp ./chart -n prod
+# → автоматически применит --history-max 10
 ```
 
 ---
@@ -121,6 +223,18 @@ helm get manifest my-release -n prod --revision 7 # Итоговый ренде�
 helm get values my-release -n prod --all
 ```
 
+**Аудит изменений между ревизиями:**
+```bash
+# Сравнение манифестов двух ревизий (diff)
+diff <(helm get manifest myapp --revision 5) <(helm get manifest myapp --revision 6)
+
+# Сравнение значений
+diff <(helm get values myapp --revision 5 -o yaml) <(helm get values myapp --revision 6 -o yaml)
+
+# JSON-вывод для парсинга скриптами
+helm history my-release -n prod -o json | jq '.[] | select(.status=="failed") | {revision, status, description}'
+```
+
 ### Безопасный откат (Rollback)
 
 ```bash
@@ -132,6 +246,27 @@ helm rollback my-release 0 -n prod
 
 # Откат с ожиданием готовности через kstatus
 helm rollback my-release 7 -n prod --wait --timeout 5m
+
+# Принудительный откат (если ресурсы конфликтуют)
+helm rollback my-release 7 -n prod --force
+```
+
+**Когда использовать `--force`:**
+- Предыдущая ревизия содержала ресурсы, которые были изменены вручную (`kubectl edit`, другой контроллер).
+- SSA не может корректно вычислить патч из-за изменений владения полями.
+- `--force` удаляет ресурсы текущей ревизии и пересоздаёт их из целевой.
+
+**Edge case: откат к удалённой ревизии:**
+```bash
+# Если --history-max был мал и нужная ревизия удалена
+helm history my-release -n prod
+# → Ревизии 1-5 отсутствуют (удалены --history-max)
+
+# Ошибка при откате:
+# Error: no available release name found
+
+# Решение: откатить к доступной ревизии или пересоздать релиз
+helm rollback my-release 6 -n prod  # К доступной ревизии
 ```
 
 ### Автоматизация деплоя и SSA
@@ -149,27 +284,79 @@ helm upgrade --install my-app ./chart \
   -n prod
 ```
 
-### Управление глубиной истории
+**Таблица флагов управления деплоем:**
 
-Большое количество ревизий перегружает etcd. Рекомендуется ограничивать глубину.
+| Флаг | Описание | Когда использовать |
+|------|----------|-------------------|
+| `--atomic` | Включает `--wait` + автоматический `rollback` при ошибке или timeout. | Production, критичные сервисы. Гарантирует откат при неуспехе. |
+| `--wait` | Блокирует завершение команды до Ready всех подов, PVC, LoadBalancer Services. | Всегда рекомендуется для `upgrade`. |
+| `--wait-for-jobs` | Дополнительно ждёт завершения Job-хуков (включает `--wait`). | Хуки с миграциями, инициализацией. |
+| `--cleanup-on-fail` | Удаляет ресурсы нового релиза при ошибке (предотвращает orphaned resources). | Всегда в паре с `--atomic`. |
+| `--timeout <duration>` | Таймаут ожидания готовности (по умолчанию 5m0s). | Увеличьте для больших деплоев (>100 подов). |
+| `--force` | Принудительное обновление: пересоздание ресурсов через delete + create. | Конфликты SSA, ручные изменения в кластере. |
+| `--force-conflicts` | Перехват владения полей у других контроллеров. | Миграция с Helm v3 на v4, ручные правки. |
+| `--reuse-values` | При upgrade переиспользует текущие значения релиза. Новые values из `values.yaml`叠加ляются. | Частичный override без потери текущих настроек. |
+| `--reset-values` | Сбрасывает к дефолтным значениям из `values.yaml` чарта. Игнорирует текущие. | Полный сброс конфигурации. |
+| `--dependency-update` | Автоматически обновляет зависимости перед деплоем. | Чарты с активными зависимостями. |
+| `--create-namespace` | Создаёт namespace если не существует. | Первичная установка. |
+| `--history-max <n>` | Ограничивает количество хранимых ревизий. | Всегда; оптимальное значение 10–20. |
+
+**Отличие `--reuse-values` от `--reset-values`:**
 
 ```bash
-# Ограничение через переменную окружения (в CI/CD)
-export HELM_HISTORY_MAX=10
+# Текущий релиз установлен с:
+# replicas=3, image.tag=v1.0, service.type=ClusterIP
 
-# При обновлении
-helm upgrade myapp ./chart --history-max 10 -n prod
+# --reuse-values: переиспользует текущие + overlay
+helm upgrade myapp ./chart --reuse-values --set replicas=5
+# → replicas=5, image.tag=v1.0, service.type=ClusterIP
+
+# --reset-values: сброс к defaults
+helm upgrade myapp ./chart --reset-values --set replicas=5
+# → replicas=5, image.tag=<default>, service.type=<default>
+
+# Без флага: переиспользует текущие + overlay ( аналог --reuse-values в v4)
+helm upgrade myapp ./chart --set replicas=5
+# → replicas=5, image.tag=v1.0, service.type=ClusterIP
 ```
 
-### Продвижение через окружения
+### Продвижение через окружения (Promotion Pipeline)
+
+Полный пайплайн развертывания от разработки до production:
 
 ```bash
-# Установка конкретной версии (Immutable Promotion)
-helm upgrade --install app oci://registry.example.com/charts/app-chart \
-  --version 2.3.1 \
+# 1. Сборка: bump version в Chart.yaml
+NEW_VERSION="1.2.$(($(grep 'version:' Chart.yaml | awk '{print $2}' | cut -d. -f3) + 1))"
+sed -i "s/version:.*/version: $NEW_VERSION/" Chart.yaml
+sed -i "s/appVersion:.*/appVersion: \"$IMAGE_TAG\"/" Chart.yaml
+
+# 2. Упаковка и публикация
+helm package ./my-chart
+helm push my-chart-$NEW_VERSION.tgz oci://registry.example.com/charts
+
+# 3. Dev: быстрое тестирование
+helm upgrade --install my-app-dev oci://registry.example.com/charts/my-chart \
+  --version $NEW_VERSION \
+  -f values-dev.yaml \
+  --namespace dev \
+  --create-namespace \
+  --atomic --timeout 5m
+
+# 4. Staging: полноценное тестирование
+helm upgrade --install my-app-staging oci://registry.example.com/charts/my-chart \
+  --version $NEW_VERSION \
+  -f values-staging.yaml \
+  --namespace staging \
+  --atomic --timeout 10m
+
+# 5. Production: атомарный деплой по.digest (Immutable Promotion)
+HELM_DIGEST=$(helm show chart oci://registry.example.com/charts/my-chart --version $NEW_VERSION 2>/dev/null | grep digest | awk '{print $2}')
+helm upgrade --install my-app oci://registry.example.com/charts/my-chart@$HELM_DIGEST \
   -f values-prod.yaml \
-  --wait --atomic \
-  -n prod
+  --namespace prod \
+  --atomic --timeout 15m \
+  --wait --wait-for-jobs \
+  --history-max 10
 ```
 
 ### Проверка изменений перед обновлением
@@ -180,6 +367,59 @@ helm diff upgrade myapp ./chart -n prod
 
 # Сравнение манифестов двух ревизий
 diff <(helm get manifest myapp --revision 5) <(helm get manifest myapp --revision 6)
+
+# Dry-run в кластере (v4: Server-side dry-run, точнее проверяет права и схемы)
+helm upgrade --install my-app ./chart -f values-prod.yaml --dry-run --debug -n prod
+```
+
+### Диагностика состояния релиза
+
+**Быстрая проверка здоровья:**
+```bash
+# Статус с деталями
+helm status my-release -n prod --show-details
+
+# Просмотр Event'ов
+kubectl get events -n prod --field-selector involvedObject.name=my-release --sort-by='.lastTimestamp'
+
+# Все ресурсы релиза
+kubectl get all -l app.kubernetes.io/instance=my-release -n prod
+
+# Проблемные Pod'ы
+kubectl get pods -l app.kubernetes.io/instance=my-release -n prod \
+  --field-selector=status.phase!=Running,status.phase!=Succeeded
+```
+
+**Диагностика `failed`-состояния:**
+```bash
+# 1. Последняя ошибка
+helm history my-release -n prod --max 5
+
+# 2. Логи Pod'ов (если это Deployment/StatefulSet)
+kubectl logs -l app.kubernetes.io/name=my-release -n prod --tail=100
+
+# 3. События хуков (если ошибка в хуке)
+kubectl get jobs -l app.kubernetes.io/instance=my-release -n prod
+kubectl logs job/<hook-job-name> -n prod
+
+# 4. Конфликты SSA (v4)
+kubectl get deployment my-release -n prod -o jsonpath='{.metadata.managedFields}' | jq .
+```
+
+**Восстановление из `failed`-состояния:**
+```bash
+# Вариант 1: Откат к последней рабочей ревизии
+helm rollback my-release 0 -n prod
+
+# Вариант 2: Принудительное обновление
+helm upgrade --install my-release ./my-chart \
+  -f values-prod.yaml -n prod \
+  --force --cleanup-on-fail
+
+# Вариант 3: Полная пересоздание (самый надежный)
+helm uninstall my-release -n prod --keep-history
+helm install my-release ./my-chart \
+  -f values-prod.yaml -n prod --atomic
 ```
 
 ---
@@ -197,6 +437,52 @@ diff <(helm get manifest myapp --revision 5) <(helm get manifest myapp --revisio
 ```bash
 # Установка с проверкой подписи
 helm install my-release my-chart-1.2.3.tgz --verify --keyring ~/.gnupg/pubring.gpg
+
+# Подписание при упаковке
+helm package ./my-chart --sign --key releng@company.com --keyring ~/.gnupg/secring.gpg
+```
+
+### CRD и жизненный цикл релиза
+
+CRD (CustomResourceDefinitions) имеют особый жизненный цикл в Helm v4:
+
+- CRD из директории `crds/` **не подлежат откату** через `helm rollback`. Они остаются в кластере после удаления релиза.
+- При `helm upgrade` новые CRD добавляются, но существующие **не обновляются**.
+- Для обновления CRDrequires`kubectl apply` или внешний контроллер (Cert-Manager, Istio).
+
+```bash
+# Проверка CRD перед установкой
+helm show crds my-chart | kubectl apply -f -
+
+# Обновление CRD отдельно от чарта
+kubectl apply -f my-chart/crds/ --server-side
+```
+
+### SCM-интеграция: Git Tags → Chart Version → OCI Digest
+
+Полный трекинг от коммита до артефакта:
+
+```bash
+# 1. Git tag → версия чарта
+GIT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.1.0")
+# → v1.2.3
+
+# 2. Удаление префикса v для SemVer
+CHART_VERSION=${GIT_TAG#v}
+# → 1.2.3
+
+# 3. Обновление Chart.yaml
+sed -i "s/version:.*/version: $CHART_VERSION/" Chart.yaml
+
+# 4. Упаковка, подписание, публикация
+helm package ./my-chart --version $CHART_VERSION
+helm push my-chart-$CHART_VERSION.tgz oci://registry.example.com/charts
+
+# 5. Получение digest для Immutable Deploy
+DIGEST=$(helm show chart oci://registry.example.com/charts/my-chart --version $CHART_VERSION 2>&1 | grep "digest:" | awk '{print $2}')
+
+# 6. Deploy по digest
+helm upgrade --install my-app oci://registry.example.com/charts/my-chart@$DIGESTAMP
 ```
 
 ### Рекомендации
@@ -206,11 +492,23 @@ helm install my-release my-chart-1.2.3.tgz --verify --keyring ~/.gnupg/pubring.g
 - **Контроль истории:** Устанавливайте `--history-max` в диапазоне 10–20 ревизий.
 - **Chart.lock:** Всегда фиксируйте зависимости, чтобы избежать "дрейфа" версий при сборке.
 - **Использование Digest:** В критических окружениях ссылайтесь на OCI-чарты по хешу (`@sha256:...`).
+- **Пре-релизы:** Используйте `--devel` для установки alpha/beta/rc версий в dev/staging.
+- **Audit trail:** Сохраняйте вывод `helm diff` как артефакт CI/CD для compliance.
+- **Одно имя релиза на namespace:** Избегайте дублирования имён релизов в одном namespace.
+
+### Частые ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `another operation (install/upgrade/rollback) is in progress` | Предыдущая операция не завершена | Дождитесь завершения или `helm rollback` к предыдущей ревизии |
+| `no available release name found` | `--history-max` слишком мал, нужная ревизия удалена | Откатить к доступной ревизии или пересоздать релиз |
+| `UPGRADE FAILED: timed-out` | Ресурсы не стали Ready за timeout | Увеличьте `--timeout`, проверьте readiness probes |
+| `UPGRADE FAILED: release: fails, normalized diff is empty` | Конфликт SSA, несовместимые поля | Используйте `--force-conflicts` или `--force` |
+| `release: not found` | Релиз был удалён или находится в другом namespace | Проверьте `helm list -A`, убедитесь в правильном `-n` |
 
 ### См. также
 
 - [Обзор Helm](./helm_overview.md) — архитектура v4, SSA и kstatus.
 - [Команды и рабочий процесс Helm](./helm_commands_and_workflow.md) — детальный разбор жизненного цикла.
 - [Структура Helm-чарта](./helm_chart_structure.md) — изучение `Chart.yaml` и `apiVersion`.
-- [Сравнение версий Helm](./helm_v2_vs_v3.md) — эволюция от v2 к v4 и изменения в стратегиях слияния.
 - [Плагины Helm](./helm_plugins.md) — работа с `helm-diff` и WASM-расширениями.

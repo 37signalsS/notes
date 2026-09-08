@@ -268,3 +268,5 @@ sysctl net.bridge.bridge-nf-call-iptables
 - **[CNI в Kubernetes](../../Kubernetes/Networking/Network/CNI/selection_and_external_access.md)** — выбор CNI-плагина.
 - **[NetworkPolicy в Kubernetes](../../Kubernetes/Networking/Network/NetworkPolicy/definitions.md)** — файрвол для Pod'ов.
 - **[Service Mesh](../../Service_Mesh/service_mesh_concepts.md)** — L7-балансировка и mTLS между Pod'ами.
+- **[kube-proxy](../../Kubernetes/Networking/Network/kube-proxy.md)** — режимы работы и диагностика.
+- **[Диагностика сетевых проблем](../../Kubernetes/Networking/Network/kubernetes_network_troubleshooting.md)** — методология troubleshooting.

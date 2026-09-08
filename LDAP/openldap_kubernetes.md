@@ -392,4 +392,4 @@ spec:
 ### См. также
 - **[389DS — альтернатива OpenLDAP](./389ds/overview.md)** — сравнение и выбор решения.
 - **[LDAP в Linux](../Linux/SystemAdministration/users_management.md)** — базовые принципы и структура DIT.
-- **[Протокол Kerberos](../../Security/Concepts/kerberos.md)** — использование LDAP в качестве бэкенда для аутентификации.
+- **[Протокол Kerberos](../Security/Concepts/kerberos.md)** — использование LDAP в качестве бэкенда для аутентификации.

@@ -47,6 +47,8 @@
 
 ### k6: базовый сценарий для CI/CD
 
+Обзор ключевых концепций k6 (stages, thresholds, checks, insecureSkipTLSVerify): [Нагрузочное тестирование с помощью k6](../../Testing/k6_load_testing.md).
+
 ```javascript
 import http from 'k6/http';
 import { check, sleep } from 'k6';

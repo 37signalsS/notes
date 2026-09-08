@@ -31,6 +31,8 @@ from rag_config import (
     BM25_K1,
     BM25_B,
     HF_HUB_TIMEOUT,
+    MAX_PARALLEL_SEARCHES,
+    MAX_MEMORY_MB,
     QDRANT_MODE,
     QDRANT_HOST,
     QDRANT_PORT,
@@ -41,6 +43,8 @@ from rag_models import (
     get_embeddings,
     get_reranker,
     get_sparse_embedding_model,
+    get_reranker_inference_lock,
+    get_sparse_inference_lock,
     _clear_model_caches,
     _DocPrefixEmbeddings,
 )

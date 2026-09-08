@@ -35,6 +35,97 @@
 | **Парадигма** | Декларативная (ЧТО сделать) vs Императивная (КАК сделать) | Ansible (гибрид), Puppet (декларативная), Fabric (императивная) |
 | **Управление состоянием** | Stateless (без хранения состояния) vs Stateful (с базой состояния) | Ansible (stateless), Terraform (stateful), Puppet (stateful) |
 
+### Детальное сравнение инструментов
+
+| Инструмент | Язык | Архитектура | Модель | Масштабируемость | Порог входа | Основной сценарий |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Ansible** | YAML + Jinja2 | Agentless | Push | Средняя (до 5000 узлов) | Низкий | Bootstrap, деплой, оркестрация |
+| **Puppet** | Puppet DSL | Agent-based | Pull | Высокая (10 000+ узлов) | Средний | Compliance, стандартные профили |
+| **Chef** | Ruby DSL | Agent-based | Pull | Высокая (10 000+ узлов) | Высокий | Сложная логика, гибкие сценарии |
+| **SaltStack** | YAML + Jinja2 | Agent-based | Push/Pull | Очень высокая (50 000+ узлов) | Средний | Оркестрация, реактивная инфраструктура |
+| **CFEngine** | CFEngine DSL | Agent-based | Pull | Очень высокая (100 000+ узлов) | Высокий | Edge, IoT, встроенные системы |
+
+### Критерии выбора инструмента
+
+| Критерий | Рекомендация |
+| :--- | :--- |
+| **Небольшая инфраструктура (<100 узлов)** | Ansible — низкий порог входа, отсутствие агентов |
+| **Enterprise-среда (1000+ узлов)** | Puppet или Chef — стабильность, compliance, аудит |
+| **Высокая скорость применения изменений** | SaltStack — ZeroMQ, мгновенное выполнение |
+| **Edge/IoT устройства** | CFEngine — минимальные ресурсы, автономность |
+| **Команда DevOps/SRE** | Ansible — баланс простоты и функциональности |
+| **Команда разработчиков** | Chef — гибкость Ruby DSL |
+| **Требования к аудиту и compliance** | Puppet — встроенные профили, отчеты |
+| **Реактивная инфраструктура** | SaltStack — Beacons & Reactor |
+
+### Производительность и масштабируемость
+
+| Инструмент | Максимальный масштаб | Время применения на 1000 узлов | Потребление ресурсов |
+| :--- | :--- | :--- | :--- |
+| **Ansible** | 5 000–10 000 узлов | 30–60 минут | Контроллер: 4+ CPU, 8+ GB RAM |
+| **Puppet** | 10 000–50 000 узлов | 10–30 минут | Master: 8+ CPU, 16+ GB RAM |
+| **Chef** | 10 000–50 000 узлов | 10–30 минут | Server: 8+ CPU, 16+ GB RAM |
+| **SaltStack** | 50 000–100 000 узлов | 1–5 минут | Master: 4+ CPU, 8+ GB RAM |
+| **CFEngine** | 100 000+ узлов | 5–15 минут | Минимальные: 1+ CPU, 1+ GB RAM |
+
+**Примечание:** Производительность зависит от сложности конфигурации, сети и hardware. Цифры ориентировочные.
+
+### Управление инвентарём (Inventory Management)
+
+Инвентарь — это список управляемых узлов и их группировка. Эффективное управление инвентарем критично для масштабных CM-систем.
+
+**Типы инвентаря:**
+
+| Тип | Описание | Инструменты |
+| :--- | :--- | :--- |
+| **Статический** | YAML/INI-файлы с явным списком хостов | Ansible, Puppet (static nodes) |
+| **Динамический** | Скрипты/плагины, получающие список хостов из внешних источников | Ansible (dynamic inventory), SaltStack (cloud grains) |
+| **Гранулы (Grains)** | Метаданные хоста (ОС, роль, окружение) | SaltStack (grains), Puppet (facts) |
+| **Fakty (Facts)** | Автоматически собираемые данные о системе | Ansible (setup module), Puppet (facter) |
+
+**Пример динамического инвентаря Ansible:**
+```python
+#!/usr/bin/env python3
+# dynamic_inventory.py — пример плагина динамического инвентаря
+import json
+import sys
+
+def get_inventory():
+    inventory = {
+        "_meta": {"hostvars": {}},
+        "web_servers": {
+            "hosts": ["web01", "web02", "web03"],
+            "vars": {"ansible_user": "deploy"}
+        },
+        "db_servers": {
+            "hosts": ["db01", "db02"],
+            "vars": {"ansible_user": "dba"}
+        }
+    }
+    return json.dumps(inventory)
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "--list":
+        print(get_inventory())
+```
+
+**Группировка в разных инструментах:**
+
+| Инструмент | Механизм группировки | Пример |
+| :--- | :--- | :--- |
+| **Ansible** | `group_vars/`, `host_vars/`, inventory groups | `[webservers]` в inventory |
+| **Puppet** | Node definitions, Hiera, external node classifier (ENC) | `node 'web01' { include webserver }` |
+| **Chef** | Roles, Environments, Search | `role[webserver]` в run_list |
+| **SaltStack** | Grains, Pillar, compound matching | `G@role:web and G@os:Ubuntu` |
+| **CFEngine** | Bundles, body knowledge | `bundle agent webserver` |
+
+**Лучшие практики управления инвентарём:**
+- Используйте динамический инвентарь для облачных и временных сред
+- Присваивайте каждому хосту роль (`role`) и окружение (`environment`)
+- Группируйте хосты по функциональному назначению (web, db, cache, monitoring)
+- Регулярно очищайте инвентарь от неактивных хостов
+- Документируйте структуру инвентаря в README
+
 ## Основные представители
 
 ### Ansible
@@ -61,6 +152,29 @@
 - **Преимущества:** Мощный движок разрешения зависимостей, автоматическая коррекция дрифта (каждые 30 минут по умолчанию), сильный аудит.
 - **Ограничения:** Сложный DSL, трудоемкое управление PKI, высокие требования к ресурсам Puppet Master.
 
+**Практический пример — манифест Puppet:**
+```puppet
+class webserver {
+  package { 'nginx': ensure => installed }
+
+  file { '/etc/nginx/nginx.conf':
+    ensure => file, source => 'puppet:///modules/webserver/nginx.conf',
+    require => Package['nginx'], notify => Service['nginx'],
+  }
+
+  service { 'nginx':
+    ensure => running, enable => true,
+    subscribe => File['/etc/nginx/nginx.conf'],
+  }
+}
+```
+
+**Применение манифеста:**
+```bash
+sudo puppet apply webserver.pp
+sudo puppet agent --test --certname web01.example.com
+```
+
 ### Chef
 
 **Chef** — инструмент, реализующий концепцию «программируемой инфраструктуры», где конфигурация пишется как настоящий код.
@@ -71,6 +185,28 @@
 - **Экосистема:** Cookbooks (поваренные книги) и Chef Supermarket.
 - **Преимущества:** Гибкость (можно описать любую сложную логику), отличная интеграция с облаками и CI/CD.
 - **Ограничения:** Самый высокий порог входа (нужно знать Ruby), сложность отладки «магического» кода в рецептах.
+
+**Практический пример — рецепт Chef:**
+```ruby
+package 'nginx' do
+  action :install
+end
+
+template '/etc/nginx/nginx.conf' do
+  source 'nginx.conf.erb'
+  variables(worker_processes: node['nginx']['worker_processes'])
+  notifies :restart, 'service[nginx]', :immediately
+end
+
+service 'nginx' do
+  action [:enable, :start]
+end
+```
+
+**Применение рецепта:**
+```bash
+sudo chef-client -z -o recipe[webserver]
+```
 
 ### SaltStack (Salt)
 
@@ -85,6 +221,34 @@ SaltStack — сверхбыстрый инструмент оркестраци
 
 Архитектура и концепции: [SaltStack: Архитектура](../SaltStack/Architecture.md).
 
+**Практический пример — state-файл SaltStack:**
+```yaml
+nginx:
+  pkg.installed:
+    - name: nginx
+
+  file.managed:
+    - name: /etc/nginx/nginx.conf
+    - source: salt://webserver/nginx.conf
+    - require:
+      - pkg: nginx
+    - watch_in:
+      - service: nginx
+
+  service.running:
+    - name: nginx
+    - enable: True
+    - watch:
+      - file: /etc/nginx/nginx.conf
+```
+
+**Применение state-файла:**
+```bash
+sudo salt 'web01' state.apply webserver
+sudo salt -C 'G@role:web' state.apply webserver
+sudo salt 'web01' state.apply webserver test=True
+```
+
 ### CFEngine
 
 **CFEngine** — легкий и автономный инструмент, ориентированный на безопасность и стабильность.
@@ -94,6 +258,30 @@ SaltStack — сверхбыстрый инструмент оркестраци
 - **Специфика:** Минимальное потребление ресурсов (написан на C).
 - **Преимущества:** Высочайшая надежность, подходит для Edge-вычислений и встраиваемых систем.
 - **Ограничения:** Крайне специфичный синтаксис, сложность реализации логики «многошаговых» развертываний.
+
+**Практический пример — обещание (promise) CFEngine:**
+```cfengine
+bundle agent webserver
+{
+  commands:
+    "install_nginx"
+      command => "/usr/bin/apt-get install -y nginx";
+
+  files:
+    "/etc/nginx/nginx.conf"
+      create => "true",
+      edit_line => insert_lines("worker_processes 4;");
+
+  services:
+    "nginx"
+      service_policy => "start";
+}
+```
+
+**Применение обещания:**
+```bash
+sudo cf-agent --file webserver.cf
+```
 
 ## Прочие инструменты
 
@@ -121,12 +309,62 @@ SaltStack — сверхбыстрый инструмент оркестраци
 
 На практике часто используется сочетание различных инструментов для оптимизации жизненного цикла инфраструктуры:
 
-1.  **Provisioning + Configuration:** **Terraform** или **OpenTofu** (создание ресурсов) + **Ansible** (финальная настройка ПО).
+1.  **Provisioning + Configuration:** **Terraform** или **OpenTofu** (управление жизненным циклом ресурсов) + **Ansible** (конфигурация операционных систем и приложений). Подробнее — в разделе [Terraform / OpenTofu + Ansible](#terraform--opentofu--ansible).
 2.  **Mutable vs Immutable:** Создание базовых образов (Golden Images) с помощью **Packer** и **Ansible**, с последующим развертыванием в неизменяемой (Immutable) среде.
 3.  **Bootstrap + Compliance:** **Ansible** используется для начальной настройки (bootstrap) и установки агентов **Puppet**, которые далее следят за соблюдением стандартов.
 4.  **Orchestration:** **SaltStack** управляет высокоуровневой оркестрацией и реакцией на события, используя **Salt states** для приведения узлов к состоянию.
 
-Подробнее о взаимодействии инструментов: [IaC обзор — Terraform vs Ansible](./iac_overview.md#сравнение-инструментов-terraform-vs-ansible).
+Подробнее о взаимодействии инструментов: [IaC обзор — Матрица выбора инструмента](./iac_overview.md#матрица-выбора-инструмента).
+
+### Terraform / OpenTofu + Ansible
+
+Это стандартная связка для DevOps/SRE-команд, в которой каждый инструмент покрывает свою часть жизненного цикла инфраструктуры без перекрытия обязанностей.
+
+#### Архитектурные различия
+
+**Terraform / OpenTofu** работают по модели **Push (Plan/Apply)**:
+- Описание инфраструктуры декларативно в HCL-файлах (ресурсы, провайдеры, модули).
+- Команда `plan` строит граф зависимостей и вычисляет изменения (Create/Update/Destroy) до их применения.
+- После применения инструмент сохраняет **state-файл** (`.tfstate`) — статический снимок фактической инфраструктуры, сопоставленный с кодом. В командной работе state хранится в **remote backend** (S3 + DynamoDB, GCS, Azure Blob, HCP Terraform) с блокировкой для предотвращения коллизий.
+- **OpenTofu** — открытый форк Terraform под лицензией MPL 2.0 (CNCF Sandbox), совместимый с HCL и форматом state. Имеет нативное шифрование состояния (AES-GCM, KMS-провайдеры).
+
+**Ansible** работает по модели **Push (SSH/WinRM)**:
+- Описание конфигурации декларативно в YAML-плейбуках.
+- Отсутствие state-файла: при каждом запуске движок подключается к управляемым узлам, собирает факты (`setup`) и выполняет задачи только если текущее состояние отличается от желаемого. Это обеспечивает **идемпотентность**.
+- **Agentless-архитектура:** не требует установки постоянного агента на управляемые узлы; связь осуществляется через стандартные протоколы (SSH для Linux, WinRM/PSRP для Windows).
+
+Ключевое различие: Terraform управляет **жизненным циклом ресурсов** (создание, изменение параметров, удаление) и отслеживает их через state, тогда как Ansible управляет **конфигурацией существующих систем** и не запоминает, что было сделано при предыдущем запуске.
+
+#### Жизненный цикл инфраструктуры
+
+Стандартный рабочий процесс при использовании связки Terraform/OpenTofu + Ansible:
+
+1.  **Provisioning (Terraform/OpenTofu):** Создание инфраструктурных ресурсов — виртуальные машины, сети, подсети, DNS-записи, балансировщики нагрузки, IAM-политики, ресурсы внутри PaaS-платформ. При необходимости используются **динамические ссылки** между ресурсами (например, IP-адрес созданной VM автоматически подставляется в DNS-запись и запись IPAM), что позволяет Terraform строить граф зависимостей и применять изменения в правильном порядке.
+2.  **Configuration Management (Ansible):** После создания ресурсов Ansible подключается к ним и выполняет базовую настройку — установка пакетов, создание пользователей, копирование конфигурационных файлов, запуск сервисов. Ansible не зависит от того, была машина создана 5 минут назад или работает годами; он просто проверяет текущее состояние и вносит изменения только при необходимости.
+3.  **Эксплуатация:** Terraform отслеживает ресурсы через state и применяет изменения при изменении кода (например, добавление CPU/RAM, изменение сети). Ansible запускается по требованию или по расписанию для установки обновлений, перезапуска сервисов, выполнения оперативных задач.
+4.  **Уничтожение (Terraform/OpenTofu):** При удалении ресурса Terraform удаляет не только саму виртуальную машину, но и все зависимые объекты (DNS-записи, IPAM-записи, документация). То, что было настроено Ansible внутри системы, больше не имеет значения — система уничтожается целиком.
+
+#### Практический сценарий: Proxmox + OpenTofu + Ansible
+
+Пример из практики (homelab):
+- **OpenTofu** определяет ресурсы в Proxmox: виртуальные машины с параметрами CPU, RAM, диска и статическими IP-адресами.
+- На основе этих IP-адресов автоматически создаются **DNS-записи** (например, через провайдер DNS) и добавляются записи в **IPAM** (система управления инвентаризацией) и **Netbox** (система документирования).
+- После создания VM запускается **Ansible**, который устанавливает стандартные пакеты (например, Prometheus Node Exporter, QEMU Guest Agent) и применяет базовую конфигурацию ОС.
+
+Преимущество такого подхода: все зависимые ресурсы (VM, DNS, IPAM) объявлены вместе в коде, что позволяет OpenTofu строить единый план изменений. Если изменить IP-адрес VM, автоматически обновятся DNS, IPAM и Netbox.
+
+#### Детекция дрейфа и управление состоянием
+
+- **Terraform/OpenTofu:** Дрейф (неавторизованные изменения в облаке) обнаруживается при запуске `plan`, но в open-source версии не исправляется автоматически — требуется явный `apply` или CI-пайплайн. Для периодической детекции используют scheduled `plan` в CI, HCP Terraform Drift Detection или Flux TF-controller (в GitOps-режиме).
+- **Ansible:** Дрейф конфигурации обнаруживается и исправляется автоматически при каждом запуске плейбука благодаря идемпотентности модулей. Если пакет удален вручную, Ansible установит его повторно; если конфигурационный файл изменен, Ansible вернет его к эталону.
+
+#### Рекомендации по выбору
+
+- **Используйте Terraform/OpenTofu**, когда необходимо управлять жизненным циклом ресурсов с явным отслеживанием состояния: создание/изменение/удаление VM, сетей, DNS, IAM, облачных сервисов.
+- **Используйте Ansible**, когда нужно настроить существующую систему: установка ПО, управление пользователями, копирование файлов, запуск/остановка сервисов, выполнение оперативных задач.
+- **Граница не является абсолютной:** Ansible может создавать инфраструктурные ресурсы (например, через community-модули для Proxmox), а Terraform может применять конфигурации (например, DNS-записи, записи Netbox). Выбирайте инструмент, который лучше подходит для конкретного этапа жизненного цикла, а не по принципу «все provisioning — Terraform, вся конфигурация — Ansible».
+
+Подробнее о модели управления состоянием: [Управление состоянием и дрейфом (Drift)](../GitOps/Crossplane/terraform_comparison.md#управление-состоянием-и-дрейфом-drift), [Configuration Drift: обнаружение, исправление, предотвращение](./iac_overview.md#configuration-drift-обнаружение-исправление-предотвращение).
 
 ## Практическая реализация
 
@@ -150,6 +388,66 @@ SaltStack — сверхбыстрый инструмент оркестраци
     -   **InSpec** (Ruby/Chef): Декларативное описание тестов безопасности и комплаенса.
     -   **Goss** (YAML/Go): Быстрая проверка состояния системы.
 
+### Шаблонизация (Template Engines)
+
+Шаблонизация позволяет создавать конфигурационные файлы на основе переменных и данных. Каждый инструмент CM использует свой механизм шаблонизации.
+
+**Сравнение механизмов шаблонизации:**
+
+| Инструмент | Движок шаблонов | Синтаксис | Пример |
+| :--- | :--- | :--- | :--- |
+| **Ansible** | Jinja2 | `{{ variable }}`, `{% for %}` | `{{ ansible_hostname }}` |
+| **Puppet** | ERB (Embedded Ruby) | `<%= variable %>`, `<% if %>` | `<%= @hostname %>` |
+| **Chef** | ERB (Embedded Ruby) | `<%= node['variable'] %>`, `<% if %>` | `<%= node['nginx']['port'] %>` |
+| **SaltStack** | Jinja2 (аналогично Ansible) | `{{ grain['os'] }}`, `{% if %}` | `{{ pillar['web']['port'] }}` |
+| **CFEngine** | Встроенный (bundle edits) | `$(variable)`, `ifelse()` | `$(this.host)` |
+
+**Пример шаблона Jinja2 (Ansible/SaltStack):**
+```jinja2
+# /etc/nginx/nginx.conf.j2
+worker_processes {{ nginx_worker_processes | default(4) }};
+
+events {
+    worker_connections {{ nginx_worker_connections | default(1024) }};
+}
+
+http {
+    server {
+        listen {{ nginx_listen_port | default(80) }};
+        server_name {{ nginx_server_name }};
+
+        {% if nginx_ssl_enabled | default(false) %}
+        listen 443 ssl;
+        ssl_certificate /etc/ssl/{{ nginx_ssl_cert }};
+        ssl_certificate_key /etc/ssl/{{ nginx_ssl_key }};
+        {% endif %}
+    }
+}
+```
+
+**Пример шаблона ERB (Puppet/Chef):**
+```erb
+# /etc/nginx/nginx.conf.erb
+worker_processes <%= @worker_processes %>;
+
+events {
+    worker_connections <%= @worker_connections %>;
+}
+
+http {
+    server {
+        listen <%= @listen_port %>;
+        server_name <%= @server_name %>;
+    }
+}
+```
+
+**Рекомендации по шаблонизации:**
+- Выносите переменные в `group_vars/` (Ansible) или `Hiera` (Puppet) для переиспользования
+- Используйте значения по умолчанию (`| default(value)`) для optional параметров
+- Избегайте сложной логики в шаблонах — выносите ее в переменные или roles
+- Тестируйте шаблоны с разными наборами переменных
+
 ### Стратегии поиска неисправностей (Troubleshooting)
 
 При возникновении ошибок в процессе CM рекомендуется:
@@ -165,6 +463,110 @@ SaltStack — сверхбыстрый инструмент оркестраци
 2.  **Управление секретами:** Никогда не храните пароли в открытом виде. Используйте **Vault-решения** (Ansible Vault, HashiCorp Vault, AWS KMS).
 3.  **Безопасность транспорта:** Всегда используйте проверку ключей хоста (`Host Key Checking`) для SSH. Для агентских систем используйте взаимную TLS-аутентификацию (mTLS).
 4.  **Аудит изменений:** Храните всю историю изменений в Git и настраивайте централизованное логгирование результатов выполнения заданий (например, в ELK или специализированные GUI типа AWX/Semaphore).
+
+### Мониторинг и логирование CM-операций
+
+Контроль выполнения задач управления конфигурацией критичен для обнаружения ошибок и аудита.
+
+**Логирование в разных инструментах:**
+
+| Инструмент | Механизм логирования | Централизованное хранение |
+| :--- | :--- | :--- |
+| **Ansible** | `ANSIBLE_LOG_PATH`, callback-плагины (json, profile_tasks) | syslog, ELK, Splunk, AWX |
+| **Puppet** | `/var/log/puppetlabs/puppetserver/`, puppetdb | PuppetDB, ELK, syslog |
+| **Chef** | `/var/log/chef/`, chef-client stdout | Chef Automate, ELK, syslog |
+| **SaltStack** | `/var/log/salt/master`, `/var/log/salt/minion`, event bus | Salt Master logs, ELK, syslog |
+| **CFEngine** | `/var/cfengine/state/`, cf-serverd logs | syslog, внешние системы |
+
+**Настройка логирования Ansible:**
+```ini
+# ansible.cfg
+[defaults]
+log_path = /var/log/ansible/ansible.log
+callback_whitelist = profile_tasks, timer, json
+
+[callback_json]
+filename = /var/log/ansible/ansible_json.log
+```
+
+**Пример вывода Ansible с детализацией:**
+```bash
+# Обычный вывод
+ansible-playbook site.yml
+
+# С таймингом задач
+ANSIBLE_PROFILE_TASKS=true ansible-playbook site.yml
+
+# С перенаправлением в файл
+ansible-playbook site.yml 2>&1 | tee /var/log/ansible_deploy_$(date +%Y%m%d_%H%M%S).log
+```
+
+**Метрики для мониторинга CM-операций:**
+- **Время выполнения playbook/manifest** — для обнаружения деградации производительности
+- **Процент успешных/неуспешных задач** — для выявления проблемных конфигураций
+- **Количество затронутых узлов** — для контроля масштаба изменений
+- **Частота drift-исправлений** — показатель стабильности инфраструктуры
+
+**Интеграция с системами мониторинга:**
+- **Prometheus:** Экспорт метрик через callback-плагины (Ansible), HTTP API (Puppet, Chef)
+- **Grafana:** Визуализация результатов CM-операций
+- **Alertmanager:** Алерты при ошибках выполнения или превышении времени отклика
+
+### Стратегии отката (Rollback) в управлении конфигурацией
+
+Откат изменений в контексте CM отличается от отката приложений. Важно понимать, что CM-инструменты работают с состоянием, а не с версиями ПО.
+
+**Принципы отката в CM:**
+
+1. **Декларативный подход = Самовосстановление:** В Puppet/SaltStack достаточно вернуть предыдущую версию манифеста/state-файла в Git — инструмент автоматически приведет систему к эталонному состоянию.
+2. **Версионирование конфигураций:** Храните все изменения в Git. Откат — это `git revert` + применение предыдущей версии.
+3. **Тестирование перед применением:** Всегда используйте dry-run (`--check`, `test=True`) для оценки изменений.
+
+**Откат в разных инструментах:**
+
+| Инструмент | Механизм отката | Пример |
+| :--- | :--- | :--- |
+| **Ansible** | Изменение кода + повторный запуск | `git revert HEAD && ansible-playbook site.yml` |
+| **Puppet** | Откат манифеста в Git | `git revert HEAD` + агент применит изменения |
+| **Chef** | Откат рецепта + `chef-client` | `git revert HEAD && sudo chef-client` |
+| **SaltStack** | Откат state-файла + `state.apply` | `git revert HEAD && salt '*' state.apply` |
+| **CFEngine** | Откат обещания + `cf-agent` | `git revert HEAD && sudo cf-agent --update` |
+
+**Пример отката Ansible с использованием блока `block/rescue`:**
+```yaml
+- name: Пример безопасного развертывания с откатом
+  block:
+    - name: Копирование новой конфигурации
+      ansible.builtin.copy:
+        src: files/nginx_new.conf
+        dest: /etc/nginx/nginx.conf
+        backup: yes
+      notify: restart nginx
+
+    - name: Проверка здоровья сервиса
+      ansible.builtin.uri:
+        url: "http://localhost/health"
+        status_code: 200
+      retries: 5
+      delay: 5
+
+  rescue:
+    - name: Восстановление предыдущей конфигурации
+      ansible.builtin.copy:
+        src: /etc/nginx/nginx.conf.backup
+        dest: /etc/nginx/nginx.conf
+      notify: restart nginx
+
+    - name: Уведомление об откате
+      ansible.builtin.debug:
+        msg: "Конфигурация восстановлена из-за ошибки health-check"
+```
+
+**Рекомендации по откату:**
+- Всегда используйте `backup: yes` в модулях Ansible для автоматического создания резервных копий
+- Настройте `rescue`-блоки в Ansible для автоматического отката при ошибках
+- Ведите журнал изменений (changelog) для каждого обновления конфигурации
+- Тестируйте процесс отката в Dev/Staging перед применением в Production
 
 ## Дополнительная информация
 

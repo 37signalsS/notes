@@ -34,9 +34,14 @@
 *   **`privileged: true`** — крайне опасно, предоставляет контейнеру полные привилегии, эквивалентные правам root на хостовой системе. Следует избегать.
 *   **`fsGroup`** — указывает GID, который будет назначен для всех томов, примонтированных к поду, обеспечивая правильные разрешения для чтения/записи.
     *   **Поведение:** Файлы, создаваемые в томах, наследуют указанную группу. Владелец файла остаётся тем, под которым запущен процесс, но группа всегда соответствует `fsGroup`.
-*   **`seLinuxOptions`** — позволяет назначать SELinux (Security-Enhanced Linux) метки для процессов в контейнере.
-*   **`sysctls`** — позволяет настраивать параметры ядра (sysctl) для пода. Разделяются на «безопасные» (разрешены по умолчанию) и «небезопасные» (требуют явного разрешения в конфигурации kubelet).
+*   **`seLinuxOptions`** — позволяет назначать SELinux (Security-Enhanced Linux) метки для процессов в контейнере. Работает только на узлах с включенным SELinux (RHEL, CentOS, Fedora).
+    *   **Поля:** `user` ( тип процесса), `role`, `level` (уровень.mac/priv/container). SELinux изолирует процессы на уровне MAC (Mandatory Access Control), дополняя DAC-разрешения (Linux permissions).
+*   **`sysctls`** — позволяет настраивать параметры ядра (sysctl) для пода. Разделяются на «безопасные» (разрешены по умолчанию, например `net.core.somaxconn`) и «небезопасные» (требуют явного разрешения в конфигурации kubelet через `--allowed-unsafe-sysctls`).
+    *   **Примеры безопасных:** `net.core.somaxconn`, `net.ipv4.ip_local_port_range`.
+    *   **Примеры небезопасных:** `net.ipv4.ip_forward`, `kernel.msgmax`. Использование небезопасных sysctls требует включения на уровне узла.
 *   **`windowsOptions`** — специфичные для Windows настройки, такие как `RunAsUserName` или интеграция с GMSA (Group Managed Service Accounts).
+*   **`automountServiceAccountToken`** — управляет автоматическим монтированием ServiceAccount Token в под. По умолчанию `true` (токен монтируется в `/var/run/secrets/kubernetes.io/serviceaccount/token`). Установите `false`, если приложению не нужен доступ к Kubernetes API.
+*   **`supplementalGroups`** — список дополнительных GID, добавляемых в список групп процесса. Используется для предоставления доступа к общим томам (NFS, CephFS) нескольким подам с разными UID.
 
 ## Особенности работы с образами
 
@@ -230,6 +235,133 @@ spec:
     image: untrusted-app:latest
 ```
 
+### 6. Отключение автомонтирования ServiceAccount Token
+
+Если приложению не нужен доступ к Kubernetes API, отключите автомонтирование токена:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-without-k8s-api
+spec:
+  automountServiceAccountToken: false  # Отключаем монтирование токена
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 3000
+  containers:
+  - name: app
+    image: nginx:alpine
+    securityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+```
+
+**Проверка:**
+```bash
+kubectl exec app-without-k8s-api -- ls /var/run/secrets/kubernetes.io/
+# → ls: cannot access '/var/run/secrets/kubernetes.io/': No such file or directory
+```
+
+### 7. SELinux в Security Context
+
+Для систем с включенным SELinux (RHEL, CentOS, Fedora):
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-selinux
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  containers:
+  - name: app
+    image: nginx:alpine
+    securityContext:
+      seLinuxOptions:
+        user: "system_u"
+        role: "system_r"
+        type: "container_t"
+        level: "s0:c123,c456"  # MLS уровень
+```
+
+**Проверка:**
+```bash
+# На узле с SELinux
+ps -eZ | grep <pod-container-pid>
+# → system_u:system_r:container_t:s0:c123,c456  12345 ?  00:00:00 nginx
+```
+
+### 8. Sysctl в Security Context
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-sysctls
+spec:
+  securityContext:
+    runAsNonRoot: true
+    sysctls:
+    - name: net.core.somaxconn        # Безопасный sysctl
+      value: "1024"
+    - name: net.ipv4.ip_local_port_range
+      value: "1024 65535"
+  containers:
+  - name: app
+    image: nginx:alpine
+```
+
+**Проверка:**
+```bash
+kubectl exec app-with-sysctls -- sysctl net.core.somaxconn
+# → net.core.somaxconn = 1024
+```
+
+**Небезопасные sysctls** (требуют `--allowed-unsafe-sysctls` на kubelet):
+```bash
+# На узле (в kubelet конфигурации)
+--allowed-unsafe-sysctls=net.ipv4.ip_forward,kernel.shmmax
+```
+
+### 9. supplementalGroups для доступа к NFS
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-nfs-access
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 3000
+    supplementalGroups: [5000, 5001]  # Дополнительные GID для NFS
+    fsGroup: 2000
+  containers:
+  - name: app
+    image: nginx:alpine
+    volumeMounts:
+    - name: nfs-volume
+      mountPath: /data
+  volumes:
+  - name: nfs-volume
+    nfs:
+      server: 10.0.1.100
+      path: /exports/data
+```
+
+**Проверка:**
+```bash
+kubectl exec app-nfs-access -- id
+# → uid=1000 gid=3000 groups=3000,2000,5000,5001
+```
+
 ## Проверка корректности настроек
 
 После создания пода с Security Context важно убедиться, что настройки применены корректно.
@@ -262,12 +394,80 @@ touch /test-file
 
 **Важное ограничение:** Security Context на уровне пода (`spec.securityContext`) применяется ко всем контейнерам в поде. Настройки на уровне контейнера имеют приоритет.
 
+## Устранение неисправностей
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Pod в `CrashLoopBackOff` после добавления `runAsNonRoot: true`** | Образ использует root по умолчанию (нет инструкции `USER` в Dockerfile) | Добавьте `runAsUser: <UID>` в securityContext, либо пересоберите образ с инструкцией `USER 1000`. |
+| **`Permission denied` на смонтированном volume** | Неверный `fsGroup` или `defaultMode` | Укажите `fsGroup` в `spec.securityContext` пода. Для NFS/cephfs убедитесь, что GID разрешен на сервере. |
+| **`Permission denied` при записи в корневую ФС** | Включен `readOnlyRootFilesystem: true` | Монтируйте `emptyDir` в `/tmp`, `/var/cache/nginx`, `/var/run` и другие каталоги, куда приложение пишет. |
+| **Nginx/Apache падает на порту 80** | `runAsNonRoot: true` + порт < 1024 | Используйте unprivileged образ (`nginx-unprivileged`) или перенастройте на порт > 1024. |
+| **PSA `enforce: restricted` блокирует под** | Нарушение политик PSS (отсутствует `seccompProfile`, есть `hostPath` и т.д.) | Используйте `--dry-run=server` для проверки перед деплоем. Исправьте `securityContext`. |
+| **sysctl не применяется** | Sysctl небезопасный и не добавлен в `--allowed-unsafe-sysctls` на kubelet | Добавьте sysctl в список разрешенных или используйте безопасный sysctl. |
+| **SELinux блокирует доступ к томам** | Несовпадение метки SELinux контейнера и файла на хосте | Проверьте `ls -Z` на хосте. Добавьте `:z` к volumeMount или настройте `seLinuxOptions`. |
+| **Automounted токен утекает в приложение** | `automountServiceAccountToken` не отключен (по умолчанию `true`) | Установите `automountServiceAccountToken: false` в Pod spec. |
+
+### Диагностические команды
+
+```bash
+# Просмотр securityContext пода
+kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].securityContext}'
+
+# Просмотр пользователя контейнера
+kubectl exec <pod-name> -- id
+# → uid=1000 gid=3000 groups=3000,2000,5000
+
+# Просмотр процесса (PID 1) и его пользователя
+kubectl exec <pod-name> -- ps aux
+# → USER  PID %CPU %MEM    VSZ   RSS TTY  STAT START   TIME COMMAND
+# → 1000    1  0.0  0.0   2344  1234 ?    Ss   10:00   0:00 nginx: master process
+
+# Проверка прав на файле в контейнере
+kubectl exec <pod-name> -- ls -la /data/
+# → drwxr-xr-x 2 1000 3000 4096 Aug 31 10:00 .
+
+# Проверка, что корневая ФС только для чтения
+kubectl exec <pod-name> -- touch /test-file
+# → touch: cannot touch '/test-file': Read-only file system
+
+# Проверка automountServiceAccountToken
+kubectl get pod <pod-name> -o jsonpath='{.spec.automountServiceAccountToken}'
+
+# Проверка PSA меток неймспейса
+kubectl get ns <namespace> -o jsonpath='{.metadata.labels}' | grep pod-security
+
+# Просмотр событий PSA (отклонения)
+kubectl get events --field-selector reason=FailedCreate --namespace <namespace>
+```
+
 ## Дополнительная информация
 
 Security Context — базовый инструмент обеспечения многоуровневой защиты (security-in-depth). Он дополняет сетевые политики и Pod Security Standards, создавая фундамент для безопасной работы приложений.
+
+### Типичные ошибки (Antipatterns)
+
+1. **Запуск от root без необходимости** — основной вектор атаки. Используйте `runAsNonRoot: true` + `runAsUser: 1000`.
+2. **Отсутствие `readOnlyRootFilesystem`** — позволяет атакующему записать бэкдор в контейнер.
+3. **`privileged: true` без крайней необходимости** — эквивалентен root на хосте. Используйте `capabilities` с `drop: ["ALL"]` + `add` только нужных.
+4. **Несбрасывание capabilities** — по умолчанию Docker дает контейнеру ~14 capabilities. Используйте `drop: ["ALL"]`.
+5. **Токен ServiceAccount в production** — если приложению не нужен API K8s, отключите `automountServiceAccountToken: false`.
+6. **Отсутствие `seccompProfile`** — без него контейнер может выполнять любые syscall. Используйте `RuntimeDefault`.
+
+### Связь с другими механизмами безопасности
+
+Security Context работает в связке с:
+- **[Pod Security Admission](../../Kubernetes/Base/namespace.md#безопасность-pod-security-admission)** — контроль на уровне Namespace.
+- **[NetworkPolicy](../../Kubernetes/Networking/Network/network_policy.md)** — контроль сетевого доступа.
+- **[RBAC](./rbac/rbac_overview.md)** — контроль доступа к API Kubernetes.
+- **[Linux Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)** — детали работы capabilities в ядре Linux.
+- **[Seccomp](../../Linux/Security/Mechanisms/Seccomp.md)** — фильтрация syscall.
+- **[AppArmor](../../Linux/Security/Mechanisms/AppArmor.md)** — контроль доступа к файлам и ресурсам.
 
 ## См. также
 
 * [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
 * [Конфигурация Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
 * [Применение Security Context через Kyverno](./kyverno/policies/practical_scenarios.md)
+* [Лучшие практики Pod](../Base/Pod/pod_best_practices.md) — минимальный безопасный securityContext для production.
+* [User Namespaces в Pod](../Base/Pod/user_namespaces.md) — изоляция root внутри контейнера.
+* [Ephemeral Containers: Debug Profiles](../Base/Pod/ephemeral_containers.md) — профили безопасности для отладки.

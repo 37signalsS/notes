@@ -99,6 +99,42 @@ Producer (v2) ──▶ Schema Registry ──┘
 - **FORWARD:** Можно добавить поле, удалить поле с `default`
 - **FULL:** Можно добавить/удалить только поля с `default`
 
+### Синтаксис схем: Protobuf
+
+Protocol Buffers (protobuf) — бинарный формат от Google. Схема описывается в `.proto`-файлах. В отличие от Avro, схема **не встраивается** в сообщение: продюсер и консьюмер должны согласовать её при помощи Schema Registry или распределенного файла.
+
+```protobuf
+syntax = "proto3";
+
+message Person {
+  string name = 1;      // Поле 1: строка
+  int32 id = 2;          // Поле 2: 32-битное целое
+  repeated string emails = 3;  // Массив строк (аналог Array в JSON, List в Java)
+}
+```
+
+**Особенности:**
+- **Field numbers (1, 2, 3):** именно по этим тегам данные кодируются в компактный бинарник, а не по именам полей. Это обеспечивает компактность и быструю сериализацию.
+- **`repeated`:** ключевое слово для объявления массивов (аналог `Ray` в Avro).
+- **`proto3` vs `proto2`:** в `proto3` нет явных `required`/`optional` (все поля optional по умолчанию); в `proto2` используется `required`/`optional`/`repeated`.
+
+### Синтаксис схем: Thrift
+
+Thrift — бинарный формат, разработанный Facebook. Схема описывается в `.thrift`-файлах. Синтаксис похож на protobuf, но с ключевыми отличиями в порядке объявления полей.
+
+```thrift
+struct Person {
+  1: required string name,
+  2: required i32 id,
+  3: optional list<string> emails
+}
+```
+
+**Ключевые различия от Protobuf:**
+- **Порядок полей:** в Thrift номер поля идёт **первым** (`1: required string name`), в Protobuf — **последним** (`string name = 1`).
+- **Явные модификаторы:** Thrift использует `required` и `optional` для каждого поля; в `proto3` они опускаются.
+- **Массивы:** Thrift использует `list<string>`, `set<string>`, `map<i32, string>`; в Protobuf — `repeated string`.
+
 ### Форматы схем
 
 | Формат | Преимущества | Недостатки | Когда использовать |

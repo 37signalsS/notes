@@ -10,12 +10,12 @@
 
 ### Роль CNI (L2/L3: Инфраструктурная связность)
 
-**CNI (Container Network Interface)** — это стандартная подключаемая система, которая выступает в роли контракта между Kubernetes и сетевыми решениями. Kubernetes сам по себе не занимается настройкой сети; он делегирует эту задачу плагинам CNI. Выбор подходящего решения CNI зависит от конкретных потребностей сети, размера кластера и требований безопасности.
+CNI выступает в роли контракта между Kubernetes и сетевыми решениями. Kubernetes сам по себе не занимается настройкой сети; он делегирует эту задачу плагинам CNI.
 
 **Популярные плагины CNI и их сильные стороны:**
 *   **Calico:** Лидер в области производительности и гибкости политик безопасности. Поддерживает как оверлейные сети (VXLAN), так и прямую маршрутизацию через BGP.
 *   **Flannel:** Самое простое и легкое решение, идеально подходящее для небольших кластеров и сред, где требуется минимальная настройка (использует VXLAN).
-*   **Cilium:** Современное решение на базе eBPF, обеспечивающее высокую производительность, продвинутую безопасность (L7-политики) и глубокую наблюдаемость (observability).
+*   **Cilium:** Современное решение на базе eBPF, обеспечивающее высокую производительность, продвинутую безопасность (L7-политики) и глубокую наблюдаемость (observability). Поддерживает native routing и BGP Control Plane для анонсирования Pod CIDR во внешнюю сеть.
 
 **Ключевые характеристики CNI:**
 *   **Модульность и расширяемость:** Любое сетевое решение, реализующее интерфейс CNI, может быть легко интегрировано или заменено в кластере.
@@ -25,17 +25,17 @@
 
 **Основные задачи и механизмы:**
 
-- **IPAM (IP Address Management) и Dual-Stack:** Управление пулом адресов. Плагин выделяет уникальный IP из выделенного узлу диапазона (`podCIDR`). В современных реализациях поддерживается полноценный Dual-Stack (IPv4/IPv6), что позволяет подам получать адреса обоих стеков и работать в гибридных и IPv6-only средах.
-- **Изоляция пространств имен:** Создание сетевого namespace для каждого пода, что изолирует его сетевой стек от хоста и других подов.
-- **Настройка интерфейсов:** 
-    - Создается пара виртуальных интерфейсов (`veth-pair`). 
-    - Один конец (обычно `eth0`) помещается внутрь namespace пода. 
+- **IPAM (IP Address Management) и Dual-Stack:** Управление пулом адресов. Плагин выделяет уникальный IP из выделенного узлу диапазона (`podCIDR`). В современных реализациях поддерживается полноценный Dual-Stack (IPv4/IPv6), что позволяет подам получать адреса обоих стеков и работать в гибридных и IPv6-only средах. IPAM может работать в режимах: `host-local` (статический пул на узле), `dhcp` (автоматическое через DHCP-сервер), `calico-ipam` (динамический с поддержкой跨用 между узлами).
+- **Изоляция пространств имен:** Создание сетевого namespace для каждого пода, что изолирует его сетевой стек от хоста и других подов. Подробнее: [Сетевые пространства имен Linux](../../Linux/Networking/Tools/iproute2/ip_netns.md).
+- **Настройка интерфейсов:**
+    - Создается пара виртуальных интерфейсов (`veth-pair`).
+    - Один конец (обычно `eth0`) помещается внутрь namespace пода.
     - Второй конец остается в пространстве имен хоста (например, под именем `caliXXXX` в Calico или `vethXXXX`).
-- **Маршрутизация и инкапсуляция:** 
-    - Для межнодового взаимодействия CNI настраивает маршруты. 
-    - В режиме **Overlay** используется инкапсуляция (VXLAN, Geneve, IPIP), где пакет пода оборачивается в UDP/IP пакет узла. 
+- **Маршрутизация и инкапсуляция:**
+    - Для межнодового взаимодействия CNI настраивает маршруты.
+    - В режиме **Overlay** используется инкапсуляция (VXLAN, Geneve, IPIP), где пакет пода оборачивается в UDP/IP пакет узла. Подробнее: [Обзор сетевой модели Kubernetes](./network_overview.md#3-связность-между-разными-узлами).
     - В режиме **L3/Underlay** (например, BGP в Calico) пакеты передаются без изменений, но требуется поддержка маршрутизации внешней сетью.
-- **NetworkPolicy:** Реализация правил фильтрации трафика. CNI-плагин (если поддерживает) транслирует объекты `NetworkPolicy` в правила `iptables`, `ipset` или программы `eBPF`.
+- **NetworkPolicy:** Реализация правил фильтрации трафика. CNI-плагин (если поддерживает) транслирует объекты `NetworkPolicy` в правила `iptables`, `ipset` или программы `eBPF`. Подробнее: [NetworkPolicy: Реализация CNI-плагинами](./NetworkPolicy/cni_implementation.md).
 
 **Жизненный цикл настройки сети (Интеграция с kubelet):**
 
@@ -50,10 +50,10 @@ kube-proxy делает сеть Kubernetes "умной", позволяя об�
 
 **Основные задачи и механизмы:**
 - **Абстракция сервисов:** Реализует концепцию `Service`, позволяя предоставлять набор подов как единую сетевую службу со стабильным IP-адресом и DNS-именем.
-- **Обнаружение сервисов (Service Discovery) и EndpointSlices:** Постоянно наблюдает (`watch`) за API-сервером на предмет изменений в объектах `Service` и `EndpointSlice`. Использование `EndpointSlice` (вместо старых `Endpoints`) позволяет kube-proxy получать только дельты изменений, что кардинально снижает нагрузку на управляющий слой в масштабируемых кластерах.
+- **Обнаружение сервисов (Service Discovery) и EndpointSlices:** Постоянно наблюдает (`watch`) за API-сервером на предмет изменений в объектах `Service` и `EndpointSlice`. Использование `EndpointSlice` (вместо старых `Endpoints`) позволяет kube-proxy получать только дельты изменений, что кардинально снижает нагрузку на управляющий слой в масштабируемых кластерах. Каждый `EndpointSlice` содержит до 100 эндпоинтов, что предотвращает проблему "stale endpoint cache" в кластерах с тысячами подов.
 - **Балансировка нагрузки:** Распределяет входящие запросы между подами-эндпоинтами. Поддерживает настройку **привязки сессий (Session Affinity / Sticky Sessions)**, гарантируя, что трафик от одного и того же клиента будет последовательно направляться в один и тот же под.
 - **Топология и локальность трафика:** При конфигурации `externalTrafficPolicy: Local` или `internalTrafficPolicy: Local` kube-proxy направляет трафик только на поды, расположенные на том же узле. Это избегает лишних сетевых прыжков (hop) и позволяет сохранить исходный IP-адрес клиента (Source IP).
-- **Проверка работоспособности (Health Checks) и Graceful Termination:** kube-proxy отслеживает состояние подов-бэкендов и направляет трафик только на `Healthy` поды. При удалении пода (Terminating state) kube-proxy мгновенно удаляет его из правил маршрутизации новых соединений, но благодаря `conntrack` существующие TCP-сессии могут плавно завершиться.
+- **Проверка работоспособности (Health Checks) и Graceful Termination:** kube-proxy отслеживает состояние подов-бэкендов и направляет трафик только на `Healthy` поды. При удалении пода (Terminating state) kube-proxy мгновенно удаляет его из правил маршрутизации новых соединений, но благодаря `conntrack` существующие TCP-сессии могут плавно завершиться (default `terminationGracePeriodSeconds: 30`).
 
 **Режимы работы:**
 
@@ -63,6 +63,12 @@ kube-proxy делает сеть Kubernetes "умной", позволяя об�
 
 - **Механика:** Использует таблицы и цепочки `nftables`. Трафик обрабатывается виртуальной машиной внутри ядра Linux.
 - **Преимущества:** Атомарное обновление правил (нет риска "залипания" или частичного обновления), более высокая производительность при большом количестве сервисов, встроенная поддержка наборов (sets).
+- **Цепочки правил:**
+    - `KUBE-SERVICES`: Входная точка для всех пакетов, проверяющая обращение к ClusterIP.
+    - `KUBE-SVC-*`: Цепочка конкретного сервиса, содержащая правила выбора эндпоинта.
+    - `KUBE-SEP-*`: Цепочка конкретного эндпоинта (Service End Point), выполняющая финальный DNAT на IP пода.
+- **Балансировка:** Реализуется через модуль `statistic` с параметром `--probability`. Например, для двух подов вероятность первого правила будет 0.5, второго (финального) — 1.0.
+- **Ограничение:** O(N) поиск правила для каждого пакета — при >1000 сервисов (>10000 правил) это создает измеримую задержку.
 
 #### 2. Режим IPVS (High Performance)
 
@@ -70,11 +76,12 @@ kube-proxy делает сеть Kubernetes "умной", позволяя об�
 
 - **Механика:** Создает виртуальный сервер в таблице IPVS ядра. Балансировка происходит через хеш-таблицы.
 - **Сложность:** O(1) — время обработки пакета не зависит от общего количества правил.
-- **Алгоритмы балансировки:** 
+- **Алгоритмы балансировки:**
     - `rr` (Round Robin) — по очереди.
     - `lc` (Least Connection) — на под с наименьшим числом активных соединений.
     - `dh` (Destination Hashing), `sh` (Source Hashing).
     - `sed` (Shortest Expected Delay).
+- **Зависимость:** Требует установленного модуля ядра `ip_vs` (`lsmod | grep ip_vs`).
 
 #### 3. Режим iptables (Традиционный)
 
@@ -85,10 +92,14 @@ kube-proxy делает сеть Kubernetes "умной", позволяя об�
     - `KUBE-SVC-*`: Цепочка конкретного сервиса, содержащая правила выбора эндпоинта.
     - `KUBE-SEP-*`: Цепочка конкретного эндпоинта (Service End Point), выполняющая финальный DNAT на IP пода.
 - **Балансировка:** Реализуется через модуль `statistic` с параметром `--probability`. Например, для двух подов вероятность первого правила будет 0.5, второго (финального) — 1.0.
+- **Устаревание:** С v1.31 nftables рекомендован вместо iptables. При обновлении правил iptables может возникать кратковременная потеря пакетов из-за неатомарного обновления цепочек.
 
 #### 4. Технология eBPF (Замена kube-proxy)
 
 Реализуется в Cilium или Calico (VPP/eBPF dataplane). Программы eBPF перехватывают пакеты на уровне сетевого драйвера (TC/XDP). Это позволяет полностью исключить `kube-proxy` и Netfilter/iptables, достигая минимально возможных задержек (Latency) и снижая нагрузку на CPU за счет обработки пакетов до их попадания в сетевой стек ядра.
+
+- **kube-proxy replacement (Cilium):** Режим `kubeProxyReplacement: strict` полностью удаляет kube-proxy из DaemonSet. eBPF-программы Cilium заменяют DNAT, SNAT, балансировку и conntrack.
+- **Identity-based безопасность:** Вместо IP-адресов Cilium оперирует "Identity" — меткой, присваиваемой каждому поду на основе его меток и namespace. Пакеты фильтруются по Identity, а не по IP, что делает политики устойчивыми к рестартам подов.
 
 ### Разделение ответственности и взаимодействие
 
@@ -97,6 +108,7 @@ kube-proxy делает сеть Kubernetes "умной", позволяя об�
 | **Выбор пода** | kube-proxy | L4 | Замена VIP сервиса на IP выбранного пода (DNAT) |
 | **Доставка до узла** | CNI-плагин | L3 | Маршрутизация или инкапсуляция в VXLAN/BGP |
 | **Доставка в контейнер** | CNI-плагин | L2 | Проброс пакета в veth-интерфейс namespace пода |
+| **Фильтрация трафика** | kube-proxy + CNI | L3/L4 | DNAT + NetworkPolicy (если CNI поддерживает) |
 
 **Техническое взаимодействие (пошагово):**
 
@@ -104,6 +116,17 @@ kube-proxy делает сеть Kubernetes "умной", позволяя об�
 2.  Пакет попадает в сетевой стек узла. Правила **kube-proxy** (например, в `nftables`) срабатывают первыми, меняя целевой IP на `10.244.1.5:8080` (IP Пода Б).
 3.  Сетевой стек узла видит новый целевой IP. Таблица маршрутизации, настроенная **CNI**, указывает, что этот IP находится на другом узле.
 4.  CNI (если используется VXLAN) оборачивает пакет в UDP-заголовок с адресом целевого узла и отправляет его в физическую сеть.
+5.  На целевом узле CNI деинкапсулирует пакет и направляет его в network namespace пода Б через veth-интерфейс.
+6.  Приложение в Поде Б получает пакет с целевым IP `10.244.1.5:8080` и отправляет ответ.
+
+### Сценарии с HostNetwork и DNS
+
+**HostNetwork:** Если Pod работает в режиме `hostNetwork: true`, он разделяет network namespace хоста. Это исключает задержки от DNAT и veth-пары, но:
+- Под占用 порты хоста (конфликт портов)
+- Нет сетевой изоляции между такими подами и другими подами на хосте
+- Типичное использование:kube-dns, node-exporter, CNI-плагины
+
+**NodeLocal DNSCache:** DaemonSet, кэширующий DNS-ответы на каждом узле. Снижает нагрузку на CoreDNS и решает проблемы с `conntrack` (UDP race conditions). Работает как промежуточный DNS-сервер на `169.254.20.10`.
 
 ## Практические сценарии
 
@@ -115,48 +138,158 @@ kube-proxy делает сеть Kubernetes "умной", позволяя об�
 | **Большой кластер (>2000 сервисов)** | Calico | IPVS или nftables |
 | **Стабильность и простота** | Calico / Flannel | nftables или iptables |
 | **Сложные политики безопасности (Zero Trust)** | Calico / Cilium | Любой (но предпочтительно eBPF) |
+| **Кластер с Dual-Stack (IPv4/IPv6)** | Calico / Cilium | Любой (kube-proxy dual-stack или eBPF) |
 
 ### Ограничения балансировки L4
 
 Поскольку `kube-proxy` работает на уровне TCP/UDP, он не видит содержимое протоколов прикладного уровня (L7).
 - **Проблема gRPC и HTTP/2:** Из-за мультиплексирования HTTP/2 все запросы идут по одному долгоживущему TCP-соединению. kube-proxy выберет один под в начале сессии, и все последующие gRPC-вызовы уйдут на него, вызывая существенный перекос нагрузки.
 - **Решение:** Использовать **Gateway API**, **Ingress Controllers** или **Service Mesh** (например, Istio, Linkerd) для балансировки на уровне L7.
+- **Проблема Headless Services:** При `clusterIP: None` DNS возвращает все IP подов. Клиент может выбрать "умерший" под — нет автоматического удаления из DNS при Terminating.
+- **Решение:** Использовать `publishNotReadyAddresses: true` для включения Terminating подов в DNS или внешние контроллеры (Consul, CoreDNS с health-check).
 
-## Дополнительная информация
+### Миграция режимов kube-proxy
 
-### Диагностика сетевых компонентов
+**Миграция iptables → nftables (k8s 1.31+):**
 
 ```bash
-# 1. Проверка текущего режима kube-proxy
+# 1. Проверка текущего режима
 kubectl -n kube-system get configmap kube-proxy -o yaml | grep mode
-# → mode: "ipvs" (или "nftables", "iptables")
 
-# 2. Просмотр активных эндпоинтов в IPVS
-ipvsadm -Ln
-# Prot LocalAddress:Port Scheduler Flags
-#   -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
-# TCP  10.96.0.1:443 rr
-#   -> 192.168.1.10:6443            Masq    1      0          0         
+# 2. Обновление конфигурации
+kubectl -n kube-system patch configmap kube-proxy --type merge -p '{"data":{"config.conf":"...mode: nftables..."}}'
 
-# 3. Анализ правил nftables (если используется режим nftables)
-nft list table ip kube-proxy | head -n 20
+# 3. Перезапуск kube-proxy ( RollingUpdate )
+kubectl -n kube-system rollout restart daemonset kube-proxy
 
-# 4. Проверка состояния CNI (на примере Cilium)
-cilium status
+# 4. Мониторинг
+kubectl -n kube-system logs -l k8s-app=kube-proxy --tail=50 -f
+```
 
-# 5. Проверка veth-интерфейсов на узле
-ip link show | grep veth
+**Миграция на IPVS:**
+
+```bash
+# Убедитесь что модуль ядра ip_vs загружен
+lsmod | grep ip_vs
+# Если нет: modprobe ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh nf_conntrack
+
+# Обновите конфигурацию kube-proxy
+kubectl -n kube-system patch configmap kube-proxy --type merge -p '{"data":{"config.conf":"...mode: ipvs..."}}'
+
+# Перезапустите kube-proxy
+kubectl -n kube-system rollout restart daemonset kube-proxy
 ```
 
 ### Влияние на производительность (Performance Impact)
 
+| Параметр | iptables | nftables | IPVS | eBPF (Cilium) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Поиск правила** | O(N) | O(N)* | O(1) | O(1) |
+| **Обновление правил** | Линейное | Атомарное | Инкрементальное | Инкрементальное |
+| **CPU при churn** | 30-40% ядра | <5% ядра | <5% ядра | <1% ядра |
+| **Задержка (Latency)** | ~100μs | ~80μs | ~50μs | ~10μs |
+| **conntrack** | Да | Да | Да | Опционально |
+
+*O(N) но с низким коэффициентом за счет виртуальной машины ядра.
+
 - **Контекстные переключения:** Режимы `iptables` и `IPVS` заставляют пакет проходить через весь стек Netfilter, что создает накладные расходы. Решения на базе eBPF минимизируют этот путь, обрабатывая данные на уровне XDP (eXpress Data Path).
-- **MTU и Fragmentation (Фрагментация):** Инкапсуляция VXLAN добавляет 50 байт заголовка. Если MTU на физическом интерфейсе 1500, то внутри пода MTU должен быть **1450**. Неправильная настройка MTU приводит к фрагментации, потере пакетов и резкому падению пропускной способности (особенно критично в облачных провайдерах).
+- **MTU и Fragmentation (Фрагментация):** Инкапсуляция VXLAN добавляет 50 байт заголовка. Если MTU на физическом интерфейсе 1500, то внутри пода MTU должен быть **1450**. Неправильная настройка MTU приводит к фрагментации, потере пакетов и резкому падению пропускной способности.
 - **CPU Load (Нагрузка на процессор):** При частых обновлениях сервисов (churn) `iptables` может потреблять до 30-40% CPU одного ядра только на перезапись правил из-за линейной архитектуры. `IPVS` и `nftables` решают эту проблему через инкрементальные и атомарные обновления.
+
+## Диагностика сетевых компонентов
+
+### Алгоритм диагностики
+
+```bash
+# 1. Определение текущего режима kube-proxy
+kubectl -n kube-system get configmap kube-proxy -o yaml | grep -E "mode:|iptables|ipvs|nftables"
+# → mode: "nftables" (или "ipvs", "iptables")
+
+# 2. Проверка состояния Pod kube-proxy
+kubectl -n kube-system get pods -l k8s-app=kube-proxy -o wide
+# → Все поды должны быть Running и Ready
+
+# 3. Проверка логов на ошибки
+kubectl -n kube-system logs -l k8s-app=kube-proxy --tail=100 | grep -iE "error|fail|warn"
+
+# 4. Проверка правил nftables (на узле)
+sudo nft list ruleset | grep -E "KUBE-SERVICES|KUBE-SVC|KUBE-SEP" | head -20
+
+# 5. Проверка IPVS (на узле, если mode: ipvs)
+sudo ipvsadm -Ln | head -20
+# → Prot LocalAddress:Port Scheduler Flags
+#   -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+
+# 6. Проверка CNI-плагина
+kubectl -n kube-system get pods -o wide | grep -iE "calico|cilium|flannel|antrea"
+
+# 7. Проверка veth-интерфейсов на узле
+ip link show | grep -E "veth|cali|cni"
+```
+
+### Таблица типичных проблем
+
+| Симптом | Вероятная причина | Команда диагностики | Решение |
+| :--- | :--- | :--- | :--- |
+| Service ClusterIP не отвечает | kube-proxy не обновил правила | `nft list ruleset \| grep <cluster-ip>` | Перезапустить kube-proxy, проверить логи |
+| Трафик между подами на разных узлах не проходит | CNI не настроил маршрутизацию | `ip route show` на обоих узлах | Проверить BGP-пиринг или VXLAN-туннель |
+| Высокий CPU (>30% ядра) | iptables churn при большом количестве сервисов | `top -p $(pgrep kube-proxy)` | Перейти на nftables или IPVS |
+| Задержки >10ms между подами на разных узлах | Инкапсуляция VXLAN + MTU mismatch | `ping -M do -s 1422 <target-ip>` | Настроить MTU 1450 на физическом интерфейсе |
+| conntrack переполнен | Много короткоживущих TCP-соединений | `conntrack -S \| grep insert` | Увеличить `net.netfilter.nf_conntrack_max` |
+| DNS не резолвится из пода | CoreDNS недоступен или Egress блокирует порт 53 | `kubectl exec -it <pod> -- nslookup kubernetes.default` | Добавить Egress-правило для CoreDNS |
+| Под не видит Service ClusterIP | DNS-запись не создана или kube-proxy не обновился | `kubectl exec -it <pod> -- nslookup <svc>.<ns>.svc.cluster.local` | Проверить Service и EndpointSlice |
+| Терминирующий под не получает трафик | Graceful Termination завершается слишком быстро | `kubectl describe pod <name> \| grep -i terminat` | Увеличить `terminationGracePeriodSeconds` |
+
+### Проверка CNI-плагина (по решениям)
+
+```bash
+# Calico
+kubectl get pods -n kube-system -l k8s-app=calico-node -o wide
+kubectl get ippool -o wide
+calicoctl node status
+
+# Cilium
+kubectl get pods -n kube-system -l k8s-app=cilium -o wide
+cilium status
+cilium status --verbose
+kubectl get ciliumendpoints -A
+
+# Flannel
+kubectl get pods -n kube-system -l app=flannel -o wide
+kubectl get configmap -n kube-system kube-flannel-cfg -o yaml
+
+# Antrea
+kubectl get pods -n kube-system -l app=antrea-agent -o wide
+kubectl get antreaagentinfo -o yaml | head -30
+```
+
+### Метрики kube-proxy
+
+```bash
+# Prometheus-метрики kube-proxy (порт 10249)
+kubectl port-forward -n kube-system <kube-proxy-pod> 10249:10249
+
+# Ключевые метрики:
+# kubeproxy_sync_proxy_rules_duration_seconds — время обновления правил
+# kubeproxy_sync_proxy_rules_endpoint_changes_total — количество изменений эндпоинтов
+# kubeproxy_sync_proxy_rules_service_changes_total — количество изменений сервисов
+# kubeproxy_sync_proxy_rules_iptables_calls_total — количество вызовов iptables
+
+# Conntrack метрики
+cat /proc/net/stat/nf_conntrack | head -5
+conntrack -S
+```
+
+## Дополнительная информация
 
 ### См. также
 
-- [Обзор сетевой модели Kubernetes](./network_overview.md) — базовые принципы.
-- [Путь трафика в Kubernetes](./traffic_path.md) — детальные диаграммы North-South и East-West.
-- [IPVS в Kubernetes](./CNI/ipvs.md) — глубокое погружение в настройку хеш-таблиц.
-- [Cilium и eBPF](./CNI/cilium.md) — архитектура без legacy-компонентов.
+- [Обзор сетевой модели Kubernetes](./network_overview.md) — базовые принципы IP-per-Pod, CIDR, MTU.
+- [Путь трафика в Kubernetes](./traffic_path.md) — детальные диаграммы North-South и East-West, включая conntrack и Hairpin NAT.
+- [IPVS в Kubernetes](./CNI/ipvs.md) — глубокое погружение в настройку хеш-таблиц и conntrack.
+- [Cilium и eBPF](./CNI/cilium.md) — архитектура без legacy-компонентов, Identity-based безопасность.
+- [eBPF в Kubernetes](./CNI/ebpf.md) — технология, лежащая в основе Cilium.
+- [Выбор CNI и методы внешнего доступа](./CNI/selection_and_external_access.md) — сравнение решений.
+- [NetworkPolicy: Реализация CNI-плагинами](./NetworkPolicy/cni_implementation.md) — как CNI программирует правила фильтрации.
+- [Сетевые пространства имен Linux](../../Linux/Networking/Tools/iproute2/ip_netns.md) — механизм изоляции.
+- [Недоступность узла: Сетевые проблемы](../../Kubernetes/Troubleshooting/Common_Errors/NodeUnavailability/network_issues.md) — типичные проблемы и решения.

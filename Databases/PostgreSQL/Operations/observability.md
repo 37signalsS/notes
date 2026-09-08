@@ -227,6 +227,7 @@ service:
 
 ### Связанные документы
 
+- [Управление соединениями PostgreSQL](./connection_management.md) — `pg_stat_activity`, таймауты, troubleshooting и capacity planning.
 - [Оптимизация производительности](./performance_tuning.md) — детальный разбор `pg_stat_statements` и планов запросов.
 - [OpenTelemetry Overview](../../../OpenTelemetry/opentelemetry_overview.md) — основы распределенной трассировки.
 - [Grafana Alloy Overview](../../../Grafana/grafana_alloy_overview.md) — конфигурация агента для сбора сигналов.

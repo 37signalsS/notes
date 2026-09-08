@@ -285,7 +285,7 @@ docker compose down -v
 * RBAC и безопасность: **[Интеграция Jaeger с Kubernetes](./jaeger_kubernetes_integration.md)**
 * High Availability: **[High Availability и DR](./jaeger_high_availability.md)**
 * Capacity Planning: **[Capacity Planning для Jaeger](./jaeger_capacity_planning.md)**
-* Kubernetes RBAC: **[RBAC в Kubernetes](../Kubernetes/Base/rbac_basics.md)**
+* Kubernetes RBAC: **[RBAC в Kubernetes](../Kubernetes/Security/rbac/rbac_overview.md)**
 
 ### См. также
 

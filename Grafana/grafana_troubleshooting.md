@@ -132,6 +132,7 @@ docker compose logs grafana | grep -i "plugin"
 | Панель пустая, в логах `context deadline exceeded` | Таймаут источника | Увеличить `timeout`, оптимизировать запрос |
 | Не могу войти, забыл пароль Admin | — | `grafana-cli admin reset-admin-password` |
 | Утечка памяти / OOM | Рендеринг в том же процессе | Вынести `grafana-image-renderer` отдельно |
+| `database is locked` в логах | SQLite не выдерживает нагрузку алертов (Grafana 8.0.0+) | Миграция на PostgreSQL — см. [Обновление и миграция](grafana_upgrade_migration.md#сценарий-7-миграция-sqlite--postgresql-docker-compose) |
 
 ### Ограничения и особые случаи
 

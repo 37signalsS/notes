@@ -211,10 +211,115 @@ deploy_ssh:
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| **502 Bad Gateway** | Приложение еще не поднялось | Увеличьте `initialDelay` или время ожидания в Smoke-тестах. |
-| **Permission Denied (SSH)** | Неверный ключ или права на файл | Убедитесь, что `SSH_PRIVATE_KEY` имеет тип **File** и права 600. |
-| **OOM Kill** | JVM вышла за пределы лимитов Docker | Согласуйте `-Xmx` и `resources.limits.memory` в Compose. |
-| **Flyway Checksum Mismatch** | Изменен существующий скрипт миграции | Никогда не меняйте старые файлы миграций, создавайте новые. |
+| **502 Bad Gateway** | Приложение еще не поднялось после деплоя | Увеличьте `initialDelay` в healthcheck или время ожидания в Smoke-тестах. Добавьте `readinessProbe` с `periodSeconds: 10`. |
+| **Permission Denied (SSH)** | Неверный ключ или права на файл | Убедитесь, что `SSH_PRIVATE_KEY` имеет тип **File** и права 600. Проверьте `ssh-rsa` формат ключа. |
+| **OOM Kill** | JVM вышла за пределы лимитов Docker | Согласуйте `-Xmx` и `resources.limits.memory` в Compose. Используйте `-XX:MaxRAMPercentage=75.0` вместо фиксированных значений. |
+| **Flyway Checksum Mismatch** | Изменен существующий скрипт миграции | Никогда не меняйте старые файлы миграций — создавайте новые. Откат: `flyway repair`. |
+| **Maven: No compiler is provided** | JDK не найден в контейнере Builder | Убедитесь, что базовый образ содержит JDK (не JRE). Используйте `maven:3.9-eclipse-temurin-21-jammy`. |
+| **Kaniko: Failed to get credential** | Container Registry авторизация не настроена | Проверьте переменные `CI_REGISTRY_USER` и `CI_JOB_TOKEN`. GitLab автоматически предоставляет токен для встроенного Registry. |
+| **Container屡次重启 (CrashLoopBackOff)** | Приложение падает при старте | Проверьте логи: `docker logs <container>`. Частые причины: невалидный `SPRING_DATASOURCE_URL`, отсутствие миграций, нехватка памяти. |
+| **Image not found в Registry** | Имя образа не совпадает или Registry недоступен | Проверьте `IMAGE_NAME` переменную. Убедитесь, что `docker login` проходит успешно в before_script. |
+| **Testcontainers: Cannot connect to Docker** | Docker-in-Docker не настроен или Socket не проброшен | Добавьте сервис `docker:dind` или пробросьте `/var/run/docker.sock`. Укажите `DOCKER_HOST: tcp://docker:2375`. |
+| **Flyway: Connection refused** | База данных недоступна из контейнера Runner'а | Проверьте `DB_URL` — используйте внутренний адрес Docker-сети, а не `localhost`. Убедитесь, что PostgreSQL запущен и доступен. |
+| **Actuator: 404 Not Found** | Endpoint не включен в конфигурации | Добавьте в `application.properties`: `management.endpoints.web.exposure.include=health,info,prometheus`. |
+| **Disk space exhausted** | Локальные образы и кэш заполнили диск | Выполните `docker system prune -af` на хосте Runner'а. Настройте cron для автоматической очистки. |
+
+## Лучшие практики (Best Practices)
+
+**Безопасность:**
+- Используйте Kaniko вместо DinD для сборки образов — это исключает необходимость `privileged = true`.
+- Все敏感ные переменные (БД, SSH-ключи) храните в CI/CD Variables с флагами `masked` и `protected`.
+- Регулярно обновляйте базовые образы (Eclipse Temurin, Maven) — это закрывает CVE в зависимостях.
+- Добавьте сканирование Trivy как **обязательный** этап — блокируйте деплой при критических уязвимостях.
+- Используйте SBOM для аудита цепочки поставок (Supply Chain Security).
+
+**Производительность:**
+- Кэшируйте `.m2/repository` между запусками пайплайна — это сокращает время сборки на 50-80%.
+- Используйте `dependency:go-offline` в Maven для предзагрузки зависимостей в отдельном слое Docker.
+- В Dockerfile копируйте `pom.xml` перед `src` — это максимизирует кэширование слоёв.
+- Настройте `JAVA_OPTS` с учётом лимитов Docker: `-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC`.
+
+**Надёжность:**
+- Используйте `when: manual` для деплоя — это предотвращает автоматический деплой из ветки feature.
+- Пинайте версии образов (Kaniko, Maven, Trivy) вместо `latest` — это гарантирует воспроизводимость.
+- Добавьте Smoke-тест после деплоя — проверяйте Actuator Health и ключевые эндпоинты.
+- Настройте `retry: 2` для сканирования и деплоя — нестабильные сети могут прервать задачу.
+
+## Очистка и откат (Cleanup)
+
+**Откат деплоя:**
+```bash
+# SSH на сервер деплоя
+ssh deployer@server
+
+# Остановка текущей версии
+cd /opt/app && docker compose down
+
+# Откат к предыдущему тегу
+export IMAGE_TAG=<previous-commit-sha>
+docker compose up -d
+
+# Или через git
+git checkout <previous-commit> && docker compose up -d --build
+```
+
+**Откат миграции Flyway:**
+```bash
+# Через Maven (среда с доступом к БД)
+mvn flyway:undo -Dflyway.url=$DB_URL -Dflyway.user=$DB_USER -Dflyway.password=$DB_PASS
+
+# Или вручную (последняя миграция)
+flyway undo -url=jdbc:postgresql://host:5432/db -user=user -password=pass
+```
+
+**Очистка Container Registry:**
+```bash
+# Удаление старых тегов через API
+curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/registry/repositories/$REPO_ID/tags/<tag>"
+
+# Очистка локального кэша образов
+docker image prune -af
+```
+
+**Очистка артефактов:**
+```bash
+# Удаление старых артефактов пайплайна (Settings > CI/CD > Artifacts expiration)
+# Или через API
+curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/artifacts"
+```
+
+## Граничные случаи (Edge Cases)
+
+**Мульти-Maven модуль:**
+- Если проект состоит из нескольких Maven-модулей, настройте кэширование на уровне корня: `key: "$CI_COMMIT_REF_SLUG"` и `paths: ["./**/.m2/repository"]`.
+- Сборка: `mvn clean package -pl module-name -am` (с зависимостями).
+
+**Монорепозиторий:**
+- Используйте `rules:changes` для запуска пайплайна только при изменении relevant files:
+  ```yaml
+  rules:
+    - changes: ["src/**", "pom.xml", "Dockerfile"]
+  ```
+
+**Несколько целевых серверов:**
+- Деплой на несколько серверов через SSH-ключ и `parallel`:
+  ```yaml
+  deploy:
+    stage: deploy
+    parallel:
+      matrix:
+        - SERVER_HOST: ["server-1", "server-2", "server-3"]
+  ```
+
+**Горячий restart без даунтайма:**
+- Используйте `docker compose up -d --remove-orphans` вместо `down && up` для минимизации даунтайма.
+- Настройте `HEALTHCHECK` в Dockerfile для автоматического удаления из LB при падении.
+
+**Отладка Jenkins vs GitLab CI:**
+- В GitLab CI нет `sh -x` для отладки — используйте `set -x` в начале script для отладки.
+- Артефакты (`artifacts:paths`) доступны только в UI пайплайна, а не на сервере.
 
 ## Дополнительная информация
 
@@ -222,6 +327,9 @@ deploy_ssh:
 Интегрируйте Spring Boot Actuator с Micrometer для сбора метрик в формате Prometheus. См. руководство по **[Prometheus: Сбор метрик Java](../../../Prometheus/overview.md)**.
 
 ### Смотрите также
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовый синтаксис.
-- **[Сборка с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** — детализация безопасности.
-- **[Переменные и секреты GitLab](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — OIDC и маскирование.
+- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовый синтаксис и ключевые концепции.
+- **[Сборка с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** — безопасная сборка Docker-образов без привилегий.
+- **[Переменные и секреты GitLab](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — OIDC, маскирование и vault-интеграция.
+- **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)** — настройка Docker Executor и 10 сценариев.
+- **[GitLab Runner через Docker Compose](../Tutorials/gitlab_runner_docker_compose.md)** — готовый стек для быстрого старта.
+- **[Тестирование с Testcontainers](../../../Testing/testcontainers_overview.md)** — интеграционные тесты в CI/CD.

@@ -22,6 +22,17 @@ Linux является **монолитным ядром**, что означа�
 - **Модули ядра (LKM):** Код, который может динамически загружаться (`insmod`/`modprobe`) и выгружаться (`rmmod`) без перезагрузки. См. [**Управление модулями ядра**](./kernel_modules.md).
 - **Rust в ядре (Stable с 7.x):** Начиная с версии 6.1 начата интеграция Rust, а к версии 7.x (2026) Rust признан вторым официальным языком разработки. Это радикально снижает количество ошибок безопасности, связанных с памятью (Use-after-free, Buffer overflow) в новых драйверах.
 
+### Подсистемы ядра
+
+Ядро состоит из набора специализированных подсистем, каждая из которых отвечает за свой домен:
+
+- **VFS (Virtual File System):** Единый абстрактный слой, через который приложения взаимодействуют с любыми файловыми системами (ext4, XFS, NFS, procfs). VFS кэширует метаданные (dentry/inode) для ускорения доступа. Детали: [**Внутреннее устройство ФС**](../../FileSystems/fs_internals.md).
+- **Сетевой стек (Networking):** Реализует протоколы TCP/IP, UDP, QUIC, маршрутизацию, Netfilter/iptables/nftables и Traffic Control (qdisc). Взаимодействует с userspace через Netlink-сокеты.
+- **Блочный слой (Block Layer):** Управляет очередями запросов к дискам через blk-mq. Включает планировщики ввода-вывода (mq-deadline, Kyber, BFQ, none). См. [**Планировщики ввода-вывода**](./io_schedulers.md).
+- **Управление памятью (MM):** Отвечает за выделение физической и виртуальной памяти, Page Cache, Slab/SLUB-аллокаторы, THP (Transparent Huge Pages) и алгоритмы reclaim (kswapd, MGLRU).
+- **Планировщик (Scheduler):** Распределяет процессорное время между процессами и потоками. Современный планировщик EEVDF пришел на смену CFS в ядрах 6.12+.
+- **Подсистема безопасности:** Реализует LSM (Linux Security Modules), включая SELinux, AppArmor, Smack, а также базовый контроль доступа (DAC) и фильтрацию syscall (Seccomp, Landlock).
+
 ### Цикл разработки и версии (состояние на 2026 год)
 
 Разработка координируется Линусом Торвальдсом и поддерживается сообществом через подсистемы (Subsystems).
@@ -47,10 +58,23 @@ Linux является **монолитным ядром**, что означа�
 - **io_uring:** Интерфейс для асинхронного ввода-вывода, значительно превосходящий классический `epoll` по производительности за счет минимизации переключений контекста. См. [**io_uring**](./io_uring.md).
 - **PSI (Pressure Stall Information):** Метрики «давления» на ресурсы (CPU, Memory, I/O). Позволяют точно определить, является ли ресурс узким местом. См. [**Pressure Stall Information**](./psi.md).
 
+### Живые обновления и отладка
+
+- **Live Patching:** Технология применения исправлений безопасности (CVE) к работающему ядру без перезагрузки. Поддерживается upstream Livepatch, kpatch (RHEL), kgraft (SUSE). См. [**Live Patching и kexec**](./live_patching.md).
+- **kexec / KHO:** Быстрая перезагрузка через загрузку нового ядра из текущего. Kexec Handover (ядро 6.16+) передает состояние памяти между ядрами, сводя простой к миллисекундам.
+- **FRED (Flexible Return and Event Delivery):** Доступно в ядрах 7.x+. Заменяет устаревшую таблицу IDT, ускоряет переход между Ring 3 и Ring 0 и повышает безопасность.
+
 ### Планирование и многозадачность
 
 - **EEVDF (Earliest Eligible Virtual Deadline First):** Основной планировщик задач (пришел на смену CFS). Обеспечивает более справедливое распределение времени и предсказуемые задержки.
 - **Kernel Preemption:** Возможность прерывания кода ядра более важными задачами. В ядрах 6.13+ появилась модель `PREEMPT_LAZY` для баланса между пропускной способностью и отзывчивостью. См. [**Вытесняющая многозадачность ядра**](./preemption.md).
+- **CPU Isolation:** Механизм резервирования ядер для критических нагрузок с минимальным jitter. Включает статическую конфигурацию (`isolcpus`, `nohz_full`) и динамическую (cgroup v2 partitions). См. [**Изоляция CPU**](./cpu_isolation.md).
+
+### Прерывания и аппаратное взаимодействие
+
+- **Split IRQ Handling:** Ядро разделяет обработку прерываний на Top Half (атомарный контекст) и Bottom Half (SoftIRQ/Tasklets/Threaded IRQs). Это предотвращает блокировку системы при длительной обработке.
+- **Threaded IRQs:** Современный подход, при котором обработка переносится в контекст процесса (`irq/N-name`), что позволяет планировщику балансировать нагрузку.
+- **MSI-X / IMS:** Механизмы доставки прерываний, позволяющие устройствам (GPU, SmartNIC) создавать десятки тысяч векторов прерываний. См. [**Прерывания в ядре Linux**](./interrupts.md).
 
 ## Состояние «загрязнения» ядра (Kernel Taint)
 
@@ -85,11 +109,21 @@ cat /proc/cmdline
 # → BOOT_IMAGE=/vmlinuz-linux root=UUID=... rw loglevel=3 quiet
 ```
 
+### Параметры загрузчика (Boot Parameters)
+
+Критические параметры, передаваемые через загрузчик (GRUB, systemd-boot), влияют на поведение ядра до начала работы userspace. Основные группы:
+
+- **Производительность:** `nohz_full=`, `rcu_nocbs=`, `isolcpus=`, `intel_pstate=no_hwp`
+- **Безопасность:** `lockdown=integrity`, `slab_nomerge`, `init_on_alloc=1`, `pti=on`
+- **Отладка:** `initcall_debug`, `debug`, `loglevel=7`
+
+Полный разбор загрузки: [**Загрузка ядра**](./boot_process.md).
+
 ### Структура системных файлов
 
 - **`/boot/vmlinuz-*`**: Сжатый образ исполняемого кода ядра.
 - **`/lib/modules/$(uname -r)/`**: Каталог со всеми доступными модулями (`.ko`).
-- **`/proc` (procfs)** и **`/sys` (sysfs)**: Виртуальные интерфейсы для взаимодействия с ядром «на лету».
+- **`/proc` (procfs)** и **`/sys` (sysfs)**: Виртуальные интерфейсы для взаимодействия с ядром «на лету». См. [**procfs**](../../FileSystems/virtual_fs_proc.md) и [**sysfs**](../../FileSystems/virtual_fs_sys.md).
 
 ### Настройка «на лету» (sysctl)
 
@@ -100,11 +134,17 @@ sysctl -a | head -n 5
 # Временное изменение (например, включение IP Forwarding)
 sudo sysctl -w net.ipv4.ip_forward=1
 # → net.ipv4.ip_forward = 1
+
+# Постоянное изменение (создание файла в /etc/sysctl.d/)
+echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/99-custom.conf
+sudo sysctl --system
 ```
+
+Подробное руководство: [**sysctl**](./sysctl.md).
 
 ### Диагностика через логи
 
-Логи ядра хранятся в кольцевом буфере (ring buffer) и доступны через `dmesg`. Подробное руководство см. в [**dmesg — Просмотр сообщений ядра**](../Diagnostics/Kernel/dmesg/index.md).
+Логи ядра хранятся в кольцевом буфере (ring buffer) и доступны через `dmesg`. Подробное руководство см. в [**dmesg — Просмотр сообщений ядра**](../../Diagnostics/Kernel/dmesg/index.md).
 
 ```bash
 # Вывод сообщений ядра с человекочитаемыми метками времени
@@ -112,7 +152,104 @@ sudo dmesg -H
 
 # Поиск критических ошибок (Panic, Oops, Error)
 sudo dmesg | grep -iE "panic|oops|error|fail"
+
+# Отслеживание событий в реальном времени
+sudo dmesg -w
 ```
+
+### Мониторинг производительности ядра
+
+```bash
+# Общая статистика процессов и системных вызовов
+vmstat 1 5
+# → procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
+# →  r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+
+# Статистика slab-аллокатора (ядро и кэши)
+sudo slabtop -o
+# → OBJS   ACTIVE  USE OBJ  SIZE  OBJ/SLAB  CACHE  NAME
+# → 12345  10000   81%  4.1K   128   97  dentry
+
+# Статистика прерываний по ядрам CPU
+cat /proc/interrupts | head -n 10
+
+# Статистика прерываний сетевого стека (softnet)
+cat /proc/net/softnet_stat
+# →  Колонки: total, dropped, time_squeeze, cpu_collisions, flownoise, rps_success
+
+# Использование файловых дескрипторов
+cat /proc/sys/fs/file-nr
+# → 1234    0        1000000
+# → (используется,  свободно,  максимум)
+
+# Давление на ресурсы (PSI)
+cat /proc/pressure/memory
+# → some avg10=0.50 avg60=0.20 avg300=0.05 total=123456789
+cat /proc/pressure/cpu
+cat /proc/pressure/io
+```
+
+### Безопасность: быстрая проверка
+
+```bash
+# Проверка статуса Secure Boot
+mokutil --sb-state
+# → SecureBoot enabled
+
+# Проверка статуса Lockdown
+cat /sys/kernel/security/lockdown
+# → none [integrity] confidentiality
+
+# Проверка загруженных LSM
+cat /sys/kernel/security/lsm
+# → capability selinux yama ...
+
+# Проверка включенных hardening-параметров
+grep -E "slab_nomerge|init_on_alloc|pti|page_alloc.shuffle" /proc/cmdline
+```
+
+### Распространенные сценарии аварийного восстановления
+
+```bash
+# Сценарий: система не отвечает (可能的 soft lockup)
+# 1. Попытка получить трассу через sysrq
+echo t > /proc/sysrq-trigger  # Вывод трассы всех задач
+echo b > /proc/sysrq-trigger  # Немедленная перезагрузка
+
+# Сценарий: OOM Killer убил критический процесс
+# 1. Проверка логов
+dmesg | grep -i "out of memory"
+journalctl -k | grep -i oom
+
+# 2. Настройка oom_score_adj для защиты сервиса
+echo -500 > /proc/<PID>/oom_score_adj
+
+# Сценарий: высокое потребление ядер (ksoftirqd)
+# 1. Проверка статистики softirq
+watch -n1 'cat /proc/softirqs'
+# 2. Проверка, какие ядра обрабатывают больше всего прерываний
+cat /proc/interrupts | awk '{print $1, $2+$3+$4+$5+$6+$7+$8+$9+$10+$11+$12+$13+$14+$15+$16+$17}'
+```
+
+### Живое обновление ядра (Live Patching)
+
+```bash
+# Проверка поддержки livepatch в текущем ядре
+grep CONFIG_LIVEPATCH /boot/config-$(uname -r)
+
+# Просмотр активных патчей
+ls /sys/kernel/livepatch/
+
+# Статус перехода патча
+cat /sys/kernel/livepatch/<patch_name>/transition
+
+# kexec: подготовка к быстрой перезагрузке
+sudo kexec -l /boot/vmlinuz-$(uname -r) \
+     --initrd=/boot/initramfs-$(uname -r).img \
+     --reuse-cmdline
+```
+
+См. [**Live Patching и kexec**](./live_patching.md).
 
 ## Дополнительная информация
 
@@ -123,3 +260,8 @@ sudo dmesg | grep -iE "panic|oops|error|fail"
 - **Безопасность:** [Харденинг ядра](../../Security/Mechanisms/Kernel/hardening.md) — KASLR, Lockdown и параметры безопасности.
 - **Диагностика сбоев:** [Kernel Panic](./kernel_panic.md) и [Зависания (Lockups)](./lockups.md).
 - **Настройка:** [sysctl](./sysctl.md) — подробное руководство по тюнингу.
+- **Производительность I/O:** [Планировщики ввода-вывода](./io_schedulers.md) — blk-mq, mq-deadline, Kyber, BFQ.
+- **Отладка:** [Прерывания](./interrupts.md) — IRQ, SoftIRQ, Threaded IRQs.
+- **Low-Latency:** [Изоляция CPU](./cpu_isolation.md) — nohz_full, isolcpus, cgroup partitions.
+- **Живые обновления:** [Live Patching](./live_patching.md) — kpatch, kexec.
+- **Давление ресурсов:** [Pressure Stall Information](./psi.md) — мониторинг CPU/Memory/I/O давления.

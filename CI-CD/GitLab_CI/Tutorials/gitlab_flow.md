@@ -25,6 +25,141 @@ MR в GitLab Flow — это не просто запрос на слияние,
 * **Code Review:** Обязательная проверка кода коллегами.
 * **Review Apps:** Динамические окружения, позволяющие увидеть результат работы (например, UI) до слияния в `main`.
 
+#### Merge Trains: детальное описание
+
+Merge Trains — это механизм последовательной интеграции MR, который предотвращает конфликты и обеспечивает стабильность `main`.
+
+**Как работает Merge Train:**
+1. Когда первый MR проходит все проверки, он добавляется в очередь
+2. Перед слиянием создается временная версия `main` с учетом изменений MR
+3. Для этой временной версии запускается отдельный пайплайн проверки
+4. Если пайплайн успешен — MR сливается с `main`
+5. Если пайплайн завершился неудачно — MR отклоняется и удаляется из очереди
+6. Следующий MR в очереди проверяется уже с обновленным `main`
+
+**Конфигурация Merge Trains:**
+
+```yaml
+# Включение Merge Trains в настройках проекта:
+# Settings > General > Merge requests > Merge method = Merge commit
+# Settings > General > Merge requests > Enable merge trains
+
+# Пример .gitlab-ci.yml с поддержкой Merge Trains:
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages:
+  - test
+  - build
+  - deploy
+
+unit_tests:
+  stage: test
+  script:
+    - make test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  script:
+    - make build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+**Преимущества Merge Trains:**
+- Предотвращает «broken main» — каждый MR проверяется в контексте будущего состояния main
+- Ускоряет интеграцию — MR проверяются параллельно в очереди
+- Экономит ресурсы — отменяет проверку MR, если предыдущий MR провалился
+
+#### Review Apps: детальное описание
+
+Review Apps — это динамические окружения, которые автоматически создаются для каждого MR и удаляются после его закрытия.
+
+**Архитектура Review Apps:**
+
+```
+MR #123 → Feature Branch → GitLab CI → Kubernetes Namespace (review-123)
+                                          ↓
+                                    Приложение + БД
+                                          ↓
+                                    URL: review-123.myapp.com
+```
+
+**Конфигурация Review Apps в GitLab CI:**
+
+```yaml
+review_app:
+  stage: deploy
+  script:
+    - kubectl create namespace review-$CI_MERGE_REQUEST_IID
+    - helm upgrade --install review-$CI_MERGE_REQUEST_IID ./chart
+      --namespace review-$CI_MERGE_REQUEST_IID
+      --set image.tag=$CI_COMMIT_SHA
+      --set ingress.host=review-$CI_MERGE_REQUEST_IID.myapp.com
+  environment:
+    name: review/$CI_MERGE_REQUEST_IID
+    url: https://review-$CI_MERGE_REQUEST_IID.myapp.com
+    on_stop: stop_review_app
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+stop_review_app:
+  stage: deploy
+  script:
+    - kubectl delete namespace review-$CI_MERGE_REQUEST_IID
+  environment:
+    name: review/$CI_MERGE_REQUEST_IID
+    action: stop
+  when: manual
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+```
+
+**Интеграция с Kubernetes:**
+- Используйте `ResourceQuota` для ограничения ресурсов Review Apps
+- Настройте `LimitRange` для предотвращения потребления всех ресурсов кластера
+- Используйте `NetworkPolicy` для изоляции Review Apps от Production
+
+**Управление ресурсами:**
+
+```yaml
+# ResourceQuota для Review Apps
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: review-apps-quota
+  namespace: review-apps
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "10"
+
+# LimitRange для Review Apps
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: review-apps-limits
+  namespace: review-apps
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: 512Mi
+      defaultRequest:
+        cpu: "100m"
+        memory: 128Mi
+```
+
 ### 4. Защита ресурсов (Protected Branches & Environments)
 * **Protected Branches:** Основные ветки (`main`, `production`, `stable-*`) защищены от прямого пуша и удаления. Слияние возможно только через MR и при прохождении всех проверок.
 * **Protected Environments:** Ограничение прав на деплой в критические окружения (Staging, Production). Даже если код влит в ветку, деплой может требовать ручного подтверждения (Approval Rules) от ответственных лиц.
@@ -32,6 +167,62 @@ MR в GitLab Flow — это не просто запрос на слияние,
 ### 5. Гигиена истории
 * **Squash and Merge:** Рекомендуется объединять множество мелких коммитов ветки в один при слиянии в `main`, чтобы сохранить историю чистой и линейной.
 * **Conventional Commits:** Использование стандартизированных сообщений коммитов (`feat:`, `fix:`, `chore:`) для автоматизации генерации Changelog и управления версиями.
+
+---
+
+## Сравнение GitLab Flow с другими стратегиями ветвления
+
+### Краткая сравнительная таблица
+
+| Критерий | GitLab Flow | GitHub Flow | Git Flow | Trunk-Based |
+| :--- | :--- | :--- | :--- | :--- |
+| **Сложность** | Средняя | Низкая | Высокая | Средняя |
+| **Частота релизов** | Средняя/CD | Постоянная (CD) | Редкая (релизы) | Очень высокая |
+| **Требования к CI/CD** | Средние (Multi-stage) | Высокие (проверка PR) | Низкие (ручная работа) | Максимальные |
+| **Ветки окружений** | Да (main, staging, prod) | Нет | Да (develop, release) | Нет |
+| **Protected Environments** | Да (встроено) | Через Actions | Ручная настройка | Через Feature Flags |
+| **Merge Trains** | Да (встроено) | Нет | Нет | Нет |
+| **Review Apps** | Да (встроено) | Через Actions | Нет | Нет |
+| **Основная ниша** | Банки, MedTech, Комплаенс | SaaS, Web, Open Source | Desktop, Mobile, Enterprise | Высокотехнологичные стартапы |
+| **Рекомендуемое слияние** | Merge между env | Squash | Merge `--no-ff` | Rebase / FF |
+| **Доля рынка** | 10-15% | 40-50% | ~20% | 20-30% |
+
+### Когда выбирать GitLab Flow
+
+**GitLab Flow идеально подходит когда:**
+- Требуется жесткий контроль продвижения по окружениям (staging → pre-prod → production)
+- Есть регуляторные требования (банки, MedTech, GovTech)
+- Нужна полная трассируемость от Issue до деплоя
+- Команда работает с защищенными окружениями (Protected Environments)
+- Требуется аудит всех изменений и одобрений
+
+**GitHub Flow лучше подходит когда:**
+- Нужна максимальная скорость доставки (SaaS, Web)
+- Команда зрелая и доверяет автоматическим проверкам
+- Нет жестких регуляторных требований
+- Достаточно одного окружения (production)
+
+**Git Flow лучше подходит когда:**
+- Есть четкий цикл релизов (версии 1.0, 2.0, 3.0)
+- Требуется поддержка множества версий продукта
+- Релизы происходят редко (раз в месяц/квартал)
+- Нужны Release Candidate ветки для стабилизации
+
+**Trunk-Based Development лучше подходит когда:**
+- Команда обладает высокой зрелостью
+- Есть мощный CI/CD с качественными Quality Gates
+- Используются Feature Flags для управления функционалом
+- Приоритет — максимальная скорость интеграции
+
+### Влияние на CI/CD пайплайны
+
+GitLab Flow диктует особые требования к структуре пайплайнов:
+
+1. **Multi-stage пайплайны:** Каждая ветка окружения должна иметь свой набор задач (jobs) для тестирования и деплоя
+2. **Manual Approval Gates:** Возможность добавления ручных проверок перед деплом в критические окружения
+3. **Environment-specific переменные:** Разные значения переменных для каждого окружения (staging vs production)
+4. **Conditional jobs:** Запуск задач в зависимости от ветки или окружения
+5. **Promotion логика:** Автоматическое продвижение артефактов между ветками окружений
 
 ---
 
@@ -93,12 +284,593 @@ git push -u origin feature/123-user-auth
 
 ---
 
+## Practical YAML-примеры для GitLab CI
+
+### Пример 1: Базовый .gitlab-ci.yml для GitLab Flow (CD)
+
+```yaml
+# .gitlab-ci.yml для GitLab Flow с непрерывной доставкой
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+stages:
+  - test
+  - build
+  - security
+  - deploy
+
+variables:
+  DOCKER_REGISTRY: registry.example.com
+  IMAGE_NAME: myapp
+
+# Тесты для MR и main
+unit_tests:
+  stage: test
+  image: python:3.11
+  script:
+    - pip install -r requirements.txt
+    - pytest tests/unit/ --cov=src --cov-report=xml
+    - coverage report --fail-under=80
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+integration_tests:
+  stage: test
+  image: python:3.11
+  services:
+    - postgres:15
+    - redis:7
+  variables:
+    POSTGRES_DB: test_db
+    POSTGRES_USER: test_user
+    POSTGRES_PASSWORD: test_password
+    DATABASE_URL: postgresql://test_user:test_password@postgres/test_db
+    REDIS_URL: redis://redis:6379
+  script:
+    - pip install -r requirements.txt
+    - pytest tests/integration/ -v
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Сборка Docker образа
+build:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_SLUG:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_SLUG:$CI_COMMIT_SHA
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Безопасность
+sast:
+  stage: security
+  include:
+    - template: Security/SAST.gitlab-ci.yml
+
+dependency_scanning:
+  stage: security
+  include:
+    - template: Security/Dependency-Scanning.gitlab-ci.yml
+
+secret_detection:
+  stage: security
+  include:
+    - template: Security/Secret-Detection.gitlab-ci.yml
+
+# Деплой в Staging (main ветка)
+deploy_staging:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context staging
+    - helm upgrade --install myapp ./chart
+      --namespace staging
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_SHA
+      --set ingress.host=staging.myapp.com
+  environment:
+    name: staging
+    url: https://staging.myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Деплой в Production (только с main через MR)
+deploy_production:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context production
+    - helm upgrade --install myapp ./chart
+      --namespace production
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_SHA
+      --set ingress.host=myapp.com
+  environment:
+    name: production
+    url: https://myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  needs:
+    - deploy_staging
+```
+
+### Пример 2: GitLab Flow с ветками окружений (Continuous Delivery)
+
+```yaml
+# .gitlab-ci.yml для GitLab Flow с ветками окружений
+# main → staging → pre-prod → production
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "staging"
+    - if: $CI_COMMIT_BRANCH == "pre-prod"
+    - if: $CI_COMMIT_BRANCH == "production"
+
+stages:
+  - test
+  - build
+  - deploy_staging
+  - test_staging
+  - deploy_pre_prod
+  - test_pre_prod
+  - deploy_production
+
+variables:
+  DOCKER_REGISTRY: registry.example.com
+
+# Тесты для всех MR
+unit_tests:
+  stage: test
+  image: python:3.11
+  script:
+    - pip install -r requirements.txt
+    - pytest tests/unit/ --cov=src
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# Сборка Docker образа
+build:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Деплой в Staging (автоматически при слиянии в main)
+deploy_staging:
+  stage: deploy_staging
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context staging
+    - helm upgrade --install myapp ./chart
+      --namespace staging
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_SHA
+  environment:
+    name: staging
+    url: https://staging.myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Тесты на Staging
+smoke_tests_staging:
+  stage: test_staging
+  image: python:3.11
+  script:
+    - pip install requests pytest
+    - pytest tests/smoke/ --base-url=https://staging.myapp.com
+  environment:
+    name: staging
+    url: https://staging.myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == "staging"
+
+# Деплой в Pre-prod (только с staging через MR)
+deploy_pre_prod:
+  stage: deploy_pre_prod
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context pre-prod
+    - helm upgrade --install myapp ./chart
+      --namespace pre-prod
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_SHA
+  environment:
+    name: pre-production
+    url: https://pre-prod.myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == "staging"
+      when: manual
+  needs:
+    - smoke_tests_staging
+
+# Тесты на Pre-prod
+smoke_tests_pre_prod:
+  stage: test_pre_prod
+  image: python:3.11
+  script:
+    - pip install requests pytest
+    - pytest tests/smoke/ --base-url=https://pre-prod.myapp.com
+  environment:
+    name: pre-production
+    url: https://pre-prod.myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == "pre-prod"
+
+# Деплой в Production (только с pre-prod через MR)
+deploy_production:
+  stage: deploy_production
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context production
+    - helm upgrade --install myapp ./chart
+      --namespace production
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_SHA
+  environment:
+    name: production
+    url: https://myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == "pre-prod"
+      when: manual
+  needs:
+    - smoke_tests_pre_prod
+```
+
+### Пример 3: GitLab Flow с ветками релизов (Versioned Software)
+
+```yaml
+# .gitlab-ci.yml для GitLab Flow с ветками релизов
+# main → 2-3-stable → релиз
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH =~ /^.*-stable$/
+    - if: $CI_COMMIT_TAG
+
+stages:
+  - test
+  - build
+  - deploy
+  - release
+
+variables:
+  DOCKER_REGISTRY: registry.example.com
+
+# Тесты для всех MR
+unit_tests:
+  stage: test
+  image: python:3.11
+  script:
+    - pip install -r requirements.txt
+    - pytest tests/unit/ --cov=src
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# Сборка Docker образа
+build:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Деплой в Development (main ветка)
+deploy_development:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context development
+    - helm upgrade --install myapp ./chart
+      --namespace development
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_SHA
+  environment:
+    name: development
+    url: https://dev.myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Деплой в Staging (стабильные ветки)
+deploy_staging:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context staging
+    - helm upgrade --install myapp ./chart
+      --namespace staging
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_SHA
+  environment:
+    name: staging
+    url: https://staging.myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^.*-stable$/
+
+# Деплой в Production (теги релизов)
+deploy_production:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context production
+    - helm upgrade --install myapp ./chart
+      --namespace production
+      --set image.repository=$CI_REGISTRY_IMAGE
+      --set image.tag=$CI_COMMIT_TAG
+  environment:
+    name: production
+    url: https://myapp.com
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+
+# Создание релиза в GitLab
+create_release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  script:
+    - echo "Creating release for $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "Release $CI_COMMIT_TAG"
+    description: "Release $CI_COMMIT_TAG deployed to production"
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+```
+
+---
+
 ## Дополнительная информация
 
 ### Антипаттерны при использовании GitLab Flow
 *   **Долгоживущие ветки:** Хранение feature-веток неделями без слияния приводит к «аду конфликтов».
 *   **Hotfix в обход main:** Исправление бага напрямую в релизной ветке или в `production`. Это гарантирует возвращение бага в следующем релизе.
 *   **Отсутствие CI в Merge Request:** Если тесты запускаются только после слияния, стратегия теряет защитную функцию.
+*   **Прямое редактирование веток окружений:** Изменения должны продвигаться только через MR, а не через прямой пуш в `staging` или `production`.
+*   **Отсутствие Protected Environments:** Без настройки защитных прав на окружения любой разработчик может задеплоить изменения в production.
+
+### Rollback стратегии в GitLab Flow
+
+GitLab Flow подразумевает строгое управление откатами через Git History и GitLab UI.
+
+#### Rollback через Helm (Kubernetes)
+
+```yaml
+# .gitlab-ci.yml для rollback
+rollback_production:
+  stage: rollback
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context production
+    - helm rollback myapp --namespace production
+    - kubectl rollout status deployment/myapp -n production
+  environment:
+    name: production
+    url: https://myapp.com
+  when: manual
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+#### Rollback через Git History
+
+```bash
+# 1. Найти коммит до проблемного изменения
+git log --oneline -10
+
+# 2. Откатить изменения через revert
+git revert <problematic_commit_hash>
+
+# 3. Push изменений
+git push origin main
+
+# GitLab CI автоматически задеплоит откат через пайплайн
+```
+
+#### Rollback через GitLab UI
+
+1. Перейти в **Operate > Environments**
+2. Выбрать целевое окружение (production)
+3. Нажать **Rollback** или выбрать предыдущий деплой
+4. Подтвердить откат
+
+### Troubleshooting
+
+#### Проблема 1: Merge Train не запускается
+
+**Причина:** Отключена опция Merge Trains в настройках проекта.
+
+**Решение:**
+1. **Settings > General > Merge requests**
+2. Включить **Enable merge trains**
+3. Убедиться, что выбран правильный метод слияния (Merge commit или Semi-linear merge)
+
+#### Проблема 2: Review App не удаляется после закрытия MR
+
+**Причина:** Отсутствует задача `stop_review_app` с `action: stop`.
+
+**Решение:**
+```yaml
+# Добавить в .gitlab-ci.yml
+stop_review_app:
+  stage: deploy
+  script:
+    - kubectl delete namespace review-$CI_MERGE_REQUEST_IID --ignore-not-found
+  environment:
+    name: review/$CI_MERGE_REQUEST_IID
+    action: stop
+  when: manual
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+```
+
+#### Проблема 3: Деплой в production блокируется
+
+**Причина:** Protected Environment требует Approval Rules.
+
+**Решение:**
+1. **Settings > CI/CD > Environments**
+2. Выбрать **production**
+3. Настроить **Approval Rules**:
+   - Добавить пользователей или группы
+   - Установить количество требуемых одобрений
+
+#### Проблема 4: Пайплайн не запускается для ветки окружений
+
+**Причина:** Отсутствует правило `workflow:rules` для данной ветки.
+
+**Решение:**
+```yaml
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "staging"
+    - if: $CI_COMMIT_BRANCH == "production"
+```
+
+#### Проблема 5: Cherry-pick не применяется к stable ветке
+
+**Причина:** Конфликт или неверный формат команды.
+
+**Решение:**
+```bash
+# Правильный порядок cherry-pick
+git checkout 2-3-stable
+git cherry-pick <commit_hash>
+
+# Если конфликт
+git cherry-pick --continue
+
+# Автоматический cherry-pick через GitLab CI
+# Используйте переменную CI_COMMIT_SHA для автоматизации
+```
+
+### Compliance и аудит
+
+GitLab Flow предоставляет встроенные механизмы для обеспечения соответствия требованиям.
+
+#### Аудит через Merge Requests
+
+Каждое изменение проходит через MR с полной историей:
+- Кто создал MR
+- Кто провел Code Review
+- Какие проверки прошли
+- Кто одобрил деплой
+- Время всех операций
+
+#### Pipeline Execution Policies
+
+Принудительные проверки на уровне группы/проекта:
+
+```yaml
+# Пример Pipeline Execution Policy
+# Настройка через Settings > CI/CD > Pipeline execution policies
+
+# Все пайплайны должны включать:
+# - SAST проверку
+# - Secret Detection
+# - Code Coverage > 80%
+# - Manual Approval для production
+```
+
+#### Audit Events
+
+GitLab предоставляет аудит-события для отслеживания:
+- Деплоев в production
+- Изменений Protected Environments
+- Merge Requests с одобрениями
+- Изменений Pipeline Execution Policies
+
+### Интеграция с DevOps инструментами
+
+#### GitLab Flow + ArgoCD
+
+```yaml
+# .gitlab-ci.yml для интеграции с ArgoCD
+deploy_argocd:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    # Обновление манифестов ArgoCD
+    - kubectl patch application myapp -n argocd
+      --type merge
+      -p '{"spec":{"source":{"targetRevision":"'$CI_COMMIT_SHA'"}}}'
+  environment:
+    name: production
+    url: https://myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+#### GitLab Flow + Helm
+
+```yaml
+# .gitlab-ci.yml для Helm
+helm_deploy:
+  stage: deploy
+  image: alpine/helm:latest
+  script:
+    - helm upgrade --install myapp ./chart
+      --namespace production
+      --set image.tag=$CI_COMMIT_SHA
+      --values values-production.yaml
+  environment:
+    name: production
+    url: https://myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+#### GitLab Flow + Kubernetes
+
+```yaml
+# .gitlab-ci.yml для Kubernetes
+kubectl_deploy:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl apply -f k8s/
+    - kubectl rollout status deployment/myapp -n production
+  environment:
+    name: production
+    url: https://myapp.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
 
 ### Лучшие практики 2025–2026
 *   **Feature Flags:** Используйте переключатели функционала, чтобы вливать незавершенный код в `main` без риска для пользователей. Это позволяет сократить время жизни веток.
@@ -111,3 +883,7 @@ git push -u origin feature/123-user-auth
 *   **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — принципы работы пайплайнов.
 *   **[Review Apps и динамические окружения](./kubernetes_review_apps.md)** — настройка сред для MR.
 *   **[Окружения и деплой в GitLab](../Concepts/environments_and_deployments.md)** — детальная настройка прав доступа и Approval Rules.
+*   **[Git Branching](../../../Git/git_branching.md)** — стратегии ветвления и конвенции именования.
+*   **[Развёртывание и откаты](../../Core_Concepts/deployment_strategies.md)** — стратегии Blue/Green, Canary, Feature Flags.
+*   **[Feature Toggles](../../Testing/feature_toggles/overview.md)** — управление функционалом через флаги.
+*   **[GitLab CI/CD Advanced](../Advanced/gitlab_ci_advanced_workflow.md)** — продвинутые рабочие процессы (DAG, OIDC, SLSA).

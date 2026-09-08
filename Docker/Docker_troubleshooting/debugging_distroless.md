@@ -83,15 +83,11 @@ kubectl debug -it my-pod --image=nicolaka/netshoot --target=my-app-container
 
 Метод для глубокой диагностики, если есть доступ к хосту (требует `sudo`). Позволяет выполнять команды в контексте контейнера, используя бинарники хоста.
 
+Подробное пошаговое руководство: **[Утилита nsenter](../../Linux/Diagnostics/Processes/nsenter.md)**.
+
+Краткий пример получения PID:
 ```bash
-# 1. Находим PID процесса контейнера
 PID=$(docker inspect -f '{{.State.Pid}}' my-container)
-
-# 2. Проверка открытых портов внутри namespace без запуска shell
-sudo nsenter -t $PID -n ss -lntp
-
-# 3. Вход во все namespaces для интерактивной работы
-sudo nsenter -t $PID -m -u -i -n -p sh
 ```
 
 ### Сценарий 5: Трассировка через eBPF (Inspektor Gadget)

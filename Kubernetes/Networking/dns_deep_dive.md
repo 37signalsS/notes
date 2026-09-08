@@ -133,6 +133,58 @@ spec:
 Для поддержания производительности используется `cluster-proportional-autoscaler`.
 **Рекомендация:** 1 реплика CoreDNS на каждые 16-32 узла или на каждые 256 ядер CPU в кластере.
 
+### Плагины CoreDNS
+
+CoreDNS использует модульную архитектуру, где каждый плагин выполняет определенную функцию. Плагины обрабатывают запросы последовательно, в порядке их объявления в Corefile.
+
+**Основные плагины:**
+
+| Плагин | Назначение | Особенности |
+|:---|:---|:---|
+| `kubernetes` | Интеграция с Kubernetes API | Создает записи для Service и Pod, поддерживает EndpointSlices |
+| `cache` | Кэширование ответов | Снижает нагрузку на API-сервер, поддержка TTL |
+| `forward` | Пересылка внешних запросов | Отправляет запросы на upstream DNS-серверы |
+| `rewrite` | Модификация имен | Позволяет менять имена "на лету" для миграции или алиасов |
+| `autopath` | Оптимизация ndots | Сокращает количество запросов при поиске по суффиксам |
+| `prometheus` | Экспорт метрик | Предоставляет метрики на `:9153/metrics` |
+| `health` | Health check | Эндпоинт для проверки работоспособности |
+| `ready` | Readiness probe | Указывает, что CoreDNS готов принимать трафик |
+| `errors` | Логирование ошибок | Агрегация и логирование ошибок DNS |
+| `log` | Логирование запросов | Полное логирование всех DNS-запросов |
+| `loop` | Обнаружение петель | Предотвращает бесконечные циклы перенаправления |
+| `loadbalance` | Балансировка ответов | Перемешивание A/AAAA записей для round-robin |
+
+**Пример конфигурации с расширенными плагинами:**
+```text
+.:53 {
+    errors
+    health {
+        lameduck 5s
+    }
+    ready
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+        pods verified
+        fallthrough in-addr.arpa ip6.arpa
+        ttl 30
+    }
+    prometheus :9153
+    forward . /etc/resolv.conf {
+        max_concurrent 1000
+    }
+    cache 30
+    loop
+    reload
+    loadbalance
+}
+```
+
+**Описание ключевых параметров:**
+- `pods verified` — CoreDNS проверяет существование пода через API, возвращает NXDOMAIN если под не существует
+- `fallthrough` — если запись не найдена, запрос передается следующему плагину
+- `ttl 30` — время жизни кэша в секундах для кластерных записей
+- `max_concurrent 1000` — ограничение параллельных запросов к upstream
+- `lameduck 5s` — время "подыхания" перед остановкой для graceful shutdown
+
 ---
 
 ## Практические сценарии
@@ -149,6 +201,181 @@ spec:
 
 1. **Topology Aware Routing:** Если включено (`service.kubernetes.io/topology-mode: Auto`), CoreDNS помечает эндпоинты, направляя трафик на поды в той же зоне (Zone), что и клиент.
 2. **Internal Traffic Policy:** При установке `internalTrafficPolicy: Local` сервис будет направлять трафик только на поды, находящиеся на том же узле. Если локальных подов нет, трафик будет отброшен (полезно для минимизации задержек и безопасности).
+
+### Установка и настройка NodeLocal DNSCache
+
+NodeLocal DNSCache (NLDC) — критически важный компонент для production-кластеров, решающий проблему UDP conntrack race conditions и снижающий задержки DNS-запросов.
+
+**Предварительные требования:**
+- Kubernetes v1.18+
+- CoreDNS v1.7+ (рекомендуется v1.8+)
+- Доступ к реестру образов `registry.k8s.io`
+
+**Установка через DaemonSet:**
+
+1. Скачайте официальный манифест:
+```bash
+wget https://raw.githubusercontent.com/kubernetes/kubernetes/master/cluster/addons/dns/nodelocaldns/nodelocaldns.yaml
+```
+
+2. Отредактируйте переменные в манифесте:
+```yaml
+# В секции ConfigMap укажите:
+# __PILLAR__DNS__SERVER__ — ClusterIP CoreDNS (например, 10.96.0.10)
+# __PILLAR__DNS__DOMAIN__ — домен кластера (cluster.local)
+# __PILLAR__LOCAL__DNS__ — IP локального кэша (169.254.25.10)
+```
+
+3. Примените манифест:
+```bash
+kubectl apply -f nodelocaldns.yaml
+```
+
+4. Проверьте установку:
+```bash
+kubectl get daemonset -n kube-system node-local-dns
+kubectl get pods -n kube-system -l k8s-app=node-local-dns -o wide
+```
+
+5. Настройте `/etc/resolv.conf` в подах для использования NLDC:
+```yaml
+# Kubelet автоматически настроит поды на использование 169.254.25.10
+# Для существующих подов необходимо выполнить рестарт
+```
+
+**Архитектура NLDC:**
+- Каждый узел получает локальный DNS-кэш на IP `169.254.25.10`
+- Поды отправляют запросы на локальный IP (UDP)
+- NLDC кэширует ответы и отправляет запросы к CoreDNS по TCP (более надежно)
+- При отсутствии записи в кэсте, NLDC обращается к CoreDNS
+
+### Кастомизация Corefile
+
+**Добавление stub domains (локальных зон):**
+```text
+.:53 {
+    # ... другие плагины ...
+    
+    # Stub domain для внутренней БД
+    stubDomains {
+        "internal.corp.local" = ["10.0.0.53", "10.0.0.54"]
+    }
+    
+    # Upstream DNS для определенного домена
+    forward .internal.corp.local 10.0.0.53 10.0.0.54
+    
+    forward . /etc/resolv.conf
+}
+```
+
+**Настройка upstream DNS-серверов:**
+```text
+.:53 {
+    # ... другие плагины ...
+    
+    # Фиксированные upstream-серверы вместо /etc/resolv.conf
+    forward . 8.8.8.8 8.8.4.4 {
+        force_tcp  # Использовать TCP для upstream
+    }
+}
+```
+
+**Переопределение записей (rewrite):**
+```text
+.:53 {
+    # ... другие плагины ...
+    
+    # Переопределение имени для миграции
+    rewrite name old-service.namespace.svc.cluster.local new-service.namespace.svc.cluster.local
+    
+    # Переопределение типа записи
+    rewrite continue {
+        name regex (.*)\.old\.domain\.$ {1}.new.domain.
+        answer name (.*)\.new\.domain\.$ {1}.old.domain.
+    }
+}
+```
+
+**Валидация Corefile перед применением:**
+```bash
+# Проверка синтаксиса
+kubectl get configmap -n kube-system coredns -o yaml | yq '.data.Corefile' | coredns -conf stdin -validate
+```
+
+**Применение изменений:**
+```bash
+kubectl edit configmap -n kube-system coredns
+# CoreDNS автоматически перезагружает конфигурацию (плагин reload)
+# Или выполните рестарт:
+kubectl rollout restart deployment -n kube-system coredns
+```
+
+### Настройка DNS для внешних ресурсов (ExternalName и ExternalDNS)
+
+**ExternalName Service — создание алиаса для внешнего ресурса:**
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-database
+  namespace: production
+spec:
+  type: ExternalName
+  externalName: db.internal.corp.local
+```
+
+**Проверка работы ExternalName:**
+```bash
+kubectl run dns-test --rm -it --image=busybox:1.37 -- nslookup external-database.production.svc.cluster.local
+# → Должен вернуть CNAME на db.internal.corp.local
+```
+
+**ExternalDNS — автоматизация создания внешних записей:**
+ExternalDNS — отдельный контроллер, который синхронизирует сервисы/ингрессы Kubernetes с внешними DNS-провайдерами. CoreDNS управляет именами внутри кластера, ExternalDNS — снаружи.
+
+### Оптимизация производительности DNS
+
+**Проблема ndots:5 и решение:**
+```bash
+# Создание пода с оптимизированным ndots
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: optimized-pod
+spec:
+  containers:
+  - name: app
+    image: my-app:latest
+  dnsConfig:
+    options:
+    - name: ndots
+      value: "2"
+    - name: single-request-reopen
+      value: ""
+    - name: timeout
+      value: "2"
+    - name: attempts
+      value: "3"
+EOF
+```
+
+**Использование single-request-reopen для conntrack race:**
+```yaml
+# В dnsConfig пода
+dnsConfig:
+  options:
+  - name: single-request-reopen
+    value: ""
+```
+Эта опция заставляет резолвер отправлять A и AAAA запросы с разных портов, решая проблему UDP race conditions.
+
+**Кэширование на уровне приложения:**
+```bash
+# Для JVM-приложений настройте TTL кэширования
+-Dnetworkaddress.cache.ttl=30
+-Dnetworkaddress.cache.negative.ttl=10
+```
 
 ---
 
@@ -179,6 +406,335 @@ spec:
 - **Блокировка NetworkPolicy:** Часто "Default Deny" политики забывают разрешить Egress на UDP/TCP порт 53 в неймспейс `kube-system`.
 - **UDP Conntrack Race:** Задержки в 1 или 5 секунд при резолвинге. Решение: NodeLocal DNSCache.
 - **Размер UDP-пакета:** Если в Headless Service >20 подов, ответ может не влезть в 512 байт UDP. Убедитесь, что клиенты поддерживают переключение на TCP.
+- **OOMKilled CoreDNS:** При большом количестве сервисов или подключений CoreDNS может исчерпать память. Решение: увеличить `resources.limits.memory` в Deployment CoreDNS.
+
+### Диагностика производительности DNS
+
+**Измерение задержки DNS:**
+```bash
+# Измерение времени резолвинга
+kubectl run dns-perf --rm -it --image=busybox:1.37 -- time nslookup kubernetes.default.svc.cluster.local
+
+# Множественные запросы для оценки кэширования
+for i in $(seq 1 10); do
+  kubectl run dns-test-$i --rm -it --image=busybox:1.37 -- nslookup my-service.namespace.svc.cluster.local
+done
+```
+
+**Проверка кэширования:**
+```bash
+# Первый запрос — медленнее (кэш пустой)
+# Второй запрос — быстрее (из кэша)
+# Сброс кэша в CoreDNS:
+kubectl exec -n kube-system <coredns-pod> -- kill -SIGUSR1 1
+```
+
+**Анализ DNS-трафика:**
+```bash
+# tcpdump на узле для анализа DNS-трафика
+tcpdump -i any port 53 -n
+
+# Фильтрация по конкретному IP CoreDNS
+tcpdump -i any host 10.96.0.10 and port 53 -n
+```
+
+---
+
+## Мониторинг и метрики
+
+### Метрики CoreDNS
+
+CoreDNS экспортирует метрики через плагин `prometheus` на порту `:9153/metrics`. Основные метрики:
+
+| Метрика | Описание | Алерт |
+|:---|:---|:---|
+| `coredns_dns_requests_total` | Общее количество запросов по типу и rcode | Резкий рост при атаках |
+| `coredns_dns_response_rcode_count_total` | Распределение ответов по кодам | Рост NXDOMAIN/SERVFAIL |
+| `coredns_cache_hits_total` | Попадания в кэш | Низкий cache hit ratio |
+| `coredns_cache_misses_total` | Промахи кэша | Высокий miss rate |
+| `coredns_forward_request_duration_seconds` | Латентность пересылки в upstream | p99 > 0.5s |
+| `coredns_dns_request_duration_seconds` | Общая латентность запросов | p99 > 0.1s |
+
+### Настройка мониторинга
+
+**ServiceMonitor для Prometheus Operator:**
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: coredns
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      k8s-app: kube-dns
+  namespaceSelector:
+    matchNames:
+    - kube-system
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+```
+
+**Prometheus Service Discovery для CoreDNS:**
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'coredns'
+    kubernetes_sd_configs:
+    - role: endpoints
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+      action: keep
+      regex: kube-system;kube-dns
+    - source_labels: [__meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: metrics
+```
+
+**Grafana Dashboard:**
+- ID дашборда `14518` — CoreDNS мониторинг
+- Ключевые панели: request rate, response codes, cache hit ratio, latency percentiles
+
+### Алерты для DNS
+
+**Рекомендуемые алерты:**
+```yaml
+# PrometheusRule для CoreDNS
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: coredns-alerts
+spec:
+  groups:
+  - name: coredns
+    rules:
+    - alert: CoreDNSDown
+      expr: up{job="coredns"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "CoreDNS is down"
+        
+    - alert: CoreDNSHighErrorRate
+      expr: rate(coredns_dns_response_rcode_count_total{rcode="SERVFAIL"}[5m]) > 0.05
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CoreDNS error rate"
+        
+    - alert: CoreDNSHighLatency
+      expr: histogram_quantile(0.99, rate(coredns_dns_request_duration_seconds_bucket[5m])) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CoreDNS p99 latency > 500ms"
+```
+
+---
+
+## Безопасность DNS в Kubernetes
+
+### NetworkPolicy для защиты DNS
+
+**Разрешение DNS-трафика только для определенных подов:**
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-specific
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+```
+
+**Запрет прямого доступа к внешним DNS:**
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-external-dns
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      network-policy: restricted
+  policyTypes:
+  - Egress
+  egress:
+  # Разрешить только DNS к CoreDNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Запретить прямой доступ к внешним DNS
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.96.0.0/16  # Исключить ClusterIP CoreDNS
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+```
+
+### RBAC для CoreDNS
+
+**Минимальные права для CoreDNS ServiceAccount:**
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:coredns
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  - services
+  - pods
+  - namespaces
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - list
+  - watch
+```
+
+### Защита от DNS-атак
+
+**Rate limiting через CoreDNS:**
+```text
+.:53 {
+    # ... другие плагины ...
+    
+    # Ограничение частоты запросов
+    rate_limit {
+        zone "."
+        rate 1000
+        burst 2000
+    }
+}
+```
+
+**Защита от DNS amplification:**
+- Ограничение размера ответов
+- Отключение рекурсии для внешних клиентов
+- Использование Response Policy Zones (RPZ) для блокировки вредоносных доменов
+
+### DNS-over-TLS (DoT) и DNS-over-HTTPS (DoH)
+
+**Настройка CoreDNS для DoT:**
+```text
+.:853 {
+    tls /etc/coredns/certs/tls.crt /etc/coredns/certs/tls.key
+    # ... плагины ...
+}
+```
+
+**Примечание:** В Kubernetes DoT/DoH обычно настраивается на уровне инфраструктуры (например, через NodeLocal DNSCache или внешний DNS-резолвер), а не внутри CoreDNS.
+
+---
+
+## Диагностика и устранение неполадок
+
+### Алгоритм поиска неисправностей
+
+1. **Проверка из тестового пода:**
+   ```bash
+   kubectl run dns-debug --image=registry.k8s.io/dnsutils:1.3 --rm -it -- nslookup <svc-name>
+   ```
+
+2. **Проверка эндпоинтов DNS:**
+   ```bash
+   kubectl get endpoints -n kube-system kube-dns
+   ```
+   Если список пуст — CoreDNS не готов или не может подключиться к API.
+
+3. **Анализ логов CoreDNS:**
+   ```bash
+   kubectl logs -n kube-system -l k8s-app=kube-dns
+   ```
+   Ищите ошибки `NXDOMAIN` (неверные записи), `SERVFAIL` (проблемы с upstream) или `Loop` (циклическая пересылка).
+
+4. **Проверка конфигурации CoreDNS:**
+   ```bash
+   kubectl get configmap -n kube-system coredns -o yaml
+   ```
+
+5. **Проверка сетевой связности:**
+   ```bash
+   # Из пода к CoreDNS
+   kubectl exec -it <pod> -- nc -zv <coredns-ip> 53
+   ```
+
+### Расширенная диагностика
+
+**Проверка конкретной DNS-записи:**
+```bash
+# Использование dig для детальной информации
+kubectl run dns-debug --rm -it --image=registry.k8s.io/dnsutils:1.3 -- dig +trace my-service.namespace.svc.cluster.local
+
+# Проверка конкретного типа записи
+kubectl run dns-debug --rm -it --image=registry.k8s.io/dnsutils:1.3 -- dig SRV _http._tcp.my-service.namespace.svc.cluster.local
+```
+
+**Диагностика проблем с upstream:**
+```bash
+# Проверка доступности upstream из пода CoreDNS
+kubectl exec -n kube-system <coredns-pod> -- nslookup google.com 8.8.8.8
+
+# Проверка DNS на узле
+dig @8.8.8.8 google.com
+```
+
+**Проверка кэша CoreDNS:**
+```bash
+# Просмотр статистики кэша
+kubectl exec -n kube-system <coredns-pod> -- wget -qO- http://localhost:9153/metrics | grep coredns_cache
+```
+
+**Диагностика через плагин debug:**
+```text
+# Добавить в Corefile для детального логирования
+.:53 {
+    log . "{remote}:{port} - {>id} '{type} {class} {name} {proto} {size} {>do} {>bufsize}' {rcode} {>rflags} {rsize} {duration}"
+    # ...
+}
+```
 
 ### Диагностика NodeLocal DNSCache
 
@@ -259,8 +815,40 @@ kubectl delete daemonset -n kube-system node-local-dns
 ### Сравнение с внешним DNS (ExternalDNS)
 CoreDNS управляет именами *внутри* кластера. **ExternalDNS** — это отдельный контроллер, который синхронизирует сервисы/ингрессы Kubernetes с внешними провайдерами (Route53, Cloudflare, Google DNS) для создания публичных записей.
 
+### Сравнение версий CoreDNS
+
+| Версия Kubernetes | Версия CoreDNS | Ключевые изменения |
+|:---|:---|:---|
+| v1.13-v1.21 | v1.6.x-v1.8.x | Переход с kube-dns на CoreDNS |
+| v1.22-v1.25 | v1.8.x-v1.9.x | Стабилизация, улучшение производительности |
+| v1.26-v1.28 | v1.10.x | Поддержка EndpointSlices, улучшенный кэш |
+| v1.29+ | v1.11.x | Улучшенная безопасность, новые плагины |
+
+### Миграция с kube-dns на CoreDNS
+
+**Почему CoreDNS заменил kube-dns:**
+- Единый бинарный файл (vs 3 компонента в kube-dns)
+- Модульная архитектура с плагинами
+- Лучшая производительность и меньшее потребление памяти
+- Более гибкая конфигурация
+
+**Процедура миграции:**
+```bash
+# Проверка текущего DNS
+kubectl get deployment -n kube-system -l k8s-app=kube-dns
+
+# Удаление kube-dns
+kubectl delete deployment -n kube-system kube-dns
+
+# Установка CoreDNS (обычно включен по умолчанию в новых кластерах)
+kubectl apply -f coredns-deployment.yaml
+```
+
 ### См. также
 - [Headless Service — детальный разбор](./Service/service_type_headless.md)
+- [Тип Service — ExternalName](./Service/service_type_externalname.md)
 - [Диагностика DNS в Linux](../../Linux/Diagnostics/Networking/dns/overview.md)
-- [Service Discovery: Базовые концепции](./Network/dns_service_discovery.md)
+- [Петли перенаправления DNS](../../Networking/Protocols/DNS/dns_forwarding_loops.md)
+- [Мониторинг DNS](../../Networking/Protocols/DNS/dns_monitoring.md)
+- [Безопасность DNS](../../Networking/Protocols/DNS/dns_security.md)
 - [Официальная документация Kubernetes DNS](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)

@@ -322,6 +322,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s ...
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s ...
 ```
 
+Если используется внешний монитор Autoheal (`willfarrell/autoheal`), дополнительно настраивайте его параметры `AUTOHEAL_START_PERIOD` и `AUTOHEAL_INTERVAL` — подробнее в [Autoheal в Docker — Предотвращение ложных перезапусков при медленном старте](../../Docker_troubleshooting/docker_autoheal.md#Сценарий-5-Предотвращение-ложных-перезапусков-при-медленном-старте).
+
 ### Ошибка 2: Контейнер помечен unhealthy, но приложение работает
 
 **Причина:** Проверка здоровья обращается к внешним сервисам (БД, API), которые временно недоступны.

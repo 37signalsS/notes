@@ -34,7 +34,8 @@
 2.  **LABEL:** Удобно для переносимых дисков.
     *   Пример: `LABEL=BackupDrive`
 3.  **PARTUUID/PARTLABEL:** Идентификаторы разделов GPT (не зависят от содержимого ФС).
-    *   Пример: `PARTUUID=e29b-4e56-9d31`
+     *   Пример: `PARTUUID=e29b-4e56-9d31`
+     *   **Важно:** PARTUUID привязан к записи раздела в таблице разделов, а не к ФС. Подробнее — в [UUID vs PARTUUID](../partitions_and_filesystems.md#UUID-vs-PARTUUID-ключевое-различие).
 4.  **LVM Path:** Для логических томов.
     *   Пример: `/dev/mapper/vg_system-lv_root`
 

@@ -48,3 +48,7 @@ mmr:
   lambda: 0.5
 
 hf_hub_timeout: 180
+
+concurrency:
+  max_parallel_searches: 4
+  max_memory_mb: 10240

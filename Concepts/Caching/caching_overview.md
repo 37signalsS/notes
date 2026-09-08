@@ -37,7 +37,6 @@
     *   Кэширование на границе сети для доставки контента из географически ближайшего узла. Идеально для видео, изображений и статических API-ответов.
 4.  **Прокси-слой (Reverse Proxy / API Gateway):**
     *   Кэширование ответов бэкенда (Nginx, Angie, Varnish). Позволяет «срезать» нагрузку до того, как она попадет на сервер приложений.
-    *   **AI Gateway:** Кэширование промптов и ответов LLM (Large Language Models) для экономии токенов и снижения задержки. Используется семантическое кэширование (поиск похожих векторов).
 5.  **Прикладное кэширование (Application Cache):**
     *   Использование библиотек (Guava, Caffeine для Java) или внешних хранилищ (Redis) непосредственно в бизнес-логике.
 6.  **Кэширование базы данных:**
@@ -80,6 +79,8 @@
 *   **Big Keys (Большие ключи):** Хранение слишком крупных объектов (десятки/сотни МБ) в одном ключе.
     *   *Проблема:* Приводит к задержкам при чтении/удалении и блокировкам однопоточных систем (Redis).
     *   *Решение:* Разбиение объекта на части или хранение в объектном хранилище (S3) с кэшированием только метаданных.
+*   **Потеря сессий при рестарте (Session Loss on Restart):** При перезагрузке узла кэша все сессии/состояния теряются.
+    *   *Решение:* Персистентность (RDB/AOF для Redis, Extstore для Memcached) или вынос состояния в внешнее хранилище с репликацией.
 
 ### Стратегии прогрева кэша (Cache Warmup)
 
@@ -87,6 +88,48 @@
 1.  **Массовая загрузка (Bulk Load):** Скрипт считывает самые популярные ID из аналитики/логов и записывает их в кэш перед запуском трафика.
 2.  **Зеркалирование трафика (Shadow Traffic):** Перенаправление копии реального трафика на новую систему кэширования без отдачи ответов пользователям.
 3.  **Ленивый прогрев с длинным TTL:** Постепенное наполнение в процессе работы, но с защитой от Stampede.
+
+**Пример: Bulk Load через Redis Pipeline**
+```bash
+#!/bin/bash
+# warmup.sh — массовый прогрев Redis-кэша из CSV-файла с популярными ключами
+REDIS_HOST="127.0.0.1"
+REDIS_PORT="6379"
+CSV_FILE="/opt/cache/warmup_keys.csv"
+
+while IFS=, read -r key value ttl; do
+  echo "SET $key $value EX $ttl"
+done < "$CSV_FILE" | redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" --pipe
+```
+*Ожидаемый результат:* Все ключи записаны в кэш. Проверка: `redis-cli INFO keyspace` — количество ключей увеличилось.
+
+**Пример: Ленивый прогрев с защитой от Stampede (Python)**
+```python
+import redis
+import random
+
+r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+
+def get_or_warm(key, fetch_fn, base_ttl=3600):
+    value = r.get(key)
+    if value:
+        return value
+    lock_key = f"lock:{key}"
+    acquired = r.set(lock_key, "1", nx=True, ex=10)
+    if acquired:
+        try:
+            value = fetch_fn()
+            # Джиттер для предотвращения Cache Avalanche
+            ttl = base_ttl + random.randint(-300, 300)
+            r.set(key, value, ex=ttl)
+            return value
+        finally:
+            r.delete(lock_key)
+    else:
+        import time
+        time.sleep(0.05)
+        return get_or_warm(key, fetch_fn, base_ttl)
+```
 
 ### Пример: Микрокэширование в Nginx
 
@@ -105,6 +148,13 @@ server {
 }
 ```
 
+**Валидация конфигурации:**
+```bash
+nginx -t && nginx -s reload
+curl -sI "http://localhost/api/v1/status" | grep X-Cache-Status
+# → X-Cache-Status: MISS (первый запрос) или HIT (повторный)
+```
+
 ### Оптимизация хранения и сериализация
 
 Выбор формата данных критичен для CPU и памяти:
@@ -117,7 +167,90 @@ server {
 
 Для больших объектов (более 10 КБ) рекомендуется использовать сжатие (Zstd, LZ4).
 
+### Конфигурация Redis для кэширования (оптимальные параметры)
+
+**Базовый конфиг (redis.conf):**
+```conf
+# Лимит памяти
+maxmemory 4gb
+maxmemory-policy allkeys-lru
+
+# Персистентность (для кэша обычно отключается или используется RDB)
+save ""                    # Отключить автоматические снапшоты
+appendonly no              # Отключить AOF для чистого кэша
+
+# Производительность
+hz 10                      # Частота фоновых задач (TTL-очистка)
+dynamic-hz yes             # Динамическая частота при простое
+io-threads 4               # Потоки I/O (Redis 6+)
+io-threads-do-reads yes    # Многопоточное чтение
+
+# Соединения
+maxclients 10000
+timeout 300                # Закрытие неактивных соединений
+
+# Безопасность
+bind 127.0.0.1
+protected-mode yes
+requirepass <strong_password>
+```
+
+**Валидация конфигурации:**
+```bash
+redis-cli CONFIG GET maxmemory
+# → maxmemory 4294967296
+
+redis-cli CONFIG GET maxmemory-policy
+# → maxmemory-policy allkeys-lru
+```
+
+### Конфигурация Memcached для кэширования (оптимальные параметры)
+
+```bash
+# Запуск с оптимальными параметрами для кэширования
+memcached \
+  -m 4096 \                 # 4 ГБ RAM
+  -c 2048 \                 # Макс. соединений
+  -t 8 \                    # Потоков (равно числу ядер)
+  -l 127.0.0.1 \            # Только локальный доступ
+  -o lru_maintainer,lru_crawler,slab_automove \
+  -f 1.1 \                  # Фактор роста слабов (меньше = компактнее)
+  -n 48                     # Минимальный чанк (байты)
+```
+
+**Валидация:**
+```bash
+memcached-tool localhost:11211 stats | grep -E "curr_items|get_hits|get_misses"
+# → curr_items: <number>
+# → get_hits: <number>
+```
+
 ## Дополнительная информация
+
+### Планирование ресурсов и размер (Capacity Planning)
+
+**Формула оценки потребления памяти:**
+```
+RAM (MB) = (Средний размер объекта × Количество ключей) / 1 048 576
+```
+
+**Минимальные ресурсы для Redis/Valkey:**
+
+| Нагрузка | CPU | RAM | Disk (при персистентности) |
+| :--- | :--- | :--- | :--- |
+| До 10K RPS | 1-2 core | 2-4 GB | SSD 20 GB |
+| 10K-100K RPS | 2-4 core | 8-16 GB | SSD 50 GB |
+| 100K+ RPS | 4-8 core | 32-64 GB | NVMe 100 GB+ |
+
+**Минимальные ресурсы для Memcached:**
+
+| Объем кэша | CPU | RAM | Примечания |
+| :--- | :--- | :--- | :--- |
+| До 10 GB | 2 core | 12 GB | Метаданные + overhead |
+| 10-100 GB | 4 core | 128 GB | Рассмотреть Extstore на NVMe |
+| 100 GB+ | 8 core | 256 GB+ | Sharding обязателен |
+
+**Фактор overhead:** Redis потребляет ~1.5x от реально хранимого объема из-за аллокатора и фрагментации. Memcached — ~1.3x из-за Slab Allocator.
 
 ### Мониторинг и эксплуатация
 
@@ -126,6 +259,9 @@ server {
 *   `cache_evictions_total`: Сигнал о нехватке памяти (Memory Pressure).
 *   `cache_ops_latency_seconds`: Задержка операций самого кэша.
 *   `cache_connected_clients`: Количество активных соединений (для Redis).
+*   `cache_used_memory_bytes`: Текущее потребление памяти.
+*   `cache_fragmentation_ratio`: Отношение системной памяти к потребляемой (Redis). Значение >1.5 — фрагментация, <1.0 — свопинг.
+*   `cache_blocked_clients`: Заблокированные клиенты (Redis) — рост блокировок опасен.
 
 **Пример проверки статуса Redis:**
 ```bash
@@ -137,6 +273,73 @@ redis-cli --hotkeys
 
 # Поиск больших ключей
 redis-cli --bigkeys
+
+# Проверка фрагментации памяти
+redis-cli info memory | grep mem_fragmentation_ratio
+# → mem_fragmentation_ratio: 1.08 (норма: 1.0-1.5)
+
+# Проверка slow log (долгие команды)
+redis-cli slowlog get 10
+```
+
+**Пример проверки статуса Memcached:**
+```bash
+# Общая статистика
+memcached-tool localhost:11211 stats
+
+# Просмотр slab-классов (внутренняя фрагментация)
+memcached-tool localhost:11211 display
+
+# Проверка hit rate
+echo "stats" | nc localhost 11211 | grep -E "get_hits|get_misses"
+# → STAT get_hits <number>
+# → STAT get_misses <number>
+```
+
+### Диагностика и устранение проблем (Troubleshooting)
+
+| Симптом | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Hit rate < 80% | Недостаточный объем кэша или неэффективный TTL | `redis-cli INFO stats`, `memcached-tool stats` | Увеличить `maxmemory` или оптимизировать TTL |
+| Рост latency операций | Фрагментация памяти или блокировки | `redis-cli INFO memory`, `redis-cli SLOWLOG GET` | Включить `activedefrag yes`, проверить bigkeys |
+| `OOM command not allowed` | Исчерпан лимит `maxmemory` | `redis-cli INFO memory \| grep used_memory` | Увеличить `maxmemory` или сменить eviction policy |
+| Сессии теряются после рестарта | Нет персистентности | `redis-cli INFO persistence` | Настроить RDB/AOF или вынести сессии в другой сервис |
+| Memory pressure в контейнере | Лимит `memory.limit_in_bytes` слишком низок | `cat /sys/fs/cgroup/memory/memory.limit_in_bytes` | Увеличить `memory` limits в Kubernetes/Docker |
+| Свопинг (Swap usage) | Нехватка RAM, кэш не помещается | `redis-cli INFO memory \| grep used_memory_rss` | Увеличить RAM или уменьшить `maxmemory` |
+| Слишком много соединений | Утечка соединений на клиенте | `redis-cli INFO clients` | Проверить connection pooling, установить `timeout` |
+| `ERR max number of clients reached` | Достигнут `maxclients` | `redis-cli CONFIG GET maxclients` | Увеличить `maxclients`, проверить утечки соединений |
+| Потеря данных при crash | Кэш без персистентности | Проверить конфиг персистентности | Настроить RDB/AOF, использовать replica |
+
+### Сетевые соображения для распределенного кэша
+
+**Задержка сети между приложением и кэшем:**
+*   Локальный доступ (localhost): < 0.1 мс
+*   Тот же дата-центр (10 Гбит): 0.1–0.5 мс
+*   Междатацентрный доступ: 1–50 мс (кэширование неэффективно без мультикэширования)
+
+**Рекомендации по сетевой архитектуре:**
+*   Размещайте экземпляры Redis/Memcached в том же дата-центре, что и приложение.
+*   Используйте `keepalive` для TCP-соединений для предотвращения разрыва неактивных соединений.
+*   Настройте `tcp-keepalive 300` (Redis) или `-o tcp_keepalive` (Memcached).
+
+**Пример: Проверка задержки до Redis:**
+```bash
+redis-cli --latency -h <redis_host> -p 6379
+# → min: 0, max: 1, avg: 0.23 (ms) — норма для локального доступа
+```
+
+### Безопасность кэширования
+
+*   **Сетевая изоляция:** Redis и Memcached не должны быть доступны извне. Привязка к `127.0.0.1` или внутреннему интерфейсу.
+*   **Аутентификация:** Redis — `requirepass` или ACL. Memcached — ограничение доступа на уровне сети (firewall).
+*   **TLS:** Redis поддерживает TLS 1.3 (настройка `tls-port`, `tls-cert-file`, `tls-key-file`).
+*   **Защита от RCE:** Не используйте `MODULE LOAD` или `CONFIG SET` из непроверенных источников.
+*   **Аудит:** Логируйте все `CONFIG`, `FLUSHALL`, `FLUSHDB` команды.
+
+**Пример: Настройка ACL в Redis (только чтение для приложения):**
+```bash
+# Создание пользователя только для чтения
+redis-cli ACL SETUSER app_read only +get +mget +hget +hgetall +scan on >secure_password
 ```
 
 ### Валидация и тестирование кэша
@@ -147,20 +350,66 @@ redis-cli --bigkeys
 3.  **Проверка инвалидации:** Тестирование скорости распространения обновлений и отсутствия Stale-данных там, где это критично.
 4.  **Инструменты:** `redis-benchmark`, `memtier_benchmark`, `k6` с модулями для работы с Redis.
 
+**Пример: Нагрузочное тестирование Redis**
+```bash
+# Базовый бенчмаркинг (100K запросов, 50 параллельных соединений)
+redis-benchmark -h 127.0.0.1 -p 6379 -c 50 -n 100000 -q
+
+# Тест с Pipeline (ускорение в 5-10 раз)
+redis-benchmark -h 127.0.0.1 -p 6379 -c 50 -n 100000 -P 10 -q
+
+# Продвинутый тест (memtier_benchmark)
+memtier_benchmark -s 127.0.0.1 -p 6379 -t 4 -c 50 -n 100000 --key-maximum=1000000 --ratio=1:1
+```
+
 ### Ограничения и Edge Cases
 
 *   **Динамический TTL:** Использование разных TTL в зависимости от популярности контента (Popularity-aware caching).
 *   **Кэш-бастинг (Cache Busting):** Атака или ошибка, генерирующая бесконечное количество уникальных ключей, что приводит к 0% Hit Rate и вымыванию полезных данных.
 *   **Проблема первого запроса:** Первый пользователь всегда платит `Miss Penalty`. Решается через предварительный прогрев.
+*   **Однопоточность Redis (основной поток):** Даже с I/O threading, долгие команды (SORT, KEYS, большие множества) блокируют основной поток. Использовать `SCAN` вместо `KEYS`, `SSCAN` вместо `SMEMBERS`.
+*   **Ограничение Memcached на размер объекта:** Максимум 1 МБ (по умолчанию). Увеличивается через `-I` (например, `-I 4m`), но это снижает эффективность Slab Allocator.
+*   **Гонка данных при инвалидации (Race Condition):** Параллельные потоки могут записать устаревшее значение в кэш. Решение — `Delayed Double Deletion` (см. [паттерны кэширования](./caching_patterns.md)).
+*   **Ограничение количества ключей:** Redis — теоретически 2^32, практически ограничено памятью. Memcached — 2^32, но на практике рекомендуется не более 10M ключей на инстанс.
+
+### Бэкап и восстановление (Backup & Recovery)
+
+**Redis (при использовании как кэш-хранилища):**
+*   RDB-снапшоты: автоматические (`save 900 1`) или ручные (`BGSAVE`).
+*   AOF-файлы: `BGREWRITEAOF` для компактности.
+*   Восстановление: копирование dump-файла в каталог данных и перезапуск.
+
+**Memcached:**
+*   Полная потеря данных при перезапуске — это нормальное поведение для кэша.
+*   Recovery strategy: прогрев кэша (Cache Warmup) после перезапуска.
+
+**Пример: Ручной снапшот Redis:**
+```bash
+# Сохранение снапшота
+redis-cli BGSAVE
+
+# Проверка статуса
+redis-cli LASTSAVE
+# → 1234567890 (Unix timestamp последнего снапшота)
+```
+
+### Чек-лист: Миграция кэширования с Redis на Valkey
+
+При необходимости миграции (лицензионные причины):
+1.  Проверить совместимость API (Valkey 8.x — полная совместимость с Redis 7.x).
+2.  Запустить Valkey с тем же конфигом (`valkey-server redis.conf`).
+3.  Настроить репликацию Redis → Valkey.
+4.  Переключить приложение на Valkey.
+5.  Удалить Redis после стабилизации.
+
+**Валидация после миграции:**
+```bash
+valkey-cli INFO server | grep redis_version
+# → redis_version: 8.0.0
+```
 
 ### Связанные темы
 
-*   [Обзор Redis](../../Databases/redis_overview.md) — базовые концепции и архитектура Redis.
-*   [Обзор Memcached](../../Databases/memcached_overview.md) — базовые концепции и применение Memcached.
-*   [Сравнение Redis и Memcached](../../Databases/redis_vs_memcached.md) — детальная матрица выбора.
 *   [Паттерны взаимодействия с кэшем](./caching_patterns.md)
 *   [Алгоритмы вытеснения данных](./caching_eviction_policies.md)
-*   [HTTP-кэширование и заголовки](../../Networking/Protocols/HTTP/http_caching.md)
-*   [Кэширование в веб-производительности](../../WebServers/Concepts/web_performance/caching.md)
-*   [Серверное кэширование в Nginx/Angie](../../WebServers/Nginx/Performance/Caching/proxy_caching.md)
-*   [Кэширование в CI/CD (GitLab CI)](../../CI-CD/GitLab_CI/Advanced/gitlab_ci_caching/caching_overview.md)
+*   [Сравнение Redis и Memcached](../../Databases/redis_vs_memcached.md)

@@ -153,7 +153,7 @@ WHERE state != 'idle';
 -- Принудительное завершение "зависшего" процесса
 -- SELECT pg_terminate_backend(<pid>);
 ```
-Больше запросов для анализа производительности — в разделе **[Наблюдаемость PostgreSQL](./observability.md)**.
+Больше запросов и практических сценариев — в **[Управление соединениями PostgreSQL](./connection_management.md)**.
 
 ### Типовые ошибки и Troubleshooting
 

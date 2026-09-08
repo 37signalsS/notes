@@ -170,7 +170,8 @@ ncdu -x /
 
 ## Дополнительная информация
 
-- [Устранение нехватки места на диске](../../FileSystems/disk_space_troubleshooting.md) — подробный чеклист очистки.
+- [Устранение нехватки места на диске](../../FileSystems/disk_space_troubleshooting.md) — подробный чек-лист очистки.
 - [Ссылки, Inode и Dentry](../../FileSystems/links_inodes_dentries.md) — теория структур данных.
 - [Статистика ввода-вывода (iostat)](./iostat.md) — диагностика производительности.
 - [Мониторинг дисковой активности (iotop)](./iotop.md) — анализ нагрузки в реальном времени.
+- [Устранение неполадок: ФС в режиме read-only](../../FileSystems/read_only_filesystem_troubleshooting.md) — диагностика и восстановление после автоматического перехода `ext4` в RO.

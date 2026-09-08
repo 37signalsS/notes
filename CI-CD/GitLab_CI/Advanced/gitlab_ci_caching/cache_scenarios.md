@@ -1,8 +1,31 @@
 # Практические сценарии кэширования в GitLab CI
 
 ## Требования и предварительные условия
-- **Инфраструктура:** GitLab Runner с настроенным `Distributed Cache` (S3/MinIO) для гарантии доступности кэша между разными узлами.
-- **Версии GitLab:** Примеры актуальны для GitLab 17.x–19.x (включая лимиты Gitaly на `cache:key:files` и алгоритмы `zstd`).
+
+### Версия GitLab и поддержка функций
+
+| Функция | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| `cache:key:files` | 11.3+ | Хеш по содержимому lock-файлов |
+| `cache:key:prefix` | 11.3+ | Статический префикс к хешу файлов |
+| `cache:policy` (`pull`/`push`) | 8.10+ | Асимметричные политики |
+| `cache:when` | 8.8+ | Условия сохранения кэша |
+| `fallback_keys` (до 5) | 16.0+ | Цепочка поиска альтернативных ключей |
+| `zstd` сжатие | 16.2+ | Алгоритм по умолчанию |
+| `FF_SKIP_NOOP_CACHE` | 16.0+ | Пропуск пустых операций архивации |
+| `CACHE_COMPRESSION_LEVEL` | 16.11+ | Управление уровнем сжатия |
+
+### Необходимые знания
+
+- Базовый синтаксис `.gitlab-ci.yml` и жизненный цикл пайплайна
+- Различие между кэшем и артефактами (подробнее — в **[сравнении механизмов](./caching_overview.md)**)
+- Предопределённые переменные (`$CI_COMMIT_REF_SLUG`, `$CI_JOB_NAME`, `$CI_DEFAULT_BRANCH`, `$CI_NODE_INDEX`)
+- Настройка Runner'ов и Distributed Cache (S3/MinIO)
+- Принципы безопасного кэширования (cache poisoning, isolation)
+
+### Целевая аудитория
+
+Справочник предназначен для DevOps-инженеров, SRE и системных администраторов, работающих с on-premise и гибридной инфраструктурой. Примеры ориентированы на оптимизацию времени сборки и безопасное кэширование зависимостей в распределённых командах Shared Runners.
 
 ## Базовые концепции
 
@@ -97,6 +120,69 @@ install:
     - uv sync --frozen
 ```
 *Механика:* `uv sync` создает виртуальное окружение `.venv` (по умолчанию в корне проекта) и использует кэшированные wheels из `.uv-cache`. 
+
+**Вариант А2: Упрощённый кэш (CI/CD optimized)**
+
+Ключ может строиться только от `uv.lock` (без `pyproject.toml`), если конфигурация проекта в `pyproject.toml` редко меняется. Путь кэша можно перенаправить в стандартную директорию `.cache/uv`:
+
+```yaml
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+
+cache:
+  key:
+    files:
+      - uv.lock
+  paths:
+    - .cache/uv
+
+install_deps:
+  image: ghcr.io/astral-sh/uv:python3.13-slim
+  cache:
+    policy: pull-push
+  script:
+    - uv sync --frozen
+```
+
+**Настройка self-hosted Runner для кэширования:**
+
+Для self-hosted Docker-раннеров необходимо в `config.toml` включить локальное кэширование и пробросить том для кэша:
+```toml
+[[runners]]
+  name = "python-uv-runner"
+  executor = "docker"
+  [runners.docker]
+    disable_cache = false
+    volumes = [
+      "/var/lib/gitlab-runner/cache:/cache",
+      "/var/run/docker.sock:/var/run/docker.sock"
+    ]
+  [runners.cache]
+    Type = "filesystem"
+    Shared = true
+    [runners.cache.filesystem]
+      Prefix = "gitlab-cache-"
+```
+
+**Проблема кастомного индекса (nexus-proxy):**
+
+При использовании приватного PyPI-прокси (например, Nexus) вместо публичного PyPI, `uv` меняет `uv.lock`, так как URL-источника зависимостей фиксируется внутри. Это приводит к конфликту: lock-файл, сгенерированный локально (PyPI), не совпадает с lock-файлом из CI (Nexus).
+
+```yaml
+# ОШИБКА: uv.lock изменяется между локальной сборкой и CI
+install:
+  variables:
+    UV_INDEX_URL: "https://nexus.example.com/repository/pypi/simple/"
+  script:
+    - uv sync --frozen  # → FAILED: lock file mismatch
+```
+
+**Решения:**
+1. **Один индекс для всех:** Используйте один и тот же `UV_INDEX_URL` в CI и локально (через `.env` или `direnv`). Lock-файл не будет меняться.
+2. **Разделение lock-файлов:** Генерируйте отдельные lock-файлы для разных индексов (`uv lock --group prod --output uv.lock.ci`) и переключайте их в CI.
+3. **`--no-index` + `--find-links`:** Для полностью офлайн-сборки используйте зеркалирование пакетов в локальную директорию через `uv export` и `UV_INDEX_STRATEGY=unsafe-best-match`.
+
+*Механика:* `UV_INDEX_URL` влияет на разрешение транзитивных зависимостей. Если Nexus проксирует PyPI с задержкой, версии пакетов могут расходиться, и `uv.lock` потребует обновления.
 
 **Вариант Б: Классический Pip + Venv**
 ```yaml
@@ -306,12 +392,265 @@ test_feature:
     - make test
 ```
 
+## DevOps/SRE и on-premise сценарии
+
+### Сценарий 11 — Кэширование Terraform-модулей и провайдеров
+
+Для Terraform критично кэшировать `.terraform/` (провайдеры) и промежуточные планы. Без кэша каждый запуск скачивает все провайдеры заново.
+
+```yaml
+.terraform_cache:
+  cache:
+    - key: terraform-providers-${TF_VERSION}-${CI_COMMIT_REF_SLUG}
+      paths:
+        - $TF_ROOT/.terraform/providers/
+      policy: pull-push
+    - key: terraform-plugins-${TF_VERSION}
+      paths:
+        - $TF_ROOT/.terraform/plugins/
+      policy: pull
+      fallback_keys:
+        - terraform-plugins-latest
+  variables:
+    TF_VERSION: "1.9"
+    TF_ROOT: "terraform/environments/staging"
+
+terraform:plan:
+  extends: .terraform_cache
+  script:
+    - cd $TF_ROOT
+    - terraform init -backend=false
+    - terraform plan -out=tfplan
+  artifacts:
+    paths:
+      - $TF_ROOT/tfplan
+    expire_in: 1 hour
+
+terraform:apply:
+  extends: .terraform_cache
+  script:
+    - cd $TF_ROOT
+    - terraform init -backend=false
+    - terraform apply -auto-approve tfplan
+  dependencies:
+    - terraform:plan
+```
+
+**Почему `.terraform/providers/` вместо всего `.terraform/`?** Полная директория `.terraform/` может содержать sensitive данные (state lock, backend config). Разделение позволяет безопасно кэшировать только провайдеры.
+
+### Сценарий 12 — Кэширование Ansible-ролей и Galaxy
+
+Ansible скачивает роли и коллекции при каждом запуске. Кэширование `roles/` и `requirements/` значительно ускоряет повторные запуски.
+
+```yaml
+ansible:lint:
+  cache:
+    - key: galaxy-roles-${CI_COMMIT_REF_SLUG}
+      paths:
+        - roles/
+      policy: pull
+      fallback_keys:
+        - galaxy-roles-main
+    - key: galaxy-collections-${CI_COMMIT_REF_SLUG}
+      paths:
+        - collections/
+      policy: pull
+  script:
+    - ansible-galaxy install -r requirements.yml --roles-path roles/
+    - ansible-galaxy collection install -r requirements.yml --collections-path collections/
+    - ansible-lint playbooks/
+
+ansible:deploy:
+  extends: .ansible_cache
+  cache:
+    - policy: pull-push
+  script:
+    - ansible-playbook -i inventory/production site.yml
+  environment:
+    ANSIBLE_FORCE_COLOR: "true"
+```
+
+### Сценарий 13 — Кэширование Salt-состояний и Pillar
+
+Salt кэширует модули и состояния. В on-premise средах с bare-metal серверами это критично для быстрых повторных.apply.
+
+```yaml
+.salt_cache:
+  cache:
+    - key: salt-states-${CI_COMMIT_REF_SLUG}
+      paths:
+        - salt/base/
+      policy: pull-push
+    - key: salt-modules-${SALT_VERSION}
+      paths:
+        - .salt/cache/
+      policy: pull
+      fallback_keys:
+        - salt-modules-latest
+
+salt:apply:
+  extends: .salt_cache
+  script:
+    - salt-call --local state.apply base test=False
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+
+salt:test:
+  extends: .salt_cache
+  script:
+    - salt-call --local state.apply base test=True --output=json
+```
+
+### Сценарий 14 — Кэширование Helm-чартов и зависимостей
+
+Helm скачивает зависимости при каждом `dependency build`. Кэширование `.helm/` и `charts/` ускоряет повторные запуски.
+
+```yaml
+.helm_cache:
+  cache:
+    - key: helm-deps-${CI_COMMIT_REF_SLUG}
+      paths:
+        - charts/
+      policy: pull
+    - key: helm-cache-${HELM_VERSION}
+      paths:
+        - .helm/cache/repository/
+      policy: pull-push
+      fallback_keys:
+        - helm-cache-latest
+
+helm:lint:
+  extends: .helm_cache
+  script:
+    - helm dependency build charts/myapp
+    - helm lint charts/myapp
+
+helm:package:
+  extends: .helm_cache
+  script:
+    - helm dependency build charts/myapp
+    - helm package charts/myapp
+  artifacts:
+    paths:
+      - "*.tgz"
+```
+
+### Сценарий 15 — Кэширование Docker BuildKit для multi-arch сборок
+
+BuildKit поддерживает кэширование слоёв в registry. Для multi-arch сборок через `buildx` это значительно ускоряет повторные сборки.
+
+```yaml
+.docker_buildx_cache:
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+    BUILDX_CACHE: "$CI_REGISTRY_IMAGE/cache"
+
+.build:setup:
+  script:
+    - docker buildx create --use --driver docker-container
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+
+.build:push:
+  script:
+    - >
+      docker buildx build
+      --platform linux/amd64,linux/arm64
+      --cache-from type=registry,ref=$BUILDX_CACHE
+      --cache-to type=registry,ref=$BUILDX_CACHE,mode=max
+      --push -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+```
+
+### Сценарий 16 — Кэширование системных пакетов (bare-metal部署)
+
+Для bare-metal серверов и on-premise сред кэширование системных пакетов (nginx, postgres, etc.) через local mirror или apt/yum cache.
+
+```yaml
+.deploy:bare_metal:
+  cache:
+    - key: apt-cache-${TARGET_OS}
+      paths:
+        - /var/cache/apt/archives/
+      policy: pull
+  script:
+    - ssh deploy@server "apt-get install -y --no-install-recommends nginx postgresql-client"
+  environment:
+    APT_CACHE_DIR: "/var/cache/apt/archives"
+```
+
+**Примечание:** В Docker-контейнерах кэширование системных пакетов малоэффективно (контейнер ephemeral). Этот сценарий适用于 shell-раннеров на bare-metal серверах.
+
+### Сценарий 17 — Кэширование зависимостей в Collector'ах и шардах
+
+При шардинге тестов каждый шард должен иметь уникальный ключ.
+
+```yaml
+test:sharded:
+  parallel: 8
+  cache:
+    - key: test-deps-$CI_NODE_INDEX-$CI_COMMIT_REF_SLUG
+      paths:
+        - .pytest-cache/
+        - .tox/
+      policy: pull-push
+    - key: test-results-$CI_NODE_INDEX
+      paths:
+        - results-$CI_NODE_INDEX.xml
+      policy: push
+```
+
 ## Валидация и устранение неполадок
 
 ### Как убедиться, что кэш работает?
-1.  **Чтение логов Runner'а:** Ищите строки `Checking cache for...`, `Downloading cache.zip from...` в начале задачи.
-2.  **Время выполнения:** Задача `npm ci` с кэшем должна выполняться за секунды (вывод: `added X packages in Xs`), тогда как "холодная" сборка занимает минуты.
-3.  **Сохранение кэша:** В конце задачи должна присутствовать секция `Creating cache...` и `Uploading cache.zip to...`. Если там написано `Archive is up to date!`, значит `FF_SKIP_NOOP_CACHE` работает корректно.
+
+1. **Чтение логов Runner'а:** Ищите строки `Checking cache for...`, `Downloading cache.zip from...` в начале задачи.
+2. **Время выполнения:** Задача `npm ci` с кэшем должна выполняться за секунды (вывод: `added X packages in Xs`), тогда как "холодная" сборка занимает минуты.
+3. **Сохранение кэша:** В конце задачи должна присутствовать секция `Creating cache...` и `Uploading cache.zip to...`. Если там написано `Archive is up to date!`, значит `FF_SKIP_NOOP_CACHE` работает корректно.
+4. **Отладочные переменные:** Добавьте `CI_DEBUG_TRACE: "true"` для получения детальных логов.
+
+### Диагностика через API
+
+```bash
+# Просмотр всех кэшей проекта
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/cache" | \
+  jq '.[] | {key, size, created_at, last_used_at}'
+
+# Очистка кэша по ключу (谨慎使用)
+curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/cache?key=$CACHE_KEY"
+
+# Очистка всего кэша проекта
+curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/cache"
+```
+
+### Валидация конфигурации через CI Lint
+
+```bash
+# Проверка синтаксиса
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  --data "content=$(cat .gitlab-ci.yml | base64)" \
+  "https://gitlab.example.com/api/v4/ci/lint" | jq '.valid'
+```
+
+### Диагностика локального кэша Runner'а
+
+```bash
+# Просмотр локального кэша
+ls -la /home/gitlab-runner/cache/
+
+# Проверка размера
+du -sh /home/gitlab-runner/cache/
+
+# Очистка локального кэша
+rm -rf /home/gitlab-runner/cache/*
+
+# Проверка конфигурации Runner'а (Distributed Cache)
+cat /etc/gitlab-runner/config.toml | grep -A5 "\[cache\]"
+```
 
 ### Диагностика типичных ошибок
 
@@ -322,10 +661,144 @@ test_feature:
 | **Ошибка 403 при скачивании (Distributed Cache)** | **Причина:** Срок жизни (TTL) pre-signed URL от GitLab истек, либо IAM-роль Runner'а потеряла доступ к S3. **Решение:** Проверить настройки `config.toml` Runner'а и синхронизацию времени NTP. |
 | **Раздувание кэша (No space left on device)** | **Причина:** Накапливание старых версий пакетов в локальных папках вроде `target/` или `node_modules/`. **Решение:** Включите регулярную инвалидацию ключа (смена префикса) или очистите кэш через UI GitLab (Clear runner caches). |
 
+## Лучшие практики
+
+### Выбор типа ключа по сценарию
+
+| Сценарий | Рекомендуемый ключ | Причина |
+| :--- | :--- | :--- |
+| Lock-файлы (npm, pip, bundler) | `cache:key:files` | Детерминированная инвалидация |
+| Go-модули без `go.sum` | `cache:key:prefix` | Хеш всего `vendor/` |
+| Глобальные утилиты (tflint, hadolint) | Статический ключ (`"tools-v2"`) | Неизменяемые бинарники |
+| Матричные сборки | `key: $CI_JOB_NAME-$TARGET` | Изоляция по комбинации |
+| Feature-ветки → main | `fallback_keys: [main]` | Использование кэша main |
+| Шардинг тестов | `key: $CI_JOB_NAME-$CI_NODE_INDEX` | Уникальность шарда |
+
+### Асимметричные политики
+
+| Тип задачи | `cache:policy` | Причина |
+| :--- | :--- | :--- |
+| Установка зависимостей (`npm ci`, `pip install`) | `pull-push` | Кэш создаётся и обновляется |
+| Тесты (`npm test`, `pytest`) | `pull` | Только чтение кэша |
+| Линтеры (`eslint`, `pylint`) | `pull` | Не должны перезаписывать кэш |
+| Сборка (`go build`, `cargo build`) | `pull` | Артефакты в artifacts, не в кэш |
+| Deploy | `pull` | Кэш для зависимостей, не для деплоя |
+
+### Организация кэша
+
+| Практика | Описание | Приоритет |
+| :--- | :--- | :--- |
+| Префикс по проекту/сервису | `myproject-npm-$CI_COMMIT_REF_SLUG` | Высокий |
+| Разделение тяжёлых зависимостей | `node_modules` отдельно от `dist/` | Средний |
+| `fallback_keys` в 2 уровнях | main → global | Средний |
+| Документирование ключей в README | Для новых членов команды | Низкий |
+
+### Безопасность
+
+| Практика | Описание | Приоритет |
+| :--- | :--- | :--- |
+| Не использовать `unprotect: true` для зависимостей | Cache poisoning через MR | Критический |
+| `policy: pull` для тестов | Предотвращение перезаписи кэша | Высокий |
+| `fallback_keys` вместо статических ключей | Изоляция веток + кэш main | Высокий |
+| Ограничение `files` до 2 файлов | Предотвращение Gitaly timeout | Средний |
+
+## Граничные случаи и ограничения
+
+### Технические лимиты
+
+| Параметр | Лимит | Рекомендация |
+| :--- | :--- | :--- |
+| Кэшей на задачу | 4 | Используйте минимально необходимое количество |
+| Файлов в `cache:key:files` | 2 (Gitaly лимит) | Оставьте только lock-файлы |
+| `fallback_keys` | 5 (GitLab 16.0+) | Достаточно для большинства сценариев |
+| Размер кэша | Ограничен диском Runner'а или S3 bucket | Настройте Lifecycle в S3 |
+| `prefix` в `key:files` | Без лимита | Используйте короткие префиксы |
+
+### Особые сценарии
+
+**`cache:key:files` с пустым файлом:**
+```yaml
+# Проблема: если package-lock.json пуст или отсутствует, хеш будет детерминированным
+# и кэш НЕ обновится при изменении зависимостей
+# Решение: добавьте проверку в before_script
+before_script:
+  - test -s package-lock.json || (echo "ERROR: lock file missing" && exit 1)
+```
+
+**Изоляция кэша в матричных сборках:**
+```yaml
+# Проблема: все матричные задачи делят один кэш
+# Решение: уникальный ключ для каждой комбинации
+test:
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.10", "3.11", "3.12"]
+  cache:
+    key: py${PYTHON_VERSION}-deps  # Уникальный ключ
+    paths:
+      - .venv/
+```
+
+**Кэш и `interruptible: false`:**
+```yaml
+# Проблема: прерванная задача не сохраняет кэш
+# Решение: используйте cache:when: always (осторожно)
+cache:
+  key: build-$CI_COMMIT_REF_SLUG
+  when: always  # Сохраняет кэш даже при падении
+```
+
+**Кэширование в шардах:**
+```yaml
+# Проблема: шарды перезаписывают кэш друг друга
+# Решение: уникальный ключ с индексом шарда
+test:
+  parallel: 8
+  cache:
+    key: test-shard${CI_NODE_INDEX}-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cache/
+```
+
+**Множественные lock-файлы:**
+```yaml
+# Проблема: несколько lock-файлов с разными хешами
+# Решение: используйте fallback_keys или комбинируйте ключи
+cache:
+  key:
+    files:
+      - package-lock.json
+      - Gemfile.lock
+    prefix: deps
+  paths:
+    - node_modules/
+    - vendor/ruby
+# Проблема: если ОДИН из файлов не изменился, кэш НЕ обновится
+# Решение: используйте отдельные кэши для разных экосистем
+```
+
+**Кэширование в Docker-контейнерах:**
+```yaml
+# Проблема: Docker-контейнер ephemeral, локальный кэш недоступен
+# Решение: используйте Distributed Cache (S3/MinIO)
+cache:
+  key: deps-$CI_COMMIT_REF_SLUG
+  paths:
+    - node_modules/
+# Настройка Runner'а в config.toml:
+# [cache]
+# Type = "s3"
+# Shared = true
+# [cache.s3]
+# BucketName = "gitlab-runner-cache"
+```
+
 ## Дополнительная информация
 
 ### Связанные документы
 
-- **Ключи и политики:** [настройка cache:key](./cache_keys.md)
-- **Концепции и механизмы:** [обзор кэширования](./caching_overview.md)
-- **Рекомендации:** [лучшие практики](./cache_best_practices.md)
+- **[Ключи и политики](./cache_keys.md)** — детальный справочник параметров `cache:key`.
+- **[Обзор кэширования](./caching_overview.md)** — архитектура, уровни хранения, сравнение с артефактами.
+- **[Лучшие практики](./cache_best_practices.md)** — детальный разбор Gitaly Load и стратегий.
+- **[Артефакты в GitLab CI](./gitlab_ci_artifacts.md)** — передача данных между стадиями.
+- **[Матричные сборки и сериализация](../workflow_rules/matrix_builds_and_serialization.md)** — изоляция кэша в матричных задачах.

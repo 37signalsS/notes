@@ -99,6 +99,7 @@ VictoriaMetrics является стандартом де-факто для д�
 
 * **`vmagent`** — агент для сбора метрик (scraper). Может заменять Prometheus. Поддерживает фильтрацию/переименование меток, буферизацию данных на диске (persistent queue) при обрыве связи с центральным хранилищем, streaming aggregation (Enterprise) и приём данных по OTLP/InfluxDB/Graphite.
 * **`vmalert`** — выполнение правил алертинга и записи. Может использовать в качестве источника данных как метрики VictoriaMetrics, так и логи из VictoriaLogs (LogsQL) и трейсы VictoriaTraces. Подробнее: [`vmalert_overview.md`](./vmalert_overview.md).
+* **`vmestimator`** — оценка кардинальности в реальном времени на этапе сбора. Позволяет получать алерты до наступления взрыва кардинальности. Подробнее: [`vmestimator.md`](./vmestimator.md).
 * **`vmctl`** — утилита для миграции данных из Prometheus (snapshot), InfluxDB, OpenTSDB, Thanos, Mimir и между инстансами VictoriaMetrics (native mode). Полезен для переноса исторических данных без простоя.
 * **`vmbackup` / `vmrestore`** — утилиты для инкрементального резервного копирования в S3, GCS, Azure Blob Storage и локальное хранилище.
 * **VictoriaMetrics Operator** — Kubernetes-оператор для автоматизации деплоя, масштабирования, rolling update, бэкапов и управления ресурсами (VMSingle, VMCluster, VMAgent, VMAlert, VMRule, VMServiceScrape, VMPodScrape и др.). Поддерживает миграцию из Prometheus CRDs.
@@ -198,5 +199,6 @@ VictoriaMetrics рекомендуется использовать в Kubernete
 Смотрите также:
 * [VictoriaLogs: внутреннее устройство](./victorialogs_internals.md) — детальный разбор хранения и обработки логов;
 * [vmalert](./vmalert_overview.md) — подробный обзор компонента алертинга;
+* [vmestimator](./vmestimator.md) — оценка кардинальности в реальном времени;
 * [Управление правилами в K8s](./vmalert_rules_management_with_manifests.md) — декларативный подход к алертингу;
 * [Prometheus: обзор](../Prometheus/overview.md) — основа экосистемы метрик.

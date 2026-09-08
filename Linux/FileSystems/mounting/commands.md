@@ -65,6 +65,7 @@
     sudo blkid /dev/sda1
     # → /dev/sda1: UUID="a1b2..." TYPE="ext4" PARTUUID="c3d4..."
     ```
+    Подробное объяснение различия между UUID и PARTUUID, их изменение при пересоздании ФС и влияние на загрузку описано в [Разделы и файловые системы — UUID vs PARTUUID](../partitions_and_filesystems.md#UUID-vs-PARTUUID-ключевое-различие).
 *   **lsblk**: Древовидный обзор устройств.
     ```bash
     lsblk -f

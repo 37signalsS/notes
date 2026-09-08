@@ -169,6 +169,159 @@ deploy_to_prod:
 3.  После ручной проверки в Jira, система отправляет `POST` запрос к GitLab Deployments API для одобрения.
 4.  GitLab разблокирует задание и Runner приступает к выполнению.
 
+### Сценарий 5: Деплой Terraform инфраструктуры с environment
+
+Управление инфраструктурой через Terraform с привязкой к окружениям GitLab.
+
+```yaml
+stages:
+  - plan
+  - apply
+
+.terraform_base:
+  image: hashicorp/terraform:1.9
+  before_script:
+    - cd terraform/
+    - terraform init -backend-config="backend.hcl"
+
+terraform_plan:
+  extends: .terraform_base
+  stage: plan
+  script:
+    - terraform plan -out=tfplan -var-file="production.tfvars"
+  artifacts:
+    paths:
+      - terraform/tfplan
+    expire_in: 1 day
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+terraform_apply:
+  extends: .terraform_base
+  stage: apply
+  script:
+    - terraform apply -auto-approve tfplan
+  dependencies:
+    - terraform_plan
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+```
+
+### Сценарий 6: Деплой Ansible playbook с environment isolation
+
+Запуск Ansible playbooks с изоляцией секретов по окружениям.
+
+```yaml
+stages:
+  - validate
+  - deploy
+
+ansible_lint:
+  stage: validate
+  image: cytopia/ansible-lint
+  script:
+    - ansible-lint roles/
+    - ansible-lint playbooks/
+
+ansible_deploy:
+  stage: deploy
+  image: cytopia/ansible:2.14
+  script:
+    - ansible-playbook -i inventory/${CI_ENVIRONMENT_NAME} playbooks/deploy.yml
+  environment:
+    name: staging
+    url: https://staging.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+ansible_deploy_prod:
+  stage: deploy
+  image: cytopia/ansible:2.14
+  script:
+    - ansible-playbook -i inventory/${CI_ENVIRONMENT_NAME} playbooks/deploy.yml
+  environment:
+    name: production
+    url: https://app.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+```
+
+### Сценарий 7: Откат базы данных через环境-scoped secrets
+
+Безопасный откат БД с использованием секретов, привязанных к конкретному окружению.
+
+```yaml
+stages:
+  - backup
+  - rollback
+
+backup_database:
+  stage: backup
+  image: postgres:16
+  script:
+    - pg_dump -h $DB_HOST -U $DB_USER -d $DB_NAME > backup_$(date +%Y%m%d_%H%M%S).sql
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+rollback_database:
+  stage: rollback
+  image: postgres:16
+  script:
+    - psql -h $DB_HOST -U $DB_USER -d $DB_NAME < backup_${BACKUP_TIMESTAMP}.sql
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  variables:
+    BACKUP_TIMESTAMP: "20240101_120000"  # Указать нужный бэкап
+```
+
+### Сценарий 8: Canary деплой с мониторингом
+
+Прогрессивная раскатка с автоматическим откатом при ошибках.
+
+```yaml
+stages:
+  - deploy
+  - verify
+
+canary_deploy:
+  stage: deploy
+  script:
+    - kubectl set image deployment/my-app my-app=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - kubectl rollout status deployment/my-app --timeout=300s
+  environment:
+    name: canary
+    url: https://canary.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+verify_canary:
+  stage: verify
+  script:
+    - |
+      # Проверка метрик после деплоя
+      ERROR_RATE=$(curl -s "http://prometheus:9090/api/v1/query?query=rate(http_requests_total{status=~'5..',app='my-app'}[5m])" | jq '.data.result[0].value[1]' -r)
+      if (( $(echo "$ERROR_RATE > 0.05" | bc -l) )); then
+        echo "Error rate too high: $ERROR_RATE"
+        kubectl rollout undo deployment/my-app
+        exit 1
+      fi
+  environment:
+    name: canary
+  needs:
+    - canary_deploy
+```
+
 ## Дополнительная информация
 
 ### Интерфейс и аналитика
@@ -181,11 +334,49 @@ deploy_to_prod:
 
 ### Метрики DORA
 
-GitLab использует данные о деплоях в окружения уровня `production` для расчета:
+GitLab использует данные о деплоях в окружениях уровня `production` для расчета:
 - **Deployment Frequency:** Как часто код попадает в продакшн.
 - **Lead Time for Changes:** Время от первого коммита до деплоя в прод.
 - **Change Failure Rate:** Процент деплоев, приведших к инцидентам.
 - **Time to Restore Service:** Среднее время восстановления после сбоя.
+
+### Диагностика и устранение неполадок
+
+#### Типичные ошибки и их решения
+
+| Ошибка | Причина | Решение |
+|:---|:---|:---|
+| `Environment not found` | Окружение не определено в `.gitlab-ci.yml` или удалено | Добавьте директиву `environment` в задание или восстановите окружение. |
+| `Protected environment access denied` | Попытка деплоя в защищенное окружение без прав | Проверьте настройки Protected Environments в Settings > CI/CD. |
+| `on_stop task not found` | Задача остановки не найдена или имеет другое имя | Убедитесь, что `on_stop` ссылается на существующую задачу с `action: stop`. |
+| `auto_stop_in expired` | Временное окружение истекло | Проверьте настройки `auto_stop_in` или продлите окружение через API. |
+| `Kubernetes agent not connected` | GitLab Agent (KAS) не подключен к кластеру | Проверьте статус агента в Operations > Kubernetes. |
+| `Deployment approval pending` | Деплой ожидает одобрения | Проверьте настройки Approval Policies или свяжитесь с approver. |
+
+#### Методы диагностики
+
+```bash
+# Просмотр состояния окружений через API
+curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+  "https://gitlab.example.com/api/v4/projects/${CI_PROJECT_ID}/environments"
+
+# Просмотр истории деплоев
+curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+  "https://gitlab.example.com/api/v4/projects/${CI_PROJECT_ID}/deployments"
+
+# Проверка статуса агента Kubernetes
+kubectl get agents -n gitlab
+```
+
+### Лучшие практики
+
+1. **Всегда настраивайте `on_stop`** для динамических окружений, чтобы избежать перерасхода ресурсов.
+2. **Используйте `auto_stop_in`** для автоматической очистки эфемерных сред.
+3. **Привязывайте секреты к окружениям** через Environment Scope для изоляции.
+4. **Настраивайте Protected Environments** для продакшена с ограничением по ролям.
+5. **Используйте `deployment_tier`** для корректного расчета DORA-метрик.
+6. **Документируйте URL окружений** для удобства доступа команде.
+7. **Регулярно очищайте** неиспользуемые окружения через API или UI.
 
 ### Смотрите также
 

@@ -12,6 +12,22 @@
 
 ---
 
+## Предварительные требования
+
+### Аппаратное обеспечение
+- Любой современный x86_64 или ARM64 процессор с поддержкой SMP (Symmetric Multi-Processing)
+- Рекомендуется NUMA-архитектура для многосокетных систем (2P/4P) или чиплетных процессоров (AMD EPYC, Intel Xeon)
+- Отключение SMT/Hyper-Threading в BIOS для latency-critical workloads (или корректный учет топологии сиблингов)
+
+### Программное обеспеение
+- Linux kernel 5.1+ (для базового `sched_setaffinity`); kernel 5.15+ рекомендуется для `cpuset.cpus.partition`
+- `util-linux` (утилиты `taskset`, `chrt`, `lsns`)
+- `numactl` (пакет `numactl` или `numactl-devel` для NUMA-топологии)
+- `cgroups v2` (модуль ядра `cgroup2`, монтирование `/sys/fs/cgroup` с `cgroup2`)
+- systemd 249+ (для `systemd.cpu_affinity` и `systemd-run --cpuset-cpus`)
+
+---
+
 ## Основные концепции
 
 ### Механизмы привязки в Linux
@@ -45,6 +61,27 @@ cat /sys/devices/system/cpu/cpu*/topology/thread_siblings_list
 ```
 **Пример:** Если `cpu0` и `cpu8` являются сиблингами, для достижения максимальной производительности одного потока ядро `cpu8` должно оставаться свободным.
 
+### Внутреннее устройство affinity в ядре
+
+Ядро Linux хранит маску разрешенных ядер для каждой задачи в поле `cpus_allowed` структуры `task_struct`. Системный вызов `sched_setaffinity(pid, len, mask)` изменяет эту маску, а `sched_getaffinity()` возвращает текущее значение.
+
+**Чтение текущей привязки через `/proc`:**
+```bash
+# Текущая маска affinity в шестнадцатеричном виде
+cat /proc/<PID>/status | grep Cpus_allowed_list
+# → Cpus_allowed_list:  0,2,4
+
+# Эффективная маска с учетом ограничений cgroups
+cat /proc/<PID>/status | grep Cpus_allowed_list
+# → учитывает cpuset родительских групп
+```
+
+**Взаимодействие с балансировщиком:**
+Даже при наличии affinity ядро может мигрировать задачу между разрешенными ядрами для балансировки нагрузки. Полная изоляция от миграции достигается только через:
+1. `cpuset.cpus.exclusive` (ядро 6.x+) — ядра удаляются из домена балансировки (`sched_domain`)
+2. `isolcpus` — статическое исключение ядер из общего планировщика
+3. Отключение `CONFIG_SMP` (однопроцессорные системы) — не рекомендуется для production
+
 ---
 
 ## Программные интерфейсы и инструменты
@@ -55,15 +92,19 @@ cat /sys/devices/system/cpu/cpu*/topology/thread_siblings_list
 ```bash
 # Запустить процесс на ядре 2
 taskset -c 2 ./my_app
+# → (процесс запущен с привязкой к cpu2)
 
 # Изменить привязку работающего процесса (PID 1234) на ядра 0 и 3
 taskset -pc 0,3 1234
+# → pid 1234's current affinity list: 0,3
 
 # Использование шестнадцатеричной маски (0x3 = бинарное 0011 = ядра 0 и 1)
 taskset 0x3 ./my_app
+# → (процесс запущен с привязкой к cpu0-cpu1)
 
 # Показать текущую привязку процесса
 taskset -p 1234
+# → pid 1234's current affinity mask: 0x3
 ```
 
 ### 2. numactl — привязка с учетом топологии
@@ -72,12 +113,20 @@ taskset -p 1234
 ```bash
 # Запустить на ядрах 0-3 с использованием локальной памяти только NUMA-узла 0
 numactl --cpunodebind=0 --membind=0 ./my_app
+# → (процесс привязан к NUMA-ноде 0)
 
 # Привязка к конкретным физическим ядрам
 numactl --physcpubind=0,1,2,3 --membind=0 ./my_app
+# → (используются cpu0-cpu3 и память ноды 0)
 
-# Просмотр топологии системы и «расстояния» между узлами
+# Просмотр топологии системы и «расстояний» между узлами
 numactl --hardware
+# → available: 2 nodes (0-1)
+# → node 0 cpus: 0 1 2 3 4 5 6 7
+# → node 0 size: 32768 MB
+# → node 0 free: 28000 MB
+# → node 1 cpus: 8 9 10 11 12 13 14 15
+# → node 1 distance: 10 21
 ```
 
 ### 3. cpuset (Cgroups v2) — изоляция ресурсов
@@ -89,13 +138,20 @@ sudo mkdir /sys/fs/cgroup/isolated_tasks
 
 # Разрешить ядра 4-7
 echo "4-7" | sudo tee /sys/fs/cgroup/isolated_tasks/cpuset.cpus
+# → 4-7
 
 # Сделать ядра эксклюзивными (Kernel 6.x+)
 # Эти ядра перестанут использоваться общим планировщиком для других задач
 echo "isolated" | sudo tee /sys/fs/cgroup/isolated_tasks/cpuset.cpus.partition
+# → isolated
+
+# Проверка статуса партиции
+cat /sys/fs/cgroup/isolated_tasks/cpuset.cpus.partition
+# → isolated
 
 # Перемещение процесса в группу
 echo 1234 | sudo tee /sys/fs/cgroup/isolated_tasks/cgroup.procs
+# → 1234
 ```
 
 ### 4. Программный интерфейс (C API)
@@ -105,6 +161,7 @@ echo 1234 | sudo tee /sys/fs/cgroup/isolated_tasks/cgroup.procs
 #define _GNU_SOURCE
 #include <sched.h>
 #include <stdio.h>
+#include <unistd.h>
 
 void pin_to_core(int core_id) {
     cpu_set_t cpuset;
@@ -115,6 +172,19 @@ void pin_to_core(int core_id) {
     if (sched_setaffinity(0, sizeof(cpu_set_t), &cpuset) == -1) {
         perror("sched_setaffinity");
     }
+
+    // Проверка результата
+    CPU_ZERO(&cpuset);
+    sched_getaffinity(0, sizeof(cpu_set_t), &cpuset);
+    if (CPU_ISSET(core_id, &cpuset)) {
+        printf("Привязка к ядру %d подтверждена\n", core_id);
+    }
+}
+
+int main() {
+    pin_to_core(2);
+    pause(); // Держим процесс активным
+    return 0;
 }
 ```
 
@@ -126,12 +196,12 @@ void pin_to_core(int core_id) {
 Заменил классический CFS. Благодаря механизму «виртуальных дедлайнов», EEVDF значительно точнее соблюдает задержки (latency) для интерактивных задач. Пиннинг в современных ядрах всё чаще используется не для «борьбы» с планировщиком, а для **гарантии кэш-локальности** и предсказуемости доступа к памяти.
 
 ### Sched_ext (Kernel 6.11+)
-Фреймворк для загрузки планировщиков через eBPF. 
+Фреймворк для загрузки планировщиков через eBPF.
 - Позволяет использовать специализированные планировщики (например, `scx_layered`), которые могут динамически менять стратегии пиннинга в зависимости от типа нагрузки.
 - Оптимизирован для игровых и высоконагруженных интерактивных задач.
 
 ### Гибридные процессоры (Intel P/E-cores)
-В современных ядрах (Linux 6.x+) планировщик учитывает разницу между производительными (P) и энергоэффективными (E) ядрами. 
+В современных ядрах (Linux 6.x+) планировщик учитывает разницу между производительными (P) и энергоэффективными (E) ядрами.
 **Критический нюанс:** Ошибочный пиннинг вычислительно-сложного потока на E-ядро может привести к деградации производительности в 2-4 раза. Всегда проверяйте типы ядер через `lscpu -e`.
 
 ---
@@ -144,24 +214,12 @@ void pin_to_core(int core_id) {
 ```bash
 # Привязка фоновых процессов PostgreSQL к выделенным ядрам (0-3)
 taskset -pc 0-3 $(pgrep -f "postgres: writer|postgres: checkpointer")
+# → pid 12345's current affinity list: 0,1,2,3
+# → pid 12346's current affinity list: 0,1,2,3
 ```
 
 ### 2. Сетевые приложения и DPDK
-В задачах пакетной обработки (Data Plane Development Kit) ядра должны быть полностью изолированы от прерываний ОС и тиков таймера.
-
-**Настройка через GRUB:**
-```bash
-# Изолировать ядра 2-7, отключить тики планировщика (nohz_full) и RCU-коллбэки
-GRUB_CMDLINE_LINUX_DEFAULT="... isolcpus=2-7 nohz_full=2-7 rcu_nocbs=2-7"
-```
-
-**Перенос прерываний сетевой карты:**
-```bash
-# Найти номер прерывания (IRQ) сетевой карты
-grep eth0 /proc/interrupts
-# Привязать IRQ к ядру 0 (маска 0001)
-echo 1 > /proc/irq/[IRQ_NUMBER]/smp_affinity
-```
+В задачах пакетной обработки (Data Plane Development Kit) ядра должны быть полностью изолированы от прерываний ОС и тиков таймера. Полная настройка GRUB, привязка IRQ и NUMA-топология описаны в **[Изоляция CPU](./kernel/cpu_isolation.md)**.
 
 ### 3. Контейнеризация (Kubernetes)
 Использование CPU Manager с политикой `static` для гарантированных ресурсов.
@@ -181,6 +239,107 @@ spec:
 ```
 *Kubelet автоматически применит `cpuset` к контейнеру, физически изолируя его на конкретных ядрах.*
 
+### 4. Systemd-сервисы
+
+Использование директив `CPUAffinity` и `CPUAffinity=` в unit-файлах:
+
+```ini
+# /etc/systemd/system/myapp.service
+[Service]
+ExecStart=/usr/bin/my_app
+CPUAffinity=0 1 2 3
+
+# Или диапазоном
+CPUAffinity=0-3
+```
+
+**Проверка:**
+```bash
+systemctl daemon-reload
+systemctl restart myapp
+# Проверка affinity сервиса
+taskset -pc $(systemctl show -p MainPID --value myapp)
+# → pid 1234's current affinity list: 0,1,2,3
+```
+
+**Для разовых задач через `systemd-run`:**
+```bash
+# Запуск таймера или фоновой задачи с жестким cpuset
+sudo systemd-run --scope --cpuset-cpus=4-7 \
+  /usr/bin/backup_script.sh
+```
+
+### 5. Docker (standalone)
+
+```bash
+# Привязка контейнера к ядрам 0-3
+docker run -d \
+  --cpuset-cpus="0-3" \
+  --cpus="4" \
+  --memory=8g \
+  --name db-postgres \
+  postgres:17-alpine
+
+# Проверка изнутри контейнера
+docker exec db-postgres taskset -cp $(pgrep -o postgres)
+# → current affinity: 0-3
+
+# NUMA-aware запуск через numactl
+numactl --cpunodebind=0 --membind=0 \
+  docker run -d --name db-postgres postgres:17-alpine
+```
+
+### 6. Виртуализация (KVM/VirtualBox)
+
+**KVM/Libvirt (XML-конфигурация):**
+```xml
+<cputune>
+  <vcpupin vcpu='0' cpuset='1'/>
+  <vcpupin vcpu='1' cpuset='2'/>
+  <emulatorpin cpuset='0-1'/>
+</cputune>
+```
+Подробнее о настройке XML, NUMA-тюнинге и проверке см. в **[KVM — Обзор и архитектура](../../Virtualization/kvm/overview.md)** и **[Оптимизация KVM (2025–2026)](../../Virtualization/kvm/performance_tuning_2026.md)**.
+
+**VirtualBox (`VBoxManage`):**
+```bash
+# Пиннинг vCPU ВМ (требует VirtualBox 6.1+)
+VBoxManage modifyvm "vm_name" \
+  --cpuid-portability-level 0 \
+  --cpus 2 \
+  --cpuexecutioncap 100
+
+# Привязка конкретных CPU через HOST-only (работает на хосте)
+# Примечание: VirtualBox не предоставляет прямой API для vcpupin как KVM;
+# для production используйте KVM/Libvirt.
+```
+
+### 7. Пакетные задания и фоновые задачи
+
+```bash
+# Запуск nightly-бэкапа на ядрах 4-7 через systemd-run
+sudo systemd-run --on-calendar="daily" --scope \
+  --cpuset-cpus=4-7 \
+  /usr/local/bin/backup.sh
+
+# Проверка активных cpuset-групп
+systemd-cgls /sys/fs/cgroup/cpuset
+```
+
+### 8. Задачи реального времени (RT)
+
+```bash
+# Запуск RT-задачи с привязкой к ядру 0 и приоритетом SCHED_FIFO 50
+sudo chrt -f 50 taskset -c 0 ./rt_worker
+
+# Проверка политики и affinity
+chrt -p $(pgrep rt_worker)
+# → pid 1234's current scheduling policy: SCHED_FIFO
+# → pid 1234's current scheduling priority: 50
+taskset -pc $(pgrep rt_worker)
+# → pid 1234's current affinity list: 0
+```
+
 ---
 
 ## Мониторинг и диагностика
@@ -192,12 +351,63 @@ spec:
 | `lscpu -e` | Детальная топология: сокеты, узлы NUMA, кэши L1-L3 и типы ядер (P/E). |
 | `perf sched latency` | Измерение задержек планировщика для конкретных ядер. |
 | `htop` | Настройка `Columns` -> `PROCESSOR` позволяет визуально отслеживать миграцию. |
+| `pidstat -w 1` | Мониторинг переключений контекста (cswch/s и nvcswch/s). |
+| `numactl --hardware` | Просмотр NUMA-топологии и расстояний между узлами. |
+| `cat /proc/<PID>/status | grep Cpus_allowed_list` | Текущая и эффективная маска affinity процесса. |
 
 ---
 
-## Дополнительная информация
+## Валидация и проверка
 
-### Поиск и устранение неисправностей
+После применения pinning убедитесь, что affinity действует:
+
+```bash
+# 1. Проверка маски через taskset
+taskset -pc <PID>
+# → pid 1234's current affinity list: 0-3
+
+# 2. Проверка через /proc
+grep Cpus_allowed_list /proc/<PID>/status
+# → Cpus_allowed_list:  0-3
+
+# 3. Проверка, что процесс НЕ мигрирует (мониторинг 10 секунд)
+watch -n1 "ps -o pid,psr,comm -p <PID>"
+# → PSR должен оставаться постоянным
+
+# 4. Проверка NUMA-локальности (если использовался numactl)
+numastat -p <PID>
+# → показат распределение памяти по NUMA-узлам
+
+# 5. Проверка отсутствия миграций через perf
+sudo perf stat -e sched:sched_migrate -p <PID> sleep 5
+# → 0 sched_migrate (если affinity корректный)
+```
+
+---
+
+## Безопасность и ограничения
+
+- **`CAP_SYS_NICE`:** Для установки affinity к чужим процессам или повышения приоритета требуется capability `CAP_SYS_NICE` (обычно только root). В контейнерах она передается через `--cap-add SYS_NICE`.
+- **YAMA LSM:** На системах с включенным YAMA (`ptrace_scope=2` или выше) `sched_setaffinity` на чужие процессы может быть ограничен. Проверьте: `cat /proc/sys/kernel/yama/ptrace_scope`.
+- **Rootless-контейнеры:** В Podman/Docker без root контейнеры могут наследовать ограничения cpuset родительской группы, но не могут выходить за её пределы.
+- **Конфликт с `isolcpus`:** Если ядро исключено через `isolcpus`, `taskset` может привязать процесс к нему, но общий планировщик не будет назначать на него другие задачи. Это может привести к «простаиванию» выделенных ядер.
+- **SMT-ловушка:** Привязка к логическим ядрам одного физического ядра не дает ожидаемого прироста из-за contention на исполнительных блоках. Используйте `lscpu -e` для проверки топологии.
+- **Наследование в cgroups:** Процесс, перемещенный в cgroup с `cpuset.cpus`, автоматически наследует это ограничение для всех потомков. Выход из родительской группы невозможен без явного изменения `cgroup.procs`.
+- **Виртуализация:** В KVM/QEMU `vcpupin` привязывает vCPU хоста к физическим ядрам, но не исключает влияние гипервизора (QEMU threads, ksoftirqd). Для полной изоляции дополнительно настройте `emulatorpin` и `iothreadpin`.
+
+---
+
+## Производительность и накладные расходы
+
+- **Локальность кэша:** Привязка к одному ядру сохраняет данные в L1/L2/L3 кэше. Оценка выигрыша: 5–30% для вычислительно-сложных workloads.
+- **Отсутствие миграции:** Исключение переключений контекста (context switches) снижает задержки на 10–50% в latency-sensitive приложениях.
+- **NUMA-штраф:** Доступ к удаленной памяти (remote node) обходится в 1.5–2 раза дороже локального. Привязка к «чужому» NUMA-узлу без `numactl --membind` деградирует производительность.
+- **SMT-overhead:** При отсутствии SMT пиннинг к физическому ядру дает максимальный эффект. При включенном SMT эффект сокращается на 30–50% из-за разделения ресурсов.
+- **Нагрузка на планировщик:** Чрезмерно мелкое деление ядер между приложениями увеличивает нагрузку на `sched_domain` и может снизить общую пропускную способность.
+
+---
+
+## Поиск и устранение неисправностей
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
@@ -205,10 +415,47 @@ spec:
 | **Высокий Jitter на ядре** | Прерывания (IRQ) попадают на изолированное ядро. | Проверьте `/proc/interrupts`, настройте `irqbalance --banlist`. |
 | **Снижение скорости I/O** | Пиннинг на другой NUMA-узел относительно HBA/NIC. | Используйте `numactl -H` и привязывайте к ядрам, «близким» к шине PCI. |
 | **Конфликт SMT** | Потоки конкурируют за ресурсы одного физ. ядра. | Привязывайте к сиблингам (например, 0 и 8) либо отключайте SMT в BIOS. |
+| **Процесс мигрирует между ядрами** | Ядра не в `isolated` cgroup, балансировщик перераспределяет нагрузку. | Используйте `cpuset.cpus.exclusive` или `isolcpus`. |
+| **Ошибка `EINVAL` в `sched_setaffinity`** | Маска содержит ядро, не поддерживаемое системой (offline или отсутствующее). | Проверьте `lscpu | grep -i offline`. |
+| **Высокий `si%` на закрепленном ядре** | SoftIRQ (сетевые пакеты) обрабатываются на том же ядре. | Перенесите IRQ affinity на housekeeping-ядра через `/proc/irq/*/smp_affinity`. |
+| **Docker игнорирует `--cpuset-cpus`** | Родительский cgroup (systemd или docker) имеет узкий `cpuset.cpus`. | Проверьте `/sys/fs/cgroup/cpuset/system.slice/cpuset.cpus`. |
+| **KVM: vCPU мигрирует на другие pCPU** | Не настроен `vcpupin` или `emulatorpin`, ksoftirqd использует те же ядра. | Добавьте `<vcpupin>` в XML; проверьте `/proc/interrupts` на хосте. |
+| **`taskset` не работает в rootless-контейнере** | Контейнер не имеет доступа к `/proc` хоста или `CAP_SYS_NICE` отсутствует. | Добавьте `--cap-add SYS_NICE` или настройте cpuset на уровне демона. |
+
+---
+
+## Рекомендации
+
+- **Housekeeping ядра:** Всегда резервируйте минимум 2 ядра (0,1) для housekeeping на системах с < 8 ядрами, минимум 4 ядра на больших системах.
+- **NUMA-локальность:** Привязывайте IRQ и процессы к ядрам той же NUMA-ноды, что и устройство/память.
+- **Верификация топологии:** Всегда проверяйте `lscpu -e` и `cat /sys/devices/system/cpu/cpu*/topology/thread_siblings_list` перед пиннингом.
+- **Инкрементальное применение:** Применяйте pinning постепенно, измеряя задержки (`cyclictest`, `perf sched latency`) до и после изменений.
+- **Измеряйте, а не гадайте:** Используйте `perf`, `bpftrace` или `ftrace` для валидации P99/Max latency.
+- **Вероятностная проверка:** Запускайте нагрузку 10–30 минут; краткие тесты (< 1 мин) могут не захватить периодические события (TPS, trim).
+- **Откатываемость:** Сохраняйте исходные конфигурации GRUB/systemd в VCS; пиннинг может сломать совместимость с некоторыми драйверами.
+- **SMT:** Для latency-critical workloads отключайте SMT в BIOS. Если это невозможно, не размещайте критичные потоки на sibling-ядрах.
+- **cgroups > taskset:** Для production-систем предпочитайте `cpuset` (cgroups) или systemd-directives утилите `taskset`, так как они обеспечивают наследование и интеграцию с оркестраторами.
+
+---
+
+## Особые случаи
+
+- **Nested PID Namespace:** В контейнере с новым PID namespace `taskset` работает корректно, но видит только ядра, разрешенные родительским cgroup `cpuset`.
+- **pivot_root/chroot:** После смены корневого каталога `/proc` остается примонтирован из хоста, поэтому `taskset` и `cat /proc/<PID>/status` продолжают работать без изменений.
+- **MS_SHARED mounts:** Привязка процесса к ядрам не влияет на монтирование общих файловых систем. Однако при выполнении тяжелого I/O на общем ресурсе (NFS, GFS2) соседние ядра могут создавать contention на уровне блочного слоя.
+- **YAMA ptrace_scope:** При `ptrace_scope=2` или `3` попытка `sched_setaffinity` на чужой процесс из непривилегированного контейнера завершится `EPERM`, даже если процесс принадлежит тому же пользователю.
+- **Интерфейс `lo`:** Пиннинг не влияет на loopback-интерфейс — все пакеты `lo` обрабатываются на том ядре, где был вызван `send()`/`recv()`.
+- **POSIX Message Queues:** Очереди сообщений (`mq_*`) не наследуют affinity. После открытия дескриптора `mqd_t` обработка сообщений происходит на любом доступном ядре.
+- **Ядерный модуль (`CONFIG_SMP`):** Если ядро собрано без SMP, affinity не работает — система однопроцессорная, и все задачи всегда выполняются на единственном ядре.
+- **Горячее выключение ядер (CPU Hotplug):** Ядро, выведенное через `echo 0 > /sys/devices/system/cpu/cpuX/online`, исчезает из всех масок affinity. При последующем включении (`echo 1 > ...`) маски не восстанавливаются автоматически.
+- **`adjtimex`/`clock_adjtime`:** Привязка процесса не влияет на настройку часов. Однако на системах с `nohz_full` вызовы `clock_gettime` на изолированных ядрах имеют меньшую задержку за счет отсутствия тиков.
+- **Циклические зависимости cgroup:** Если группа A является потомком группы B, и B имеет `cpuset.cpus=0-1`, то A не может получить доступ к cpu2, даже если явно указать `cpuset.cpus=2`. Родительские ограничения всегда имеют приоритет.
+
+---
+
+## Дополнительная информация
 
 ### Связанные темы
-- **[Изоляция CPU](./kernel/cpu_isolation.md)** — глубокая настройка параметров загрузки ядра.
-- **[Контрольные группы (cgroups)](./cgroups.md)** — современное управление ресурсами.
-- **[Оптимизация памяти (Memory Tuning)](./memory/performance_tuning.md)** — связь топологии CPU и RAM.
-- **[Прерывания (IRQ)](./kernel/interrupts.md)** — детальная настройка очередей.
-- **[Диагностика CPU](../Diagnostics/Hardware/cpu_info.md)** — сбор информации об оборудовании.
+- **[Контрольные группы (cgroups)](./cgroups.md)** — иерархическое управление ресурсами и `cpuset`.
+- **[Изоляция CPU](./kernel/cpu_isolation.md)** — глубокая настройка `isolcpus`, `nohz_full` и динамических партиций.
+- **[Диагностика CPU](../Diagnostics/Hardware/cpu_info.md)** — топология, кэши и аппаратные возможности процессора.

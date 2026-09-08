@@ -34,7 +34,7 @@
 
 ### Высокая доступность и производительность (HA)
 
-Для обеспечения непрерывности работы (High Availability) cert-manager должен быть развернут в нескольких репликах.
+Для обеспечения непрерывности работы (High Availability) cert-manager должен быть развернут в нескольких репликах. Дополнительно к репликам критически важны **PodDisruptionBudget** (защита от плановых обслуживаний узлов) и явные лимиты памяти.
 
 | Компонент | HA-механизм | Рекомендация |
 | :--- | :--- | :--- |
@@ -42,7 +42,28 @@
 | **Webhook** | Load Balancing | 3 реплики. Критично для доступности API (создание ресурсов). |
 | **CA Injector** | Leader Election | 2 реплики. Отвечает за инжекцию CA в CRD и Webhooks. |
 
-**Ресурсы (Resources):** При большом количестве сертификатов (>500) увеличьте лимиты памяти для контроллера, так как он держит кэш ресурсов в памяти.
+**Ресурсы (Resources):** При большом количестве сертификатов (>500) увеличьте лимиты памяти для контроллера, так как он держит кэш ресурсов в памяти. Для webhook критична минимальная задержка (latency-sensitive), поэтому выделяйте ему отдельные requests/limits.
+
+#### PodDisruptionBudget (PDB)
+
+PDB защищает cert-manager от одновременного выселения всех реплик при `kubectl drain` или обновлении узлов кластера.
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cert-manager-webhook-pdb
+  namespace: cert-manager
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: cert-manager
+      app.kubernetes.io/component: webhook
+```
+
+*   **Особенность:** PDB блокирует только добровольные прерывания (eviction). При аварийном падении узла PDB не применяется.
+*   **Конфликт с Cluster Autoscaler:** Если `minAvailable` слишком жесткий (100%), Cluster Autoscaler не сможет завершить масштабирование узла. Используйте `maxUnavailable: 1` для webhook в высоконагруженных кластерах.
 
 ### Безопасность и управление доступом (RBAC)
 
@@ -56,6 +77,32 @@
 Начиная с версии **v1.20**, Helm-чарт поддерживает нативные `NetworkPolicy`.
 *   **Egress:** Ограничьте доступ контроллера только к API-серверу Kubernetes и эндпоинтам центров сертификации (Let's Encrypt, Vault).
 *   **Ingress:** Разрешите входящий трафик к Webhook только из `kube-system` (API-сервер).
+
+---
+
+### Конфигурация Webhook
+
+Webhook cert-manager валидирует ресурсы при создании и обновлении. Неправильная конфигурация может привести к блокировке всего кластера.
+
+*   **failurePolicy:** Рекомендуется значение `Fail` (по умолчанию в новых версиях). При `Ignore` невалидные сертификаты могут попасть в кластер.
+*   **timeoutSeconds:** По умолчанию webhook ожидает ответ 10 секунд. При большой нагрузке увеличьте до `30`, но не более — иначе API-сервер будет держать соединения.
+*   **Порт метрик:** Webhook экспортирует метрики на порту `9402` (Prometheus формат). Подробнее о настройке алертов: **[Cert-manager: Операции](./operations.md)**.
+
+### Шифрование секретов и защита приватных ключей
+
+Приватные ключи CA и сертификаты хранятся в Kubernetes Secrets. Без дополнительных мер они защищены только RBAC и etcd-шифрованием (при наличии EncryptionConfiguration).
+
+*   **EncryptionConfiguration:** Обязательно включите шифрование `Secrets` на уровне etcd для Production-кластеров.
+*   **CSI-драйвер cert-manager (v1.14+):** Генерирует ключи в памяти узла и хранит их в CSI-volume. Приватный ключ никогда не попадает в etcd. Это критично для высокосекретных сред.
+*   **RBAC:** Ограничьте доступ к namespace `cert-manager` только администраторами PKI. Секреты с CA-ключами должны быть доступны минимуму сервисных аккаунтов.
+
+### Мониторинг и аудит
+
+Для proactive администрирования необходимо отслеживать не только метрики, но и события Kubernetes.
+
+*   **События (Events):** cert-manager генерирует события `Reason: Readiness` и `Reason: Renewal` при изменении состояния сертификатов. Анализ событий позволяет выявлять проблемы до истечения срока.
+*   **Аудит API-сервера:** Включите audit log для ресурсов `cert-manager.io/v1`. Это позволяет отследить, кто создал или изменил Issuer.
+*   **Prometheus:** Метрики экспортируются на порту `9402`. Базовый PrometheusRule приведен в **[Cert-manager: Операции](./operations.md)**.
 
 ---
 
@@ -127,6 +174,78 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   --set global.networkPolicy.enabled=true
 ```
 
+### Защита от плановых обслуживаний (PodDisruptionBudget)
+
+PDB предотвращает одновременное выселение всех реплик cert-manager при обновлении узлов или drain. Без PDB webhook может стать недоступен, блокируя создание любых ресурсов в кластере.
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cert-manager-webhook-pdb
+  namespace: cert-manager
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: cert-manager
+      app.kubernetes.io/component: webhook
+```
+
+*   **Для air-graded сред:** Если используется `maxUnavailable`, убедитесь, что значение не превышает количество реплик webhook.
+*   **Конфликт с Cluster Autoscaler:** PDB с `minAvailable: 100%` блокирует масштабирование узлов. Для кластеров с CA используйте `maxUnavailable: 1`.
+
+### Управление ресурсами компонентов
+
+При больших нагрузках (>1000 сертификатов) cert-manager требует явных лимитов памяти, особенно контроллер и webhook.
+
+```yaml
+# Пример ресурсов для контроллера через values.yaml (Helm)
+controller:
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+webhook:
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "512Mi"
+      cpu: "250m"
+```
+
+*   **QoS:** Для webhook установите `requests == limits` для гарантированного QoS `Guaranteed`. Это защищает webhook от OOM Kill при пиковых нагрузках.
+*   **Диагностика нехватки памяти:** Если контроллер перезапужается с `OOMKilled`, увеличивайте лимиты постепенно и мониторьте `container_memory_working_set_bytes`.
+
+### Аудит событий cert-manager
+
+Анализ событий Kubernetes позволяет выявлять проблемы до истечения срока действия сертификатов.
+
+```bash
+# Мониторинг событий Readiness и Renewal в реальном времени
+kubectl get events -n production --field-selector reason=Readiness,reason=Renewal --watch
+
+# Поиск всех событий cert-manager за последний час
+kubectl get events -A --field-selector involvedObject.apiVersion=cert-manager.io/v1 --sort-by='.lastTimestamp'
+
+# Аудит: кто создал или изменил Issuer
+kubectl get clusterissuer -o json | jq '.items[] | {name: .metadata.name, managedFields: .metadata.managedFields}'
+```
+
+### Восстановление после сбоя (Disaster Recovery)
+
+Потеря CA-секретов (приватных ключей) делает невозможным выпуск новых сертификатов. Подробный алгоритм восстановления и проверка бэкапов описаны в **[Cert-manager: Операции](./operations.md)**.
+
+### Работа в air-gapped средах
+
+В изолированных кластерах cert-manager не может обращаться к публичным ACME-серверам. Используйте внутренние Issuer (Vault, self-signed, CA) и trust-manager для распространения CA-бандлов. Сценарии развертывания: **[Приватный CA: Сценарии](../Private_CA/scenarios.md#сценарий-9-работа-в-изолированной-среде-air-gapped)**.
+
 ---
 
 ## Дополнительная информация
@@ -141,6 +260,26 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 
 В новых версиях администрирование упрощается за счет **ACME Renewal Information (ARI)**. Контроллер сам определяет оптимальное время продления, основываясь на данных от CA.
 *   **Совет:** При переходе на v1.21+ постепенно удаляйте поле `renewBefore` из пользовательских ресурсов `Certificate`, чтобы полностью переключиться на логику ARI.
+
+### Ограничения и известные проблемы
+
+*   **etcd-риски:** cert-manager не хранит историю Secret'ов. При случайном удалении Secret восстановление возможно только из внешнего бэкапа или повторным запросом в CA.
+*   **ReferenceGrant (Gateway API):** Если `Secret` находится в другом namespace, требуется явный `ReferenceGrant`. Без него Gateway не увидит сертификат.
+*   **Rate Limits Let's Encrypt:** При массовой регенерации сертификатов используйте Staging-окружение. Production Rate Limit — 50 дубликатов домена в неделю.
+*   **Версия 1.21+:** Удалены права на создание ServiceAccount токенов из стандартного чарта. Для интеграции с AWS IRSA или GCP Workload Identity требуется ручная настройка RBAC.
+
+### Best practices для Production
+
+1.  **Используйте ClusterIssuer для общих CA:** Централизуйте управление учетными данными и снижайте риск утечки ключей из-за множества Issuer'ов в разных namespace.
+2.  **Предпочитайте ECDSA/Ed25519:** Алгоритм `ECDSA-P256` обеспечивает высокую производительность и эквивалентную безопасность по сравнению с RSA 2048. Ed25519 еще компактнее и быстрее.
+3.  **Настраивайте `revisionHistoryLimit`:** В высоконагруженных кластерах явно задавайте `revisionHistoryLimit: 5` для `CertificateRequest`, чтобы контролировать количество объектов в etcd.
+4.  **Включайте `ownerReference`:** Флаг `--enable-certificate-owner-ref=true` автоматически удаляет Secret при удалении Certificate, предотвращая "мусор" в etcd.
+5.  **Используйте Staging для тестов:** Все изменения политик Issuer и ротацию CA тестируйте на Let's Encrypt Staging.
+6.  **Настройте алерты:** Минимум — алерт на истечение сертификатов (<7 дней) и недоступность webhook.
+7.  **Бэкап CA-секретов:** Храните бэкапы приватных ключей CA в зашифрованном виде вне кластера. Подробнее: **[Cert-manager: Операции](./operations.md)**.
+8.  **Сетевая изоляция:** Используйте `NetworkPolicy` для ограничения egress контроллера только необходимыми эндпоинтами.
+9.  **CSI-драйвер для высокосекретных сред:** Генерация ключей в памяти узла исключает хват приватных ключей в etcd.
+10. **Аудит:** Включите audit log для API-сервера с фокусом на ресурсы `cert-manager.io/v1`.
 
 ### Смотрите также
 

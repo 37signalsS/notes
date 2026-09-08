@@ -492,24 +492,7 @@ sudo conntrack -L | head -20
 
 **Симптомы:** После применения правил файрвола теряется SSH-соединение.
 
-**Причины:**
-- Блокировка SSH-трафика правилом с политикой DROP
-- Неправильный порядок правил (DROP выше ACCEPT для SSH)
-- Применение правил без предварительной проверки
-
-**Решение:**
-```bash
-# Если есть физический/консольный доступ:
-sudo iptables -F
-# или
-sudo nft flush ruleset
-
-# Профилактика: используйте таймер при тестировании
-sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT && (sleep 60 && sudo iptables -D INPUT -p tcp --dport 22 -j ACCEPT) &
-
-# Для nftables: применение с автоматическим откатом
-sudo nft -f /etc/nftables.conf && echo "OK" || (sleep 60 && sudo nft flush ruleset)
-```
+**Решение и профилактика:** подробно описаны в [nftables — безопасная настройка на удалённом сервере](../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md#безопасная-настройка-nftables-на-удалённом-сервере).
 
 #### Проблема 2: Не работает доступ после перезагрузки
 

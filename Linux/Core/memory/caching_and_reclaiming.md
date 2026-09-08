@@ -14,6 +14,9 @@
 * **MGLRU (Multi-Gen LRU)**: Многопоколенный алгоритм LRU (ядра 6.1+). Заменяет бинарные списки Active/Inactive на набор "поколений", что значительно точнее отражает реальную активность использования памяти и снижает нагрузку на CPU.
 * **Refault**: Ситуация, когда страница была недавно вытеснена, но потребовалась снова. Указывает на слишком агрессивное вытеснение или нехватку RAM (**Thrashing**).
 * **Shrinkers**: Механизмы обратного вызова (callbacks) в ядре, позволяющие подсистемам (например, Slab-аллокатору) освобождать свою память (кэши инод, дендриев) при дефиците ресурсов.
+* **Zones (Зоны памяти)**: Логическое разделение физической RAM на диапазоны адресов. На x86_64: `ZONE_DMA` (0–16 МБ), `ZONE_DMA32` (16 МБ–4 ГБ), `ZONE_NORMAL` (4 ГБ–значение зависит от ядра), `ZONE_HIGHMEM` (>896 МБ на 32-битных системах; на x86_64 с CONFIG_HIGHMEM64G — до 64 ГБ). Каждая зона имеет собственные водяные знаки и списки LRU. Reclaim происходит независимо в каждой зоне.
+* **Compaction (Компакция)**: Процесс дефрагментации памяти, при котором ядро объединяет разрозненные страницы в более крупные contiguous-блоки для успешного выделения HugePages или Order-1+ страниц. Ведет к `compact_stall` и `compact_success` в `/proc/vmstat`. Проактивная компакция (`/proc/sys/vm/compact_memory`) запускается ядром фоном.
+* **Readahead (Упреждающее чтение)**: Механизм ядра, который заранее загружает данные в Page Cache при последовательном доступе к файлу. Размер управляется через `/sys/block/<dev>/queue/read_ahead_kb` (по умолчанию 128 КБ). Для случайного I/O (СУБД) readahead следует отключать.
 
 ## Основные концепции
 
@@ -72,9 +75,144 @@
 3. **Проактивное освобождение (Cgroup v2)**:
    - Через интерфейс `memory.reclaim` в cgroup v2 можно принудительно заставить ядро освободить заданный объем памяти для группы процессов, не дожидаясь системного дефицита.
 
-### Механизм Watermark Boosting
-При обнаружении сильной фрагментации или резких всплесков аллокаций ядро может временно "поднять" водяные знаки (`boost`), чтобы заставить `kswapd` работать агрессивнее и подготовить свободные страницы заранее.
-**Рекомендация 2025**: На многих нагруженных системах этот механизм вызывает внезапные "swap storms". Рекомендуется отключать его: `vm.watermark_boost_factor = 0`.
+### Зоны памяти и per-zone reclaim
+
+Физическая RAM делится на зоны (Zones), каждая из которых обслуживает определенный диапазон адресов и имеет собственные водяные знаки. На x86_64:
+- **ZONE_DMA** (0–16 МБ): Для устройств, не поддерживающих 32-битную адресацию (ISA, ранние PCI).
+- **ZONE_DMA32** (16 МБ–4 ГБ): Для 32-битных DMA-устройств (сетевые карты, RAID-контроллеры).
+- **ZONE_NORMAL** (4 ГБ–порог): Основная зона для ядра и пользовательских пространств. На x86_64 с 64-битным ядром начинается с 4 ГБ.
+- **ZONE_HIGHMEM** (на 32-битных системах >896 МБ): Память, не permanently mapped в ядро. На x86_64 с `CONFIG_HIGHMEM64G` эта зона отсутствует, так как ядро может отображать всю RAM.
+
+**Важность для reclaim:**
+- Если `ZONE_NORMAL` заполнена, но `ZONE_DMA` свободна, ядро **не** может переместить страницы между зонами для reclaim. Это называется **зональным дефицитом (zone depletion)**.
+- `kswapd` работает отдельно для каждой зоны. Если в какой-то зоне `free < low`, просыпается соответствующий `kswapd`.
+- Параметр `vm.min_free_kbytes` распределяется пропорционально размеру зон.
+
+**Диагностика зон:**
+```bash
+# Просмотр всех зон и их watermarks
+cat /proc/zoneinfo | grep -E "Node|free|min|low|high|protection|scanned"
+# → node 0, zone   Normal
+#   pages free     12345
+#          min      1000
+#          low      1250
+#          high     1500
+#   pages scanned  5000 (kswapd активно сканирует)
+
+# Если для Normal free ≈ min, а для DMA free = high — проблема в Normal, а не в системе в целом
+```
+
+### Компакция памяти (Memory Compaction)
+
+Когда ядро не может выделить contiguous-блоки нужного размера (например, для THP), оно запускает компактацию:
+- **Проактивная компакция**: Фоновая задача (`kcompactd`) перемещает страницы заранее, чтобы подготовить contiguous-блоки.
+- **Реактивная компакция**: Запускается при запросе Order-1+ страниц, если `compact_blocks` не достигли цели.
+
+**Ключевые счетчики в `/proc/vmstat`:**
+- `compact_stall`: Количество раз, когда процесс ждал завершения компакции.
+- `compact_success`: Успешные компакции.
+- `compact_fail`: Неудачи из-за фрагментации или недостатка памяти.
+
+```bash
+# Анализ компакции
+grep -E "compact_stall|compact_success|compact_fail" /proc/vmstat
+# → compact_stall       1234
+# → compact_success     1200
+# → compact_fail         34
+# → успех > 95% = норма, постоянные fail = проблемная фрагментация
+```
+
+**Взаимодействие с reclaim:**
+Компакция и reclaim часто конкурируют за ресурсы CPU. При включенном THP (`always` или `madvise`) ядро может тратить до 20% CPU на компакцию и `khugepaged`.
+
+### Упреждающее чтение (Readahead)
+
+При последовательном чтении файла ядро предзагружает следующие блоки в Page Cache. Это снижает latency, но может заполнять RAM "холодными" данными, если прогноз ошибочен.
+
+**Параметры:**
+- `/sys/block/<dev>/queue/read_ahead_kb`: Глобальный readahead для блочного устройства (по умолчанию 128 КБ).
+- `fadvise64(..., POSIX_FADV_RANDOM)`: Приложение может отключить readahead для файла.
+- `blockdev --setra 0 /dev/sda`: Отключение readahead на уровне устройства.
+
+**Когда отключать:**
+- СУБД (PostgreSQL, MySQL, ClickHouse) с собственным буферным менеджером.
+- Файлы с случайным доступом (логи, объектные хранилища).
+- Виртуальные машины (гипервизор сам управляет caching).
+
+```bash
+# Проверка текущего readahead
+cat /sys/block/sda/queue/read_ahead_kb
+# → 128
+
+# Отключение для SSD/HDD со случайной нагрузкой
+echo 0 | sudo tee /sys/block/sda/queue/read_ahead_kb
+
+# Для NVMe с последовательными нагрузками можно оставить 128 или увеличить до 256
+echo 256 | sudo tee /sys/block/nvme0n1/queue/read_ahead_kb
+```
+
+### Приоритеты reclaim (Priority Levels)
+
+Ядро использует 12 уровней приоритета (0–12) при сканировании страниц:
+- **DEF_PRIORITY (12)**: Обычный фон (kswapd).
+- **0 (критический)**: При `free < min` или когда `scanned > swappiness * файловые_страницы`.
+
+Приоритет влияет на то, сколько страниц ядро сканирует из каждого списка (Anonymous vs File-backed). На низких приоритетах ядро предпочитает сканировать анонимные страницы (готовые к swap), на высоких — файловый кэш (легко удаляется).
+
+```bash
+# Просмотр текущего приоритета reclaim (требует debugfs)
+cat /proc/sys/vm/kswapd_threads 2>/dev/null || echo "N/A в ядре < 5.9"
+# В современных ядрах kswapd_threads отсутствует; приоритет определяется динамически.
+```
+
+### Механизм Watermark Boosting (расширенный)
+
+При резком росте аллокаций ядро может временно повышать `min` и `low` через `boost`. Это заставляет `kswapd` работать агрессивнее, но может вызвать `swap storms` при burst-нагрузках.
+
+**Рекомендация 2025**: На серверах с высокой вариабельностью нагрузки (`kswapd` работает постоянно) отключите буст:
+```bash
+echo 0 | sudo tee /proc/sys/vm/watermark_boost_factor
+```
+
+Если оставить включенным (`10` по умолчанию), контролируйте через `dmesg` сообщения `watermark_boost`.
+
+### NUMA и Page Cache / Reclaim
+
+В NUMA-системах Page Cache распределяется по узлам пропорционально доступу:
+- Ядро предпочитает хранить страницы файлов на том же узле, который их читал.
+- `kernel.numa_balancing` перемещает страницы ближе к "горячим" ядрам.
+- При дефиците на узле N, `kswapd` узла N может выгружать страницы в swap на локальное устройство.
+
+**Важно:** Fallback на межпроцессорную шину (QPI/UPI) снижает производительность в 2–5 раз. Для диагностики:
+```bash
+# Проверка меж-узлового доступа (латентность)
+numactl --hardware
+# → node distances:
+# →   0:  10  21
+# →   1:  21  10
+
+# Если node 0 перегружен, а node 1 свободен — возможен imbalanced reclaim
+```
+
+### Связь Page Cache и Writeback
+
+Page Cache и Writeback — два лица одного процесса:
+1. Приложение пишет → данные попадают в Page Cache (dirty pages).
+2. Ядро отслеживает процент грязных страниц через `vm.dirty_ratio` / `vm.dirty_background_ratio`.
+3. При превышении порогов запускаются потоки writeback (`kworker`, `flush-x`), которые сбрасывают данные на диск.
+4. Если диск медленный, dirty pages накапливаются, занимая RAM и снижая `MemAvailable`.
+
+**Ключевая метрика:** `Dirty` в `/proc/meminfo`. Если `Dirty` > 1–2 ГБ постоянно — дисковая подсистема не справляется.
+
+```bash
+# Мониторинг dirty pages
+watch -n1 "grep -E 'Dirty|Writeback' /proc/meminfo"
+# → Dirty:          524288 kB
+# → Writeback:       65536 kB
+# → Если Dirty растет, а Writeback ≈ 0 — writeback заблокирован
+```
+
+Подробнее: **[Настройка writeback](../../Diagnostics/Performance/DiskIO/writeback_tuning.md)**.
 
 ## Практические сценарии
 
@@ -142,6 +280,222 @@ vmstat -s | grep -i refault
 ```
 Если счетчики растут со скоростью более 1000/сек, это верный признак **Thrashing** (система тратит больше времени на перемещение данных, чем на полезную работу).
 
+### Runbook: обнаружение kswapd storm
+
+`kswapd storm` — состояние, при котором фоновый reclaim не может угнаться за нагрузкой, и `kswapd` работает на 100% CPU, постоянно очищая кэши и свопая.
+
+**Триазна:**
+1. `top` / `htop` → `kswapd0` потребляет > 50% одного CPU-ядра.
+2. `vmstat 1` → `si`/`so` > 0 постоянный, `free` не растет.
+3. `cat /proc/pressure/memory` → `some avg10 > 10%`.
+
+**Действия:**
+1. **Быстрая разгрузка**: Увеличьте `vm.min_free_kbytes` (временно) или отключите THP:
+   ```bash
+   echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+   ```
+2. **Выявление "виновника"**: Проверьте, какой процесс генерирует самый высокий `pgmajfault`:
+   ```bash
+   ps -eo pid,comm,majflt --sort=-majflt | head -n 10
+   ```
+3. **Кэш-анализ**: Определите, является ли проблема "горячим" кэшем или нехваткой RAM для процессов:
+   ```bash
+   awk '/Active\(anon\)|Inactive\(anon\)|Active\(file\)|Inactive\(file\)/' /proc/meminfo
+   # Если Active(file)+Inactive(file) > 70% RAM — кэш переполнен, можно принудительно сбросить
+   ```
+4. **Аварийный сброс кэша** (только если `si`/`so` > 0, а `free` близок к `min`):
+   ```bash
+   echo 3 | sudo tee /proc/sys/vm/drop_caches
+   ```
+5. **Постоянное устранение**: Увеличить RAM, снизить `vm.dirty_ratio`, настроить cgroup-лимиты.
+
+### Runbook: Direct Reclaim в контейнерах
+
+В Docker/Kubernetes Direct Reclaim часто маскируется под OOMKilled или throttling.
+
+**Триазна:**
+1. `docker stats` → контейнер показывает `PIDS` ограничение или `MEM USAGE / LIMIT` близко к 100%.
+2. `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.events` → рост `low`, `high`, `max`.
+3. `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.pressure` → `full avg10 > 5%`.
+
+**Действия:**
+1. **Увеличение лимитов**: `docker update --memory=4g <container>` или adjust `resources.limits.memory` в Deployment.
+2. **Добавление `memory.high`**: Установите мягкий лимит ниже `memory.max`, чтобы throttle начался раньше OOM:
+   ```bash
+   echo 3G | sudo tee /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.high
+   ```
+3. **Оптимизация workfload**: Если контейнер использует mmap (Java, Node.js), увеличьте `vm.min_free_kbytes` на хосте.
+4. **Zram на хосте**: Установите `vm.swappiness=10` и включите zram на хосте, чтобы контейнер мог использовать быстрый swap без дисковых задержек.
+
+### Runbook: Cache Pressure Triage
+
+**Сценарий:** `MemAvailable` падает, `free` близок к `min`, процессы "фризят", но RSS стабилен.
+
+**Дифференциальная диагностика:**
+
+| Симптом | Page Cache Pressure | Slab Pressure | Anon Memory Leak |
+|---------|-------------------|---------------|------------------|
+| `Active(file)` растет | Да | Нет | Нет |
+| `SUnreclaim` растет | Нет | Да | Нет |
+| `Active(anon)` растет | Нет | Нет | Да |
+| `MemAvailable` падает | Да | Да | Да |
+| `pgmajfault` растет | Да | Иногда | Да |
+
+**Действия по типу:**
+1. **Page Cache Pressure**: Проверьте `Dirty` в `/proc/meminfo`. Если `Dirty` > 2 ГБ — проблема в writeback. Тюнинг: снизить `vm.dirty_ratio` и `vm.dirty_background_ratio`.
+2. **Slab Pressure**: Проверьте `SUnreclaim` и `slabtop`. Если растет один кэш (например, `dentry`) — возможна утечка в VFS. Тюнинг: `vm.vfs_cache_pressure = 200` (агрессивная очистка).
+3. **Anon Memory Leak**: Проверьте `top` / `ps aux --sort=-%mem`. Найдите процесс с растущим RSS. Тюнинг: cgroup-лимиты или перезапуск процесса.
+
+### Диагностика per-zone watermarks
+
+Для систем с несколькими NUMA-узлами или ограниченным DMA:
+```bash
+# Детальный анализ каждой зоны
+cat /proc/zoneinfo | awk '
+/^  pages free/ { free=$2 }
+/min/ { min=$2 }
+/low/ { low=$2 }
+/high/ { high=$2 }
+/scanned/ { scan=$2 }
+/protection/ { prot=$2 }
+NR%8==0 { 
+  printf "Zone: %-20s free=%6d min=%6d low=%6d high=%6d scan=%6d prot=%d\n", 
+  zone, free, min, low, high, scan, prot 
+}
+' zone=""
+
+# Если free < low для Normal, но free > high для DMA — проблема локальна
+```
+
+### Тюнинг Readahead по типу нагрузки
+
+```bash
+# 1. СУБД (PostgreSQL, MySQL, ClickHouse): отключить полностью
+echo 0 | sudo tee /sys/block/sda/queue/read_ahead_kb
+echo 0 | sudo tee /sys/block/nvme0n1/queue/read_ahead_kb
+
+# 2. Файловый сервер / Веб-сервер: умеренный readahead (256 КБ)
+echo 256 | sudo tee /sys/block/sda/queue/read_ahead_kb
+
+# 3. Последовательные чтения (видео, бэкапы): агрессивный (1–2 МБ)
+echo 2048 | sudo tee /sys/block/sda/queue/read_ahead_kb
+
+# 4. Постоянная настройка через udev (сохраняется после перезагрузки)
+cat > /etc/udev/rules.d/99-readahead.rules << 'EOF'
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/read_ahead_kb}="0"
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/read_ahead_kb}="256"
+ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/read_ahead_kb}="0"
+EOF
+udevadm control --reload-rules && udevadm trigger
+```
+
+### SRE: Ежедневный аудит кэшей и reclaim
+
+```bash
+#!/bin/bash
+# runbook: daily_cache_audit.sh
+echo "=== Общая картина ==="
+free -h
+echo ""
+
+echo "=== Зоны и watermarks ==="
+cat /proc/zoneinfo | grep -E "Node|free|min|low|high|scanned" | head -n 30
+echo ""
+
+echo "=== Reclaim активность ==="
+grep -E "kswapd|pgscan|pgsteal|compact" /proc/vmstat | head -n 15
+echo ""
+
+echo "=== Page Cache vs Anon ==="
+awk '/Active\(anon\)|Inactive\(anon\)|Active\(file\)|Inactive\(file\)/' /proc/meminfo
+echo ""
+
+echo "=== Dirty Pages ==="
+grep -E "Dirty|Writeback" /proc/meminfo
+echo ""
+
+echo "=== Slab ==="
+grep -E "Slab|SReclaimable|SUnreclaim" /proc/meminfo
+echo ""
+
+echo "=== THP / Компакция ==="
+cat /sys/kernel/mm/transparent_hugepage/enabled
+grep compact_stall /proc/vmstat
+echo ""
+
+echo "=== NUMA топология ==="
+numactl --hardware | head -n 15
+echo ""
+
+echo "=== PSI Memory ==="
+cat /proc/pressure/memory
+echo ""
+
+echo "=== Топ процессов по Major Faults ==="
+ps -eo pid,comm,majflt --sort=-majflt | head -n 11
+```
+
+### Прометеус: алерты на кэширование и reclaim
+
+```yaml
+groups:
+  - name: cache_reclaim_alerts
+    rules:
+      - alert: HighKswapdActivity
+        expr: rate(node_vmstat_pgscan_kswapd[5m]) > 5000
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая активность kswapd на {{ $labels.instance }}"
+          description: "kswapd сканирует {{ $value }} страниц/сек. Проверьте watermark настройки."
+
+      - alert: DirectReclaimDetected
+        expr: rate(node_vmstat_pgsteal_kswapd[5m]) < 100 and rate(node_vmstat_pgscan_direct[5m]) > 1000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Direct Reclaim на {{ $labels.instance }}"
+          description: "kswapd не справляется, процессы блокируются на reclaim."
+
+      - alert: HighPageCachePressure
+        expr: (node_memory_Active_file_bytes + node_memory_Inactive_file_bytes) / node_memory_MemTotal_bytes > 0.75
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Высокое давление на Page Cache на {{ $labels.instance }}"
+          description: "File-backed pages занимают {{ $value | humanizePercentage }} RAM."
+
+      - alert: HighDirtyPages
+        expr: node_memory_Dirty_bytes / node_memory_MemTotal_bytes > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокий объем грязных страниц на {{ $labels.instance }}"
+          description: "Dirty pages {{ $value | humanizePercentage }}. Проверьте writeback скорость."
+
+      - alert: HighCompactionStalls
+        expr: rate(node_vmstat_compact_stall[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Частые stall'ы компакции на {{ $labels.instance }}"
+          description: "Процессы ждут дефрагментации. Проверьте THP настройки."
+
+      - alert: Thrashing
+        expr: rate(node_vmstat_workingset_refault_anon[5m]) + rate(node_vmstat_workingset_refault_file[5m]) > 1000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Thrashing на {{ $labels.instance }}"
+          description: "Высокий refault rate {{ $value }} pages/sec. Увеличивайте RAM или уменьшайте working set."
+```
+
 ## Дополнительная информация
 
 ### Связь со Slab и Swap
@@ -157,3 +511,13 @@ vmstat -s | grep -i refault
 * **< 100**: Ядро будет стремиться сохранить иноды в памяти, предпочитая очищать страничный кэш.
 
 Подробнее о тюнинге всех параметров: **[Оптимизация и тонкая настройка памяти](./performance_tuning.md)**.
+
+### Связь с другими механизмами
+
+- **[Pressure Stall Information (PSI)](../kernel/psi.md)** — как PSI показывает давление на память из-за reclaim.
+- **[Оптимизация памяти](./performance_tuning.md)** — детальный тюнинг watermarks, THP, NUMA, KSM, Zram/Zswap, Memory QoS.
+- **[Диагностика Swap и Page Faults](./swap_diagnostics.md)** — диагностика swap, Major Faults, Zram/Zswap.
+- **[Slab Allocator](./slab_allocator.md)** — SReclaimable/SUnreclaim, shrinkers, утечки ядра.
+- **[/proc/meminfo — статистика памяти ядра](../../Diagnostics/Memory/proc_meminfo.md)** — расшифровка всех метрик.
+- **[Настройка writeback](../../Diagnostics/Performance/DiskIO/writeback_tuning.md)** — профили tuning для Dirty Pages.
+- **[vmstat — статистика виртуальной памяти](../../Diagnostics/Memory/vmstat.md)** — мониторинг reclaim активности.

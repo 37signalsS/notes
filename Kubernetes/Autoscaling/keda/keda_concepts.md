@@ -108,11 +108,63 @@ KEDA поддерживает более 60 типов источников, р�
 
 ## Практические сценарии
 
+### Базовые примеры конфигурации
+
 Прикладные материалы вынесены в отдельные файлы:
 
-* [KEDA: Практические сценарии](./practical_scenarios.md) — примеры конфигурации для различных сценариев (RabbitMQ, Kafka, Prometheus, cron)
+* [KEDA: Практические сценарии](./practical_scenarios.md) — примеры конфигурации для различных сценариев (RabbitMQ, Prometheus, cron, StatefulSet)
+* [KEDA + Kafka](./kafka-keda-scaler.md) — масштабирование по consumer lag, аутентификация (SASL, mTLS)
+* [KEDA + Redis](./redis-keda-scaler.md) — масштабирование по длине списка/стрима
 * [KEDA: Эксплуатация — мониторинг и troubleshooting](./keda-operations.md) — диагностика, алерты, типовые проблемы
 * [KEDA: FinOps-гардрейлы и измерение экономии](./keda-finops.md) — финансовая сторона: scale-to-zero, лимиты, пилот и замер эффекта
+* [KEDA: Тестирование и валидация](./keda-testing-validation.md) — проверка масштабирования, chaos-тестирование, cold start
+* [KEDA: Вопросы для собеседования](./keda-interview-questions.md) — систематизация вопросов по KEDA
+
+### Минимальный ScaledObject
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: orders-worker
+  namespace: app
+spec:
+  scaleTargetRef:
+    name: orders-worker  # Deployment для масштабирования
+  minReplicaCount: 0     # scale-to-zero
+  maxReplicaCount: 10    # финансовый лимит
+  triggers:
+    - type: rabbitmq
+      metadata:
+        host: amqp://user:pass@rabbitmq:5672/
+        queueName: orders
+        queueLength: "10"  # масштабировать при 10+ сообщениях
+```
+
+### ScaledJob для batch-задач
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: batch-processor
+  namespace: app
+spec:
+  jobTargetRef:
+    template:
+      spec:
+        containers:
+          - name: processor
+            image: batch-processor:latest
+            command: ["python", "process.py"]
+        restartPolicy: Never
+  triggers:
+    - type: rabbitmq
+      metadata:
+        host: amqp://user:pass@rabbitmq:5672/
+        queueName: batch-tasks
+        queueLength: "5"
+```
 
 ## Дополнительная информация
 
@@ -141,6 +193,61 @@ KEDA — не универсальное решение. Сценарии, гд�
 * **Stateful workloads (базы данных).** Scale-to-zero для PostgreSQL — плохая идея (долгий startup, потеря кеша, state). Часто лучше вертикальное масштабирование (VPA, более крупные ноды).
 * **Очень короткие задачи (< 1 секунды).** Если задача выполняется за 100 мс, overhead на создание пода (5–15 сек) слишком велик. Лучше держать `minReplicaCount` или использовать serverless-платформы (Knative, Lambda).
 * **Критичные сервисы с SLA < 1 секунды.** Cold start не укладывается в такие SLA — нужен постоянный warm pool.
+
+### KEDA в on-premise / bare-metal окружениях
+
+KEDA полностью cloud-agnostic и работает в любом Kubernetes: on-premise (kubeadm, Kubespray, RKE2), bare-metal, edge. Ключевое требование — доступность источника метрик.
+
+**Скейлеры, работающие без облака:**
+
+| Скейлер | Источник метрик | Примечание |
+|:---|:---|:---|
+| `rabbitmq` | RabbitMQ Management API | Прямое подключение, AMQP/HTTP |
+| `kafka` | Kafka Broker | Прямое подключение, SASL/TLS |
+| `prometheus` | Prometheus | Любой Prometheus (внутренний) |
+| `cron` | Расписание | Не требует внешних источников |
+| `redis` / `redis-streams` | Redis | Прямое подключение |
+| `kubernetes-resource` | ConfigMap/Secret | K8s API |
+
+**Скейлеры, требующие облако (НЕ работают в on-prem):**
+
+| Скейлер | Провайдер |
+|:---|:---|
+| `aws-sqs` | AWS |
+| `aws-cloudwatch` | AWS |
+| `azure-servicebus` | Azure |
+| `azure-queue` | Azure |
+| `gcp-pubsub` | GCP |
+
+**Особенности on-premise развёртывания:**
+
+1. **Prometheus как центральный источник метрик:** в on-prem рекомендуется использовать Prometheus scaler вместо прямых подключений к Kafka/RabbitMQ — это упрощает аутентификацию и centralizes метрики.
+
+2. **Сетевая доступность:** `serverAddress` Prometheus scaler должен быть доступен с подов KEDA Operator. В on-prem это通常 решается через ClusterIP Service.
+
+3. **Отсутствие Workload Identity:** в on-prem нет IAM-ролей, поэтому аутентификация через Kubernetes Secrets + TriggerAuthentication.
+
+4. **Cluster Autoscaler:** в on-prem используется Cluster Cluster Autoscaler с Cluster API или Metal3 вместо Karpenter (Karpenter только для EKS/AKS).
+
+```yaml
+# Пример on-premise: KEDA + RabbitMQ + Prometheus (без облака)
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: onprem-worker-scaler
+  namespace: app
+spec:
+  scaleTargetRef:
+    name: worker-deployment
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090   # ClusterIP Service
+        query: sum(rabbitmq_queue_messages{queue="tasks"})
+        threshold: "10"
+```
 
 ### Поддержка версий
 
@@ -171,6 +278,322 @@ Replicas: 2      SLA: at risk
 | **Механизм работы** | Опрос Metrics API | Реакция на события + External Metrics API |
 | **Типы нагрузок** | Deployment, StatefulSet | + Jobs, Custom Resources |
 | **Сложная логика** | Ограничена базовыми порогами | Scaling Modifiers, Fallback, Multiple Triggers |
+
+## Жизненный цикл ScaledObject
+
+### Этапы работы
+
+```text
+1. Создание ScaledObject
+   → Admission Webhook валидирует конфигурацию
+   → KEDA Operator создаёт HPA
+   → HPA запрашивает метрики у Metrics Server
+
+2. Ожидание событий (replicas = 0)
+   → Scaler опрашивает источник с pollingInterval
+   → Если метрика < activationThreshold → нет масштабирования
+   → Если метрика >= activationThreshold → переход к шагу 3
+
+3. Масштабирование 0 → 1
+   → KEDA Operator напрямую обновляет scale deployment
+   → Первый под запускается
+   → HPA начинает управление
+
+4. Масштабирование 1 ↔ N
+   → HPA запрашивает метрики у Metrics Server
+   → Рассчитывает desired replicas: ceil(currentReplicas * (targetValue / currentMetricValue))
+   → Масштабирует workload
+
+5. Scale-down
+   → После исчезновения нагрузки
+   → Ожидание cooldownPeriod (по умолчанию 300 сек)
+   → Возврат к minReplicaCount (включая 0)
+```
+
+### Обработка ошибок скейлеров
+
+KEDA реализует механизм fallback для обработки ошибок получения метрик:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: resilient-worker
+spec:
+  scaleTargetRef:
+    name: worker
+  fallback:
+    failureThreshold: 3      # количество ошибок до fallback
+    replicas: 3              # количество реплик в fallback-режиме
+    behavior: static         # статическое количество реплик
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        query: rate(http_requests_total[5m])
+        threshold: "100"
+```
+
+**Поведение при fallback:**
+
+```text
+1. Scaler возвращает ошибку 3 раза подряд (failureThreshold)
+2. KEDA переключается в fallback-режим
+3. Устанавливает количество реплик = fallback.replicas
+4. Продолжает опрашивать источник
+5. При восстановлении связи — возврат к нормальной работе
+```
+
+**Варианты поведения fallback:**
+
+```text
+static            — всегда fallback.replicas
+currentReplicas   — текущее количество реплик
+currentReplicasIfHigher — текущее, если оно больше fallback.replicas
+currentReplicasIfLower  — текущее, если оно меньше fallback.replicas
+```
+
+### Обработка нескольких триггеров
+
+KEDA поддерживает несколько триггеров в одном ScaledObject. Логика масштабирования — MAX (максимальное значение среди всех триггеров):
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: multi-trigger-worker
+spec:
+  scaleTargetRef:
+    name: worker
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  triggers:
+    - type: rabbitmq
+      metadata:
+        host: amqp://user:pass@rabbitmq:5672/
+        queueName: orders
+        queueLength: "10"
+    - type: cron
+      metadata:
+        timezone: Europe/Moscow
+        start: 0 9 * * 1-5
+        end: 0 18 * * 1-5
+        desiredReplicas: "5"
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        query: sum(rate(http_requests_total[5m]))
+        threshold: "100"
+```
+
+**Пример расчёта:**
+
+```text
+RabbitMQ триггер: 25 сообщений / 10 = 2.5 → 3 реплики
+Cron триггер: 5 реплик (активен)
+Prometheus триггер: 200 RPS / 100 = 2 реплики
+
+Итого: MAX(3, 5, 2) = 5 реплик
+```
+
+## Ресурсы и производительность KEDA
+
+### Требования к ресурсам компонентов
+
+| Компонент | CPU (requests) | Memory (requests) | CPU (limits) | Memory (limits) |
+| :--- | :--- | :--- | :--- | :--- |
+| keda-operator | 100m | 128Mi | 500m | 512Mi |
+| keda-metrics-apiserver | 100m | 128Mi | 500m | 512Mi |
+| keda-admission-webhooks | 50m | 64Mi | 250m | 256Mi |
+
+### Влияние pollingInterval на нагрузку
+
+```text
+При pollingInterval = 30 сек (по умолчанию):
+  100 ScaledObject × 30 сек = 3.3 опроса/сек
+  Нагрузка на внешние источники: минимальная
+
+При pollingInterval = 5 сек:
+  100 ScaledObject × 5 сек = 20 опросов/сек
+  Нагрузка на внешние источники: значительная
+
+Рекомендация:
+  - Для большинства сценариев: 15-30 сек
+  - Для критичных сервисов: 5-10 сек (с осторожностью)
+  - Для batch-задач: 30-60 сек
+```
+
+### Оптимизация производительности
+
+```yaml
+# Оптимизация для высоконагруженных кластеров
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: high-load-worker
+  annotations:
+    autoscaling.keda.sh/polling-interval: "15"  # увеличенный интервал
+spec:
+  scaleTargetRef:
+    name: worker
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 600
+          policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+```
+
+## Безопасность и сетевая политика
+
+### RBAC для KEDA
+
+KEDA требует определённые разрешения для работы:
+
+```yaml
+# ClusterRole для KEDA Operator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: keda-operator
+rules:
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects", "scaledjobs", "triggerauthentications", "clustertriggerauthentications"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+```
+
+### Сетевая политика для KEDA
+
+```yaml
+# Разрешить доступ KEDA к Prometheus
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keda-to-prometheus
+  namespace: keda
+spec:
+  podSelector:
+    matchLabels:
+      app: keda-operator
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+```
+
+### Безопасное хранение секретов
+
+```yaml
+# Использование Vault через External Secrets Operator
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: keda-rabbitmq-credentials
+  namespace: app
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: rabbitmq-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: host
+      remoteRef:
+        key: secret/data/rabbitmq
+        property: host
+    - secretKey: password
+      remoteRef:
+        key: secret/data/rabbitmq
+        property: password
+```
+
+## Интеграция с другими контроллерами Kubernetes
+
+### KEDA + Cluster Autoscaler
+
+```text
+Взаимодействие:
+1. KEDA масштабирует поды (HPA)
+2. Cluster Autoscaler видит pending поды
+3. Cluster Autoscaler добавляет ноды
+4. При scale-to-zero: KEDA удаляет поды
+5. Cluster Autoscaler видит пустые ноды
+6. Cluster Autoscaler удаляет ноды
+
+Важно:
+- Настройте --scale-down-delay-after-add для избежания "пинг-понга"
+- Используйте --max-node-provision-time для долгих cloud-инстансов
+```
+
+### KEDA + Karpenter
+
+```yaml
+# Karpenter NodePool для KEDA workload
+apiVersion: karpenter.sh/v1beta1
+kind: NodePool
+metadata:
+  name: keda-optimized
+spec:
+  template:
+    spec:
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "node.kubernetes.io/instance-type"
+          operator: In
+          values: ["m5.large", "m5.xlarge", "m5.2xlarge"]
+      nodeClassRef:
+        name: default
+  limits:
+    cpu: 100
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s
+```
+
+### KEDA + Pod Disruption Budget
+
+```yaml
+# PDB для защиты availability при scale-down
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: worker-pdb
+  namespace: app
+spec:
+  minAvailable: 1  # или maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: orders-worker
+```
 
 ## Частые вопросы
 
@@ -216,7 +639,12 @@ kubectl apply -f deployment-before-keda.yaml
 ## См. также
 
 * [KEDA: Практические сценарии](./practical_scenarios.md) — установка, триггеры, мониторинг, troubleshooting
+* [KEDA + Kafka](./kafka-keda-scaler.md) — масштабирование по consumer lag
+* [KEDA + Redis](./redis-keda-scaler.md) — масштабирование по длине очереди/стрима
+* [KEDA: Эксплуатация](./keda-operations.md) — диагностика и алерты
 * [KEDA: FinOps-гардрейлы и измерение экономии](./keda-finops.md) — scale-to-zero, maxReplicaCount, замер эффекта
+* [KEDA: Тестирование и валидация](./keda-testing-validation.md) — проверка масштабирования
+* [KEDA: Вопросы для собеседования](./keda-interview-questions.md) — систематизация вопросов
 * [HPA: Горизонтальное масштабирование](../HPA/index.md)
 * [Cluster Autoscaler: Масштабирование кластера](../cluster_autoscaler_detailed.md)
 * [Обзор и концепции Karpenter](../Karpenter/overview.md)

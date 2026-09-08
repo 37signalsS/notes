@@ -32,10 +32,12 @@ Kyverno встраивается в жизненный цикл запроса �
 
 | Компонент | Роль в современной архитектуре (2026) |
 | :--- | :--- |
-| **Admission Controller** | Управляет вебхуками для сложных мутаций, генерации и верификации образов. |
-| **Background Controller** | Проводит непрерывный аудит (Background Scan) и фоновую мутацию существующих ресурсов. |
-| **Cleanup Controller** | Реализует `CleanupPolicy` для автоматической очистки ресурсов по TTL или расписанию. |
-| **Reports Controller** | Агрегирует результаты в `PolicyReport`. Поддерживает PostgreSQL для разгрузки API-сервера. |
+| **Admission Controller** | Управляет вебхуками для синхронных проверок (validate, mutate), генерации ресурсов и верификации образов. Динамически управляет конфигурацией вебхуков только для ресурсов, затронутых установленными политиками. |
+| **Background Controller** | Обрабатывает правило `generate` и `mutateExisting` для уже существующих ресурсов через промежуточный ресурс `UpdateRequest`. **Не участвует** в фоновом сканировании отчетов — это функция Reports Controller. |
+| **Reports Controller** | Создает `PolicyReport`/`ClusterPolicyReport` из результатов Admission Scan и Background Scan. Агрегирует промежуточные отчеты в единые отчеты. Поддерживает внешнюю PostgreSQL для разгрузки API-сервера. |
+| **Cleanup Controller** | Реализует `CleanupPolicy`/`ClusterCleanupPolicy` для автоматической очистки ресурсов по cron-расписанию. Каждая политика映射уется в отдельный Kubernetes CronJob. |
+
+> **Важно**: Background Scan (фоновое сканирование существующих ресурсов для формирования отчетов) выполняется **Reports Controller**, а не Background Controller. Background Controller отвечает только за генерацию и мутацию существующих ресурсов.
 
 ### Защита цепочки поставок (Supply Chain Security)
 
@@ -44,6 +46,89 @@ Kyverno предоставляет уникальные механизмы ве�
 - **Аттестации (Attestations)**: Проверка метаданных сборки (например, результаты сканирования на уязвимости или факт прохождения тестов).
 - **Валидация SBOM**: Проверка содержимого Software Bill of Materials ( CycloneDX / SPDX) на соответствие политикам (например, запрет конкретных лицензий или библиотек).
 
+### Режимы валидации (Validation Modes)
+
+Kyverno поддерживает несколько режимов обработки нарушений политик. Режим определяет, как вебхук реагирует на ресурс, не соответствующий политике.
+
+**Унаследованные режимы (ClusterPolicy, v1):**
+| Режим | Поведение | Применение |
+| :--- | :--- | :--- |
+| **Enforce** | Немедленная блокировка создания/обновления ресурса. Результат `pass` записывается в PolicyReport. | Критичные политики безопасности (запрет root, привилегий). |
+| **Audit** | Ресурс создается, но нарушение записывается в PolicyReport. | Первичный аудит перед включением Enforce; мониторинг без блокировки. |
+
+**CEL-based режимы (ValidatingPolicy, v1.17+):**
+| Режим | Поведение | Применение |
+| :--- | :--- | :--- |
+| **Deny** | Аналог Enforce — блокировка ресурса. | Новая рекомендация вместо Enforce для CEL-политик. |
+| **Audit** | Аналог Audit — запись нарушения без блокировки. | Аудит с нулевым воздействием на рабочие процессы. |
+| **Warn** | Ресурс создается, но API-сервер возвращает предупреждение пользователю/CI. | Обратная связь без блокировки; полезно в CI/CD пайплайнах. |
+
+> **Рекомендация**: Начинайте всегда с `Audit`/`Warn`, затем переходите к `Enforce`/`Deny` после стабилизации политик.
+
+### Типы ресурсов (Policy Types)
+
+Kyverno поддерживает два поколения ресурсов политик:
+
+**Унаследованные (Deprecated с v1.17):**
+| Ресурс | Область | Статус |
+| :--- | :--- | :--- |
+| `ClusterPolicy` | Cluster-scoped | Deprecated (удаление в v1.20, октябрь 2026) |
+| `Policy` | Namespace-scoped | Deprecated (удаление в v1.20) |
+| `CleanupPolicy` | Namespace-scoped | Deprecated (заменяется `DeletingPolicy`) |
+| `ClusterCleanupPolicy` | Cluster-scoped | Deprecated (заменяется `ClusterDeletingPolicy`) |
+
+**CEL-based (рекомендуется):**
+| Ресурс | Область | Назначение |
+| :--- | :--- | :--- |
+| `ValidatingPolicy` | Cluster-scoped | Валидация ресурсов через CEL |
+| `NamespacedValidatingPolicy` | Namespace-scoped | Валидация в рамках пространства имен |
+| `MutatingPolicy` | Cluster-scoped | Мутация ресурсов через CEL |
+| `NamespacedMutatingPolicy` | Namespace-scoped | Мутация в рамках пространства имен |
+| `GeneratingPolicy` | Cluster-scoped | Генерация ресурсов через CEL |
+| `NamespacedGeneratingPolicy` | Namespace-scoped | Генерация в рамках пространства имен |
+| `ImageValidatingPolicy` | Cluster-scoped | Верификация образов (Cosign/Sigstore) |
+| `DeletingPolicy` | Cluster-scoped | Замена CleanupPolicy (cron-based очистка) |
+| `NamespacedDeletingPolicy` | Namespace-scoped | Очистка в рамках пространства имен |
+
+> **Область (scope)** определяет, где политика действует: `ClusterPolicy` и `ValidatingPolicy` — на весь кластер; `Policy` и `NamespacedValidatingPolicy` — только в пределах конкретного Namespace.
+
+### Селекторы ресурсов (Match / Exclude)
+
+Kyverno позволяет точно определять, к каким ресурсам применяется каждое правило через блоки `match` и `exclude`.
+
+**Доступные поля `match`:**
+- `resources.kinds[]` — типы ресурсов (Pod, Deployment, Service и т.д.)
+- `resources.names[]` — имена конкретных ресурсов
+- `resources.namespaces[]` — пространства имен
+- `resources.operations[]` — операции API (CREATE, UPDATE, DELETE, CONNECT)
+- `resources.selector` — label selector ресурса
+- `resources.annotations` — аннотации ресурса
+- `subjects[]` — субъекты (User, Group, ServiceAccount)
+- `clusterRoles[]` / `roles[]` — RBAC роли субъекта
+
+**Логика `any` / `all`:**
+- `match.all[]` — логическое И: все условия должны быть выполнены
+- `match.any[]` — логическое ИЛИ: достаточно выполнения одного условия
+
+**Пример:**
+```yaml
+match:
+  any:
+    - resources:
+        kinds: ["Pod"]
+        namespaces: ["production", "staging"]
+    - resources:
+        kinds: ["Deployment"]
+        selector:
+          matchLabels:
+            critical: "true"
+```
+
+**Важные ограничения:**
+- Правила, использующие `subjects`, `roles` или `clusterRoles` в match/exclude, **не могут** работать в режиме Background Scan (только Admission).
+- `exclude` вычисляется с использованием логического И с `match` — ресурс должен соответствовать match И НЕ соответствовать exclude.
+- Поддерживается формат GVK: `group/version/kind` (например, `apps/v1/Deployment`).
+
 ### Управление исключениями (PolicyException)
 
 Для гибкого управления доступом без изменения основных политик используется ресурс **PolicyException (POLE)**.
@@ -51,6 +136,55 @@ Kyverno предоставляет уникальные механизмы ве�
 - **Делегирование**: Группа безопасности контролирует политики, а владельцы приложений могут запрашивать исключения через стандартный процесс GitOps.
 - **Гранулярность**: Исключение можно ограничить конкретным правилом, образом или пространством имен.
 - **Автоматизация**: Поддержка TTL (Time-To-Live) позволяет автоматически отзывать временные исключения.
+- **Scope**: `PolicyException` должен находиться в том же Namespace, что и целевая `Policy` (для namespace-scoped политик). Для `ClusterPolicy` исключения создаются в Namespace `kyverno`.
+
+### Механизм мутации (Mutate) и мутации существующих ресурсов (mutateExisting)
+
+Kyverno поддерживает два сценария мутации:
+
+**Синхронная мутация (Admission-time):**
+- Выполняется до сохранения ресурса в etcd.
+- Поддерживает **Strategic Merge Patch** (для встроенных ресурсов K8s) и **RFC 6902 JSON Patch** (универсальный).
+- Мутация выполняется **до валидации** — правила валидации не должны противоречить результатам мутации.
+
+**Асинхронная мутация (mutateExisting):**
+- Изменяет ресурсы, которые уже существуют в кластере (не только при Admission).
+- Реализуется через `mutate.targets` в правиле — Background Controller создает `UpdateRequest` для каждого затронутого ресурса.
+- Требует дополнительных RBAC-разрешений для ServiceAccount `kyverno-background-controller` (write доступ к целевым ресурсам).
+- Настройка `evaluation.mutateExisting.enabled: true` (CEL-based) или `mutateExistingOnPolicyUpdate: true` (legacy) запускает мутацию существующих ресурсов при создании/обновлении политики.
+
+### Механизм генерации (Generate) и генерации существующих ресурсов (generateExisting)
+
+**Источники данных:**
+- **Data** — ресурс определяется инлайн в политике.
+- **Clone** — ресурс копируется из существующего шаблона в кластере.
+
+**Генерация существующих ресурсов (generateExisting):**
+- При `generateExisting: true` политика применяется ко всем существующим ресурсам при первом создании политики.
+- Полезно для ретроспективного применения политик к уже запущенным Namespace.
+
+**Синхронизация (synchronize):**
+- При `synchronize: true` сгенерированные ресурсы автоматически обновляются при изменении шаблона (Clone) или определения (Data).
+- При `synchronize: false` ресурс создается один раз и больше не обновляется.
+
+**Промежуточный ресурс UpdateRequest:**
+- Генерация и мутация существующих ресурсов выполняются через `UpdateRequest` — промежуточный CR, обрабатываемый Background Controller.
+- `UpdateRequest` содержит статус: Completed, Failed, Pending, Skip.
+- Kyverno повторяет попытку до 3 раз при ошибке.
+
+**Важно для RBAC**: При генерации `RoleBinding`/`ClusterRoleBinding` ServiceAccount должен быть привязан к той же Role/ClusterRole, которая генерируется (ограничение Kubernetes RBAC).
+
+### Конфигурация вебхуков
+
+Kyverno динамически управляет двумя основными конфигурациями вебхуков:
+- `kyverno-resource-validating-webhook-cfg` — для валидирующих проверок.
+- `kyverno-resource-mutating-webhook-cfg` — для мутирующих проверок.
+
+**Ключевые параметры:**
+- **failurePolicy**: `Fail` (по умолчанию) — при недоступности Kyverno запрос блокируется; `Ignore` — запрос проходит без проверки. Используйте `Ignore` для некритичных политик и `Fail` для политик безопасности.
+- **Динамическое управление**: По умолчанию Kyverno получает запросы только для ресурсов, затронутых установленными политиками (`--autoUpdateWebhooks=true`). Отключение приводит к получению ВСЕХ типов ресурсов (не рекомендуется).
+- **Тайм-аут**: По умолчанию 10 секунд (диапазон 1–30 секунд). Увеличьте при использовании сложных CEL-выражений или удаленных OIDC-провайдеров.
+- **matchConditions** (Kubernetes v1.27+): Дополнительная фильтрация запросов на уровне API-сервера перед отправкой в Kyverno.
 
 ---
 
@@ -60,11 +194,14 @@ Kyverno предоставляет уникальные механизмы ве�
 
 | Функция | Техническая реализация | Применение |
 | :--- | :--- | :--- |
-| **Валидация** | CEL / JMESPath | Запрет запуска контейнеров от пользователя root. |
-| **Мутация** | Strategic Merge Patch / JSON Patch | Автоматическое добавление лимитов ресурсов (Resources Quotas). |
-| **Генерация** | Clone / Data | Создание `NetworkPolicy` и `LimitRange` для новых Namespace. |
-| **Верификация** | Sigstore / OCI | Блокировка образов без подписи безопасности. |
-| **Очистка** | Cron-based Cleanup | Удаление завершенных Job или временных Namespace. |
+| **Валидация** | CEL (рекомендуется) / JMESPath / pattern (устаревает) | Запрет запуска контейнеров от пользователя root. |
+| **Мутация** | Strategic Merge Patch / JSON Patch / CEL | Автоматическое добавление лимитов ресурсов (Resources Quotas). |
+| **Мутация существующих** | mutate.targets + UpdateRequest | Добавление label ко всем существующим Pod в Namespace. |
+| **Генерация** | Clone / Data + generateExisting | Создание `NetworkPolicy` и `LimitRange` для новых Namespace. |
+| **Генерация существующих** | generateExisting + synchronize | Ретроспективное применение политики к запущенным Namespace. |
+| **Верификация** | Sigstore / OCI (Cosign) | Блокировка образов без подписи безопасности. |
+| **Очистка** | CronJob-based CleanupPolicy / DeletingPolicy | Удаление завершенных Job или временных Namespace. |
+| **Отчетность** | Admission Scan + Background Scan → PolicyReport | Аудит и мониторинг соответствия политикам. |
 
 ### Сравнение с альтернативами
 
@@ -83,15 +220,38 @@ Kyverno предоставляет уникальные механизмы ве�
 Поскольку Admission Controller является критическим звеном, его недоступность может заблокировать работу кластера. Рекомендации:
 - **HA-режим**: Минимум 3 реплики admission-контроллера, распределенные по зонам доступности (Pod Anti-Affinity).
 - **PriorityClass**: Установка `system-cluster-critical` для защиты от вытеснения при дефиците ресурсов.
-- **Failure Policy**: Использование `Ignore` для некритичных политик и `Fail` для политик безопасности, требующих обязательного исполнения.
+- **failurePolicy**: Использование `Ignore` для некритичных политик и `Fail` для политик безопасности, требующих обязательного исполнения.
+- **Готовность (Readiness)**: Kyverno использует `/readyz` эндпоинт. Убедитесь, что Readiness Probe настроен корректно (по умолчанию `periodSeconds: 5`).
+- **PodDisruptionBudget**: Минимум 2 реплики для допустимого количества недоступных Pod при обновлении/дрейфе нод.
+
+### Устаревание и миграция (Deprecation Schedule)
+
+Версия Kyverno 1.17 (февраль 2026) знаменует переход на архитектуру **CEL-first**. Унаследованные ресурсы постепенно выводятся из использования:
+
+| Версия | Статус `ClusterPolicy`, `Policy`, `CleanupPolicy` |
+| :--- | :--- |
+| **v1.17** (февраль 2026) | Помечены как Deprecated. Полная функциональность сохраняется. |
+| **v1.18** | Только критические исправления безопасности (Critical fixes only). |
+| **v1.19** | Последний релиз с полной поддержкой. |
+| **v1.20** (октябрь 2026) | Планируемое удаление. |
+
+**Рекомендация по миграции**: Начните тестирование CEL-based политик (`ValidatingPolicy`, `MutatingPolicy` и т.д.) в стадии `Audit` параллельно с существующими `ClusterPolicy`. Полный переход рекомендуется завершить до v1.20.
 
 ### Экосистема и интеграции
 
-- **GitOps**: Интеграция с Argo CD (Server-Side Apply) обеспечивает корректную синхронизацию мутированных ресурсов.
+- **GitOps**: Интеграция с Argo CD (Server-Side Apply) обеспечивает корректную синхронизацию мутированных ресурсов ([подробнее](./argo-cd.md)).
 - **Policy Reporter**: Визуализация отчетов и отправка алертов (Slack/Grafana) ([подробнее](./reporter.md)).
-- **Observability**: Глубокий мониторинг задержек вебхуков и количества отказов через Prometheus.
+- **Observability**: Глубокий мониторинг задержек вебхуков и количества отказов через Prometheus ([подробнее](./reports.md)).
+- **Runtime Security**: Для защиты на уровне выполнения (когда процессы уже запущены) рекомендуется связка с [Falco](../../../Security/Tools/falco.md).
 
 ### См. также
+- [Определения и концепции: типы правил, lifecycle, match/exclude](./policies/definitions_and_concepts.md)
 - [Типы правил и их синтаксис](./rules.md)
 - [Система отчетов Policy Reports](./reports.md)
 - [Практическое развертывание и HA](./install.md)
+- [Диагностика и устранение проблем](./troubleshooting.md)
+- [Производительность и масштабирование](./performance.md)
+- [Сравнение с OPA Gatekeeper и VAP](./comparison.md)
+- [Интеграция с Falco, Trivy, kube-bench](./integrations.md)
+- [Управление политиками в мультикластере](./multi-cluster.md)
+- [Disaster Recovery](./disaster-recovery.md)

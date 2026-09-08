@@ -261,3 +261,4 @@ ip route show
 - [Обзор Proxmox VE](./proxmox_overview.md)
 - [Архитектура SDN](../Networking/Concepts/sdn/sdn_overview.md)
 - [Технология VXLAN](../Networking/Tunnels/vxlan.md)
+- [Proxmox Service Discovery](./proxmox_service_discovery.md) — автоматическое обнаружение VM через DNS

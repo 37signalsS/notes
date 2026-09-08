@@ -45,12 +45,41 @@ error: externally-managed-environment
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Работа с проектом:**
+**Работа с проектом (основной workflow):**
 ```bash
-uv init my_app         # Создает структуру проекта и pyproject.toml
-uv add "requests>=2.31" # Добавляет зависимость и создает uv.lock
-uv run main.py          # Автоматически создает .venv и запускает код
+uv sync            # Создаёт .venv и устанавливает ВСЕ зависимости из uv.lock
+uv run pytest      # Запускает команду в виртуальном окружении
+source .venv/bin/activate  # Активация для традиционной работы (опционально)
 ```
+
+- **`uv sync`** — синхронизирует `.venv` с `uv.lock`: устанавливает все зависимости (включая dev-группы) и создаёт виртуальное окружение. Аналогично `pip install -r requirements.txt`, но оперативнее и на основе lock-файла.
+- **`uv run <command>`** — запускает команду в `.venv` без ручной активации. Удобен в CI.
+- **`uv.lock`** — детерминированный lock-файл (аналог `package-lock.json` в Node.js). Гарантирует, что все установки продакшена, CI и локальной разработки используют одинаковые версии пакетов и их транзитивные зависимости.
+
+**Изоляция dev-зависимостей в группы:**
+```bash
+uv add --group dev pytest ruff          # Добавляет в группу [dependency-groups]
+uv sync --group dev                      # Устанавливает и основные, и dev-зависимости
+uv sync --group dev --no-default-group   # Только dev-группа
+uv run --with pytest python -m pytest     # Ad-hoc запуск без установки в .venv
+```
+
+**Миграция с pip (requirements.txt → pyproject.toml):**
+При переходе с классического `pip` + `requirements.txt`/`requirements-dev.txt` на `uv`:
+```bash
+# 1. Создаём pyproject.toml из существующих файлов
+uv init                # Или: uv init my_project
+
+# 2. Переносим зависимости из requirements.txt
+uv add -r requirements.txt
+
+# 3. Переносим dev-зависимости в отдельную группу
+uv add --group dev -r requirements-dev.txt
+
+# 4. Генерируем uv.lock
+uv lock
+```
+*Поведение:* `requirements.txt` → `[project.dependencies]`, `requirements-dev.txt` → `[dependency-groups] dev`. Список групп можно переключать флагом `--group name` при `uv sync` или `uv run`.
 
 **Управление инструментами (Замена pipx):**
 ```bash
@@ -125,6 +154,8 @@ pyenv local 3.11.9    # Создает .python-version
 ### См. также
 * **[Dockerfile: Лучшие практики для Python](../../Docker/Dockerfile/Docker_best_practices/python.md)** — использование `uv` и multi-stage сборок для минимизации образов.
 * **[Файлы версий (.python-version)](../../Git/version_files.md)** — как разные инструменты читают конфигурацию версий.
+* **[Практические сценарии кэширования в GitLab CI](../../CI-CD/GitLab_CI/Advanced/gitlab_ci_caching/cache_scenarios.md#сценарий-2--python-uv--pip--poetry)** — кэширование `uv` в CI/CD, self-hosted runner config, настройка кастомного индекса.
+* **[Комплексный CI/CD пайплайн для Python](../../CI-CD/GitLab_CI/Tutorials/python_project_pipeline_guide.md)** — продвинутый пайплайн с Kubernetes, SAST и Helm.
 * **[Развертывание Python-приложения с Ansible](../../Ansible/examples/example_python_app_deployment.md)** — автоматизация через модули `pip` и `venv`.
 * **[Mise: Универсальный менеджер](../../mise.md)** — детальное руководство по `mise`.
 

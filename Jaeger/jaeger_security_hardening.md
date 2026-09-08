@@ -241,7 +241,7 @@ data:
 
 ```yaml
 # external-secret.yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: jaeger-secrets
@@ -316,8 +316,8 @@ kubectl delete networkpolicy -n observability -l app=jaeger
 * Security Context: **[Интеграция Jaeger с Kubernetes](./jaeger_kubernetes_integration.md)**
 * TLS конфигурация: **[Варианты развертывания Jaeger](./jaeger_deployment_options.md)**
 * OTLP mTLS: **[OTLP Configuration для Jaeger](./jaeger_otlp_configuration.md)**
-* Kubernetes RBAC: **[RBAC в Kubernetes](../Kubernetes/Base/rbac_basics.md)**
-* Secret Management: **[External Secrets Operator](../GitOps/external_secrets_operator.md)**
+* Kubernetes RBAC: **[RBAC в Kubernetes](../Kubernetes/Security/rbac/rbac_overview.md)**
+* Secret Management: **[Управление секретами в GitOps](../GitOps/secrets_encryption.md)**
 
 ### См. также
 

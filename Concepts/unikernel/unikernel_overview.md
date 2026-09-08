@@ -13,12 +13,74 @@
 - **Неизменяемая инфраструктура (Immutable Infrastructure):** Образ создается один раз. Любое изменение конфигурации или кода требует полной пересборки бинарного файла.
 - **Минимализм:** Отсутствие шелла (bash), SSH, пакетных менеджеров и лишних драйверов.
 
+## Мотивация для DevOps/SRE и sysadmin
+
+Юникернелы представляют интерес для инженеров эксплуатации не как замена контейнеров, а как дополнительный инструмент для特定ных on-premise сценариев, где традиционные подходы неэффективны.
+
+### Почему стоит рассмотреть юникернелы в on-premise среде
+
+**Проблема密度 и изоляции:** Традиционные VM потребляют гигабайты RAM на экземпляр и загружаются за десятки секунд. Контейнеры offering более высокую плотность, но используют программную изоляцию — уязвимость ядра хоста (например, CVE в сетевом стеке Linux) компрометирует все контейнеры. Юникернелы решают обе проблемы: аппаратная изоляция уровня VM при размере образа 1–50 МБ и старте за миллисекунды.
+
+**Проблема поверхности атаки:** Стандартный Linux-контейнер содержит shell, пакетный менеджер, десятки системных утилит — всё это расширяет поверхность атаки. Юникернел не содержит ничего лишнего: нет shell, нет SSH, нет cron. Критерий: если атакующий получает контроль над процессом внутри юникернела, у него нет инструментов для lateral movement.
+
+**Проблема предсказуемости:** В ОС общего назначения работают фоновые процессы (systemd, journald, kswapd, cron), которые создают jitter в latency. Юникернел выполняет только приложение — детерминированные задержки guarantee для критичных сервисов (DNS, балансировщики, firewall).
+
+### Когда НЕ стоит использовать юникернелы
+
+- **Приложение требует интерактивной отладки:** Невозможно выполнить `docker exec -it` или подключиться по SSH. Отладка требует eBPF на хосте или инструментации через OpenTelemetry.
+- **Приложение зависит от сложного POSIX API:** Многие POSIX-вызовы не реализованы в Library OS. Необходимо проверять совместимость через `ops run -i` (Nanos) или анализ systemd-зависимостей.
+- **Нет компетенций в команде:** Барьер входа выше, чем для Docker. Требуется понимание процессов компиляции, работы гипервизора и сетевых мостов.
+- **Нужна оркестрация через Kubernetes:** Юникернелы не поддерживаются стандартным CRI без надстроек (KubeVirt, специализированные CNI).
+
 ## Требования для использования
 
-Для развертывания юникернелов необходима следующая инфраструктура:
-- **Аппаратная поддержка:** Процессор с инструкциями виртуализации (Intel VT-x / AMD-V).
-- **Гипервизор:** KVM/QEMU, Xen, AWS Firecracker или специализированные облачные платформы (KraftCloud).
-- **Инструментарий сборки:** Зависит от выбранного фреймворка (например, `kraft` для Unikraft, `ops` для Nanos, `dune` для MirageOS).
+### Аппаратные требования
+
+- **Процессор:** Инструкции виртуализации обязательны — Intel VT-x или AMD-V. Проверка на Linux:
+  ```bash
+  grep -E 'vmx|svm' /proc/cpuinfo | head -1
+  # → flags: ... vmx ... (Intel) или flags: ... svm ... (AMD)
+  
+  # Или через cpu-checker:
+  sudo apt install cpu-checker && kvm-ok
+  # → INFO: /dev/kvm exists, KVM acceleration can be used
+  ```
+- **RAM:** Минимум 2 ГБ свободной RAM для инструментов сборки. Для запуска юникернелов — от 64 МБ на экземпляр (取决于 приложения).
+- **Диск:** 5–10 ГБ для инструментов сборки и образов.
+
+### Программные требования (on-premise, Linux хост)
+
+| Компонент | Требование | Проверка |
+| :--- | :--- | :--- |
+| **Ядро Linux** | 5.10+ (для KVM и eBPF) | `uname -r` |
+| **Гипервизор** | KVM/QEMU (наиболее универсальный) | `ls -la /dev/kvm` |
+| **Доступ к KVM** | Пользователь в группе `kvm` или root | `groups \| grep kvm` |
+| **Утилиты сборки** | `gcc`, `make`, `cmake`, `ninja` | `gcc --version` |
+| **Сетевые инструменты** | `ip`, `iptables`, `bridge-utils` | `ip link show` |
+| **Для Unikraft** | `rustc`, `cargo`, `kraft` | `kraft --version` |
+| **Для Nanos** | `ops` | `ops version` |
+| **Для MirageOS** | `ocaml`, `dune`, `opam` | `opam --version` |
+
+### Установка базового стека (KVM + QEMU)
+
+```bash
+# Debian/Ubuntu
+sudo apt update && sudo apt install -y \
+  qemu-system-x86 qemu-utils \
+  libvirt-daemon-system libvirt-clients \
+  bridge-utils virtinst virt-manager
+
+# Добавление пользователя в группы
+sudo usermod -aG kvm $USER
+sudo usermod -aG libvirt $USER
+
+# Проверка KVM
+ls -la /dev/kvm
+# → crw-rw---- 1 root kvm 10, 232 ...
+
+# Включение и запуск libvirtd
+sudo systemctl enable --now libvirtd
+```
 
 ## Основные концепции
 
@@ -41,6 +103,8 @@
 3.  **Специализация:** Образ упаковывается для конкретного гипервизора (например, создается загрузочный диск для QEMU).
 4.  **Запуск:** Гипервизор запускает образ напрямую, минуя стадию загрузки традиционной ОС.
 
+**Ключевое отличие от Docker:** В Docker `docker build` = компиляция + упаковка в OCI-образ. В юникернеле этапы разделены: `kraft build` создаёт ELF-бинарник, `kraft run` — упаковывает в bootable disk для гипервизора.
+
 ### Основные типы систем
 
 - **Специфичные (Clean-slate):** Написаны с нуля на типобезопасных языках. Обеспечивают максимальную безопасность. 
@@ -50,6 +114,170 @@
 - **Специализированные рантаймы:** Оптимизированы под конкретные виртуальные машины (например, JVM).
   - *Пример:* **OSv**.
 
+### Выбор фреймворка для on-premise
+
+| Критерий | Unikraft | Nanos/OPS | MirageOS | OSv |
+| :--- | :--- | :--- | :--- | :--- |
+| **Язык приложения** | C/C++/POSIX | Любой ELF (Go, Python, Node, Java) | OCaml | JVM, C/C++ |
+| **Размер образа** | 1–5 МБ | 5–15 МБ | 1–2 МБ | 10–20 МБ |
+| **Время старта** | 10–20 мс | 10–50 мс | 20–50 мс | 50–100 мс |
+| **Барьер входа** | Средний | Низкий (бинарная совместимость) | Высокий (OCaml) | Средний |
+| **Сценарий** | Новые сервисы | Legacy-приложения, GPU | Безопасность, формальная верификация | JVM-стек |
+
+## Сетевые настройки для on-premise
+
+Юникернелы работают на гипервизоре и не имеют доступа к сетевой конфигурации хоста. Сетевая связь обеспечивается через TAP-интерфейсы и мосты.
+
+### Базовая топология: QEMU + TAP + NAT
+
+```
+┌──────────────────────────────────────────────────────┐
+│                    Хост (Linux)                      │
+│                                                      │
+│  ┌─────────────┐     ┌──────────────┐               │
+│  │   bridge0    │─────│    br-eth0    │─── eth0 ──→ │
+│  │  10.0.0.1   │     │  NAT (MASQ)  │    (Интернет)│
+│  └──────┬──────┘     └──────────────┘               │
+│         │                                            │
+│  ┌──────┴──────┐                                     │
+│  │    tap0      │                                     │
+│  │  10.0.0.2   │                                     │
+│  └──────┬──────┘                                     │
+│         │                                            │
+│  ┌──────┴──────────────────────┐                     │
+│  │    Юникернел (QEMU VM)     │                     │
+│  │    IP: 10.0.0.2            │                     │
+│  │    GW: 10.0.0.1            │                     │
+│  └────────────────────────────┘                     │
+└──────────────────────────────────────────────────────┘
+```
+
+### Настройка сети на хосте
+
+```bash
+# 1. Создание TAP-интерфейса
+sudo ip tuntap add tap0 mode tap
+sudo ip addr add 10.0.0.1/24 dev tap0
+sudo ip link set tap0 up
+
+# 2. Включение IP forwarding
+sudo sysctl -w net.ipv4.ip_forward=1
+# → net.ipv4.ip_forward = 1
+
+# 3. Настройка NAT (маскарадинг) для доступа в Интернет
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+sudo iptables -A FORWARD -i tap0 -o eth0 -j ACCEPT
+sudo iptables -A FORWARD -i eth0 -o tap0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+# 4. Проверка
+ip addr show tap0
+# → tap0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 ... inet 10.0.0.1/24 ...
+
+# 5. Сохранение правил iptables (Persistent)
+sudo apt install iptables-persistent
+sudo netfilter-persistent save
+```
+
+### Запуск юникернела с сетевой конфигурацией
+
+```bash
+# Unikraft: привязка к TAP-интерфейсу
+kraft run --headless --background -p 8080:80 --net tap0
+
+# Nanos/OPS: через конфигурацию
+cat <<EOF > /etc/ops/ops.conf
+{
+  "Network": {
+    "Type": "tap",
+    "Tap": "tap0"
+  }
+}
+EOF
+ops run -p 8080 --net tap0 ./my-app
+
+# QEMU напрямую (для отладки)
+qemu-system-x86_64 \
+  -m 256 -smp 2 \
+  -drive file=my-unikernel.qcow2,if=virtio \
+  -netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
+  -device virtio-net-pci,netdev=net0 \
+  -nographic
+```
+
+### Проверка сетевой связности
+
+```bash
+# С хоста → юникернел
+ping -c 3 10.0.0.2
+# → 3 packets transmitted, 3 received, 0% packet loss
+
+# Сканирование открытых портов юникернела
+nmap -sT -p- 10.0.0.2
+# → PORT   STATE SERVICE
+# → 80/tcp open  http
+# (только те порты, которые явно слушает приложение)
+```
+
+## Мониторинг и наблюдаемость
+
+Юникернелы не поддерживают запуск агентов мониторинга внутри себя (нет shell, нет systemd). Стандартный подход — **Sidecar-less Observability**: сбор данных на стороне хоста.
+
+### Что можно собирать
+
+| Тип данных | Инструмент на хосте | Что получаем |
+| :--- | :--- | :--- |
+| **Метрики CPU/RAM** | `ps`, `virt-top`, Node Exporter | Потребление ресурсов процессом QEMU |
+| **Сетевой трафик** | eBPF (bpftrace), iptables logging | Объём входящего/исходящего трафика |
+| **Логи приложения** | stdout/stderr юникернела → гипервизор | Логи приложения через `--log-file` |
+| **Метрики приложения** | OpenTelemetry SDK (в коде) | Трейсы, метрики, логи в Grafana/Jaeger |
+
+### Сбор логов
+
+```bash
+# Unikraft: вывод console-output в файл
+kraft run --headless --background -p 8080:80 \
+  --log-file /var/log/unikernel/my-service.log 2>&1
+
+# Nanos: перехват stdout
+ops run -p 8080 ./my-app 2>&1 | tee /var/log/nanos/my-app.log
+
+# QEMU: serial output в файл
+qemu-system-x86_64 ... -serial file:/var/log/qemu-serial.log
+
+# Чтение логов
+tail -f /var/log/unikernel/my-service.log
+```
+
+### Мониторинг через eBPF (Linux 5.10+)
+
+```bash
+# Мониторинг сетевых пакетов юникернела через TAP-интерфейс
+sudo bpftrace -e '
+kprobe:virtio_net_xmit {
+    printf("TX: %s -> %d bytes\n", comm, arg1);
+}'
+
+# Мониторинг времени выполнения VMM
+sudo bpftrace -e '
+kretprobe:kvm_vcpu_ioctl {
+    @us = hist(nsecs - @start[pid]);
+    delete(@start[pid]);
+}'
+```
+
+### Экспорт метрик в Prometheus
+
+```yaml
+# На хосте: конфигурация Prometheus scrape
+scrape_configs:
+  - job_name: 'unikernel-host'
+    static_configs:
+      - targets: ['host-ip:9100']  # Node Exporter (CPU, RAM, disk хоста)
+  - job_name: 'qemu-metrics'
+    static_configs:
+      - targets: ['host-ip:9090']  # QEMU metrics endpoint (если включен)
+```
+
 ## Практические сценарии
 
 Юникернелы эффективно решают задачи в областях, где критична скорость и безопасность:
@@ -58,7 +286,142 @@
 - **Confidential Computing:** Минимальная база кода позволяет легко проводить аудит безопасности всей системы.
 - **Высокопроизводительные сети:** Обработка трафика с минимальными задержками (Zero-copy).
 
+### Типичные DevOps/SRE сценарии для on-premise
+
+- **DNS-сервер:** Unikraft + стек DNS → образ 2–3 МБ, старт за 10 мс, thousands of instances.
+- **Reverse proxy / балансировщик:** Nanos + nginx → бинарная совместимость без пересборки, изоляция на уровне VM.
+- **Firewall / DPI:** Minimized attack surface критичен для сетевых функций.
+- **Legacy JVM-приложения:** OSv + OpenJDK → запуск без модификации Java-бинарников.
+
 Подробные примеры использования см. в документе [Сценарии использования Unikernel](./use_cases.md).
+
+## Быстрый старт: от установки до запуска
+
+### Шаг 1: Установка инструментария
+
+```bash
+# Unikraft (kraft)
+curl -sSf https://get.kraftkit.sh | bash
+# → kraft installed to ~/.local/bin/kraft
+
+# Nanos (ops)
+curl -fsSL https://releases.nanovms.com/ops/ops-latest | tar -xzf -
+sudo mv ops /usr/local/bin/
+ops kernel get latest
+# → downloading nanos latest...
+```
+
+### Шаг 2: Сборка и запуск (Unikraft)
+
+```bash
+# Инициализация проекта (Python)
+kraft init -p python3 my-service
+cd my-service
+
+# Конфигурация (kraft.yaml)
+cat <<EOF > kraft.yaml
+spec: v0.6
+name: my-service
+unikraft: v0.17.0
+targets:
+  - name: qemu
+    arch: x86_64
+    platform: qemu
+libraries:
+  - name: python3
+    version: latest
+  - name: lwip
+    version: latest
+EOF
+
+# Сборка
+kraft build --target qemu --arch x86_64
+# → Building for x86_64/qemu...
+
+# Запуск
+kraft run --headless --background -p 8080:80
+# → my-service running on port 8080
+
+# Проверка
+curl http://localhost:8080
+# → Hello from Unikraft!
+```
+
+### Шаг 3: Сборка и запуск (Nanos/OPS)
+
+```bash
+# Запуск стандартного Linux-бинарника (без пересборки!)
+ops run -p 8080 ./my-app
+# → booting /home/user/my-app ...
+
+# Проверка
+curl http://localhost:8080
+
+# Конвертация Docker-образа в unikernel
+ops pkg from docker nginx:latest -a amd64
+ops run nginx:latest -p 8080:80
+```
+
+### Шаг 4: Headless-запуск (продакшн)
+
+```bash
+# Unikraft: запуск в фоне
+kraft run --headless --background \
+  --name my-service-prod \
+  -p 8080:80 \
+  --log-file /var/log/unikernel/my-service.log
+
+# Проверка статуса
+kraft ps
+# → NAME              STATE   PID    PORTS        MEMORY
+# → my-service-prod   Running 12345  0.0.0.0:8080 6.4M
+
+# Остановка
+kraft stop my-service-prod
+```
+
+## Best Practices для продакшн-развертывания
+
+### Иммутабельность и версионирование
+
+- **Храните конфигурацию сборки в Git:** `kraft.yaml`, `ops.json`, `config.json` — это source of truth для воспроизводимости образов.
+- **Используйте теги для образов:** Каждый релиз = новый тег в Git + соответствующий образ.
+- **Never changes in place:** Юникернел нельзя «обновить на лету». Любое изменение = новая сборка + перезапуск.
+
+### Безопасность
+
+```bash
+# Удаление отладочных символов (уменьшает размер образа и убирает информацию для атакующего)
+kraft build --strip
+
+# Проверка отсутствия отладочных символов
+readelf -S build/my-service-qemu-x86_64 | grep debug
+# → (пусто = OK)
+
+# Проверка что юникернел не имеет доступа к данным других инстансов
+ls -la /proc/$(pgrep -f "qemu.*unikernel")/fd | grep kvm
+# → только virtio-устройства, не данные других VM
+```
+
+### Откат при сбоях
+
+Юникернелы не имеют persistent state. Стратегия отката:
+
+1. **Rebuild from Source (рекомендуется):** Источник кода в Git + `kraft.yaml` = воспроизводимый образ за 1–5 минут.
+2. **Snapshot Restore:** Unikraft Metis позволяет создавать снимки запущенных инстансов и восстанавливать их за миллисекунды.
+3. **Blue-Green:** Запуск новой версии параллельно со старой, переключение трафика, остановка старой.
+
+### Мониторинг
+
+```bash
+# Проверка потребления RAM
+ps aux | grep qemu | grep my-service | awk '{print $6/1024 " MB"}'
+# → 6.4 MB
+
+# Проверка сетевых соединений
+ss -tlnp | grep 8080
+# → LISTEN  0  128  0.0.0.0:8080  users:(("qemu-system-x86_64",pid=12345,fd=5))
+```
 
 ## Валидация и проверка работоспособности
 
@@ -66,6 +429,24 @@
 - **Проверка размера бинарного файла:** Убедитесь, что образ не содержит лишних артефактов (например, образ веб-сервера на Go должен быть в пределах 10-20 МБ).
 - **Замер времени старта:** Интервал от команды `run` до появления первой записи в логах приложения. Ожидаемое значение для 2026 года: <100 мс.
 - **Сканирование портов:** Внешнее сканирование (nmap) должно показывать открытыми только те порты, которые явно прописаны в логике приложения.
+
+```bash
+# Проверка времени старта
+time kraft run --headless --background -p 9090:80 2>/dev/null &
+PID=$!
+sleep 0.1
+curl -s http://localhost:9090/ > /dev/null
+# → Ожидаемый результат: <100 мс от запуска до первого ответа
+kill $PID 2>/dev/null
+
+# Проверка размера образа
+ls -lh build/my-service*
+# → -rw-r--r-- 4.2M ... my-service-qemu-x86_64
+
+# Проверка состава бинарника
+file build/my-service-qemu-x86_64
+# → ELF 64-bit LSB executable, x86-64, statically linked
+```
 
 ## Устранение неполадок
 
@@ -75,13 +456,19 @@
 | **Тайм-аут сетевого соединения** | Не подключен модуль стека протоколов | Убедиться, что библиотеки типа `lib-lwip` включены в сборку. |
 | **Высокое потребление ресурсов** | Включены неиспользуемые отладочные символы или модули | Собрать образ в режиме `Release` с удалением символов (strip). |
 | **Нестабильная работа на KVM** | Несоответствие версии Virtio драйвера | Проверить параметры гипервизора и совместимость с `virtio-net`. |
+| **"Operation not permitted" в OPS** | Недостаточно прав для KVM | Проверить права на `/dev/kvm` или запустить с `sudo`. |
+| **"binary not compatible" (Nanos)** | Бинарник использует нереализованный syscall | Проверить через `ops run -i` и заменить недоступные вызовы. |
+| **"Kernel Panic при загрузке"** | Несоответствие драйвера гипервизора (Virtio) | Проверить флаги компиляции и поддержку гипервизора в `kraft.yaml`. |
+| **Юникернел не отвечает на HTTP** | Приложение слушает на 127.0.0.1 вместо 0.0.0.0 | Убедиться, что приложение привязано к `0.0.0.0:80`. |
+| **Сетевая трафик не маршрутизируется** | Отсутствие NAT или bridge-интерфейса | Настроить IP forwarding и iptables на хосте. |
 
 ## Дополнительная информация
 
 ### См. также
-- [Популярные Unikernel-проекты](./popular_unikernels.md) — разбор Unikraft, Nanos, MirageOS.
+- [Популярные Unikernel-проекты](./popular_unikernels.md) — разбор Unikraft, Nanos, MirageOS с примерами команд.
 - [Инструменты и будущее технологии](./tools_future.md) — сравнение с WebAssembly и MicroVM (Firecracker).
 - [Преимущества и ограничения](./unikernel_advantages_disadvantages.md) — детальный разбор безопасности и Ops.
+- [Сценарии использования](./use_cases.md) — CI/CD, наблюдаемость, стратегии развёртывания.
 
 ### Ссылки
 - [Unikraft Platform](https://unikraft.org/) — модульные юникернелы.

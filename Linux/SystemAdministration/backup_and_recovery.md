@@ -126,4 +126,6 @@
 - **[LVM — базовые концепции](../FileSystems/LVM/index.md)** — управление томами.
 - **[Утилита dd](../FileSystems/dd.md)** — низкоуровневое копирование.
 - **[Стратегии бэкапов БД](../../Databases/Concepts/backups.md)** — специфика приложений.
+- **[Утилиты сжатия файлов (gzip, bzip2, xz, zip)](./file-compression.md)** — компрессоры для файлов и потоков.
+- **[Мета-мониторинг: мониторинг бэкапов](../../Concepts/Observability_and_Monitoring/meta-monitoring.md)** — Dead Man's Switch для контроля выполнения cron-заданий и heartbeat-мониторинг.
 - **[Аудит и логирование](./Logging/logging_overview.md)** — мониторинг заданий.

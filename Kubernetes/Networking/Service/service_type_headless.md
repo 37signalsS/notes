@@ -1,5 +1,32 @@
 # Тип Service — Headless
 
+## Предварительные требования
+
+**Окружение:**
+- Kubernetes v1.20+ (стабильная поддержка EndpointSlices)
+- CoreDNS v1.8+ (или kube-dns) как DNS-сервер кластера
+- CNI-плагин с поддержкой Service Discovery (Calico, Flannel, Cilium)
+
+**Проверка готовности:**
+```bash
+# Проверка версии кластера
+kubectl version --short
+# → Client Version: v1.30.x
+# → Server Version: v1.30.x
+
+# Проверка работы CoreDNS
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+# → NAME                       READY   STATUS    RESTARTS   AGE
+# → coredns-xxxxxxxxxx-xxxxx   1/1     Running   0          xxm
+
+# Проверка работы DNS в кластере
+kubectl run dns-debug --image=busybox:1.36 -it --rm --restart=Never -- nslookup kubernetes.default
+# → Server:    10.96.0.10
+# → Address:   10.96.0.10#53
+# → Name:      kubernetes.default.svc.cluster.local
+# → Address:   10.96.0.1
+```
+
 ## Определения
 
 **Headless Service** — это специальный тип Service в Kubernetes, у которого отсутствует виртуальный IP-адрес (`spec.clusterIP: None`). В отличие от стандартных сервисов, он не выполняет балансировку нагрузки на уровне кластера и не проксирует трафик через `kube-proxy`.
@@ -20,6 +47,27 @@
 | **A/AAAA (Сервис)** | `<svc>.<ns>.svc.cluster.local` | Возвращает набор IP-адресов всех готовых подов. Порядок в ответе обычно случайный. |
 | **A/AAAA (Под)** | `<pod>.<svc>.<ns>.svc.cluster.local` | Возвращает IP конкретного пода. Имя пода берется из `metadata.name`. |
 | **SRV** | `_<port-name>._<proto>.<svc>.<ns>.svc.cluster.local` | Содержит номера портов и соответствующие им целевые DNS-имена подов. Критично для протоколов, требующих явного указания портов. |
+
+**Валидация DNS-записей:**
+```bash
+# Проверка A-записи сервиса (список IP подов)
+nslookup nginx-headless.default.svc.cluster.local
+# → Server:    10.96.0.10
+# → Address:   10.96.0.10#53
+# → Name:      nginx-headless.default.svc.cluster.local
+# → Address:   10.244.0.10
+# → Address:   10.244.0.11
+
+# Проверка A-записи конкретного пода
+nslookup web-0.nginx-headless.default.svc.cluster.local
+# → Name:      web-0.nginx-headless.default.svc.cluster.local
+# → Address:   10.244.0.10
+
+# Проверка SRV-записи (для портов)
+dig SRV _web._tcp.nginx-headless.default.svc.cluster.local +short
+# → 0 100 80 web-0.nginx-headless.default.svc.cluster.local.
+# → 0 100 80 web-1.nginx-headless.default.svc.cluster.local.
+```
 
 ### Механизм publishNotReadyAddresses
 
@@ -187,6 +235,123 @@ dig SRV _amqp._tcp.rabbitmq-headless.default.svc.cluster.local +short
 
 ---
 
+## Troubleshooting: типичные проблемы и диагностика
+
+**Проблема 1: DNS-имя пода не резолвится**
+
+*Причины:*
+- Headless Service не создан или имя в `serviceName` StatefulSet не совпадает
+- Поды не в состоянии `Ready` (без `publishNotReadyAddresses: true`)
+- Несовпадение labels между селектором Service и подами
+
+*Диагностика:*
+```bash
+# Проверка существования Headless Service
+kubectl get svc nginx-headless
+# → NAME             TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)
+# → nginx-headless   ClusterIP   None         <none>        80/TCP
+
+# Проверка совпадения селектора и labels подов
+kubectl get svc nginx-headless -o yaml | grep -A 5 selector
+# → selector:
+# →   app: nginx
+
+kubectl get pods -l app=nginx --show-labels
+# → NAME    READY   STATUS    RESTARTS   AGE   LABELS
+# → web-0   1/1     Running   0          5m    app=nginx
+
+# Проверка состояния подов
+kubectl get pods -l app=nginx
+# → NAME    READY   STATUS    RESTARTS   AGE
+# → web-0   1/1     Running   0          5m
+# → web-1   0/1     Running   0          5m  ← под не Ready, не будет в DNS
+```
+
+**Проблема 2: Большой DNS-ответ не помещается в UDP**
+
+*Симптом:* При большом количестве подов (>50-100) DNS-ответ обрезается.
+
+*Диагностика:*
+```bash
+# Проверка флага TC (Truncated) в ответе
+dig nginx-headless.default.svc.cluster.local +noall +comments
+# → ;; flags: qr rd ra; QUERY: 1, ANSWER: X, AUTHORITY: 0, ADDITIONAL: 0
+# → Если флаг TC присутствует — ответ обрезан
+
+# Проверка через TCP
+dig nginx-headless.default.svc.cluster.local +tcp +short
+```
+
+*Решение:* Убедиться, что клиенты поддерживают переключение на TCP (большинство современных резолверов делают это автоматически).
+
+**Проблема 3: Поды не обнаруживают друг друга при бутстрапе**
+
+*Симптом:* Кластер (Cassandra, Elasticsearch, ZooKeeper) не формирует кворум.
+
+*Причина:* Поды не могут обнаружить друг друга до прохождения Readiness Probe.
+
+*Решение:* Использовать `publishNotReadyAddresses: true`:
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cassandra-headless
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true  # ← Критично для бутстрапа
+  selector:
+    app: cassandra
+  ports:
+    - port: 9042
+```
+
+**Проблема 4: Ошибка при использовании с ClusterIP Service**
+
+*Симптом:* Создан Service с `clusterIP: None`, но приложение ожидает обычный ClusterIP.
+
+*Диагностика:*
+```bash
+# Проверка типа сервиса
+kubectl get svc nginx-headless -o jsonpath='{.spec.clusterIP}'
+# → None
+```
+
+*Решение:* Headless Service не предоставляет ClusterIP. Для балансировки трафика используйте обычный ClusterIP Service или клиентскую балансировку.
+
+## Best Practices
+
+1. **Используйте с StatefulSet:** Headless Service обязательно для стабильной DNS-идентификации подов в StatefulSet.
+
+2. **publishNotReadyAddresses для кворумных систем:** Всегда включайте `publishNotReadyAddresses: true` для Cassandra, Elasticsearch, ZooKeeper, etcd и других систем, требующих бутстрапа кворума.
+
+3. **Проверка совпадения labels:** Убедитесь, что селектор Service точно соответствует labels подов. Несовпадение — частая причина отсутствия DNS-записей.
+
+4. **Мониторинг DNS:** Настройте мониторинг доступности DNS-записей для критичных Headless Service.
+
+5. **Ограничение размера кластера:** При >500 подов учитывайте ограничения UDP-пакетов и нагрузку на CoreDNS.
+
+6. **Документирование:** Явно указывайте в документации, что сервис является Headless, чтобы разработчики понимали отсутствие балансировки на уровне кластера.
+
+7. **Тестирование DNS:** Всегда проверяйте DNS-записи после создания Headless Service и при изменении количества реплик.
+
+## Edge Cases и ограничения
+
+1. **Нет балансировки трафика:** Headless Service не балансирует нагрузку — весь трафик идет на один под (первый в DNS-ответе) или требуется клиентская балансировка.
+
+2. **Зависимость от DNS:** Если клиент не использует DNS (например, работает только с IP-адресами), Headless Service бесполезен.
+
+3. **Ограничение на количество записей:** При большом количестве подов (>1000) DNS-ответы могут быть нестабильными из-за ограничений размера UDP-пакетов.
+
+4. **sessionAffinity игнорируется:** Поле `sessionAffinity` не работает для Headless Service, так как нет проксирования трафика.
+
+5. **EndpointSlice масштабирование:** Для больших кластеров убедитесь, что EndpointSlice контроллер справляется с нагрузкой (используйте `endpointslicehints` для оптимизации).
+
+6. **Несовместимость с kube-proxy:** Headless Service не создает правил iptables/IPVS — kube-proxy не обрабатывает трафик для таких сервисов.
+
+7. **Особенности Dual-stack:** При `ipFamilyPolicy: PreferDualStack` CoreDNS создает как A, так и AAAA записи. Убедитесь, что клиенты корректно обрабатывают оба типа записей.
+
+---
+
 ## Совет по собеседованию
 
 **Вопрос:** Что такое Headless Service в Kubernetes и когда вы будете его использовать?
@@ -210,17 +375,10 @@ dig SRV _amqp._tcp.rabbitmq-headless.default.svc.cluster.local +short
 | **Уровень OSI** | L3 (Discovery) | L4 (Distribution) |
 | **Типовой use-case** | БД, StatefulSet, gRPC | Веб-сервисы, stateless API |
 
-### Особенности и ограничения
-
-- **`sessionAffinity`:** Поле игнорируется, так как нет проксирования трафика.
-- **Dual-stack (IPv4/IPv6):** Поддерживается. При настройке `ipFamilyPolicy: PreferDualStack` в DNS будут создаваться как A (IPv4), так и AAAA (IPv6) записи для каждого пода.
-- **Зависимость от DNS:** Механизм работает исключительно через систему имен. Если клиент не умеет резолвить имена (например, использует только IP), Headless Service бесполезен.
-- **Масштабируемость:** При >500 подов DNS-ответы переключаются на TCP из-за ограничений размера UDP-пакетов.
-
 ### См. также
 
 - [Обзор StatefulSet](../../Base/StatefulSet/statefulset_overview.md)
 - [Сводка по типам Service](./service_types_summary.md)
-- [Service Discovery через DNS](../Network/dns_service_discovery.md)
+- [DNS в Kubernetes: Глубокое погружение](../dns_deep_dive.md)
 - [Тип Service — ExternalName](./service_type_externalname.md)
 

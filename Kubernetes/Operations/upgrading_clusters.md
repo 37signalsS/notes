@@ -32,7 +32,7 @@ Control Plane управляет жизненным циклом всего кл
 
 1. **Не пропускать минорные версии:** Обновление всегда идет по цепочке (1.31 → 1.32 → 1.33).
 2. **Бэкап etcd:** Единственная точка восстановления. Снапшот гарантирует возможность восстановления кластера в случае критического сбоя при обновлении. Сохраняйте его на внешнем носителе.
-3. **Дренаж узлов:** Обновление `kubelet` без `kubectl drain` может привести к некорректному завершению подов и потере данных.
+3. **Дренаж узлов:** Обновление `kubelet` без `kubectl drain` может привести к некорректному завершению подов и потере данных. Детали: [Обслуживание узлов (Cordon/Drain)](../Operations/node_maintenance.md).
 4. **Аудит API:** Использование специализированных инструментов (`kubent`, `pluto`) для поиска устаревших ресурсов.
 5. **Поэтапность:** Обновление рабочих узлов по одному минимизирует время простоя и позволяет сохранить доступность приложений.
 
@@ -86,19 +86,152 @@ kubectl get nodes
 kubeadm upgrade plan
 ```
 
+#### Pre-flight проверки перед обновлением
+
+Перед началом любых операций выполните комплексную проверку состояния кластера. Нарушения, обнаруженные на этом этапе, значительно дешевле исправить, чем после начала обновления.
+
+**1. Здоровье etcd и кворум**
+```bash
+# Проверка доступности всех членов etcd
+k-etcdctl endpoint health --cluster -w table
+# → https://10.0.0.10:2379 is healthy: successfully committed and received proposal
+
+# Проверка лидера и членов
+k-etcdctl member list -w table
+k-etcdctl endpoint status --cluster -w table
+
+# Проверка метрик кворума (Prometheus)
+# etcd_server_has_leader == 1
+# etcd_server_quota_backend_bytes / etcd_memory_used_bytes < 0.8
+```
+*Требование:* Все члены healthy, есть лидер, использование диска < 80%.
+
+**2. Целостность снапшота etcd**
+```bash
+ETCDCTL_API=3 etcdctl snapshot status /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db --write-out=table
+# Проверка контрольных sums
+etcdutl snapshot verify /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db
+# → Snapshot file is valid: checksum matches
+```
+
+**3. Сертификаты PKI**
+```bash
+# Проверка срока действия всех сертификатов кластера
+kubeadm certs check-expiration
+# → CERTIFICATE                EXPIRES                  RESIDUAL TIME   CERTIFICATE AUTHORITY   EXTERNALLY MANAGED
+# → admin.conf                 Sep 15, 2026 12:00 UTC   364d                                    no
+```
+*Требование:* Ни один сертификат не должен истекать в течение следующего Maintenance Window.
+
+**4. Static Pods Control Plane**
+```bash
+# Все компоненты должны быть в Running
+kubectl get pods -n kube-system -l tier=control-plane
+# → NAME               READY   STATUS    RESTARTS   AGE
+# → kube-apiserver     1/1     Running   0          45d
+
+# Проверка Lease (лидерство)
+kubectl get lease -n kube-system -o custom-columns=NAME:.metadata.name,HOLDER:.spec.holderIdentity
+```
+
+**5. PodDisruptionBudget для критичных сервисов**
+```bash
+# Вывод всех PDB и текущего здоровья
+kubectl get pdb -A
+# → NAMESPACE   NAME   MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+# → default     myapp  3               <none>             2                     30d
+
+# Проверка, что allowed disruptions > 0 для обслуживания
+kubectl get pdb <name> -o jsonpath='{.status.disruptionsAllowed}{"\n"}'
+```
+*Требование:* Для каждого критичного сервиса `disruptionsAllowed` > 0 или batch size обслуживаемых узлов укладывается в бюджет.
+
+**6. Отсутствие устаревших и удаляемых API**
+```bash
+# Быстрый скан активного кластера
+kubent --helm3 --exit-error
+
+# Проверка Helm-релизов
+pluto detect-helm -A
+```
+
+**7. Состояние сетевого плагина и CSI**
+```bash
+# CNI поды должны быть Ready
+kubectl get pods -n kube-system -l app=calico -o wide
+kubectl get pods -n kube-system -l app=csi-driver -o wide
+
+# Проверка CSI Driver health
+kubectl get csidrivers
+# → NAME                                           ATTACHREQUIRED   PUBLISHVOLUME   STORAGECAPACITY   ...
+# → csi.vsphere.vmware.com                          true             true            false
+```
+
+**8. Образы контейнеров (pause image)**
+```bash
+# Проверка версии pause образа, используемого kubelet
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.nodeInfo.runtimeVersion}{"\n"}{end}'
+# Убедитесь, что версия containerd/runc совместима с целевой версией K8s.
+# См. release notes для минимальной поддерживаемой версии.
+```
+
+**9. План изменений (Change Plan)**
+- Согласуйте Maintenance Window с командой и стейкхолдерами.
+- Убедитесь, что количество одновременно обслуживаемых узлов не превышает `maxUnavailable` в PDB критичных сервисов.
+- Подготовьте канал коммуникации (Slack, Statuspage) для информирования о ходе работ.
+
 ### 2. Резервное копирование etcd
 
 Выполняется на одном из узлов Control Plane. Снапшот обязателен перед любыми операциями по обновлению, так как etcd хранит все состояние кластера.
 
 ```bash
-ETCDCTL_API=3 etcdctl snapshot save /var/lib/kubelet/etcd-snapshot-$(date +%F).db \
+ETCDCTL_API=3 etcdctl snapshot save /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db \
   --endpoints=https://127.0.0.1:2379 \
   --cacert=/etc/kubernetes/pki/etcd/ca.crt \
   --cert=/etc/kubernetes/pki/etcd/server.crt \
   --key=/etc/kubernetes/pki/etcd/server.key
-# → Snapshot saved at /var/lib/kubelet/etcd-snapshot-2026-07-22.db
+
+# Проверка целостности снапшота (обязательно)
+etcdutl snapshot verify /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db
+# → Snapshot file is valid: checksum matches
+
+# Просмотр метаинформации
+ETCDCTL_API=3 etcdctl snapshot status /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db --write-out=table
 ```
-*Подробнее: **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)***.
+
+**Политика хранения снапшотов:**
+- Храните копию на внешнем носителе (отдельный сервер, NAS, ленточная библиотека).
+- Храните минимум 3 последних снапшота с разными датами.
+- Ведите лог создания снапшотов (дата, версия K8s, хэш файла).
+- Для автоматизации используйте CronJob на мастере:
+  ```bash
+  # Пример crontab
+  0 2 * * * ETCDCTL_API=3 etcdctl snapshot save /var/lib/kube-backups/etcd-$(date +\%F).db && \
+    etcdutl snapshot verify /var/lib/kube-backups/etcd-$(date +\%F).db && \
+    find /var/lib/kube-backups/ -name "etcd-*.db" -mtime +7 -delete
+  ```
+
+**Быстрое восстановление из снапшота (аварийный сценарий):**
+```bash
+# 1. Остановите Control Plane на всех узлах
+sudo mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
+sudo mv /etc/kubernetes/manifests/etcd.yaml /tmp/
+sudo mv /etc/kubernetes/manifests/kube-controller-manager.yaml /tmp/
+sudo mv /etc/kubernetes/manifests/kube-scheduler.yaml /tmp/
+
+# 2. Восстановите etcd (на первом мастере)
+etcdutl snapshot restore /var/lib/kube-backups/etcd-pre-upgrade-2026-08-30.db \
+  --data-dir=/var/lib/etcd-restored \
+  --name etcd-0 \
+  --initial-advertise-peer-urls https://10.0.0.10:2380 \
+  --advertise-client-urls https://10.0.0.10:2379
+
+# 3. Обновите --data-dir в манифесте etcd.yaml
+# 4. Верните манифесты обратно и дождитесь запуска
+sudo mv /tmp/etcd.yaml /etc/kubernetes/manifests/
+sudo mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+```
+*Подробнее: **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)**, **[Стратегии резервного копирования](backup-strategies.md)***.
 
 ### 3. Сценарий: Автоматизированное обновление (Kubespray)
 
@@ -112,24 +245,65 @@ ansible-playbook -i inventory/mycluster/hosts.yml upgrade-cluster.yml -e kube_ve
 
 ### 4. Сценарий: Ручное обновление (на примере kubeadm)
 
+#### Порядок обновления для разных топологий
+
+Порядок обновления зависит от того, как развернут etcd.
+
+**Stacked etcd (etcd на тех же узлах, что и Control Plane — топология по умолчанию для kubeadm):**
+1. Обновите первый узел Control Plane (`kubeadm upgrade apply`). Статический под `etcd` обновится автоматически вместе с `kube-apiserver`.
+2. Дождитесь стабилизации (`kubectl get pods -n kube-system -l component=etcd`).
+3. Перейдите к следующему мастер-узлу.
+4. После обновления всех мастер-узлов обновите worker-узлы.
+
+**External etcd (etcd на выделенных узлах):**
+1. Обновите узлы внешнего etcd **самыми первыми** (по одному, с проверкой кворума после каждого).
+2. Затем обновите первый узел Control Plane.
+3. Затем остальные мастер-узлы.
+4. Затем worker-узлы.
+
+**Критически важно для HA-кластеров:**
+- Никогда не обновляйте более одного мастера одновременно. Потеря кворума etcd = полная недоступность кластера.
+- Между обновлением мастер-узлов делайте паузу 2–5 минут для стабилизации лидерства etcd (1–2 смены лидера — нормально, >5 — проблема).
+- Если за кластером стоит Load Balancer или VIP, убедитесь, что он корректно определяет готовность (`/readyz`) обновленного узла перед переводом трафика.
+
 Процесс повторяется для каждого узла. Сначала обновляются все узлы Control Plane (строго один за другим, чтобы не потерять кворум etcd), затем Worker-узлы. Если используется внешняя база **etcd** (External etcd topology), её узлы обновляются самыми первыми. В топологии **Stacked etcd** компоненты etcd обновляются вместе с Control Plane при выполнении `kubeadm upgrade apply/node`.
 
-**Шаг 1: Изоляция и дренаж (Drain)**
+**Шаг 1: Pre-drain проверки и изоляция**
 ```bash
+# Проверка PDB: убедитесь, что бюджет позволяет выселение
+kubectl get pdb -A -o wide
+
+# Проверка подов на узле (должны быть только системные и прикладные, подлежащие выселению)
+kubectl get pods -o wide --all-namespaces --field-selector spec.nodeName=node-1
+
+# Дренаж узла
 kubectl drain node-1 --ignore-daemonsets --delete-emptydir-data --timeout=5m
 # → node/node-1 cordoned
 # → evicting pod ...
 ```
 *Примечание:* Поды DaemonSet не выселяются `drain`. Они продолжат работу, либо будут остановлены при перезапуске `kubelet`/`containerd`.
 
-**Шаг 2: Обновление kubeadm**
+**Шаг 2: Обновление пакетов ОС и runtime (опционально, но рекомендуется)**
+```bash
+# Обновление containerd (если требуется целевой версией K8s)
+apt-mark unhold containerd && \
+apt-get update && apt-get install -y containerd=1.7.25-0 && \
+apt-mark hold containerd
+
+# Перезапуск containerd и проверка версии
+systemctl daemon-reload && systemctl restart containerd
+ctr version
+```
+*Почему важно:* Версия containerd/runtim должна соответствовать минимальной требованиям целевой версии Kubernetes (см. Release Notes).
+
+**Шаг 3: Обновление kubeadm**
 ```bash
 apt-mark unhold kubeadm && \
 apt-get update && apt-get install -y kubeadm=1.32.0-1.1 && \
 apt-mark hold kubeadm
 ```
 
-**Шаг 3: Применение обновления конфигурации**
+**Шаг 4: Применение обновления конфигурации**
 ```bash
 # На первом (primary) мастере (обновляет манифесты apiserver, scheduler, cm и etcd):
 sudo kubeadm upgrade apply v1.32.0
@@ -137,21 +311,27 @@ sudo kubeadm upgrade apply v1.32.0
 # На всех остальных узлах (secondary мастера и воркеры):
 sudo kubeadm upgrade node
 ```
+*Валидация:* После `upgrade apply` проверьте, что все static pods перезапустились с новым image tag:
+```bash
+docker ps | grep kube-apiserver  # или crictl ps для containerd
+# → registry.k8s.io/kube-apiserver:v1.32.0
+```
 
-**Шаг 4: Обновление бинарных файлов kubelet и kubectl**
+**Шаг 5: Обновление бинарных файлов kubelet и kubectl**
 ```bash
 apt-mark unhold kubelet kubectl && \
 apt-get update && apt-get install -y kubelet=1.32.0-1.1 kubectl=1.32.0-1.1 && \
 apt-mark hold kubelet kubectl
 ```
 
-**Шаг 5: Перезапуск сервиса**
+**Шаг 6: Перезапуск сервиса и проверка**
 ```bash
 systemctl daemon-reload
 systemctl restart kubelet
 ```
+*Ожидание:* Подождите 30–60 секунд, пока kubelet зарегистрирует узел и запустит статические пода (на мастерах) или перейдет в состояние Ready (на воркерах).
 
-**Шаг 6: Валидация API и компонентов**
+**Шаг 7: Валидация API и компонентов**
 После рестарта `kubelet` на Control Plane убедитесь, что API отвечает и компоненты поднялись:
 ```bash
 # Проверка доступности API и версии сервера
@@ -159,12 +339,30 @@ kubectl version --short
 
 # Проверка статических подов Control Plane
 kubectl get pods -n kube-system -l tier=control-plane
+
+# Проверка etcd кворума и лидера
+k-etcdctl endpoint health --cluster -w table
+k-etcdctl member list -w table
+
+# Проверка Version Skew
+kubectl get nodes -o custom-columns=NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion
+# Все узлы должны быть на целевой версии ±1 минорная версия.
 ```
 
-**Шаг 7: Возврат в работу (Uncordon)**
+**Шаг 8: Возврат в работу (Uncordon)**
 ```bash
 kubectl uncordon node-1
 # → node/node-1 uncordoned
+```
+
+**Шаг 9: Пост-обновление узла**
+```bash
+# Проверка, что узел Ready и все системные поды запущены
+kubectl get node node-1 -o wide
+kubectl get pods -n kube-system -o wide --field-selector spec.nodeName=node-1
+
+# Если используется Cluster Autoscaler — убедитесь, что узел не помечен для удаления
+kubectl get node node-1 -o jsonpath='{.spec.taints[?(@.key=="node.kubernetes.io/out-of-service")]}'
 ```
 
 ## Сценарий: Промышленное обновление (Production Upgrade Strategy)
@@ -196,18 +394,91 @@ kubectl uncordon node-1
 *   **Внешние зависимости:** Убедитесь, что версии баз данных, сторонних API и других сервисов совместимы с новой версией Kubernetes и изменениями в приложении.
 
 ### 5. Обновление аддонов (Cluster Add-ons)
+
 После стабилизации инфраструктуры и узлов необходимо убедиться, что все системные надстройки совместимы с новой версией Kubernetes.
-*   **Совместимость:** Плагины CNI, контроллеры Ingress и DNS-сервисы (CoreDNS) должны соответствовать версии кластера. Несовместимые аддоны — частая причина скрытых проблем с сетью или маршрутизацией.
-*   **Helm-чарты:** Всегда начинайте с обновления Helm-чартов приложений и системных компонентов. Это гарантирует, что манифесты используют актуальные возможности кластера и корректные версии API.
+
+**Порядок обновления (рекомендуемый):**
+1. **Сначала CRDs и вебхуки ( validating/mutating admission webhooks )**: Убедитесь, что сертификаты CA вебхуков действительны и не блокируют создание ресурсов с новыми версиями API.
+2. **CoreDNS**: Обновите Deployment CoreDNS. Проверьте, что сервис `kube-dns` отвечает.
+3. **Kube-proxy**: Обычно обновляется автоматически как демон (DaemonSet). Проверьте версии на всех узлах.
+4. **CNI плагин** (Calico, Cilium, Flannel и др.): Это самый критичный аддон. Обновите его раньше прикладных нагрузок. После обновления проверьте:
+   ```bash
+   # Проверка сетевой связности
+   kubectl run nettest --image=busybox --rm -it --restart=Never -- nslookup kubernetes.default
+   kubectl exec -ti nettest -- ping -c3 <pod-cidr-gateway>
+   ```
+5. **CSI drivers и StorageClasses**: Убедитесь, что CSI sidecar контейнеры (external-provisioner, external-attacher, external-snapshotter) совместимы с целевой версией. Проверьте `csidrivers` и `storageclasses`.
+6. **Metrics-server, Dashboard, другие аддоны**: Обновляйте по одному, проверяя метрики и работу после каждого.
+
+**Helm-чарты:** Всегда начинайте с обновления Helm-чартов приложений и системных компонентов. Это гарантирует, что манифесты используют актуальные возможности кластера и корректные версии API.
 *   **Порядок:** Обновляйте аддоны по одному, проверяя работоспособность каждого на Staging перед Production.
 
 ### 6. Мониторинг стабильности
+
 Процесс обновления не заканчивается на `uncordon`.
 *   **Длительность:** Отслеживайте показатели работоспособности кластера, логи и производительность приложений **минимум одну неделю** после апгрейда.
 *   **Фокус:** Особое внимание уделяйте сетевому уровню. Аддоны (особенно CNI) могут создавать трудноуловимые проблемы, проявляющиеся только под нагрузкой.
-*   **Инструменты:** Используйте Prometheus, Grafana или облачные сервисы (CloudWatch/Stackdriver) для мониторинга SLO и выявления скрытых аномалий.
+*   **Инструменты:** Используйте Prometheus, Grafana или корпоративные системы мониторинга SLO/SLI для отслеживания метрик и выявления скрытых аномалий.
 
-### 7. Стратегия обновления по средам
+### 6.5. Пост-апгрейд валидация (Post-Upgrade Validation)
+
+После обновления всего кластера выполните обязательный чек-лист:
+
+```bash
+# 1. Версии узлов
+kubectl get nodes -o wide
+# → Все узлы должны показать целевую версию
+
+# 2. Статус всех подов Control Plane
+kubectl get pods -n kube-system -l tier=control-plane
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+kubectl get pods -n kube-system -l app=csi-driver
+
+# 3. Здоровье etcd
+k-etcdctl endpoint health --cluster -w table
+k-etcdctl endpoint status --cluster -w table
+
+# 4. Сертификаты
+kubeadm certs check-expiration
+
+# 5. Сетевая связность (Network Policy / CNI)
+kubectl run nettest --image=busybox --rm -it --restart=Never -- wget -qO- http://kubernetes.default
+
+# 6. Проверка Storage
+kubectl get storageclass
+kubectl get csidrivers
+kubectl get volumeattachment
+
+# 7. Аудит API (повторный)
+kubent --helm3 --exit-error
+pluto detect-helm -A
+
+# 8. Метрики API-сервера (APF, latency, errors)
+kubectl get --raw /metrics | grep apiserver
+```
+
+### 7. Массовое обновление рабочих узлов (Batch Upgrade)
+
+При обновлении пула worker-узлов применяйте подход "batched rolling upgrade" с учетом PDB:
+
+**Расчет безопасного размера партии (Batch Size):**
+```text
+Batch Size = min(количество_узлов_в_пуле, floor((Общее_количество_под_of_сервис - PDB.minAvailable) / Реплик_на_узел))
+```
+На практике часто используют batch size = 1 для критичных сервисов и batch size = 2–3 для менее критичных, если PDB позволяет.
+
+**Алгоритм:**
+1. Определите размер пула и PDB для критических сервисов.
+2. Соберите第一批 (batch) из N узлов.
+3. Выполните `cordon` + `drain` на каждом узле в партии последовательно (один за другим).
+4. Выполните обновление пакетов и `kubeadm upgrade node`.
+5. Валидируйте узел (Ready, системные поды).
+6. `uncordon`.
+7. Перейдите к следующему батчу.
+
+*Связь с node_maintenance.md:* Детали команды `drain`, флаги и NodeMaintenance API описаны в **[Обслуживании узлов (Cordon/Drain)](../Operations/node_maintenance.md)**.
+
+### 8. Стратегия обновления по средам
 Поэтапное обновление — лучший способ минимизировать риски в масштабе организации.
 *   **Последовательность:** Сначала обновляются непроизводственные кластеры (Dev → Test/QA), затем Production.
 *   **Зеркалирование:** Убедитесь, что процесс верифицирован на Staging в условиях, максимально приближенных к рабочим, прежде чем приступать к Production.
@@ -218,6 +489,25 @@ kubectl uncordon node-1
 *   **Безопасность:** Регулярные небольшие обновления предотвращают накопление критических уязвимостей и упрощают процесс миграции в будущем.
 
 ## Регламент технического обслуживания
+
+### Стратегия отката и аварийного восстановления
+
+`kubeadm` не поддерживает команду `rollback`. Единственный путь назад — комбинация восстановления из снапшота etcd и переустановки пакетов.
+
+**Уровни отката:**
+
+| Уровень | Ситуация | Действие |
+| :--- | :--- | :--- |
+| **Уровень 1: Один узел не стартовал** | После обновления узел в `NotReady` | Откатите пакеты на узеле: `apt-get install kubelet=1.31.0-1.1 kubeadm=1.31.0-1.1 kubectl=1.31.0-1.1`. Удалите узел из кластера (`kubectl delete node`), исправьте и повторите присоединение. |
+| **Уровень 2: Control Plane нестабилен** | API отвечает с ошибками, поды CP в CrashLoop | Если кворум etcd сохранен — откатите манифесты CP к старой версии (restore из git/config management). Если кворум потерян — переходите к Уровню 3. |
+| **Уровень 3: Потеря кворума / полный отказ** | API не доступен, etcd потерял лидера | Восстановление из снапшота etcd (см. раздел "Резервное копирование etcd"). При крайней необходимости используйте `--force-new-cluster` (риск split-brain). |
+
+**Подготовка к откату (до начала обновления):**
+- Имейте готовый playbook с командами отката пакетов.
+- Если используете Ansible/Terraform — зафиксируйте состояние "до обновления" (tags, branch).
+- Назначьте ответственного за принятие решения об откате (rollback owner).
+
+**Важно:** Перед восстановлением из снапшота убедитесь, что все новые изменения в кластере (созданные после снапшота) документированы, так как они будут потеряны.
 
 Для обеспечения стабильности и безопасности кластера рекомендуется придерживаться следующего графика выполнения регламентных работ.
 
@@ -237,24 +527,37 @@ kubectl uncordon node-1
 | **API Server Timeout** | `curl -k https://localhost:6443/healthz` | Проверить статус статических подов в `/etc/kubernetes/manifests/`. Проверить кворум etcd. |
 | **Drain Failure** | Ошибка таймаута при выселении | Проверить [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md). Использовать `--force` для подов без контроллеров. |
 | **Cert Expired** | Ошибка TLS в логах компонентов | `kubeadm certs check-expiration`. Обновление через `kubeadm upgrade` автоматически продлевает сертификаты. |
+| **APF Throttling** | `kubectl get --raw /metrics | grep apiserver_requested_deprecated_instances` | Проверьте, не попал ли клиент под лимит APF. Увеличьте `--max-requests-inflight` или уберите deprecated clients. |
+| **CNI/NetworkPolicy Broken** | `kubectl exec -ti <pod> -- ping <other-pod>` | CNI плагин несовместим с новой версией. Откатите CNI, проверьте release notes, обновите CSI/CNI sidecars. |
+| **CSI Driver Unhealthy** | `kubectl get pods -n kube-system -l app=csi-driver` | Проверьте, что CSI sidecar контейнеры (external-provisioner и др.) совместимы с K8s vX.Y. Обновите CSI driver chart. |
+| **Pause Image Mismatch** | `kubectl get nodes -o jsonpath='{range .items[*]}{.status.nodeInfo.runtimeVersion}{"\n"}{end}'` | Версия containerd/runc слишком старая. Обновите runtime до минимальной требуемой версии (см. Release Notes). |
+| **Webhook Blocking** | `kubectl get events --field-selector reason=FailedCreate` | Admission webhook возвращает ошибку для новых API версий. Обновите вебхук или добавьте исключение (`failurePolicy: Ignore`). |
 
 ## Рекомендации (Best Practices)
 
 * **Один узел за раз (Serial Upgrades):** Никогда не обновляйте более одного узла Control Plane одновременно, чтобы избежать потери кворума etcd.
 * **Инфраструктура как код (IaC):** Всегда фиксируйте версии Kubernetes в ваших Ansible-плейбуках или Terraform-конфигурациях.
+* **PDB-aware batch size:** При массовом обновлении рабочих узлов рассчитывайте размер партии так, чтобы `disruptionsAllowed` в PDB критичных сервисов не исчерпывался.
+* **Pause image pinning:** Фиксируйте версии pause образа в kubelet configuration (`--pod-infra-container-image`), особенно при использовании внутреннего registry.
+* **Admission webhooks:** Перед обновлением проверьте, что все validating/mutating webhooks совместимы с целевой версией K8s. Используйте `failurePolicy: Ignore` для некритичных вебхуков во время апгрейда.
+* **API Priority and Fairness (APF):** После обновления следите за метрикой `apiserver_requested_deprecated_instances` и настройками `--max-requests-inflight`, чтобы избежать троттлинга легитимных клиентов.
 * **Мониторинг метрик:** Во время обновления следите за:
     * `apiserver_request_duration_seconds` (время ответа API).
     * `etcd_server_has_leader` (стабильность кворума).
+    * `kubelet_pleg_relist_duration_seconds` (скорость обнаружения изменений).
 * **План отката:** Помните, что `kubeadm` не поддерживает команду rollback. Единственный путь назад — удаление узлов, переустановка пакетов старой версии и восстановление etcd из снапшота.
 * **Обновление сертификатов:** Проверяйте статус сертификатов перед обновлением. `kubeadm upgrade` обновит их только если они управляются им напрямую.
+* **Согласование Change Window:** Обновляйте кластер в заранее согласованное окно, когда нагрузка минимальна, а команда дежурства готова к реагированию.
 
 ## Дополнительная информация
 
 ### Связанные темы
 
 * [Управление сертификатами](certificate_management.md) — ручное продление и ротация.
-* [Обслуживание узлов](node_maintenance.md) — детальное описание процессов Cordon и Drain.
-* [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — настройка бюджетов доступности.
-* [Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md) — глубокое погружение в etcd.
+* [Обслуживание узлов](node_maintenance.md) — детальное описание процессов Cordon и Drain, NodeMaintenance API.
+* [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — настройка бюджетов доступности и взаимодействие с drain.
+* [Высокая доступность в Kubernetes](../Base/high_availability.md) — архитектура HA-кластеров, кворум etcd, лидерство.
+* [etcd: операции и обслуживание](../Concepts/etcd_operations.md) — снапшоты, восстановление, обновление etcd.
 * [Kubespray: Управление кластером](../Installation/Kubespray/cluster_management.md) — детали автоматизации.
 * [RKE: Управление](../Installation/RKE/rke_management_scenarios.md) — специфика обновления в Rancher.
+* [Стратегии резервного копирования](backup-strategies.md) — общие принципы бэкапа и DR для Kubernetes.

@@ -15,6 +15,12 @@
 
 **Dual-stack (IPv4/IPv6)** — конфигурация сети, позволяющая подам иметь адреса обоих протоколов одновременно. NetworkPolicy в этом случае должны учитывать оба адресных пространства.
 
+**conntrack (Connection Tracking)** — механизм ядра Linux, отслеживающий состояния активных сетевых соединений. NetworkPolicy использует conntrack для автоматического разрешения ответного трафика (return traffic) независимо от наличия разрешающих правил в противоположном направлении.
+
+**matchExpressions** — расширенный механизм селекторов в NetworkPolicy, поддерживающий операции сравнения (`In`, `NotIn`, `Exists`, `DoesNotExist`) и работу с множествами значений. Позволяет задавать более сложные условия отбора подов и пространств имен, чем простое совпадение меток (`matchLabels`).
+
+**endPort** — поле в спецификации NetworkPolicy (K8s 1.21+), позволяющее указать диапазон портов (от `port` до `endPort`) в одном правиле вместо создания отдельного правила для каждого порта.
+
 ## Базовые концепции
 
 ### Методология настройки
@@ -26,6 +32,16 @@
 - **Инфраструктурная связность** — обязательное разрешение доступа к системным службам (CoreDNS, Metrics Server) при включении Egress-изоляции.
 - **Многоуровневая защита** — использование ANP для защиты инфраструктуры и изоляция трафика между пространствами имен (Namespaces) с использованием меток (Labels).
 
+### Поведение conntrack в NetworkPolicy
+
+NetworkPolicy являются **stateful** (с сохранением состояния). Это означает:
+
+1.  Если исходящий трафик (Egress) разрешен, то ответный входящий трафик (Return traffic) разрешается **автоматически** на уровне conntrack, независимо от наличия разрешающих правил Ingress.
+2.  Соединения, установленные до применения политики, могут оставаться активными до истечения тайм-аута conntrack (по умолчанию ~1ч для TCP, ~30с для UDP).
+3.  При переполнении таблицы conntrack (`nf_conntrack_max`) ядро начинает отбрасывать новые пакеты, что приводит к «молчаливым» блокировкам, маскирующимся под проблемы NetworkPolicy.
+
+> **Рекомендация для DevOps/SRE:** При подозрении на проблемы с NetworkPolicy всегда проверяйте состояние conntrack: `conntrack -S` и `sysctl net.netfilter.nf_conntrack_max`.
+
 ### Описание тестовой среды
 
 Для сценариев используется среда с тремя Namespaces:
@@ -36,6 +52,7 @@
 | `app-backend` | `api-server` | Основной сервис API на базе TCP |
 | `app-backend` | `static-server` | Веб-сервер для раздачи статического контента |
 | `kube-system` | `coredns` | Системный сервис DNS |
+| `kube-system` | `metrics-server` | Мониторинг ресурсов (CPU/RAM) |
 
 Изначально в кластере действует открытая сетевая модель: все Pod могут свободно взаимодействовать друг с другом.
 
@@ -171,6 +188,21 @@ spec:
       protocol: TCP
 ```
 
+**Важно:** Если приложение использует `kubectl top` или HPA (Horizontal Pod Autoscaler), необходимо также разрешить доступ к Metrics Server (порт 4443 в `kube-system`):
+
+```yaml
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: metrics-server
+    ports:
+    - port: 4443
+      protocol: TCP
+```
+
 ### Альтернатива: Использование ipBlock для внешних ресурсов (Dual-stack)
 
 Если приложению требуется доступ к внешнему API, используйте IPv4 и IPv6 диапазоны.
@@ -274,6 +306,300 @@ spec:
       port: 38412
 ```
 
+### Сценарий 8: Диапазон портов (endPort)
+
+Задача: разрешить входящий трафик на диапазон портов 8000-8100 для приложения с несколькими сервисами.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-port-range
+  namespace: app-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: api-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: app-frontend
+    ports:
+    - protocol: TCP
+      port: 8000
+      endPort: 8100
+```
+
+**Примечание:** `endPort` поддерживается начиная с Kubernetes 1.21. В 경우е использования более ранних версий необходимо указывать каждый порт отдельно.
+
+### Сценарий 9: Сложные селекторы (matchExpressions)
+
+Задача: разрешить входящий трафик от подов с меткой `environment` равной `prod` или `staging`, но исключить поды с меткой `debug: "true"`.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prod-staging-no-debug
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: api-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchExpressions:
+        - key: environment
+          operator: In
+          values:
+          - prod
+          - staging
+        - key: debug
+          operator: DoesNotExist
+    ports:
+    - protocol: TCP
+      port: 8080
+```
+
+**Операторы matchExpressions:**
+| Оператор | Описание |
+| :--- | :--- |
+| `In` | Значение метки входит в указанный список |
+| `NotIn` | Значение метки не входит в указанный список |
+| `Exists` | Метка с указанным ключом существует |
+| `DoesNotExist` | Метка с указанным ключом отсутствует |
+
+### Сценарий 10: Меж-неймспейсная изоляция с namespaceSelector
+
+Задача: обеспечить изоляцию между средами (dev, staging, prod) так, чтобы поды в `dev` не могли обращаться к сервисам в `prod`, но `staging` имел ограниченный доступ.
+
+```yaml
+# 1. Default Deny для prod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress: []
+---
+# 2. Разрешение доступа из staging к определенным сервисам
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-staging-to-api
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: api-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: staging
+      podSelector:
+        matchLabels:
+          app: load-tester
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+# 3. Полная изоляция dev от prod (enantiosemantics через namespaceSelector)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-dev-to-prod
+  namespace: prod
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: dev
+    # Пустой список ingress[0].from с namespaceSelector = Deny из dev
+```
+
+**Важно:** В Kubernetes комбинация `namespaceSelector` и `podSelector` в одном элементе списка `from` работает как **логическое И** (оба условия должны выполняться одновременно). Разные элементы списка `from` работают как **логическое ИЛИ**.
+
+### Сценарий 11: Поэтапное внедрение (Phased Rollout)
+
+Стратегия безопасного внедрения NetworkPolicy без нарушения рабочих процессов:
+
+**Этап 1: Audit Mode (Мониторинг)** — политика логирует, но не блокирует нарушения.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: audit-ingress-default-deny
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress: []
+```
+
+После создания política автоматически переходит в режим Default Deny. Однако перед применением на продакшене используйте инструменты CNI для аудита:
+
+```bash
+# Cilium: мониторинг отброшенных пакетов без блокировки
+cilium monitor --type policy-verdict --namespace production --verdict DROPPED
+
+# Hubble: визуализация трафика
+hubble observe --namespace production --verdict DROPPED --follow
+```
+
+**Этап 2: Частичная изоляция (Ingress-only)** — разрешаем только необходимые входящие соединения, Egress оставляем открытым.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: api-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+```
+
+**Этап 3: Полная изоляция (Ingress + Egress)** — добавляем Egress-правила и DNS-разрешения.
+
+**Этап 4: GitOps Workflow** — все манифесты хранятся в Git и применяются через Argo CD/Flux.
+
+### Сценарий 12: GitOps Workflow для NetworkPolicy
+
+Управление сетевыми политиками через Git обеспечивает версионирование, аудит и автоматическое применение:
+
+```
+network-policies/
+├── base/
+│   ├── default-deny.yaml
+│   └── allow-dns.yaml
+├── overlays/
+│   ├── dev/
+│   │   ├── kustomization.yaml
+│   │   └── allow-all.yaml
+│   ├── staging/
+│   │   └── kustomization.yaml
+│   └── production/
+│       ├── kustomization.yaml
+│       ├── allow-frontend-to-backend.yaml
+│       └── deny-external-access.yaml
+└── tests/
+    └── conftest_policy_test.rego
+```
+
+```bash
+# Тестирование политик перед применением
+conftest test network-policies/base/ --policy tests/conftest_policy_test.rego
+
+# Применение через kubectl
+kubectl apply -k network-policies/overlays/production/
+```
+
+### Сценарий 13: Политика для Metrics Server и HPA
+
+Если в кластере используется HPA (Horizontal Pod Autoscaler), поды должны иметь доступ к Metrics Server. При Default Deny Egress этот доступ блокируется:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-metrics-server
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # Metrics Server
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: metrics-server
+    ports:
+    - port: 4443
+      protocol: TCP
+  # API Server (для запросов метрик)
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8  # CIDR API-сервера кластера
+    ports:
+    - port: 6443
+      protocol: TCP
+```
+
+### Сценарий 14: Защита чувствительных эндпоинтов (Metadata API)
+
+Блокировка доступа к cloud metadata API (169.254.169.254) для предотвращения кражи IAM-ролей:
+
+```yaml
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: AdminNetworkPolicy
+metadata:
+  name: block-metadata-api
+spec:
+  priority: 5
+  subject:
+    namespaces: {}
+  egress:
+  - name: deny-metadata-api
+    action: Deny
+    to:
+    - ipBlock:
+        cidr: 169.254.169.254/32
+    ports:
+    - port: 80
+      protocol: TCP
+    - port: 443
+      protocol: TCP
+```
+
+> **Важно:** Этот сценарий особенно критичен в средах без облачных провайдеров, где metadata API может быть доступен через маршрутизацию узла.
+
 ## Устранение неполадок (Troubleshooting)
 
 Классическим симптомом проблемы с NetworkPolicy является **Connection Timeout**.
@@ -289,6 +615,7 @@ spec:
 2.  **Проверьте наличие и правила политик:**
     ```bash
     kubectl get networkpolicy -n <namespace>
+    kubectl describe networkpolicy <policy-name> -n <namespace>
     ```
     Проверьте `podSelector`, `policyTypes` и убедитесь, что разделы правил не пусты (пустой раздел — полный запрет).
 
@@ -302,7 +629,29 @@ spec:
 4.  **Проверьте плагин CNI:**
     Убедитесь, что CNI (Cilium, Calico) работает корректно. Используйте:
     *   **Cilium:** `hubble observe --pod <pod-name> --verdict DROPPED`
-    *   **Calico:** Проверка логов `calico-node`.
+    *   **Calico:** `calicoctl node status` и проверка логов `calico-node`.
+
+5.  **Проверьте conntrack:**
+    ```bash
+    # Статистика conntrack
+    conntrack -S
+    
+    # Проверка таблицы conntrack
+    conntrack -L | grep <pod-ip>
+    
+    # Проверка лимитов
+    sysctl net.netfilter.nf_conntrack_max
+    sysctl net.netfilter.nf_conntrack_count
+    ```
+
+6.  **Очистка conntrack (при необходимости):**
+    ```bash
+    # Очистка всех записей для конкретного пода
+    conntrack -D -s <pod-ip>
+    
+    # Очистка всех записей для конкретного сервиса
+    conntrack -D -d <service-cluster-ip>
+    ```
 
 ### Мини-кейс: Изоляция пространства имен и исправление
 
@@ -322,10 +671,35 @@ ingress:
 *   **Диагностика:** `kubectl get netpol -n users` показал, что разрешен Ingress только от `role: frontend`.
 *   **Решение:** В политику `users` добавлено правило для подов с меткой `app: payments`.
 
+### Мини-кейс: DNS-резолвинг после Default Deny Egress
+
+**Проблема:** После применения Default Deny Egress поды не могут разрешить имена сервисов.
+**Диагностика:**
+```bash
+kubectl exec -it <pod> -- nslookup kubernetes.default.svc.cluster.local
+# connection timed out; no servers could be reached
+```
+**Решение:** Добавить Egress-правило для CoreDNS (порт 53 UDP/TCP в `kube-system`).
+
+### Мини-кейс: Conntrack race condition с DNS
+
+**Проблема:** Интерmittent DNS failures (1-5 секунд задержки) при высокой нагрузке.
+**Причина:** Race condition в `nf_conntrack` при UDP-запросах к CoreDNS.
+**Решение:** Установить NodeLocal DNSCache для локального кэширования DNS-запросов на каждом узле.
+
+### Мини-кейс: Метрики HPA не собираются
+
+**Проблема:** HPA показывает `<unknown>` для подов после включения Default Deny Egress.
+**Причина:** Поды не могут достучаться до Metrics Server (порт 4443).
+**Решение:** Добавить Egress-правило для Metrics Server в `kube-system` (см. Сценарий 13).
+
 ### Совет для собеседования
 
 **Вопрос:** О чем важно не забыть при создании Egress-политики?
 **Ответ:** О разрешении **DNS-трафика** (порт 53 UDP/TCP) в сторону `kube-system`. Без этого под не сможет разрешить имена сервисов.
+
+**Вопрос:** Как определить, что проблема связана с conntrack, а не с NetworkPolicy?
+**Ответ:** Проверить `conntrack -S` — если много dropped по `nf_conntrack_full`, проблема в размере таблицы, а не в правилах. Также `conntrack -L | grep <pod-ip>` покажет активные соединения.
 
 ## Дополнительные сведения
 
@@ -336,8 +710,21 @@ ingress:
 kubectl delete networkpolicy --all -n <namespace>
 ```
 
-**См. также:**
+### Производительность и масштабирование
+
+- При Default Deny каждое новое соединение требует перебора правил. Для приложений с высокой пропускной способностью используйте CNI с eBPF (O(1) lookup).
+- При количестве политик >1000 или подов >10000 рекомендуется переход на CNI на базе eBPF (Cilium, Calico eBPF mode).
+- Используйте `endPort` вместо отдельных правил для каждого порта — это снижает количество правил и ускоряет обработку.
+
+### Шаблонизация через Helm
+
+Для управления NetworkPolicy в Helm-чартах используйте именованные шаблоны для синхронизации меток между Deployment и политиками. Подробнее: [Шаблонизация NetworkPolicy](../../../../ToolsUtilities/Helm/templating/scenarios/networkpolicy.md).
+
+### См. также
+
 * [NetworkPolicy: Определения и концепции](./definitions.md) — базовые термины.
-* [NetworkPolicy: Логика правил](./rule_logic.md) — разбор И/ИЛИ.
+* [NetworkPolicy: Логика правил](./rule_logic.md) — разбор И/ИЛИ и аддитивность.
 * [NetworkPolicy: Лучшие практики](./best_practices.md) — рекомендации Zero Trust.
+* [NetworkPolicy: Реализация CNI-плагинами](./cni_implementation.md) — сравнение CNI и методы исполнения.
 * [Cilium: Сетевые политики L7](../CNI/cilium.md) — FQDN и HTTP фильтрация.
+* [NetworkPolicy: Сетевая безопасность](../../../Security/network_policies.md) — безопасность и compliance.

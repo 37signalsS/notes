@@ -32,9 +32,33 @@
 
 ### Предварительные требования
 
+| Компонент | Минимальная версия | Рекомендуемая версия | Установка |
+| :--- | :--- | :--- | :--- |
+| **Docker** | 24.0 | 27.0 | `sudo apt install docker.io` (Ubuntu) |
+| **GitLab Runner** | 16.0 | 17.0+ | См. [Регистрация Runner](./runner_registration.md) |
+| **uv** | 0.4.0 | 0.8.x | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| **Python** | 3.11 | 3.13 | Входит в Docker-образ |
+
+**Проверка окружения:**
+```bash
+docker --version
+# → Docker version 27.0.3, build 7d4fcc8
+
+gitlab-runner --version
+# → Version:      17.8.0
+
+# Установка uv (для локальной разработки)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv --version
+# → uv 0.8.13
+```
+
+**Предварительные требования (checklist):**
 1.  **Репозиторий:** Приватный проект в GitLab.
-2.  **Runner:** Установленный GitLab Runner с тегом `docker-runner`.
-3.  **Доступ:** Права `Maintainer` в проекте для настройки переменных.
+2.  **Runner:** Установленный GitLab Runner с тегом `docker-runner` и включённым Docker-in-Docker.
+3.  **Доступ:** Права `Maintainer` в проекте для настройки переменных и CI/CD.
+4.  **Container Registry:** Включен в настройках проекта (Deploy -> Container Registry).
+5.  **Переменные:** `SSH_PRIVATE_KEY` и `SSH_KNOWN_HOSTS` добавлены в CI/CD -> Variables (для деплоя по SSH).
 
 ### Шаг 1: Подготовка кода приложения и зависимостей
 
@@ -74,13 +98,34 @@ dev = [
 
 Используем `uv` для мгновенной сборки и `python:3.13-slim` для минимизации размера.
 
+**`.dockerignore` (обязательно перед Dockerfile):**
+```
+.git
+.gitignore
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+*.egg-info
+dist
+build
+.env
+.venv
+venv
+htmlcov
+.coverage
+.coverage.*
+report.xml
+*.log
+```
+
 **`Dockerfile`:**
 ```dockerfile
 # syntax=docker/dockerfile:1
 
 # Stage 1: Сборка зависимостей (Builder)
 FROM python:3.13-slim AS builder
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.8.13 /uv /uvx /bin/
 
 WORKDIR /app
 COPY pyproject.toml ./
@@ -105,8 +150,24 @@ USER appuser
 ENV PYTHONUNBUFFERED=1
 EXPOSE 5000
 
+# Проверка здоровья контейнера (Docker HEALTHCHECK)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/')" || exit 1
+
 # Использование exec-формы для корректной обработки сигналов (SIGTERM)
 ENTRYPOINT ["python", "app.py"]
+```
+
+**Проверка сборки локально:**
+```bash
+docker build -t python-app .
+docker run -d --name python-app -p 5000:5000 python-app
+curl http://localhost:5000/
+# → {"status":"ok","message":"Hello from GitLab CI/CD 2026!"}
+
+# Проверка HEALTHCHECK
+docker inspect --format='{{json .State.Health}}' python-app | python3 -m json.tool
+# → "Status": "healthy"
 ```
 
 ### Шаг 3: Настройка пайплайна `.gitlab-ci.yml`
@@ -223,13 +284,165 @@ deploy-prod:
 | **Permission denied (Docker)** | Runner не имеет прав на Docker Socket | Убедитесь, что Runner настроен с привилегированным режимом для DinD или используйте Kaniko. |
 | **ModuleNotFoundError** | Зависимость не установлена в Dockerfile | Проверьте, добавлен ли пакет в `pyproject.toml` и выполнен ли `uv pip install`. |
 | **SSH connection timed out** | Закрыт порт 22 на целевом сервере | Проверьте настройки Firewall (Security Groups) на сервере деплоя. |
-| **GitLab Registry 403 Forbidden** | Недостаточно прав у токена | Убедитесь, что в настройках проекта включен Container Registry. |
+| **GitLab Registry 403 Forbidden** | Недостаточно прав у токена | Убедитесь, что в настройках проекта включен Container Registry и токен `CI_JOB_TOKEN` имеет права `write_repository`. |
+| **HEALTHCHECK: starting** | Контейнер еще не готов | Начальная задержка `start-period=10s` — подождите. Если持续 на `unhealthy`, проверьте логи: `docker logs python-app`. |
+| **No space left on device** | Заполнен диск на Runner | Очистите старые образы: `docker system prune -a` или добавьте volume для кэша. |
+| **pip install fails in CI** | Нет доступа к PyPI через прокси | Добавьте прокси в переменные: `PIP_INDEX_URL`, `HTTPS_PROXY`. |
+| **uv: command not found** | Бинарник uv не скопирован в runtime | Проверьте строку `COPY --from=builder /usr/local/bin /usr/local/bin` в Dockerfile. |
+| **SIGTERM received, exiting** | Приложение не обрабатывает сигналы | Используйте exec-форму ENTRYPOINT (`["python", "app.py"]` вместо `CMD python app.py`). |
+| **Connection refused (5000)** | Flask не слушает 0.0.0.0 | Убедитесь, что `app.run(host='0.0.0.0')` — по умолчанию Flask слушает только localhost. |
+| **GitLab CI: job: not found** | Неправильный тег Runner'а | Проверьте `tags:` в `.gitlab-ci.yml` совпадают с тегом registered Runner'а. |
 
 ## Дополнительная информация
+
+### Документация переменных окружения
+
+Переменные, используемые в пайплайне, должны быть добавлены через **CI/CD -> Variables**:
+
+| Переменная | Описание | Где добавить | Защищена? |
+| :--- | :--- | :--- | :--- |
+| `SSH_PRIVATE_KEY` | Приватный SSH-ключ для деплоя | CI/CD -> Variables | Yes (masked + protected) |
+| `SSH_KNOWN_HOSTS` | SSH fingerprint целевого сервера | CI/CD -> Variables | No |
+| `DEPLOY_USER` | Пользователь на сервере деплоя | CI/CD -> Variables | No |
+| `DEPLOY_HOST` | IP/hostname сервера деплоя | CI/CD -> Variables | No |
+
+**Генерация SSH_KNOWN_HOSTS:**
+```bash
+ssh-keyscan -H <deploy_host>
+# → Вывод скопируйте в переменную SSH_KNOWN_HOSTS
+```
+
+**Генерация SSH ключа:**
+```bash
+ssh-keygen -t ed25519 -C "gitlab-ci-deploy" -f deploy_key -N ""
+# → deploy_key (приватный) → в переменную SSH_PRIVATE_KEY
+# → deploy_key.pub (публичный) → добавьте в ~/.ssh/authorized_keys на целевом сервере
+```
+
+### Лучшие практики (Best Practices)
+
+**Безопасность:**
+- Всегда используйте `USER appuser` в Dockerfile — никогда не запускайте приложение от root.
+- Используйте `CI_JOB_TOKEN` вместо личных Access Tokens — токен автоматически истекает после задачи.
+- Маскируйте секреты в CI/CD Variables (флаги `masked` + `protected`).
+- Используйте `--no-cache-dir` для pip/uv в CI — ускоряет сборку и исключает утечку кэша.
+
+**Производительность:**
+- Используйте Multi-stage Build — образ уменьшается на 40-60%.
+- Кэшируйте Docker-слои: в CI кэшируйте `uv` cache через `variables: UV_CACHE_DIR`.
+- Не копируйте `.git` и другие артефакты через `.dockerignore`.
+
+**Надёжность:**
+- Пинайте версии инструментов: `uv:0.8.13` вместо `uv:latest`.
+- Используйте `HEALTHCHECK` в Dockerfile для оркестраторов (Docker Compose, Kubernetes).
+- Добавьте `timeout-minutes` к задачам CI/CD для защиты от бесконечных пайплайнов.
+
+**Логирование:**
+- `PYTHONUNBUFFERED=1` — обязательная переменная для корректного вывода логов в stdout/stderr.
+- В продакшене используйте JSON-formatted логи для парсинга (ELK, Loki).
+
+### Очистка артефактов (Cleanup)
+
+**Удаление образа из Container Registry:**
+```bash
+# Удаление конкретного тега через API
+curl --request DELETE "https://gitlab.example.com/api/v4/projects/<project_id>/registry/repositories/<repo_id>/tags/<tag>" \
+  --header "PRIVATE-TOKEN: <your_token>"
+
+# Удаление всех тегов через скрипт
+for tag in $(curl -s "https://gitlab.example.com/api/v4/projects/<project_id>/registry/repositories/<repo_id>/tags" | python3 -c "import sys,json; [print(t['name']) for t in json.load(sys.stdin)]"); do
+  curl --request DELETE "https://gitlab.example.com/api/v4/projects/<project_id>/registry/repositories/<repo_id>/tags/$tag" \
+    --header "PRIVATE-TOKEN: <your_token>"
+done
+```
+
+**Автоматическая очистка Registry (рекомендуется):**
+Добавьте в `.gitlab-ci.yml` задачу автоматической очистки старых образов:
+```yaml
+cleanup-registry:
+  stage: .post
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl jq
+    - curl -s "https://gitlab.example.com/api/v4/projects/$CI_PROJECT_ID/registry/repositories" \
+        --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" | jq -r '.[].id' | while read repo_id; do
+        # Удаление тегов старше 30 дней (кроме latest и release-*)
+        curl -s "https://gitlab.example.com/api/v4/projects/$CI_PROJECT_ID/registry/repositories/$repo_id/tags" \
+          --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" | \
+          jq -r '.[] | select(.name | test("^(latest|release-)$") | not) | .name' | \
+          head -n -5 | xargs -I {} curl -s --request DELETE \
+          "https://gitlab.example.com/api/v4/projects/$CI_PROJECT_ID/registry/repositories/$repo_id/tags/{}" \
+          --header "PRIVATE-TOKEN: $CI_JOB_TOKEN"
+      done
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  tags:
+    - docker-runner
+```
+
+**Откат деплоя (Rollback):**
+```bash
+# На целевом сервере — остановка текущего контейнера и запуск предыдущего образа
+ssh $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+docker stop my-app && docker rm my-app
+# Используем тег предыдущего коммита или release-тег
+docker pull $CI_REGISTRY_IMAGE:previous_tag
+docker run -d --name my-app -p 5000:5000 $CI_REGISTRY_IMAGE:previous_tag
+EOF
+```
+
+### Мониторинг и логирование
+
+**Базовый мониторинг приложения:**
+
+```python
+# Добавьте в app.py для暴露 метрик для Prometheus
+from prometheus_client import Counter, Gauge, generate_latest
+from flask import Response
+
+REQUEST_COUNT = Counter('flask_requests_total', 'Total requests', ['method', 'endpoint', 'status'])
+REQUEST_LATENCY = Gauge('flask_request_latency_seconds', 'Request latency', ['endpoint'])
+
+@app.route('/metrics')
+def metrics():
+    return Response(generate_latest(), mimetype='text/plain')
+```
+
+**Логирование в structured формате:**
+
+```python
+import logging
+import json
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        return json.dumps({
+            'timestamp': self.formatTime(record),
+            'level': record.levelname,
+            'message': record.getMessage(),
+            'module': record.module,
+            'function': record.funcName
+        })
+
+handler = logging.StreamHandler()
+handler.setFormatter(JSONFormatter())
+logging.getLogger().addHandler(handler)
+logging.getLogger().setLevel(logging.INFO)
+```
+
+**Проверка логов в Docker:**
+```bash
+# Просмотр логов контейнера
+docker logs -f python-app
+# → {"timestamp":"2026-08-25 10:30:00","level":"INFO","message":"Running on http://0.0.0.0:5000"}
+
+# Проверка HEALTHCHECK статуса
+docker inspect --format='{{json .State.Health}}' python-app
+```
 
 ### Смотрите также
 
 - **[Комплексный Pipeline для Python](./python_project_pipeline_guide.md)** — продвинутые сценарии с Kubernetes, SAST и Helm.
 - **[Dockerfile: Лучшие практики для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md)** — глубокая оптимизация слоев и кэширования.
 - **[Регистрация GitLab Runner](./runner_registration.md)** — подробности настройки Docker Executor.
-- **[Docker-in-Docker (DinD)](../../../Docker/docker-in-docker.md)** — детальный разбор механики и рисков.

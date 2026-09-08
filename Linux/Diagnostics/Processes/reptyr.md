@@ -108,3 +108,4 @@ sudo reptyr <PID>
 - [Утилита ps](./ps.md) — статический снимок процессов.
 - [Терминальные мультиплексоры (Tmux/Screen)](../../Shell/cli-tools.md#терминальные-мультиплексоры) — основы использования.
 - [Checkpoint/Restore (CRIU)](../../Core/processes/Troubleshooting/checkpoint_restore.md) — альтернативные методы сохранения состояния.
+- [Горячие клавиши Shell: управление процессами](../../Shell/shell_shortcuts.md#управление-процессами-и-терминалом) — фоновый режим, `Ctrl+Z`, `jobs`, `fg`, `bg`.

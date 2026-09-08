@@ -222,9 +222,43 @@ ceph -w
 
 > **Рекомендация**: Для новых инсталляций в конце 2026 года используйте **Umbrella (21.x)**.
 
+### Выбор интерфейса: RBD vs CephFS vs RGW
+
+| Критерий | RBD | CephFS | RGW |
+|----------|-----|--------|-----|
+| **IOPS** | Высокие (NVMe) | Средние | Средние |
+| **Throughput** | Высокий | Высокий | Высокий |
+| **Latency** | Низкая (<1мс) | Средняя | Средняя |
+| **POSIX** | Нет | Да | Нет |
+| **Доступность** | Single-pod (RWO) | Multi-pod (RWX) | Multi-tenant |
+| **Стоимость** | 3x (replica) | 3x или EC | 3x или EC |
+| **Сценарий** | СУБД, ВМ, QoS | Файлы, CI/CD, кеш | Архивы, S3 API |
+
+#### Decision tree
+
+```
+Нужен POSIX-доступ?
+├── Да → CephFS
+└── Нет →
+    Нужен блочный доступ (Volume)?
+    ├── Да →
+    │   Нужна низкая latency?
+    │   ├── Да → RBD (NVMe)
+    │   └── Нет → RBD (HDD/SSD) + EC
+    └── Нет →
+        Нужен S3/Swift API?
+        ├── Да → RGW
+        └── Нет → CephFS (POSIX fallback)
+```
+
 ### См. также
 
 - [Официальная документация Ceph](https://docs.ceph.com/)
 - [Архитектура RADOS (документация)](https://docs.ceph.com/en/latest/architecture/)
 - [Rook — Ceph в Kubernetes](https://rook.io/)
 - [Расчет Placement Groups (PG)](./ceph_placement_groups.md)
+- [Erasure Coding](./ceph_erasure_coding.md) — экономия места для RGW/CephFS
+- [RGW (S3-compatible)](./ceph_rgw_s3.md) — объектное хранилище
+- [Сетевая архитектура](./ceph_networking.md) — настройка public/cluster сетей
+- [Резервное копирование и DR](./ceph_backup_and_dr.md) — бэкап данных и конфигурации
+- [Бенчмаркинг](./ceph_benchmarks.md) — тестирование производительности
