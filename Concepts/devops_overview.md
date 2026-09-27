@@ -116,7 +116,7 @@ Total Lead Time: 4 дней | Touch Time: 2 дней | Efficiency: 50% (но с�
     *   **Deployment Frequency (DF):** Как часто код попадает в продакшен.
     *   **Lead Time for Changes (LTFC):** Сколько времени проходит от коммита до запуска.
     *   **Change Failure Rate (CFR):** Процент изменений, приведших к сбою.
-    *   **Time to Restore Service (TTRS):** Время восстановления после инцидента.
+    *   **Failed Deployment Recovery Time (FDRT):** Время восстановления после инцидента, вызванного деплоем.
     *   *Подробнее:* **[Метрики DORA](../CI-CD/Core_Concepts/dora_metrics.md)**.
 2.  **Фреймворк SPACE (Инженерный опыт):**
     *   Фокусируется на снижении когнитивной нагрузки и удовлетворенности.

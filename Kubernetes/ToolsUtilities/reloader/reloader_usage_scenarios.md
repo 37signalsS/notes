@@ -832,6 +832,147 @@ kubectl get events --field-selector reason=ReloaderTriggered -n <namespace>
 
 ## Дополнительная информация
 
+### Взаимодействие с Rolling Update стратегиями
+
+Reloader инициирует Rolling Update через patch PodTemplate, но **не управляет параметрами обновления**. Это означает, что `maxSurge` и `maxUnavailable` Deployment определяют скорость и безопасность обновления.
+
+**Как Reloader взаимодействует с разными стратегиями:**
+
+| Стратегия Deployment | Поведение Reloader | Рекомендации |
+| :--- | :--- | :--- |
+| `maxSurge: 1, maxUnavailable: 0` | Сначала +1 новый под, затем -1 старый | **Стандарт.** Безопасно для production |
+| `maxSurge: 25%, maxUnavailable: 25%` | Параллельный обмен по 25% | Быстрее, но требует запас ресурсов |
+| `maxUnavailable: 0` | Старые поды не удаляются до готовности новых | Гарантия доступности, но требует ресурсов для `maxSurge` |
+| `Recreate` | Все старые поды удаляются, затем все новые | **Опасно** — полный простой. Избегать для критичных сервисов |
+
+**Практический пример:**
+
+```yaml
+# Deployment с безопасными параметрами для Reloader
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  annotations:
+    reloader.stakater.com/auto: "true"
+    # Debounce: группировать изменения в окне 2 минуты
+    deployment.reloader.stakater.com/pause-period: "2m"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # +1 дополнительный под
+      maxUnavailable: 0   # Старые поды не удаляются до готовности новых
+  template:
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: app
+          image: my-app:v1.0
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]  # Дренаж трафика перед SIGTERM
+```
+
+**Критические параметры для Reloader:**
+
+1. **`maxUnavailable: 0`** — гарантирует, что Reloader не вызовет downtime
+2. **`readinessProbe`** — обязательна; без неё Reloader может удалить здоровый под до готовности нового
+3. **`terminationGracePeriodSeconds`** — должен покрывать `preStop sleep` + время дренажа
+4. **`preStop sleep`** — компенсирует задержку обновления Endpoints (5-15 сек)
+
+**Edge cases:**
+
+- **Reloader + HPA:** HPA масштабирует Deployment, а Reloader обновляет. При `maxUnavailable: 0` и нехватке ресурсов rollout застрянет — убедитесь в запасе мощности кластера.
+- **Reloader + PDB:** PodDisruptionBudget **не блокирует** Rolling Update от контроллера Deployment, но блокирует `kubectl drain`. Согласуйте `maxUnavailable` в Deployment и `minAvailable` в PDB.
+- **Reloader + StatefulSet:** StatefulSet обновляется медленнее — Reloader учитывает `updateStrategy` и `minReadySeconds`. Используйте `partition` для ступенчатого обновления.
+
+### Configuration Drift: Reloader и GitOps
+
+**Configuration drift** — расхождение между состоянием в Git и фактическим состоянием кластера. Reloader может как создавать drift, так и способствовать его обнаружению.
+
+**Как Reloader создаёт drift:**
+
+```text
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Git (SSoT) │ ──> │   ArgoCD     │ ──> │  K8s Cluster │
+│  ConfigMap   │     │  Sync        │     │  ConfigMap   │
+└──────────────┘     └──────────────┘     └──────────────┘
+                            │                     │
+                            │                     ▼
+                            │              ┌──────────────┐
+                            │              │   Reloader   │
+                            │              │  patch Deploy│
+                            │              └──────────────┘
+                            │                     │
+                            ▼                     ▼
+                     ┌──────────────┐     ┌──────────────┐
+                     │  OutOfSync   │     │  Pod с новым │
+                     │  (drift)     │     │  аннотацией  │
+                     └──────────────┘     └──────────────┘
+```
+
+**Стратегии предотвращения drift:**
+
+| Стратегия | Механизм | Когда использовать |
+| :--- | :--- | :--- |
+| **Annotation Strategy** | `--reload-strategy=annotations` | **Рекомендуется.** Minimizes diff — только аннотация, не переменные окружения |
+| **Ignore Differences** | ArgoCD `ignoreDifferences` | Обязательно при использовании Reloader + ArgoCD |
+| **Immutable ConfigMap** | `immutable: true` + Kustomize Hash | Для критичных конфигураций — полная замена вместо update |
+| **External Secret Operators** | ESO + Reloader CSI | Секреты управляются вне Git, Reloader реагирует на CSI sync |
+
+**Практический пример: предотвращение drift с ArgoCD:**
+
+```yaml
+# 1. Reloader с annotation strategy
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reloader
+  namespace: reloader-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: reloader
+          args:
+            - --reload-strategy=annotations  # Ключевой параметр
+
+---
+# 2. ArgoCD Application с ignoreDifferences
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app
+spec:
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        # Игнорировать аннотацию Reloader
+        - /spec/template/metadata/annotations/reloader.stakater.com~1last-reloaded-from
+```
+
+**Детекция drift через Reloader metrics:**
+
+```promql
+# Reloader обновил под, но ArgoCD откатил — цикл обновлений
+increase(reloader_success_reload_total[5m]) > 3
+
+# ConfigMap изменился, но Reloader не отреагировал (潜在ный drift)
+changes(kube_configmap_info{namespace="production"}[5m]) > 0
+  and on()
+  (rate(reloader_success_reload_total[5m]) == 0)
+```
+
 ### Рекомендации по выбору режима отслеживания
 
 | Режим | Когда применять | Особенности |
@@ -863,6 +1004,7 @@ kubectl get events --field-selector reason=ReloaderTriggered -n <namespace>
 
 - [Установка и настройка Reloader](./reloader_installation.md)
 - [Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)
-- [Официальный GitHub Stakater/Reloader](https://github.com/stakater/Reloader)
+- [Безопасность Reloader](./reloader_security.md)
+- [Runbooks и реагирование на инциденты](./reloader_runbooks.md)
 - [Helm templating: Restart on Change](../Helm/templating/scenarios/restart_on_change.md)
 - [ArgoCD: Ignore Differences](../../GitOps/ArgoCD/synchronization/ignore_differences.md)

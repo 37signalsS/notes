@@ -199,6 +199,156 @@ ps -fH -p $PID
 | **Длительный PDB** | `drain` узла зависает из-за блокировки. | Проверьте [Блокировку PDB](./pdb_blocking.md). |
 | **preStop без readiness probe** | Pod остаётся в Endpoints до SIGKILL. | Добавьте readinessProbe, возвращающий 503 после SIGTERM. |
 | **connection timeout < drain time** | Прокси закрывает соединение до завершения запроса. | Увеличьте `proxy_read_timeout` в Ingress. |
+| **502/504 при выкате** | Приложение закрывает сокет до обновления эндпоинтов в сети. | Увеличьте `preStop sleep` до 10–15с; добавьте `Connection: close` / `GOAWAY`. |
+
+### Сетевые ошибки (502/504) при завершении подов
+
+Одна из самых частых проблем при обновлении Deployment — всплеск ошибок `502 Bad Gateway` или `504 Gateway Timeout` в логах Ingress-контроллера. Это прямое следствие race condition между локальной остановкой пода и глобальным обновлением сетевых таблиц.
+
+#### Механизм возникновения ошибок
+
+```
+Время 0ms:    kubectl rollout restart → контроллер создаёт новый ReplicaSet
+Время 0ms:    Старый под получает deletionTimestamp
+Время 1ms:    kubelet выполняет preStop → отправляет SIGTERM
+Время 1ms:    Приложение закрывает listening socket (мгновенно)
+Время 1-5000ms: Ingress-контроллер ещё НЕ обновил кэш эндпоинтов
+              → трафик продолжает идти на закрытый сокет
+              → 502 Bad Gateway / Connection Refused
+Время 5000ms: Ingress обновляет кэш → ошибки прекращаются
+```
+
+**Парадокс:** Приложение, которое обрабатывает SIGTERM и закрывает сокет мгновенно, получает БОЛЬШЕ ошибок 502. Приложение, которое «тупит» несколько секунд после SIGTERM (продолжает обрабатывать запросы), случайно оказывается в выигрыше — оно дорабатывает трафик, пока сеть обновляется.
+
+#### Типичные источники ошибок
+
+| Источник | Механизм | Типичная задержка |
+| :--- | :--- | :--- |
+| **kube-proxy (iptables/IPVS)** | Обновление правил на каждой ноде | 100мс — 5с |
+| **Ingress-контроллер (NGINX)** | Обновление кэша эндпоинтов | ~1с |
+| **Ingress-контроллер (Envoy)** | Обновление через xDS API | ~500мс |
+| **Service Mesh (Istio/Linkerd)** | Обновление таблиц маршрутизации | 500мс — 2с |
+| **DNS-кэш в клиентах** | TTL устаревших записей | Секунды — минуты |
+| **Keep-alive пулы** | Долгоживущие TCP-соединения между прокси и подами | До закрытия соединения |
+
+#### Диагностика
+
+```bash
+# 1. Мониторинг ошибок Ingress в реальном времени (NGINX Ingress)
+kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx -f \
+  | grep -E '"(502|504|503)"'
+
+# 2. Поиск ошибок по конкретному сервису
+kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx \
+  | grep -E '"(502|504)".*<service-name>'
+
+# 3. Проверка текущих эндпоинтов сервиса
+kubectl get endpoints <service-name> -o wide
+# → ЕслиEndpoints пусты — проблема с readinessProbe, а не с termination
+
+# 4. Проверка времени обновления EndpointSlice
+kubectl get endpointslice -l kubernetes.io/service-name=<service-name> -o yaml \
+  | grep -A 5 "lastUpdated"
+
+# 5. Запуск тестовой нагрузки во время выката для верификации
+hey -z 30s -c 10 http://<service>/endpoint &
+kubectl rollout restart deployment/<name>
+# Мониторинг: ошибки не должны превышать 0.1% от общего числа запросов
+```
+
+#### Решения и паттерны
+
+**1. preStop sleep (компенсация propagation delay)**
+
+Самый эффективный и распространённый способ. Даёт медленной цепочке (обновление эндпоинтов) время завершиться до того, как приложение закроет сокет:
+
+```yaml
+lifecycle:
+  preStop:
+    sleep:
+      seconds: 10  # Компенсация задержки обновления EndpointSlice
+terminationGracePeriodSeconds: 45  # preStop(10) + дренаж(25) + запас(10)
+```
+
+**2. Readiness Probe возвращает 503 после SIGTERM**
+
+Приложение после получения SIGTERM должно начать возвращать `503` (или неуспех) в readinessProbe. Это убирает под из Endpoints БЫСТРО — ещё до обновления сетевых таблиц на всех узлах:
+
+```go
+// Go: обработчик SIGTERM
+func handleShutdown() {
+    isShuttingDown = true  // Флаг
+    server.Shutdown(ctx)   // Ожидание завершения активных запросов
+}
+
+// Readiness Probe
+func readyz(w http.ResponseWriter, r *http.Request) {
+    if isShuttingDown {
+        http.Error(w, "shutting down", http.StatusServiceUnavailable)
+        return
+    }
+    w.WriteHeader(http.StatusOK)
+}
+```
+
+**3. Connection: close / GOAWAY**
+
+Приложение при получении SIGTERM должно начать отдавать заголовок `Connection: close` (HTTP/1.1) или отправлять фрейм `GOAWAY` (HTTP/2/gRPC). Это заставляет прокси (Ingress) закрыть keep-alive соединение и переоткрыть его на здоровом поде:
+
+| Протокол | Механизм | Реализация |
+| :--- | :--- | :--- |
+| HTTP/1.1 | Заголовок `Connection: close` | Большинство фреймворков автоматически |
+| HTTP/2 | Фрейм `GOAWAY` | `srv.Shutdown(ctx)` в Go, `server.shutdown=graceful` в Spring Boot |
+| gRPC | Фрейм `GOAWAY` | Встроенный в реализацию gRPC-сервера |
+
+**4. Верификация Zero-Downtime**
+
+Единственный способ подтвердить отсутствие потерь — запуск нагрузки во время выката:
+
+```bash
+# Генератор нагрузки (hey)
+hey -z 60s -c 20 http://<service>/endpoint &
+
+# Выкатка
+kubectl rollout restart deployment/<name>
+
+# Мониторинг ошибок в реальном времени
+kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx -f \
+  | grep -cE '"(502|504)"'
+
+# Ожидаемый результат: 0 ошибок (или < 0.1% от общего числа)
+```
+
+#### Шаблон конфигурации для нулевого даунтайма
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Гарантия: старые поды живут пока новые не Ready
+  template:
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+      - name: app
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: 10  # Компенсация propagation delay
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 3
+        # После SIGTERM: isShuttingDown=true → readinessProbe возвращает 503
+```
 
 ---
 
@@ -217,6 +367,8 @@ Pod'ы DaemonSet **не могут** использовать Pod Disruption Bud
 - С `--ignore-daemonsets=true` (по умолчанию): поды DaemonSet остаются на узле.
 - С `--ignore-daemonsets=false`: поды удаляются принудительно.
 - Если DaemonSet настроен с `terminationGracePeriodSeconds: 0`, контейнеры будут убиты мгновенно.
+
+Подробнее: [DaemonSet и завершение подов](./daemonset_termination.md).
 
 ### Graceful Node Shutdown (K8s 1.21+)
 
@@ -282,4 +434,5 @@ kubectl get pods -A -o json | jq -r '.items[] | select(.metadata.deletionTimesta
 - [Определения Pod Terminating](./definitions.md) — базовые термины и механизмы.
 - [Диагностика Pod Terminating](./diagnostics.md) — алгоритм поиска причин зависания.
 - [Финализаторы и CSI](./finalizer_issues.md) — если под застрял из-за дисков.
+- [DaemonSet и завершение подов](./daemonset_termination.md) — специфика завершения DaemonSet.
 - [Официальная документация (Termination)](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination) — спецификация.

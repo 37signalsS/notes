@@ -68,24 +68,66 @@ end
 ### Сценарий 2: Интеграция с Ansible (Remote и Local)
 
 **Варианты использования:**
-1.  **`ansible`**: Запуск с хост-машины (требует установленного Ansible на хосте).
-2.  **`ansible_local`**: Запуск внутри ВМ (Ansible устанавливается автоматически в гостевую ОС, если указано `ansible.install = true`). Полезно для Windows-хостов.
+1.  **`ansible`** (remote): запуск playbook с хост-машины (требуется установленный Ansible на хосте). Поддерживает **мульти-машины за один проход**: Vagrant генерирует инвентарь со всеми машинами окружения (`.vagrant/provisioners/ansible/inventory`) и выполняет playbook один раз сразу для всех узлов.
+2.  **`ansible_local`**: запуск внутри ВМ (Ansible автоматически ставится в гостевую ОС при `ansible.install = true`). Выполняется по-машинно; полезен, когда Ansible нет на хосте (в т.ч. на Windows-хостах).
 
 ```ruby
 config.vm.provision "ansible" do |ansible|
   ansible.playbook = "ansible/site.yml"
-  ansible.extra_vars = { 
+  ansible.extra_vars = {
     db_port: 5432,
-    app_env: "dev" 
+    app_env: "dev"
   }
-  # Использование кастомного инвентаря (отключает автогенерацию)
+  # Кастомный инвентарь (отключает автогенерацию Vagrant)
   ansible.inventory_path = "ansible/hosts.ini"
   ansible.limit = "all"
   ansible.become = true
+  ansible.become_user = "root"
+  ansible.verbose = "vvv"          # показывает реальную ansible-playbook команду и инвентарь
 end
 ```
 
-Подробнее об использовании секретов: [Ansible Vault в Vagrant](../Ansible/Vault/examples.md).
+**Группы и host-переменные через Vagrantfile** (работает при автосгенерированном инвентаре):
+
+```ruby
+config.vm.provision "ansible" do |ansible|
+  ansible.playbook = "provisioning/site.yml"
+  ansible.groups = {
+    "db"  => ["db"],
+    "web" => ["web", "web2"],
+    "all:vars" => { "ansible_python_interpreter" => "/usr/bin/python3" }
+  }
+  ansible.host_vars = {
+    "web" => { "http_port" => 8080 },
+    "db"  => { "max_connections" => 200 }
+  }
+end
+```
+
+**Работа с секретами:** пароль Vault передаётся файлом, а не встраивается в конфигурацию:
+
+```ruby
+config.vm.provision "ansible" do |ansible|
+  ansible.playbook = "site.yml"
+  ansible.vault_password_file = "ansible/.vault_pass"   # файл с паролем, в .gitignore
+  # или: ansible.ask_vault_pass = true
+  ansible.compatibility_mode = "2.0"   # переменные инвентаря для новых Ansible (ansible_host)
+end
+```
+
+**`ansible_local` детально:**
+
+```ruby
+config.vm.provision "ansible_local" do |ansible|
+  ansible.playbook = "ansible/site.yml"
+  ansible.install = true          # доставить Ansible в гостя
+  ansible.version = "latest"      # или "2.15.x" для пина версии
+  ansible.install_mode = "default"  # для pip установки: "pip"
+  ansible.playbook_command = "ansible-playbook"
+end
+```
+
+Подробнее об использовании секретов: [Ansible Vault в Vagrant](../Ansible/Vault/examples.md), о самих playbook и инвентаре — [Ansible Playbook Execution](../Ansible/ansible_playbook_execution.md).
 
 ### Сценарий 3: Docker-провижининг
 

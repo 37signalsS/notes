@@ -106,25 +106,7 @@ nstat -az | grep -E 'TcpExt(TCPAbortOnTimeout|TCPAbortOnClose|TCPAbortOnMemory)'
 # → TcpExtTCPAbortOnMemory          2                 0.0    # Нехватка памяти для сокета
 ```
 
-### 3. Анализ через tcpdump
-
-`tcpdump` — инструмент захвата и анализа пакетов на основе библиотеки `libpcap`. Позволяет увидеть "что реально происходит в сети".
-
-**Базовый синтаксис:**
-```bash
-tcpdump -i <интерфейс> [фильтр] [параметры вывода]
-```
-
-**Интерпретация TCP-флагов в выводе:**
-```bash
-tcpdump -i eth0 -nn 'tcp[tcpflags] & (tcp-syn|tcp-fin|tcp-rst) != 0'
-# → Flags [S]    : SYN
-# → Flags [S.]   : SYN-ACK
-# → Flags [F]    : FIN
-# → Flags [R]    : RST
-# → Flags [P.]   : PSH-ACK (данные)
-# → Flags [.]    : ACK
-```
+Для анализа трафика и базового синтаксиса `tcpdump` используйте **[tcpdump — сетевой анализатор пакетов](../../../../Linux/Diagnostics/Networking/tcpdump.md)**. Ниже — TCP-специфичные паттерны для диагностики соединений.
 
 **Практические фильтры:**
 ```bash

@@ -332,6 +332,9 @@ kubectl get clusterissuer letsencrypt-prod -o jsonpath='{.spec.acme.solvers}'
 - **[Let's Encrypt: Обзор](./index.md)** — лимиты, solvers и окружения
 - **[Углублённые концепции ACME](./letsencrypt_concepts.md)** — подробности ARI, CT-логи и типы аккаунтов.
 - **[Практические сценарии Let's Encrypt](./letsencrypt_scenarios.md)** — полные YAML-примеры конфигураций.
+- **[Реагирование на инциденты (Incident Response)](./letsencrypt_incident_response.md)** — пошаговые процедуры при просроченных сертификатах и компрометации ключей.
+- **[Disaster Recovery и Backup](./letsencrypt_disaster_recovery.md)** — восстановление после потери кластера и DNS API токенов.
+- **[Сетевая безопасность (Network Security)](./letsencrypt_network_security.md)** — firewall, egress и NetworkPolicy для ACME проверок.
 - **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов контроллера.
 - **[Cert-manager: Администрирование](../Administration/index.md)** — HA, ресурсы и ротация ключей.
 - **[Cert-manager: Troubleshooting](../Administration/troubleshooting.md)** — общая диагностика контроллера (CPU, Memory, Webhook).

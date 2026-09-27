@@ -297,6 +297,40 @@ sudo vtysh -c "show ip bgp 10.0.0.100/32"
     ```
     *Если между ними есть расхождение, проблему следует искать в процессе инсталляции маршрутов, next-hop resolution или сбоях аппаратных таблиц (TCAM).*
 
+**Высокопроизводительные платформы (high-end роутеры)**
+
+**Проблема:** В routing table (RIB) маршрут отображается корректно: next-hop есть, метрики нормальные, протокол сходится. Но data-plane не использует этот маршрут — пакеты не уходят, и сеть «работает частично».
+
+**Причины:** чаще всего связаны с ограничениями ASIC, рекурсивным разрешением next-hop или проблемами с adjacency.
+
+**Диагностика:**
+
+1.  **Проверка программирования маршрута в FIB/CEF:**
+    ```cisco
+    show ip cef <prefix> detail
+    ```
+    *Показывает детали записи FIB: state, recursive resolution, adjacency, ASIC-specific флаги.*
+
+2.  **Проверка adjacency и L2-револвинг next-hop:**
+    ```cisco
+    show adjacency detail
+    show ip arp <next-hop>
+    ```
+    *Если next-hop не разрешается через adjacency (ARP/NDP не resolved, или adjacency invalid), пакеты не будут пересылаться despite наличия маршрута в RIB.*
+
+3.  **Проверка hardware table и дропов на high-end платформах:**
+    ```cisco
+    show platform hardware qfp active feature cef drop
+    ```
+    *QFP (Quantum Flow Processor) — специализированный процессор пакетов на Cisco high-end платформах (ASR 9000, NCS 5500, CRS). Команда показывает счётчики дропов, вызванных ASIC-ограничениями, ошибками adjacency, или переполнением hardware table.*
+
+**Решение:**
+- Корректировка рекурсивного next-hop (проверка reachability next-hop через IGP или static route)
+- Перераспределение нагрузки по ASIC (optimization hash distribution на multi-ASIC платформах)
+- Оптимизация L3 adjacency (очистка stale adjacency через `clear adjacency`)
+- Проверка максимального количества маршрутов/entry в FIB для high-end маршрутизаторов (сравнение `show ip cef summary` с capacity спецификацией платформы)
+- При TCAM overflow — агрегация префиксов или firmware update ASIC
+
 ### Сценарий 10: Default route из нескольких источников (BGP, OSPF, Static)
 
 **Проблема:** На маршрутизаторе одновременно живет default route (`0.0.0.0/0`) из BGP, OSPF и static. Все протоколы сообщают, что выход есть, но трафик стабильно уходит через один uplink. Проблема в том, что `show ip route` показывает только итоговое решение общей RIB — сам процесс выбора остается скрытым.

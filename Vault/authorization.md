@@ -2,6 +2,18 @@
 
 В архитектуре Vault аутентификация отвечает за проверку личности (кто вы), а **авторизация** — за управление доступом (что вам разрешено делать). Основным механизмом авторизации являются политики, которые определяют права доступа к путям API.
 
+## Предварительные требования
+
+Перед написанием и применением политик убедитесь, что инфраструктура подготовлена:
+
+- **Vault инициализирован и разблокирован:** Выполнен `vault operator init` с распределением ключей Shamir (рекомендуется минимум 3 из 5) и `vault operator unseal` на каждом узле.
+- **Метод аутентификации включен:** Например, `vault auth enable kubernetes`, `vault auth enable approle`, `vault auth enable userpass`. Выполните `vault auth list` для проверки.
+- **Движок секретов включен:** Для KV v2 — `vault secrets enable -path=secret -version=2 kv`. Выполните `vault secrets list -detailed` для проверки доступных путей.
+- **Identity Store готов:** Сущности, группы и алиасы созданы через `vault write identity/entity ...` или автоматически при аутентификации. Выполните `vault identity list` для просмотра.
+- **Аудит включен:** Как минимум один audit device (`file`, `syslog`) для фиксации всех операций авторизации. Без аудита невозможно отследить причину отказа в доступе.
+- **Сеть:** Приложения и CI/CD-агенты имеют сетевая доступность до Vault на порту 8200 (или 8201 для Raft-кластера). В air-gapped средах используйте Vault Agent с кэшированием.
+- **CLI версии:** Команды проверены на Vault 1.13+ (capability `patch`, параметры `allowed_parameters`/`denied_parameters`/`required_parameters` доступны с 1.13).
+
 ## Определения
 
 **Авторизация (Authorization)** — процесс проверки прав доступа аутентифицированного субъекта (Entity) к конкретным путям, операциям и ресурсам в Vault.
@@ -248,8 +260,164 @@ path "secret_access/export-keys/encryption" {
 
 Дополнительно параметр `controlled_capabilities` в блоке `control_group` позволяет требовать одобрение только для конкретных операций (например, `sudo`), оставляя остальные беспрепятственными. Control Groups доступны в Vault Enterprise и HCP Vault Dedicated/Standard.
 
+### Изоляция сред (dev/staging/prod)
+
+Для разделения доступа между средами используйте либо префиксы путей, либо отдельные политики с явным указанием среды. Ниже — подход на основе префиксов, который не требует изменения синтаксиса при добавлении новой среды.
+
+```hcl
+# Общая политика для production: только чтение и патч
+path "secret/data/production/{{identity.entity.metadata.team}}/*" {
+  capabilities = ["read", "patch"]
+}
+
+# Staging: полный доступ для команды разработки
+path "secret/data/staging/{{identity.entity.metadata.team}}/*" {
+  capabilities = ["create", "read", "update", "patch", "delete", "list"]
+}
+
+# Dev: доступ по умолчанию для всех сотрудников
+path "secret/data/development/*" {
+  capabilities = ["read", "list"]
+}
+
+# Явный запрет на доступ к production из staging-инструментов
+path "secret/data/production/*" {
+  capabilities = ["deny"]
+}
+```
+
+Для более строгой изоляции используйте отдельные mount-точки (`secret-prod`, `secret-staging`) с разными политиками. Это исключает случайный доступ при ошибке в пути.
+
+### Политики для CI/CD пайплайнов
+
+CI/CD-агенты (GitLab Runner, Jenkins, GitHub Actions) должны получать секреты только для своей ветки и проекта. Используйте аутентификацию через AppRole или JWT с привязкой к claims раннера. Пример политики для GitLab CI с AppRole описан в **[CI-CD/DevSecOps/secrets_management.md](../CI-CD/DevSecOps/secrets_management.md)**. Ключевые принципы:
+
+- TTL токена совпадает с длительностью задачи (обычно 10–30 минут).
+- Политика ограничивается префиксом `secret/data/ci/<project-id>/*`.
+- `token_no_default_policy = true` для отключения политики `default`.
+- SecretID передается через Response Wrapping (`-wrap-ttl=60s`), а не в открытом виде.
+
+### Политики для Transit Engine
+
+Transit Engine используется для шифрования/дешифрования данных без доступа к ключам. Политика должна минимизировать возможность выхода ключа за пределы Transit. Примеры и детальные сценарии (ключи с деривацией, ограничение контекста, подпись) описаны в **[Transit Engine — Политики](./guides/transit-encryption-policies.md)**. Минимальная политика для приложения:
+
+```hcl
+path "transit/encrypt/{{identity.entity.metadata.key_name}}" {
+  capabilities = ["update"]
+  allowed_parameters = {
+    "context" = []
+  }
+}
+
+path "transit/decrypt/{{identity.entity.metadata.key_name}}" {
+  capabilities = ["update"]
+  allowed_parameters = {
+    "context" = []
+  }
+}
+```
+
+### Политики для динамических учетных данных баз данных
+
+Динамические учетные данные создаются на лету и автоматически удаляются по истечении TTL. Политика для приложения, подключающегося к PostgreSQL через Vault:
+
+```hcl
+# Генерация динамических учетных данных
+path "database/creds/{{identity.entity.metadata.db_role}}" {
+  capabilities = ["read"]
+}
+
+# Обновление конфигурации подключения (опционально)
+path "database/config/postgresql/prod" {
+  capabilities = ["read"]
+}
+```
+
+Важно: приложение не должно иметь прав на `database/config/*` с `create`/`update`/`delete`, иначе злоумышленник может изменить конфигурацию подключения и перенаправить трафик.
+
+### Изоляция по namespace Kubernetes
+
+При использовании Kubernetes auth метод аутентификация передает `service_account_namespace` в метаданные алиаса. Это позволяет создавать политики, автоматически ограничивающие доступ namespace:
+
+```hcl
+# Сервис из namespace team-a имеет доступ только к своим секретам
+path "secret/data/teams/{{identity.entity.aliases.<kubernetes_mount_accessor>.metadata.service_account_namespace}}/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+Значение `<kubernetes_mount_accessor>` получают командой `vault auth list` (столбец `Accessor` для метода `kubernetes`). Такой подход исключает необходимость создавать отдельную политику для каждого namespace.
+
+### Аудит и мониторинг политик
+
+Включите audit device на старте развертывания Vault:
+
+```bash
+# Файловый audit device (локальный)
+vault audit enable file file_path=/var/log/vault/audit.log
+
+# Syslog для централизованного сбора логов
+vault audit enable syslog tag="vault-audit" facility=AUTH
+```
+
+Для мониторинга политик в production экспортируйте метрики:
+- `vault.token.count.by_policy` — количество токенов с привязанной политикой.
+- `vault.token.creation` — частота создания токенов (всплеск может указывать на компрометацию).
+- `vault.request.count` — общее число запросов к путям, покрытым политиками.
+
+Анализируйте лог на наличие `permission denied` с высоким `request.path` — это может быть reconnaissance со стороны скомпрометированного приложения.
+
+## Типичные ошибки и устранение
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `403 Forbidden` / `permission denied` | Политика не покрывает путь или capability | Выполнить `vault token capabilities <path> <token>` для диагностики. Проверить точное совпадение пути, включая сегмент `data/` для KV v2. |
+| `permission denied` при `vault policy read` | Токен не имеет `sudo` на `sys/policy/*` | Использовать токен с политикой, содержащей `capabilities = ["sudo", "read"]` на пути `sys/policy/*`, или root-токен. |
+| Политика не применяется | Токен создан без политики или `token_no_default_policy=true` без явного указания политик | Проверить `vault token lookup <token>` → поле `policies`. Убедиться, что роль аутентификации привязывает нужную политику. |
+| `list` возвращает больше ключей, чем ожидалось | `list` не фильтруется политиками | Не закладывать чувствительные данные в имена ключей. Использовать отдельные пути для разных уровней доступа. |
+| Wildcard в шаблоне рендерит `/` | `deny_slash_in_templated_paths` включен по умолчанию | Либо изменить опцию в `/v1/sys/config`, либо переструктурировать Identity metadata, чтобы исключить `/` из значений. |
+| `patch` не работает на KV v2 | Указан путь без сегмента `data/` или capability `patch` отсутствует | Проверить: `vault token capabilities secret/data/<path>` → должно содержать `patch`. Путь в CLI: `secret/data/...` (с `data/`). |
+
+## Лучшие практики
+
+1. **Deny-by-default:** Все политики должны явно разрешать только необходимые пути. Никогда не используйте `path "secret/*" { capabilities = ["read"] }` для приложений.
+2. **Максимальная детализация путей:** Чем длиннее префикс пути, тем выше приоритет правила. Используйте полные пути вместо глобальных wildcard.
+3. **Отдельные политики на приложение:** Одна политика = один сервис/инструмент. Это упрощает аудит и отзыв доступа.
+4. **Минимальные capabilities:** Если приложению нужно только читать секрет, не добавляйте `create`/`update`/`delete`.
+5. **Шаблонизация вместо индивидуальных политик:** Используйте `identity.entity.metadata.*` и группы, чтобы не поддерживать десятки идентичных политик.
+6. **Аудит с первого дня:** Включите audit device до того, как приложения начнут запрашивать секреты. Без логов невозможно расследовать инцидент.
+7. **Отказ от root-токенов в production:** После инициализации кластера создайте административные политики и отзовите root-токен. Используйте `sudo` capability на `sys/*` для операций администрирования.
+8. **Response Wrapping для передачи секретов:** Вместо общего статического секрета используйте `-wrap-ttl` для передачи временных credential между сервисами.
+9. **Регулярный аудит политик:** Выполняйте `vault policy list` и `vault token capabilities` на предмет устаревших правил, особенно после ротации команд и деплоя новых приложений.
+
+## Границы применимости и ограничения
+
+- **KV v2 не поддерживает тонкую фильтрацию полей:** `allowed_parameters`/`denied_parameters`/`required_parameters` работают только для KV v1 и не-движков. Для KV v2 используйте отдельные пути или `patch` capability.
+- **Шаблонизация только в путях:** Переменные Identity Store подставляются только в блоке `path`, но не в значения параметров или capabilities.
+- **Control Groups и Sentinel — Enterprise:** Control Groups, EGP и RGP требуют Vault Enterprise или HCP Vault Dedicated/Standard. В OSS используйте ACL-политики с явными `deny` и разделением путей.
+- **Аудит не фильтрует чувствительные данные по умолчанию:** Включите audit device осторожно — он записывает все запросы и ответы (включая секреты) в лог. Обеспечьте защиту лога аудита (доступ по `sudo`, ротация, шифрование).
+- **Сетевой доступ обязателен:** Приложения должны достигать Vault API. В air-gapped средах используйте Vault Agent с `auto-auth` и кэшированием, но учтите, что политики по-прежнему применяются на стороне Vault.
+- **Токены имеют фиксированный TTL:** Даже с `renew` политика не продлевает бесконечно. Убедитесь, что TTL токена покрывает максимальное время работы приложения, либо используйте Vault Agent для автоматического продления.
+
 ## Дополнительная информация
 
 *   **[Архитектура и концепции](./concepts.md)** — детали работы токенов и Identity Store.
 *   **[Подход Zero Trust](./zero_trust.md)** — роль авторизации в архитектуре нулевого доверия.
+*   **[Интеграция Vault с Kubernetes](./guides/vault_kubernetes_integration.md)** — примеры Kubernetes auth, VSO и CSI Driver.
+*   **[Авторизация через AppRole](./guides/vault_auth_approle.md)** — практическое руководство по настройке AppRole для CI/CD и приложений.
+*   **[Политики Transit Engine](./guides/transit-encryption-policies.md)** — сценарии ограничения encrypt/decrypt и деривации ключей.
+*   **[Control Groups](./control_groups.md)** — multi-approval для критических операций (Enterprise).
+*   **[SSH Secrets Engine](./guides/ssh_secrets_engine.md)** — динамические SSH-ключи и сертификаты.
+*   **[Database Secrets Engine](./guides/database_secrets_engine.md)** — динамические учетные данные баз данных.
+*   **[PKI/CA продвинутые сценарии](./guides/pki_ca_advanced.md)** — Intermediate CA, ACME, CRL/OCSP.
+*   **[Производительность и репликация](./performance_and_replication.md)** — Performance Standby, DR Replication.
+*   **[Мониторинг и алертинг](./monitoring_and_alerting.md)** — Prometheus, Grafana, SLO/SLI.
+*   **[Анализ audit логов](./audit_log_analysis.md)** — SIEM, forensic, compliance.
+*   **[Ротация секретов](./secret_rotation.md)** — стратегии ротации.
+*   **[Namespaces](./namespaces.md)** — изоляция сред (Enterprise).
+*   **[SLM, Vault Radar, Secrets Sync](./slm_radar_secrets_sync.md)** — Security Lifecycle Management.
+*   **[Производительность и тюнинг](./performance_tuning.md)** — оптимизация для high-load.
+*   **[Vault API Reference](./vault_api_reference.md)** — REST API и endpoints.
+*   **[Cubbyhole и Response Wrapping](./cubbyhole_response_wrapping.md)** — безопасная доставка секретов.
+*   **[Стратегии бэкапов и восстановления](./backup_restore_strategies.md)** — RPO/RTO, disaster recovery.
 *   **[Официальная документация по политикам](https://developer.hashicorp.com/vault/docs/concepts/policies)**

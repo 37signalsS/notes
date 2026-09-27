@@ -586,5 +586,7 @@ cat /sys/kernel/mm/transparent_hugepage/enabled
 ### См. также
 
 *   **[Оптимизация памяти](./performance_tuning.md)** — HugePages, THP, NUMA, KSM, Memory QoS.
+*   **[Справочник sysctl-параметров памяти](./sysctl_memory_reference.md)** — единый reference по всем параметрам памяти.
+*   **[Фактическое потребление vs Reporting](./memory_reporting_vs_reality.md)** — разница между free, top, smem.
 *   **[Диагностика /proc/meminfo](../../Diagnostics/Memory/proc_meminfo.md)** — расшифровка всех метрик памяти.
 *   **[Slab Allocator](./slab_allocator.md)** — память ядра, не учитываемая в RSS процессов.

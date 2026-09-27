@@ -393,6 +393,180 @@ docker compose up -d --scale netbox-rq=3
 
 ## Дополнительная информация
 
+### Шаблон Boilerplates (community-инструмент для генерации Docker Compose)
+
+Помимо официального репозитория `netbox-docker`, существует community-инструмент **Boilerplates** (CLI), который автоматически генерирует готовый к работе стек Docker Compose с предварительно настроенными интеграциями: обратным прокси-сервером **Traefik** для TLS-терминации, внешней базой данных PostgreSQL, RADIUS-аутентификацией и уведомлениями по электронной почте.
+
+**Установка инструмента:**
+```bash
+# Установка через pip (или brew, npm — зависит от реализации)
+pip install boilerplates
+```
+
+**Принцип работы:**
+Инструмент запрашивает у пользователя параметры (или принимает их через флаги CLI), после чего генерирует полный набор файлов `docker-compose.yml`, `.env`, `configuration.py` и секретов в указанную директорию.
+
+**Неинтерактивный режим и вывод в директорию:**
+```bash
+boilerplates -n -o /tmp/netbox-demo
+```
+- `-n` — неинтерактивный режим, использует значения по умолчанию без промптов.
+- `-o <path>` — директория для вывода сгенерированных файлов.
+
+**Переопределение переменных через флаги:**
+```bash
+boilerplates -n -o /tmp/netbox \
+  --traffic true \
+  --traffic_host netbox.test1.home.cl.de \
+  --email true \
+  --email_host smtp.example.com \
+  --email_port 587 \
+  --email_username user@example.com \
+  --email_password secure_password \
+  --email_use_tls true
+```
+
+**Основные переменные шаблона:**
+
+| Переменная | Описание | Значение по умолчанию |
+| :--- | :--- | :--- |
+| `TRAEFIK_NETWORK` | Внешняя сеть Docker для Traefik | `traefik-public` |
+| `TRAEFIK_HOST` | Поддомен для доступа к NetBox | `netbox` |
+| `TRAEFIK_DOMAIN` | Доменная зона (локальная DNS в домашней лаборатории) | `home.cl.te` |
+| `TRAEFIK_TLS` | Включение TLS через Traefik | `false` |
+| `EMAIL_HOST` | SMTP-сервер для уведомлений | — |
+| `EMAIL_PORT` | Порт SMTP (587 для TLS, 465 для SSL) | — |
+| `EMAIL_USERNAME` | Логин SMTP | — |
+| `EMAIL_PASSWORD` | Пароль SMTP | — |
+| `EMAIL_USE_TLS` | Использовать TLS (`true`) или SSL (`false`) | `true` |
+| `NETBOX_SECRET_KEY` | Секретный ключ Django (50 символов) | Автогенерация |
+| `DB_HOST` | Хост внешней PostgreSQL (если используется внешняя БД) | Встроенный контейнер |
+| `RADIUS_HOST` | Хост RADIUS-сервера | — |
+| `RADIUS_SECRET` | Секретный ключ RADIUS | — |
+
+**Сгенерированная структура стека:**
+```yaml
+services:
+  netbox:
+    image: netboxcommunity/netbox:latest
+    depends_on:
+      - postgres
+      - redis
+      - redis-cache
+    env_file: .env
+    volumes:
+      - netbox_static:/opt/netbox/netbox/static
+      - netbox_media:/opt/netbox/netbox/media
+      - ./configuration.py:/opt/netbox/netbox/configuration.py:ro
+
+  netbox-rq:
+    image: netboxcommunity/netbox:latest
+    command: /opt/netbox/venv/bin/python manage.py rqworker high default low
+
+  radius:
+    image: freeradius/freeradius-server:latest
+    # Контейнер RADIUS для аутентификации
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+
+  redis-cache:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  netbox_static:
+  netbox_media:
+```
+
+**Сетевые метки Traefik:**
+```yaml
+services:
+  nginx:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netbox.rule=Host(`${TRAEFIK_HOST}.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.netbox.entrypoints=websecure"
+      - "traefik.http.routers.netbox.tls.certresolver=myresolver"
+    networks:
+      - traefik-public
+      - netbox-internal
+```
+
+**Инициализация и ожидание готовности:**
+
+При первом запуске NetBox инициализирует базу данных, что занимает несколько минут. В этот момент рабочие процессы (netbox-rq) и веб-сервер могут завершаться с ошибкой до готовности PostgreSQL.
+
+```bash
+# Мониторинг прогресса инициализации
+docker compose logs -f netbox
+
+# Ожидание успешной инициализации
+# Искомое сообщение в логах:
+# "Конфигурация блока замка успешно загружена" (или аналог на английском)
+# После этого все контейнеры перейдут в состояние healthy
+```
+
+**Варианты доступа к веб-интерфейсу:**
+
+| Сценарий | Способ доступа | Примечание |
+| :--- | :--- | :--- |
+| **TLS включен** | `https://netbox.<домен>` через Traefik | Рекомендуется для production |
+| **TLS отключен** | `http://<хост>:8000` напрямую | Только для тестирования, небезопасно |
+
+При использовании TLS обратный прокси (Traefik) берет на себя SSL-терминацию, и порт 8000 не暴露вается наружу.
+
+**Проверка работы уведомлений по email:**
+
+```bash
+# Вход в интерактивную оболочку контейнера NetBox
+docker compose exec netbox /bin/bash
+
+# Запуск скрипта проверки email
+python manage.py shell -c "
+from django.core.mail import send_mail
+send_mail(
+    'NetBox Email Test',
+    'Тестовое уведомление',
+    'netbox@example.com',
+    ['ваш@email.com'],
+    fail_silently=False,
+)
+"
+# → 1 (отправлено) или ошибка SMTP
+```
+
+**Безопасность — стандартный API-токен администратора:**
+
+При первом входе в NetBox (`admin` / `admin`) система отображает предупреждение о стандартном API-токене администратора (`1234567890abcdef...`), который широко известен и крайне небезопасен.
+
+**Обязательные действия после первого входа:**
+1. **Сменить пароль** администратора: `Admin → Users → admin → Change password`.
+2. **Удалить стандартный API-токен**: `Admin → Users → Tokens → токен "admin" → Delete`.
+3. **Создать новый токен** с ограничениями: `write_enabled` по необходимости, `allowed_ips`, `expires`.
+
+**Внешняя база данных PostgreSQL:**
+
+Если используется внешняя PostgreSQL, переопределите переменные в `.env`:
+```env
+DB_HOST=postgres.external.example.com
+DB_PORT=5432
+DB_NAME=netbox
+DB_USER=netbox
+DB_PASSWORD=strong_password
+```
+В этом случае стек Docker Compose пропустит контейнер PostgreSQL и подключится к внешнему серверу.
+
 ### См. также
 
 - [NetBox: Обзор и базовые концепции](./overview.md)

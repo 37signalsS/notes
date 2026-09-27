@@ -14,7 +14,11 @@
 
 **STIG (Security Technical Implementation Guide)** — набор правил безопасности, разработанный агентством DISA (США) для систем, используемых в оборонных ведомствах. Считается одним из самых строгих стандартов харденинга.
 
-## Основные концепции
+**SCAP Security Guide (SSG)** — пакет политик для OpenSCAP, содержащий Data Streams (XML-файлы) с правилами для конкретных ОС и профилями (CIS, STIG, NIST).
+
+**Tailoring (Кастомизация профиля)** — процесс адаптации стандартного SCAP-профиля под конкретную среду: исключение правил, конфликтующих с сервисами, и изменение параметров без модификации исходного профиля.
+
+## Основные концепции и архитектура
 
 ### Стратегия укрепления систем
 
@@ -28,10 +32,30 @@
 
 Рекомендуется разделять процесс на три уровня:
 *   **Base Hardening:** Настройка ядра (`sysctl`), базовых прав доступа и SSH. Реализуется через общие роли (например, `devsec.hardening`).
-*   **Compliance Hardening:** Приведение к конкретному стандарту (CIS L1/L2). Реализуется через специализированные роли (Ansible Lockdown).
-*   **Application Hardening:** Специфичные настройки для Web, DB или Docker (см. [Харденинг контейнеров](../../Docker/Docker_security/container_hardening.md)).
+*   **Compliance Hardening:** Приведение к конкретному стандарту (CIS L1/L2, STIG). Реализуется через специализированные роли (Ansible Lockdown).
+*   **Application Hardening:** Специфичные настройки для сервисов (Nginx, MySQL, PostgreSQL). В рамках OS Hardening рассматривается только взаимодействие с системными политиками (например, `noexec` для `/tmp` и его влияние на сервисы).
 
-## Готовые инструменты и коллекции
+### Принцип работы инструментов
+
+**DevSec Hardening Framework** (`devsec.hardening`):
+- Работает как набор независимых ролей: `os_hardening`, `ssh_hardening`, `nginx_hardening`, `mysql_hardening`.
+- Каждая роль идемпотентна: повторный запуск не изменяет состояние, если система уже соответствует политике.
+- Использует переменные с префиксами для изоляции конфигурации: `os_*`, `ssh_*`, `sysctl_overwrite`.
+- Интегрируется с Ansible через `include_role` или directly в `requirements.yml`.
+
+**Ansible Lockdown**:
+- Предоставляет роли, реализующие конкретные версии стандартов (CIS RHEL 10 v1.0.1, DISA STIG V2R7 и т.д.).
+- Поддерживает два режима: Remediation (применение) и Audit (проверка через Goss).
+- Использует теги для управления scope: `level1-server`, `level2-workstation`, `audit_only`.
+- Требует предварительного тестирования в `check_mode` или на изолированных хостах.
+
+**OpenSCAP**:
+- Работает на целевом хосте: требует установки пакетов `scap-security-guide` и `openscap-scanner`.
+- Data Stream (`.xml`) — единый файл, содержащий CPE-словарь, OVAL-проверки, XCCDF-правила и Ansible remediations.
+- Возвращает код завершения: `0` — все пройдено, `1` — ошибка, `2` — есть несоответствия.
+- Генерация Ansible-кода происходит через `oscap xccdf generate remediation --fix-type ansible`.
+
+## Практические сценарии и конфигурация
 
 ### 1. Коллекция DevSec (Hardening Framework)
 
@@ -39,12 +63,13 @@
 
 *   **Коллекция:** `devsec.hardening`
 *   **Актуальная версия:** 10.6.0 (май 2026)
+*   **Минимальная версия Ansible:** 2.16+
 *   **Поддерживаемые ОС (2026):**
     *   Ubuntu 22.04 / 24.04 / 26.04
     *   RHEL 8 / 9 / 10
     *   AlmaLinux 8 / 9 / 10
     *   Rocky Linux 8 / 9 / 10
-    *   CentOS Stream 9
+    *   CentOS Stream 9 / 10
     *   Debian 11 / 12 / 13
     *   Fedora 42 / 43 / 44
 *   **Включенные роли:** `os_hardening`, `ssh_hardening`, `nginx_hardening`, `mysql_hardening` (в разработке: `apache_hardening`, `windows_hardening`)
@@ -105,18 +130,18 @@
           /etc/shadow: { mode: "0640", owner: "root", group: "shadow" }
 ```
 
-**Важные побочные эффекты параметров sysctl (см. [Харденинг ядра Linux](../../Linux/Security/Mechanisms/Kernel/hardening.md)):**
+**Важные побочные эффекты параметров sysctl (см. [Харденинг ядра Linux](../Linux/Security/Mechanisms/Kernel/hardening.md)):**
 
 | Параметр | Что может сломаться | Рекомендация |
 | :--- | :--- | :--- |
 | `kernel.kptr_restrict=2` | Falco, Sysdig, perf | Отключить для хостов с профилировщиками |
 | `kernel.unprivileged_bpf_disabled=1` | Cilium, Falco, bpftrace | Добавить в исключения если используется eBPF |
-| `net.ipv4.ip_forward=0` | Kubernetes, Docker, CNI | Установить `1` для контейнерных хостов |
+| `net.ipv4.ip_forward=0` | Контейнерные хосты | Установить `1` для хостов с Docker/CNI |
 | `user.max_user_namespaces=0` | Rootless контейнеры | Не использовать на Docker-хостах |
 
 ### 2. Ansible Lockdown (CIS & STIG)
 
-Проект предоставляетroles для глубокого соответствия стандартам. Идеально подходит для регулируемых отраслей (финтех, медицина, госсектор). Поддерживает как **Remediation** (применение), так и **Audit** (проверку через Goss).
+Проект предоставляет роли для глубокого соответствия стандартам. Идеально подходит для регулируемых отраслей (финтех, медицина, госсектор). Поддерживает как Remediation, так и Audit (проверка через Goss).
 
 *   **Репозитории:** [Ansible Lockdown GitHub](https://github.com/ansible-lockdown)
 *   **Документация:** [ansible-lockdown.readthedocs.io](https://ansible-lockdown.readthedocs.io/)
@@ -133,16 +158,8 @@
 | `ansible-lockdown.RHEL10-CIS` | RHEL 10 / Alma 10 / Rocky 10 | Активна |
 | `ansible-lockdown.DEBIAN12-CIS` | Debian 12 | Активна |
 | `ansible-lockdown.DEBIAN13-CIS` | Debian 13 | Активна |
-| `ansible-lockdown.AMAZON2023-CIS` | Amazon Linux 2023 | Активна |
-
-**CIS Benchmarks (Cloud / Applications):**
-
-| Роль | Платформа | Примечание |
-| :--- | :--- | :--- |
-| `ansible-lockdown.AWS-FOUNDATIONS-CIS` | AWS | Только Remediation |
-| `ansible-lockdown.AZURE-CIS` | Azure | Только Remediation |
-| `ansible-lockdown.APACHE-2.4-CIS` | Apache HTTP Server | |
-| `ansible-lockdown.POSTGRES-12-CIS` | PostgreSQL | |
+| `ansible-lockdown.SUSE15-CIS` | SUSE 15 | Активна |
+| `ansible-lockdown.SUSE16-CIS` | SUSE 16 | Активна |
 
 **DISA STIG Roles:**
 
@@ -150,7 +167,8 @@
 | :--- | :--- |
 | `ansible-lockdown.UBUNTU24-STIG` | Ubuntu 24.04 LTS |
 | `ansible-lockdown.RHEL8-STIG` | RHEL 8 |
-| `ansible-lockdown.RHEL9-STIG` | RHEL 9 |
+| `ansible-lockdown.RHEL9-STIG` | RHEL 9 (DISA STIG V2R8) |
+| `ansible-lockdown.RHEL10-STIG` | RHEL 10 |
 
 **Важно:** Роли Lockdown крайне агрессивны. Всегда начинайте с предварительной оценки:
 
@@ -169,39 +187,41 @@ vars:
   hosts: ubuntu_servers
   become: true
   vars:
-    # Отключение правил, конфликтующих с Docker
-    cis_rule_1_1_1_1: false  # tmp noexec (ломает Docker builds)
+    # Отключение правил, конфликтующих с сервисами
+    cis_rule_1_1_1_1: false  # tmp noexec (ломает пользовательские сервисы)
     cis_rule_5_3: false      # PAM (если используется LDAP)
   roles:
     - ansible-lockdown.UBUNTU24-CIS
 ```
 
-## Интеграция с OpenSCAP
+### 3. Интеграция с OpenSCAP
 
 OpenSCAP позволяет автоматизировать аудит и генерировать плейбуки исправления на основе актуальных политик **SCAP Security Guide (SSG)**.
 
-### 1. Работа с профилями SSG
+#### Работа с профилями SSG
 
 Пакет `scap-security-guide` содержит Data Streams (файлы `.xml`), описывающие правила для конкретных ОС.
 
-**Актуальные версии профилей (SSG 0.1.80+, июнь 2026):**
+**Актуальные версии профилей (SSG 0.1.80+, май 2026; 0.1.81 доступен):**
 
 | ОС | CIS Benchmark | DISA STIG | Файл Data Stream |
 | :--- | :--- | :--- | :--- |
-| RHEL 8 | v4.0.0 | V2R6 | `ssg-rhel8-ds.xml` |
-| RHEL 9 | v2.0.0+ | V2R7 | `ssg-rhel9-ds.xml` |
-| RHEL 10 | В разработке | В разработке | `ssg-rhel10-ds.xml` |
+| RHEL 8 | v4.0.0 | V2R7 | `ssg-rhel8-ds.xml` |
+| RHEL 9 | v2.0.0+ | V2R8 | `ssg-rhel9-ds.xml` |
+| RHEL 10 | v1.0.1 | V1R1 | `ssg-rhel10-ds.xml` |
 | Ubuntu 24.04 | CIS Level 1/2 | V1R1 | `ssg-ubuntu2404-ds.xml` |
+| Ubuntu 26.04 | CIS Level 1/2 | В разработке | `ssg-ubuntu2604-ds.xml` |
 | Debian 12 | CIS Level 1/2 | — | `ssg-debian12-ds.xml` |
+| Debian 13 | CIS Level 1/2 | — | `ssg-debian13-ds.xml` |
 
 **Просмотр доступных профилей для RHEL 9:**
 ```bash
 oscap info /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
 # → xccdf_org.ssgproject.content_profile_cis (Level 2)
 # → xccdf_org.ssgproject.content_profile_cis_server_l1 (Level 1)
-# → xccdf_org.ssgproject.content_profile_stig (DISA STIG V2R7)
+# → xccdf_org.ssgproject.content_profile_stig (DISA STIG V2R8)
 # → xccdf_org.ssgproject.content_profile_cis_workstation_l1
-# → xccdf_org.ssgproject.content_profile_bsi_itGrundschutz (NEW)
+# → xccdf_org.ssgproject.content_profile_bsi_itGrundschutz
 ```
 
 **Просмотр доступных профилей для Ubuntu 24.04:**
@@ -213,7 +233,7 @@ oscap info /usr/share/xml/scap/ssg/content/ssg-ubuntu2404-ds.xml
 # → xccdf_org.ssgproject.content_profile_cis_level2_workstation
 ```
 
-### 2. Генерация Remediation-плейбуков
+#### Генерация Remediation-плейбуков
 
 Вы можете сгенерировать Ansible-код, идеально подходящий под конкретную версию вашей системы и профиль.
 
@@ -222,7 +242,7 @@ oscap info /usr/share/xml/scap/ssg/content/ssg-ubuntu2404-ds.xml
 oscap xccdf generate remediation --fix-type ansible \
   --profile xccdf_org.ssgproject.content_profile_cis \
   /usr/share/xml/scap/ssg/content/ssg-ubuntu2404-ds.xml > cis_remediation.yml
-# → Готовый плейбуки с задачами для каждого правила CIS
+# → Готовый плейбук с задачами для каждого правила CIS
 
 # Генерация для RHEL 9 STIG
 oscap xccdf generate remediation --fix-type ansible \
@@ -230,22 +250,16 @@ oscap xccdf generate remediation --fix-type ansible \
   /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml > stig_remediation.yml
 ```
 
-### 3. Настройка профиля через Tailoring-файл
+#### Настройка профиля через Tailoring-файл
 
 Tailoring позволяет исключить или изменить конкретные правила без модификации исходного профиля. Это критически важно для production-сред, где отдельные проверки могут нарушить работу сервисов.
 
 **Создание tailoring-файла:**
 ```bash
-# Экспорт базового профиля
-oscap xccdf generate fix --fix-type ansible \
-  --profile xccdf_org.ssgproject.content_profile_cis \
-  --output tailoring_base.yml \
-  /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
-
 # Генерация tailoring-файла (XML) для исключения правил
 oscap xccdf generate fix --fix-type ansible \
   --profile xccdf_org.ssgproject.content_profile_cis \
-  --output cis_tailored.yml \
+  --output cis_tailored.xml \
   /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
 ```
 
@@ -273,7 +287,7 @@ oscap xccdf eval \
   /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
 ```
 
-### 3. Автоматизированный аудит через Ansible
+#### Автоматизированный аудит через Ansible
 
 ```yaml
 - name: Аудит безопасности OpenSCAP
@@ -321,7 +335,7 @@ oscap xccdf eval \
       ansible.builtin.debug:
         msg: >
           Обнаружены нарушения! См. отчет: {{ report_dir }}/report.html
-          Статистика: {{ stats.stdout }}
+          Статистика: {{ stats.stdout }}"
       when: scan_out.rc == 2
 
     - name: Загрузить отчет на Control Node
@@ -330,6 +344,37 @@ oscap xccdf eval \
         dest: "reports/{{ inventory_hostname }}_oscap_report.html"
         flat: true
       when: scan_out.rc == 2
+```
+
+## Операции и команды
+
+### Справочник по командам
+
+| Операция | Команда / Пример | Примечание |
+| :--- | :--- | :--- |
+| Установка коллекции DevSec | `ansible-galaxy collection install devsec.hardening` | Требуется ansible-core >= 2.16 |
+| Установка роли Lockdown | `ansible-galaxy role install ansible-lockdown.UBUNTU24-CIS` | Установка в `~/.ansible/roles` |
+| Просмотр профилей SSG | `oscap info /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml` | Путь зависит от ОС |
+| Запуск аудита (eval) | `oscap xccdf eval --profile <profile> --results results.xml --report report.html <ds.xml>` | rc=0 OK, rc=2 fail |
+| Генерация Ansible remediation | `oscap xccdf generate remediation --fix-type ansible --profile <profile> <ds.xml> > fix.yml` | Требует SSG >= 0.1.80 |
+| Генерация tailoring | `oscap xccdf generate fix --fix-type ansible --profile <profile> --output tailored.xml <ds.xml>` | |
+| Проверка sshd конфигурации | `sshd -T` | Валидация без перезагрузки |
+| Проверка sysctl | `sysctl -a \| grep <key>` | Проверка примененных параметров |
+| Проверка SELinux отказов | `ausearch -m avc --start recent` | Требуется auditd |
+| Поиск broken symlinks | `find /etc -type l ! -exec test -e {} \; -print` | Диагностика после удаления пакетов |
+
+### Проверка ролей
+
+```bash
+# Проверить роль DevSec в check_mode
+ansible-playbook playbooks/hardening.yml --check
+
+# Проверить роль Lockdown с префиксом переменных
+ansible-playbook playbooks/cis.yml -e "audit_only=true" --check
+
+# Список тегов для селективного запуска (CIS)
+ansible-playbook playbooks/cis.yml --list-tags
+# → TASK TAGS: [level1-server, level1-workstation, level2-server, level2-workstation]
 ```
 
 ## Практические сценарии
@@ -478,7 +523,7 @@ verify:
       changed_when: false
 
     # --- Фаза 2: Применение Hardening ---
-    - name: Применить roles
+    - name: Применить роли
       ansible.builtin.include_role:
         name: devsec.hardening.os_hardening
 
@@ -543,18 +588,18 @@ handlers:
     listen: "restart sshd"
 ```
 
-## Бестиарий и рекомендации (Чек-лист 2026)
+## Лучшие практики
 
 *   **Идемпотентность:** Ваши роли Hardening должны быть на 100% идемпотентными. Повторный запуск не должен менять состояние системы, если она уже защищена.
 *   **Исключения (Whitelist):** Всегда составляйте список исключений для специфических нагрузок (например, не отключайте `ptrace`, если используете инструменты профилирования как `strace` или `gdb`).
 *   **Разделение /tmp и /var/tmp:** CIS требует монтирования этих директорий с параметрами `noexec, nosuid, nodev`. Убедитесь, что у приложений есть место для временных файлов, не требующих исполнения.
 *   **Логирование:** Включайте расширенный аудит через `auditd` для мониторинга попыток изменения системных файлов после применения Hardening.
-*   **FIPS Compliance:** В government/financial средах используйте roles с поддержкой FIPS 140-2/3 (ansible-lockdown roles поддерживают `fips_mode: true`).
-*   **Testing перед продом:** Всегда запускайте roles в `check_mode` или на тестовых серверах перед mass-ремедиацией.
-*   **Версионирование политик:** Храните tailoring-файлы и переменные roles в Git для отслеживания изменений compliance-политик.
-*   **Непрерывный мониторинг:** После однократного Hardening настройте Wazuh SCA или定时 cron-задачи с OpenSCAP для обнаружения drift-конфигурации.
+*   **FIPS Compliance:** В government/financial средах используйте роли с поддержкой FIPS 140-2/3 (ansible-lockdown roles поддерживают `fips_mode: true`).
+*   **Testing перед продом:** Всегда запускайте роли в `check_mode` или на тестовых серверах перед масс-ремедиацией.
+*   **Версионирование политик:** Храните tailoring-файлы и переменные ролей в Git для отслеживания изменений compliance-политик.
+*   **Непрерывный мониторинг:** После однократного Hardening настройте Wazuh SCA или cron-задачи с OpenSCAP для обнаружения drift-конфигурации.
 
-## Troubleshooting (Типичные ошибки)
+## Устранение неполадок (Типичные ошибки)
 
 ### 1. SSH-блокировка после Hardening
 
@@ -582,7 +627,7 @@ sudo systemctl restart sshd
 
 ### 2. Конфликт sysctl с контейнерами
 
-**Симптом:** Kubernetes/Docker поды не могут маршрутизировать трафик.
+**Симптом:** Контейнерные поды не могут маршрутизировать трафик.
 
 **Причина:** `net.ipv4.ip_forward=0` нарушает маршрутизацию для CNI.
 
@@ -628,7 +673,7 @@ sudo sealert -a /var/log/audit/audit.log
 
 **Решение:**
 ```bash
-# Обновить SSG до последней верси
+# Обновить SSG до последней версии
 sudo dnf update scap-security-guide  # RHEL
 sudo apt install ssg-debderived      # Debian/Ubuntu
 
@@ -644,7 +689,7 @@ oscap info /usr/share/xml/scap/ssg/content/ssg-$(lsb_release -sr | tr -d.)-ds.xm
 
 **Решение:**
 ```bash
-# Проверка версии Ansible (требуется >= 2.15)
+# Проверка версии Ansible (требуется >= 2.16)
 ansible --version
 
 # Переустановка коллекции
@@ -678,18 +723,8 @@ ansible-galaxy collection list | grep devsec
 
 ## Дополнительная информация
 
-### Инструменты и ссылки
-
-*   **[SCAP Security Guide (SSG)](https://github.com/ComplianceAsCode/content)** — первоисточник всех политик OpenSCAP (пакеты: `scap-security-guide`, `ssg-debderived`).
-*   **[CIS Benchmarks Community](https://www.cisecurity.org/cis-benchmarks/)** — доступ к официальным документам стандартов (требуется регистрация).
+*   **[SCAP Security Guide (SSG)](https://github.com/ComplianceAsCode/content)** — первоисточник всех политик OpenSCAP.
 *   **[Ansible Lockdown](https://ansible-lockdown.io/)** — портал с готовыми ролями соответствия (MIT-лицензия).
-*   **[DevSec.io](https://dev-sec.io/)** — фреймворк и тесты (InSpec) для проверки безопасности.
-*   **[Lockdown Enterprise](https://lockdownenterprise.com/)** — коммерческая поддержка roles (enterprise SLA).
 *   **[DISA STIGs](https://public.cyber.mil/stigs/)** — официальный источник STIG-политик.
 
-### Смотрите также
-
-*   **[Ansible: Рекомендации по безопасности](./ansible_security_best_practices.md)** — защита Control Node и секретов.
-*   **[Обзор аудита и комплаенса](../Security/audit_and_compliance_overview.md)** — общие принципы compliance-менеджмента (ISO 27001, SOC 2, PCI-DSS).
-*   **[Харденинг ядра Linux](../../Linux/Security/Mechanisms/Kernel/hardening.md)** — детальное описание параметров `sysctl` и Kernel Lockdown.
-*   **[Wazuh SCA (Security Configuration Assessment)](../Security/Tools/Wazuh/wazuh-sca.md)** — непрерывный мониторинг комплаенса через агентов.
+См. также: [Ansible: Рекомендации по безопасности](./ansible_security_best_practices.md), [Обзор аудита и комплаенса](../Security/audit_and_compliance_overview.md), [Харденинг ядра Linux](../Linux/Security/Mechanisms/Kernel/hardening.md).

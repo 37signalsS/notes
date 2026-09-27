@@ -471,6 +471,81 @@ done
 | Анонимный bind работает на Consumer | `nsslapd-allow-anonymous-access` не отключен | `dsconf config replace nsslapd-allow-anonymous-access=off`. |
 | Поток репликации разорван | Пакетный firewall или MTU | Проверьте `iptables -L -n` и `ping -M do -s 1400 <host>`. |
 
+### Диагностика Split-Brain и CSN-конфликтов
+
+**Split Brain** — состояние, когда часть мастеров потеряла связь и продолжила принимать изменения независимо.
+
+**Причины:**
+- Сетевой разрыв между узлами (firewall, switch failure)
+- Нестабильная связность (> 5ms задержка, packet loss)
+- Остановка ns-slapd на одном из узлов без отключения соглашений
+
+**Симптомы:**
+- Конфликтные записи с атрибутом `nsds5ReplicationConflict`
+- Разные значения атрибутов на разных мастерах
+- Ошибки `Replication conflict` в errors log
+
+**Диагностика:**
+
+```bash
+# Поиск конфликтных записей
+dsconf -D "cn=Directory Manager" ldap://localhost search \
+  --suffix "dc=example,dc=com" \
+  --filter "(nsds5ReplicationConflict=*)" \
+  --base-dn "dc=example,dc=com"
+
+# Просмотр CSN конфликтов
+dsconf -D "cn=Directory Manager" ldap://localhost replication get-ruv \
+  --suffix "dc=example,dc=com" | grep -i conflict
+
+# Проверка clock skew между узлами
+ssh ldap-01 "ntpq -p" && ssh ldap-02 "ntpq -p"
+
+# Поиск записей с разным entryCSN на разных узлах
+dsconf -D "cn=Directory Manager" ldap://localhost search \
+  --suffix "dc=example,dc=com" \
+  --filter "(objectClass=*)" \
+  --attrs entryCSN \
+  --base-dn "uid=jdoe,ou=people,dc=example,dc=com"
+```
+
+**Разрешение конфликтов:**
+
+```bash
+# 1. Определите запись с конфликтом
+dsconf -D "cn=Directory Manager" ldap://localhost search \
+  --suffix "dc=example,dc=com" \
+  --filter "(nsds5ReplicationConflict=*)" \
+  --attrs nsds5ReplicationConflict dn
+
+# 2. Выберите версию "правильного" мастера и скопируйте запись
+ldapsearch -x -H ldap://ldap-01 -D "cn=Directory Manager" -W \
+  -b "uid=jdoe,ou=people,dc=example,dc=com"
+
+# 3. Удалите конфликтную запись на каждом мастере
+ldapdelete -x -H ldap://ldap-02 -D "cn=Directory Manager" -W \
+  "uid=jdoe,ou=people,dc=example,dc=com"
+
+# 4. Добавьте правильную версию
+ldapadd -x -H ldap://ldap-02 -D "cn=Directory Manager" -W -f correct_entry.ldif
+```
+
+**Профилактика:**
+
+```bash
+# 1. Убедитесь, что NTP работает на всех узлах
+chronyc sources -v
+
+# 2. Проверьте связность между мастерами
+ping -c 10 ldap-02.example.com
+
+# 3. Настройте таймауты репликации
+dsconf -D "cn=Directory Manager" ldap://localhost repl-agmt set \
+  --suffix "dc=example,dc=com" \
+  --session-timeout 60 \
+  "agmt-to-ldap-02"
+```
+
 ### Сравнение репликации 389DS и OpenLDAP
 
 | Характеристика | OpenLDAP | 389 Directory Server |

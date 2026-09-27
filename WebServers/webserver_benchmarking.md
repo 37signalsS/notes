@@ -6,6 +6,8 @@
 - **RPS (Requests Per Second):** количество успешно обработанных запросов в секунду.
 - **Latency (Задержка):** время от момента отправки запроса до получения последнего байта ответа (TTLB).
 - **Throughput (Пропускная способность):** объем переданных данных (бит/с), на который влияет как размер ресурсов, так и эффективность протоколов.
+- **Concurrency (Конкурентность):** количество одновременно открытых соединений, имитирующих параллельных пользователей.
+- **Percentile (Перцентиль):** статистическая мера, показывающая, какая доля запросов имеет задержку не выше указанного значения (p95, p99, p99.9).
 
 **Модели нагрузки:**
 
@@ -31,6 +33,8 @@
     - **p95:** время ответа для 95% пользователей.
     - **p99:** критический показатель для "хвостовых" задержек.
     - **p99.9:** выявление редких, но критических блокировок (Stop-the-world в GC или дисковый I/O).
+5.  **Басleine (базовый уровень):** Перед каждым тестом записывайте текущие метрики в baseline-файл. Сравнение с baseline позволяет детектировать регрессии, которые могут быть незаметны при абсолютных значениях.
+6.  **Изоляция тестового окружения:** Отключите logging на стороне сервера на время теста. Логирование дискового I/O может исказить результаты при высоких RPS. Используйте отдельный endpoint для чистого бенчмаркинга (например, `/bench` с `access_log off`).
 
 ### Системная подготовка (Tuning)
 
@@ -41,6 +45,11 @@
 ```bash
 # Проверка и установка лимитов (ulimit)
 ulimit -n 1000000
+
+# Перманентная настройка через systemd (для службы)
+# /etc/systemd/system/benchmark.service.d/limits.conf
+[Service]
+LimitNOFILE=1000000
 ```
 
 **2. Настройка TCP-стека (sysctl):**
@@ -54,6 +63,25 @@ sysctl -w net.ipv4.tcp_tw_reuse=1
 # Увеличение размера очереди входящих соединений
 sysctl -w net.core.somaxconn=65535
 sysctl -w net.ipv4.tcp_max_syn_backlog=65535
+
+# Отключение path MTU discovery (для тестов в изолированных сетях)
+sysctl -w net.ipv4.ip_no_pmtu_disc=1
+```
+
+**3. CPU affinity и NUMA:**
+На многоядерных серверах закрепите нагрузчик и сервер за отдельными сокетами NUMA, чтобы исключить contention по памяти:
+```bash
+# Проверка топологии NUMA
+numactl --hardware
+
+# Запуск нагрузчика на первом сокете
+numactl --cpunodebind=0 --membind=0 wrk -t4 -c100 -d30s https://example.com/
+```
+
+**4. Отключение ненужных сервисов:**
+```bash
+# Нагрузочной машине: отключите firewall, chrony, logging
+systemctl stop firewalld ufw chronyd systemd-journald
 ```
 
 ### Обзор инструментов
@@ -67,6 +95,7 @@ sysctl -w net.ipv4.tcp_max_syn_backlog=65535
 | **k6** | Go/TS | HTTP/1.1, 2, 3, gRPC | v2.2.0. Нативный TypeScript. Полный gRPC-стриминг. Стандарт CI/CD. |
 | **ghz** | Go | gRPC | Специализированный для gRPC. Контроль соединений vs потоков. |
 | **fortio** | Go | HTTP/1.1, 2, gRPC | Легковесный инструмент, стандарт для Istio. |
+| **oha** | Rust | HTTP/1.1, 2 | Современный TUI-интерфейс. Реaltime-визуализация. Низкий overhead. |
 | **Vegeta** | Go | HTTP/1.1, 2 | Идеален для Open Loop (постоянный RPS). |
 | **Bombardier** | Go | HTTP/1.1, 2 | Очень быстрый. Поддержка HTTP/2 из коробки. |
 | **Hey** | Go | HTTP/1.1, 2 | Простая альтернатива `ab` с поддержкой HTTP/2. |
@@ -108,6 +137,20 @@ h2load -n 10000 -c 100 -m 50 --npn-list h3 https://example.com/
 # -m: streams per connection (50 параллельных запросов в одном TCP/UDP соединении)
 ```
 **Нюансы 2026:** При анализе HTTP/3 (QUIC) критически важно проверять эффективность **0-RTT** (Early Data). Если задержка первого запроса в соединении значительно выше последующих, значит 0-RTT не настроен или не работает. Также учитывайте, что обработка UDP для QUIC потребляет до 2–3 раз больше CPU, чем эквивалентный трафик по TCP.
+
+### Использование oha (Rust TUI-нагрузчик)
+
+Современный инструмент с TUI-интерфейсом, написанный на Rust. Подходит для быстрого ad-hoc анализа с визуализацией в реальном времени.
+
+```bash
+# Установка (Homebrew)
+brew install oha
+
+# Тест с ограничением 1000 QPS, 100 воркеров, 30 секунд
+oha -n 10000 -c 100 -q 1000 --latency-correction --disable-keepalive https://example.com/
+# --latency-correction: включает коррекцию Coordinated Omission
+# --disable-keepalive: отключает переиспользование соединений для чистоты теста
+```
 
 ### Использование Hey и Bombardier (Go-нагрузчики)
 
@@ -186,13 +229,150 @@ export default function () {
     **Важно для Kubernetes:** Из-за "залипания" gRPC-соединений на L4-балансировщиках (Service ClusterIP), бенчмаркинг может нагружать только один под. Используйте Headless Services или Service Mesh для честной балансировки L7.
 2.  **WebSocket:** k6 предоставляет нативную поддержку (модуль `k6/ws`). Для простого бенчмаркинга десятков тысяч соединений используйте `tsung`.
 
+## Операции и команды
+
+### Стандартные сценарии запуска
+
+| Задача | Инструмент | Команда |
+| :--- | :--- | :--- |
+| Быстрый smoke-test | `ab` | `ab -n 1000 -c 10 -k https://example.com/` |
+| RPS-бенчмарк | `wrk` | `wrk -t4 -c100 -d30s https://example.com/` |
+| Open Loop Latency | `wrk2` | `wrk -t2 -c100 -d30s -R5000 --latency https://example.com/` |
+| HTTP/2 бенчмарк | `h2load` | `h2load -n 100000 -c 100 --h2 https://example.com/` |
+| HTTP/3 бенчмарк | `h2load` | `h2load -n 10000 -c 100 -m 50 --npn-list h3 https://example.com/` |
+| TUI-визуализация | `oha` | `oha -z 30s -c 100 -q 1000 https://example.com/` |
+| CI/CD пайплайн | `k6` | `k6 run --out json=results.json script.js` |
+| gRPC бенчмарк | `ghz` | `ghz --insecure --proto svc.proto --call Method -c 10 -q 100 localhost:50051` |
+
+### Docker-изоляция нагрузчика
+
+Запуск в контейнере гарантирует воспроизводимость окружения:
+```bash
+# k6 в Docker
+docker run -u root -v $(pwd):/scripts grafana/k6:latest run \
+  /scripts/load-test.js \
+  --out json=/scripts/results.json
+
+# wrk в Docker (официальный образ отсутствует, используйте кастомный)
+docker run --rm -v $(pwd):/data williamyeh/wrk \
+  -t4 -c100 -d30s -s /data/post.lua https://api.example.com/endpoint
+
+# oha в Docker
+docker run --rm -v $(pwd):/data ghcr.io/hatoo/oha:latest \
+  -z 30s -c 100 -q 500 https://example.com/
+```
+
+### Базовый скрипт для bash-обёртки
+
+```bash
+#!/bin/bash
+# bench.sh — универсальная обёртка для бенчмаркинга
+set -euo pipefail
+
+TARGET="${1:?Usage: $0 <url>}"
+DURATION="${2:-30s}"
+CONCURRENCY="${3:-100}"
+RATE="${4:-0}"  # 0 = open loop (max), >0 = fixed rate
+OUTPUT="${5:-results.json}"
+
+echo "=== Benchmark: $TARGET ==="
+echo "Duration: $DURATION | Concurrency: $CONCURRENCY | Rate: $RATE"
+
+if [ "$RATE" -gt 0 ]; then
+    wrk -t2 -c"$CONCURRENCY" -d"$DURATION" -R"$RATE" --latency "$TARGET" | tee "$OUTPUT"
+else
+    wrk -t2 -c"$CONCURRENCY" -d"$DURATION" --latency "$TARGET" | tee "$OUTPUT"
+fi
+```
+
+## Устранение неисправностей
+
+### Низкий RPS при тесте
+
+| Причина | Диагностика | Решение |
+| :--- | :--- | :--- |
+| Сетевой лимит | `ethtool $IFACE`, `iftop` | Увеличить MTU, проверить duplex, исключить shared hosting |
+| CPU bottleneck на нагрузчике | `htop`, `pidstat -p $(pgrep wrk)` | Уменьшить `-t` (потоки) или использовать несколько машин |
+| TIME_WAIT exhaustion | `ss -s`, `netstat -s \| grep TIME_WAIT` | `sysctl -w net.ipv4.tcp_tw_reuse=1`, увеличить `ip_local_port_range` |
+| ulimit слишком мал | `ulimit -n` | Увеличить до 1000000+ |
+| TLS handshake overhead | `openssl s_client -connect host:443 -brief` в цикле | Тестировать HTTP/2 или HTTP, чтобы изолировать криптографию |
+
+### Аномально высокие перцентили (p99)
+
+| Причина | Диагностика | Решение |
+| :--- | :--- | :--- |
+| Coordinated Omission | Используется `wrk` или `ab` вместо `wrk2`/`k6` | Переключиться на Open Loop инструменты |
+| GC паузы | `jstat -gcutil $(pgrep java)` или логи GC | Увеличить heap, включить G1GC, настроить pause target |
+| Disk I/O на сервере | `iostat -x 1` | Отключить логирование, использовать tmpfs для логов |
+| NUMA penalty | `numactl --hardware` | Закрепить процессы за сокетами NUMA |
+| Контентция на ядре | `perf top`, `pidstat -I` | Уменьшить `-t` в wrk, использовать `taskset` |
+
+### Ошибки подключения (Connection refused / Reset)
+
+| Причина | Диагностика | Решение |
+| :--- | :--- | :--- |
+| `somaxconn` исчерпан | `netstat -s \| grep listen` | Увеличить `net.core.somaxconn` и `tcp_max_syn_backlog` |
+| `file descriptor` exhaustion | `cat /proc/sys/fs/file-nr` | Увеличить `ulimit -n` и `fs.file-max` |
+| Firewall / SELinux | `iptables -L -n`, `ausearch -m AVC` | Открыть порт, отключить для теста |
+| TLS mismatch | `curl -v --http3 https://host` | Проверить ALPN, сертификат, версию OpenSSL |
+| Сервер перегружен | `uptime`, `top` на сервере | Уменьшить нагрузку, найти bottleneck на сервере |
+
+### Отсутствие роста RPS при увеличении concurrency
+
+Это признак насыщения одного из ресурсов. Диагностика по порядку:
+1.  **CPU:** `top` → `%sy` высокий? Bottleneck в kernel. Увеличить `-t` (потоки wrk) или использовать несколько нагрузчиков.
+2.  **Сеть:** `ifconfig` → `RX dropped` растет? Проблема с buffer или CPU interrupts.
+3.  **Память:** `free -h` → swap используется? Увеличить RAM или уменьшить `-c`.
+4.  **Сервер:** `nginx_status` или `haproxy_stat` → все воркеры заняты? Нагрузка достигла лимита сервера.
+
+## Лучшие практики
+
+### Подготовка тестового окружения
+
+- **Всегда используйте baseline:** Сохраняйте результаты каждого теста в JSON/CSV с метаданными (дата, версия ПО, конфигурация ядра). Это позволяет детектировать регрессии.
+- **Тестируйте на эталонном железе:** Используйте одинаковое железо для сравнения разных версий ПО или конфигураций.
+- **Изолируйте сеть:** Если возможно, используйте dedicated 10/25/40/100GbE линк между нагрузчиком и сервером без шлюзов.
+- **Контейнеризируйте нагрузчик:** Используйте `grafana/k6` или кастомный Docker-образ с предустановленными инструментами. Это исключает "it works on my machine".
+- **Мониторьте сервер во время теста:** Запускайте `collectd`, `node_exporter` или `netdata` на стороне сервера. Без данных с сервера тест неинформативен.
+
+### Выбор инструмента по методологии
+
+| Тип теста | Рекомендуемый инструмент | Обоснование |
+| :--- | :--- | :--- |
+| Сырой RPS (capacity) | `wrk`, `oha`, `Bombardier` | Максимальный throughput, минимальный overhead |
+| Latency под нагрузкой | `wrk2`, `k6`, `Vegeta` | Open Loop, корректные перцентили |
+| HTTP/2 или HTTP/3 | `h2load`, `oha` | Нативная поддержка мультиплексирования и QUIC |
+| gRPC | `ghz`, `k6` (xk6-grpc), `fortio` | Глубокий анализ protobuf и metadata |
+| Сложные сценарии | `k6`, `locust` | JS/Python логика, параметризация, ramp-up |
+| Реальное время (TUI) | `oha` | Визуализация без внешних зависимостей |
+
+### CI/CD и автоматизация
+
+- **Quality Gates:** Настройте пороги в k6 (`thresholds`) или используйте `k6 cloud` для исторических baseline. Пример порога:
+  ```typescript
+  thresholds: {
+    http_req_duration: ['p(99)<500'], // p99 < 500ms
+    http_req_failed: ['rate<0.01'],   // <1% ошибок
+  }
+  ```
+- **Базовый тест (smoke):** Запускайте 30-секундный тест с 10 RPS на каждый PR. Полный регрессионный тест — только на main branch или nightly.
+- **Артефакты:** Сохраняйте JSON-отчеты, HTML-графики и логи в CI-артефактах (GitHub Actions, GitLab CI) на 30–90 дней.
+- **Canary-бенчмаркинг:** Новую версию сервиса тестируйте на 5% трафика в production с помощью `wrk2` или `k6`, сравнивая p99 с контрольной группой.
+
+### Оптимизация результатов
+
+- **Warm-up:** Всегда делайте warm-up (30–60 секунд) перед измерением. JIT-компиляция, JVM TLAB, TLS session cache и CPU frequency scaling искажают первые секунды.
+- **Длительность теста:** Минимум 60 секунд для стабилизации перцентилей. Для p99.9 — 5–10 минут.
+- **Повторяемость:** Запускайте каждый тест минимум 3 раза и усредняйте. Разброс >10% означает нестабильность окружения.
+- **Разделение тестов:** Не смешивайте статику и API в одном тесте. Разные эндпоинты имеют разную footprint и искажают перцентили.
+
 ## Дополнительная информация
 
 ### Выбор инструмента по задаче
 
-- **Нужен сырой RPS (Benchmark сервера):** `wrk`, `Bombardier` или `h2load`.
+- **Нужен сырой RPS (Benchmark сервера):** `wrk`, `oha`, `Bombardier` или `h2load`.
 - **Нужна задержка под нагрузкой (SLA/Performance):** `wrk2`, `Vegeta` или `k6`.
-- **Нужен HTTP/3 / QUIC:** `h2load` или `k6` (с xk6-http3).
+- **Нужен HTTP/3 / QUIC:** `h2load` или `oha` (с `--http-version 3`).
 - **Нужен gRPC:** `ghz`, `fortio` или `k6`.
 - **Нужны сложные бизнес-сценарии (Auth, API flows):** `k6`.
 

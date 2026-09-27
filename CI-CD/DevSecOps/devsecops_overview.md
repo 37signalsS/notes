@@ -6,9 +6,9 @@
 
 **ASPM (Application Security Posture Management)** — центральная категория инструментов 2026 года, которая консолидирует данные из всех AST-сканеров, устраняет дубликаты и приоритизирует уязвимости на основе **анализа достижимости (Reachability Analysis)**. ASPM служит «единым окном» для ИБ-офицеров и разработчиков.
 
-**AST (Application Security Testing)** — методы тестирования безопасности, дополненные ИИ:
-- **SAST (Static AST):** семантический анализ кода с использованием LLM для понимания намерений и авто-исправлений. Подробно: [SAST](./sast_overview.md).
-- **DAST (Dynamic AST):** автономный ИИ-пентестинг, исследующий API и бизнес-логику в рантайме. Подробно: [DAST](./dast_overview.md).
+**AST (Application Security Testing)** — методы тестирования безопасности приложения:
+- **SAST (Static AST):** статический анализ исходного кода без его выполнения. Подробно: [SAST](./sast_overview.md).
+- **DAST (Dynamic AST):** динамический анализ работающего приложения в рантайме. Подробно: [DAST](./dast_overview.md).
 - **SCA (Software Composition Analysis):** анализ сторонних зависимостей через **Living SBOM** (динамический граф компонентов).
 - **IAST (Interactive AST):** гибридный анализ через **eBPF**-инструментацию, обеспечивающий точность без изменения кода.
 
@@ -20,11 +20,11 @@
 
 ### Принципы DevSecOps (2026)
 
-- **Shift Left 2.0:** Безопасность встроена непосредственно в IDE и ИИ-копилоты. Уязвимости блокируются на этапе написания кода, а не после коммита.
+- **Shift Left:** Безопасность встроена непосредственно в инструменты разработчика. Уязвимости блокируются на этапе написания кода, а не после коммита.
 - **Reachability-First:** Игнорирование уязвимостей в библиотеках, если уязвимый код физически не вызывается приложением. Это снижает «шум» сканеров на 70–90%.
 - **Policy as Code (PaC):** Декларативное описание политик (Kyverno, OPA), которые автоматически применяются к IaC-манифестам и Kubernetes-кластерам.
-- **Auto-Remediation:** Автоматическая генерация ИИ-агентами Pull Request с исправлениями, которые проходят валидацию тестами перед предложением разработчику.
-- **NHI Security (Non-Human Identities):** Фокус на защите и ротации прав доступа для ИИ-агентов, сервисных аккаунтов и пайплайнов. В 2026 году NHI составляют до 95% всех цифровых сущностей.
+- **Automated Remediation:** Автоматическая генерация Pull Request с исправлениями по правилам (например, Renovate для зависимостей), которые проходят валидацию тестами перед предложением разработчику.
+- **NHI Security (Non-Human Identities):** Фокус на защите и ротации прав доступа для сервисных аккаунтов и пайплайнов. В 2026 году NHI составляют до 95% всех цифровых сущностей.
 - **Platform-Native Security:** Безопасность как часть внутреннего портала разработчика (IDP — Internal Developer Platform), где ИБ-проверки являются «золотыми путями» (Golden Paths).
 
 ### Инструменты и классификации (2026)
@@ -32,13 +32,12 @@
 | Категория | Инструменты | Назначение |
 | :--- | :--- | :--- |
 | **ASPM** | Cycode, Apiiro, Snyk AppRisk | Оркестрация, корреляция и приоритизация рисков. |
-| **SAST (AI-driven)** | Snyk DeepCode, Semgrep | Глубокий семантический анализ и авто-фикс. |
+| **SAST** | Snyk Code, Semgrep | Глубокий семантический анализ и авто-фикс. |
 | **SCA / SBOM** | Trivy, Grype, Syft | Генерация Living SBOM и VEX-анализ. |
 | **IaC Security** | Checkov, KICS, OPA | Проверка инфраструктурного кода (Terraform, Helm). Подробнее: [Defense in Depth в IaC](./iac-security-defense-in-depth.md). |
 | **Secret Scan** | Gitleaks, TruffleHog | Поиск секретов в Git, Slack, документации и логах. |
-| **DAST (Autonomous)** | XBOW, Penligent, Nuclei | Автономный ИИ-пентестинг и защита API. |
+| **DAST** | Nuclei, ZAP, Burp Suite | Динамическое тестирование работающего приложения и защита API. |
 | **Runtime (eBPF)** | Falco, Tetragon, Pixie | Обнаружение аномалий и дрейфа конфигурации (Drift Detection) в ядре. |
-| **AI Security** | Giskard, Lakera | Тестирование промптов и ИИ-моделей на уязвимости. |
 
 **Стандарты и протоколы:**
 - **SLSA v2.0 (Supply-chain Levels for Software Artifacts):** уровни защиты целостности сборки и артефактов.
@@ -106,10 +105,10 @@
 ### Жизненный цикл безопасности (Lifecycle 2026)
 
 1.  **Проектирование (Plan):**
-    - ИИ-ассистенты анализируют архитектуру и требования, подсвечивая риски безопасности на этапе планирования (Threat Modeling as Code).
+    - Автоматизированные инструменты анализируют архитектуру и требования, подсвечивая риски безопасности на этапе планирования (Threat Modeling as Code).
 2.  **Разработка (Code):**
     - **IDE Scanning:** обнаружение уязвимостей и секретов в реальном времени.
-    - **AI Auto-Fix:** предложение исправлений прямо в редакторе кода.
+    - **Auto-Fix:** предложение исправлений прямо в редакторе кода.
 3.  **Интеграция (Build):**
     - **Incremental SAST:** быстрый анализ только измененного кода (diff).
     - **SBOM Generation:** создание CycloneDX/SPDX манифеста.
@@ -155,7 +154,7 @@ pre-commit install   # → устанавливает git hook в .git/hooks/pre
 
 ```bash
 git add . && git commit -m "feat: add auth handler"
-# → gitleaks: найден секрет (AWS_KEY) → коммит заблокирован
+# → gitleaks: найден секрет → коммит заблокирован
 # → semgrep: найден dangerous-eval → коммит заблокирован
 ```
 
@@ -280,13 +279,109 @@ trivy sbom --vex vex.json sbom.json
 
 **Validation:** `sbom.json` непустой и валиден по схеме CycloneDX; `trivy` печатает таблицу CVE; после `--vex` количество находок уменьшается на число подтверждённо неэксплуатируемых.
 
+## Оперативные команды
+
+### Обнаружение и мониторинг
+
+| Команда / Инструмент | Назначение | Ожидаемый результат |
+| :--- | :--- | :--- |
+| `semgrep --config=auto .` | Быстрый статический анализ кода в текущей директории | # → список находок по CWE/SEC |
+| `gitleaks detect --source=. --report-path=gitleaks.json` | Поиск секретов в Git-репозитории | # → JSON с находками или пустой файл |
+| `trivy fs .` | SCA-анализ файловой системы (зависимости, секреты, IaC) | # → таблица CVE по критичности |
+| `conftest test --policy policy/ deploy.yaml` | Проверка IaC-манифеста на соответствие политикам Rego | # → PASS или список нарушений |
+| `checkov -d ./terraform` | Сканирование Terraform-кода на небезопасные конфигурации | # → результаты по CIS-бенчмаркам |
+| `syft . -o cyclonedx-json > sbom.json` | Генерация SBOM в формате CycloneDX | # → sbom.json с инвентарём компонентов |
+| `grype sbom:sbom.json` | Сканирование SBOM на известные CVE | # → список уязвимых пакетов |
+| `git secrets --scan` | Предотвращение коммитов секретов в Git (ключи, токены) | # → найден секрет → откат коммита |
+
+### Реагирование на инцидент (Incident Response Runbook)
+
+При обнаружении критической уязвимости в продакшен-коде или инфраструктуре:
+
+1. **Остановить:** если уязвимость активно эксплуатируется — изолировать компонент (отключить сервис, откатить деплой, отозвать секрет).
+2. **Зафиксировать:** сохранить логи, SARIF-отчёт, evidence (скриншоты, дампы).
+3. **Уведомить:** escalation в Security-команду, владельцу сервиса, compliance (если затронуты PII/PCI).
+4. **Исправить:** патч, обновление зависимостей, изменение конфигурации.
+5. **Проверить:** повторное сканирование после исправления; триггер quality gate.
+6. **Уроки:** blameless postmortem, обновление правил сканеров и политик.
+
+## Устранение неисправностей
+
+### Типичные ошибки и решения
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `semgrep` падает с `ParseError` | Нестандартный синтаксис или повреждённый файл | Запустить с `--verbose`; проверить, что файл поддерживается языком |
+| `gitleaks` false positive на тестовом ключе | Шаблон совпал с тестовыми данными | Добавить хэш находки в `.gitleaksignore` или пометить файл через комментарий |
+| `conftest` не видит политики | Неправильный путь или отсутствует `package main` | Проверить `--policy` путь; убедиться, что Rego начинается с `package main` |
+| `trivy` не находит CVE | Устаревшая база или неправильный тип сканирования | Обновить `trivy image --download-db-only`; указать правильный тип (fs/image) |
+| `checkov` пропускает ресурс | Ресурс не покрыт стандартными политиками | Написать кастомное правило или использовать `--check` с явным CKV-ID |
+| `syft` генерирует пустой SBOM | Нет поддерживаемых артефактов в директории | Проверить, что в директории есть `package.json`, `go.mod`, `requirements.txt` и т.д. |
+| Раннер видит чужие секреты | Scope переменных окружения не ограничен | Настроить `protected`/`environment` в CI; использовать masked/protected переменные |
+| SARIF-файл пустой | Сканер не сработал или неверный формат вывода | Проверить команду запуска сканера; убедиться, что `--sarif` флаг активен |
+| `gitlab-runner` не эфемерный | Флаг `--ephemeral` не установлен или не поддерживается | Проверить конфигурацию раннера; обновить до версии с поддержкой ephemeral |
+| Pre-commit hook не срабатывает | Нет прав на выполнение или symlink сбит | `ls -l .git/hooks/pre-commit` → должен указывать на `pre-commit` |
+
+## Рекомендации
+
+### Хост-харднинг раннеров (Runner Hardening)
+
+- **Эфемерные раннеры:** каждый джоб выполняется на свежем экземпляре, уничтожаемом после. GitLab: флаг `--ephemeral` у `gitlab-runner`; GitHub Actions: `runs-on: [self-hosted, ephemeral]`.
+- **Наименьшие привилегии:** раннер работает под выделенным пользователем без широких прав; нет SSH-ключей к проду.
+
+```bash
+id gitlab-runner                 # → проверить, что раннер не в группе sudo/wheel
+sudo -l -U gitlab-runner         # → должен выдавать только необходимые NOPASSWD-команды
+```
+
+- **Сетевая изоляция:** раннеры в отдельном VLAN; исходящий трафик — только к внутреннему registry/mirror и необходимым хостам (egress allowlist). Недоверенные зависимости тянутся через внутреннее зеркало, а не напрямую из интернета.
+- **Очистка диска и workspace:** шифрование диска (LUKS), `clear_readonly` / очистка workspace между джобами; для контейнерных раннеров — read-only rootfs и `--rm`.
+- **Секреты в рантайме:** инъекция через Vault/секрет-менеджер в память, никогда не пишутся на диск; маскировка в логах (`--mask` / settings).
+- **Ограничение ядра:** seccomp/AppArmor-профили, запрет `privileged` контейнеров.
+
+### Сетевая сегментация и управление доступом
+
+- **Zero Trust на уровне раннеров:** каждый раннер обслуживает только определённый набор проектов/групп; нет общего раннера на всю организацию без network policies.
+- **Egress-фильтрация:** исходящие соединения только к registry, artifact store и необходимым внешним API; всё остальное через proxy с DLP.
+- **Segregation of Duties:** раннеры для PR/build отдельно от deploy/release; разные секреты, разные уровни доступа.
+
+### Ресурсы и масштабирование
+
+- **Ретенция артефактов:** SARIF, SBOM, логи сканеров — хранить 30–90 дней в зависимости от compliance требований; долгосрочная аналитика агрегируется в единый дашборд.
+- **Кэширование зависимостей:** внутренний registry (Harbor/Nexus) с проксированием; кэш на уровне джоба для ускорения incremental SAST.
+- **SLA для quality gate:** инкрементальный SAST — <5 мин, полный SAST — ночной джоб; SCA — <3 мин; gate блокирует на Critical/High с высокой уверенностью.
+
+### Резервное копирование и восстановление CI/CD
+
+- **Конфигурация пайплайнов:** версионируется в Git; потеря CI-конфигурации = потеря reproducibility.
+- **Registry:** образы и артефакты реплицируются между регионами; retention policy = 90 дней для промежуточных, бессрочно для релизов.
+- **Восстановление:** tested restore procedure для registry и artifact store; runbook на случай компрометации registry.
+
+### Политики и метрики
+
+- **Quality gate пороги:** Critical/High — блокировать; Medium — triage; Low — backlog.
+- **Метрики программы:** Reachability Rate (<5% noise), MTTR (<4 часа для critical), Golden Path Adoption (% команд), Drift Recurrence.
+- **Retention политики:** SARIF/logs 30–90 дней; SBOM — бессрочно для релизов; секреты — ротация каждые 90 дней.
+
+### Чек-лист минимальной защищённости (Quick Reference)
+
+1. **Pre-commit:** gitleaks + semgrep + conftest установлены у разработчиков.
+2. **CI gate:** SAST/SCA/secret scan на PR; quality gate блокирует Critical/High.
+3. **SBOM:** генерируется на каждом билде; хранится как артефакт.
+4. **IaC:** проверка на PR; admission control на деплой.
+5. **Раннеры:** эфемерные, изолированные, без широких прав.
+6. **Секреты:** динамические, в памяти, маскированные, с ротацией.
+7. **Мониторинг:** Falco/Tetragon для рантайма; drift detection для IaC.
+8. **Backup:** registry и CI-конфигурация реплицированы; tested restore.
+9. **Метрики:** автоматический сбор в дашборд; ежемесячный пересмотр порогов.
+
 ## Дополнительная информация
 
 ### Ключевые вызовы (2026)
 
-1.  **AI Trust:** Проблема доверия к автоматическим исправлениям, генерируемым ИИ-агентами. Необходимы строгие регрессионные тесты.
-2.  **Identity Sprawl:** Управление жизненным циклом миллионов кратковременных секретов и прав доступа (NHI).
-3.  **Complexity of Supply Chain:** Сложность верификации всей цепочки транзитивных зависимостей даже при наличии SBOM.
+1.  **Identity Sprawl:** Управление жизненным циклом миллионов кратковременных секретов и прав доступа (NHI).
+2.  **Complexity of Supply Chain:** Сложность верификации всей цепочки транзитивных зависимостей даже при наличии SBOM.
+3.  **Reachability Analysis:** Отсеивание ложных срабатываний через анализ достижимости уязвимого кода в рантайме.
 
 ### Метрики эффективности
 
@@ -295,62 +390,41 @@ trivy sbom --vex vex.json sbom.json
 - **Golden Path Adoption:** Процент команд, использующих стандартные безопасные шаблоны платформы.
 - **Drift Recurrence:** Частота возникновения несанкционированных изменений в инфраструктуре.
 
-### Операционные рекомендации для DevOps/SRE/Sysadmin
-
-Внедрение DevSecOps — это не только установка сканеров, но и эксплуатация инфраструктуры безопасности.
-
-- **Где запускать сканеры:** предпочтительно на **self-hosted раннерах** (GitLab Runner, GitHub Actions self-hosted), если исходный код не должен покидать периметр. SaaS-сканеры удобны, но передают код третьей стороне — для приватных репозиториев это неприемлемо.
-- **Стратегия по этапам SDLC:**
-  - *Pre-commit / IDE:* быстрые лёгкие проверки (gitleaks, semgrep, conftest) — мгновенный feedback разработчику (см. Пример 1, 2).
-  - *PR / CI:* **инкрементальный** анализ только изменений — дешево по времени, не блокирует из-за исторических находок.
-  - *Nightly / релизная ветка:* **полный** анализ всего репозитория и сборка SBOM — нахождение накопленного долга.
-  - *Admission / Deploy:* проверка подписей и политик перед запуском (см. IaC-гайд и supply chain).
-- **Хранение и ротация отчётов:** SARIF и отчёты сканеров сохраняйте как артефакты CI и/или в объектное хранилище (MinIO/NFS) с ротацией 30–90 дней — это основа трендов и аудита. Долгосрочная аналитика агрегируется в единый дашборд.
-- **Управление секретами в раннерах:** динамические секреты через Vault/секрет-менеджер, инъекция в рантайме, маскировка в логах, строгая ротация. Подробнее — в **[управлении секретами в CI/CD](./secrets_management.md)**.
-- **Мониторинг рантайма:** аномалии и дрейф конфигурации отслеживаются средствами на базе eBPF (Falco, Tetragon) и аудит-логами — это замыкание петли обратной связи (второй путь DevOps).
-- **Инцидент-респонс:** runbook на случай находки критической уязвимости в проде, blameless postmortem, связь MTTR с метриками выше.
-- **Безопасность самих раннеров:** эфемерность, изоляция, наименьшие привилегии (см. Пример 3).
-
-### Чек-лист внедрения DevSecOps
-
-Практический чек-лист для старта программы (people / process / tech):
-
-1.  **People:** назначены security champions в командах; проведено базовое обучение разработчиков; Sec-команда перешла от «блокировщика» к « enabler».
-2.  **Process:** определён владелец программы; проведён ассессмент зрелости (DSEC/OWASP SAMM); выбраны 2–3 целевых направления; заданы пороги блокировки (Critical/High).
-3.  **Tech — Plan/Code:** pre-commit hooks (gitleaks + semgrep), threat modeling для критичных сервисов.
-4.  **Tech — Build/Test:** инкрементальный SAST, SCA + SBOM, secret scanning в CI; quality gate на PR.
-5.  **Tech — Deploy/Run:** admission control / проверка подписей; мониторинг рантайма (Falco); регулярный VEX-анализ зависимостей.
-6.  **Measure:** автоматический сбор метрик (см. Пример 4) в дашборд; ежемесячный пересмотр порогов и FP-rate.
-
-## Операционный контекст: DevOps / SRE / Sysadmin (навигатор по смежным заметкам)
+### Операционный контекст: DevOps / SRE / Sysadmin (навигатор по смежным заметкам)
 
 DevSecOps — это надстройка над инженерией ПО, поэтому инженер обязан владеть операционной (ops) частью: релизами, наблюдаемостью, инцидентами, Linux и сетью. Ниже — навигатор по уже существующим заметкам vault (без cloud/AI, ориентир — продакшен и собеседования). Дублировать их содержимое здесь не нужно; это точки входа под конкретный угол.
 
-### Теория (interview-уровень, без глубокой математики)
+#### Теория (interview-уровень, без глубокой математики)
 - **SRE: SLO/SLI/error budgets, four golden signals, burn rate** — [Concepts/sre_concepts_main.md](../../Concepts/sre_concepts_main.md).
 - **DORA-метрики** (частота деплоев, lead time, MTTR, change failure rate) — [CI-CD/Core_Concepts/dora_metrics.md](../../CI-CD/Core_Concepts/dora_metrics.md).
 - **CI/CD паттерны** (trunk-based vs GitFlow, ветвление) — [CI-CD/ci_cd_patterns.md](../../CI-CD/ci_cd_patterns.md), [CI-CD/Core_Concepts/pipeline_glossary.md](../../CI-CD/Core_Concepts/pipeline_glossary.md).
 - **Стратегии деплоя (теория canary/blue-green)** — [CI-CD/Deployment_Strategies/comparison.md](../../CI-CD/Deployment_Strategies/comparison.md).
 
-### Практика — релиз и конфигурация
+#### Практика — релиз и конфигурация
 - **Canary / blue-green / rolling / rollback** — [canary_deployment](../../CI-CD/Deployment_Strategies/canary_deployment.md), [rolling_update](../../CI-CD/Deployment_Strategies/rolling_update.md), [progressive_delivery_gitops](../../GitOps/Concepts/progressive_delivery_gitops.md).
 - **Feature flags / toggles** — [CI-CD/Testing/feature_toggles/best_practices.md](../../CI-CD/Testing/feature_toggles/best_practices.md).
 - **Configuration management (Ansible: idempotency, roles, system config)** — [ansible-os-hardening](../../Ansible/ansible-os-hardening.md), [ansible_service_and_system_config_modules](../../Ansible/Modules/ansible_service_and_system_config_modules.md), [ansible_security_best_practices](../../Ansible/ansible_security_best_practices.md).
+- **SCA и анализ зависимостей** — [SCA-инструменты: сравнение](../../Security/Supply_Chain_Security/sca_tools_comparison.md), [Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md), [Защита от dependency confusion](../../Security/Supply_Chain_Security/dependency_confusion_prevention.md).
+- **Безопасность контейнеров** — [Сканирование образов](../../Docker/Docker_security/vulnerability_scanning.md), [Runtime monitoring](../../Docker/Docker_security/runtime_monitoring.md), [Подпись артефактов](../../Security/Supply_Chain_Security/artifact_signing.md), [Falco](../../Security/Tools/falco.md).
 
-### Практика — наблюдаемость, инциденты, нагрузка
+#### Практика — наблюдаемость, инциденты, нагрузка
 - **Observability (Prometheus / Grafana / OTel / ELK)** — [Prometheus overview](../../Prometheus/kubernetes/overview.md), [Grafana overview](../../Grafana/grafana_overview.md), [LGTM/OTel stack](../../Kubernetes/Installation/LGTM_Stack/lgtm_otel_minikube_overview.md), [observability_driven_testing](../../CI-CD/Testing/observability_driven_testing.md).
+- **Security Monitoring / Dashboard / Alerting** — [DevSecOps monitoring](./devsecops_monitoring.md), [Falco runtime security](../../Security/Tools/falco.md), [Tetragon eBPF](../../Security/Tools/tetragon.md).
 - **Alerting-гигиена / on-call** — [Concepts/Observability_and_Monitoring/monitoring_alerting_recommendations.md](../../Concepts/Observability_and_Monitoring/monitoring_alerting_recommendations.md).
-- **Incident response / postmortem / troubleshooting-методология** — [Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md).
+- **Incident response / postmortem / troubleshooting-методология** — [Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md), [Incident Response для CI/CD](../../CI-CD/GitLab_CI/Advanced/incident_response_cicd.md), [Kubernetes incident response](../../Kubernetes/Security/incident_response.md), [Supply chain incident response](../../Security/Supply_Chain_Security/supply_chain_incident_response.md).
 - **Load / performance testing** — [Testing/performance_testing_methodology.md](../../Testing/performance_testing_methodology.md), [CI-CD/Testing/load_testing_ci_cd.md](../../CI-CD/Testing/load_testing_ci_cd.md).
 - **Capacity planning / saturation** — [Concepts/capacity-planning.md](../../Concepts/capacity-planning.md).
+- **Vulnerability management / triage** — [CVE triage workflow](../../Security/Supply_Chain_Security/cve_triage_workflow.md), [Vulnerability management](../../Linux/Security/vulnerability_management.md), [Wazuh vulnerability detector](../../Security/Tools/Wazuh/wazuh-vulnerability-detector.md).
 
-### Практика — Linux/sysadmin, сеть, контейнеры, БД
+#### Практика — Linux/sysadmin, сеть, контейнеры, БД
 - **Linux sysadmin (systemd / cgroups / namespaces / пользователи)** — [systemd/overview](../../Linux/Core/systemd/overview.md), [cgroups](../../Linux/Core/cgroups.md), [namespaces](../../Linux/Core/namespaces.md), [users_management](../../Linux/SystemAdministration/users_management.md).
 - **Харденинг / CIS / аудит Linux** — [Security/Tools/lynis.md](../../Security/Tools/lynis.md), [Linux/Security/Mechanisms/Kernel/hardening.md](../../Linux/Security/Mechanisms/Kernel/hardening.md), [Linux/Security/vulnerability_management.md](../../Linux/Security/vulnerability_management.md).
+- **Compliance / аудит** — [Audit and compliance overview](../../Security/audit_and_compliance_overview.md), [Ansible OS hardening](../../Ansible/ansible-os-hardening.md), [OpenSCAP](../../Ansible/ansible-os-hardening.md), [Kubernetes compliance](../../Kubernetes/Security/kyverno/Scenarios/automation_compliance.md).
 - **Сеть (iptables / nftables / firewall)** — [iptables_basics](../../Linux/Networking/Settings/tools/iptables_basics.md), [nftables/practical_scenarios](../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md), [Networking/Concepts/firewall_concepts.md](../../Networking/Concepts/firewall_concepts.md).
 - **SSH / bastion (cert-auth, fail2ban)** — [ssh_certificate_authentication](../../Linux/Security/ssh/server/ssh_certificate_authentication.md), [fail2ban](../../Linux/Security/Tools/fail2ban.md).
 - **Container / image hardening & runtime (Falco)** — [Docker_security/overview](../../Docker/Docker_security/overview.md), [runtime_monitoring](../../Docker/Docker_security/runtime_monitoring.md), [Security/Tools/falco.md](../../Security/Tools/falco.md), [CI-CD/Testing/container_testing.md](../../CI-CD/Testing/container_testing.md).
 - **Backup / DR (K8s, БД)** — [Kubernetes/Operations/backup-strategies.md](../../Kubernetes/Operations/backup-strategies.md), [Databases/Concepts/backups.md](../../Databases/Concepts/backups.md).
+- **API security** — [WAF/WAAP](../../Security/ApplicationSecurity/waf.md), [HTTP security hardening](../../Networking/Protocols/HTTP/http_security_hardening.md), [API rate limiting](../../Networking/Protocols/HTTP/http_rate_limiting_circuit_breakers.md).
 
 ## См. также
 

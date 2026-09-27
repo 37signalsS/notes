@@ -130,6 +130,11 @@ google-chrome --user-data-dir=/tmp/debug
 # firefox -profile /tmp/debug-profile
 ```
 
+> **Важно:** После настройки `SSLKEYLOGFILE` в Wireshark также включите:
+> - `Edit → Preferences → Protocols → TCP → Allow subdissector to reassemble TCP streams`
+> - Вторая опция TCP (переупорядочивание сегментов, указанная в документации Wireshark).
+> Без этих параметров TLS-сессии могут не расшифровываться корректно.
+
 ### Сценарий 2: Использование eBPF для "Zero-Instrumentation" (Linux)
 
 Для приложений без поддержки `SSLKEYLOGFILE` (Go-бинарники, старое ПО, AI-агенты):
@@ -214,6 +219,32 @@ tshark -r webrtc.pcapng -o tls.keylog_file:~/dtls-keys.log -Y "dtls"
 tshark -r webrtc.pcapng -o tls.keylog_file:~/dtls-keys.log -Y "rtp" -T fields -e rtp.ssrc -e rtp.seq -e rtp.timestamp
 ```
 
+### Сценарий 7: Windows — ручная настройка SSLKEYLOGFILE
+
+На Windows переменная окружения `SSLKEYLOGFILE` создаётся через системные настройки:
+
+1. Откройте **Мой компьютер** → **Свойства** → **Дополнительные параметры системы** → **Переменные среды**.
+2. Нажмите **Создать** в разделе «Переменные среды пользователя».
+3. В поле **Имя переменной** введите `SSLKEYLOGFILE`.
+4. В поле **Значение переменной** укажите полный путь к файлу, например `C:\Users\<user>\tls-keys.log`.
+   - Если файл не существует, он будет создан автоматически при первом экспорте ключей.
+5. Нажмите **ОК** во всех окнах и **перезапустите браузер**.
+
+> **Важно:** Браузер, запущенный до создания переменной окружения, не увидит её. В некоторых случаях требуется перезагрузка компьютера.
+
+**Проверка:**
+После перезапуска откройте HTTPS-сайт и убедитесь, что в файл записываются ключи:
+```powershell
+# Просмотр последних записей в файле ключей
+Get-Content C:\Users\<user>\tls-keys.log -Tail 5
+```
+
+В логе появляются записи, соответствующие phases сессии:
+- `CLIENT_HANDSHAKE_TRAFFIC_SECRET` — секреты этапа Handshake
+- `CLIENT_TRAFFIC_SECRET_0` — данные от клиента к серверу
+- `SERVER_TRAFFIC_SECRET_0` — данные от сервера к клиенту
+- `CLIENT_RANDOM` — формат TLS 1.2 (RSA)
+
 ## Дополнительная информация
 
 ### Формат файла логов (NSS Key Log)
@@ -242,6 +273,7 @@ tshark -r webrtc.pcapng -o tls.keylog_file:~/dtls-keys.log -Y "rtp" -T fields -e
 | RSA-расшифровка не работает | TLS 1.3 (RSA удален) | Использовать SSLKEYLOGFILE вместо RSA-ключа |
 | `Follow Stream` показывает мусор | Трафик зашифрован | Расшифровать через SSLKEYLOGFILE или MITM |
 | DTLS не расшифровывается | Протокол не указан | Включить DTLS в настройках протокола |
+| Трафик не найден по IP на shared hosting | У домена несколько A/AAAA-записей | Переберите все IP-адреса или используйте фильтр по SNI (`tls.handshake.extensions_server_name == "domain"`) |
 
 ### Сравнение методов расшифровки
 

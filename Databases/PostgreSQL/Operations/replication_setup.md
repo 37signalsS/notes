@@ -155,7 +155,7 @@ sudo -u postgres pg_ctl promote -D /var/lib/postgresql/17/main
 | `is already active` | Слот занят | Проверьте `pg_replication_slots` на мастере. |
 | Огромный рост `pg_wal` | Реплика не забирает данные | Удалите неактивный слот: `pg_drop_replication_slot('slot')`. |
 | Репликация не стартует | Firewall или `listen_addresses` | Проверьте доступность 5432 через `nc -zv`. |
-| Конфликты восстановления | Vacuum удалил нужные реплике строки | Включите `hot_standby_feedback = on` на Standby. |
+| Конфликты восстановления | Vacuum удалил нужные реплике строки | Сначала сократите длительные запросы на Standby и настройте vacuum; `hot_standby_feedback = on` может увеличить bloat и WAL на primary, поэтому включайте его осознанно. |
 
 ## Обслуживание
 

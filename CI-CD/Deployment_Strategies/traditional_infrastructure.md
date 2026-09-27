@@ -95,7 +95,7 @@ deploy_app:
   become: true
   vars:
     app_path: "/opt/apps/my-service"
-    db_password: "{{ lookup('community.hashi_vault.vault_kv', 'secret/data/prod/db:password') }}"
+    db_password: "{{ lookup('community.hashi_vault.vault_kv2_get', 'prod/db').secret.password }}"
 
   tasks:
     - name: "Verification: Check free space"
@@ -370,38 +370,108 @@ goss validate --format tap
 
 ---
 
-## Особенности и ограничения
+## Операции и команды
 
-- **Дрифт конфигурации (Configuration Drift):** В мутабельной среде серверы неизбежно «стареют». Решение — переход на Immutable или ежедневный принудительный прогон Ansible в режиме `--diff`.
-- **Latency & Storage:** При деплое на Bare Metal критически важна настройка **NVMe-over-Fabrics (NVMe-oF)** и тюнинг сетевого стека (DPDK/SR-IOV) для высоконагруженных приложений.
-- **Clock Drift:** Виртуальные машины подвержены «уплыванию» времени. Необходимо использовать `chrony` с PTP-источниками для синхронизации с точностью до микросекунд (важно для распределенных БД).
-- **Скорость отката:** В традиционной среде откат часто требует переустановки ОС или восстановления из LVM-снимков (см. Сценарий 6).
-- **Аппаратная неоднородность:** Узлы одного пула могут различаться по CPU/объёму памяти; при Rolling важно проверять `lscpu`/`free -h` и не смешивать несовместимые ядра.
+Ниже — быстрые справочники по основным инструментам традиционного деплоя. Полные конфигурации — в практических сценариях и профильных документах.
 
----
+### Ansible
 
-## Лучшие практики и эксплуатация
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `ansible-lint` | Статическая проверка плейбуков | `ansible-lint playbooks/deploy.yml` |
+| `ansible-playbook` | Запуск деплоя | `ansible-playbook -i inventory/prod.ini playbooks/deploy.yml --extra-vars "app_version=1.2.3"` |
+| `ansible-playbook --check --diff` | Детекция дрифта без применения | `ansible-playbook -i inventory/prod.ini playbooks/hardening.yml --check --diff` |
+| `ansible-pull` | Pull-модель (без открытого SSH) | `ansible-pull -U https://git.company.com/infra/config.git local.yml` |
 
-### Безопасность (Zero Trust & DevSecOps)
-- **JIT Access (Just-in-Time):** Полный отказ от постоянно открытых SSH-портов. Доступ предоставляется временно через IAP-прокси или системы типа **Teleport**.
-- **Runtime Attestation:** Использование **Keylime** или **Spiffe/Spire** для проверки целостности ноды и выдачи динамических сертификатов только доверенным хостам.
-- **Micro-segmentation:** Настройка локальных файрволов (nftables/firewalld) через IaC для ограничения трафика между сервисами внутри сегмента Bare Metal.
-- **Ротация секретов:** короткоживущие токены Vault; никогда не хранить статические пароли в инвентаре Ansible (использовать `community.hashi_vault`).
+### Packer
 
-### Мониторинг и Observability
-- **Node Exporter & eBPF:** Сбор не только базовых метрик (CPU/RAM), но и детальной статистики по системным вызовам и сетевым задержкам через eBPF-экспортеры.
-- **Log Aggregation:** Использование **Vector** или **Fluent-bit** для сбора логов `journald` и передачи их в централизованное хранилище (Loki/Elastic).
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `packer build` | Сборка Golden Image | `packer build -var 'app_version=1.4.0' ./packer/template.pkr.hcl` |
+| `packer inspect` | Просмотр шаблона | `packer inspect ./packer/template.pkr.hcl` |
 
-### FinOps и Green Ops
-- **Экономическая эффективность:** Автоматическое выключение тестовых VM в нерабочее время и использование Spot-инстансов для пакетной обработки данных.
-- **Sustainability:** Мониторинг метрик энергопотребления через **Scaphandre** или IPMI для расчета углеродного следа (Carbon Footprint) инфраструктуры.
+### Terraform
 
-### Эксплуатационные практики (Change Management)
-- **Runbook и окно обслуживания:** каждый деплой сопровождается документированным планом отката.
-- **Soak-период:** держите старую версию в резерве минимум до прохождения пика нагрузки после switch.
-- **Тестирование отката:** процедура возврата проверяется не реже, чем сам деплой (LVM-снимок, symlink-flip, VRRP-priority).
-- **Гигиена Golden Image:** ребейк образов по расписанию (патчи безопасности), строгое версионирование; не копить ручные правки внутри «золотого» образа.
-- **Резервирование ёмкости:** под Rolling нужен минимум N+1, под Blue-Green — 2x ресурсов (учитывайте лимиты лицензий ПО).
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `terraform plan` | Превью изменений инфраструктуры | `terraform plan -var='app_version=1.4.0'` |
+| `terraform apply` | Применение изменений | `terraform apply -auto-approve` |
+| `terraform state list` | Просмотр текущего состояния | `terraform state list` |
+
+### keepalived / VRRP
+
+| Команда / Проверка | Назначение | Пример |
+| :--- | :--- | :--- |
+| `systemctl status keepalived` | Проверка работы VRRP | `systemctl status keepalived` |
+| `ip addr show` | Проверка VIP на интерфейсе | `ip addr show eth0` |
+| `tcpdump` | Диагностика VRRP-пакетов | `tcpdump -i eth0 proto 112` |
+
+### HAProxy
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `socat` runtime API | Вывод/возврат узла из пула | `echo "disable server app/web01" | socat stdio /var/run/haproxy.sock` |
+| `echo show stat` | Сбор метрик пула | `echo "show stat" | socat stdio /var/run/haproxy.sock \| cut -d ',' -f 1,2,18,24` |
+| `haproxy -c` | Проверка конфигурации | `haproxy -c -f /etc/haproxy/haproxy.cfg` |
+
+### Nginx
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `nginx -t` | Проверка конфигурации | `nginx -t` |
+| `nginx -s reload` | Горячая перезагрузка конфигурации | `nginx -s reload` |
+| `curl` upstream | Проверка маршрутизации upstream | `curl -H "Host: app.example.com" http://lb/` |
+
+### systemd
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `systemctl restart` | Рестарт юнита | `systemctl restart my-service` |
+| `systemctl reload` | Перезагрузка конфигурации без разрыва | `systemctl reload my-service` |
+| `systemctl reload-or-restart` | Безопасная попытка reload, иначе restart | `systemctl reload-or-restart my-service` |
+| `systemctl set-property` | Изменение лимитов cgroup на живом процессе | `systemctl set-property myapp.service MemoryMax=2G CPUQuota=150%` |
+| `systemctl is-active` | Проверка состояния | `systemctl is-active my-service` |
+| `journalctl -u` | Просмотр логов сервиса | `journalctl -u my-service -n 50` |
+
+### LVM
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `lvcreate -s` | Создание снимка для отката | `lvcreate -L 2G -s -n app_snap /dev/vg0/app` |
+| `lvconvert --merge` | Слияние снимка (откат ФС) | `lvconvert --merge /dev/vg0/app_snap` |
+| `lvs` | Проверка состояния томов | `lvs` |
+
+### dnsmasq / PXE
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `systemctl restart dnsmasq` | Применение конфигурации PXE | `systemctl restart dnsmasq` |
+| `cat /etc/dnsmasq.d/pxe.conf` | Проверка опций DHCP/TFTP | `cat /etc/dnsmasq.d/pxe.conf` |
+
+### Подпись артефактов
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `cosign sign` | Подпись образа | `cosign sign --key cosign.key nexus.internal:5000/my-app:1.4.0` |
+| `cosign verify` | Верификация подписи образа | `cosign verify --key cosign.pub nexus.internal:5000/my-app:1.4.0` |
+| `gpg --verify` | Верификация tar.gz/файла | `gpg --verify my-app.tar.gz.sig my-app.tar.gz` |
+| `syft` | Генерация SBOM | `syft nexus.internal:5000/my-app:1.4.0 -o spdx-json` |
+| `grype` | Сканирование уязвимостей | `grype nexus.internal:5000/my-app:1.4.0` |
+
+### Валидация и Observability
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `curl -fsS` | Быстрый health-check эндпоинта | `curl -fsS http://localhost:8080/healthz` |
+| `goss validate` | Декларативная проверка состояния хоста | `goss validate --format tap` |
+| `journalctl -u` | Логи сервиса за последние N строк | `journalctl -u my-service -n 50` |
+| `systemctl is-active` | Проверка, что сервис запущен | `systemctl is-active my-service` |
+| `chronyc tracking` | Статус синхронизации времени | `chronyc tracking` |
+| `ipmitool chassis status` | Проверка BMC железа | `ipmitool -H bmc-1 -U admin chassis status` |
+| `nvme smart-log` | Состояние NVMe-накопителя | `nvme smart-log /dev/nvme0` |
+| `iostat -xz 1` | Утилизация дисков в реальном времени | `iostat -xz 1` |
+| `mtr` | Трассировка маршрута с диагностикой потерь | `mtr google.com` |
+| `ethtool -S` | Статистика ошибок на NIC | `ethtool -S eth0` |
 
 ---
 
@@ -413,13 +483,13 @@ goss validate --format tap
 
 ### Проблемы с производительностью I/O
 - **Симптомы:** Высокий `iowait`, задержки в работе БД.
-- **Диагностика:** 
+- **Диагностика:**
   - `iostat -xz 1` — анализ утилизации дисков.
   - `nvme smart-log /dev/nvme0` — проверка состояния NVMe-накопителей.
 - **Тюнинг:** Настройка планировщика I/O (`deadline` или `none` для SSD) и параметров `dirty_ratio` в `sysctl`.
 
 ### Сетевые задержки и потери пакетов
-- **Диагностика:** 
+- **Диагностика:**
   - `mtr` — поиск узких мест в маршруте.
   - `ethtool -S eth0` — поиск ошибок на физическом уровне (CRC errors, drops).
 - **Решение:** Проверка соответствия MTU на всех участках сети, тюнинг очередей сетевой карты (`ethtool -G`).
@@ -451,6 +521,59 @@ goss validate --format tap
 ### Нехватка места при распаковке
 - **Симптомы:** `No space left on device` на шаге `unarchive`.
 - **Решение:** Очистить старые релизы (`rm -rf /opt/apps/my-service-vOLD`), поднять threshold `assert` (Сценарий 1), освободить место под `/tmp`.
+
+### VIP не мигрирует (keepalived)
+- **Сценарий:** Blue-Green switch через VRRP не происходит, VIP остается на старой среде.
+- **Решение:** Проверить доступность multicast/unicast между узлами (`tcpdump -i eth0 proto 112`), убедиться что `priority` различается, firewall не блокирует VRRP.
+
+### HAProxy сокет недоступен
+- **Сценарий:** `socat stdio /var/run/haproxy.sock` возвращает `Connection refused`.
+- **Решение:** Проверить `ls -l /var/run/haproxy.sock` и права; убедиться что `stats socket` объявлен в `haproxy.cfg`; перезапустить HAProxy.
+
+### DNS TTL ломает Zero-Downtime
+- **Сценарий:** После switch часть клиентов все еще стучится на старый IP из-за кэширования.
+- **Решение:** Использовать L7-веса/VRRP вместо DNS-based переключения; DNS понижать TTL только как крайняя мера.
+
+### Graceful Shutdown не успевает завершить запросы
+- **Сценарий:** Приложение получает `SIGTERM`, но долгие запросы обрываются.
+- **Решение:** Увеличить `TimeoutStopSec` в systemd-юните до покрытия P99 длительности + запас; добавить явный обработчик сигнала в код; увеличить лимит активных соединений перед `SIGTERM`.
+
+### Connection Draining зависает
+- **Сценарий:** HAProxy/Nginx не ждет завершения long-polling/WebSocket при drain.
+- **Решение:** Увеличить `timeout` в настройках drain; отключить sticky-сессии на период drain; переключиться на TCP-drain.
+
+### Ошибка лицензий при 2x capacity
+- **Сценарий:** Blue и Green вместе превышают лимит лицензий ПО (например, JBoss, WebLogic).
+- **Решение:** Планировать capacity с запасом под одну среду +burst; использовать лицензии с гранулярной (per-core) моделью.
+
+### Config drift в Golden Image
+- **Сценарий:** Образ содержит ручные правки, не отраженные в Packer/Ansible.
+- **Решение:** Ребейк образа по расписанию; все изменения только через IaC; включить проверку `ansible-lint` в CI для плейбуков образа.
+
+---
+
+## Лучшие практики
+
+### Безопасность (Zero Trust & DevSecOps)
+- **JIT Access (Just-in-Time):** Полный отказ от постоянно открытых SSH-портов. Доступ предоставляется временно через IAP-прокси или системы типа **Teleport**.
+- **Runtime Attestation:** Использование **Keylime** или **Spiffe/Spire** для проверки целостности ноды и выдачи динамических сертификатов только доверенным хостам.
+- **Micro-segmentation:** Настройка локальных файрволов (nftables/firewalld) через IaC для ограничения трафика между сервисами внутри сегмента Bare Metal.
+- **Ротация секретов:** короткоживущие токены Vault; никогда не хранить статические пароли в инвентаре Ansible (использовать `community.hashi_vault`).
+
+### Мониторинг и Observability
+- **Node Exporter & eBPF:** Сбор не только базовых метрик (CPU/RAM), но и детальной статистики по системным вызовам и сетевым задержкам через eBPF-экспортеры.
+- **Log Aggregation:** Использование **Vector** или **Fluent-bit** для сбора логов `journald` и передачи их в централизованное хранилище (Loki/Elastic).
+
+### FinOps и Green Ops
+- **Экономическая эффективность:** Автоматическое выключение тестовых VM в нерабочее время и использование Spot-инстансов для пакетной обработки данных.
+- **Sustainability:** Мониторинг метрик энергопотребления через **Scaphandre** или IPMI для расчета углеродного следа (Carbon Footprint) инфраструктуры.
+
+### Эксплуатационные практики (Change Management)
+- **Runbook и окно обслуживания:** каждый деплой сопровождается документированным планом отката.
+- **Soak-период:** держите старую версию в резерве минимум до прохождения пика нагрузки после switch.
+- **Тестирование отката:** процедура возврата проверяется не реже, чем сам деплой (LVM-снимок, symlink-flip, VRRP-priority).
+- **Гигиена Golden Image:** ребейк образов по расписанию (патчи безопасности), строгое версионирование; не копить ручные правки внутри «золотого» образа.
+- **Резервирование ёмкости:** под Rolling нужен минимум N+1, под Blue-Green — 2x ресурсов (учитывайте лимиты лицензий ПО).
 
 ---
 

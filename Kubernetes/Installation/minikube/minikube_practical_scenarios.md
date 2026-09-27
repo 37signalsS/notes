@@ -803,6 +803,16 @@ spec:
 - **[Persistent Volumes и Persistent Volume Claims](../../../Kubernetes/Storage/pv_and_pvc.md)** — управление хранилищем в Kubernetes.
 - **[Helm: Обзор](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)** — пакетный менеджер для Kubernetes.
 
+### Расширенные темы
+- **[Тестирование NetworkPolicy](./minikube_networkpolicy_testing.md)** — настройка Calico CNI, Default Deny, Egress-политики.
+- **[Бэкап и восстановление etcd](./minikube_etcd_backup_restore.md)** — снапшоты, восстановление, скрипты.
+- **[Интеграция с CI/CD](./minikube_cicd_integration.md)** — GitLab CI, GitHub Actions, тестирование Helm-чартов.
+- **[HPA на практике](./minikube_hpa_practical.md)** — горизонтальное масштабирование на основе CPU и кастомных метрик.
+- **[RBAC на практике](./minikube_rbac_practical.md)** — Role, ClusterRole, ServiceAccount, проверка доступа.
+- **[PSS/PSA на практике](./minikube_pss_psa.md)** — Pod Security Standards, enforcement, диагностика.
+- **[PDB на практике](./minikube_pdb_practical.md)** — PodDisruptionBudget, drain, взаимодействие с Rolling Update.
+- **[Стек LGTM и OpenTelemetry на Minikube](../../Installation/LGTM_Stack/lgtm_otel_minikube_overview.md)** — Prometheus, Grafana, Loki, Tempo.
+
 ### Полезные ссылки
 - **Примеры манифестов:** [GitHub minikube/examples](https://github.com/kubernetes/minikube/tree/master/examples)
 - **Troubleshooting guide:** [Official Docs](https://minikube.sigs.k8s.io/docs/handbook/debugging/)

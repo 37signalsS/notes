@@ -155,7 +155,7 @@ secret_detection:
 dependency_scanning:
   stage: .pre
   image: 
-    name: aquasec/trivy:latest
+    name: aquasec/trivy:0.74.0
     entrypoint: [""]
   script:
     - trivy fs --format json --output dependency-results.json .
@@ -170,7 +170,7 @@ dependency_scanning:
 container_scanning:
   stage: .post
   image:
-    name: aquasec/trivy:latest
+    name: aquasec/trivy:0.74.0
     entrypoint: [""]
   script:
     - trivy image --format json --output image-results.json $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA

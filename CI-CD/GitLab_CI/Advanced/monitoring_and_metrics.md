@@ -42,7 +42,7 @@ ci_merge_requests_builds_total             — MR-пайплайны
 | **Deployment Frequency** | Частота деплоя в продакшен | Daily+ | GitLab API: `pipelines?status=success&ref=main` |
 | **Lead Time for Changes** | Время от коммита до деплоя | < 1 часа | `pipeline.created_at - commit.created_at` |
 | **Change Failure Rate** | Доля неудачных деплоев | < 5% | `failed_deploys / total_deploys` |
-| **Time to Restore Service** | Время восстановления после инцидента | < 1 часа | Разница между incident.created_at и resolve |
+| **Failed Deployment Recovery Time** | Время восстановления после инцидента, вызванного деплоем | < 1 часа | Разница между incident.created_at и resolve |
 | **MTTR (Mean Time To Recovery)** | Среднее время восстановления | < 30 мин | Агрегация по инцидентам |
 
 ### Метрики Runner'ов

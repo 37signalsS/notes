@@ -705,4 +705,8 @@ sudo ethtool -K eth0 tso on gso on gro on
 - [Пошаговая диагностика](./diagnostics.md) — алгоритм поиска причин ошибок (L1-L5).
 - [Распространённые ошибки](./common_errors.md) — разбор TLS, прокси, DNS-резолва и других ошибок реестров.
 - [MTU и диагностика PMTUD](../../../Networking/OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md) — глубокая теория фрагментации и "черных дыр".
+- [NetworkPolicy и доступ к реестру](./network_policy_impact.md) — влияние NetworkPolicy и GlobalNetworkPolicy на image pull.
+- [Pod Security Standards и image pull](./pod_security_standards.md) — PSS/PSA и их влияние на загрузку образов.
+- [HPA и автоскейлинг](./hpa_and_scaling.md) — влияние масштабирования на image pull и rate limiting.
+- [Init-контейнеры и image pull](./init_container_image_pulls.md) — проблемы pull в init-контейнерах.
 

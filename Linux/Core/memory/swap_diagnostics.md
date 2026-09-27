@@ -390,6 +390,7 @@ cat /proc/zoneinfo | grep -E "Node|free|low|high"
 * **[Управление Swap](./swap_management.md)**: Глубиная настройка swap, Zram/Zswap, production thresholds, аварийные сценарии и автоматизация.
 * **[/proc/meminfo](../../Diagnostics/Memory/proc_meminfo.md)**: Детальная расшифровка метрик памяти, включая SwapTotal/SwapFree и Zswap.
 * **[vmstat](../../Diagnostics/Memory/vmstat.md)**: Мониторинг активности swap (si/so) в реальном времени.
+* **[Справочник sysctl-параметров памяти](./sysctl_memory_reference.md)**: Единый reference по vm.swappiness, page-cluster и др.
 
 ### Zram против Zswap: диагностическая матрица
 

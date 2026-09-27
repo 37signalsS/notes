@@ -1,5 +1,7 @@
 # Специфические задачи Frontend CI/CD
 
+**Актуально для:** Node.js v22+, Playwright v1.49.0+, GitLab CI / GitHub Actions
+
 ## Определения
 
 **Инвалидация CDN (CDN Invalidation / Purge)** — процесс принудительной очистки кэша на пограничных узлах (Edge) для немедленного обновления контента у пользователей. В CI/CD автоматизируется через API провайдера. Позволяет сбросить устаревшие версии файлов до истечения их TTL. Различается по гранулярности: полная очистка (`purge_everything`), по префиксу/пути (`/static/*`) и по тегу (Surrogate-Key / Cache-Tag) — последняя наиболее точна и дешева, так как затрагивает только связанные ресурсы.
@@ -290,34 +292,11 @@ it('has no a11y violations', async () => {
 
 ### Визуальное регрессионное тестирование (Visual Regression)
 
-Контроль целостности UI через сравнение скриншотов. Позволяет отловить ошибки верстки, которые не выявляются функциональными тестами. Детальное руководство: **[Visual Regression в CI/CD](../Testing/visual-regression-cicd.md)**.
+Контроль целостности UI через сравнение скриншотов с эталоном. Позволяет отловить ошибки верстки, которые не выявляются функциональными тестами. Полное руководство по настройке и CI-интеграции: **[Visual Regression в CI/CD](../Testing/visual-regression-cicd.md)**.
 
-#### Сценарий для Frontend пайплайна
-Рекомендуется разделять визуальные тесты на два уровня:
-1.  **Компонентный уровень:** Тестирование изолированных компонентов (например, через Playwright + Storybook).
-2.  **E2E уровень:** Проверка критических страниц (Landing, Checkout) в сборе.
-
-#### Пример интеграции с Playwright (`.gitlab-ci.yml`)
-```yaml
-test_visual:
-  stage: test
-  image: mcr.microsoft.com/playwright:v1.49.0-noble
-  script:
-    - npm ci
-    # Использование Docker-образа гарантирует консистентность шрифтов
-    - npx playwright test --grep @visual
-  artifacts:
-    when: on_failure
-    paths:
-      - playwright-report/
-    expire_in: 1 week
-```
-
-#### Управление эталонами (Snapshots)
-Для фронтенд-проектов наиболее эффективны:
--   **Percy/Applitools:** Полностью снимают проблему хранения и сравнения скриншотов, предоставляя удобный UI для дизайнеров.
--   **Git LFS:** Если используется Playwright `toHaveScreenshot`, эталоны хранятся в Git. Требует обязательного обновления эталонов строго в том же Docker-контейнере, что и в CI.
--   **Обновление эталонов:** Обновляйте скриншоты только осознанно (`--update-snapshots`) и коммитьте через отдельный MR, чтобы визуальное изменение проходило code review, а не принималось автоматически.
+В контексте фронтенд-пайплайна визуальные тесты принято разделять на два уровня:
+1.  **Компонентный уровень:** Изолированные компоненты (Playwright + Storybook).
+2.  **E2E уровень:** Критические страницы (Landing, Checkout) в сборе.
 
 ### Деплой статики на Nginx через атомарную символическую ссылку
 
@@ -499,35 +478,29 @@ sha256sum -c dist.sha256 || { echo "Artifact corrupted"; exit 1; }
     - Smoke test / Health Check (проверка `index.html` и ссылок на чанки).
     - Откат (`rollback`, `when: manual`) при неудаче smoke test.
 
+## Особые случаи
+
+- **Race condition: CDN инвалидирует раньше, чем ассеты долетели до Origin.** Симптом: после деплоя `X-Cache: Miss` для HTML, но `404` на чанки. Порядок операций: `rsync` ассетов → проверка доступности (`curl --retry`) → `ln -sfn` → инвалидация. Никогда не инвалидируйте до загрузки ассетов.
+- **Cache stampede при Purge All.** Полная очистка CDN создаёт всплеск запросов к Origin. Решения: ограничьте частоту Purge All, используйте теговую инвалидацию по умолчанию, добавьте Origin-level rate limiting.
+- **Stale SW после отката symlink.** Откат на старый релиз не обновляет SW: старый SW продолжает кэшировать старые хэши. Решения: инвалидировать `sw.js` в CDN, добавить баннер обновления, использовать `skipWaiting` + `clients.claim`. Детали — в **[Service Worker и PWA](./service_worker_pwa_cicd.md)**.
+- **Partial deploy на multi-DC.** Если деплой идёт на несколько дата-центров, откат должен быть синхронным. Проверяйте `readlink` на каждом хосте; используйте orchestration (Ansible, Fleet) вместо ручного `ssh` в цикле.
+- **Эфемерные раннеры без remote cache.** При каждом pipeline создаётся новый runner, локальный `.turbo`/`.nx/cache` не сохраняется. Без remote cache каждый прогон собирает всё с нуля. Решение: настройте S3-совместимый бакет (MinIO) или self-hosted Nx cache server.
+- **Разные версии Node.js между CI и локально.** Минорная версия меняет хэш `node_modules` и ломает remote cache. Фиксируйте `.nvmrc` и используйте тот же Docker-образ в CI, что и локально.
+- **LHCI вариативность на перегруженных раннерах.** CPU steal, IO contention дают разный LCP/CLS на одном и том же коде. Решения: выделенные (dedicated) раннеры, `numberOfRuns: 5` с медианой, фиксированные `emulatedFormFactor` и `throttlingMethod: simulate`.
+- **`npm ci` с повреждённым lock-файлом.** Если `package-lock.json` повреждён или не соответствует `package.json`, `npm ci` завершится с ошибкой. Добавьте pre-build проверку: `npm ci --dry-run` или `npm audit --audit-level=high`.
+- **Nginx `try_files` и SPA-маршруты с query-параметрами.** `try_files $uri $uri/ /index.html` не передаёт query string к бэкенду при SSR. Если приложение использует query для маршрутизации, добавьте `$is_args$args` или переходите на path-based routing.
+- **Большой SBOM для монорепозиториев.** Генерация SBOM для 100+ пакетов замедляет пайплайн. Решения: инкрементальный SBOM (только изменённые пакеты), кэширование SBOM артефакта, отключение `syft` для preview-сред.
+
 ---
 
 ## Дополнительная информация
 
 ### См. также
 
-**Теория и практика кэширования/выдачи:**
-- **[Политики кэширования и инвалидации в CDN](../../Networking/CDN/cdn_caching_and_invalidation.md)** — общие принципы работы и теория TTL.
-- **[Клиентское кэширование в Nginx](../../WebServers/Nginx/Performance/Caching/client_caching.md)** — реализация заголовков и Cache Busting на стороне сервера.
-- **[Выдача статических файлов (Nginx)](../../WebServers/Nginx/Core/Location/serving_files.md)** — обслуживание `dist/` и `try_files`.
-- **[Reverse proxy и балансировка для фронтенда](./frontend_reverse_proxy.md)** — upstream/keepalive, precompression, HTTP/2,3, CORS.
-- **[Security-заголовки и CSP](./frontend_security_headers.md)** — CSP/HSTS/X-Frame и защита статики.
-
-**Сборка, артефакты и окружения:**
-- **[Ключи кэша и политики в GitLab CI](../GitLab_CI/Advanced/gitlab_ci_caching/cache_keys.md)** — кэширование зависимостей по хэшу lock-файла.
-- **[Управление артефактами](../artifact_management.md)** — promotion, immutability, SBOM, retention.
-- **[Монорепо CI для фронтенда](./monorepo_frontend_ci.md)** — Turborepo/Nx, affected builds, remote cache.
-- **[Превью-окружения](./preview_environments.md)** — ephemeral review-среды на MR.
-
-**Деплой и надёжность:**
-- **[Деплой SSR/SSG/ISR](./ssr_ssg_deployment.md)** — Next.js/Nuxt: процесс-менеджмент, runtime-конфиг, zero-downtime.
-- **[Service Worker и PWA](./service_worker_pwa_cicd.md)** — версионирование SW, precache, офлайн, stale-SW.
-- **[Микро-фронтенды и Module Federation](./micro_frontends_cicd.md)** — независимый деплой модулей.
-- **[Feature flags в доставке фронтенда](./feature_flags_frontend.md)** — decouple deploy/release, kill switch.
-- **[Стратегии деплоя](../Core_Concepts/deployment_strategies.md)** и **[Здоровье и откат](../Deployment_Strategies/deployment_health_checks_and_rollback.md)** — canary/blue-green для фронта.
-- **[SLO/SLI и RUM для фронтенда](./frontend_slo_rum.md)** — метрики, error budget, алертинг.
-- **[Инцидент-респонс для фронтенда](./frontend_incident_response.md)** — runbook, откат, бламлесс-постмортем.
-- **[Автоматизация зависимостей](../dependency_automation.md)** — Renovate/Dependabot, SCA-гейт.
-- **[Управление пулом раннеров](../runner-fleet-management.md)** — выделенные раннеры для стабильности Lighthouse.
-- **[Наблюдаемость пайплайнов](../Core_Concepts/pipeline_observability.md)** и **[Метрики DORA](../Core_Concepts/dora_metrics.md)** — телеметрия CI и поставки.
-- **[Глоссарий пайплайна (Quality Gate)](../Core_Concepts/pipeline_glossary.md)** — терминология ворот качества.
-- **[Автоматизация миграций в CI/CD](../../Databases/Concepts/migrations/database-ci-cd.md)** — концепции Quality Gates, применимые и к фронтенду.
+- **[Управление артефактами](../artifact_management.md)** — жизненный цикл артефактов, immutability, SBOM, retention policies, promotion между средами.
+- **[Инцидент-респонс для фронтенда](./frontend_incident_response.md)** — runbook для отката symlink, инвалидации CDN, kill switch.
+- **[Стратегии деплоя и здоровье](../Core_Concepts/deployment_strategies.md)** — общие принципы canary/blue-green, health checks и отката, применимые к фронтенду.
+- **[Secrets Management в CI/CD](../DevSecOps/secrets_management.md)** — Vault, dynamic secrets, rotation и интеграция с GitLab CI.
+- **[Supply Chain Security](../../Security/Supply_Chain_Security/)** — Snyk, Renovate, Trivy, Grype, SBOM и подпись артефактов.
+- **[Контейнеризация фронтенда](./frontend_containerization.md)** — Dockerfile, multi-stage builds, registry security и Cosign/Notary.
+- **[Деплой фронтенда в Kubernetes](./frontend_kubernetes_deployment.md)** — Deployment, Service, Ingress, HPA, PDB и NetworkPolicy.

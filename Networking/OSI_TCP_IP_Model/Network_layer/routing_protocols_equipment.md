@@ -276,6 +276,7 @@ show ip route summary                       # статистика по прот
 # Просмотр FIB (CEF)
 show ip cef
 show ip cef 10.0.0.1
+show ip cef 10.0.0.1 detail                # детали записи: recursive resolution, adjacency
 show ip cef exact-route 10.0.1.1 10.0.2.1   # точный путь
 
 # Соседи (BGP)
@@ -419,7 +420,7 @@ rpki
 | **OSPF не видит соседей** | Hello не доходит; area mismatch | `tcpdump -i eth0 proto ospf` + `show ip ospf neighbor` | Проверить area, network type, MTU |
 | **Маршруты «прыгают» (route flapping)** | Нестабильный линк; split-horizon | `ping` + `tcpdump` на проблемном линке | `ip link set eth0 down/up`; проверить MTU |
 | **ECMP не балансирует** | Разные метрики; hash policy | `ip route get 10.0.0.1` (множественные nexthop) | `ip route change default nexthop ...` |
-| **FIB не синхронизирован с RIB** | Аппаратная проблема; TCAM overflow | `show ip cef exact-route` | Reload; firmware update |
+| **FIB не синхронизирован с RIB** | Аппаратная проблема; TCAM overflow; unresolved next-hop | `show ip cef <prefix> detail` + `show platform hardware qfp active feature cef drop` | Reload; firmware update; оптимизация adjacency; проверка max routes в FIB |
 | **PBR не работает** | Отсутствует table в RPDB | `ip rule show` + `ip route show table 100` | Добавить `ip rule add fwmark 1 table 100` |
 
 ## Сводная таблица

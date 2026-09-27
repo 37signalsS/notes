@@ -188,5 +188,5 @@ LLM — это предсказание следующих токенов. Ин�
 ### См. также
 
 - [Методология AI-First разработки](./ai-first-development.md)
-- [ИИ-агенты](./agents.md)
+- [ИИ-агенты](./ai-agents.md)
 - [TDD, BDD и ATDD](../CI-CD/Testing/tdd_bdd_overview.md)

@@ -29,6 +29,54 @@ sudo lsof | grep deleted
 
 Подробная механика описана в [Диагностика файловых систем и дискового пространства](../Diagnostics/Filesystem/filesystem_and_disk_space_diagnostics.md#механизм-удалённых-открытых-файлов-deleted-but-open).
 
+### Файловая система и её накладные расходы
+
+Перед анализом свободного места важно понимать, из чего состоит использование диска Beyond данных пользователя:
+
+- **Зарезервированные блоки (Reserved Blocks):** В Ext2/3/4 по умолчанию 5% резервируется для `root`. Это защищает систему от полного заполнения обычными пользователями, но создаёт иллюзию «потерянного» места. Проверить: `tune2fs -l /dev/sdXN | grep "Reserved block count"`.
+- **Журнал ФС (Journal):** Ext4 и XFS хранят журнал транзакций. Размер журнала зависит от объёма ФС (обычно 128 МБ – 1 ГБ). При сбоях журнал помогает быстро восстановить целостность, но занимает место.
+- **Таблица Inode:** Каждый inode занимает 256 байт (ext4) или динамический размер (XFS). При миллионах мелких файлов накладные расходы на таблицу inode становятся заметными.
+- **Служебные области:** Суперблок, группы блоков, bitmaps — занимают доли процента, но на очень маленьких ФС (<1 ГБ) могут быть критичны.
+
+### Разреженные файлы (Sparse files)
+
+Разреженный файл имеет большой логический размер, но физически занимает место только для реально записанных блоков. Это стандартное поведение для виртуальных машин, контейнерных слоёв и некоторых баз данных.
+
+```bash
+# Создать разреженный файл 10 ГБ
+truncate -s 10G sparse_test
+
+# Проверить физический размер
+ls -lh sparse_test
+# → -rw-r--r-- 1 root root 10G sparse_test
+
+# du покажет реальный размер на диске
+du -h sparse_test
+# → 0 sparse_test
+
+# stat покажет блоки
+stat sparse_test
+# → Blocks: 0  IO Block: 4096
+```
+
+**Проблема:** `du` показывает 0, а `df` показывает уменьшение свободного места пропорционально логическому размеру при записи нулей. Это часто вызывает непонимание при анализе дискового пространства.
+
+### Различия в учёте места: Ext4 против XFS
+
+| Аспект | Ext4 | XFS |
+| :--- | :--- | :--- |
+| **Резерв root** | Да (настраиваемый через `tune2fs -m`) | Нет (встроенного резерва нет) |
+| **Выделение inode** | Статическое (фиксируется при `mkfs`) | Динамическое (по мере необходимости) |
+| **Журнал** | Внешний journal (файл или блок device) | Внутренний (embedded в ФС) |
+| **Trim/Unmap** | `fstrim` работает | `fstrim` работает |
+| **Онлайн изменение размера** | Да (`resize2fs`) | Да (`xfs_growfs`) |
+| **Онлайн дефрагментация** | Нет (`e4defrag` частично) | Нет (требует unmount) |
+| **Счётчик резерва** | Включается в Used у `df` | Не влияет на `df` |
+
+**На практике:** На XFS `df` может показывать больше свободного места, чем Ext4 с таким же объёмом данных, из-за отсутствия резерва root.
+
+**Подробнее:** См. [Диагностика файловых систем и дискового пространства](../Diagnostics/Filesystem/filesystem_and_disk_space_diagnostics.md) и [Внутреннее устройство ФС](./fs_internals.md).
+
 ## Практические сценарии
 
 ### 1. Экстренное спасение (для Ext2/3/4)
@@ -88,6 +136,46 @@ sudo ncdu /
 - **Логи приложений в `/var/log`:**
   Удалите старые архивные файлы (заканчивающиеся на `.gz` или `.1`).
 
+### 4. Системный анализ директорий
+
+Когда причина не в одном файле, а в постепенном заполнении нескольких каталогов, используйте комбинацию `du`, `find` и современных утилит.
+
+**Быстрый обзор по разделам:**
+```bash
+# Анализ корневого раздела с ограничением глубиной 2 уровня
+sudo du -xh --max-depth=2 / | sort -rh | head -30
+
+# Проверка самых типичных «пожирателей» места
+sudo du -sh /var /tmp /home /opt /usr /var/log /var/lib /var/lib/docker /var/lib/containerd 2>/dev/null | sort -rh
+```
+
+**Поиск файлов по размеру и дате:**
+```bash
+# Файлы больше 1 ГБ
+sudo find / -xdev -type f -size +1G -exec ls -lh {} \; 2>/dev/null
+
+# Файлы, не修改енные более 180 дней
+sudo find /var -xdev -type f -mtime +180 -exec ls -lh {} \; 2>/dev/null | head -20
+
+# Каталоги с наибольшим количеством файлов (полезно при нехватке inodes)
+sudo find /var -xdev -printf '%h\n' | sort | uniq -c | sort -rn | head -20
+# →  54321 /var/spool/postfix/maildrop
+```
+
+**Современные утилиты для интерактивного анализа:**
+- **`ncdu`** — ncurses-интерфейс для `du`, позволяет удалять файлы прямо из интерфейса.
+- **`gdu`** — аналог на Go, работает значительно быстрее на SSD и при больших объёмах.
+- **`dust`** — интуитивная визуализация по размеру.
+- **`dua`** — TUI с диаграммами.
+
+```bash
+# ncdu с игнорированием других точек монтирования
+sudo ncdu -x /
+
+# gdu (Go, многопоточный)
+sudo gdu -d 2 /
+```
+
 ### 5. Причины переполнения диска в Kubernetes-кластере
 
 На узлах Kubernetes наиболее частые причины исчерпания дискового пространства:
@@ -131,15 +219,18 @@ sudo du -sh /var/lib/docker/overlay2 2>/dev/null
 ### 6. Очистка логов
 
 **Экстренная очистка без остановки контейнеров:**
-```bash
-# Для драйвера json-file
-sudo truncate -s 0 /var/lib/docker/containers/*/*-json.log
 
-# Для драйвера local
-sudo truncate -s 0 /var/lib/docker/containers/*/local-logs/*
+Подробные команды и параметры ротации см. в [Ротации логов Docker](../../Docker/Docker_logs/docker_log_rotation.md). Краткий набор для экстренной ситуации:
+
+```bash
+# Логи контейнеров Docker (оба драйвера)
+sudo find /var/lib/docker/containers/ -name "*.log" -exec truncate -s 0 {} \;
 
 # Логи в Kubernetes
 sudo find /var/log/pods -type f -name "*.log" -exec truncate -s 0 {} \;
+
+# Системные логи journald
+sudo journalctl --vacuum-size=100M
 ```
 
 **Профилактика переполнения:**
@@ -149,10 +240,211 @@ sudo find /var/log/pods -type f -name "*.log" -exec truncate -s 0 {} \;
 4. Мониторить `node_filesystem_avail_bytes` в Prometheus
 5. Установить `sizeLimit` для `emptyDir`-томов
 
+### 7. Обработка исчерпания inodes
+
+Ситуация: `df -h` показывает 50% свободного места, но `df -i` показывает 100% использования inodes. Новые файлы создать нельзя, приёмы с удалением больших файлов не помогают.
+
+**Диагностика:**
+```bash
+# Проверка использования inodes
+df -i
+# → /dev/sda1  3276800  3276800     0  100% /
+
+# Поиск директорий с максимальным количеством файлов
+sudo find / -xdev -printf '%h\n' | sort | uniq -c | sort -rn | head -20
+# →  54321 /var/spool/postfix/maildrop
+```
+
+**Решение:**
+```bash
+# Очистка очереди почты (пример)
+sudo systemctl stop postfix
+sudo rm -rf /var/spool/postfix/maildrop/*
+sudo systemctl start postfix
+
+# Для кэшей сессий или временных файлов
+sudo find /tmp -type f -delete
+```
+
+**Профилактика:**
+- Настройте ротацию логов и кэшей.
+- Используйте XFS или Btrfs с динамическим выделением inode.
+- Для ext4 создавайте ФС с запасом inode: `mkfs.ext4 -N <количество>`.
+
+### 8. Диагностика через `/proc` и `fuser`
+
+Когда `df` показывает заполнение, а `du` не находит крупных файлов, используйте `fuser` для определения процессов, удерживающих точку монтирования.
+
+```bash
+# Найти процессы, использующие /var/lib/docker
+sudo fuser -m /var/lib/docker
+# → 1234 5678
+
+# Детализация через lsof
+sudo lsof +D /var/lib/docker | head -20
+
+# Принудительно завершить процессы (осторожно!)
+sudo fuser -km /var/lib/docker
+```
+
+**Освобождение места без перезапуска процесса (truncate через `/proc`):**
+```bash
+# Найти PID и FD удалённого файла
+sudo lsof +L1 | grep deleted
+# → nginx   1234  root  DEL   252,0   10485760  /var/log/nginx/access.log (deleted)
+
+# Обнулить файл через дескриптор
+sudo truncate -s 0 /proc/1234/fd/252
+
+# Или через bash redirection
+sudo bash -c '> /proc/1234/fd/252'
+```
+
+### 9. Работа с `tmpfs` и `/dev/shm`
+
+`tmpfs` — это виртуальная ФС в оперативной памяти. При заполнении `/dev/shm` могут падать базы данных (PostgreSQL, MySQL) и приложения, использующие общую память.
+
+```bash
+# Проверка использования tmpfs
+df -h /dev/shm
+# → tmpfs   4G  3.5G  512M  88% /dev/shm
+
+# Поиск крупных файлов в /dev/shm
+sudo du -sh /dev/shm/* | sort -rh | head -20
+
+# Очистка (осторожно: удаляются временные файлы приложений)
+sudo rm -rf /dev/shm/*
+
+# Постоянное ограничение размера через systemd
+# /etc/systemd/system/<service>.d/shm.conf
+[Service]
+# Ограничение /dev/shm для конкретного сервиса
+PrivateTmp=yes
+# Или через mount options в fstab
+```
+
+**Важно:** В Docker/Podman контейнеры по умолчанию используют `--shm-size=64m`. Для баз данных увеличивайте:
+```bash
+docker run --shm-size=1g ...
+```
+
+### 10. Мониторинг роста диска в реальном времени
+
+Для обнаружения процесса, который активно заполняет диск:
+
+```bash
+# Топ процессов по дисковому I/O
+sudo iotop -o
+# → Total DISK READ: 0.00 B/s | Total DISK WRITE: 5.20 M/s
+
+# Статистика дисков в реальном времени
+iostat -xz 1
+# → sda    avg-cpu:  %user %nice %system %iowait  %steal   %idle
+# →         0.50    0.00    0.25   15.00    0.00   84.25
+
+# Найти PID, создающий много файлов (inotifywait)
+sudo inotifywait -m -r /var/log --timefmt '%Y-%m-%dT%H:%M:%S' --format '%T %w%f %e' | while read time path event; do
+  echo "$time $path $event"
+done
+```
+
+**Отслеживание роста конкретного файла:**
+```bash
+# Мониторинг размера файла каждые 5 секунд
+watch -n 5 'ls -lh /var/log/syslog'
+
+# Или через stat
+watch -n 5 'stat -c "%s %y" /var/log/syslog'
+```
+
+### 11. Автоматизация очистки и профилактика
+
+**Logrotate для кастомных приложений:**
+```bash
+# /etc/logrotate.d/myapp
+/var/log/myapp/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    maxsize 100M
+    create 0640 myapp myapp
+    postrotate
+        systemctl reload myapp
+    endscript
+}
+```
+
+**Очистка старых файлов через `find`:**
+```bash
+# Удалить логи старше 30 дней
+sudo find /var/log -name "*.log.*" -mtime +30 -delete
+
+# Архивировать и удалить старые логи
+sudo find /var/log -name "*.log" -mtime +7 -exec gzip {} \;
+```
+
+**Очистка пакетных менеджеров:**
+```bash
+# Debian/Ubuntu
+sudo apt-get clean
+sudo apt-get autoremove
+
+# RHEL/CentOS
+sudo yum clean all
+# Или для dnf
+sudo dnf clean all
+```
+
+**Очистка Podman:**
+```bash
+# Удалить остановленные контейнеры и неиспользуемые образы
+podman system prune -a --volumes
+
+# Проверить использование storage
+podman system df
+# → Images space: 1.2GB
+# → Containers space: 512MB
+# → Local volumes space: 800MB
+```
+
+**Очистка systemd journal:**
+```bash
+# Оставить только последние 100 МБ
+sudo journalctl --vacuum-size=100M
+
+# Удалить логи старше 7 дней
+sudo journalctl --vacuum-time=7d
+
+# Проверить текущий размер
+journalctl --disk-usage
+# → Archived and active journals take up 1.2G on disk.
+```
+
+## Трайблшутинг
+
+| Ошибка / Симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `df` 100%, `du` 50% | Удалённые, но открытые файлы | `sudo lsof +L1` | Перезапуск процесса или truncate через `/proc/PID/fd` |
+| `No space left on device`, но `df -h` есть место | Исчерпание inodes | `df -i` | Удаление миллионов мелких файлов |
+| Обычные пользователи не могут записывать, место есть | Резерв root >95% (Ext4) | `df -h` | `sudo tune2fs -m 5 /dev/sdXN` |
+| `/dev/shm` переполнен | tmpfs exhaustion | `df -h /dev/shm` | Очистка или увеличение `--shm-size` |
+| Диск заполняется мгновенно | Утечка в логи или бесконечный цикл | `sudo du -sh /var/log/*` | Ротация логов, logrotate |
+| Путаница с overlay2/containerd | Неочищенные слои и образы | `docker system df` | `docker system prune -a --volumes` |
+
+## Лучшие практики
+
+1. **Мониторинг:** Настройте алёрты на `node_filesystem_avail_bytes` и `node_filesystem_files_free` в Prometheus.
+2. **Ротация логов:** Все сервисы должны иметь настроенную ротацию (`logrotate` или встроенную).
+3. **Резерв root:** Оставляйте 1-5% на Ext4. На XFS резерв по умолчанию отсутствует.
+4. **Inodes:** Для систем с миллионами мелких файлов используйте XFS/Btrfs или создавайте ext4 с запасом inode (`mkfs.ext4 -N`).
+5. **tmpfs:** Ограничьте размер `/dev/shm` через mount options или systemd `MemoryMax` для сервисов.
+6. **Контейнеры:** Настраивайте `log-opt max-size`/`max-file` для Docker и `--log-driver` с ротацией для Podman.
+7. **Ежедневная проверка:** Внедрите `ncdu` или `gdu` в рутину инженера для периодического аудита дискового пространства.
+
 ## Дополнительная информация
 
 - **Диагностика:** Подробный разбор причин расхождения данных `df` и `du` — [Диагностика файловых систем и дискового пространства](../Diagnostics/Filesystem/filesystem_and_disk_space_diagnostics.md).
-- **Inodes:** Что делать, если закончились индексные дескрипторы — [Индексы и ссылки](./links_inodes_dentries.md#Увеличение-количества-Inodes-Ext234).
-- **Docker:** Настройка автоматической ротации для предотвращения переполнения — [Ротация логов Docker](../../Docker/Docker_logs/docker_log_rotation.md).
-- **Квоты:** Ограничение места для пользователей — [Дисковые квоты](./disk_quotas.md).
-- **Мониторинг:** Мониторинг физического состояния — [smartctl](../Diagnostics/Hardware/smartctl/index.md).
+- **Inodes:** Что делать, если закончились индексные дескрипторы — [Индексы и ссылки](./links_inodes_dentries.md).

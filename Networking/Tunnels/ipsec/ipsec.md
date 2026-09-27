@@ -459,6 +459,304 @@ sudo swanctl --list-sas
 # → ESTABLISHED, IKEv2, AES_GCM_16_256, ECP_384
 ```
 
+### Практический урок: настройка IPsec на современном стеке (charon-systemd)
+
+Данный урок демонстрирует пошаговое развёртывание IPsec на современном стеке (`charon-systemd` + `strongSwan` + `swanctl`/`vici`) и служит примером миграции с legacy-стека (`ipsec.conf`/`pluto`).
+
+#### Топология стенда
+
+- **Шлюз A (левый):** `192.168.52.138` (внутренняя сеть `172.16.150.0/24`, тестовый хост `172.16.150.90`)
+- **Шлюз B (правый):** `192.168.52.141` (внутренняя сеть `172.16.100.0/24`, тестовый хост `172.16.100.101`)
+
+#### Шаг 1. Проверка связности
+
+Перед началом убедитесь, что между подсетями нет связи:
+
+```bash
+# На шлюзе A
+ping -c 3 172.16.100.101
+# → Destination Host Unreachable
+
+# На шлюзе B
+ping -c 3 172.16.150.90
+# → Destination Host Unreachable
+```
+
+#### Шаг 2. Установка пакетов
+
+```bash
+# Debian/Ubuntu
+sudo apt update
+sudo apt install strongswan libcharon-extra-plugins strongswan-swanctl
+
+# RHEL/CentOS/Rocky/Alma
+sudo dnf install strongswan
+```
+
+#### Шаг 3. Верификация демона
+
+Убедитесь, что запущен `charon-systemd`, а не legacy-демон `pluto`:
+
+```bash
+sudo systemctl status strongswan
+# → Active: active (running)
+# → Главный процесс: charon-systemd
+# → strongswan-starter отсутствует
+```
+
+#### Шаг 4. Конфигурация
+
+Создайте файл `/etc/swanctl/conf.d/linux-to-linux.conf`:
+
+```hcl
+# /etc/swanctl/conf.d/linux-to-linux.conf
+connections {
+    linux-to-linux {
+        remote_addrs = 192.168.52.141
+        local_addrs = 192.168.52.138
+        version = 2
+        proposals = aes256-sha256-modp2048
+
+        local {
+            auth = psk
+            id = linux-1
+        }
+        remote {
+            auth = psk
+            id = linux-2
+        }
+
+        children {
+            net-net {
+                local_ts = 172.16.150.0/24
+                remote_ts = 172.16.100.0/24
+                esp_proposals = aes256-sha256
+                start_action = trap
+                close_action = restart
+                dpd_action = restart
+            }
+        }
+    }
+}
+
+secrets {
+    linux-to-linux {
+        secret = "qwerty!"
+    }
+}
+```
+
+На шлюзе B создайте зеркальный конфиг, поменяв `local_addrs` ↔ `remote_addrs`, `linux-1` ↔ `linux-2` и подсети `172.16.150.0/24` ↔ `172.16.100.0/24`.
+
+> **Важно:** `qwerty!` — учебный PSK. В production используйте ключ длиной не менее 64 символов: `openssl rand -base64 48`.
+
+#### Шаг 5. Применение конфигурации
+
+```bash
+# Загрузка конфигурации и секретов
+sudo swanctl --load-all
+
+# Проверка загруженных соединений
+sudo swanctl --list-conns
+```
+
+#### Шаг 6. Запуск туннеля
+
+Туннель запускается автоматически при появлении трафика (`start_action = trap`), либо вручную по имени `children`-блока:
+
+```bash
+# Ручной запуск (по имени children, НЕ connections)
+sudo swanctl --initiate --child net-net
+```
+
+> **Важно:** Для запуска туннеля используется имя `children`-блока (`net-net`), а не имя `connections` (`linux-to-linux`). Попытка запуска по имени connection приведёт к ошибке.
+
+#### Шаг 7. Валидация
+
+```bash
+# Проверка статуса SA
+sudo swanctl --list-sas
+# → ESTABLISHED, IKEv2, ...
+
+# Пинг через туннель
+ping -c 3 172.16.100.101
+# → Ответы с правой стороны
+```
+
+#### Шаг 8. Диагностика
+
+```bash
+# Состояние туннеля
+sudo swanctl --list-sas
+
+# Статистика демона
+sudo swanctl --stats
+
+# Пакеты и байты в ядре
+ip -s xfrm state
+
+# Политики в ядре
+ip xfrm policy
+```
+
+---
+
+### Настройка strongSwan (legacy ipsec.conf/ipsec.secrets)
+
+Помимо современного формата [`swanctl.conf`](#настройка-strongswan-swanctlconf), strongSwan поддерживает устаревший формат конфигурации `ipsec.conf`/`ipsec.secrets` (наследие проекта FreeS/WAN). Данный формат используется демоном `pluto` и встречается в существующих инсталляциях, а также в примерах для вендорского оборудования.
+
+> **Важно:** Legacy-формат не поддерживает `charon-systemd`. Для его использования требуется демон `pluto` (пакет `strongswan-pluto` или `libstrongswan-pluto`). В новых инсталляциях предпочитайте [swanctl.conf](#настройка-strongswan-swanctlconf).
+
+#### Структура конфигурационных файлов
+
+| Файл | Назначение | Формат |
+|------|------------|--------|
+| `/etc/ipsec.conf` | Определения туннелей (`conn`), алгоритмы IKE/ESP, идентификаторы | INI-подобный |
+| `/etc/ipsec.secrets` | PSK и приватные ключи | Текстовый (chmod 600) |
+| `/etc/ipsec.d/` | Директория для сертификатов и CA (если используется X.509) | PEM |
+
+#### Практический пример: Site-to-Site с PSK
+
+**Топология стенда:**
+- **Шлюз A (Public IP):** `192.168.52.138` (внутренняя сеть `172.16.150.0/24`)
+- **Шлюз B (Public IP):** `192.168.52.141` (внутренняя сеть `172.16.100.0/24`)
+
+**Шаг 1. Установка strongSwan с поддержкой legacy-формата**
+
+```bash
+# Debian/Ubuntu
+sudo apt update
+sudo apt install strongswan strongswan-pluto
+
+# RHEL/CentOS/Rocky/Alma
+sudo dnf install strongswan strongswan-pluto
+```
+
+**Шаг 2. Настройка `/etc/ipsec.conf` на Шлюзе A**
+
+```bash
+config setup
+    uniqueids=no
+
+conn linux-to-linux
+    keyexchange=ike
+    ike=aes256-sha256-modp2048!
+    esp=aes256-sha256!
+    left=192.168.52.138
+    right=192.168.52.141
+    leftid=192.168.52.138
+    rightid=192.168.52.141
+    leftsubnet=172.16.150.0/24
+    rightsubnet=172.16.100.0/24
+    auto=add
+```
+
+**Шаг 3. Настройка `/etc/ipsec.secrets` на Шлюзе A**
+
+```text
+192.168.52.138 : PSK "qwerty"
+192.168.52.141 : PSK "qwerty"
+```
+
+```bash
+# Установка строгих прав доступа
+sudo chmod 600 /etc/ipsec.secrets
+sudo chown root:root /etc/ipsec.secrets
+```
+
+**Шаг 4. Настройка Шлюза B (зеркальная конфигурация)**
+
+На Шлюзе B (`192.168.52.141`) параметры `left` и `right` меняются местами:
+
+```bash
+config setup
+    uniqueids=no
+
+conn linux-to-linux
+    keyexchange=ike
+    ike=aes256-sha256-modp2048!
+    esp=aes256-sha256!
+    left=192.168.52.141
+    right=192.168.52.138
+    leftid=192.168.52.141
+    rightid=192.168.52.138
+    leftsubnet=172.16.100.0/24
+    rightsubnet=172.16.150.0/24
+    auto=add
+```
+
+```text
+192.168.52.141 : PSK "qwerty"
+192.168.52.138 : PSK "qwerty"
+```
+
+**Шаг 5. Включение IP Forwarding и применение конфигурации**
+
+```bash
+# Включение маршрутизации (на обоих шлюзах)
+echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/99-ipsec.conf
+sudo sysctl -p /etc/sysctl.d/99-ipsec.conf
+
+# Проверка конфигурации
+sudo ipsec verify
+
+# Запуск strongSwan
+sudo systemctl restart strongswan
+
+# Инициализация туннеля
+sudo ipsec up linux-to-linux
+```
+
+**Шаг 6. Валидация**
+
+```bash
+# Проверка статуса
+sudo ipsec status
+# → "linux-to-linux" #1: ESTABLISHED, IKEv2, ...
+
+# Просмотр SA в ядре
+ip xfrm state
+ip xfrm policy
+
+# Пинг через туннель
+ping -c 4 172.16.100.90
+```
+
+Детальная диагностика: [Управление и диагностика](#управление-и-диагностика).
+
+#### Разбор параметров конфигурации
+
+| Параметр | Описание |
+|----------|----------|
+| `config setup` | Глобальные параметры strongSwan |
+| `uniqueids=no` | Разрешить многопользовательские ID (нужно при использовании IP в качестве ID) |
+| `conn <name>` | Имя туннельного соединения |
+| `keyexchange=ike` | Протокол обмена ключами (IKEv1/IKEv2) |
+| `ike=aes256-sha256-modp2048!` | Алгоритмы IKE SA (восклицательный знак — обязательное соответствие) |
+| `esp=aes256-sha256!` | Алгоритмы ESP (данные) |
+| `left` | IP-адрес локального интерфейса |
+| `right` | IP-адрес удалённого шлюза |
+| `leftid` | Идентификатор локальной стороны |
+| `rightid` | Идентификатор удалённой стороны |
+| `leftsubnet` | Внутренняя сеть локальной стороны |
+| `rightsubnet` | Внутренняя сеть удалённой стороны |
+| `auto=add` | Автоматически загружать соединение при старте (не запускать туннель) |
+
+#### Задание на самостоятельную работу: текстовые идентификаторы
+
+В примере выше в качестве `leftid`/`rightid` используются IP-адреса. Для использования текстовых идентификаторов (например, `linux-one`, `linux-two`):
+
+1. Удалите строку `uniqueids=no` из `config setup`
+2. Замените IP-адреса в `leftid`/`rightid` на текстовые значения
+3. Убедитесь, что идентификаторы совпадают в `ipsec.secrets` на обеих сторонах
+
+```bash
+# Пример с текстовыми ID
+conn linux-to-linux
+    leftid=linux-one
+    rightid=linux-two
+```
+
 ---
 
 ## Управление и диагностика

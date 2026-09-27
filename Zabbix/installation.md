@@ -1,52 +1,84 @@
 # Zabbix — установка и настройка
 
-> **Примечание:** В примерах ниже используется Zabbix 7.0 LTS — актуальная долгосрочная версия (на август 2026). Ожидается выход Zabbix 8.0 LTS в Q3 2026 (сентябрь). Для получения актуальной информации и загрузки дистрибутивов рекомендуется обращаться к [официальному сайту Zabbix](https://www.zabbix.com/download).
+> Данная заметка описывает развёртывание Zabbix Server, Proxy и Agent 2 в production-среде.
+> Сведения актуальны для **Zabbix 7.4** (текущая стандартная ветка) и **Zabbix 7.0 LTS** (основная долгосрочная ветка).
+> **Zabbix 8.0 LTS** ожидается в Q3 2026 (сентябрь 2026); как на сентябрь 2026 г., версия находится в стадии beta (последний релиз — 8.0.0beta2, июль 2026). Все изменения, связанные с Zabbix 7.4, отмечены явно.
 
 ---
 
 ## Определения
 
-Основные архитектурные компоненты (Server, Proxy, Agent, Trapper) и терминология подробно описаны в разделе **[Определения и основные концепции](./definitions_and_concepts.md)**.
+* **Zabbix Server** — центральный процесс мониторинга, принимающий данные от агентов, прокси и внешних систем; выполняет вычисление триггеров и хранение метрик.
+* **Zabbix Agent 2** — современный агент сбора метрик на целевом хосте; написан на Go, поддерживает многопоточность и загружаемые плагины (PostgreSQL, MySQL и др.).
+* **Zabbix Proxy** — промежуточный компонент для распределённого сбора данных (удалённые локации, сегменты сети); позволяет снизить нагрузку на основной сервер.
+* **Zabbix Trapper** — элемент данных типа `Trapper`, принимающий значения по модели Push (через `zabbix_sender` или JSON-RPC API).
+* **NVPS (New Values Per Second)** — количество новых значений, записываемых в базу данных за секунду; ключевой метрический показатель производительности мониторинга.
+* **Очередь (Zabbix Queue)** — список элементов данных, чей опрос запаздывает относительно запланированного интервала; индикатор нехватки процессов сбора.
+* **Cacti vs Zabbix** — Cacti использует RRDtool и фокусируется на графическом представлении данных, тогда как Zabbix — полноценная система мониторинга с вычислением триггеров, корреляцией событий и оповещениями.
+* **STL vs Zabbix** — STL (Security Threat Library) — библиотека угроз безопасности; не связана напрямую с мониторингом. Zabbix может интегрироваться с STL-подобными системами через вебхуки или API, но это выходит за рамки данного развёртывания.
 
 ---
 
 ## Основные концепции
 
-### Компоненты серверного стека
+### Архитектура серверного стека
 
 Для функционирования Zabbix Server необходимы следующие компоненты:
 
-*   **Веб-сервер:** Nginx или Apache (используется для работы веб-интерфейса).
-*   **СУБД:** PostgreSQL (рекомендуется с TimescaleDB) или MySQL/MariaDB.
-*   **PHP:** серверный язык программирования (версии 8.0+ для Zabbix 7.0).
-*   **Zabbix Frontend:** графический интерфейс управления.
+* **Операционная система:** Linux (Ubuntu 24.04/26.04 LTS, RHEL 9/10, Rocky Linux 9/10, AlmaLinux 9/10)
+* **СУБД:** PostgreSQL (рекомендуется с TimescaleDB) или MySQL/MariaDB
+* **Веб-сервер:** Nginx или Apache (для работы веб-интерфейса)
+* **PHP:** серверный язык программирования (версии 8.1+ для Zabbix 8.0; 8.0+ для Zabbix 7.0)
+* **Zabbix Frontend:** графический интерфейс управления
 
-### Выбор агента
+### Выбор компонентов и SRE-перспектива
 
-*   **Zabbix Agent 2:** Рекомендуется для новых инсталляций. Написан на Go, поддерживает многопоточность и плагины (Docker, PostgreSQL, MySQL и др.).
-*   **Zabbix Agent (Classic):** Написан на C, потребляет меньше памяти. Используется в legacy-системах или на устройствах с ограниченными ресурсами.
+При выборе конфигурации SRE учитывают следующие аспекты:
 
-Сравнение режимов работы доступно в разделе **[Модели сбора данных](./definitions_and_concepts.md#модели-сбора-данных)**.
+* **Нагрузка на NVPS:** основной фактор выбора СУБД и конфигурации кэшей. PostgreSQL + TimescaleDB — стандарт для высоконагруженных систем (>5000 NVPS).
+* **Сетевые сегменты:** для удалённых локаций используется Zabbix Proxy, снижающий нагрузку на WAN-каналы.
+* **Горизонтальное масштабирование:** Zabbix Server 8.0 поддерживает нативный HA-режим и Proxy Groups, что позволяет строить отказоустойчивые кластеры.
+* **Снижение стоимости:** использование Zabbix Agent 2 с плагинами позволяет исключить установку дополнительных утилит (ODBC, SNMP-трапы) на целевом хосте.
+
+### Версионная матрица (на сентябрь 2026)
+
+| Версия | Статус | Дата выпуска | Конец поддержки (Full) | Конец поддержки (Limited) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Zabbix 8.0** | **LTS (current)** | Q3 2026 (сентябрь 2026) | Q3 2029 | Q3 2031 |
+| **Zabbix 7.4** | Standard (EOL) | 30 июня 2025 | 30 сентября 2026 | 30 сентября 2026 |
+| **Zabbix 7.0** | LTS | 4 июня 2024 | 30 июня 2027 | 30 июня 2029 |
+| Zabbix 7.2 | Standard (EOL) | 10 декабря 2024 | 30 июня 2025 | 31 декабря 2025 |
+
+> **Рекомендация:** для новых инсталляций использовать Zabbix 7.4. **Zabbix 8.0 LTS** ожидается в Q3 2026 — после выхода финальной версии миграция станет приоритетной.
 
 ---
 
 ## Практические сценарии
 
-### Установка Zabbix Server на Ubuntu 24.04 (PostgreSQL + TimescaleDB)
+### Сценарий 1. Установка Zabbix Server на Ubuntu 24.04/26.04 (PostgreSQL + TimescaleDB)
 
 Данная конфигурация является стандартом для высоконагруженных систем. Подробности технологии: **[Обзор TimescaleDB](../Databases/timescaledb.md)**.
 
-#### 1. Добавление официального репозитория
+#### 1. Предпосылки
+
+* **Жёсткий диск:** не менее 20 ГБ свободного места (10 ГБ под ОС, 10 ГБ под БД и логи)
+* **Память:** не менее 4 ГБ RAM (8 ГБ для >5000 NVPS)
+* **Процессор:** 2 ядра (4 ядра для >10 000 хостов)
+* **Сеть:** порт 80/443 (Frontend), 10050 (Agent), 10051 (Server/Proxy), 10052 (Java Gateway), 10053 (Web Service)
+
+#### 2. Добавление официального репозитория
 
 ```bash
-wget https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
+wget https://repo.zabbix.com/zabbix/8.0/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
 sudo dpkg -i zabbix-release_latest+ubuntu24.04_all.deb
 sudo apt update
 ```
 
-> Алиас `latest` в имени пакета всегда ссылается на актуальную версию пакета репозитория (актуальная на август 2026: `zabbix-release_7.0-5+ubuntu24.04_all.deb`), поэтому нет необходимости вручную обновлять номер версии.
+Для Zabbix 7.0 замените `8.0` на `7.0` в URL.
 
-#### 2. Установка PostgreSQL и TimescaleDB
+Для Ubuntu 26.04 используйте `zabbix-release_latest+ubuntu26.04_all.deb`.
+
+#### 3. Установка PostgreSQL и TimescaleDB
 
 ```bash
 sudo apt install -y postgresql postgresql-contrib timescaledb-2-postgresql-16
@@ -55,13 +87,15 @@ sudo timescaledb-tune --quiet --yes
 sudo systemctl restart postgresql
 ```
 
-#### 3. Установка пакетов Zabbix
+#### 4. Установка пакетов Zabbix
 
 ```bash
 sudo apt install -y zabbix-server-pgsql zabbix-frontend-php zabbix-nginx-conf zabbix-sql-scripts zabbix-agent2
 ```
 
-#### 4. Инициализация базы данных
+Для Zabbix 7.0 также установите `zabbix-agent2-plugin-postgresql` для мониторинга СУБД через плагин.
+
+#### 5. Инициализация базы данных
 
 ```bash
 sudo -u postgres psql -c "CREATE USER zabbix WITH PASSWORD 'your_password';"
@@ -70,52 +104,74 @@ sudo -u postgres psql -c "CREATE DATABASE zabbix OWNER zabbix;"
 sudo -u postgres psql -d zabbix -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
 ```
 
-Импорт начальной схемы и активация гипертаблиц:
+#### 6. Импорт начальной схемы и активация гипертаблиц
+
 ```bash
 zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | sudo -u zabbix psql zabbix
 cat /usr/share/zabbix-sql-scripts/postgresql/timescaledb.sql | sudo -u zabbix psql zabbix
 ```
 
-#### 5. Конфигурация Zabbix Server
+Для Zabbix 7.0 используйте `server.sql.gz` и `timescaledb.sql`. В Zabbix 8.0 схема импорта переименована в `/usr/share/zabbix/sql-scripts/postgresql/server.sql.gz`.
+
+#### 7. Конфигурация Zabbix Server
 
 В файле `/etc/zabbix/zabbix_server.conf` укажите пароль:
-`DBPassword=your_password`
 
-#### 6. Настройка Nginx и PHP
+```ini
+DBPassword=your_password
+```
+
+Минимальные обязательные параметры для SRE:
+
+```ini
+# Стартовые значения для 2000+ хостов (отрегулируйте по нагрузке)
+CacheSize=128M
+HistoryCacheSize=256M
+ValueCacheSize=64M
+StartDBSyncers=4
+```
+
+#### 8. Настройка Nginx и PHP
 
 В файле `/etc/zabbix/nginx.conf` раскомментируйте директивы `listen` и `server_name`.
+
 Перезапустите сервисы:
+
 ```bash
 sudo systemctl restart zabbix-server zabbix-agent2 nginx php8.3-fpm
 sudo systemctl enable zabbix-server zabbix-agent2 nginx php8.3-fpm
 ```
 
-#### 7. Завершение настройки через веб-интерфейс
+Для Zabbix 7.0 и PHP 8.1 используйте `php8.1-fpm`.
+
+#### 9. Завершение настройки через веб-интерфейс
 
 Перейдите по адресу `http://<IP_сервера>` и выполните шаги мастера установки:
 
-1.  **Регистрация:** при необходимости укажите имя сети и загрузите файл конфигурации Zabbix.
-2.  **Проверка предпосылок:** мастер проверяет готовность PHP, СУБД и прав на файлы. Убедитесь, что нет красных пунктов.
-3.  **Подключение к базе данных:** укажите **Database type**, адрес (`localhost`), порт, а также `DB name` (`zabbix`), `User` (`zabbix`) и `Password` — те же значения, что и в `zabbix_server.conf`.
-4.  **Сведения о сервере (Zabbix server details):** укажите hostname сервера и, опционально, порт.
-5.  **Сводка и установка:** нажмите **Install** и дождитесь завершения.
-6.  **Вход:** по умолчанию логин `Admin`, пароль `zabbix`, **обязательно** смените пароль сразу после первого входа (профиль пользователя — change password).
+1. **Проверка предпосылок:** мастер проверяет готовность PHP, СУБД и прав на файлы.
+2. **Подключение к базе данных:** укажите тип, адрес (`localhost`), порт, базу (`zabbix`), пользователя (`zabbix`) и пароль.
+3. **Сведения о сервере:** укажите hostname и порт.
+4. **Сводка и установка:** нажмите **Install** и дождитесь завершения.
+5. **Вход:** по умолчанию логин `Admin`, пароль `zabbix`. **Обязательно** смените пароль сразу после первого входа.
 
 ---
 
-### Установка Zabbix Server на RHEL / Rocky Linux / AlmaLinux 9
+### Сценарий 2. Установка Zabbix Server на RHEL / Rocky Linux / AlmaLinux 9/10
 
-Альтернативная конфигурация для дистрибутивов семейства RHEL (dnf-based). Команды актуальны для **Zabbix 7.0 LTS** на RHEL 9 и его производных.
+Конфигурация для dnf-based дистрибутивов семейства RHEL. Команды актуальны для **Zabbix 8.0 LTS** на RHEL 9/10 и его производных.
 
 #### 1. Добавление официального репозитория
 
 ```bash
-sudo rpm -Uvh https://repo.zabbix.com/zabbix/7.0/rhel/9/x86_64/zabbix-release-7.0-5.el9.noarch.rpm
+# Для RHEL 9
+sudo rpm -Uvh https://repo.zabbix.com/zabbix/8.0/rhel/9/x86_64/zabbix-release-latest.el9.noarch.rpm
+# Для RHEL 10
+sudo rpm -Uvh https://repo.zabbix.com/zabbix/8.0/rhel/10/x86_64/zabbix-release-latest.el10.noarch.rpm
 sudo dnf clean all
 sudo dnf -y update
 ```
 
-> Внимание: номер сборки пакета репозитория (`zabbix-release-7.0-5`) изменяется при обновлениях. Проверяйте актуальную версию на [странице загрузки Zabbix](https://www.zabbix.com/download).
+Для Zabbix 7.0 замените `8.0` на `7.0`.
 
 #### 2. Установка PostgreSQL и пакетов Zabbix
 
@@ -126,33 +182,34 @@ sudo systemctl enable --now postgresql
 sudo dnf install -y zabbix-server-pgsql zabbix-web-pgsql zabbix-nginx-conf zabbix-sql-scripts zabbix-agent2
 ```
 
-Для TimescaleDB (рекомендуется на больших инсталляциях см. **[Обзор TimescaleDB](../Databases/timescaledb.md)**) установите пакет `timescaledb-2-postgresql-<версия-PG>` из официального репозитория Timescale.
+Для TimescaleDB установите пакет `timescaledb-2-postgresql-<версия-PG>` из официального репозитория Timescale.
 
 #### 3. Инициализация базы данных и импорт схемы
 
 ```bash
 sudo -u postgres psql -c "CREATE USER zabbix WITH PASSWORD 'your_password';"
 sudo -u postgres psql -c "CREATE DATABASE zabbix OWNER zabbix;"
-```
-
-Импорт начальной схемы:
-```bash
 sudo zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | sudo -u zabbix psql zabbix
 ```
 
 #### 4. Конфигурация сервера и SELinux
 
 В файле `/etc/zabbix/zabbix_server.conf` укажите пароль:
-`DBPassword=your_password`
+
+```ini
+DBPassword=your_password
+```
 
 В RHEL-системах важно настроить SELinux:
 
 ```bash
 # Разрешить серверу слушать сетевые порты
-sudo setsebool -P zabbix_can_network 1
-# Открыть порты в firewall (основной порт Zabbix Server — 10051)
+sudo setsebool -P httpd_can_connect_zabbix on
+sudo setsebool -P httpd_can_network_connect_db on
+# Открыть порты в firewall
 sudo firewall-cmd --permanent --add-port=10051/tcp
 sudo firewall-cmd --permanent --add-port=80/tcp
+sudo firewall-cmd --permanent --add-port=443/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -167,25 +224,32 @@ sudo systemctl enable zabbix-server zabbix-agent2 nginx php-fpm
 
 ---
 
-### Установка Zabbix Agent 2 на отдельный хост (monitored host)
+### Сценарий 3. Установка Zabbix Agent 2 на отдельный хост (monitored host)
 
 Установка агента на целевые серверы — базовый сценарий мониторинга. Агент не требует сервера и Frontend, достаточно пакетов самого агента.
 
 #### Ubuntu / Debian
 
 ```bash
-wget https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
+wget https://repo.zabbix.com/zabbix/8.0/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
 sudo dpkg -i zabbix-release_latest+ubuntu24.04_all.deb
 sudo apt update
 sudo apt install -y zabbix-agent2
 ```
 
+Для Zabbix 7.0 замените `8.0` на `7.0`.
+
 #### RHEL / Rocky / AlmaLinux
 
 ```bash
-sudo rpm -Uvh https://repo.zabbix.com/zabbix/7.0/rhel/9/x86_64/zabbix-release-7.0-5.el9.noarch.rpm
+# Для RHEL 9
+sudo rpm -Uvh https://repo.zabbix.com/zabbix/8.0/rhel/9/x86_64/zabbix-release-latest.el9.noarch.rpm
+# Для RHEL 10
+sudo rpm -Uvh https://repo.zabbix.com/zabbix/8.0/rhel/10/x86_64/zabbix-release-latest.el10.noarch.rpm
 sudo dnf install -y zabbix-agent2
 ```
+
+Для Zabbix 7.0 замените `8.0` на `7.0`.
 
 #### Настройка агента
 
@@ -198,6 +262,7 @@ Hostname=имя_хоста           # Должно совпадать с име
 ```
 
 Запуск и автозагрузка:
+
 ```bash
 sudo systemctl enable --now zabbix-agent2
 sudo systemctl status zabbix-agent2
@@ -207,96 +272,29 @@ sudo systemctl status zabbix-agent2
 
 ---
 
-### Развертывание через Docker Compose
+### Сценарий 4. Развертывание Zabbix Proxy с SQLite3
 
-Быстрый способ запуска всего стека в изолированных контейнерах. Конфигурация использует кворк Compose для **Zabbix 7.0 LTS** и PostgreSQL 16.
+Прокси используется для мониторинга удалённых локаций и распределения нагрузки. SQLite3 рекомендуется для небольших прокси, так как не требует настройки полноценной СУБД.
 
-> **Примечание:** в Docker Compose v2 поле `version:` является устаревшим и может быть опущено. Теги образов вида `7.0-ubuntu-latest` обновляются по мере выхода патчей (на август 2026 — `7.0.29`).
+#### 1. Установка
 
-```yaml
-services:
-  zabbix-db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: zabbix
-      POSTGRES_PASSWORD: zabbix_password
-      POSTGRES_DB: zabbix
-    volumes:
-      - ./zbx_db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zabbix"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  zabbix-server:
-    image: zabbix/zabbix-server-pgsql:7.0-ubuntu-latest
-    ports:
-      - "10051:10051"
-    environment:
-      DB_SERVER_HOST: zabbix-db
-      POSTGRES_USER: zabbix
-      POSTGRES_PASSWORD: zabbix_password
-      ZBX_ENABLE_SNMP_TRAPS: "true"
-      # Имя хоста сервера для корректной работы Java Gateway
-      ZBX_HOSTNAME: zabbix-server
-      ZBX_JAVAGATEWAY: zabbix-java-gateway
-    depends_on:
-      zabbix-db:
-        condition: service_healthy
-
-  zabbix-web:
-    image: zabbix/zabbix-web-nginx-pgsql:7.0-ubuntu-latest
-    ports:
-      - "8080:8080"
-    environment:
-      ZBX_SERVER_HOST: zabbix-server
-      DB_SERVER_HOST: zabbix-db
-      POSTGRES_USER: zabbix
-      POSTGRES_PASSWORD: zabbix_password
-      ZBX_SERVER_NAME: Zabbix Docker
-    depends_on:
-      zabbix-server:
-        condition: service_started
-
-  zabbix-java-gateway:
-    image: zabbix/zabbix-java-gateway:7.0-ubuntu-latest
-    ports:
-      - "10052:10052"
-
-  zabbix-agent:
-    image: zabbix/zabbix-agent2:7.0-ubuntu-latest
-    environment:
-      ZBX_HOSTNAME: "zabbix-agent"
-      ZBX_SERVER_HOST: zabbix-server
-      ZBX_ACTIVESERVERS: zabbix-server
-    depends_on:
-      zabbix-server:
-        condition: service_started
-```
-
-> Java Gateway (порт `10052`) обязателен при мониторинге Java-приложений (JMX), однако его запуск не является строго необходимым для базового мониторинга и его можно удалить из файла.
-
----
-
-### Установка и настройка Zabbix Proxy
-
-Используется для мониторинга удаленных локаций и распределения нагрузки.
-
-#### 1. Установка (с использованием SQLite3)
-
-SQLite3 рекомендуется для небольших прокси, так как не требует настройки полноценной СУБД.
 ```bash
 sudo apt install -y zabbix-proxy-sqlite3 zabbix-sql-scripts
+```
+
+Для RHEL-подобных систем:
+
+```bash
+sudo dnf install -y zabbix-proxy-sqlite3 zabbix-sql-scripts
 ```
 
 #### 2. Выбор бэкенда прокси
 
 Прокси может хранить конфигурацию и буфер в одной из трех СУБД:
 
-*   **SQLite3** — рекомендуется для небольших и средних прокси, не требует отдельной СУБД (пакет `zabbix-proxy-sqlite3`).
-*   **PostgreSQL / MySQL** — для высоконагруженных прокси и больших объемов истории (пакеты `zabbix-proxy-pgsql` / `zabbix-proxy-mysql`), при этом прокси используется собственная БД, а не база основного сервера.
-*   **Memory Buffer (in-memory)** — с версии 7.0 прокси может работать вообще без локальной СУБД, храня буфер в памяти (параметр `ProxyMode=0` + `DBName=` без указания пути). Подробнее в **[Определения и основные концепции](./definitions_and_concepts.md#распределенный-мониторинг-proxy)**.
+* **SQLite3** — рекомендуется для небольших и средних прокси, не требует отдельной СУБД.
+* **PostgreSQL / MySQL** — для высоконагруженных прокси и больших объёмов истории.
+* **Memory Buffer (in-memory)** — с версии 7.0 прокси может работать без локальной СУБД, храня буфер в памяти (параметр `ProxyMode=0` + `DBName=` без указания пути). Подробнее: **[Определения и основные концепции](./definitions_and_concepts.md#распределенный-мониторинг-proxy)**.
 
 #### 3. Настройка (`/etc/zabbix/zabbix_proxy.conf`)
 
@@ -306,9 +304,10 @@ sudo apt install -y zabbix-proxy-sqlite3 zabbix-sql-scripts
 Server=192.168.1.100  # IP основного Zabbix Server
 Hostname=Branch-Proxy # Должно совпадать с именем в веб-интерфейсе
 DBName=/var/lib/zabbix/zabbix_proxy.db
+ProxyMode=0           # Без СУБД (in-memory buffer)
 ```
 
-Для прокси на PostgreSQL (пакет `zabbix-proxy-pgsql`) дополнительно указывается адрес СУБД:
+Для прокси на PostgreSQL дополнительно указывается адрес СУБД:
 
 ```ini
 Server=192.168.1.100
@@ -328,11 +327,33 @@ sudo systemctl enable --now zabbix-proxy
 
 #### 4. Proxy Groups (с версии 7.0)
 
-Прокси можно объединять в группы для обеспечения **отказоустойчивости и балансировки нагрузки**: если один прокси в группе недоступен, его хосты автоматически переключаются на другой доступный прокси группы. Добавление в группу не требует настройки на стороне самого прокси — группа настраивается только в веб-интерфейсе (`Administration → Proxies → Create proxy group`).
+Прокси можно объединять в группы для обеспечения **отказоустойчивости и балансировки нагрузки**: если один прокси в группе недоступен, его хосты автоматически переключаются на другой доступный прокси. Добавление в группу не требует настройки на стороне самого прокси — группа настраивается только в веб-интерфейсе (`Administration → Proxies → Create proxy group`).
 
 ---
 
-### Настройка безопасности и шифрования (PSK)
+### Сценарий 5. Высокая доступность (High Availability)
+
+Zabbix 8.0 поддерживает нативный режим HA для сервера. Кластер автоматически выбирает активную ноду (Active), остальные находятся в состоянии Standby и без ручного вмешательства принимают нагрузку при сбое активной.
+
+1. Установите несколько узлов Zabbix Server, подключенных к **одной общей БД** (PostgreSQL/MySQL). Все узлы должны иметь одинаковую версию Zabbix и конфигурацию.
+2. В `zabbix_server.conf` каждого узла укажите уникальное имя узла в параметре `HANodeName` и, при необходимости, адрес обмена `HANodeAddress` (по умолчанию узлы автоматически обмениваются адресами).
+3. При развёртывании нескольких узлов Frontend их необходимо проксировать через внешний балансировщик (Nginx/HAProxy), так как автоматического failover для Frontend нет.
+4. Серверы автоматически создадут кластер. Статус можно проверить командой:
+
+```bash
+zabbix_server -R ha_status
+# → Output: 1 active and 1 standby nodes (or similar), leading node: node-1, 192.168.1.100:10051
+```
+
+**Требования HA:**
+
+* Единая БД — все узлы читают/пишут в одну СУБД (репликация БД для HA отключена/нежелательна).
+* Синхронность времени узлов (NTP).
+* Для полноценной отказоустойчивости Frontend использовать внешний балансировщик нагрузки.
+
+---
+
+### Сценарий 6. Настройка безопасности и шифрования (PSK)
 
 Для защиты трафика между агентом и сервером используйте Pre-Shared Keys.
 
@@ -354,87 +375,189 @@ TLSPSKFile=/etc/zabbix/zabbix_agent2.psk
 #### 3. Настройка в веб-интерфейсе
 
 В свойствах хоста на вкладке **Encryption**:
-*   **Connections to host:** PSK.
-*   **Connections from host:** PSK.
-*   **PSK identity:** PSK_001.
-*   **PSK:** (содержимое сгенерированного файла).
+
+* **Connections to host:** PSK
+* **Connections from host:** PSK
+* **PSK identity:** PSK_001
+* **PSK:** (содержимое сгенерированного файла)
 
 ---
 
-### Высокая доступность (High Availability)
+## Операции и команды
 
-Zabbix 6.0+ поддерживает нативный режим HA для сервера. Кластер автоматически выбирает активную ноду (Active), остальные находятся в состоянии Standby и без ручного вмешательства принимают нагрузку при сбое активной.
+### Основные команды управления сервисами
 
-1.  Установите несколько узлов Zabbix Server, подключенных к **одной общей БД** (PostgreSQL/MySQL). Все узлы должны иметь одинаковую версию Zabbix и конфигурацию.
-2.  В `zabbix_server.conf` каждого узла укажите уникальное имя узла в параметре `HANodeName` и, при необходимости, адрес обмена `HANodeAddress` (по умолчанию узлы автоматически обмениваются адресами).
-3.  При развертывании нескольких узлов Frontend их необходимо проксировать через внешний балансировщик (Nginx/HAProxy), так как автоматического failover для Frontend нет.
-4.  Серверы автоматически создадут кластер. Статус можно проверить командой:
-    `zabbix_server -R ha_status`
+| Действие | Команда |
+| :--- | :--- |
+| Перезапуск сервера | `sudo systemctl restart zabbix-server` |
+| Перезапуск агента | `sudo systemctl restart zabbix-agent2` |
+| Перезапуск прокси | `sudo systemctl restart zabbix-proxy` |
+| Статус сервера | `sudo systemctl status zabbix-server` |
+| Автозагрузка сервера | `sudo systemctl enable zabbix-server` |
+| Проверка конфигурации | `zabbix_server -R config_cache_reload` |
 
-Пример вывода:
-```
-# → Output: 1 active and 1 standby nodes (or similar), leading node: node-1, 192.168.1.100:10051
-```
+### Управление работающим сервером (Runtime Control)
 
-**Требования HA:**
-*   Единая БД — все узлы читают/пишут в одну СУБД (репликация БД для HA отключена/нежелательна).
-*   Синхронность времени узлов (NTP).
-*   Для полноценной отказоустойчивости самого Frontend использовать внешний балансировщик нагрузки.
+| Команда | Описание |
+| :--- | :--- |
+| `zabbix_server -R config_cache_reload` | Принудительно обновить кэш конфигурации |
+| `zabbix_server -R ha_status` | Вывести статус кластера HA |
+| `zabbix_server -R log_level_increase='<тип>'` | Повысить уровень логирования для типа процесса |
+| `zabbix_server -R log_level_decrease='<тип>'` | Понизить уровень логирования для типа процесса |
+| `zabbix_server -R diaginfo=<секция>` | Собрать диагностику секции в лог |
+| `zabbix_server -R housekeeper_execute` | Запустить Housekeeper вне расписания |
+| `zabbix_server -R secrets_reload` | Перезагрузить секреты из Vault |
+| `zabbix_server -R history_cache_clear=<target>` | Очистить кэш истории для элемента |
 
----
+### Управление базой данных (PostgreSQL)
 
-### Настройка SNMP-мониторинга
+| Действие | Команда |
+| :--- | :--- |
+| Создание пользователя | `sudo -u postgres psql -c "CREATE USER zabbix WITH PASSWORD 'pass';"` |
+| Создание базы | `sudo -u postgres psql -c "CREATE DATABASE zabbix OWNER zabbix;"` |
+| Импорт схемы | `zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz \| sudo -u zabbix psql zabbix` |
+| Активация TimescaleDB | `sudo -u postgres psql -d zabbix -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"` |
+| Проверка таблиц | `sudo -u zabbix psql -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" zabbix` |
 
-Для устройств без возможности установки агента:
+### Управление агентами
 
-1.  Установите утилиты SNMP: `sudo apt install snmp snmp-mibs-downloader`.
-2.  На целевом устройстве включите SNMP (v2c или v3).
-3.  В Zabbix создайте хост с интерфейсом **SNMP** и укажите **Community string** (например, `public`).
-
-Подробнее: **[SNMP в Zabbix](./definitions_and_concepts.md#определения)**.
-
----
-
-### Автоматическое обнаружение хостов (Network Discovery)
-
-Пример настройки автоматического добавления Linux-серверов:
-
-1.  **Discovery rule:** задается диапазон сети (например, `192.168.1.0/24`) и проверка (например, `system.uname` через Zabbix Agent).
-2.  **Action:** настраивается реакция. Если результат проверки содержит `Linux`, хост добавляется в группу `Linux servers` и к нему привязывается шаблон `Linux by Zabbix agent`.
-
-Концептуальное описание механизма: **[Обнаружение хостов](./definitions_and_concepts.md#автоматизация-масштабирования)**.
-
----
+| Действие | Команда |
+| :--- | :--- |
+| Тест пассивного агента | `zabbix_get -s 127.0.0.1 -p 10050 -k agent.ping` |
+| Тест элемента агента | `zabbix_agent2 -t site.auth` |
+| Отправка trapper-значения | `zabbix_sender -z <server> -s <hostname> -k <key> -o <value>` |
 
 ### Отправка данных через zabbix_sender
 
-Используется для передачи метрик в trapper-элементы:
-
 ```bash
-zabbix_sender -z <server_ip> -s <hostname> -k <item_key> -o <value>
+zabbix_sender -z 192.168.1.100 -s myserver -k system.cpu.load -o 2.5
 # → Response from "192.168.1.100:10051": "processed: 1; failed: 0; total: 1; seconds spent: 0.000045"
 ```
 
 ---
 
+## Устранение неисправностей
+
+### Типичные проблемы при установке
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `Zabbix server is running: No` | Ошибка в конфигурации, нет подключения к БД | Проверить `/etc/zabbix/zabbix_server.conf` и лог `/var/log/zabbix/zabbix_server.log` |
+| `current database version` mismatch | Схема БД не импортирована или устарела | Переимпортировать `server.sql.gz` |
+| Frontend недоступен | Nginx не запущен или неправильный `server_name` | Проверить `systemctl status nginx` и `/etc/zabbix/nginx.conf` |
+| Агент не соединяется с сервером | Неправильный `Server=` или брандмауэр | Проверить `/etc/zabbix/zabbix_agent2.conf` и порт 10051 |
+| `Queue` растёт | Нехватка поллеров | Увеличить `StartPollers` и `StartAgentPollers` |
+| `Gaps` на графиках | Переполнение History Cache | Увеличить `HistoryCacheSize`, проверить IOPS БД |
+
+### Диагностика через логи
+
+* **Zabbix Server:** `/var/log/zabbix/zabbix_server.log`
+* **Zabbix Proxy:** `/var/log/zabbix/zabbix_proxy.log`
+* **Zabbix Agent:** `/var/log/zabbix/zabbix_agent2.log`
+* **Nginx:** `/var/log/nginx/error.log`
+* **PHP-FPM:** `/var/log/php8.3-fpm.log`
+
+### Диагностика через внутренние метрики
+
+```bash
+# Проверка пассивного агента
+zabbix_get -s 127.0.0.1 -p 10050 -k agent.ping
+# → Expected output: 1
+
+# Проверка очереди
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[queue,1m]"
+# → Expected output: integer value
+
+# Проверка NVPS
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[history]"
+# → Expected output: new values per second
+
+# Проверка HA-кластера
+zabbix_server -R ha_status
+```
+
+### Устранение проблем с PostgreSQL
+
+* **Аутентификация scram-sha-256:** на RHEL-подобных системах по умолчанию используется `ident`; измените на `scram-sha-256` или `md5` в `pg_hba.conf`.
+* **Оптимизация соединений:** при большом числе History Syncers используйте PgBouncer для пула соединений.
+* **Сжатие TimescaleDB:** включите компрессию данных старше 7 дней для снижения IOPS.
+
+---
+
+## Лучшие практики
+
+### Production-checklist SRE/Sysadmin
+
+1. **Бэкапы:**
+   * Бэкап БД (pg_dump / pg_basebackup) — ежедневно, хранить 7–30 дней.
+   * Бэкап `/etc/zabbix/` — после каждого изменения конфигурации.
+   * Тест восстановления бэкапа — ежемесячно.
+2. **Безопасность:**
+   * Использовать PSK или сертификаты TLS для шифрования трафика.
+   * Запретить прямой доступ к порту 10051 из интернета.
+   * Сменить пароль Admin после установки.
+3. **Производительность:**
+   * Начинать с значений по умолчанию для кэшей и увеличивать только при стабильной утилизации >80%.
+   * Использовать TimescaleDB компрессию для систем с >10000 хостов.
+   * Асинхронные pollers (Zabbix 7.0+) — использовать для Agent/HTTP/SNMP.
+4. **Апрувы:**
+   * Изменения конфигурации Zabbix Server/Proxy в production через change-management процесс.
+   * Версионный контроль `/etc/zabbix/` через Git.
+5. **Мониторинг мониторинга:**
+   * Подключить `Template App Zabbix Server` к самому серверу для отслеживания очередей, NVPS и кэшей.
+   * Подключить `Template App Zabbix Proxy` к каждому прокси.
+
+### Рекомендации по именованию
+
+* **Hostnames:** использовать FQDN (например, `zbx-srv-01.example.com`).
+* **Пароли:** использовать сложные пароли, хранить в Vault (HashiCorp Vault или аналогичные системы).
+* **Макросы:** использовать префиксы для изоляции переменных (например, `{$MYSQL.PORT}` вместо `{$PORT}`).
+
+---
+
 ## Дополнительная информация
 
-### Жизненный цикл версий (на август 2026)
+### Миграция с Zabbix 7.0 LTS на Zabbix 8.0 LTS
 
-Данные сверены с официальной [политикой жизненного цикла Zabbix](https://www.zabbix.com/life_cycle_and_release_policy) и [endoflife.date](https://endoflife.date/zabbix). LTS-версии поддерживаются 5 лет: 3 года полной поддержки + 2 года ограниченной (критические исправления).
+1. **Остановка сервисов:**
 
-| Версия | Статус | Дата выпуска | Конец поддержки (Full) | Конец поддержки (Limited) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Zabbix 8.0** | **LTS (анонс)** | Q3 2026 (сентябрь 2026) | Q3 2029 | Q3 2031 |
-| **Zabbix 7.0** | **LTS (текущая, до 7.0.29)** | 4 июня 2024 | **30 июня 2027** | **30 июня 2029** |
-| Zabbix 7.4 | Standard | 30 июня 2025 | 30 сентября 2026 (до выхода 8.0) | 30 сентября 2026 |
-| Zabbix 7.2 | Standard (EOL) | 10 декабря 2024 | 30 июня 2025 | 31 декабря 2025 |
+   ```bash
+   sudo systemctl stop zabbix-server zabbix-agent2 zabbix-proxy
+   ```
 
-> **Рекомендация:** для производственных сред использовать Zabbix 7.0 LTS. Версия 7.4 завершает поддержку в сентябре 2026 — миграция обязательна до этой даты. После выхода Zabbix 8.0 LTS (Q3 2026) следует планировать переход на новую LTS-ветку.
+2. **Бэкап БД и конфигурации:**
+
+   ```bash
+   mkdir /opt/zabbix-backup/
+   cp /etc/zabbix/zabbix_server.conf /opt/zabbix-backup/
+   cp -R /usr/share/zabbix/ /opt/zabbix-backup/
+   ```
+
+3. **Обновление репозитория:**
+
+   ```bash
+   # Ubuntu
+   wget https://repo.zabbix.com/zabbix/8.0/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
+   sudo dpkg -i zabbix-release_latest+ubuntu24.04_all.deb
+   # RHEL
+   sudo rpm -Uvh https://repo.zabbix.com/zabbix/8.0/rhel/9/x86_64/zabbix-release-latest.el9.noarch.rpm
+   ```
+
+4. **Обновление пакетов:**
+
+   ```bash
+   # Ubuntu
+   sudo apt update && sudo apt install -y zabbix-server-pgsql zabbix-agent2
+   # RHEL
+   sudo dnf install -y zabbix-server-pgsql zabbix-agent2
+   ```
+
+5. **Миграция БД:** запустить скрипты миграции согласно [заметам о миграции Zabbix](https://www.zabbix.com/documentation/8.0/en/manual/installation/upgrade).
 
 ### См. также
 
-* **[Мониторинг СУБД](./zabbix_database_monitoring.md)** — общие подходы к мониторингу баз данных.
-* **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — настройка мониторинга через Zabbix Agent 2.
-* **[Тюнинг производительности](./zabbix_troubleshooting_and_performance_tuning.md)** — оптимизация Zabbix и БД.
-* **[Лучшие практики](./zabbix_best_practices.md)** — рекомендации по настройке триггеров.
+* **[Определения и основные концепции](./definitions_and_concepts.md)** — описание базовых компонентов и моделей сбора данных.
+* **[Внутреннее устройство и процессы](./additional_info.md)** — архитектурное описание демонов и параметры конфигурации.
+* **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — настройка мониторинга СУБД через Zabbix Agent 2.
+* **[Лучшие практики настройки](./zabbix_best_practices.md)** — рекомендации по триггерам, шаблонам и оповещениям.
+* **[Тюнинг и производительность](./zabbix_troubleshooting_and_performance_tuning.md)** — анализ узких мест, работа с кэшами и масштабирование воркеров.

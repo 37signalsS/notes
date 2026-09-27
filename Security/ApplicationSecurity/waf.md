@@ -32,7 +32,7 @@
 
 | Тип | Описание | Особенности (2026) |
 | :--- | :--- | :--- |
-| **Cloud WAAP (SaaS)** | Облачные решения (Cloudflare, Akamai, Yandex Cloud WAF) | Быстрый запуск, глобальный Threat Intelligence, встроенная защита от массированных DDoS. |
+| **Cloud WAAP (SaaS)** | Облачные решения (Cloudflare, Akamai, Yandex Cloud WAF) | Быстрый запуск, глобальный Threat Intelligence, вbuilt-in защита от массированных DDoS. |
 | **Host-based (Software)** | Модули для веб-серверов (ModSecurity для Nginx/Apache) | Минимальная задержка (latency), полный контроль над данными, но нагружает CPU сервера. |
 | **Edge / Sidecar** | Интеграция в Kubernetes через Sidecar-контейнеры или eBPF | Использование **Coraza Wasm** для Envoy/Istio. Идеально для защиты East-West трафика. |
 | **Network-based (Appliance)** | Физические или виртуальные устройства (F5 BIG-IP, Citrix) | Высокая производительность за счет аппаратного ускорения, интеграция в корпоративный периметр. |
@@ -43,7 +43,7 @@
 - **Блокировка (Prevention/Blocking)** — WAF активно прерывает вредоносные сессии (обычно код 403 Forbidden).
 - **Интерактивная проверка (Challenge)** — предъявление пользователю невидимых JS-проверок или CAPTCHA для подтверждения, что запрос сделан человеком.
 
-## Сравнение WAF и RASP
+## Сравнение WAF, RASP и NAXSI
 
 **RASP (Runtime Application Self-Protection)** — технология, интегрированная непосредственно в среду исполнения приложения (JVM, .NET, PHP).
 
@@ -51,7 +51,241 @@
 - **RASP** работает внутри приложения, видит выполнение функций, запросы к БД и файловой системе.
 - **Сценарий:** WAF эффективен для отсечения массовых атак, RASP — для предотвращения сложных атак, использующих специфику кода. Рекомендуется совместное использование.
 
+| Характеристика | ModSecurity | NAXSI | Coraza |
+| :--- | :--- | :--- | :--- |
+| **Язык правил** | SecRules (собственный DSL) | Nginx-специфичные директивы | SecRules (совместимость с ModSecurity) |
+| **Наборы правил** | OWASP Core Rule Set (CRS), Comodo | Собственные правила | OWASP CRS, кастомные |
+| **Режимы** | DetectionOnly, On, Off | Naxsi:learning, Naxsi:off | On, Off, DetectionOnly |
+| **Производительность** | Средняя (регулярные выражения) | Высокая (whitelist-based) | Высокая (Go + Wasm) |
+| **Интеграция** | Nginx, Apache, HAProxy, Envoy | Только Nginx | Nginx, Apache, Envoy (Wasm) |
+| **False Positive Rate** | Средний (требует тонкой настройки) | Низкий (whitelist) | Низкий (современный парсер) |
+| **Размер сообщения** | Средний | Высокий | Компактный |
+
 ## Практические сценарии и конфигурация
+
+### Предпосылки и системные требования
+
+#### Аппаратные требования
+
+- **CPU:** ModSecurity добавляет 5–20 мс задержки на запрос из-за регулярных выражений. На сервисах с RPS > 10 000 требуется выделенный core или использование NAXSI/Coraza.
+- **RAM:** OWASP CRS потребляет ~50–100 МБ дополнительной памяти на инстанс веб-сервера. Для высоконагруженных систем выделяйте не менее 2 ГБ под WAF-компонент.
+- **Диск:** Логи ModSecurity (audit log) могут быстро расти. Рекомендуется выделить отдельный раздел или настроить logrotate с политикой хранения 7–14 дней.
+
+#### Программные требования
+
+- **ОС:** Linux (Debian 12+, RHEL/Rocky 9+, Ubuntu 22.04 LTS). Windows не рекомендуется для production WAF.
+- **Веб-сервер:** Nginx 1.25+ или Apache 2.4+ с поддержкой динамических модулей.
+- **Библиотеки:** `libmodsecurity3` (>= 3.0.12) с коннектором для соответствующего веб-сервера.
+
+### Установка ModSecurity на Nginx (bare metal)
+
+#### Debian / Ubuntu
+
+```bash
+# 1. Установка зависимостей
+sudo apt update
+sudo apt install -y libmodsecurity3 modsecurity-crs nginx-module-geoip2
+
+# 2. Проверка версии
+nginx -V 2>&1 | grep -o 'modsecurity/3\.[0-9]\+\(\.[0-9]\+\)*'
+# → modsecurity/3.0.12 (пример)
+
+# 3. Создание директорий
+sudo mkdir -p /etc/nginx/modsecurity /var/log/modsecurity /var/cache/modsecurity
+sudo chown -R www-data:www-data /var/log/modsecurity /var/cache/modsecurity
+```
+
+#### RHEL / Rocky / Alma
+
+```bash
+# 1. Установка из EPEL
+sudo dnf install -y epel-release
+sudo dnf install -y nginx-mod-http-modsecurity mod_security_crs
+
+# 2. Для RHEL-совместимых систем может потребоваться сборка модуля
+sudo dnf install -y gcc make pcre-devel libxml2-devel
+git clone --depth 1 -b v3.0.12 https://github.com/SpiderLabs/ModSecurity-nginx.git
+sudo nginx -V 2>&1 | grep -- '--add-module='
+```
+
+#### Базовая конфигурация ModSecurity
+
+Создайте `/etc/nginx/modsecurity.conf`:
+
+```nginx
+# Включение движка
+SecRuleEngine On
+
+# Доступ к телу запроса (обязательно для CRS)
+SecRequestBodyAccess On
+SecRequestBodyLimit 13107200
+SecRequestBodyNoFilesLimit 131072
+
+# Доступ к телу ответа (обычно отключен для производительности)
+SecResponseBodyAccess Off
+SecResponseBodyLimit 524288
+
+# Логирование
+SecAuditEngine RelevantOnly
+SecAuditLogRelevantStatus ^(?:5|4(?!04))
+SecAuditLogParts ABIJDEFHZ
+SecAuditLogType Serial
+SecAuditLog /var/log/modsecurity/audit.log
+SecDebugLog /var/log/modsecurity/debug.log
+SecDebugLogLevel 3
+
+# Кэширование (уменьшает нагрузку)
+SecCacheTransformationsOnDiskCache 128
+SecTmpDir /var/cache/modsecurity
+SecDataDir /var/cache/modsecurity
+
+# Отключение шумных правил при необходимости
+# SecRuleRemoveById 920350  # Пример: правило на user-agent
+```
+
+#### Подключение к Nginx
+
+В `/etc/nginx/nginx.conf` в блоке `http`:
+
+```nginx
+load_module modules/ngx_http_modsecurity_module.so;
+
+http {
+    modsecurity on;
+    modsecurity_rules_file /etc/nginx/modsecurity.conf;
+
+    server {
+        listen 443 ssl;
+        server_name app.example.com;
+
+        # Включение CRS
+        # Правило: запретить HTTP/1.0 (защита от smuggling)
+        if ($server_protocol ~* "^HTTP/1\.0$") { return 403; }
+
+        location / {
+            proxy_pass http://127.0.0.1:8080;
+        }
+    }
+}
+```
+
+#### Включение OWASP CRS
+
+```bash
+# Для Debian/Ubuntu пакет размещает CRS в /etc/modsecurity/crs
+sudo mkdir -p /etc/nginx/modsecurity/crs
+sudo cp -r /usr/share/modsecurity-crs/* /etc/nginx/modsecurity/crs/
+
+# Добавьте в /etc/nginx/modsecurity.conf:
+SecRuleRemoveById 920350  # Пример отключения шумного правила на yaweb crawler
+Include /etc/nginx/modsecurity/crs/crs-setup.conf
+Include /etc/nginx/modsecurity/crs/rules/*.conf
+```
+
+### Установка ModSecurity на Apache
+
+```bash
+# Debian / Ubuntu
+sudo apt install -y libapache2-mod-security2
+
+# RHEL / Rocky
+sudo dnf install -y mod_security
+
+# Проверка загрузки модуля
+apachectl -M | grep security2
+# → security2_module (shared)
+```
+
+#### Базовая конфигурация Apache
+
+Создайте `/etc/apache2/mods-available/security2.conf` (Debian) или `/etc/httpd/conf.d/mod_security.conf` (RHEL):
+
+```apache
+<IfModule security2_module>
+    SecRuleEngine On
+    SecRequestBodyAccess On
+    SecRequestBodyLimit 13107200
+    SecRequestBodyNoFilesLimit 131072
+    SecResponseBodyAccess Off
+
+    SecAuditEngine RelevantOnly
+    SecAuditLogRelevantStatus ^(?:5|4(?!04))
+    SecAuditLogParts ABIJDEFHZ
+    SecAuditLogType Serial
+    SecAuditLog /var/log/modsec_audit.log
+    SecDebugLog /var/log/modsec_debug.log
+    SecDebugLogLevel 3
+
+    SecTmpDir /var/cache/modsecurity
+    SecDataDir /var/cache/modsecurity
+
+    Include /etc/modsecurity/crs/crs-setup.conf
+    Include /etc/modsecurity/crs/rules/*.conf
+</IfModule>
+```
+
+```bash
+# Применение
+sudo a2enmod security2 && sudo systemctl restart apache2
+# RHEL:
+sudo systemctl restart httpd
+```
+
+### Coraza как современная альтернатива
+
+Coraza — это WAF на Go, совместимый с правилами ModSecurity CRS, с акцентом на производительность и Cloud Native-сценарии.
+
+#### Установка standalone Coraza на Linux
+
+```bash
+# Установка из бинарного релиза
+CORAZA_VERSION=v3.0.12
+wget https://github.com/corazawaf/coraza/releases/download/${CORAZA_VERSION}/coraza_${CORAZA_VERSION}_linux_amd64.tar.gz
+sudo tar -xzf coraza_${CORAZA_VERSION}_linux_amd64.tar.gz -C /usr/local/bin/
+sudo chmod +x /usr/local/bin/coraza
+
+# Создание конфигурации
+sudo mkdir -p /etc/coraza /var/log/coraza
+sudo useradd -r -s /bin/false coraza
+```
+
+#### Конфигурация Coraza standalone
+
+Создайте `/etc/coraza/coraza.conf`:
+
+```ini
+[default]
+# Режим работы: On, Off, DetectionOnly
+SecRuleEngine DetectionOnly
+
+# Логирование
+SecAuditEngine RelevantOnly
+SecAuditLogRelevantStatus ^(?:5|4(?!04))
+SecAuditLogParts ABIJDEFHZ
+SecAuditLogType Serial
+SecAuditLog /var/log/coraza/audit.log
+SecDebugLog /var/log/coraza/debug.log
+SecDebugLogLevel 3
+
+# Директории
+SecTmpDir /var/cache/coraza
+SecDataDir /var/cache/coraza
+
+# CRS
+Include /etc/coraza/crs/crs-setup.conf
+Include /etc/coraza/crs/rules/*.conf
+```
+
+#### Запуск Coraza как reverse proxy
+
+```bash
+# Запуск на порту 8443 с проксированием на бэкенд 127.0.0.1:8080
+coraza --config /etc/coraza/coraza.conf --listen :8443 --upstream http://127.0.0.1:8080
+```
+
+**Валидация:**
+- `curl -k https://localhost:8443/?q=<script>alert(1)</script>` — ожидается `403 Forbidden`.
+- `tail -f /var/log/coraza/audit.log` — запись о блокировке XSS.
 
 ### Использование ModSecurity в Kubernetes
 
@@ -117,6 +351,278 @@ http_filters:
           local: { filename: "/etc/coraza/coraza-proxy-wasm.wasm" }
 ```
 
+### Управление правилами и тонкая настройка
+
+#### Кастомные правила ModSecurity
+
+Создайте `/etc/nginx/modsecurity/custom_rules/block_suspicious_user_agents.conf`:
+
+```apache
+# Блокировка известных сканеров
+SecRule REQUEST_HEADERS:User-Agent "@rx (?:sqlmap|nikto|nmap|masscan)" \
+    "id:1000001,phase:1,deny,status:403,msg:'Known scanner detected'"
+
+# Блокировка запросов с недопустимой длиной URI (> 8192 байт)
+SecRule REQUEST_URI "@gt 8192" \
+    "id:1000002,phase:1,deny,status:414,msg:'URI Too Long'"
+
+# Ограничение размера JSON-тела для API
+SecRule REQUEST_HEADERS:Content-Type "^application/json" \
+    "id:1000003,phase:1,pass,nolog,ctl:requestBodyProcessor=JSON"
+SecRule REQUEST_BODY "@gt 1048576" \
+    "id:1000004,phase:2,deny,status:413,msg:'JSON body too large'"
+```
+
+#### Обработка ложных срабатываний (False Positives)
+
+```bash
+# 1. Определите ID правила из audit.log
+grep "Message.*Access denied" /var/log/modsecurity/audit.log | head -5
+# → id:123456
+
+# 2. Добавьте исключение в отдельный конфиг
+echo 'SecRuleRemoveById 123456' | sudo tee /etc/nginx/modsecurity/custom_rules/whitelist.conf
+
+# 3. Перезагрузите Nginx
+sudo nginx -t && sudo systemctl reload nginx
+
+# 4. Мониторьте 24 часа. Если ложных срабатываний нет — исключение можно оставить.
+```
+
+#### Жизненный цикл правил
+
+1. **Разработка:** Пишите правила в отдельном файле (`custom_rules/`), протестируйте в `DetectionOnly`.
+2. **Тестирование:** Запустите `curl` с payload, ожидаемым к блокировке. Проверьте `audit.log`.
+3. **Промоушен:** Перенесите в production config после 1 недели без ложных срабатываний.
+4. **Ревизия:** Раз в квартал удаляйте устаревшие правила, обновляйте CRS.
+
+### Анализ логов и диагностика
+
+#### Формат audit.log (ModSecurity)
+
+```
+--abcd1234-A--
+[02/Oct/2026:14:32:01 +0300] 192.168.1.100 50001 192.168.1.10 443
+--abcd1234-B--
+GET /admin?id=1 OR 1=1 HTTP/1.1
+Host: app.example.com
+--abcd1234-F--
+HTTP/1.1 403 Forbidden
+--abcd1234-H--
+Message: Access denied with code 403 (Phase 2). Pattern match "SQL Injection" at REQUEST_URI.
+Action: Intercepted (Phase 2)
+--abcd1234-E--
+```
+
+#### Полезные команды для SRE
+
+```bash
+# Поиск всех блокировок за последний час
+awk -v d="$(date -d '1 hour ago' '+%d/%b/%Y:%H')" '$4 ~ d' /var/log/modsecurity/audit.log | grep "Access denied"
+
+# Топ-10 IP-адресов по количеству блокировок
+grep -oP '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' /var/log/modsecurity/audit.log | sort | uniq -c | sort -rn | head -10
+
+# Топ-10 правил по срабатываниям
+grep -oP 'id:\d+' /var/log/modsecurity/audit.log | sort | uniq -c | sort -rn | head -10
+
+# Поиск SQL-инъекций
+grep "SQL Injection" /var/log/modsecurity/audit.log | tail -20
+
+# Корреляция ModSecurity audit ID с access.log
+# В audit.log: --abcd1234-A-- содержит client_port
+# В access.log: ищем тот же port и timestamp
+```
+
+#### Диагностика через journalctl (systemd)
+
+```bash
+# Логи Nginx с фильтром по ModSecurity
+journalctl -u nginx --since "1 hour ago" | grep "ModSecurity"
+
+# Логи Apache
+journalctl -u httpd --since "1 hour ago" | grep "ModSecurity"
+```
+
+### Интеграция с fail2ban
+
+fail2ban может использовать ModSecurity audit.log как источник для автоматической блокировки повторяющихся нарушителей.
+
+```ini
+# /etc/fail2ban/filter.d/modsecurity.conf
+[Definition]
+failregex = ^\s*<client>\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+"Access denied with code \d+ \(Phase \d+\).*id:(\d+).*$
+ignoreregex =
+```
+
+```ini
+# /etc/fail2ban/jail.local
+[modsecurity]
+enabled  = true
+port     = http,https
+logpath  = /var/log/modsecurity/audit.log
+maxretry = 5
+bantime  = 3600
+findtime = 600
+action   = iptables-multiport[name=ModSecurity, port="http,https", protocol=tcp]
+```
+
+```bash
+# Применение
+sudo fail2ban-client reload
+sudo fail2ban-client status modsecurity
+```
+
+**Валидация:**
+- 5 запросов с SQL-инъекцией с одного IP за 10 минут.
+- `fail2ban-client status modsecurity` — IP в списке забаненных.
+- `iptables -L -n` — правило DROP.
+
+### Мониторинг и метрики
+
+#### Prometheus Exporter для ModSecurity
+
+Используйте `prometheus-modsecurity-exporter`:
+
+```bash
+# Установка
+go install github.com/BeatrisR/metrics-exporter@latest
+sudo cp metrics-exporter /usr/local/bin/
+
+# Запуск как systemd service
+cat <<EOF | sudo tee /etc/systemd/system/modsecurity-exporter.service
+[Unit]
+Description=ModSecurity Prometheus Exporter
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/metrics-exporter --modsec-log /var/log/modsecurity/audit.log
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now modsecurity-exporter
+```
+
+#### Ключевые метрики
+
+| Метрика | Описание | Порог тревоги |
+| :--- | :--- | :--- |
+| `modsecurity_blocks_total` | Количество заблокированных запросов | > 100/мин требует анализа |
+| `modsecurity_phase2_blocks_total` | Блокировки на Phase 2 (body inspection) | Всплеск = атака на логику |
+| `modsecurity_unique_ips_total` | Количество уникальных IP, заблокированных за период | > 50 = массовая атака |
+| `modsecurity_rule_hits{rule_id="941100"}` | Срабатывания конкретного правила | Рост = обновление атакующих стратегий |
+
+#### Простой мониторинг через bash
+
+```bash
+# Скрипт для мониторинга количества блокировок
+#!/bin/bash
+BLOCKS=$(grep -c "Access denied" /var/log/modsecurity/audit.log)
+if [ "$BLOCKS" -gt 100 ]; then
+    echo "WARNING: High block rate: $BLOCKS/min" | mail -s "WAF Alert" ops@example.com
+fi
+```
+
+### Валидация и тестирование эффективности
+
+#### Базовые тесты для проверки работоспособности
+
+```bash
+# 1. XSS (должен блокироваться 403)
+curl -s -o /dev/null -w "%{http_code}" "https://app.example.com/?q=<script>alert(1)</script>"
+# → 403
+
+# 2. SQL Injection (должен блокироваться 403)
+curl -s -o /dev/null -w "%{http_code}" "https://app.example.com/?id=1 OR 1=1"
+# → 403
+
+# 3. Path Traversal (должен блокироваться 403)
+curl -s -o /dev/null -w "%{http_code}" "https://app.example.com/../../../etc/passwd"
+# → 403
+
+# 4. Легитимный запрос (должен проходить 200)
+curl -s -o /dev/null -w "%{http_code}" "https://app.example.com/?id=42"
+# → 200
+
+# 5. Проверка audit.log
+tail -5 /var/log/modsecurity/audit.log
+# → Должны присутствовать записи с id:941100, id:942100 и т.д.
+```
+
+#### Регрессионное тестирование после изменения правил
+
+```bash
+#!/bin/bash
+# test_waf_rules.sh — запускается после каждого обновления CRS
+
+ATTACKS=(
+    "?q=<script>alert(1)</script>:XSS"
+    "?id=1+OR+1=1:SQLi"
+    "?file=../../../etc/passwd:Path Traversal"
+    "?cmd=cat+/etc/passwd:Command Injection"
+)
+
+PASS=0
+FAIL=0
+
+for attack in "${ATTACKS[@]}"; do
+    PAYLOAD="${attack%%:*}"
+    EXPECTED="${attack##*:}"
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://app.example.com/${PAYLOAD}")
+    
+    if [ "$STATUS" == "403" ]; then
+        echo "[PASS] $EXPECTED blocked (403)"
+        ((PASS++))
+    else
+        echo "[FAIL] $EXPECTED returned $STATUS (expected 403)"
+        ((FAIL++))
+    fi
+done
+
+echo "Results: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ] || exit 1
+```
+
+### Типичные проблемы и устранение неполадок
+
+| Проблема | Симптом | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Высокая задержка** | RPS падает, latency растет | `systemd-analyze blame`, `top`, проверка `SecRuleRemoveById` для сложных regex | Переход на NAXSI, отключение тяжелых правил, вертикальное/горизонтальное масштабирование |
+| **Ложные срабатывания** | Легитимные запросы возвращают 403 | `grep "Access denied" /var/log/modsecurity/audit.log` | `SecRuleRemoveById`, создание исключений по `REQUEST_URI` |
+| **Утечка памяти** | RSS процесса Nginx растет indefinitely | `pmap -x $(pgrep nginx)`, проверка `SecCacheTransformationsOnDiskCache` | Увеличение `SecTmpDir`, обновление до последней версии ModSecurity |
+| **Не читается тело запроса** | Запросы с JSON/XML не проверяются | `grep "Request body no files data" /var/log/modsecurity/debug.log` | Убедитесь, что `SecRequestBodyAccess On` и `SecRequestBodyLimit` > реальный размер тела |
+| **Утечка audit.log** | Лог занимает весь диск | `du -sh /var/log/modsecurity/*` | Настройте `logrotate` или `SecAuditLogRelevantStatus` для ограничения записей |
+| **TLS Inspection ошибки** | Backend получает зашифрованный трафик | Проверка, что WAF стоит перед TLS termination | WAF должен работать после TLS termination (на plaintext HTTP) или использовать собственный сертификат |
+
+### Лучшие практики для продакшена
+
+1.  **Период DetectionOnly:** Первые 2–4 недели на проде работайте в режиме `SecRuleEngine DetectionOnly`. Собирайте статистику, отключайте шумные правила через `SecRuleRemoveById`, затем переключайтесь в `On`.
+2.  **Обновление CRS:** Подписывайтесь на репозиторий OWASP CRS. Обновляйте правила раз в месяц, тестируйте на staging перед деплоем на prod.
+3.  **Сегрегация правил:** Разделяйте кастомные правила, CRS и исключения по разным файлам. Это упрощает аудит и откат.
+    ```
+    /etc/nginx/modsecurity/
+    ├── modsecurity.conf      # Основные директивы
+    ├── crs/
+    │   ├── crs-setup.conf
+    │   └── rules/
+    ├── custom_rules/
+    │   ├── block_scanners.conf
+    │   └── api_protection.conf
+    └── whitelist/
+        └── false_positives.conf
+    ```
+4.  **Rate Limiting + WAF:** Комбинируйте `limit_req_zone` в Nginx с WAF. WAF защищает от сложных атак, rate limiting — от простого флуда.
+5.  **Логирование в SIEM:** Передавайте audit.log в ELK/Graylog/Splunk через Filebeat/Vector. Это позволяет коррелировать WAF-события с другими инцидентами.
+6.  **Резервное копирование правил:** Храните кастомные правила в Git. Восстановление после сбоя занимает минуты, а не часы.
+7.  **Регулярный пентест:** Раз в квартал запускайте сканеры (OWASP ZAP, Burp Suite) в режиме passive scan для проверки, что WAF действительно блокирует целевые векторы.
+8.  **Отказ от unsafe-inline в CSP:** WAF не защищает от DOM-based XSS. CSP с `strict-dynamic` и nonces закрывает эту брешь.
+
 ## Ограничения и методы обхода (Evasion)
 
 WAF не является панацеей, и злоумышленники используют различные техники обхода:
@@ -136,6 +642,8 @@ WAF не является панацеей, и злоумышленники ис
 - [XSS and CSP](./xss_and_csp.md) — защита фронтенда и ограничения WAF.
 - [DDoS Overview](./ddos_overview.md) — место WAF в иерархии защиты от DDoS.
 - [Firewall Concepts](../../Networking/Concepts/firewall_concepts.md) — сравнение WAF с L3/L4 файрволами и NGFW.
+- [Безопасность HTTP в продакшене](../../Networking/Protocols/HTTP/http_security_hardening.md) — расширенные сценарии ModSecurity, NAXSI и заголовки безопасности.
+- [Руководство по безопасности Nginx и Angie](../../WebServers/Nginx/Security/nginx_security_guide.md) — тюнинг веб-серверов и модулей безопасности.
 
 ### Внешние ресурсы
 - [OWASP Coraza WAF](https://coraza.io/) — современный Cloud Native WAF проект.

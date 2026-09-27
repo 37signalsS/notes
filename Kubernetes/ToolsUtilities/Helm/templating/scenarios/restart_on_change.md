@@ -275,7 +275,7 @@ configMap:
 # .gitlab-ci.yml фрагмент
 deploy:
   stage: deploy
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm upgrade myapp ./mychart \
         -f values.yaml \

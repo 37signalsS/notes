@@ -28,18 +28,22 @@ Control Node                    Managed Hosts
 └─────────────────────┘
 ```
 
+Callback-плагины загружаются в алфавитном порядке. Для кастомных плагинов, размещенных в директории рядом с плейбуком, порядок загрузки определяется именем файла (например, `1_first.py` загрузится перед `2_second.py`).
+
 ### Типы Callback-плагинов
 
 1.  **stdout:** Плагины, отвечающие за вывод в консоль. В Ansible может быть активен только **один** stdout-плагин (например, `yaml`, `debug`, `minimal`). Настраивается через `stdout_callback` в `ansible.cfg`.
 2.  **aggregate:** Плагины, которые собирают данные со всех хостов и выполняют действие в конце выполнения (например, формирование итогового отчета).
-3.  **notification:** Отправка уведомлений о событиях во внешние системы (ELK, Loki, Slack, Telegram) по мере их возникновения.
+3.  **notification:** Отправка уведомлений о событиях во внешние системы (SIEM, Slack, Telegram, ntfy) по мере их возникновения.
 
 ### Местоположение и FQCN
 
-Начиная с Ansible 2.10, плагины рекомендуется поставлять в составе коллекций.
+Начиная с ansible-core 2.10, плагины рекомендуется поставлять в составе коллекций и использовать полное имя (**FQCN**).
 *   **Локальные плагины:** Размещаются в директории `callback_plugins/` рядом с плейбуком или ролью.
-*   **Плагины коллекций:** Используют полное имя (**FQCN**), например `ansible.posix.timer` или `community.general.logstash`.
+*   **Плагины коллекций:** Используют полное имя, например `ansible.posix.timer` или `community.general.logstash`.
 *   **Пути поиска:** Регулируются параметром `callback_plugins` в `ansible.cfg`.
+
+Для выполнения ad-hoc команд через `ansible` CLI (а не `ansible-playbook`) требуется дополнительная настройка: либо `bin_ansible_callbacks = True` в `ansible.cfg`, либо переменная окружения `ANSIBLE_LOAD_CALLBACK_PLUGINS=1`.
 
 ### Жизненный цикл событий
 
@@ -72,7 +76,9 @@ Ansible вызывает методы плагина (наследуемые о�
 *   `CALLBACK_VERSION`: Версия API (текущая — `2.0`).
 *   `CALLBACK_TYPE`: Тип плагина (`stdout`, `notification`, `aggregate`).
 *   `CALLBACK_NAME`: Имя плагина для использования в конфигурации.
-*   `CALLBACK_NEEDS_WHITELIST`: Требуется ли включение в `callbacks_enabled` (по умолчанию `False` для stdout, `True` для notification/aggregate).
+*   `CALLBACK_NEEDS_ENABLED`: Требуется ли включение в `callbacks_enabled` (по умолчанию `False` для stdout, `True` для notification/aggregate).
+
+> **Примечание:** В старом коде может встречаться `CALLBACK_NEEDS_WHITELIST` — это устаревший атрибут, сохраненный для обратной совместимости. Для новых плагинов используйте `CALLBACK_NEEDS_ENABLED`.
 
 ### Метаданные DOCUMENTATION и EXAMPLES
 
@@ -97,9 +103,9 @@ options:
 
 EXAMPLES = r'''
 # ansible.cfg
-# [defaults]
-# callbacks_enabled = my_callback
-# callback_plugins = ./callback_plugins
+[defaults]
+callbacks_enabled = my_callback
+callback_plugins = ./callback_plugins
 '''
 ```
 
@@ -119,6 +125,9 @@ callbacks_enabled = ansible.posix.timer, ansible.posix.profile_tasks, my_custom_
 
 # Изменение формата вывода в консоль (только один)
 stdout_callback = community.general.yaml
+
+# Для ad-hoc команд через ansible CLI
+bin_ansible_callbacks = True
 ```
 
 ### Разработка кастомного плагина для логирования
@@ -128,9 +137,6 @@ stdout_callback = community.general.yaml
 #### Пример: Плагин с защитой данных и продвинутым логированием
 
 ```python
-from __future__ import (absolute_import, division, print_function)
-__metaclass__ = type
-
 import json
 import os
 from datetime import datetime
@@ -155,10 +161,10 @@ class CallbackModule(CallbackBase):
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = 'notification'
     CALLBACK_NAME = 'log_to_json'
-    CALLBACK_NEEDS_WHITELIST = True
+    CALLBACK_NEEDS_ENABLED = True
 
     def __init__(self):
-        super(CallbackModule, self).__init__()
+        super().__init__()
         self.log_path = os.environ.get(
             'ANSIBLE_CALLBACK_LOG_PATH',
             'ansible_execution_log.json'
@@ -207,12 +213,9 @@ class CallbackModule(CallbackBase):
         self._log_event(result._host.get_name(), 'ITEM_FAILED', result)
 ```
 
-### Пример: Плагин-уведомления в Slack
+### Пример: Плагин-уведомления
 
 ```python
-from __future__ import (absolute_import, division, print_function)
-__metaclass__ = type
-
 import json
 import os
 from urllib.request import Request, urlopen
@@ -243,10 +246,10 @@ class CallbackModule(CallbackBase):
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = 'notification'
     CALLBACK_NAME = 'slack_notify'
-    CALLBACK_NEEDS_WHITELIST = True
+    CALLBACK_NEEDS_ENABLED = True
 
     def __init__(self):
-        super(CallbackModule, self).__init__()
+        super().__init__()
         self.webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
         self.channel = os.environ.get('SLACK_CHANNEL', '#ansible-logs')
         if not self.webhook_url:
@@ -295,9 +298,7 @@ class CallbackModule(CallbackBase):
 ### Пример: Плагин-анализатор производительности
 
 ```python
-from __future__ import (absolute_import, division, print_function)
-__metaclass__ = type
-
+import time
 from ansible.plugins.callback import CallbackBase
 
 DOCUMENTATION = r'''
@@ -314,20 +315,18 @@ class CallbackModule(CallbackBase):
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = 'aggregate'
     CALLBACK_NAME = 'task_timer'
-    CALLBACK_NEEDS_WHITELIST = True
+    CALLBACK_NEEDS_ENABLED = True
 
     def __init__(self):
-        super(CallbackModule, self).__init__()
+        super().__init__()
         self.task_times = {}
         self.playbook_start = None
 
     def v2_playbook_on_task_start(self, task, is_conditional):
-        import time
         self.current_task_start = time.time()
         self.current_task_name = task.get_name()
 
     def v2_runner_on_ok(self, result):
-        import time
         if hasattr(self, 'current_task_start'):
             elapsed = time.time() - self.current_task_start
             task_name = self.current_task_name
@@ -350,7 +349,7 @@ class CallbackModule(CallbackBase):
             )
 ```
 
-### Интеграция с внешними системами (ELK / Loki / Slack)
+### Интеграция с внешними системами
 
 Для промышленного использования предпочтительны готовые плагины из коллекций:
 
@@ -364,14 +363,80 @@ class CallbackModule(CallbackBase):
 *   Аналитика времени выполнения через `ansible.posix.profile_tasks`.
 *   Хранение истории изменений для комплаенса и аудита.
 *   Мгновенные алерты при критических сбоях плейбуков.
-*   Корреляция событий Ansible с инцидентами в мониторинге.
+*   Корреляция событий Ansible с инцидентами в системах мониторинга.
+
+## Операции и команды
+
+### Параметры конфигурации в ansible.cfg
+
+| Параметр | Описание |
+| :--- | :--- |
+| `callbacks_enabled` | Список активных callback-плагинов через запятую |
+| `stdout_callback` | Единственный активный stdout-плагин |
+| `callback_plugins` | Пути поиска callback-плагинов, разделённые `:` |
+| `log_path` | Путь к файлу лога Ansible |
+| `bin_ansible_callbacks` | `True` — загрузка callback-плагинов при выполнении через `ansible` CLI |
+
+### Диагностические команды
+
+```bash
+# Список доступных callback-плагинов
+ansible-doc -t callback -l
+
+# Документация по конкретному плагину
+ansible-doc -t callback ansible.posix.timer
+
+# Проверка плейбука с отладкой плагинов
+ansible-playbook -vvv playbook.yml
+
+# Проверка количества плагинов
+ansible-doc -t callback -l | wc -l
+
+# Поиск плагинов по имени
+ansible-doc -t callback -l | grep -i slack
+
+# Проверка конфигурации callback-плагинов
+ansible-config dump | grep -i callback
+
+# Проверка путей поиска плагинов
+ansible-config dump | grep -i callback_plugins
+```
+
+## Диагностика и устранение неполадок
+
+### Типичные ошибки
+
+| Проблема | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| Плагин не загружается | Файл не в `callback_plugins/` или не в `callbacks_enabled` | Проверьте путь и `ansible.cfg` |
+| `AttributeError: 'NoneType'` | Плагин вызывается до инициализации `__init__` | Всегда вызывайте `super().__init__()` |
+| Секреты в логах | Отсутствие проверки `_ansible_no_log` | Проверяйте `result._result.get('_ansible_no_log', False)` |
+| `ImportError` при запуске | Отсутствие зависимостей в `ansible-core` | Используйте только стандартную библиотеку Python |
+| stdout-плагин не применяется | Использован неправильный `CALLBACK_TYPE` | Убедитесь, что тип — `stdout`, а не `notification` |
+| Плагин вызывается дважды | Два плагина одного типа зарегистрированы | Проверьте `callbacks_enabled` — оставьте только нужные |
+| `KeyError` в метаданных | Отсутствует обязательный атрибут класса | Добавьте `CALLBACK_VERSION`, `CALLBACK_TYPE`, `CALLBACK_NAME` |
+| Плагин не виден в `ansible-doc` | Ошибка синтаксиса Python | Проверьте плагин командой `python -c "import callback_plugins.my_plugin"` |
+| `CALLBACK_NEEDS_ENABLED` и плагин не работает | Плагин не указан в `callbacks_enabled` | Добавьте имя плагина в `callbacks_enabled` |
+| `ModuleNotFoundError` для кастомного плагина | Неправильный путь в `callback_plugins` | Проверьте `callback_plugins` в `ansible.cfg` |
+| `callbacks_enabled` игнорируется | Нет `callback_plugins` или плагин не найден | Проверьте пути поиска через `ansible-config dump` |
+| `UnicodeEncodeError` в callback | Необработанные символы в выводе | Добавьте `ensure_ascii=False` при сериализации JSON |
+
+## Рекомендации (Best Practices)
+
+*   **Производительность:** Callback-плагины работают синхронно в основном потоке управления. Долгие сетевые вызовы (например, отправка в API) замедляют выполнение плейбука. Для высоконагруженных систем используйте очереди сообщений (Redis, RabbitMQ) или отправляйте данные в фоновых потоках.
+*   **Безопасность и `no_log`:** Всегда проверяйте атрибут `_ansible_no_log` в объекте результата. Игнорирование этого правила приведет к утечке паролей и токенов в логи.
+*   **Использование `self._display`:** Вместо `print()` используйте встроенный объект `self._display`. Он поддерживает уровни логирования (`display`, `v`, `vv`, `vvv`, `warning`, `error`) и корректно интегрируется с выводом Ansible.
+*   **Совместимость:** Наследуйтесь от класса `CallbackBase` и следуйте спецификации API v2 для гарантии работы в будущих версиях `ansible-core`.
+*   **Блокировка вызовов:** Избегайте блокировки вызовов в `__init__`. Инициализируйте переменные, но не выполняйте сетевые операции до первого вызова метода.
+*   **Идемпотентность:** Callback-плагин не должен изменять состояние системы. Он только обрабатывает результаты и отправляет их во внешние системы.
+*   **Обработка ошибок:** Всегда оборачивайте сетевые вызовы в блоки `try/except`. Ошибка в callback-плагине не должна прерывать выполнение плейбука.
 
 ## Дополнительная информация
 
 ### Популярные встроенные плагины
 
 *   **`ansible.posix.timer`:** Выводит время выполнения каждого play и суммарное время в конце.
-*   **`ansible.posix.profile_tasks`:** Показывает топ-20 самых медленных задач (незаменимо для оптимизации).
+*   **`ansible.posix.profile_tasks`:** Показывает время выполнения каждой задачи.
 *   **`ansible.posix.profile_roles`:** Аналог `profile_tasks` для ролей.
 *   **`ansible.builtin.junit`:** Генерирует отчет в формате JUnit XML для интеграции с CI/CD (Jenkins, GitLab).
 *   **`community.general.say`:** Использует синтез речи для озвучивания прогресса (macOS/Linux).
@@ -424,48 +489,6 @@ def test_no_log_filtering(callback):
 3.  Используйте `self._display.warning("message")` внутри плагина для вывода отладочной информации.
 4.  Проверьте, что плагин добавлен в `callbacks_enabled` в `ansible.cfg`.
 5.  Убедитесь, что файл плагина находится в одной из директорий `callback_plugins`.
-
-### Диагностические команды
-
-```bash
-# Список доступных callback-плагинов
-ansible-doc -t callback -l
-
-# Документация по конкретному плагину
-ansible-doc -t callback ansible.posix.timer
-
-# Проверка плейбука с отладкой плагинов
-ansible-playbook -vvv playbook.yml
-
-# Проверка количества плагинов
-ansible-doc -t callback -l | wc -l
-
-# Поиск плагинов по имени
-ansible-doc -t callback -l | grep -i slack
-```
-
-### Таблица типовых ошибок
-
-| Проблема | Вероятная причина | Решение |
-| :--- | :--- | :--- |
-| Плагин не загружается | Файл не в `callback_plugins/` или не в `callbacks_enabled` | Проверьте путь и `ansible.cfg` |
-| `AttributeError: 'NoneType'` | Плагин вызывается до инициализации `__init__` | Всегда вызывайте `super().__init__()` |
-| Секреты в логах | Отсутствие проверки `_ansible_no_log` | Проверяйте `result._result.get('_ansible_no_log', False)` |
-| `ImportError` при запуске | Отсутствие зависимостей в `ansible-core` | Используйте только стандартную библиотеку Python |
-| stdout-плагин не применяется | Использован неправильный `CALLBACK_TYPE` | Убедитесь, что тип — `stdout`, а не `notification` |
-| Плагин вызывается дважды | Два плагина одного типа зарегистрированы | Проверьте `callbacks_enabled` — оставьте только нужные |
-| `KeyError` в метаданных | Отсутствует обязательный атрибут класса | Добавьте `CALLBACK_VERSION`, `CALLBACK_TYPE`, `CALLBACK_NAME` |
-| Плагин не виден в `ansible-doc` | Ошибка синтаксиса Python | Проверьте плагин командой `python -c "import callback_plugins.my_plugin"` |
-
-### Рекомендации (Best Practices)
-
-*   **Производительность:** Callback-плагины работают синхронно в основном потоке управления. Долгие сетевые вызовы (например, отправка в API) замедляют выполнение плейбука. Для высоконагруженных систем используйте очереди сообщений (Redis, RabbitMQ) или отправляйте данные в фоновых потоках.
-*   **Безопасность и `no_log`:** Всегда проверяйте атрибут `_ansible_no_log` в объекте результата. Игнорирование этого правила приведет к утечке паролей и токенов в логи.
-*   **Использование `self._display`:** Вместо `print()` используйте встроенный объект `self._display`. Он поддерживает уровни логирования (`display`, `v`, `vv`, `vvv`, `warning`, `error`) и корректно интегрируется с выводом Ansible.
-*   **Совместимость:** Наследуйтесь от класса `CallbackBase` и следуйте спецификации API v2 для гарантии работы в будущих версиях `ansible-core`.
-*   **Блокировка вызовов:** Избегайте блокировки вызовов в `__init__`. Инициализируйте переменные, но не выполняйте сетевые операции до первого вызова метода.
-*   **Идемпотентность:** Callback-плагин не должен изменять состояние системы. Он только обрабатывает результаты и отправляет их во внешние системы.
-*   **Обработка ошибок:** Всегда оборачивайте сетевые вызовы в блоки `try/except`. Ошибка в callback-плагине не должна прерывать выполнение плейбука.
 
 ### Смотрите также
 

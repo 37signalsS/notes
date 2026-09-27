@@ -253,7 +253,88 @@ security:
 6.  **Слепая эксплуатация (нет наблюдаемости):** отсутствие метрик/алертов маскирует деградацию и завышает TTRS.
 7.  **Ручное всё:** отсутствие автоматизации пайплайна превращает каждый релиз в уникальный риск.
 
-### Troubleshooting: типичные проблемы внедрения
+### Граничные случаи (Edge Cases)
+
+- **Регулируемые отрасли (Compliance):** требуют V-Model, формальной верификации и неизменяемых артефактов — скорость сознательно снижается ради аудита.
+- **Legacy без тестов:** внедрение SDLC начинается с характеризационного тестирования (characterization tests), чтобы не сломать при рефакторинге.
+- **Многосервисные программы:** координация релизов через внутренние платформы (IDP) и общий календарь change window.
+- **Миграции БД как часть SDLC:** долгие, рискованные; требуют отдельного плана (expand/contract), иначе блокируют релиз приложения.
+- **Аварийные хотфиксы:** обходят часть пайплайна, но обязаны проходить минимальный набор проверок и последующий postmortem.
+
+## Операции и команды
+
+### Управление релизом (Release Operations)
+
+```bash
+# Создание release branch из main
+git checkout main && git pull && git checkout -b release/1.42.0
+
+# Фиксация версии в артефакте (пример для Makefile)
+make VERSION=1.42.0 build
+
+# Генерация SBOM (Software Bill of Materials)
+syft . -o cyclonedx-json > sbom.json
+
+# Подпись артефакта (cosign)
+cosign sign --key cosign.key registry.internal/app:1.42.0
+
+# Проверка подписи перед деплоем
+cosign verify --key cosign.pub registry.internal/app:1.42.0
+```
+
+### Деплой и откат (Deployment & Rollback)
+
+```bash
+# Проверка health перед релизом
+curl -sf http://app.internal/healthz || { echo " unhealthy"; exit 1; }
+
+# Rolling restart без даунтима (Kubernetes)
+kubectl rollout restart deployment/app -n production
+kubectl rollout status deployment/app -n production --timeout=300s
+
+# Откат на предыдущий стабильный релиз
+kubectl rollout undo deployment/app -n production
+kubectl rollout status deployment/app -n production --timeout=300s
+
+# Проверка событий после отката
+kubectl get events -n production --sort-by='.lastTimestamp' | tail -20
+```
+
+### Мониторинг и валидация (SRE / Sysadmin)
+
+```bash
+# Базовая линия SLO (пример: доступность 99.9%)
+slo-calculator --window 30d --target 99.9 --metric availability
+
+# Проверка бэкапа (PostgreSQL)
+pg_basebackup -D /backups/pg -Ft -z -P -h pg.internal
+pg_restore -l /backups/pg/base.tar.gz | head -20
+
+# DR drill: восстановление на резервном узле
+systemctl stop postgresql
+pg_ctlcluster 16 main start
+psql -c "SELECT count(*) FROM users;" -h pg-restore.internal
+
+# Аудит секретов в образе (Trivy)
+trivy image --secret scan registry.internal/app:1.42.0
+```
+
+### Управление артефактами и очистка
+
+```bash
+# Ротация старых бэкапов (оставить 7 последних)
+ls -t /backups/app-*.tar.gz | tail -n +8 | xargs rm -f
+
+# Очистка старых RC-артефактов в CI/CD
+curl -X POST "https://ci.internal/api/v4/projects/42/jobs" \
+  --data "scope=artifacts" --data "older_than=30d" --data "action=delete"
+
+# Проверка целостности артефакта (hash)
+sha256sum app-1.42.0-linux-amd64.bin
+# → a1b2c3d4... app-1.42.0-linux-amd64.bin
+```
+
+## Типичные ошибки и решения
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
@@ -264,7 +345,7 @@ security:
 | Бэкап не восстанавливается | Бэкап никогда не тестировался | Регулярные restore-тренировки (DR drill) |
 | Инциденты повторяются | Нет postmortem / action items | Культура SRE, трекинг устранений |
 
-### Лучшие практики и очистка
+## Лучшие практики
 
 - **Автоматизируйте** сборку, тесты, сканирование и раскатку — ручной релиз невоспроизводим.
 - **Документируйте runbook** для каждой фазы, особенно для эксплуатации и вывода из эксплуатации.
@@ -273,14 +354,6 @@ security:
 - **Политика хранения артефактов и бэкапов:** ротация, проверка восстановления (DR drill).
 - **Не наказывайте метриками:** SDLC-метрики — диагностический инструмент, а не KPI для штрафов.
 - **Очистка (Cleanup):** decommission-runbook при выводе сервиса (DNS, сертификаты, секреты, ресурсы); удаление временных RC-артефактов.
-
-### Граничные случаи (Edge Cases)
-
-- **Регулируемые отрасли (Compliance):** требуют V-Model, формальной верификации и неизменяемых артефактов — скорость сознательно снижается ради аудита.
-- **Legacy без тестов:** внедрение SDLC начинается с характеризационного тестирования (characterization tests), чтобы не сломать при рефакторинге.
-- **Многосервисные программы:** координация релизов через внутренние платформы (IDP) и общий календарь change window.
-- **Миграции БД как часть SDLC:** долгие, рискованные; требуют отдельного плана (expand/contract), иначе блокируют релиз приложения.
-- **Аварийные хотфиксы:** обходят часть пайплайна, но обязаны проходить минимальный набор проверок и последующий postmortem.
 
 ## Дополнительная информация
 

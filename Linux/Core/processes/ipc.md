@@ -167,9 +167,17 @@ ls -l /var/run/docker.sock
 
 В контейнерных средах разделяемая память часто становится узким местом.
 
+`/dev/shm` — это каталог, который внутри Linux реализован как `tmpfs` (временная файловая система в оперативной памяти). Он используется для POSIX shared memory (`shm_open`), отображения файлов в память (`mmap`) и других механизмов IPC между процессами.
+
+В контейнере ситуация отличается от хоста: `/dev/shm` выглядит как обычный каталог, но внутри Linux это отдельный mount point типа `tmpfs`, который создаётся в собственном mount namespace контейнера. Контейнер получает не просто каталог `/dev/shm` хоста, а собственный экземпляр `tmpfs`.
+
 ```bash
 # Проверка текущего размера /dev/shm (в контейнере по умолчанию 64MB)
 df -h /dev/shm
+
+# Проверка типа файловой системы
+mount | grep shm
+# → tmpfs on /dev/shm type tmpfs ... size=64m
 
 # Временное увеличение размера tmpfs для /dev/shm
 sudo mount -o remount,size=2G /dev/shm
@@ -180,6 +188,36 @@ tmpfs /dev/shm tmpfs defaults,size=2G 0 0
 # Просмотр содержимого разделяемой памяти
 ls -la /dev/shm/
 ```
+
+Поэтому приложения, активно использующие shared memory (PostgreSQL, Chromium, Python multiprocessing, различные IPC-механизмы), могут падать с ошибками, не похожими на нехватку дискового пространства:
+
+```bash
+# Пример: запись в /dev/shm в контейнере с лимитом 64MB
+dd if=/dev/zero of=/dev/shm/test bs=1M count=100
+# → No space left on device
+
+# При этом корневая файловая система может иметь десятки гигабайт свободного места
+df -h /
+```
+
+Размер можно увеличить при запуске контейнера:
+
+```bash
+# Docker run
+docker run --shm-size=1g ...
+
+# Docker Compose
+services:
+  app:
+    shm_size: '1gb'
+```
+
+При этом важно не путать размер `tmpfs` `/dev/shm` с обычным memory limit контейнера. `tmpfs` использует RAM (и может взаимодействовать с swap), поэтому большой `--shm-size` не означает, что контейнер автоматически получил столько физической памяти. Существует два независимых ограничения:
+
+- `/dev/shm size` — сколько shared-memory filesystem может содержать
+- cgroup memory limit — сколько памяти контейнер в целом может использовать
+
+Поэтому контейнер может иметь `--shm-size=2g`, но при `memory.max=512m` всё равно упереться в общий memory limit раньше.
 
 ### Отладка D-Bus служб (systemd)
 
@@ -328,6 +366,8 @@ print(os.read(fd, 100))
 
 **Симптомы:** Падение PostgreSQL, Chromium, или Java-приложений с ошибкой «Cannot allocate memory» или «No space left on device».
 
+**Причина:** В контейнере `/dev/shm` смонтирован как отдельный `tmpfs` (по умолчанию 64 MB), а не как каталог на общей файловой системе. Это независимый лимит, не связанный с `df -h /` или cgroup memory limit. Приложения, ожидающие `/dev/shm` ≥ 1 GB, падают, хотя общий лимит памяти контейнера может быть configured correctly.
+
 **Решение:**
 ```bash
 # Docker Compose: увеличить shared memory
@@ -348,6 +388,8 @@ volumeMounts:
   - name: dshm
     mountPath: /dev/shm
 ```
+
+**Важно:** `--shm-size` и cgroup memory limit — это два независимых ограничения. Контейнер может иметь `--shm-size=2g`, но при `memory.max=512m` упереться в общий memory limit раньше. Настройте оба параметра при работе с memory-intensive приложениями.
 
 ### 2. Зависшие объекты System V IPC после аварийного завершения
 

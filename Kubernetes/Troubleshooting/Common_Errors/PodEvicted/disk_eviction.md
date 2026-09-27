@@ -588,9 +588,73 @@ topk(10, container_fs_usage_bytes{container!=""})
 | Отсутствие мониторинга | Проблемы обнаруживаются только после вылета сервисов | Настройте алерты в Prometheus |
 | Игнорирование disk I/O | DiskPressure из-за медленного диска | Проверяйте `iostat -x` для анализа `await` и `%util` |
 
+### 12. Централизованный сбор логов и DiskPressure
+
+Неправильная настройка сбора логов — одна из частых причин DiskPressure в продакшне. Агент сбора логов (Fluent Bit, Promtail, Vector, Grafana Alloy) должен успевать прочитать лог-файл **до** того, как kubelet выполнит ротацию или удалит под.
+
+**Типичные проблемы:**
+
+| Проблема | Симптом | Решение |
+|:---|:---|:---|
+| Агент не успевает читать логи | `nodefs.available` падает, хотя приложение не пишет много | Увеличьте `containerLogMaxSize` и `containerLogMaxFiles` |
+| Агент упал или завис | Логи копятся в `/var/log/pods/` без отправки | Мониторьте агент через healthcheck, настройте auto-restart |
+| Нет Dual Logging | При использовании network log driver логи не дублируются локально | Включите Dual Logging (Docker 20.10+) |
+| Лог-агент на DaemonSet без requests | Агент потребляет все ресурсы узла | Установите `resources.requests` для агента |
+
+**Рекомендуемая конфигурация для продакшна:**
+
+```yaml
+# Лимиты для контейнера с лог-агентом (DaemonSet)
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+    ephemeral-storage: "100Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+    ephemeral-storage: "500Mi"
+```
+
+**Проверка размера логов на узле:**
+```bash
+# Топ-5 самых больших лог-директорий
+du -sh /var/log/pods/* | sort -rh | head -5
+
+# Общий размер логов
+du -sh /var/log/pods/
+```
+
+> Подробнее: **[Ротация логов Docker](../../../../Docker/Docker_logs/docker_log_rotation.md)**, **[Агентный сбор логов](../../../../Docker/Docker_logs/docker_agent_based_logging.md)**, **[Kubernetes: Архитектура мониторинга и логирования](../../../../Kubernetes/MonitoringLogging/kubernetes-monitoring-logging-architecture.md)**.
+
+### 13. Kernel-level тюнинг для предотвращения DiskPressure
+
+Некоторые параметры ядра косвенно влияют на потребление диска:
+
+| Параметр | Влияние | Рекомендуемое значение |
+|:---|:---|:---|
+| `fs.file-max` | Общий лимит файловых дескрипторов. При исчерпании — процессы не могут создавать файлы. | `2097152` |
+| `fs.inotify.max_user_watches` | Лимит отслеживания файлов (ConfigMap/Secret монтируются через inotify). | `524288` |
+| `fs.inotify.max_user_instances` | Лимит inotify-очередей. При нехватке — поды в Pending. | `512` |
+| `vm.max_map_count` | Лимит memory map areas. Для Elasticsearch/Java приложений. | `262144` |
+
+```bash
+# Проверка текущих значений
+sysctl fs.file-max fs.inotify.max_user_watches fs.inotify.max_user_instances vm.max_map_count
+
+# Применение (временно)
+sudo sysctl -w fs.file-max=2097152
+sudo sysctl -w fs.inotify.max_user_watches=524288
+
+# Персистентно: /etc/sysctl.d/99-k8s-worker.conf
+```
+
+> Подробнее: **[sysctl: Параметры ядра](../../../../Linux/Core/kernel/sysctl.md)**, **[Лимиты ресурсов: Концепции](../../../../Linux/Core/processes/resource_limits_concepts.md)**, **[Подготовка узлов kubeadm](../../../../Kubernetes/Installation/kubeadm/kubeadm_installation_guide.md)**.
+
 ### Смотрите также
 
 - **[Pod Evicted: Определения](./definitions.md)** — база по типам выселений.
 - **[Диагностика выселения](./diagnostics.md)** — общий алгоритм поиска первопричин.
 - **[Профилактика выселения](./prevention.md)** — как настроить кластер, чтобы избежать выселений.
 - **[QoS и выселение](./qos_and_eviction.md)** — влияние классов ресурсов на выбор жертвы.
+- **[Diagnosing Node Unavailability](../NodeUnavailability/diagnostics.md)** — диагностика проблем с узлами.

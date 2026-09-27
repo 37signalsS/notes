@@ -13,6 +13,12 @@
 - `continue` (по умолчанию) — под продолжает работать, infra-контейнер остается живым, IP-адрес и пространства имен сохраняются;
 - `stop` — под (включая infra-контейнер) корректно останавливается, когда завершается последний контейнер. Применяется по умолчанию в `podman kube play` и в Quadlet.
 
+**pinns** — вспомогательная утилита Podman, отвечающая за создание и подготовку совместных пространств имен (PID, IPC, UTS) для пода. В отличие от контейнерного runtime, pinns не запускает процессы — только настраивает неймспейсы через системные вызовы. Используется как при создании пода через CLI, так и при генерации Quadlet-юнитов. В daemonless-архитектуре это отдельный процесс, что позволяет Podman управлять неймспейсами пода без центрального координатора.
+
+**SQLite-бэкенд (Podman 6.x)** — с Podman 4.9 SQLite стала базой данных метаданных по умолчанию для новых установок, а в Podman 6.0 поддержка BoltDB полностью удалена. Метаданные подов (ID, конфигурация, связь с контейнерами) хранятся в локальной SQLite-базе, что ускоряет операции `podman pod ps`, `podman pod inspect` и обеспечивает целостность данных при асинхронном доступе. Автоматическая миграция BoltDB → SQLite выполняется при первом запуске Podman 6.0; для контролируемой миграции используется `podman system migrate --migrate-db`.
+
+**conmon-rs** — экспериментальная реализация монитора контейнеров на Rust (проект `containers/conmon-rs`), которая в перспективе заменит C-версию conmon. Ключевое преимущество для подов: один экземпляр conmon-rs на весь под вместо одного на контейнер, что снижает потребление памяти (целевой RSS 3–4 МБ) и упрощает переиспользование для `podman exec`. На момент Podman 6.x conmon-rs находится в стадии оценки.
+
 ---
 
 ## Основные концепции
@@ -285,6 +291,228 @@ podman kube down web-app.yaml
 
 > **Примечание:** В версиях Podman до 4.3 использовались команды `podman generate kube` и `podman play kube`. Сейчас они считаются устаревшими (deprecated) в пользу группы команд `podman kube`. Ресурсы, запускаемые через `podman kube play`, используют политику выхода `exit-policy=stop`.
 
+### 5. Динамическое управление и отладка (Podman 6.x)
+
+Podman 6.x позволяет изменять параметры уже запущенных подов без пересоздания, что критично для production-сред, где простой пода недопустим.
+
+#### Изменение параметров пода на лету
+
+Команда `podman update` применяет новые ограничения ресурсов и параметры конфигурации к запущенному поду. Изменения затрагивают все контейнеры пода, которые не задали собственный лимит выше нового значения пода.
+
+```bash
+# Уже running под с лимитом 1 CPU
+podman pod stats web-app-pod
+# → NAME         CPU %  MEM USAGE / LIMIT  NET I/O     BLOCK I/O   PIDS
+# → web-app-pod  0.15%  45MB / 1GB         1.2kB/0B    0B/0B       12
+
+# Повышение лимита CPU до 2 (без перезапуска контейнеров)
+podman pod update web-app-pod --cpus 2
+
+# Изменение лимита памяти
+podman pod update web-app-pod --memory 2g
+
+# Проверка новых значений
+podman pod inspect web-app-pod --format "{{.Config.ResourceLimits}}"
+# → {Memory:2147483648 NanoCPUs:2000000000 ...}
+```
+
+Динамически изменяемые параметры пода: `--cpus`, `--memory`, `--cpuset-cpus`, `--cpuset-mems`, `--pids-limit`, `--shm-size`, а также флаги healthcheck (`--health-interval`, `--health-retries`, `--health-cmd` и т.д.). Физические устройства (`--device`), публикация портов (`-p`) и выбор сети (`--network`) изменить после создания пода нельзя — для этого требуется пересоздание пода.
+
+#### Сравнение конфигурации пода (`podman pod diff`)
+
+Команда показывает отличия текущего состояния пода от его исходной конфигурации. Полезна для аудита изменений, примененных через `podman update`, и для отладки неожиданного поведения:
+
+```bash
+# Показать diff
+podman pod diff web-app-pod
+# → Memory: original 1073741824, current 2147483648
+# → Cpus: original 500000000, current 2000000000
+
+# В комбинации с inspect — полная картина изменений
+podman pod inspect web-app-pod --format "{{json .HostConfig.PodUpdateCommand}}" | jq
+```
+
+#### Валидация после создания пода
+
+Проверка корректности создания пода и сетевой доступности:
+
+```bash
+# Создание пода с пробросом портов
+podman pod create --name web-app-pod -p 8080:80
+
+# Запуск контейнеров
+podman run -d --pod web-app-pod --name nginx-server nginx
+podman run -d --pod web-app-pod --name sidecar busybox \
+  sh -c "while true; do wget -qO- localhost:80; sleep 10; done"
+
+# Проверка: под запущен, infra-контейнер жив
+podman ps --pod --filter name=web-app-pod
+# → CONTAINER ID  IMAGE       COMMAND  CREATED   STATUS    PORTS   NAMES
+# → a1b2c3d4e5f   k8s.gcr.io/pause  ...     2m ago    Up 2m    8080->80/tcp  web-app-pod-infra
+# → b2c3d4e5f6g   nginx       ...      2m ago    Up 2m    8080->80/tcp  nginx-server
+
+# Сетевой тест: контейнеры видят друг друга через localhost
+podman exec nginx-server wget -qO- localhost:80
+# → <html>...</html>
+
+# Внешний тест (с хоста)
+curl -s http://localhost:8080
+# → <html>...</html>
+
+# DNS: внешний DNS резолвится внутри пода (через Aardvark/host)
+podman exec nginx-server nslookup google.com
+# → Non-authoritative answer:
+# → google.com has address 142.250.185.14
+```
+
+### 6. Безопасность
+
+#### Контекст SELinux
+
+SELinux работает в режиме enforcing на RHEL, Fedora, CentOS и других дистрибутивах. Для контейнеров и томов Podman автоматически назначает контекст `container_file_t`, но при монтировании каталогов хоста может потребоваться явное relabeling:
+
+```bash
+# Монтирование с автоматическим relabeling (SELinux)
+podman run -d --pod web-app-pod \
+  -v /srv/app/data:/var/lib/app:Z \
+  my-app-image
+
+# :Z — exclusive relabel (только для этого контейнера)
+# :z — shared relabel (разрешено нескольким контейнерам)
+```
+
+В rootless-режиме с user namespace используется расширение `:U` (relabel в контексте user namespace):
+
+```bash
+podman run -d --pod web-app-pod \
+  -v /srv/app/data:/var/lib/app:U \
+  my-app-image
+```
+
+Без флага `:Z`/`:z`/`:U` монтирование в enforcing-режиме завершится ошибкой `permission denied`.
+
+#### Контекст безопасности контейнера (Security Context)
+
+```bash
+# Запуск без привилегий (по умолчанию)
+podman run -d --pod web-app-pod --name app my-app
+
+# Отключение SELinux внутри контейнера (не рекомендуется)
+podman run -d --pod web-app-pod --security-opt label=disable my-app
+
+# Добавление capabilities
+podman run -d --pod web-app-pod --cap-add=NET_ADMIN my-app
+
+# Полный привилегированный режим
+podman run -d --pod web-app-pod --privileged my-app
+```
+
+В Quadlet флаги безопасности задаются в секции `[Container]`:
+
+```ini
+[Container]
+Image=my-app:latest
+SecurityOptDisableSeccomp=true
+SecurityOptLabelDisable=false
+AddCapability=NET_ADMIN
+```
+
+### 7. Типичные проблемы и диагностика
+
+#### Порт уже занят
+
+```bash
+# Симптом: Error creating pod: container_linux.go:380:
+#   starting container process caused "process_linux.go:380:
+#   container init caused \"listen tcp:8080:bind: address already in use\""
+
+# Диагностика
+ss -tlnp | grep 8080
+# → LISTEN 0 128 *:8080 *:* users:(("nginx",pid=1234,fd=6))
+
+# Решение 1: освободить порт на хосте
+sudo kill 1234
+
+# Решение 2: изменить проброс портов пода
+podman pod rm --force web-app-pod
+podman pod create --name web-app-pod -p 8081:80
+```
+
+#### Permission denied при создании пода
+
+```bash
+# Симптом: Error: creating container storage: lstat /proc/1234/ns/net:
+#   permission denied
+
+# Причина: не настроены subuid/subgid для пользователя
+cat /etc/subuid
+# → user:100000:65536
+
+# Решение (от root)
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER
+podman system migrate
+```
+
+#### DNS не резолвится внутри пода
+
+```bash
+# Симптом: контейнер не может разрешить внешние имена
+podman exec nginx-server nslookup google.com
+# ;; connection timed out; no servers could be reached
+
+# Диагностика: проверка /etc/resolv.conf внутри пода
+podman exec nginx-server cat /etc/resolv.conf
+# → nameserver 10.88.0.1 (Aardvark)
+# → search podman
+
+# Решение 1: указать внешний DNS при создании пода
+podman pod create --name web-app-pod \
+  --dns 8.8.8.8 --dns 1.1.1.1 \
+  -p 8080:80
+
+# Решение 2: использовать сеть хоста (внимание: теряется изоляция)
+podman pod create --name web-app-pod --network host -p 8080:80
+```
+
+#### Контейнер не видит localhost внутри пода
+
+```bash
+# Симптом: wget localhost:80 не работает, хотя порт проброшен
+# Причина: контейнер в поде с `--share=` (без общего network namespace)
+# Это поведение по умолчанию в podman-compose
+
+# Решение 1: для нативного пода убедитесь, что infra-контейнер активен
+podman ps --filter name=web-app-pod-infra
+# Если infra не найден — под создан с --infra=false
+
+# Решение 2: проверка shared namespaces
+podman pod inspect web-app-pod --format "{{.ShareNamespaces}}"
+# → net,ipc,uts (должно включать net)
+```
+
+#### Infra-контейнер завис и не останавливается
+
+```bash
+# Симптом: podman pod stop не завершается, контейнеры в статусе "Stopping"
+# Диагностика
+podman ps -a --filter name=web-app-pod
+# → STATUS: Up 2 hours (или Stuck)
+
+# Решение: принудительная остановка
+podman pod kill web-app-pod
+podman pod rm --force web-app-pod
+```
+
+#### Полярные контейнеры (orphans) после удаления пода
+
+```bash
+# Проверка: существуют ли контейнеры без родительского пода
+podman ps -a --filter "pod=!web-app-pod" --filter "label=io.podman.namespace=web-app-pod"
+
+# Очистка всех неиспользуемых контейнеров
+podman container prune -f
+```
+
 ---
 
 ## Нюансы и сравнение с Podman Compose
@@ -298,6 +526,19 @@ podman kube down web-app.yaml
 | **Взаимодействие** | Только через порты на `localhost`. | Через DNS (имена контейнеров). |
 | **Публикация портов** | Только на уровне всего пода (`-p` нельзя менять после создания). | На уровне отдельных сервисов. |
 | **Производительность** | Чуть выше из-за отсутствия лишних сетевых мостов. | Зависит от сложности сети Compose. |
+| **Лимиты ресурсов** | На уровне пода через cgroup-родителя; контейнер может только уменьшить. | На уровне отдельных сервисов (`cpus`, `mem_limit`, `deploy.resources`). |
+| **Политика выхода** | `exit-policy` на уровне пода (`continue`/`stop`). | Управляется на уровне сервисов; при `podman-compose down` контейнеры удаляются. |
+| **Безопасность** | SELinux-контексты применяются к infra-контейнеру и всем контейнерам пода. | Применяется к каждому контейнеру отдельно. |
+| **Экспорт в Kubernetes** | Нативный: `podman kube generate <pod>` → манифест K8s. | Требует доп. шагов: `podman pod ps` → найти ID → `podman kube generate`. |
+| **Режим rootless** | Полная поддержка через Pasta; порты пробрасываются на host-интерфейс. | Поддерживается, но сетевые стеки настраиваются индивидуально для каждого сервиса. |
+
+### Важные ограничения нативного подхода
+
+- **Порты нельзя опубликовать после создания**: если потребовался другой порт, под необходимо пересоздать. Для zero-downtime деплоя используйте внешний reverse proxy (например, запущенный в отдельном поде) или DNS/load-balancer.
+- **Порты внутри пода уникальны**: два контейнера пода не могут слушать один и тот же порт — второй получит ошибку `bind: address already in use`.
+- **Без `--share=net` нет localhost**: если под создан с отключенным общим сетевым namespace (например, `--share=""` или через Compose с `--share=`), контейнеры не видят друг друга по `127.0.0.1`. Используйте DNS-имена сервисов.
+- **Обновление образа требует перезапуска контейнера**: `podman pod update` изменяет лимиты, но не обновляет образы. Для обновления образа используйте `podman container update --image new:tag <container>` или пересоздайте контейнер.
+- **Зависимости внутри пода**: порядок запуска контейнеров внутри пода не гарантирован. Если требуется запуск БД перед приложением, используйте либо Quadlet с `After=`/`Requires=`, либо скрипт ожидания готовности (healthcheck loop).
 
 ---
 
@@ -311,7 +552,102 @@ podman kube down web-app.yaml
 
 Подробнее: **[Управление зависимостями и готовностью](./podman-dependencies.md)**.
 
+### Хранение метаданных и миграция
+
+Поды, как и контейнеры, хранят метаданные в локальной базе данных:
+
+```bash
+# Проверка бэкенда базы данных
+podman info --format '{{.Host.DatabaseBackend}}'
+# → sqlite
+
+# Принудительная миграция BoltDB → SQLite (Podman 6.0)
+podman system migrate --migrate-db
+```
+
+С Podman 6.0 BoltDB полностью удален; автоматическая миграция выполняется при первом запуске. Для больших инсталляций (>10 000 контейнеров/подов) рекомендуется выполнить миграцию вручную, остановив systemd-активируемые сервисы.
+
+### Namespace-модель и pinns
+
+Для создания подов Podman использует утилиту **pinns** (Podman INitialize Namespaces). Её задача — подготовить неймспейсы до запуска контейнеров:
+
+```bash
+# Внутренний вызов (не требует ручного запуска)
+pinns --ipc --net --uts --pid /proc/1234/ns /var/run/podman/...
+
+# Просмотр созданных неймспейсов (через podman unshare)
+podman unshare ls /proc/1234/ns
+# → ipc -> 'ipc:[12345]'
+# → net -> 'net:[67890]'
+# → uts -> 'uts:[11111]'
+```
+
+pinns создает неймспейсы один раз при создании пода, после чего все контейнеры пода присоединяются к уже существующим неймспейсам. Это эффективнее, чем создавать новый неймспейс для каждого контейнера, и гарантирует их общность.
+
+### Kubernetes: расширенная интеграция
+
+`podman kube generate` поддерживает больше типов ресурсов и опций, чем базовый Pod. При экспорте пода учитываются:
+
+```bash
+# Полный манифест с Deployment, Service и PersistentVolumeClaim
+podman kube generate --type deployment web-app-pod > web-app.yaml
+```
+
+**Тома:** если контейнеры пода используют именованные тома (`podman volume create`), манифест генерирует соответствующие `PersistentVolumeClaim`. Для bind-mountов создаются `hostPath`-тома с абсолютными путями хоста — при переносе в кластер такие тома требуют адаптации.
+
+**Переменные окружения и секреты:** переменные окружения пода переносятся в `env` секции контейнеров Deployment. `podman secret` экспортируется как `Secret` с типом `Opaque` (требуется `type=env` или `type=mount` в Quadlet).
+
+**Метки и аннотации:** метки пода (`--label`) и контейнеров переносятся в `metadata.labels` и `metadata.annotations` манифеста.
+
+```bash
+# Проверка сгенерированного манифеста
+podman kube generate --type deployment web-app-pod | yq '.spec.template.spec.containers[0].env'
+```
+
+### Очистка и рекомендации
+
+```bash
+# Удаление одного пода (при остановленном поде)
+podman pod rm web-app-pod
+
+# Удаление запущенного пода (принудительно)
+podman pod rm --force web-app-pod
+
+# Удаление ВСЕХ неиспользуемых подов (без контейнеров)
+podman pod prune -f
+
+# Удаление неиспользуемых контейнеров (включая "осиротевшие")
+podman container prune -f
+
+# Полная очистка: контейнеры, тома, сети, образы
+podman system prune -a --volumes
+```
+
+**Рекомендации по очистке:**
+- Перед `podman pod rm` убедитесь, что контейнеры пода остановлены, или используйте `--force`.
+- `podman pod prune` удаляет только поды с статусом `Created` или `Exited`; запущенные поды не затрагиваются.
+- `podman system prune` НЕ удаляет тома по умолчанию — добавьте `--volumes` для их удаления.
+- Организуйте регулярный `podman system prune` через cron/timer для development-сред.
+
+### Мониторинг и наблюдаемость
+
+```bash
+# Статистика потребления ресурсов в реальном времени
+podman pod stats web-app-pod
+# → NAME         CPU %  MEM USAGE / LIMIT  NET I/O     BLOCK I/O   PIDS
+# → web-app-pod  0.15%  45MB / 1GB         1.2kB/0B    0B/0B       12
+
+# Агрегированные логи всех контейнеров пода
+podman pod logs -f web-app-pod
+
+# События systemd-юнита пода (если используется Quadlet)
+journalctl --user -u app-stack-pod.service -f
+```
+
+Для сброса статистики `podman pod stats` используйте `podman system reset` (останавливает все контейнеры).
+
 ### См. также
 - **[Healthchecks в Podman](./podman_healthchecks.md)** — проверка готовности сервисов внутри пода.
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — как работают процессы `conmon` и инфраструктура подов.
 - **[Миграция с Docker (Compose → Quadlet)](./migration-from-docker.md)** — подробнее о переходе на Quadlet и различиях в сетевом стеке.
+- **[Podman Compose](./podman-compose.md)** — компоновка сервисов через Compose-спецификацию.

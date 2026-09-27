@@ -448,9 +448,7 @@ set protocols bgp group INTERNAL family inet unicast
 | Сессия устанавливается, но маршруты не приходят | Filter block | Проверить `show ip bgp neighbors <IP> received-routes` |
 | | Prefix-list отбрасывает маршруты | Проверить `show ip bgp neighbors <IP> adj-rib-in` |
 | | Soft-reconfiguration не включена | `neighbor <IP> soft-reconfiguration inbound` |
-| Маршруты есть в RIB, но нет в FIB | Проблема с next-hop resolution | `show ip cef <prefix>` |
-| | TCAM переполнен | Проверить `show platform hardware capacity` |
-| | Синхронизация RIB/FIB | `clear ip bgp * soft` |
+| Маршруты есть в RIB, но нет в FIB | Проблема с next-hop resolution; adjacency invalid; TCAM overflow; ASIC ограничения | `show ip cef <prefix> detail` + `show adjacency detail` + `show ip arp <next-hop>` + `show platform hardware qfp active feature cef drop` | Корректировка next-hop; оптимизация adjacency; проверка capacity FIB; `clear ip bgp * soft` |
 | Конвергенция медленная | Hold Time слишком велик | Уменьшить Hold Time, включить BFD |
 | | MRAI-таймер не оптимизирован | `neighbor <IP> advertisement-interval 5` |
 | | Route Reflector не отражает | Проверить `show ip bgp neighbors <IP> routes` |

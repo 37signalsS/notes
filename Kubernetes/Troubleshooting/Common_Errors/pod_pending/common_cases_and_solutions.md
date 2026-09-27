@@ -347,6 +347,144 @@ kubectl describe pod <name> | grep -A 10 "RequiredDuringScheduling"
 
 ---
 
+### 11. ServiceAccount и монтирование токена
+
+**Симптом:** Pod в Pending или `ContainerCreating` с ошибками `FailedMount` или `FailedCreatePodConfigMap`.
+
+**Мини-кейс:** Deployment ссылается на `serviceAccountName: my-sa`, но ServiceAccount не создан в target namespace.
+
+**Диагностика:**
+```bash
+# Проверка ServiceAccount
+kubectl get sa my-sa -n <namespace>
+# → Error from server (NotFound): serviceaccounts "my-sa" not found
+
+# Проверка Secret SA
+kubectl get sa my-sa -n <namespace> -o jsonpath='{.secrets}'
+# → (пусто — SA без секрета)
+
+# Проверка событий монтирования
+kubectl describe pod <name> | grep -A 5 "Events:"
+# → Warning  FailedMount  ... MountVolume.SetUp failed for volume "xxx": secret "my-sa-token-xxx" not found
+```
+
+**Решения:**
+1. **Создать SA:** `kubectl create serviceaccount my-sa -n <namespace>`
+2. **Проверить автоматическое создание Secret:** SA автоматически создаёт Secret с токеном (v1.24+). Если `automountServiceAccountToken: false` — токен не создаётся.
+3. **RBAC:** Убедитесь, что SA имеет права на required ресурсы (RoleBinding/ClusterRoleBinding).
+
+**Важно:** ServiceAccount с `automountServiceAccountToken: false` не создаёт Secret → Pod не может смонтировать токен → Pending/ContainerCreating.
+
+---
+
+### 12. Spot-инстансы и taints
+
+**Симптом:** `0/X nodes are available: Y had taint {spot-instance: true}, that pod didn't tolerate`.
+
+**Мини-кейс:** Кластер на spot-инстансах (AWS/GCP/Azure). Spot-узлы имеют taint `spot-instance=true:NoSchedule`. Pod без `tolerations` не может быть запланирован.
+
+**Диагностика:**
+```bash
+# Проверка taints на spot-узлах
+kubectl get nodes -o json | jq '.items[] | select(.spec.taints[]? | .key=="spot-instance") | {name:.metadata.name, taints:.spec.taints}'
+# → {"name":"spot-node-1","taints":[{"key":"spot-instance","value":"true","effect":"NoSchedule"}]}
+
+# Проверка tolerations в Pod
+kubectl describe pod <name> | grep -A 5 Tolerations
+# → Tolerations: <пусто>
+```
+
+**Решения:**
+1. **Добавить tolerations:** Добавьте `tolerations` для spot-узлов в манифест Pod.
+2. **nodeSelector для on-demand:** Используйте `nodeSelector: node.kubernetes.io/instance-type=~"m5.*"` для выбора on-demand узлов.
+3. **PriorityClass:** Для критических сервисов используйте `preemptionPolicy: PreemptLowerPriority` для вытеснения с spot-узлов.
+
+---
+
+### 13. DaemonSet Pending на отдельном узле
+
+**Симптом:** DaemonSet работает на 9 узлах из 10. На одном узле Pod не создан.
+
+**Диагностика:**
+```bash
+# Проверка статуса DaemonSet
+kubectl get daemonset <ds-name>
+# → DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR
+# → 10        9         9       9            9           <none>
+
+# Проверка conditions узла
+kubectl describe node <node> | grep -A 10 "Conditions:"
+# → MemoryPressure   True    ...   ← блокирует запуск Pod
+
+# Проверка taints
+kubectl get node <node> -o jsonpath='{.spec.taints}'
+# → [{"key":"node.kubernetes.io/disk-pressure","effect":"NoSchedule"}]
+```
+
+**Решения:**
+1. **Очистить узел:** Если `DiskPressure` — освободить место на диске.
+2. **Удалить taint:** Если taint не критичен — `kubectl taint nodes <node> node.kubernetes.io/disk-pressure:NoSchedule-`
+3. **DaemonSet tolerations:** DaemonSet автоматически добавляет toleration для `node.kubernetes.io/unschedulable:NoSchedule`, но не для других taints.
+
+---
+
+### 14. StatefulSet Pending из-за unbound PVC
+
+**Симптом:** StatefulSet с 3 репликами: 2 Pod запущены, 3-й Pending.
+
+**Диагностика:**
+```bash
+# Проверка PVC
+kubectl get pvc -n <namespace>
+# → NAME              STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS
+# → data-myapp-0      Bound     pvc-xxx  10Gi       RWO            standard
+# → data-myapp-1      Bound     pvc-yyy  10Gi       RWO            standard
+# → data-myapp-2      Pending                                       standard
+
+# Проверка StorageClass
+kubectl get sc standard -o jsonpath='{.volumeBindingMode}'
+# → WaitForFirstConsumer (ожидает назначения Pod)
+
+# Проверка Availability Zone
+kubectl get node <node> -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}'
+# → zone-c (все узлы в zone-c заняты)
+```
+
+**Решения:**
+1. **Добавить узлы:** Добавить узлы в zone-c через CA или вручную.
+2. **Изменить zone:** Убрать `nodeSelector` или использовать `topologySpreadConstraints` с `ScheduleAnyway`.
+3. **Immediate binding:** Изменить `volumeBindingMode` на `Immediate` (риск zonal mismatch).
+
+---
+
+### 15. Ephemeral Storage exhaustion
+
+**Симптом:** `0/X nodes are available: Y Insufficient ephemeral-storage`. Pod в Pending без видимых причин (CPU/RAM достаточно).
+
+**Диагностика:**
+```bash
+# Проверка ephemeral-storage на узлах
+kubectl describe nodes | grep -A 3 "ephemeral-storage"
+# → ephemeral-storage:  100Gi   ← Capacity
+# →   Allocatable:      95Gi    ← после вычета reserved
+
+# Проверка использованного пространства
+kubectl describe node <node> | grep -A 10 "Allocated resources"
+# → ephemeral-storage
+# →   Requests:  85Gi   ← 85Gi занято, свободно 10Gi
+
+# Проверка Pod с высоким ephemeral-storage usage
+kubectl get pods -A -o json | jq '.items[] | select(.spec.containers[].resources.requests["ephemeral-storage"] != null) | {name:.metadata.name, ns:.metadata.namespace, requests:.spec.containers[].resources.requests["ephemeral-storage"]}' | head -20
+```
+
+**Решения:**
+1. **Уменьшить ephemeral-storage requests:** Снизить требования Pod.
+2. **Очистить Pod/логи:** Удалить завершённые Pod, очистить логи контейнеров.
+3. **Увеличить ephemeral-storage:** Расширить disk на узле или добавить узлы с большим диском.
+4. **Настроить imageGC:** Увеличить `imageGCHighThresholdPercent` для автоматической очистки образов.
+
+---
+
 ## Граничные случаи и известные ограничения
 
 1. **ResourceQuota vs LimitRange:** ResourceQuota проверяется на уровне Namespace, LimitRange — на уровне Pod. Оба могут блокировать создание.
@@ -410,3 +548,7 @@ kubectl describe pod <name> | grep -A 10 "RequiredDuringScheduling"
 - **[Диагностика](./diagnostics.md)** — алгоритм поиска причин Pending.
 - **[Продвинутые темы](./advanced_topics.md)** — глубокий разбор Scheduling Gates и DRA.
 - **[Определения и концепции](./definitions_and_concepts.md)** — базовые термины и архитектура планирования.
+- **[Вопросы для собеседования](./interview_questions.md)** — типичные вопросы и ответы по Pending.
+- **[Postmortem кейсы](./postmortem_cases.md)** — реальные сценарии из продакшена.
+- **[Kubelet](../../../Concepts/kubelet.md)** — system-reserved, kube-reserved, Allocatable.
+- **[Container Runtime](../../../Concepts/container_runtime.md)** — containerd, CRI-O, crictl.

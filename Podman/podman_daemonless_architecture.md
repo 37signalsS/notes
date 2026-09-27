@@ -55,22 +55,6 @@ Podman делегирует задачи специализированным и
 
 **Изменения в Podman 6.0** (важно для обновления): удалены поддержка **CNI**-сетей (остался только Netavark), файрвол **iptables** (используется nftables), сетевое окружение **slirp4netns** (заменено на Pasta) и поддержка **cgroups v1**. Изоляция сети теперь включена по умолчанию, что улучшает совместимость с Docker API.
 
-### Хранение состояния (SQLite)
-
-Podman хранит метаданные контейнеров, подов и томов в локальной базе данных (сами данные томов и слои образов — в файловой системе хранилища).
-
-- **Podman 4.9**: SQLite стала базой данных по умолчанию для новых установок.
-- **Podman 5.x**: BoltDB объявлена устаревшей, создание новых BoltDB-баз запрещено (существующие продолжали работать); выводилось предупреждение о необходимости миграции.
-- **Podman 6.0**: поддержка BoltDB полностью удалена; при первом запуске Podman выполняет **автоматическую миграцию** BoltDB → SQLite. Для контролируемой миграции (например, на больших серверах) существует команда `podman system migrate --migrate-db`.
-
-```bash
-# Проверка текущего бэкенда базы данных
-podman info --format '{{.Host.DatabaseBackend}}'
-# → sqlite
-```
-
-Параметр `database_backend` в `containers.conf` (`[engine]`) позволяет явно выбрать `boltdb` или `sqlite` (пустое значение — "использовать существующую, иначе sqlite"). Перед сменой бэкенда рекомендуется выполнить `podman system reset`.
-
 ### Интеграция с systemd и Quadlet
 
 Поскольку Podman не имеет собственного демона-планировщика, он использует **systemd** как нативный оркестратор для одиночных узлов. Контейнеры регистрируются в иерархии cgroups systemd (`--cgroup-manager=systemd` — значение по умолчанию), поэтому управляются стандартными средствами: `systemctl`, `journalctl`, лимиты ресурсов, зависимости.
@@ -89,6 +73,45 @@ podman info --format '{{.Host.DatabaseBackend}}'
 - `ignore` — `NOTIFY_SOCKET` игнорируется (полезно, когда Podman вызывается из другого сервиса, использующего sdnotify).
 
 **Альтернатива (легаси):** команда `podman generate systemd` создает классические юниты из запущенных контейнеров. Quadlet считается рекомендованным подходом для продакшена.
+
+### Хранение состояния (SQLite)
+
+Podman хранит метаданные контейнеров, подов и томов в локальной базе данных (сами данные томов и слои образов — в файловой системе хранилища).
+
+- **Podman 4.9**: SQLite стала базой данных по умолчанию для новых установок.
+- **Podman 5.x**: BoltDB объявлена устаревшей, создание новых BoltDB-баз запрещено (существующие продолжали работать); выводилось предупреждение о необходимости миграции.
+- **Podman 6.0**: поддержка BoltDB полностью удалена; при первом запуске Podman выполняет **автоматическую миграцию** BoltDB → SQLite. Для контролируемой миграции (например, на больших серверах) существует команда `podman system migrate --migrate-db`.
+
+```bash
+# Проверка текущего бэкенда базы данных
+podman info --format '{{.Host.DatabaseBackend}}'
+# → sqlite
+```
+
+Параметр `database_backend` в `containers.conf` (`[engine]`) позволяет явно выбрать `boltdb` или `sqlite` (пустое значение — "использовать существующую, иначе sqlite"). Перед сменой бэкенда рекомендуется выполнить `podman system reset`.
+
+**Драйверы хранилища и особенности daemonless:**
+
+| Драйвер | Где используется | Особенности в daemonless-контексте |
+| :--- | :--- | :--- |
+| **overlay** | По умолчанию на большинстве дистрибутивов | Поддерживает hard links; не требует дополнительных mount-операций при запуске. В rootless-режиме требует `fuse-overlayfs` если kernel не поддерживает unprivileged overlay mounts. |
+| **vfs** | Fallback, отладка | Каждый слой — отдельная копия файлов. Медленнее, но не требует специальных mount-прав. Полезен на файловых системах без overlay support (например, NFS в старых ядрах). |
+| **btrfs** | Специализированные хосты | Использует built-in snapshot. Может потребовать `user_subvol_rm_allowed` для rootless. |
+| **zfs** | Специализированные хосты | Аналогично btrfs, но через ZFS datasets. В daemonless-контексте работает идентично — mount выполняется рантаймом, не демоном. |
+
+```bash
+# Проверка текущего драйвера хранилища
+podman info --format '{{.Store.GraphDriverName}}'
+# → overlay
+
+# Проверка backing filesystem для хранилища
+df -T ~/.local/share/containers/storage
+# → overlay on /dev/nvme0n1p2 type ext4 (1.8T)
+```
+
+**Важно:** В daemonless-архитектуре mount-операции выполняет рантайм (`crun`) от имени запустившего пользователя, а не центральный демон. Это означает:
+- В rootless-режиме mount-point принадлежит пользователю, и его cleanup происходит при завершении conmon.
+- При падении хоста или kill -9 контейнера mount-точки могут оставаться "висячими" до перезагрузки или ручного `podman system prune`.
 
 ### Docker API-совместимость (Socket)
 
@@ -215,9 +238,305 @@ podman info --format '{{.Host.DatabaseBackend}}'
 # → sqlite
 ```
 
+### 5. Диагностика жизненного цикла (conmon и процессы)
+
+При отсутствии центрального демона диагностика строится вокруг `conmon` и systemd:
+
+```bash
+# Поиск conmon для конкретного контейнера
+CONMON_PID=$(podman inspect --format '{{.State.ConmonPid}}' web-test)
+ps -fp $CONMON_PID -o pid,ppid,cmd
+
+# Проверка PPID: должен быть 1 (systemd) или pid systemd --user
+# → PID TTY      STAT   TIME COMMAND
+# → 12345 ?        Ss     0:00 /usr/bin/conmon ...
+
+# Просмотр открытых файловых дескрипторов conmon
+ls -la /proc/$CONMON_PID/fd
+
+# Проверка, что контейнер "уже не зависит" от CLI-процесса
+podman run -d --name orphan-test nginx:alpine
+CLI_PID=$!
+sleep 2
+kill $CLI_PID 2>/dev/null
+podman ps --filter name=orphan-test
+# → orphan-test Up ... (жив, хотя CLI-процесс убит)
+```
+
+**Диагностика через systemd (rootless):**
+
+```bash
+# Проверка статуса юнита
+systemctl --user status web.service
+
+# Просмотр полного ExecStart (включая --sdnotify, --cgroups)
+systemctl --user cat web.service | grep ExecStart
+# → ExecStart=/usr/bin/podman run ... --sdnotify=container ...
+
+# Проверка MAINPID (должен указывать на conmon)
+systemctl --user show web.service -p MainPID --value
+# → 12345
+```
+
+### 6. Ограничение ресурсов в Quadlet
+
+В daemonless-архитектуре все лимиты применяются через cgroups systemd. В Quadlet ресурсы задаются в секции `[Container]` или через drop-in к секции `[Service]`:
+
+```ini
+# Файл: ~/.config/containers/systemd/web.container
+[Unit]
+Description=Web with resource limits
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/nginx:alpine
+PublishPort=80:80
+Cpus=2
+Memory=1g
+MemorySwap=1.5g
+PidsLimit=256
+# Дополнительные лимиты через drop-in или cgroupfs параметры
+# annotation io.resourcepolicy=... (зависит от версии Podman)
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+# Проверка примененных cgroup-лимитов
+systemctl --user show web.service -p CPUQuotaPerSecUSec --value
+# → 2000000us (2 CPUs)
+
+# Просмотр live cgroup-иерархии
+systemd-cgtop -b -n 1
+# → Control Group                            CPU  Memory
+# → user.slice/user@1000.service/...          0.5%  80M
+
+# Проверка memory.max (cgroup v2)
+cat /sys/fs/cgroup/user.slice/user@1000.service/.../memory.max
+# → 1073741824
+```
+
+**Важно:** `MemorySwap` в Quadlet транслируется в `--memory-swap` CLI, что ограничивает общую память + swap. При `--cgroup-manager=systemd` Podman делегирует контроль cgroup systemd, и ручная правка cgroup-путей может конфликтовать с юнитом.
+
+### 7. Централизованный сбор логов
+
+В daemonless-архитектуре логи контейнеров направляются в `journald` (при использовании systemd/Quadlet) или в stdout/stderr CLI-процесса. Централизованный сбор требует настройки на уровне ОС:
+
+```bash
+# Логи конкретного контейнера через journalctl (rootless)
+journalctl --user -u web.service --since "1 hour ago" -o json-pretty
+
+# Фильтр по приоритету (ERROR и выше)
+journalctl --user -u web.service -p err --since today
+
+# Поиск по содержимому
+journalctl --user -u web.service --grep "timeout"
+
+# Persistent storage для rootless юнитов
+# По умолчанию journald в user-mode хранит логи в /var/log/journal/
+# Если Storage=volatile, логи теряются после перезагрузки
+mkdir -p ~/.local/share/journal
+journalctl --user --flush
+```
+
+**Для rootful-сервисов:**
+
+```bash
+journalctl -u web.service --since "1 hour ago" -f
+```
+
+### 8. Аудит событий и compliance
+
+Без центрального демона аудит строится на `podman events` и journald:
+
+```bash
+# Поток событий в реальном времени (create, start, stop, die, kill)
+podman events --filter event=create,start,stop,died,kill --format '{{.Time}} {{.Event}} {{.Actor}}'
+
+# Аудит запуска контейнеров за последний час
+podman events --filter event=start --since 1h --format '{{.Time}} {{.Actor}} {{.PID}}'
+
+# Поиск контейнеров без метки io.containers.autoupdate (compliance)
+podman ps --filter label=!io.containers.autoupdate --format '{{.Names}}'
+
+# Проверка использования секретов (должны быть только через secret, не env)
+podman inspect $(podman ps -q) --format '{{range .HostConfig.Env}}ENV: {{.}}{{"\n"}}{{end}}'
+```
+
 ---
 
-## Дополнительная информация
+## Устранение неполадок
+
+### Типичные ошибки daemonless-архитектуры
+
+| Симптом | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| Контейнер завершается сразу после `podman run -d` | Приложение упало, или HEALTHCHECK не настроен при `--sdnotify=healthy` | Проверить `podman logs <name>`; при `sdnotify=healthy` добавить `HealthCmd` в Quadlet или CLI |
+| `systemctl --user start` зависает в `activating` | `NOTIFY_SOCKET` не получен, таймаут `TimeoutStartSec` | Проверить, что приложение поддерживает sdnotify, или переключить на `--sdnotify=conmon` |
+| `podman events` не показывает события | `events_logger` не настроен, или используется `cgroupfs` вместо `systemd` | Проверить `events_logger=file` или `journald` в `containers.conf` |
+| Контейнер "висит" в `stopped` после `podman stop` | conmon не завершился, или остались зависшие процессы | `podman rm -f <name>`; проверить `ps aux | grep conmon` |
+| `podman system service` не поднимается | `dbus-user-session` не запущен (rootless) или сокет не активен | `systemctl --user enable --now podman.socket`; убедиться, что `XDG_RUNTIME_DIR` корректен |
+| Rootless-контейнер исчез после logout | pause-процесс убит при завершении сессии | Включить `loginctl enable-linger $USER` для серверных узлов |
+| `Error: short-name` при pull | Реестр не настроен, не указан FQIN | Использовать `docker.io/library/nginx:alpine` или настроить `registries.conf` |
+| `cgroup` ограничения не применяются | `--cgroup-manager=cgroupfs` вместо `systemd` | Переключить на `systemd` или задать `--cgroups=enabled` |
+
+### Диагностические команды
+
+```bash
+# Быстрый health-check daemonless-окружения
+echo "=== Database backend ==="
+podman info --format '{{.Host.DatabaseBackend}}'
+
+echo "=== Storage driver ==="
+podman info --format '{{.Store.GraphDriverName}}'
+
+echo "=== Cgroup manager ==="
+podman info --format '{{.Host.CgroupManager}}'
+
+echo "=== Conmon processes ==="
+pgrep -a conmon
+
+echo "=== Systemd user session ==="
+systemctl --user show | grep -E 'MainPID|SubState|ActiveState'
+
+echo "=== Socket activation ==="
+systemctl --user status podman.socket
+
+echo "=== Recent events ==="
+podman events --filter event=start,stop,died --since 5m --format '{{.Time}} {{.Event}} {{.Actor}} {{.Status}}'
+```
+
+### Логирование и audit trail
+
+```bash
+# Журнал systemd-юнита (rootless)
+journalctl --user -u web.service --since "2 hours ago" -o short-iso
+
+# Поиск ошибок в journald
+journalctl --user -u web.service -p err --since today | tail -20
+
+# Экспорт метрик conmon (вручную через /proc)
+CONMON_PID=$(podman inspect --format '{{.State.ConmonPid}}' web-test)
+cat /proc/$CONMON_PID/status | grep -E 'VmRSS|Threads|voluntary'
+
+# Мониторинг в реальном времени
+podman events --filter event=start,stop,died,kill --format '{{.Time}} {{.Event}} {{.Actor}}' --since 1m
+```
+
+## Best practices для SRE/Sysadmin
+
+### Проектирование production-окружения
+
+1. **Используйте Quadlet для всех сервисов.** Внешние `podman run` команды несовместимы с автообновлением, audit и централизованным управлением. Размещайте `.container`-файлы в `/etc/containers/systemd/` (rootful) или `~/.config/containers/systemd/` (rootless).
+
+2. **Используйте FQIN (Fully Qualified Image Name) с digest.** Короткие теги (`latest`) ненадежны в продакшене:
+   ```ini
+   [Container]
+   Image=docker.io/library/nginx@sha256:abc123...
+   ```
+
+3. **Настройте `sdnotify` корректно.** Для приложений с длительной инициализацией используйте `Notify=healthy` + `HealthCmd` вместо `Notify=conmon`, чтобы systemd не считал сервис готовным до фактической готовности приложения.
+
+4. **Включите `AutoUpdate=registry`** только для staging-сред. В production обновления должны проходить через CI/CD pipeline с предварительным тестированием.
+
+5. **Разделите rootful и rootless зоны.** Rootful — для системных сервисов, требующих привилегий (проброс портов <1024, настройка сети). Rootless — для пользовательских рабочих нагрузок.
+
+### Мониторинг и алертинг
+
+```bash
+# Базовый мониторинг: failed/unhealthy контейнеры
+FAILED=$(podman ps --filter health=unhealthy --format '{{.Names}}')
+if [ -n "$FAILED" ]; then
+  echo "ALERT: unhealthy containers: $FAILED"
+fi
+
+# Проверка, что Quadlet-юниты в desired state
+systemctl --user list-units --type=service --state=failed | grep podman
+
+# Мониторинг дискового пространства хранилища
+podman system df
+df -h ~/.local/share/containers/storage
+```
+
+### Резервное копирование и disaster recovery
+
+```bash
+# Экспорт метаданных (SQLite) для disaster recovery
+cp ~/.local/share/containers/storage/containers.db ~/backups/
+
+# Экспорт запущенных контейнеров в YAML
+podman generate kube running-container > backup.yaml
+
+# Восстановление из backup
+podman play kube backup.yaml
+```
+
+### Compliance checklist
+
+- [ ] Все production-сервисы управляются через Quadlet (systemd)
+- [ ] Используются `io.containers.autoupdate=registry` только где explicitly одобрено
+- [ ] `--cap-drop=ALL` с явным добавлением только необходимых capabilities
+- [ ] `--security-opt no-new-privileges` для всех production-контейнеров
+- [ ] `Memory` и `Cpus` заданы в Quadlet для каждого сервиса
+- [ ] Логи направлены в journald (`--log-driver=journald` для rootful)
+- [ ] `podman events` агрегируется в SIEM (Filebeat, Fluentd, или journald remote)
+- [ ] `pods` используются для tightly-coupled сервисов, share network namespace
+
+### Инцидент-респонс (SRE playbook)
+
+**Сценарий 1: Контейнер в `CrashLoopBackOff`-подобном состоянии**
+
+```bash
+# 1. Проверить статус и код выхода
+podman ps -a --filter name=my-app
+podman inspect my-app --format '{{.State.ExitCode}} {{.State.Error}}'
+
+# 2. Проверить логи через journald (не docker logs!)
+journalctl --user -u my-app.service --since "10 minutes ago"
+
+# 3. Проверить события
+podman events --filter container=my-app --since 10m
+
+# 4. При необходимости — перезапуск через systemd (не podman start!)
+systemctl --user restart my-app.service
+```
+
+**Сценарий 2: Нехватка памяти (OOM)**
+
+```bash
+# 1. Проверить journald на предмет OOM-kill
+journalctl --user -u my-app.service | grep -i "oom\|killed"
+
+# 2. Проверить текущие лимиты cgroup
+systemctl --user show my-app.service -p MemoryMax --value
+
+# 3. Проверить usage
+cat /sys/fs/cgroup/.../memory.current
+
+# 4. Внедрить Memory= в Quadlet и перезапустить
+systemctl --user daemon-reload
+systemctl --user restart my-app.service
+```
+
+**Сценарий 3: Обновление образа с откатом**
+
+```bash
+# 1. Принудительное обновление образа
+podman image pull docker.io/library/nginx:alpine
+
+# 2. Перезапуск через systemd (атомарный)
+systemctl --user restart web.service
+
+# 3. Проверка статуса
+systemctl --user status web.service
+
+# 4. При проблемах — откат к предыдущему образу
+# (используйте digest из registry или локальный tag)
+podman tag nginx:alpine-previous nginx:alpine
+systemctl --user restart web.service
+```
 
 ### Преимущества архитектуры
 
@@ -247,3 +566,72 @@ podman info --format '{{.Host.DatabaseBackend}}'
 - **[podman system service](https://docs.podman.io/en/latest/markdown/podman-system-service.1.html)** (англ.) — REST API, совместимый с Docker.
 - **[conmon-rs Repository](https://github.com/containers/conmon-rs)** — монитор на Rust (один экземпляр на под).
 - **[Podman 5.0: SQLite и Pasta по умолчанию](https://blog.podman.io/2024/03/podman-5-0-has-been-released/)** (англ.) — изменения бэкендов в 5.0.
+
+### Сравнение с Docker для системных администраторов
+
+| Аспект | Docker (daemon) | Podman (daemonless) |
+| :--- | :--- | :--- |
+| **Единая точка отказа** | `dockerd` — при падении все контейнеры теряют управление | Нет единого процесса; каждый контейнер автономен |
+| **Прослушивание портов** | Демон слушает сокет; socket activation через systemd возможен, но не нативен | Сокет активируется systemd по требованию (socket activation — нативная модель) |
+| **Логи** | JSON-файлы в `/var/lib/docker/containers/` или драйверы (`journald`, `fluentd`) | По умолчанию в journald (через systemd) или stdout/stderr CLI |
+| **Мониторинг** | `docker stats` через демон; cAdvisor/Node Exporter обращаются к `/proc` | `podman stats` напрямую читает cgroups; `systemd-cgtop` для systemd-управляемых |
+| **Обновление** | Требует перезапуск демона (`systemctl restart docker`), краткий downtime | `podman system migrate` без перезапуска контейнеров; пакет обновляется на лету |
+| **Пользователи** | Один демон на хост (rootful) или rootlesskit (отдельный пользовательский демон) | Каждый пользователь имеет собственную среду; no shared daemon |
+| **Аудит** | Аудит через демон или API-вызовы | Аудит через `podman events` + journald; каждое событие записывается в user-space |
+
+**Для sysadmens, мигрирующих с Docker:**
+- Нет `docker.service` для мониторинга — вместо него следите за `podman.socket` и `podman-auto-update.timer`
+- Логи не в `/var/lib/docker` — используйте `journalctl -u <unit>` или `~/.local/share/containers/storage/`
+- `docker info` ↔ `podman info`; `docker stats` ↔ `podman stats` (одинаковый синтаксис)
+- Запуск контейнеров: `docker run` ↔ `podman run` (CLI-совместимость высокая, но архитектурные различия влияют на оркестрацию)
+
+### События и наблюдаемость
+
+В отсутствие центрального демона агрегация событий строится на двух уровнях:
+
+1. **`podman events`** — поток событий из SQLite-хранилища (create, start, stop, die, kill, health_status, exec и др.). Поддерживает фильтры по типу события, контейнеру, образу, label.
+2. **`journald`** — логи контейнеров (stdout/stderr) и системные сообщения Podman записываются в journald при использовании systemd/Quadlet.
+
+```bash
+# Мониторинг всех событий в реальном времени
+podman events --format '{{.Time}} {{.Event}} {{.Actor}} {{.Status}}' --since 1m
+
+# Фильтр: только старты и остановки конкретного контейнера
+podman events --filter event=start,stop,died --filter container=my-app --since 1h
+
+# Агрегация journald (rootless)
+journalctl --user -u my-app.service --since "1 hour ago" -o json
+
+# Экспорт в SIEM: настроить journald remote (systemd-journal-remote) или
+# использовать Filebeat с модулем journald для отправки в Elasticsearch
+```
+
+**Конфигурация `events_logger` в `containers.conf`:**
+
+```ini
+[engine]
+events_logger = "journald"  # или "file", "k8s-file"
+```
+
+При `events_logger=journald` события дублируются в journald, что упрощает корреляцию с системными логами. При `file` — пишутся в `~/.local/share/containers/storage/events.log`.
+
+### Conmon-rs: текущее состояние и миграция
+
+**conmon-rs** — альтернативная реализация монитора на Rust (`containers/conmon-rs`), разработка ведется Red Hat и сообществом. Ключевые отличия от C-версии:
+
+- **Один экземпляр на под** вместо одного на контейнер (экономия памяти).
+- **Переиспользование для `exec`** — не требуется порождение нового процесса.
+- **Целевой RSS 3–4 МБ** на под против ~1 МБ на conmon C-версии.
+
+**Статус на Podman 6.x:** conmon-rs находится в стадии оценки. По умолчанию продолжает использоваться C-версия. Для тестирования можно собрать пакет из репозитория Fedora или скомпилировать из исходников. При явном использовании conmon-rs через `containers.conf` убедитесь, что все хосты в кластере используют совместимую версию.
+
+```ini
+# containers.conf
+[engine]
+monitor = "conmon-rs"
+```
+
+**Риски миграции:**
+- Несовместимость с существующими скриптами, парсящими вывод `podman inspect` (формат `.State.ConmonPid` может отличаться).
+- Отсутствие поддержки в некоторых дистрибутивах (требуется сборка из исходников).
+- CRI-O по-прежнему использует C-conmon; смешение версий в одной среде не рекомендуется.

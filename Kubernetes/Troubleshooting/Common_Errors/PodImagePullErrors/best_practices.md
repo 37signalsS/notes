@@ -314,6 +314,10 @@ journalctl -u kubelet --since "24 hours ago" | \
 - [Пошаговая диагностика](./diagnostics.md) — алгоритм действий при возникновении сбоев.
 - [Распространённые ошибки](./common_errors.md) — разбор типовых кодов ответа реестров (401, 403, 429).
 - [Air-gapped кластеры](./airgapped.md) — специфика работы в полностью изолированных сетях.
+- [NetworkPolicy и доступ к реестру](./network_policy_impact.md) — влияние NetworkPolicy и GlobalNetworkPolicy на image pull.
+- [Pod Security Standards и image pull](./pod_security_standards.md) — PSS/PSA и их влияние на загрузку образов.
+- [HPA и автоскейлинг](./hpa_and_scaling.md) — влияние масштабирования на image pull и rate limiting.
+- [Init-контейнеры и image pull](./init_container_image_pulls.md) — проблемы pull в init-контейнерах.
 - [Подпись артефактов](../../../../Security/Supply_Chain_Security/artifact_signing.md) — детальное руководство по Cosign и Notation.
 - [Сканирование уязвимостей](../../../../Docker/Docker_security/vulnerability_scanning.md) — внедрение Trivy и Grype в пайплайны.
 

@@ -221,4 +221,5 @@ kustomize build . | kubeconform -strict -summary -
 - **[Обзор и основные концепции](./kustomize_overview.md)** — введение и установка.
 - **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — подробнее о механизмах модификации.
 - **[Продвинутые возможности](./kustomize_advanced_features.md)** — генераторы, замены и плагины.
+- **[Валидация манифестов](./kustomize_testing_validation.md)** — conftest, snapshot, lint.
 - **[Валидация манифестов (kubeconform)](../kubeconform_overview.md)** — подробнее о проверке схем.

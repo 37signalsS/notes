@@ -7,30 +7,35 @@
 - **Окно обслуживания (Maintenance Window)** — запланированный период времени, в течение которого допускается временная недоступность сервисов для проведения регламентных работ.
 - **Rolling Update (Последовательное обновление)** — стратегия, при которой узлы кластера обновляются по очереди или небольшими группами, что позволяет минимизировать простой приложения.
 - **Canary Update (Канареечное обновление)** — метод, при котором обновление сначала применяется к одному или нескольким «тестовым» узлам для проверки стабильности перед массовой раскаткой.
-- **Pre-Patching / Post-Patching** — этапы подготовки (проверка здоровья, создание снимков) и верификации (проверка работы служб) до и после непосредственной установки пакетов.
+- **Pre-Patching / Post-Patching** — этапы подготовки (проверка здоровья, создание точек отката) и верификации (проверка работы служб) до и после непосредственной установки пакетов.
 - **Lock Packages (Блокировка пакетов)** — механизм предотвращения автоматического обновления или удаления критически важных пакетов через `apt-mark hold` (Debian/Ubuntu) или `dnf versionlock` (RHEL/Rocky).
-- **dnf-automatic** — таймерный сервис в RHEL/Rocky/Alpine, автоматически загружающий и устанавливающий обновления по расписанию. Аналог `unattended-upgrades` для Debian/Ubuntu.
+- **dnf-automatic** — таймерный сервис в RHEL/Rocky, автоматически загружающий и устанавливающий обновления по расписанию. Аналог `unattended-upgrades` для Debian/Ubuntu.
 - **unattended-upgrades** — демон в Debian/Ubuntu, автоматически применяющий обновления безопасности (и опционально — все обновления) без участия администратора.
 - **needs-restarting** — утилита RHEL/Rocky, проверяющая, какие процессы используют обновлённые библиотеки и требуют перезапуска для применения изменений.
 - **Kernel Livepatching** — механизм применения исправлений ядра без перезагрузки (kpatch для RHEL, canonical-livepatch для Ubuntu). Позволяет устранять критические CVE без простоя.
+- **dpkg --configure -a** — команда Debian/Ubuntu для восстановления после прерывания обновления пакетов.
+- **needs-restarting -s** — команда RHEL/Rocky, выводящая список процессов с обновлёнными библиотеками, требующих перезапуска.
+- **systemctl daemon-reload** — команда перезагрузки конфигурации systemd после обновления unit-файлов.
+- **dnf-plugin-versionlock** — плагин для dnf, добавляющий команду `dnf versionlock` для блокировки пакетов.
+- **apt-mark** — утилита Debian/Ubuntu для блокировки (`hold`) и разблокировки (`unhold`) пакетов.
 
 ## Предварительные требования
 
 | Компонент | Минимальная версия | Назначение |
 | :--- | :--- | :--- |
-| **ansible-core** | 2.15+ | Ядро Ansible (рекомендуется 2.17+) |
-| **Python** | 3.8+ | Совместимость с ansible-core |
+| **ansible-core** | 2.21+ | Ядро Ansible |
+| **Python** | 3.12+ | Совместимость с ansible-core |
 | **openssh-server** (целевые хосты) | 7.0+ | Доступ по SSH для Ansible |
 | **sudo** (целевые хосты) | 1.8+ | Права root для установки пакетов |
-| **dnf / yum** (RHEL/Rocky) | dnf 5.0+ / yum 3.4+ | Пакетный менеджер |
-| **apt** (Debian/Ubuntu) | apt 2.0+ | Пакетный менеджер |
+| **dnf** (RHEL/Rocky) | 5.0+ | Пакетный менеджер |
+| **apt** (Debian/Ubuntu) | 2.0+ | Пакетный менеджер |
 | **winrm** (Windows) | 5.0+ | Удалённое управление Windows-хостами |
 
 **Проверка окружения:**
 ```bash
 # Версия Ansible
 ansible --version | head -1
-# → ansible [core 2.17.x]
+# → ansible [core 2.21.4]
 
 # Доступность целевых хостов
 ansible all -m ping
@@ -39,17 +44,37 @@ ansible all -m ping
 ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
 ```
 
-## Жизненный цикл управления патчами
+## Основные концепции
 
-Современный подход к патчингу в Ansible строится на трехфазной модели, обеспечивающей максимальную безопасность и аудит.
+### Почему управление патчами критично
 
-### Фаза 1: Подготовка (Pre-Patching)
-1.  **Сбор фактов и свидетельств:** Запись текущих версий ядра и критических пакетов.
-2.  **Проверка готовности:** Контроль свободного места на диске (минимум 2 ГБ для `/var`) и отсутствия битых пакетов.
-3.  **Создание точек отката:** Использование модулей облачных платформ или виртуализации (например, `community.vmware.vmware_guest_snapshot`) для создания мгновенных снимков системного диска.
-4.  **Уведомление:** Оповещение команд мониторинга о начале работ для предотвращения ложных срабатываний (Silence).
-5.  **Блокировка критических пакетов:** Предотвращение случайного обновления БД, ядра или других критических компонентов.
-6.  **Создание бэкапа конфигураций:** Копирование критических конфигов перед обновлением.
+Управление патчами — первая линия обороны информационной безопасности. По данным отраслевых отчётов, 60 % успешных атак используют известные CVE, для которых доступны исправления. Патчинг решает три задачи:
+
+1. **Безопасность:** устранение CVE критических и высоких уровней серьёзности (CVSS 7+).
+2. **Стабильность:** исправление регресс и падений, выявленных в предыдущих релизах.
+3. **Производительность:** устранение узких мест и улучшение использования ресурсов.
+
+### Паттерны организации патчинга
+
+Существует два базовых паттерна:
+
+1. **Security-only патчинг:** обновляются только пакеты, закрывающие CVE. Минимизирует риск регресс.
+2. **Full patching:** обновляются все пакеты до последней версии. Обеспечивает полную актуальность, но увеличивает вероятность регресс.
+
+Для production-сред рекомендуется security-only патчинг с последующим контролируемым расширением на полный пакет.
+
+### Жизненный цикл управления патчами
+
+Современный подход к патчингу в Ansible строится на трёхфазной модели, обеспечивающей максимальную безопасность и аудит.
+
+#### Фаза 1: Подготовка (Pre-Patching)
+
+1. **Сбор фактов и свидетельств:** запись текущих версий ядра и критических пакетов.
+2. **Проверка готовности:** контроль свободного места на диске (минимум 2 ГБ для `/var`) и отсутствия битых пакетов.
+3. **Создание точек отката:** резервное копирование критических конфигураций и данных перед обновлением.
+4. **Уведомление:** оповещение команд мониторинга о начале работ для предотвращения ложных срабатываний (Silence).
+5. **Блокировка критических пакетов:** предотвращение случайного обновления БД, ядра или других критически важных компонентов.
+6. **Создание бэкапа конфигураций:** копирование критических конфигов перед обновлением.
 
 #### Блокировка критических пакетов
 
@@ -98,15 +123,17 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
     mode: '0644'
 ```
 
-### Фаза 2: Исполнение (Patching)
+#### Фаза 2: Исполнение (Patching)
+
 Применение обновлений с использованием стратегий конкурентности (`serial`, `throttle`) и фильтрации по категориям безопасности.
 
-### Фаза 3: Верификация (Post-Patching)
-1.  **Контрольная перезагрузка:** Выполнение только при необходимости.
-2.  **Проверка здоровья (Health Checks):** Верификация доступности портов, ответов API и состояния системных юнитов.
-3.  **Отчетность:** Генерация списка обновленных пакетов для целей комплаенса.
-4.  **Разблокировка пакетов:** Возврат возможности обновления заблокированных пакетов.
-5.  **Очистка кэша:** Удаление скачанных пакетов для освобождения места.
+#### Фаза 3: Верификация (Post-Patching)
+
+1. **Контрольная перезагрузка:** выполнение только при необходимости.
+2. **Проверка здоровья (Health Checks):** верификация доступности портов, ответов API и состояния системных юнитов.
+3. **Отчётность:** генерация списка обновлённых пакетов для целей комплаенса.
+4. **Разблокировка пакетов:** возврат возможности обновления заблокированных пакетов.
+5. **Очистка кэша:** удаление скачанных пакетов для освобождения места.
 
 #### Аудит результатов
 
@@ -160,9 +187,10 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   ignore_errors: true
 ```
 
-## Стратегии массового обновления
+### Стратегии массового обновления
 
-### 1. Последовательное обновление (`serial`)
+#### 1. Последовательное обновление (serial)
+
 Директива `serial` ограничивает количество хостов, обрабатываемых Ansible одновременно. Это основной инструмент для реализации Rolling Updates.
 
 ```yaml
@@ -175,14 +203,11 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
         name: "*"
         state: latest
 ```
-# → Ansible обновляет первую группу, и только при успехе переходит к следующей.
 
-**Варианты настройки `serial`:**
-*   `serial: 1` — строгая последовательность (Canary-стиль для первого хоста).
-*   `serial: [1, 5, 20%]` — прогрессивная стратегия: сначала 1 хост, затем 5, затем 20% от остатка.
-*   `any_errors_fatal: true` — при ошибке на любом хосте выполнение всего плейбука немедленно прекращается (критично для Canary).
+`serial` поддерживает прогрессивную стратегию: сначала 1 хост, затем 5, затем 20 % от остатка. При использовании `any_errors_fatal: true` выполнение всего плейбука немедленно прекращается при ошибке на любом хосте.
 
-### 2. Ограничение конкурентности задач (`throttle`)
+#### 2. Ограничение конкурентности задач (throttle)
+
 В отличие от `serial`, который работает на уровне всего плея, `throttle` ограничивает количество одновременных выполнений конкретной задачи.
 
 ```yaml
@@ -192,7 +217,8 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   throttle: 1  # Только одно обращение к API за раз, чтобы не перегрузить его
 ```
 
-### 3. Асинхронные обновления (`async`)
+#### 3. Асинхронные обновления (async)
+
 Используются для длительных операций (например, полное обновление ОС или пересборка ядра), которые могут превысить таймаут SSH-сессии.
 
 ```yaml
@@ -211,10 +237,9 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   delay: 60
 ```
 
-### 4. Синхронное обновление с остановкой при ошибке
+#### 4. Синхронное обновление с остановкой при ошибке
 
 ```yaml
----
 - name: Безопасное обновление с block/rescue
   hosts: web_servers
   serial: "25%"
@@ -240,22 +265,16 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
         - name: Откат через dnf (RHEL)
           ansible.builtin.command: dnf history undo last -y
           when: ansible_facts['os_family'] == "RedHat"
-
-        - name: Уведомление об ошибке
-          ansible.builtin.uri:
-            url: "https://hooks.slack.com/services/T00/B00/XXX"
-            method: POST
-            body_format: json
-            body:
-              text: "Патчинг провалился на {{ inventory_hostname }}. Откат выполнен."
 ```
 
-## Целевое обновление безопасности
+### Целевое обновление безопасности
 
-В 2025-2026 годах рекомендуется отдавать приоритет обновлениям безопасности, а не обновлять все пакеты до `latest` без разбора.
+В 2025–2026 годах рекомендуется отдавать приоритет обновлениям безопасности, а не обновлять все пакеты до `latest` без разбора. Это уменьшает риск регресс и ускоряет применение критических CVE.
 
-### RHEL / Rocky / AlmaLinux
+#### RHEL / Rocky / AlmaLinux
+
 Используйте модуль `dnf` с параметром `security`.
+
 ```yaml
 - name: Установка только security-патчей
   ansible.builtin.dnf:
@@ -264,7 +283,8 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
     state: latest
 ```
 
-**Просмотр доступных CVE:**
+Просмотр доступных CVE:
+
 ```yaml
 - name: Список доступных исправлений безопасности
   ansible.builtin.command: dnf updateinfo list --security
@@ -281,8 +301,10 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   changed_when: false
 ```
 
-### Ubuntu / Debian
+#### Ubuntu / Debian
+
 Для управления безопасностью рекомендуется использовать `unattended-upgrades` или точечное обновление через `apt`.
+
 ```yaml
 - name: Обновление кеша и установка только обновлений безопасности
   ansible.builtin.apt:
@@ -291,7 +313,8 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
     only_upgrade: yes
 ```
 
-**Просмотр доступных обновлений:**
+Просмотр доступных обновлений:
+
 ```yaml
 - name: Список доступных обновлений
   ansible.builtin.shell: apt list --upgradable 2>/dev/null
@@ -303,8 +326,10 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
     msg: "Доступно {{ available_updates.stdout_lines | length }} обновлений"
 ```
 
-### Windows
+#### Windows
+
 Для Windows-инфраструктуры используется специализированный модуль.
+
 ```yaml
 - name: Установка критических обновлений Windows
   ansible.windows.win_updates:
@@ -314,7 +339,8 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
     reboot: yes  # Автоматическая перезагрузка только при необходимости
 ```
 
-### SUSE / openSUSE
+#### SUSE / openSUSE
+
 ```yaml
 - name: Обновление пакетов (zypper)
   ansible.builtin.zypper:
@@ -323,12 +349,14 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
     type: patch
 ```
 
-## Умная перезагрузка (Conditional Reboot)
+### Умная перезагрузка (Conditional Reboot)
 
 Безусловная перезагрузка — плохая практика. Ansible позволяет проверять необходимость рестарта.
 
-### Реализация для Debian/Ubuntu
+#### Реализация для Debian/Ubuntu
+
 Проверяется наличие файла-маркера.
+
 ```yaml
 - name: Проверка необходимости перезагрузки (Debian)
   ansible.builtin.stat:
@@ -341,8 +369,10 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   when: reboot_required_file.stat.exists
 ```
 
-### Реализация для RHEL/Rocky
+#### Реализация для RHEL/Rocky
+
 Используется утилита `needs-restarting`.
+
 ```yaml
 - name: Проверка необходимости перезагрузки (RHEL)
   ansible.builtin.command: needs-restarting -r
@@ -355,7 +385,7 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   when: result.rc != 0
 ```
 
-### Определение процессов, требующих перезапуска
+#### Определение процессов, требующих перезапуска
 
 ```yaml
 - name: Список процессов с обновлёнными библиотеками
@@ -371,7 +401,7 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   when: restarted_services.stdout_lines | length > 0
 ```
 
-### Координация перезагрузки с балансировщиком
+#### Координация перезагрузки с балансировщиком
 
 ```yaml
 - name: Снять с балансировщика перед перезагрузкой
@@ -389,7 +419,7 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   ansible.builtin.uri:
     url: "http://localhost:8080/health"
     status_code: 200
-  register: health
+    register: health
   until: health.status == 200
   retries: 12
   delay: 5
@@ -402,13 +432,101 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
   delegate_to: localhost
 ```
 
+### Живые обновления ядра (Kernel Live Patching)
+
+Живые обновления ядра (kpatch для RHEL, canonical-livepatch для Ubuntu) применяют исправления без перезагрузки. Это критично для инфраструктуры, где downtime ядра недопустим.
+
+#### Когда использовать live patching
+
+- Устранение CVE критических и высоких уровней серьёзности без перезагрузки.
+- Поддержание SLA на инфраструктуре, где перезагрузка недоступна.
+- Динамические инфраструктуры с большим количеством узлов.
+
+#### Ограничения
+
+- Live patches доступны только для ограниченного набора ядер.
+- Не все CVE могут быть устранены без перезагрузки.
+- При изменении major-версии ядра live patching неприменим.
+
+### Автоматическое патчинг (dnf-automatic / unattended-upgrades)
+
+Для инфраструктур, где ручной запуск патчинга невозможен, используются сервисы автоматического обновления.
+
+#### dnf-automatic (RHEL/Rocky)
+
+`dnf-automatic` — таймерный сервис, автоматически загружающий и устанавливающий обновления по расписанию.
+
+```ini
+# /etc/dnf/automatic.conf
+[commands]
+upgrade_type = security  # Только security-патчи
+apply_updates = yes
+
+[emitters]
+system_name = yes
+emit_via = stdio
+
+[email]
+email_from = root@localhost
+email_to = root
+email_host = localhost
+
+[base]
+skip_broken = True
+```
+
+Активация:
+```bash
+# Включение таймера
+sudo systemctl enable --now dnf-automatic.timer
+
+# Проверка статуса
+systemctl list-timers | grep dnf-automatic
+```
+
+#### unattended-upgrades (Debian/Ubuntu)
+
+`unattended-upgrades` — демон, автоматически применяющий обновления безопасности.
+
+```bash
+# Включение только security-патчей
+sudo dpkg-reconfigure -plow unattended-upgrades
+
+# Или ручная настройка /etc/apt/apt.conf.d/50unattended-upgrades
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+APT::Periodic::Unattended-Upgrade "1";
+```
+
+Активация:
+```bash
+# Включение и запуск
+sudo systemctl enable --now unattended-upgrades
+
+# Проверка статуса
+systemctl status unattended-upgrades
+```
+
+#### Диагностика автоматического патчинга
+
+```bash
+# RHEL/Rocky: статус dnf-automatic
+systemctl status dnf-automatic
+journalctl -u dnf-automatic --since "1 hour ago"
+
+# Debian/Ubuntu: статус unattended-upgrades
+systemctl status unattended-upgrades
+cat /var/log/unattended-upgrades/unattended-upgrades.log | tail -20
+```
+
 ## Практические сценарии
 
 ### Сценарий 1: Комплексный кроссплатформенный Workflow
+
 Безопасное обновление с предварительными проверками и Canary-тестированием.
 
 ```yaml
----
 - name: Корпоративный стандарт патчинга 2026
   hosts: servers
   become: true
@@ -441,7 +559,7 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
     # --- Фаза 3: Post-patching & Reboot ---
     - name: Перезагрузка при необходимости
       ansible.builtin.reboot:
-      when: 
+      when:
         - (ansible_facts['os_family'] == "RedHat" and dnf_res.changed) or
           (ansible_facts['os_family'] == "Debian" and apt_res.changed)
 
@@ -458,7 +576,6 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
 ### Сценарий 2: Обновление с откатом при ошибке
 
 ```yaml
----
 - name: Безопасное обновление с block/rescue/always
   hosts: critical_servers
   serial: 1
@@ -470,16 +587,6 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
         - name: Сохранение текущих версий
           ansible.builtin.shell: "rpm -qa > /tmp/packages_before.txt"
           when: ansible_facts['os_family'] == "RedHat"
-
-        - name: Создание снимка (VMware)
-          community.vmware.vmware_guest_snapshot:
-            datacenter: "{{ vcenter_dc }}"
-            folder: "/{{ vcenter_dc }}/vm/{{ vcenter_folder }}"
-            name: "{{ inventory_hostname }}"
-            snapshot_name: "pre-patch-{{ ansible_date_time.date }}"
-            state: present
-          delegate_to: localhost
-          when: use_snapshot | default(false)
 
         # --- Patching ---
         - name: Обновление пакетов
@@ -516,16 +623,6 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
             apt-mark hold $(apt list --upgradable 2>/dev/null | cut -d/ -f1)
           when: ansible_facts['os_family'] == "Debian"
 
-        - name: Откат снимка (VMware)
-          community.vmware.vmware_guest_snapshot:
-            datacenter: "{{ vcenter_dc }}"
-            folder: "/{{ vcenter_dc }}/vm/{{ vcenter_folder }}"
-            name: "{{ inventory_hostname }}"
-            snapshot_name: "pre-patch-{{ ansible_date_time.date }}"
-            state: revert
-          delegate_to: localhost
-          when: use_snapshot | default(false)
-
         - name: Уведомление об откате
           ansible.builtin.uri:
             url: "{{ slack_webhook }}"
@@ -545,7 +642,6 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
 ### Сценарий 3: Обновление по группам с определёнными репозиториями
 
 ```yaml
----
 - name: Обновление только определённых компонентов
   hosts: all
   become: true
@@ -580,7 +676,65 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
         DEBIAN_FRONTEND: noninteractive
 ```
 
-## Устранение типичных ошибок
+### Сценарий 4: Восстановление после прерывания обновления
+
+После прерывания обновления (отключение питания, ошибка сети) пакетный менеджер может остаться в неконсистентном состоянии.
+
+```bash
+# Debian/Ubuntu: восстановление
+dpkg --configure -a
+apt install -f
+
+# RHEL/Rocky: восстановление
+dnf history redo last
+```
+
+### Сценарий 5: Применение live patches без перезагрузки
+
+```yaml
+- name: Применение live patches (RHEL)
+  ansible.builtin.dnf:
+    name: kernel
+    security: yes
+    state: latest
+  register: livepatch_result
+
+- name: Проверка необходимости перезагрузки
+  ansible.builtin.command: needs-restarting -r
+  register: reboot_check
+  failed_when: false
+  changed_when: reboot_check.rc != 0
+```
+
+## Операции и команды
+
+### Применение патчей по ОС
+
+| Задача | Команда / модуль | Пример вывода |
+| :--- | :--- | :--- |
+| Список доступных обновлений (RHEL/Rocky) | `dnf check-update` | `kernel.x86_64 5.14.0-362.el9 updates` |
+| Список security-обновлений (RHEL/Rocky) | `dnf updateinfo list --security` | `CVE-2024-1086 Important/Security` |
+| Применение только security-патчей (RHEL/Rocky) | `ansible.builtin.dnf` с `security: yes` | `changed: [web01] => (item=None)` |
+| Список доступных обновлений (Debian/Ubuntu) | `apt list --upgradable` | `nginx/bionic-updates 1.14.0-0ubuntu1 updates` |
+| Применение только security-обновлений (Debian/Ubuntu) | `ansible.builtin.apt` с `only_upgrade: yes` | `changed: [web01] => (item=None)` |
+| Установка обновлений Windows | `ansible.windows.win_updates` | `changed: [win01] => reboot_required=True` |
+| Проверка необходимости перезагрузки (Debian/Ubuntu) | `test -f /var/run/reboot-required && echo REBOOT || echo OK` | `REBOOT` |
+| Проверка необходимости перезагрузки (RHEL/Rocky) | `needs-restarting -r; echo RC=$?` | `RC=1` |
+| Список процессов с обновлёнными библиотеками (RHEL/Rocky) | `needs-restarting -s` | `systemd` |
+| Перезапуск systemd-юнита | `systemctl restart <service>` | `# → service restarted` |
+| Проверка статуса systemd-юнита | `systemctl status <service>` | `Active: active (running)` |
+| Просмотр истории транзакций dnf | `dnf history info last` | `Transaction ID: 1234` |
+| Просмотр лога обновлений apt | `grep Upgrade /var/log/apt/history.log` | `Upgrade: nginx:amd64 (1.14.0)` |
+| Откат последней транзакции dnf | `dnf history undo last -y` | `Undoing transaction #1234` |
+| Очистка кэша пакетов (RHEL/Rocky) | `dnf clean all` | `Cleaning repos: base extras updates` |
+| Очистка кэша пакетов (Debian/Ubuntu) | `apt clean` | `# → cleaned` |
+| Проверка битых пакетов (Debian/Ubuntu) | `dpkg --audit` | `The following packages have been triggered:` |
+| Восстановление после прерывания (Debian/Ubuntu) | `dpkg --configure -a && apt install -f` | `# → recovered` |
+| Восстановление после прерывания (RHEL/Rocky) | `dnf history redo last` | `# → recovered` |
+
+## Диагностика
+
+### Типичные ошибки
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
@@ -595,7 +749,8 @@ ansible all -m ansible.builtin.command -a "which dnf || which apt || which yum"
 | `Hash Sum mismatch` | Повреждён кэш пакетов | `apt clean && apt update` или `dnf clean all` |
 | `dpkg was interrupted` | Прерывание во время обновления | `dpkg --configure -a` |
 
-**Диагностика:**
+### Диагностические команды
+
 ```bash
 # Проверка текущих обновлений
 ansible all -m shell -a "apt list --upgradable" --one-line  # Debian/Ubuntu
@@ -612,14 +767,18 @@ ansible all -m shell -a "grep Upgrade /var/log/apt/history.log" --one-line
 # Проверка необходимости перезагрузки
 ansible all -m shell -a "test -f /var/run/reboot-required && echo REBOOT || echo OK"
 ansible all -m shell -a "needs-restarting -r; echo RC=$?"
+
+# Проверка статуса автоматического патчинга
+systemctl status dnf-automatic        # RHEL/Rocky
+systemctl status unattended-upgrades  # Debian/Ubuntu
 ```
 
-## Контрольный список: лучшие практики
+## Лучшие практики
 
 - [ ] **Canary перед массовым обновлением:** Запускайте `serial: 1` на тестовом хосте перед раскаткой
 - [ ] **Блокировка критических пакетов:** Используйте `apt-mark hold` / `dnf versionlock` для БД, ядра, NSS
 - [ ] **Проверка свободного места:** Минимум 2 ГБ свободного в `/var` перед обновлением
-- [ ] **Снимки/бэкапы:** Создавайте точки отката перед обновлением критических серверов
+- [ ] **Создание точек отката:** Резервное копирование критических конфигураций и данных перед обновлением
 - [ ] **Security-only обновления:** Приоритизируйте `security: yes` над полным обновлением
 - [ ] **Conditional reboot:** Перезагружайте только при необходимости (проверка `/var/run/reboot-required` или `needs-restarting`)
 - [ ] **Координация с LB:** Снимайте хост с балансировщика перед перезагрузкой
@@ -628,11 +787,16 @@ ansible all -m shell -a "needs-restarting -r; echo RC=$?"
 - [ ] **Очистка кэша:** Выполняйте `dnf clean all` / `apt clean` после обновления
 - [ ] **Error handling:** Используйте `block/rescue/always` для отката при ошибках
 - [ ] **Логирование:** Сохраняйте списки пакетов до/после обновления
+- [ ] **Live patching:** Используйте kernel live patching для критических инфраструктур, где перезагрузка недоступна
+- [ ] **Автоматическое патчинг:** Для сервисов без окна обслуживания настройте dnf-automatic / unattended-upgrades
+- [ ] **Перезапуск сервисов:** Используйте `needs-restarting -s` для определения затронутых сервисов вместо массовой перезагрузки
+- [ ] **Перезагрузка systemd:** После обновления unit-файлов выполняйте `systemctl daemon-reload`
 
-## Дополнительная información
+## Дополнительная информация
 
 - [Модули управления системой](./Modules/ansible_service_and_system_config_modules.md) — детали параметров `ansible.builtin.reboot`.
 - [Кроссплатформенные концепции](./CrossPlatform/concepts.md) — глубокое погружение в разделение логики по ОС.
 - [Оптимизация производительности](./ansible_performance_tuning.md) — настройка `forks` и `ssh_pipelining` для ускорения массового патчинга.
 - [Выполнение плейбука: база](./PlaybookStructure/basics.md) — основы работы с `serial` и `tags`.
 - [Управление ходом выполнения](./PlaybookStructure/flow_control.md) — использование `block` и `rescue` для обработки ошибок обновления.
+- [Продвинутые возможности плейбуков](./PlaybookStructure/advanced.md) — делегирование (`delegate_to`), асинхронные задачи.

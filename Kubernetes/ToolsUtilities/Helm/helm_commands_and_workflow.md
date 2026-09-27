@@ -639,14 +639,14 @@ variables:
 
 helm:lint:
   stage: lint
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm lint $CHART_DIR --strict
     - helm template $HELM_RELEASE $CHART_DIR > /dev/null
 
 helm:package:
   stage: package
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm package $CHART_DIR --version $CI_COMMIT_TAG
   artifacts:
@@ -655,7 +655,7 @@ helm:package:
 
 helm:deploy:
   stage: deploy
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm registry login $OCI_REGISTRY --username $CI_DEPLOY_USER --password-stdin <<< $CI_DEPLOY_PASSWORD
     - helm push *.tgz oci://$OCI_REGISTRY

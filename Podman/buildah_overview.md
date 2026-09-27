@@ -123,7 +123,159 @@ Buildah предоставляет возможности, которые тех
 
 ---
 
-## Настройка и внедрение в Production
+## Архитектура и принципы работы
+
+### Модель хранения (containers-storage)
+
+Buildah использует драйвер `containers-storage:` (библиотека `containers/storage`) для управления слоями образов и рабочими контейнерами. Это тот же бэкенд, что и у Podman/CRI-O, что позволяет разделять локальные образы между инструментами без повторной выгрузки.
+
+| Компонент | Назначение |
+| :--- | :--- |
+| **Graph Root** | Постоянное хранилище образов, рабочих контейнеров и слоев. |
+| **Run Root** | Временные данные: точки монтирования, промежуточные слои, PID-файлы. |
+| **Driver** | Реализация COW (Copy-on-Write): `overlay`, `overlay2`, `vfs`, `btrfs`, `zfs`. |
+
+Расположение по умолчанию:
+- **Rootless:** `~/.local/share/containers/storage` (graph), `/run/user/$(id -u)/containers` (run)
+- **Rootful:** `/var/lib/containers/storage` (graph), `/var/run/containers/storage` (run)
+
+Настройка выполняется через `storage.conf`. Подробнее о драйверах и параметрах — в [Тома и хранилище Podman](./podman_volumes_and_storage.md).
+
+### Жизненный цикл рабочего контейнера (углубленно)
+
+Рабочий контейнер (working container) — это не запущенный процесс, а **записываемый верхний слой (writable layer)** поверх базового образа в локальном хранилище.
+
+```
+Контекст сборки
+     │
+     ▼
+buildah from <image>  ──►  Рабочий контейнер (graphroot + runroot)
+     │
+     ▼
+buildah run / copy / mount / config  ──►  Изменения в writable layer
+     │
+     ▼
+buildah commit  ──►  Новый неизменяемый образ (новый LayerDiffID)
+     │
+     ▼
+buildah rm  ──►  Удаление рабочего контейнера, слои остаются в хранилище
+```
+
+Ключевые свойства:
+- **Один commit = минимум слоев:** все `run`/`copy`/`add` выполняются в рамках одного writable layer; финальный `commit` создает ровно один новый слой.
+- **Нет PID 1:** рабочий контейнер не предназначен для долгоживущих процессов. `buildah run` выполняет команду и завершается.
+- **Общее хранилище с Podman:** образы, созданные Buildah, немедленно доступны для `podman run` через транспорт `containers-storage:`.
+
+### Взаимодействие с ядром Linux
+
+Buildah напрямую взаимодействует с ядром через библиотеку `containers/storage` и OCI runtime:
+
+1. **Namespaces:** при создании рабочего контейнера Buildah настраивает mount, UTS и IPC namespace (если требуется изоляция). PID и network namespace не создаются, так как контейнер не запускается.
+2. **Слои OverlayFS:** каждый слой — это каталог с измененными файлами и ссылками на нижние (lower) слои. Монтирование выполняется через `mount(2)` или `fuse-overlayfs` в rootless-режиме.
+3. **Rootless ID mapping:** в безрутовом режиме UID/GID процессора маппятся на непривилегированные диапазоны хоста через `/etc/subuid` и `/etc/subgid`. Подробнее о настройке — в [Rootless режим Podman](./podman_rootless.md).
+
+### Связь с OCI runtime
+
+Buildah **не использует OCI runtime** (crun/runc) для сборки, так как не создает запускаемые контейнеры. Вместо этого он работает напрямую с файловой системой. OCI runtime требуется только если вы запускаете тестовый контейнер через `buildah run` с долгоживущим процессом (редкий сценарий).
+
+Для сравнения: Podman при `podman run` вызывает `conmon` → `crun`, который настраивает namespaces и cgroups. Buildah пропускает этот этап, что снижает накладные расходы и сложность привилегий.
+
+---
+
+## Предварительные требования
+
+### Версии и поддерживаемые платформы
+
+| Компонент | Минимальная версия | Рекомендуемая | Примечание |
+| :--- | :--- | :--- | :--- |
+| **Buildah** | 1.30+ | 1.45+ | Актуальная стабильная — 1.45.0 (июль 2026) |
+| **Kernel** | 4.18+ (OverlayFS) | 5.11+ | 5.11+ требуется для нативного rootless overlay |
+| **fuse-overlayfs** | 1.8+ | 1.12+ | Обязателен для rootless на ядрах < 5.11 |
+| **containers-common** | 1.50+ | Актуальный | Общие политики, storage.conf, registries.conf |
+| **Podman** (опционально) | 4.0+ | 6.0+ | Для общей работы с хранилищем |
+| **Skopeo** (опционально) | 1.10+ | 1.14+ | Для публикации и инспекции |
+
+**Проверка версий:**
+```bash
+buildah --version
+# → buildah version 1.45.0 (image-spec 1.1.0, runtime-spec 1.2.0)
+
+uname -r
+# → 5.14.0-... (требуется 4.18+; 5.11+ для нативного rootless overlay)
+
+fuse-overlayfs --version
+# → fuse-overlayfs version 1.12
+```
+
+### Пакеты и зависимости
+
+**Fedora / RHEL / Rocky / Alma:**
+```bash
+sudo dnf install -y buildah fuse-overlayfs containers-common
+```
+
+**Debian / Ubuntu:**
+```bash
+sudo apt update && sudo apt install -y buildah fuse-overlayfs uidmap
+```
+
+**openSUSE:**
+```bash
+sudo zypper install -y buildah fuse-overlayfs
+```
+
+**macOS (Homebrew):**
+```bash
+brew install buildah
+# Примечание: Buildah в Linux-подобном окружении (Colima/Lima). Прямой запуск на macOS невозможен.
+```
+
+### Rootless-подготовка
+
+Для стабильной сборки без прав root:
+
+1. **Включите user namespaces** (на большинстве дистрибутивов включены по умолчанию):
+   ```bash
+   sysctl kernel.unprivileged_userns_clone
+   # → 1
+   ```
+
+2. **Настройте subuid/subgid** для вашего пользователя (см. [Файлы конфигурации пользователей](../Linux/SystemAdministration/Users/users_config_files.md)):
+   ```bash
+   # Проверка
+   grep $USER /etc/subuid /etc/subgid
+   # → user:100000:65536
+   
+   # Если пусто — добавьте:
+   echo "$USER:100000:65536" | sudo tee -a /etc/subuid /etc/subgid
+   ```
+
+3. **Создайте storage.conf** для rootless:
+   ```ini
+   [storage]
+   driver = "overlay"
+   
+   [storage.options]
+   mount_program = "/usr/bin/fuse-overlayfs"
+   mountopt = "nodev,metacopy=on"
+   ```
+
+4. **Проверка драйвера:**
+   ```bash
+   buildah info --format '{{.Store.Info}}'
+   # → graphRoot: /home/user/.local/share/containers/storage
+   # → runRoot: /run/user/1000/containers
+   # → driver: overlay
+   ```
+
+### Ограничения окружения
+
+- **Привилегированные порты (<1024):** недоступны в rootless-режиме без `setcap` на бинарнике (не рекомендуется).
+- **SELinux:** в enforcing-режиме может потребоваться контекст `container_file_t` для каталогов сборки.
+- **NFS:** OverlayFS нестабилен на NFS; используйте `vfs` драйвер для хранилища на сетевых ФС.
+- **cgroups:** в rootless-режиме cgroups v2 доступны только с включенной delegation.
+
+---
 
 ### 1. Rootless-режим и Storage Driver
 
@@ -420,6 +572,217 @@ buildah rmi --prune
 ```
 
 ---
+
+## Валидация и проверка
+
+После каждой сборки выполняйте минимальный набор проверок, чтобы убедиться, что образ корректен и готов к деплою.
+
+### 1. Проверка установки и окружения
+
+```bash
+# Версии инструментов
+buildah --version
+# → buildah version 1.45.0 (image-spec 1.1.0, runtime-spec 1.2.0)
+
+# Информация о хранилище
+buildah info
+# → storage:
+#     driver: overlay
+#     graphRoot: /home/user/.local/share/containers/storage
+
+# Проверка работы rootless
+buildah unshare buildah info --format '{{.Store.Info}}'
+# → runRoot: /run/user/1000/containers
+```
+
+### 2. Проверка образа после сборки
+
+```bash
+# Список образов и размер
+buildah images
+# → REPOSITORY   TAG   IMAGE ID   CREATED   SIZE
+# → my-node-app  v1    abcdefgh   2 seconds  145MB
+
+# Детальный inspect (метаданные, слои, config)
+buildah inspect my-node-app:v1
+# → {
+#     "ID": "abc...",
+#     "Digest": "sha256:...",
+#     "Labels": {"version": "1.0"},
+#     "Entrypoint": ["node", "/app/src/index.js"]
+#   }
+
+# Проверка конкретных полей через --format
+buildah inspect --format '{{.Entrypoint}}' my-node-app:v1
+# → [node /app/src/index.js]
+
+buildah inspect --format '{{.Labels.version}}' my-node-app:v1
+# → 1.0
+
+# Список слоев (LayerDiffIDs)
+buildah inspect --format '{{range .LayerDiffIDs}}{{println .}}{{end}}' my-node-app:v1
+# → sha256:...
+# → sha256:...
+
+# Проверка открытых портов
+buildah inspect --format '{{.ExposedPorts}}' my-node-app:v1
+# → map[3000/tcp:{}]
+```
+
+### 3. Функциональный прогон через podman run
+
+```bash
+# Быстрый прогон (образ, созданный Buildah, доступен Podman)
+podman run --rm -p 3000:3000 my-node-app:v1 node /app/src/index.js &
+# → Server listening on port 3000
+
+# Проверка выхода
+curl -s http://localhost:3000/health
+# → {"status":"ok"}
+
+# Проверка кода завершения
+podman run --rm my-node-app:v1 node -e "process.exit(42)" || echo $?
+# → 42
+```
+
+### 4. Верификация OCI-совместимости
+
+```bash
+# Проверка, что образ соответствует OCI spec
+buildah inspect --format '{{.OCIv1}}' my-node-app:v1 > /dev/null
+echo $?
+# → 0
+
+# Проверка размера и количества слоев (норма: 1-3 слоя для оптимизированных образов)
+buildah inspect --format 'Layers: {{len .LayerDiffIDs}}, Size: {{.Size}}' my-node-app:v1
+# → Layers: 1, Size: 145MB
+
+# Проверка конфигурации (user, workingdir, env)
+buildah inspect --format 'User: {{.User}}, Workdir: {{.WorkingDir}}' my-node-app:v1
+# → User: 65535, Workdir: /app
+```
+
+### 5. Проверка multi-arch манифеста
+
+```bash
+# Инспекция манифеста-списка
+buildah manifest inspect my-app:latest
+# → {
+#     "manifests": [
+#       {"platform": {"architecture": "amd64", "os": "linux"}, ...},
+#       {"platform": {"architecture": "arm64", "os": "linux"}, ...}
+#     ]
+#   }
+
+# Проверка отдельных платформ
+buildah inspect --format '{{.Architecture}}' my-app:latest
+# → linux/amd64
+```
+
+### 6. Проверка SBOM (если включена генерация)
+
+```bash
+# SBOM генерируется при сборке --sbom
+ls -la my-app-sbom.spdx.json
+# → -rw-r--r-- 1 user user 12K my-app-sbom.spdx.json
+
+# Быстрая проверка содержимого
+head -5 my-app-sbom.spdx.json
+# → {
+#     "spdxVersion": "SPDX-2.3",
+#     "dataLicense": "CC0-1.0",
+#     ...
+#   }
+```
+
+### 7. Проверка дайджеста и reproducibility
+
+```bash
+# Детерминированная сборка (--timestamp 0) дает одинаковый дайджест
+buildah build --timestamp 0 -t my-app:v1 .
+# → COMMIT my-app:v1
+
+buildah inspect --format '{{.Digest}}' my-app:v1
+# → sha256:abc123...
+
+# Повторная сборка с тем же контекстом даст тот же дайджест
+buildah build --timestamp 0 -t my-app:v1 .
+buildah inspect --format '{{.Digest}}' my-app:v1
+# → sha256:abc123... (совпадает)
+```
+
+---
+
+## Типичные проблемы и решения
+
+| Ошибка / симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `overlay mount fails` | Драйвер overlay недоступен в rootless | `buildah info` | Установите `fuse-overlayfs` и укажите `mount_program` в `storage.conf` |
+| `error creating buildah container` | Недостаточно прав в rootless | `buildah unshare` | Выполняйте привилегированные операции через `buildah unshare -- <cmd>` |
+| `no such file or directory` в `buildah copy` | Неверный путь в контексте сборки | `ls -la <path>` | Проверьте пути относительно корня контекста; используйте абсолютные пути внутри смонтированного rootfs |
+| `unable to find user` | UID:GID не существует в образе | `buildah inspect --format '{{.User}}' <ctr>` | Создайте пользователя через `buildah run -- useradd` или используйте числовой UID |
+| `permission denied` | Rootless-режим ограничивает монтирование | `buildah unshare buildah mount <ctr>` | Используйте `buildah unshare` для операций, требующих монтирования |
+| `manifest list not found` | Multi-arch образ не создан | `buildah manifest inspect <image>` | Выполните `buildah manifest create` и `buildah manifest add` перед пушем |
+| `commit: error committing container` | Нехватка места или конфликт слоев | `df -h`, `buildah containers` | Очистите рабочие контейнеры (`buildah rm -a`), проверьте место на диске |
+| `no space left on device` | Run root или graph root заполнены | `df -h $XDG_RUNTIME_DIR` | Очистите `buildah rm -a` и `buildah rmi --prune`; увеличьте размер раздела |
+| `timeout waiting for connection` (Ansible plugin) | Контейнер не смонтирован или удален | `buildah containers` | Пересоздайте контейнер и повторно смонтируйте перед выполнением задач |
+| `signature verification failed` | Политика подписи отклоняет образ | `skopeo inspect` | Настройте `policy.json` или используйте `--insecure-policy` только для тестов |
+
+### Диагностические команды
+
+```bash
+# Проверка доступных образов
+buildah images
+
+# Просмотр рабочих контейнеров
+buildah containers
+
+# Детали образа (слои, config, history)
+buildah inspect my-image:latest
+
+# Проверка места на диске
+df -h ~/.local/share/containers/storage
+df -h /run/user/$(id -u)/containers
+
+# Проверка storage driver
+buildah info --format '{{.Store.Info}}'
+
+# Проверка политик контейнеров
+cat /etc/containers/policy.json
+
+# Отладка rootless: вход в user namespace
+buildah unshare -- buildah info
+
+# Проверка subuid/subgid
+grep $USER /etc/subuid /etc/subgid
+
+# Логи systemd-юнита (если используется Quadlet)
+journalctl --user -u my-container.service -f
+```
+---
+
+## Рекомендации и ограничения
+
+### Production-hardening
+
+- **Пиноинг базовых образов:** никогда не используйте `:latest` в production. Указывайте digest (`alpine:3.20@sha256:...`) или строгий тег.
+- **Секреты:** никогда не передавайте пароли через `--env` или `ARG`. Используйте `buildah run` с переменными окружения, которые удаляются перед `commit`, или Ansible Vault (см. [Интеграция с Ansible](../Ansible/ansible_buildah_image_building.md)).
+- **Slim образы:** используйте `--squash` или скриптовую сборку с одним `commit`, чтобы минимизировать количество слоев и размер.
+- **SBOM:** включайте `--sbom` для compliance и отслеживания зависимостей в production.
+- **Кэширование:** в CI/CD используйте `--cache-from`/`--cache-to` для распределенного кэша; для локальных повторных сборок включайте `--layers=true`.
+- **Docker-совместимость:** если нужен docker-compose, используйте `buildah build` + `podman play kube` или Docker-compatible socket.
+
+### Ограничения
+
+| Ограничение | Объяснение | Обходной путь |
+| :--- | :--- | :--- |
+| **Нет долгоживущих процессов** | Рабочий контейнер не предназначен для запуска сервисов | Используйте `podman run` для запуска, Buildah только для сборки |
+| **Rootless overlay требует fuse-overlayfs** | На ядрах < 5.11 нативный overlay недоступен | Установите `fuse-overlayfs` или используйте `vfs` драйвер |
+| **Монтирование NFS** | OverlayFS нестабилен на NFS | Используйте `vfs` драйвер или локальное хранилище |
+| **Большие образы (>2GB)** | Медленный commit и push | Используйте `--compression-format zstd`, разбивайте на multi-stage |
+| **Кросс-сборка (qemu)** | Требует `qemu-user-static` на хосте | Установите binfmt-support; для production используйте-native build на целевой платформе |
+| **Нет встроенного сканера уязвимостей** | Buildah не включает сканер | Используйте внешние инструменты (Trivy, Grype) после сборки |
+| **Windows-образы** | Buildah работает только с Linux-образами | Используйте Docker BuildKit или `buildah build --platform windows/amd64` с соответствующим runtime |
 
 ## Дополнительная информация
 

@@ -6,6 +6,37 @@
 
 Данные из `/proc/diskstats` являются первоисточником для большинства диагностических утилит, включая `iostat`, `sar`, `vmstat`, а также для экспортеров систем мониторинга (Prometheus Node Exporter, Zabbix Agent).
 
+### Дополнительные определения
+
+- **Major number (основной номер)**: Идентификатор драйвера устройства в ядре. Например, `8` — SCSI/SATA диски, `9` — MD-RAID, `253` — device-mapper (LVM).
+- **Minor number (второстепенный номер)**: Порядковый номер устройства в рамках драйвера. Для дисков SATA последовательность: `0` — `sda`, `1` — `sda1`, `2` — `sda2`.
+- **Имя устройства (`Device name`)**: Строковое представление в `/proc/diskstats` и `/sys/block/`. В современных ядрах для NVMe используется формат `nvme0n1`, для SCSI/SATA — `sda`, для LVM — `dm-0`.
+- **Сектор (512 байт)**: В контексте `/proc/diskstats` сектор всегда равен 512 байтам, независимо от физического размера сектора диска (4K, 8K). Для перевода в байты: `(sectors * 512)`.
+
+## Предварительные требования
+
+Для работы с `/proc/diskstats` и анализа его данных необходимы базовые инструменты, доступные в любой стандартной установке Linux:
+
+```bash
+# Debian/Ubuntu
+sudo apt update && sudo apt install -y sysstat procps
+
+# RHEL/CentOS/AlmaLinux
+sudo dnf install -y sysstat procps-ng
+
+# openSUSE
+sudo zypper install -y sysstat procps
+```
+
+Проверка доступа:
+```bash
+# Достаточно прав обычного пользователя для чтения /proc/diskstats
+cat /proc/diskstats | head -n 5
+
+# Для установки sysstat и включения сбора данных
+sudo systemctl enable --now sysstat 2>/dev/null || true
+```
+
 ## Основные концепции
 
 ### Формат данных и версии ядра
@@ -40,6 +71,17 @@
 | 19 | Flush requests completed | Количество выполненных Flush-запросов (сброс аппаратного кэша диска на пластины/флеш). |
 | 20 | Time spent flushing | Суммарное время, затраченное на выполнение Flush-запросов. |
 
+### Привязка полей к метрикам `iostat`
+
+| Поле `diskstats` | Метрика `iostat` | Формула |
+| :--- | :--- | :--- |
+| 4, 8 | `tps` (transfers per second) | Числитель: `Δ Field_4 + Δ Field_8`; Знаменатель: `Δt` |
+| 6, 10 | `rkB/s`, `wkB/s` | `(Δ Field_6 * 512) / Δt / 1024`; `(Δ Field_10 * 512) / Δt / 1024` |
+| 7, 11 | `await` (Average Wait) | `(Δ Field_7 + Δ Field_11) / (Δ Field_4 + Δ Field_8)` |
+| 13 | `%util` (Utilization) | `(Δ Field_13 / Δt) * 100` |
+| 14 | `avgqu-sz` / `aqu-sz` | `Δ Field_14 / Δt` |
+| 19, 20 | `f_await` (Flush Await) | `Δ Field_20 / Δ Field_19` |
+
 ## Практические сценарии
 
 ### Расчет классических метрик iostat
@@ -64,12 +106,81 @@ $$await = \frac{\Delta \text{Field\_7} + \Delta \text{Field\_11}}{\Delta \text{F
 ```bash
 # Получение данных для диска sda
 awk '$3 == "sda"' /proc/diskstats
+# → 8    0   sda   12345  678  2345678  12345  678  4567890  12345  678  0  1234567  987654  0  0  0  0  12345  6789
 ```
 
 #### Мониторинг "Flush-штормов" (для ядер 5.5+)
 Частые Flush-запросы могут указывать на неоптимальную работу БД или журналов ФС (синхронная запись).
 ```bash
 watch -n1 "awk '\$3 == \"sda\" {print \"Flush requests:\", \$19, \"| Time:\", \$20 \"ms\"}' /proc/diskstats"
+# → Flush requests: 12345 | Time: 6789ms
+```
+
+#### Расчет IOPS и пропускной способности в реальном времени
+```bash
+# Показать IOPS и MB/s для sda каждые 2 секунды
+watch -n2 "awk '\$3 == \"sda\" {printf \"r/s=%d w/s=%d rMB/s=%.2f wMB/s=%.2f\\n\", \$4+0, \$8+0, (\$6*512)/1024/1024, (\$10*512)/1024/1024}' /proc/diskstats"
+# → r/s=100 w/s=200 rMB/s=1.95 wMB/s=3.90
+```
+
+#### Поиск устройств с высокой утилизацией
+```bash
+# Найти диски, у которых Field_13 (время I/O) выросло более чем на 1 секунду за интервал
+prev_time=$(date +%s%3N)
+while true; do
+    current_time=$(date +%s%3N)
+    awk -v prev=$prev_time -v curr=$current_time '
+    $3 ~ /^(sd|nvme|vd|hd)/ {
+        cmd = "cat /proc/diskstats | awk '\''$3 == \"" $3 "\" {print \$13}'\''"
+        cmd | getline field13
+        close(cmd)
+        delta = field13 - prev_time[$3]
+        if (delta > 1000) print "HIGH UTIL:", $3, "delta_ms=", delta
+        prev_time[$3] = field13
+    }' /proc/diskstats
+    prev_time=$current_time
+    sleep 2
+done
+```
+
+### Интеграция с Prometheus Node Exporter
+
+Метрики из `/proc/diskstats` автоматически экспортируются через `node_exporter`. Проверка:
+```bash
+# Проверка метрик diskstats в node_exporter
+curl -s http://localhost:9100/metrics | grep -E 'node_disk_(read|write|io)_'
+# → node_disk_reads_completed_total{device="sda"} 12345
+# → node_disk_read_bytes_total{device="sda"} 6.37174272e+09
+```
+
+### Атрибуция нагрузки к конкретным устройствам
+
+Когда `/proc/diskstats` показывает аномалию, важно сопоставить её с процессами:
+```bash
+# 1. Найти устройство с высокой утилизацией
+iostat -xz 1 3 | grep -E 'Device|sda|nvme'
+
+# 2. Найти процессы, пишущие на это устройство
+sudo iotop -oP -d 2 | head -n 20
+
+# 3. Для LVM/device-mapper сопоставить dm-* с физическим устройством
+ls -l /sys/block/dm-0/slaves/
+# → sda, sdb (какие физические диски под LVM)
+
+# 4. Проверить, какой раздел активен
+sudo filefrag -v /var/log/syslog | head -n 5
+# → показывает физические блоки файла
+```
+
+### Корреляция с `kworker` и writeback
+
+Если `/proc/diskstats` показывает высокий `Time spent writing` при низкой пользовательской активности, это может быть фоновый writeback:
+```bash
+# Мониторинг одновременно diskstats и writeback
+watch -n1 'echo "=== diskstats ===" && awk "$3 == \"sda\" {print \"Writes:\", \$8, \"| Time:\", \$11 \"ms\"}" /proc/diskstats && echo "=== meminfo ===" && grep -E "Dirty|Writeback" /proc/meminfo'
+# → Writes: 45678 | Time: 12345ms
+# → Dirty: 524288 kB
+# → Writeback: 65536 kB
 ```
 
 ## Дополнительная информация
@@ -79,10 +190,21 @@ watch -n1 "awk '\$3 == \"sda\" {print \"Flush requests:\", \$19, \"| Time:\", \$
 1. **Размер сектора**: Важно помнить, что ядро всегда считает сектор равным 512 байтам в данном интерфейсе. Для перевода в мегабайты: `(sectors * 512) / 1024 / 1024`.
 2. **Виртуальные устройства**: Для LVM (`dm-*`) или MD-RAID некоторые поля могут быть всегда равны нулю (например, merged requests), так как объединение происходит на уровне нижележащих физических устройств.
 3. **Flush и целостность**: Высокое время в поле 20 при малом количестве запросов в поле 19 может указывать на проблемы с прошивкой диска или аппаратным контроллером RAID без BBU/Flash-защиты.
+4. **Диски > 2 TB**: При использовании 512e или 4Kn секторов `/proc/diskstats` продолжает считать в 512-байтовых единицах, что может приводить к несоответствиям с `fdisk -l` или `lsblk`.
+5. **NVMe multipath**: Для NVMe через multipath устройство может отображаться как `nvme0n1`, но физически данные идут через несколько путей. `/proc/diskstats` показывает агрегированную статистику.
+
+### Ограничения и особые случаи
+
+#### Паравиртуализация (KVM, Xen, VMware)
+В гостевой ОС `/proc/diskstats` показывает виртуализированную статистику, которая может не отражать реальную производительность хоста. Для диагностики внутри ВМ используйте `iostat` с интервалом, но для точной картины необходимы метрики гипервизора (например, `virtio-blk` statistics).
+
+#### Диски с кэшированием записи (Write Cache)
+Поле 13 (`Time spent doing I/O`) включает время на подтверждение от контроллера диска. Если у диска включен кэш записи и отсутствует BBU (Battery Backup Unit), данные могут быть подтверждены быстрее, чем записаны физически. Это создает риск потери данных при отключении питания.
+
+#### Сравнение с `/sys/block/<dev>/stat`
+`/sys/block/<dev>/stat` содержит те же данные, что и `/proc/diskstats`, но в компактном формате (14 полей). Поля 15-20 (Discard/Flush) отсутствуют в `/sys/block/*/stat` в старых ядрах.
 
 ### См. также
 
 - [`iostat` — основной инструмент анализа](./../../Filesystem/iostat.md) — парсит `/proc/diskstats` для вывода читаемых метрик.
 - [Диагностический чеклист ввода-вывода](./diagnostic_checklist.md) — как интерпретировать полученные цифры.
-- [Статистика /proc/pid/io](../Processes/proc_pid_io.md) — если нужно найти конкретный процесс, создающий нагрузку, отраженную в `diskstats`.
-- [Планировщики ввода-вывода (I/O Schedulers)](../../../Linux/Core/kernel/io_schedulers.md) — как ядро объединяет запросы (поля merged).

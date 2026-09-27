@@ -236,9 +236,9 @@ spec:
 ---
 build_image:
   stage: $[[ inputs.stage ]]
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   id_tokens:
     SIGSTORE_ID_TOKEN:
       aud: sigstore
@@ -455,7 +455,7 @@ curl --request POST \
 # templates/build.yml
 build_image:
   stage: build
-  image: docker:27.0
+  image: docker:29.8
   id_tokens:
     SIGSTORE_ID_TOKEN:
       aud: sigstore
@@ -593,7 +593,7 @@ echo "=== Диагностика завершена ==="
 | **Lead Time for Changes** | Время загрузки и валидации компонентов | < 2 минуты |
 | **Deployment Frequency** | Доступность компонентов для автоматизации | > 10 деплоев в день |
 | **Change Failure Rate** | Качество компонентов и их тестирование | < 5% |
-| **Time to Restore Service** | Скорость отката проблемных компонентов | < 15 минут |
+| **Failed Deployment Recovery Time** | Скорость отката проблемных компонентов | < 15 минут |
 
 **Формула расчета влияния на SLA:**
 

@@ -2,11 +2,28 @@
 
 ## Определения
 
-**SSH Troubleshooting** — систематический процесс выявления проблем подключения: анализ клиентской конфигурации, сетевого пути, серверных настроек и аутентификации.
+**SSH Troubleshooting** — систематический процесс выявления проблем подключения: анализ клиентской конфигурации, сетевого пути, серверных настроев и аутентификации.
 
 **Verbose Mode** — режим детализации SSH-клиента (`-v`, `-vv`, `-vvv`). Показывает каждый этап подключения в реальном времени — основной диагностический инструмент.
 
 **SSH Handshake** — начальный этап соединения: согласование версии протокола, алгоритмов шифрования, обмена ключами. Сбои чаще всего вызваны несовместимостью конфигураций, сетевыми ограничениями или устаревшими алгоритмами.
+
+**SSH-агент (ssh-agent)** — фоновый процесс, хранящий расшифрованные приватные ключи в оперативной памяти. Позволяет аутентифицироваться без повторного ввода парольной фразы. Должен быть запущен в текущей сессии: `eval "$(ssh-agent -s)"`.
+
+**BatchMode** — режим SSH, при котором клиент не запрашивает ввод от пользователя (пароль, подтверждение fingerprint). Используется в CI/CD и автоматизации. При проблемах отключает интерактивные промпты, превращая их в ошибки.
+
+**GSSAPI (Generic Security Services Application Program Interface)** — механизм аутентификации, часто используемый в корпоративных средах (Kerberos). При недоступности KDC вызывает задержки при подключении.
+
+**StrictHostKeyChecking** — директива клиента, управляющая проверкой ключей хостов:
+- `no` — автоматически добавлять новые ключи (уязвимо к MITM).
+- `yes` — отклонять новые ключи без явного добавления в `known_hosts`.
+- `accept-new` — автоматически добавлять новые, но отклонять измененные.
+
+**ControlPersist / Stale Socket** — механизм мультиплексирования, при котором сокет управления остается после закрытия сессии на заданное время. При утечках или сбоях Ansible/CI/CD старые сокеты блокируют повторное подключение.
+
+**TCPKeepAlive vs ServerAlive** — два независимых уровня проверки связи:
+- `TCPKeepAlive` — транспортные keep-alive пакеты TCP-стека (уровень ОС). Может не обнаруживать зависший sshd.
+- `ServerAliveInterval` — прикладной уровень SSH (шифрованные пакеты). Проверяет живость именно SSH-сессии.
 
 ## Базовые концепции
 
@@ -16,10 +33,21 @@
 
 | Этап | Что проверять | Инструменты |
 | :--- | :--- | :--- |
-| **Клиент** | Адрес, порт, DNS, локальный файрвол, `~/.ssh/config` | `ssh -v`, `nslookup`, `ssh -G`, `getent hosts` |
-| **Сеть** | Маршрут, блокировки портов, MTU (актуально для PQC) | `ping`, `nc -zv`, `mtr`, `traceroute`, `tcpdump` |
-| **Сервер** | Статус `sshd`, порт прослушивания, файрвол, ресурсы | `systemctl status sshd`, `ss -tlpn`, `sshd -T`, `df -h` |
-| **Аутентификация** | Ключи, права доступа, FIDO2 токены, сертификаты CA | `ssh -vvv`, логи сервера, `ssh-keygen -L`, `ssh-add -l` |
+| **Клиент** | Адрес, порт, DNS, локальный файрвол, `~/.ssh/config`, ssh-agent | `ssh -v`, `nslookup`, `ssh -G`, `getent hosts`, `ssh-add -l` |
+| **Сеть** | Маршрут, блокировки портов, MTU (актуально для PQC), ARP | `ping`, `nc -zv`, `mtr`, `traceroute`, `tcpdump`, `ip neigh` |
+| **Сервер** | Статус `sshd`, порт прослушивания, файрвол, ресурсы, journald | `systemctl status sshd`, `ss -tlpn`, `sshd -T`, `df -h`, `journalctl` |
+| **Аутентификация** | Ключи, права доступа, FIDO2 токены, сертификаты CA, PAM | `ssh -vvv`, логи сервера, `ssh-keygen -L`, `ssh-add -l`, `faillock` |
+
+### Этапы подключения SSH (RFC 4253)
+
+Понимание последовательности помогает локализовать проблему по времени её возникновения в verbose-логе:
+
+1.  **TCP- Handshake (L4):** Клиент отправляет SYN, сервер отвечает SYN-ACK. Если зависание здесь — проблема в маршрутизации или файрволе.
+2.  **Обмен версиями:** Клиент и сервер обмениваются идентификаторами (`SSH-2.0-OpenSSH_9.8`). Несовпадение версий обычно не блокирует соединение.
+3.  **KEX (Key Exchange):** Согласование алгоритмов и генерация общего секрета (например, Curve25519, MLKEM768). Сбои здесь — несовместимость алгоритмов или MTU-проблемы.
+4.  **Аутентификация сервера:** Клиент проверяет host key. Ошибка `Host key verification failed` возникает именно здесь.
+5.  **Аутентификация клиента:** Сервер проверяет ключ, пароль, сертификат или FIDO2. Ошибка `Permission denied` возникает здесь.
+6.  **Сессия:** Установление канала, запрос PTY, запуск команды или shell.
 
 ### Источники информации
 
@@ -30,6 +58,7 @@
 | `-v` | Основные этапы (согласование, аутентификация) | Большинство типичных проблем |
 | `-vv` | Выбранные алгоритмы, детали обмена (KEX) | Проблемы совместимости и шифрования |
 | `-vvv` | Каждый пакет, отладка протокола | Ошибки FIDO2, SSH-агента и сертификатов |
+| `-o LogLevel=DEBUG3` | Максимальная детализация без дублирования `-vvv` | Анализ проблем с прокси и конфигом |
 
 **Логи сервера:**
 
@@ -38,6 +67,19 @@
 | **systemd (все)** | `sudo journalctl -u ssh -f` (или `sshd`) |
 | **Debian / Ubuntu** | `sudo tail -f /var/log/auth.log` |
 | **RHEL / Rocky / Alma** | `sudo tail -f /var/log/secure` |
+
+**Шаблоны поиска в логах:**
+
+```bash
+# Неудачные попытки аутентификации
+sudo journalctl -u ssh --since "1 hour ago" | grep -E "Failed|refused|invalid user"
+
+# Подозрительные IP (brute-force)
+sudo journalctl -u ssh --since "24 hours ago" | grep -E "Invalid user|authentication failure" | awk '{for(i=1;i<=NF;i++) if($i~/^from=/) print substr($i,6)}' | sort | uniq -c | sort -rn | head
+
+# Успешные входы
+sudo journalctl -u ssh --since "24 hours ago" | grep "Accepted"
+```
 
 **Проверка эффективной конфигурации:**
 
@@ -49,6 +91,13 @@ ssh -G myserver.com
 
 # На стороне сервера: показать итоговую конфигурацию демона (effective config)
 sudo sshd -T
+
+# Запроsupported алгоритмы шифрования
+ssh -Q cipher
+ssh -Q cipher-auth
+ssh -Q kex
+ssh -Q key
+ssh -Q mac
 ```
 
 ## Практические сценарии
@@ -123,6 +172,25 @@ sudo nft list ruleset
    restorecon -Rv ~/.ssh          # Исправление
    ```
 
+#### Диагностика через ssh-copy-id
+
+```bash
+# Типичная ошибка: ssh-copy-id зависает или падает
+ssh-copy-id -i ~/.ssh/id_ed25519.pub user@host
+# → /usr/bin/ssh-copy-id: ERROR: failed to add key(s)
+
+# Причины:
+# 1. На сервере отключена аутентификация по ключам:
+sudo sshd -T | grep pubkeyauthentication
+# → pubkeyauthentication no
+
+# 2. Нет прав на запись в authorized_keys:
+# → Проверьте права и владельца (см. выше)
+
+# 3. Неверный путь к authorized_keys:
+sudo sshd -T | grep authorizedkeysfile
+```
+
 #### Проблемы FIDO2 / Security Keys
 
 При использовании ключей типа `ed25519-sk`:
@@ -139,6 +207,28 @@ sudo nft list ruleset
   ssh-keygen -L -f ~/.ssh/id_ed25519-cert.pub
   ```
 - **Типичные ошибки:** `Certificate invalid: expired` (истек срок) или `principal mismatch` (имя пользователя не входит в список `Principals:` в сертификате).
+
+#### Проблемы SSH-агента
+
+```bash
+# 1. Проверить, запущен ли агент
+echo $SSH_AUTH_SOCK
+# → /tmp/ssh-XXXX/agent.YYY (если пусто — агент не запущен)
+
+# 2. Проверить загруженные ключи
+ssh-add -l
+# → The agent has no identities. (ключи не загружены)
+# → Could not open a connection to your authentication agent. (агент не жив)
+
+# 3. Загрузить ключ
+ssh-add ~/.ssh/id_ed25519
+# Enter passphrase for ...
+
+# 4. Ошибка: Too many authentication failures
+# Причина: в агенте загружено >6 ключей, сервер отклоняет соединение
+# Решение: указать ключ явно
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519_prod user@host
+```
 
 ### Сценарий 2.1: Учетная запись заблокирована
 
@@ -189,9 +279,11 @@ ssh-keyscan -t ed25519 target-host 2>/dev/null | ssh-keygen -lf -
 ### Сценарий 3: Медленное подключение
 
 1. **Таймаут GSSAPI-аутентификации:**
+   - **Диагностика:** В verbose-логе ищите строки `GSSAPI` или `Kerberos`.
    - **Решение:** `GSSAPIAuthentication no` в `~/.ssh/config`.
 2. **Проблемы с Reverse DNS (на стороне сервера):**
-   - **Решение:** `UseDNS no` в `/etc/ssh/sshd_config`.
+   - **Диагностика:** В verbose-логе ищите длинные задержки между `Connecting` и `Authentication`.
+   - **Решение:** `UseDNS no` в `/etc/ssh/sshd_config` (на стороне сервера).
 3. **PQC (Post-Quantum) Handshake (2026+):**
    Пакеты KEXINIT в постквантовых алгоритмах значительно больше (несколько КБ).
    - **Симптом:** Зависание после обмена версиями.
@@ -219,6 +311,158 @@ ssh-keyscan -t ed25519 target-host 2>/dev/null | ssh-keygen -lf -
 Host *
   ServerAliveInterval 60
   ServerAliveCountMax 3
+```
+
+### Сценарий 6: Проблемы с передачей файлов (scp, sftp, rsync)
+
+**Симптом:** `scp` зависает, `rsync` обрывается на больших файлах, `sftp` не может подключиться.
+
+#### scp / sftp
+
+```bash
+# 1. Проверить, что подсистема sftp включена на сервере
+sudo sshd -T | grep sftp
+# → subsystem sftp /usr/lib/openssh/sftp-server
+
+# 2. Для scp проверить shell и права
+# scp требует доступного shell (не nologin), если не используется subsystem
+
+# 3. Диагностика через sftp клиент
+sftp -v user@host
+# Ищите ошибки "Subsystem request failed" или "Connection closed"
+```
+
+#### rsync через SSH
+
+```bash
+# 1. Проверить, что remote-shell доступен
+rsync -avz --progress --rsh="ssh -vvv" /src/ user@host:/dst/
+
+# 2. Частая ошибка: неверные права на целевую директорию
+# → Permission denied (write)
+# Решение: chown/chmod на удаленной стороне
+
+# 3. Ограничение ресурсов на удаленной стороне
+# Если сессия рвется на больших файлах — проверьте ulimit, disk quota
+```
+
+### Сценарий 7: Базовая диагностика Jump Host / Bastion цепочки
+
+**Симптом:** `ssh -J bastion user@target` зависает или падает с `Connection timed out`.
+
+```bash
+# 1. Проверить доступность Jump Host напрямую
+ssh -v user@bastion
+# Если не проходит — проблема на L3/L4 (маршрут, файрвол, sshd на bastion)
+
+# 2. Проверить проброс порта через bastion
+ssh -J bastion -o ProxyCommand="nc -zv %h %p" user@target
+
+# 3. Проверить AllowTcpForwarding на bastion
+ssh user@bastion "sudo sshd -T | grep allowtcpforwarding"
+# → allowtcpforwarding yes
+
+# 4. Проверить целостность host key bastion
+ssh-keygen -F bastion
+# → Found a key belonging to hostname
+# → Not found: ключ не добавлен
+```
+
+> **См. также:** [Конфигурация клиента SSH](./ssh_client_config.md) — продвинутые сценарии с `ProxyJump` и `ProxyCommand`.
+
+### Сценарий 8: Диагностика CI/CD и автоматизации
+
+**Симптом:** `GIT_SSH_COMMAND="ssh -vvv"` показывает `Permission denied (publickey)` в пайплайне, хотя локально работает.
+
+```bash
+# 1. Проверить, загружен ли ключ в агент пайплайна
+ssh-add -l
+# → Если "The agent has no identities" — ключ не добавлен
+
+# 2. Проверить права на приватный ключ в окружении CI
+ls -la ~/.ssh/id_ed25519
+# → Должен быть 600
+
+# 3. Проверить known_hosts
+# В CI/CD часто отсутствует known_hosts
+# Решение:
+#   - StrictHostKeyChecking=accept-new
+#   - или явный ssh-keyscan в шаге before_script
+
+# 4. Ansible: зависание при первом запуске
+# Причина: ControlPersist сокет от предыдущего сбоя
+ansible all -m shell -a 'exit' --ssh-extra-args='-O exit'
+# → Принудительное закрытие всех сокетов
+```
+
+### Сценарий 9: Анализ логов и автоматизация диагностики
+
+#### Паттерны journald / syslog
+
+```bash
+# Топ-10 IP по количеству неудачных попыток за последний час
+sudo journalctl -u ssh --since "1 hour ago" | \
+  grep "Failed password" | \
+  awk '{for(i=1;i<=NF;i++) if($i~/^from=/) print substr($i,6)}' | \
+  sort | uniq -c | sort -rn | head
+
+# Поиск попыток входа под несуществующими пользователями
+sudo journalctl -u ssh --since "24 hours ago" | grep "Invalid user"
+
+# Поиск успешных входов для аудита
+sudo journalctl -u ssh --since "24 hours ago" | grep "Accepted"
+```
+
+#### Сценарии brute-force
+
+```bash
+# 1. Проверить, активна ли атака
+sudo journalctl -u ssh --since "10 minutes ago" | grep -c "Failed password"
+# → Если >100 за 10 минут — активная атака
+
+# 2. Временная блокировка через nftables (без fail2ban)
+sudo nft add element inet filter ssh_bruteforce { $(sudo journalctl -u ssh --since "5 minutes ago" | grep "Failed password" | awk '{for(i=1;i<=NF;i++) if($i~/^from=/) print substr($i,6)}' | sort | uniq) }
+```
+
+### Сценарий 10: Edge cases и нестандартные окружения
+
+#### Unicode и локали
+
+При проблемах с отображением (кракозябры в менеджере пакетов, editor):
+```bash
+# Указать локаль при подключении
+ssh -o "SetEnv=LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8" user@host
+```
+
+#### PTY allocation failed
+
+```bash
+# Симптом: "PTY allocation request failed on channel 0"
+# Причина: на сервере исчерпан лимит PTY или нет свободных устройств /dev/pts
+# Диагностика на сервере:
+ssh user@host "ls /dev/pts | wc -l"
+ssh user@host "cat /proc/sys/kernel/pty/max"
+```
+
+#### tcp_wrappers (legacy)
+
+В старых дистрибутивах (RHEL 6, CentOS 6) работают `hosts.allow` / `hosts.deny`:
+```bash
+# Проверка
+cat /etc/hosts.deny | grep sshd
+# → sshd: ALL (блокирует всех)
+cat /etc/hosts.allow | grep sshd
+# → sshd: 10.0.0.0/24 (разрешает подсеть)
+```
+
+#### Конфликты с systemd / logind
+
+Если при выходе из SSH сессия продолжает висеть на сервере:
+```bash
+# Проверить KillUserProcesses
+cat /etc/systemd/logind.conf | grep KillUserProcesses
+# → KillUserProcesses=yes (по умолчанию в Fedora/RHEL)
+# Решение: использовать tmux/screen, или отключить KillUserProcesses
 ```
 
 ## Дополнительная информация
@@ -264,3 +508,24 @@ ssh user@host -vv 2>&1 | grep -E "kex|cipher|Authentications"
 # 4. Проверка на сервере
 sudo sshd -t && sudo journalctl -u ssh -n 50
 ```
+
+### Поддерживаемые алгоритмы
+
+```bash
+# Проверить, что поддерживает клиент
+ssh -Q cipher
+ssh -Q cipher-auth
+ssh -Q kex
+ssh -Q key
+ssh -Q mac
+
+# Проверить эффективные алгоритмы для конкретного хоста
+ssh -vvv user@host 2>&1 | grep -E "kex| cipher|mac"
+```
+
+### См. также
+
+- [Конфигурация клиента SSH](./ssh_client_config.md) — `~/.ssh/config`, `ssh -G`, verbose-режим, Jump-хосты.
+- [SSH Authentication](./server/ssh_authentication.md) — ключи, FIDO2, CA, `ssh-copy-id`, права доступа.
+- [Практическое использование SSH и туннелирование](./ssh_usage_and_tunnels.md) — Port Forwarding, SOCKS5, `scp`/`sftp`/`rsync`.
+- [Инструменты сетевого мониторинга](../Tools/network_monitoring_tools.md) — tcpdump, tshark, ss для диагностики SSH-трафика.

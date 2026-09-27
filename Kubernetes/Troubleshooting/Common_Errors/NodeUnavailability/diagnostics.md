@@ -505,3 +505,8 @@ journalctl -u containerd -f --output=json | jq .
 - [Taints и выселение](./taints_and_eviction.md) — последствия недоступности.
 - [Проблемы Kubelet](./kubelet_issues.md) — глубокий разбор агента.
 - [Обслуживание узлов](../../../Operations/node_maintenance.md) — плановые работы.
+- [SELinux и AppArmor](./security_profiles.md) — блокировка exec и монтирования.
+- [Тюнинг ядра](./kernel_tuning.md) — sysctl, ulimit, conntrack.
+- [Синхронизация времени](./time_sync.md) — NTP, clock skew, TLS-ошибки.
+- [Hostname и DNS](./hostname_dns_issues.md) — имя узла, /etc/hosts, DNS-резолв.
+- [SSH-доступ и bastion](./bastion_ssh_access.md) — диагностика через SSH и bastion.

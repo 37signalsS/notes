@@ -694,6 +694,7 @@ Helmwave предпочтительнее для:
 *   [Helmfile](./helmfile_overview.md) — классический альтернативный оркестратор.
 *   [Паттерны и устранение неисправностей Helm](./Advanced/patterns_troubleshooting.md) — диагностика типовых ошибок Helm.
 *   [Безопасность Helm](./Advanced/security_best_practices.md) — управление секретами, подпись и RBAC.
+*   [Мониторинг Helm-релизов](./helm_monitoring_observability.md) — Prometheus, Grafana и алертинг для Helm-релизов.
 *   [Официальная документация Helmwave](https://helmwave.github.io/docs/0.44.x/) (англ.).
 *   [Репозиторий Helmwave](https://github.com/helmwave/helmwave) — релизы и issues.
 

@@ -278,6 +278,8 @@ tshark -r capture.pcap -Y "http2.type == 0 && http2.streamid == 5" -T fields \
 | **Flow Control** | Нет (только TCP RWND) | Собственный (WINDOW_UPDATE) |
 | **Filtri в Wireshark** | `http`, `http.request`, `http.response` | `http2`, `http2.type`, `http2.streamid` |
 
+Подробный разбор анализа HTTP/1.1 поверх TLS (включая инкапсуляцию, фильтрацию по SNI и расшифровку) — в **[Анализ HTTPS в Wireshark](./https_analysis.md)**.
+
 ### Типичные проблемы HTTP/2/gRPC
 
 | Проблема | Симптом в Wireshark | Фильтр | Решение |

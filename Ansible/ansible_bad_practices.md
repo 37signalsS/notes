@@ -8,7 +8,13 @@
 
 **Каскадный сбой (Cascade Failure)** — ситуация, при которой ошибка в одной задаче приводит к остановке всех последующих задач из-за отсутствия обработки ошибок или неправильного использования `ignore_errors`.
 
-## Основные концепции
+**Согласованность состояния (Configuration Drift)** — расхождение между фактическим состоянием инфраструктуры и декларативным описанием в Ansible, возникающее из-за неидемпотентных операций, ручных изменений на хостах или отсутствия периодического convergance.
+
+**MTTR (Mean Time To Repair/Recovery)** — среднее время восстановления после сбоя. Плохие практики Ansible увеличивают MTTR за счет сложности диагностики, непредсказуемого поведения и отсутствия откатных механизмов.
+
+**Surface Area Attack (Поверхность атаки)** — совокупность точек, через которые злоумышленник может воздействовать на систему. Глобальный `become: true`, хранение секретов в Git и отсутствие `no_log` расширяют эту поверхность.
+
+## Архитектура и основные концепции
 
 ### 1. Нарушение идемпотентности и декларативности
 
@@ -17,7 +23,17 @@
 *   **Неконтролируемое накопление:** Отсутствие параметра `state: absent` для удаления старых конфигураций, пользователей или пакетов. Система «зарастает» мусором.
 *   **Игнорирование `changed_when`:** Использование модулей `shell` или `command` без явного указания условия `changed_when`. Это делает отслеживание изменений невозможным.
 
-### 2. Безопасность и управление доступом
+### 2. Влияние антипаттернов на операционную деятельность (SRE/DevOps)
+
+Антипаттерны Ansible напрямую влияют на ключевые операционные метрики:
+
+- **Увеличение MTTR:** Непредсказуемое поведение плейбуков, отсутствие обработки ошибок и неидемпотентность усложняют диагностику и восстановление после инцидентов.
+- **Потеря наблюдаемости (Observability):** Отсутствие `changed_when`, скрытые изменения и неструктурированные логи не позволяют коррелировать изменения Ansible с инцидентами мониторинга.
+- **Снижение пропускной способности изменений (Change Capacity):** Каскадные сбои и необходимость ручного вмешательства замедляют деплои и увеличивают риск batch-изменений.
+- **Нарушение SLA/SLO:** Непредсказуемое время выполнения, отсутствие throttling и контроля параллелизма приводят к превышению временных рамок обслуживания.
+- **Compliance-риски:** Отсутствие аудита изменений, неконтролируемый `become` и хранение секретов в Git нарушают требования SOC2, PCI-DSS, HIPAA и внутренние политики безопасности.
+
+### 3. Безопасность и управление доступом
 
 *   **Глобальный Privilege Escalation:** Использование `become: true` на уровне плейбука или хоста без необходимости. Это расширяет поверхность атаки.
 *   **Утечка секретов в логи:** Отсутствие директивы `no_log: true` при работе с паролями, токенами или сертификатами. Секреты попадают в stdout и отчеты CI/CD.
@@ -25,20 +41,24 @@
 *   **Хранение секретов в group_vars/host_vars:** Размещение паролей и ключей в inventory-файлах, которые могут быть случайно закоммичены в Git.
 *   **Использование `--ask-vault-pass` в CI/CD:** Передача пароля vault через интерактивный ввод или переменные окружения вместо переменных окружения vault или интеграции с HashiCorp Vault.
 
-### 3. Производительность и масштабируемость
+### 4. Производительность, масштабируемость и отказоустойчивость
 
 *   **Fact-Overhead:** Сбор фактов (`gather_facts`) на всех хостах, когда они нужны только для фильтрации в одном месте. На больших инвентарях это может занимать до 70% времени выполнения.
 *   **Линейные циклы над тяжелыми модулями:** Выполнение `apt` или `yum` в цикле `loop` для 50 пакетов. Правильный подход — передача списка в один вызов модуля для атомарной работы пакетного менеджера.
 *   **Отсутствие лимитов в `until`:** Бесконечные циклы ожидания без `retries` и `delay`, приводящие к зависанию пайплайнов.
 *   **Избыточные `serial` и `throttle`:** Использование `serial: 1` для всех задач без необходимости или чрезмерное ограничение параллелизма через `throttle`, что замедляет выполнение без улучшения стабильности.
 *   **Неконтролируемое кеширование facts:** Использование `cacheable: yes` в `set_fact` без продумывания TTL и управления кешем, что приводит к работе с устаревшими данными.
+*   **Отсутствие стратегии canary:** Массовое применение изменений к пулу серверов без поэтапного (canary) подхода. При наличии дефекта это приводит к каскадному отказу всего кластера.
+*   **Неконтролируемый параллелизм:** Запуск бесконтрольного числа асинхронных задач (`async` + `poll: 0`) без throttle, что создает пиковые нагрузки на контроллер, сеть и целевые хосты.
 
-### 4. Сложность и поддержка (Maintainability)
+### 5. Сложность и поддержка (Maintainability)
 
 *   **Жесткая связанность (Hardcoding):** Прописывание путей, имен пользователей и версий прямо в задачах вместо использования `defaults/main.yml`.
 *   **God Roles:** Создание ролей, нарушающих принцип единственной ответственности (Single Responsibility Principle). Роль «webserver», которая также настраивает бэкапы, мониторинг и VPN.
 *   **Игнорирование FQCN:** Использование коротких имен (`copy`, `template`). В современных версиях это замедляет поиск модуля и может привести к конфликтам имен при использовании нескольких коллекций.
 *   **Глубокие зависимости ролей:** Когда одна роль зависит от другой, которая зависит от третьей, создавая цепочку, которую невозможно переиспользовать или тестировать изолированно.
+*   **Отсутствие idempotency-тестов:** Отсутствие проверки идемпотентности в CI/CD. Второй запуск плейбука должен возвращать `ok`, а не `changed` для уже примененной конфигурации.
+*   **Смешение окружений:** Использование одних и тех же inventory и переменных для dev/staging/prod без явного разделения. Это увеличивает риск «размазывания» изменений между средами.
 
 ## Практические сценарии
 
@@ -142,7 +162,7 @@
 
 #### 5. Неправильное использование `changed_when`
 
-При использовании `shell` или `command` без `changed_changed` невозможно определить, было ли выполнено реальное изменение.
+При использовании `shell` или `command` без `changed_when` невозможно определить, было ли выполнено реальное изменение.
 
 **Плохо:**
 ```yaml
@@ -181,6 +201,122 @@
 - name: Set deploy timestamp
   ansible.builtin.set_fact:
     deploy_time: "{{ ansible_date_time.epoch }}"
+```
+
+### Производственные сценарии (SRE/DevOps)
+
+#### 1. Каскадный отказ при обновлении кластера
+
+Обновление всех серверов одновременно без canary-подхода и health-check.
+
+**Плохо (Массовое обновление без контроля):**
+```yaml
+- hosts: webservers
+  tasks:
+    - name: Deploy new version
+      ansible.builtin.copy:
+        src: app.tar.gz
+        dest: /opt/app/
+      notify: Restart app
+```
+
+**Хорошо (Canary с автоматическим откатом):**
+```yaml
+- hosts: webservers
+  serial: 2
+  tasks:
+    - name: Deploy new version
+      ansible.builtin.copy:
+        src: app.tar.gz
+        dest: /opt/app/
+      notify: Restart app
+
+    - name: Health check after deploy
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}:8080/health"
+        status_code: 200
+      retries: 10
+      delay: 5
+      register: health
+      failed_when: health is failed
+```
+
+#### 2. Неконтролируемый рост конфигурации (Configuration Drift)
+
+Отсутствие очистки устаревших конфигураций, пользователей и файлов.
+
+**Плохо (Только добавление):**
+```yaml
+- name: Ensure user exists
+  ansible.builtin.user:
+    name: deploy
+    state: present
+```
+
+**Хорошо (Полный lifecycle):**
+```yaml
+- name: Ensure user exists
+  ansible.builtin.user:
+    name: deploy
+    state: present
+    shell: /bin/bash
+    groups: sudo
+    remove: yes  # Удаляет пользователя, если он отсутствует в vars
+```
+
+#### 3. Отсутствие отката (Rollback) при деплое
+
+Нет механизма возврата к предыдущей версии при проблемах.
+
+**Плохо:**
+```yaml
+- name: Deploy application
+  ansible.builtin.copy:
+    src: app/
+    dest: /var/www/html/
+```
+
+**Хорошо (С backup и откатом):**
+```yaml
+- name: Backup current version
+  ansible.builtin.command: tar czf /opt/backups/app-{{ ansible_date_time.epoch }}.tar.gz /var/www/html/
+  changed_when: true
+
+- name: Deploy new version
+  ansible.builtin.copy:
+    src: app/
+    dest: /var/www/html/
+
+- name: Rollback on failure
+  block:
+    - name: Verify service health
+      ansible.builtin.uri:
+        url: "http://localhost/health"
+        status_code: 200
+  rescue:
+    - name: Restore from backup
+      ansible.builtin.command: tar xzf /opt/backups/app-latest.tar.gz -C /var/www/html/
+```
+
+#### 4. Секреты в CI/CD-логах
+
+Отсутствие `no_log` приводит к утечке токенов в логи GitHub Actions/GitLab CI.
+
+**Плохо:**
+```yaml
+- name: Deploy with token
+  ansible.builtin.command: kubectl apply -f manifest.yaml
+  environment:
+    KUBE_TOKEN: "{{ kube_token }}"
+```
+
+**Хорошо:**
+```yaml
+- name: Deploy with token
+  ansible.builtin.command: kubectl apply -f manifest.yaml
+  environment:
+    KUBE_TOKEN: "{{ kube_token }}"
+  no_log: true
 ```
 
 ### Архитектурные ошибки
@@ -291,12 +427,8 @@ max_clients: 200
     - name: Handle specific error
       ansible.builtin.debug:
         msg: "Cleanup failed: {{ cleanup_result.stderr }}"
-    - name: Notify team
-      ansible.builtin.uri:
-        url: "{{ slack_webhook }}"
-        method: POST
-        body: '{"text": "Cleanup failed on {{ inventory_hostname }}"}'
-        body_format: json
+    - name: Notify team via local mail
+      ansible.builtin.command: echo "Cleanup failed on {{ inventory_hostname }}: {{ cleanup_result.stderr }}" | mail -s "EDA Alert" admin@example.com
   always:
     - name: Verify disk space
       ansible.builtin.command: df -h /
@@ -532,7 +664,7 @@ max_clients: 200
 
 ### Статический анализ с `ansible-lint`
 
-`ansible-lint` — обязательный инструмент для выявления антипаттернов в CI/CD.
+`ansible-lint` — обязательный инструмент для выявления антипаттернов в CI/CD. Современные профили linting (`production`, `security`, `shippable`) позволяют адаптировать строгость проверок под контекст.
 
 | Правило | Описание | Почему это важно |
 | :--- | :--- | :--- |
@@ -549,6 +681,37 @@ max_clients: 200
 | `yaml[comments]` | Отсутствие пробела после `#` в комментариях | Стандартизация форматирования. |
 | `no-same-owner` | Использование `owner` без необходимости | Предотвращает нежелательные изменения владельца файлов. |
 
+### Линтинг на уровне ролей и коллекций
+
+Для больших кодовых баз используйте интеграцию в CI/CD pipeline:
+
+```bash
+# Проверка конкретного правила с конфигом
+ansible-lint -c .ansible-lint -R playbooks/
+
+# Проверка всех ролей в репозитории
+find roles/ -maxdepth 2 -name 'tasks' -type d -exec ansible-lint {} \;
+
+# Генерация отчета в формате SARIF для GitHub Security
+ansible-lint -f sarif -o ansible-lint.sarif playbooks/
+```
+
+### Дифференциальный анализ drift
+
+Для Detection Configuration Drift используйте связку Ansible + инструменты мониторинга:
+
+```bash
+# Применение плейбука в check-mode для выявления drift
+ansible-playbook site.yml --check --diff
+
+# Интеграция с Monitoring: экспорт drift-отчета в Prometheus Pushgateway
+ansible-playbook site.yml --check | \
+  python3 -c "
+import sys, json, urllib.request
+data = {'job': 'ansible-drift', 'gauges': [{'name': 'drift_tasks_changed', 'value': sys.stdin.read().count('changed=1')}]}
+"
+```
+
 ### Ручная проверка (Code Review)
 
 При проверке чужого кода всегда задавайте вопросы:
@@ -558,6 +721,7 @@ max_clients: 200
 4. Есть ли обработка ошибок для критических задач? (block/rescue)
 5. Используются ли FQCN для всех модулей?
 6. Правильно ли настроен приоритет переменных?
+7. Есть ли откатный механизм при частичном выполнении?
 
 ### Автоматизация проверок
 
@@ -592,11 +756,87 @@ ansible-lint roles/my_role/
 | `No variable found` | Неправильное имя переменной | Используйте `ansible.builtin.debug` для отладки |
 | `Handler not triggered` | Отсутствие `notify` | Убедитесь, что задача имеет `notify: Handler Name` |
 | `Infinite loop in until` | Отсутствие `retries` и `delay` | Добавьте `retries: N` и `delay: M` в цикл `until` |
+| `Host limit exceeded` | Превышен лимит параллелизма | Настройте `forks` в `ansible.cfg` или используйте `serial` |
+| `Fact gathering timeout` | Большой инвентарь, медленные хосты | Используйте `gather_facts: false` или `gather_subset` |
+| `Vault password missing` | Отсутствует `--vault-id` или `VAULT_PASSWORD` | Настройте `vault_password_file` или переменную окружения |
+| `Suspicious token in logs` | Отсутствует `no_log` | Добавьте `no_log: true` к задачам с секретами |
+| `Drift detected on rerun` | Неидемпотентные задачи | Добавьте `changed_when` и проверки состояния |
+| `Callback plugin error` | Несовместимость версий | Проверьте версию `ansible-core` и совместимость плагинов |
+
+### Диагностические команды
+
+```bash
+# Проверка синтаксиса плейбука
+ansible-playbook playbook.yml --syntax-check
+
+# Проверка идемпотентности (без применения изменений)
+ansible-playbook playbook.yml --check --diff
+
+# Поиск секретов в репозитории (pre-commit hook)
+gitleaks detect --source=. --report-path=gitleaks-report.json
+
+# Аудит переменных на наличие секретов
+ansible-playbook playbook.yml --list-tasks | grep -i password
+
+# Проверка доступных фактов
+ansible -m setup -i inventory.ini all | grep -E "ansible_|gather_subset"
+
+# Валидация всех плейбуков в репозитории
+find playbooks/ -name '*.yml' -exec ansible-lint {} +
+
+# Проверка версий коллекций
+ansible-galaxy collection list
+```
+
+## Лучшие практики (Best Practices)
+
+### Идемпотентность по умолчанию
+
+- Все модули должны возвращать корректный `changed` статус.
+- Избегайте `shell`/`command` без `changed_when` и `failed_when`.
+- Используйте `check_mode: yes` для модулей, поддерживающих проверку без применения изменений.
+
+### Безопасность (Shift-Left Security)
+
+- `no_log: true` для всех задач с секретами (токены, пароли, ключи).
+- `become: true` на уровне задачи, а не playbook.
+- Секреты только через Ansible Vault или внешние менеджеры (HashiCorp Vault, CyberArk).
+- Никогда не коммитьте файлы vault, `group_vars` с секретами, `.vault_pass`.
+
+### Производительность и масштабирование
+
+- `gather_facts: false` на уровне play, если факты не нужны, или `gather_subset` для выборочного сбора.
+- Передавайте списки в модули пакетных менеджеров, избегайте `loop` для атомарных операций.
+- Используйте `serial` и `throttle` для контролируемого rollout и защиты целевых систем.
+- Асинхронные задачи только с контролем статуса (`async_status` + `until`).
+
+### Наблюдаемость (Observability)
+
+- Единый callback-плагин (например, `yaml`, `json`, или `community.general.counter`) для структурированных логов.
+- Корреляция `run_id`/`playbook_name` с инцидентами мониторинга.
+- Включение `diff: true` для файловых операций в не production окружениях.
+- Регулярный аудит inventory на устаревшие хосты и неиспользуемые переменные.
+
+### Управление изменениями (Change Management)
+
+- Каждый плейбук должен иметь откатный сценарий (rollback playbook).
+- Изменения применяются через canary-подход с автоматическим health-check.
+- Проблемные изменения автоматически откатываются при падении SLO-показателей.
+- Документация изменений в playbook-заголовке (описание, ссылка на тикет, author, дата).
+
+### Версионирование и Supply Chain
+
+- Коллекции зафиксированы в `requirements.yml` с хешами.
+- Используйте `ansible-galaxy collection install -r requirements.yml --force-with-deps` для воспроизводимости.
+- Проверяйте GPG-подписи коллекций (`--keyring`).
+- Шаблоны (Jinja2) валидируются через `ansible-lint` и `ansible-playbook --syntax-check`.
 
 ## Дополнительная информация
 
 ### Смотрите также
 
-- [Основные концепции Ansible](./ansible_core_concepts.md) — фундаментальные принципы: идемпотентность и push-модель.
-- [Безопасность в Ansible](./ansible_security_best_practices.md) — управление пользователями, sudo и Ansible Vault.
-- [Тестирование с Molecule](./ansible_testing_with_molecule.md) — проверка инфраструктурного кода в изолированных средах.
+- **[Основные концепции Ansible](./ansible_core_concepts.md)** — фундаментальные принципы: идемпотентность и push-модель.
+- **[Безопасность в Ansible](./ansible_security_best_practices.md)** — управление пользователями, sudo и Ansible Vault.
+- **[Тестирование с Molecule](./ansible_testing_with_molecule.md)** — проверка инфраструктурного кода в изолированных средах.
+- **[Ansible Lint Guide](./ansible_lint_guide.md)** — полное руководство по статическому анализу.
+- **[Основы ролей Ansible](./ansible_roles.md)** — структурирование кода для повторного использования.

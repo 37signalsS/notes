@@ -133,6 +133,91 @@ sync  # Запись буферов из RAM на диск
 ```
 Полезна перед жестким выключением или при подозрении на Kernel Panic, чтобы гарантировать запись последних логов.
 
+### Архитектура pipeline: Decision Tree
+
+```
+Малый масштаб (<10 хостов)
+├─ journald + rsyslog → текстовые файлы + logrotate
+├─ Агент: Promtail/Fluent Bit → Loki (или без агента, просто grep)
+└─ Визуализация: journalctl + Grafana
+
+Средний масштаб (10–100 хостов)
+├─ Агент на каждом хосте: Vector / Fluent Bit
+├─ Транспорт: TCP/TLS или Kafka (при高峰流量)
+├─ Бэкенд: Loki (min RAM) или Elasticsearch (полнотекстовый поиск)
+├─ Буферизация: disk buffer на агенте
+└─ Визуализация: Grafana / Kibana
+
+Большой масштаб (100+ хостов)
+├─ Агент: Vector с VRL-трансформациями
+├─ Брокер: Kafka (очередь, буфер, повторная отправка)
+├─ Бэкенд: кластер Elasticsearch (3+ мастера) или Loki (distributed mode)
+├─ Retention: Hot-Warm-Cold (SSD → HDD → S3)
+├─ Security: TLS mTLS, RBAC, PII-маскирование
+└─ Мониторинг pipeline: Prometheus + Grafana (метрики агента и бэкенда)
+```
+
+| Фактор | Выбор решения |
+|:---|:---|
+| Бюджет ограничен | Loki + Promtail (минимум RAM, open-source) |
+| Нужен полнотекстовый поиск | Elasticsearch |
+| Нужна корреляция с метриками | Loki (интеграция с Prometheus в Grafana) |
+| K8s-кластер | Fluent Bit DaemonSet + Loki |
+| Compliance (PCI DSS, GDPR) | Elasticsearch (ILM) или Loki + WORM-хранилище |
+| Высокая скорость ingestion (>100K eps) | Kafka как брокер между агентами и бэкендом |
+
+### Log Spikes и аномалии
+
+**Log Spike** — резкий рост объема логов за короткий период. Типичные причины:
+
+| Причина | Пример | Решение |
+|:---|:---|:---|
+| **Debug-логи в production** | Включили debug для отладки, забыли выключить | Алерт на рост > 2x, автоматическое отключение через таймаут |
+| **Retry storm** | Сервис без backoff заваливает логами при недоступности БД | Circuit breaker, exponential backoff |
+| **Баг в коде** | бесконечный цикл с логированием | Алерт на количество логов от одного сервиса > порог |
+| **DDoS / сканирование** | 10K failed login attempts в минуту | rate limiting на уровне агента, алерт на аномалии |
+| **Deployment** | Новый релиз генерирует x10 логов | canary deployment с мониторингом объема логов |
+
+**Мониторинг log spikes (Prometheus):**
+
+```yaml
+groups:
+  - name: log_spikes
+    rules:
+      - alert: LogVolumeSpike
+        expr: |
+          sum by (service) (rate(journald_messages_total[5m]))
+          > 2 * avg_over_time(sum by (service) (rate(journald_messages_total[5m]))[7d:5m])
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Log spike на {{ $labels.service }}"
+
+      - alert: LogVolumeCritical
+        expr: |
+          sum(rate(journald_messages_total[5m])) > 10000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Критический объем логов: >10K msgs/sec"
+```
+
+**Автоматическое ограничение (Vector):**
+
+```yaml
+transforms:
+  rate_limit:
+    type: throttle
+    inputs: [app_logs]
+    threshold: 5000
+    window_secs: 60
+    exclude:
+      - 'level == "error"'
+      - 'level == "critical"'
+```
+
 ### Современные тенденции (2025–2026)
 
 - **eBPF (Falco, Tetragon):** Глубокий мониторинг безопасности без накладных расходов `auditd`.
@@ -149,9 +234,19 @@ sync  # Запись буферов из RAM на диск
 6.  **Мониторинг объема:** Резкий всплеск логов (Log Spikes) — повод для автоматического алерта.
 
 ### См. также
+
 - [systemd-journald: Сбор и хранение](./journald.md)
 - [journalctl: Обзор и концепции](../../Diagnostics/journalctl/journalctl_overview.md)
 - [rsyslog: Фильтрация и пересылка](./rsyslog.md)
+- [syslog-ng: Продвинутая маршрутизация](./syslog-ng.md)
 - [auditd: Аудит событий безопасности](./auditd.md)
 - [logrotate: Ротация и сжатие](./logrotate.md)
+- [Fluent Bit: Агент сбора логов](./fluent_bit.md)
+- [Структурированное логирование](./structured_logging.md)
+- [PII/Secret masking](./pii_masking.md)
+- [Логирование cron-задач и скриптов](./cron_script_logging.md)
+- [Debug-логи в production](./debug_logging_production.md)
+- [Мониторинг dmesg](./dmesg_monitoring.md)
+- [Анализ ошибок и сбоев](./error_and_crash_analysis.md)
+- [Централизованное логирование](./cloud_logging.md)
 - [Vector: современная альтернатива](../../../Vector/vector_overview.md)

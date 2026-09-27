@@ -371,3 +371,5 @@ systemd-analyze verify /etc/systemd/system/my-app.service
 * [Обзор юнитов systemd](./systemd_units_overview.md) — классификация и состояния.
 * [Таймеры systemd](./timers.md) — планирование задач.
 * [Пользовательские службы](./user_services.md) — сценарии в контексте `--user`.
+* [DNS-резолвер (systemd-resolved)](./systemd_resolved.md) — настройка DNS для сервисов.
+* [Шифрование дисков (systemd-cryptenroll)](./systemd_cryptenroll.md) — автоматическая разблокировка.

@@ -156,6 +156,32 @@ server {
 }
 ```
 
+### Архитектура модуля stream и жизненный цикл сессии
+
+Модуль `stream` работает параллельно с `http`, используя отдельные слушатели (listeners) и воркеры. В отличие от L7, здесь нет фазы разбора HTTP-запроса — Angie перехватывает соединение на уровне TCP и перенаправляет его в выбранный `upstream`.
+
+**Компоненты:**
+*   **Listener:** Принимает входящие соединения на указанном `ip:port`. Может работать в режимах TCP и UDP.
+*   **Upstream:** Именованная группа бэкенд-серверов с алгоритмом балансировки, зоной состояния и параметрами health checks.
+*   **Shared Zone:** Область разделяемой памяти, где хранится состояние upstream (активные соединения, веса, метрики) и server_zones (метрики слушателей).
+*   **Session Table:** Таблица активных сессий в памяти воркера; используется для таймаутов и ограничений.
+
+**Жизненный цикл TCP-сессии:**
+1.  **Accept:** Angie принимает новое TCP-соединение от клиента на слушатель `listen`.
+2.  **Pre-read (опционально):** Если включен `ssl_preread` или `mqtt_preread`, Angie анализирует первые байты без расшифровки, чтобы определить протокол или извлечь MQTT ClientID.
+3.  **Upstream selection:** Выбирается бэкенд из группы `upstream` согласно алгоритму (Round Robin, Hash, Least Time в stream-контексте).
+4.  **Handshake (если TLS):** При `listen ... ssl` выполняется TLS-рукопожатие с клиентом. Для upstream без TLS трафик передается как есть (TCP).
+5.  **Proxy:** Данные ретранслируются между клиентом и бэкендом. При `proxy_protocol on` в начало TCP-потока добавляется заголовок с IP/портом клиента.
+6.  **Monitoring:** Метрики сессии (байты, длительность, статус) записываются в `server_zone` и `upstream_zone` (если объявлены).
+7.  **Close:** При разрыве соединения (по таймауту или явном закрытии) сессия удаляется из таблицы, метрики фиксируются.
+
+Для UDP жизненный цикл аналогичен, но сессия привязана к `proxy_responses` пакетам и `proxy_timeout`.
+
+**Особенности Angie gegenüber Nginx:**
+*   Встроенная поддержка `status_zone` в OSS (в Nginx только в commercial subscriptions).
+*   Нативный модуль `check` для активных проверок в stream (в Nginx OSS требуется сторонний модуль `upstream_check_module`).
+*   Директива `upstream_probe` в PRO поддерживает TCP, UDP и HTTP-проверки для stream.
+
 ## Практические сценарии
 
 ### 1. Отказоустойчивая балансировка PostgreSQL с Proxy Protocol
@@ -241,6 +267,112 @@ server {
 }
 ```
 
+### 4. Проксирование Redis с балансировкой и терминацией TLS
+
+Redis поддерживает как TCP, так и TLS. Angie может терминировать TLS и балансировать между экземплярами Redis Sentinel или Cluster.
+
+```nginx
+stream {
+    upstream redis_cluster {
+        zone redis_zone 64k;
+        server 10.0.0.11:6379;
+        server 10.0.0.12:6379;
+        server 10.0.0.13:6379 backup; # Резервный Sentinel
+    }
+
+    server {
+        listen 6379 ssl;
+        status_zone redis_frontend;
+
+        ssl_certificate     /etc/angie/ssl/redis.crt;
+        ssl_certificate_key /etc/angie/ssl/redis.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        proxy_pass redis_cluster;
+        proxy_timeout 60s;
+        proxy_connect_timeout 2s;
+    }
+}
+```
+
+**Валидация:**
+```bash
+# Проверка TLS-рукопожатия
+openssl s_client -connect localhost:6379 -servername redis.example.com
+# → Verify return code: 0 (ok)
+
+# Проверка балансировки
+redis-cli -h localhost -p 6379 PING
+# → PONG
+# Повторите несколько раз, убедитесь что ротация работает
+```
+
+### 5. Маршрутизация TCP-трафика по SNI без расшифровки
+
+`ssl_preread` анализирует поле SNI в ClientHello и направляет соединение на соответствующий бэкенд, не расшифровывая трафик. Полезно для мультитенантных сред.
+
+```nginx
+stream {
+    map $ssl_preread_server_name $backend {
+        default         tcp_default;
+        pg.example.com  pg_cluster;
+        redis.example.com redis_cluster;
+    }
+
+    upstream pg_cluster     { server 10.0.0.21:5432; server 10.0.0.22:5432; }
+    upstream redis_cluster  { server 10.0.0.31:6379; server 10.0.0.32:6379; }
+    upstream tcp_default    { server 10.0.0.99:9999; }
+
+    server {
+        listen 443;
+        status_zone sni_router;
+        ssl_preread on;
+        proxy_pass $backend;
+    }
+}
+```
+
+**Валидация:**
+```bash
+# Симуляция клиента с SNI
+openssl s_client -connect localhost:443 -servername pg.example.com -brief
+# → Проверьте логи: $upstream_addr должен указывать на 10.0.0.21 или 10.0.0.22
+```
+
+### 6. Балансировка AMQP/RabbitMQ с ограничением соединений
+
+Для протоколов с длинными соединениями важно ограничивать количество одновременных подключений с одного IP, чтобы предотвратить монополизацию бэкендов.
+
+```nginx
+stream {
+    limit_conn_zone $binary_remote_addr zone=amqp_conns:10m;
+
+    upstream rabbitmq_cluster {
+        zone rabbit_zone 64k;
+        server 10.0.0.41:5672 max_conns=200;
+        server 10.0.0.42:5672 max_conns=200;
+    }
+
+    server {
+        listen 5672;
+        status_zone amqp_frontend;
+        proxy_pass rabbitmq_cluster;
+        proxy_timeout 3600s;
+        proxy_connect_timeout 5s;
+
+        limit_conn amqp_conns 10;
+    }
+}
+```
+
+**Валидация:**
+```bash
+# Проверка статуса через API
+curl -s http://127.0.0.1/status/stream/upstreams/rabbitmq_cluster/ | jq '.peers[] | {server, active, max_conns}'
+# → {"server":"10.0.0.41:5672","active":15,"max_conns":200}
+```
+
 ## Дополнительная информация
 
 ### Динамическое управление апстримами
@@ -266,19 +398,19 @@ server {
 
 1.  **Получение статистики:**
     ```bash
-    curl http://localhost:8080/api/v1/stream/upstreams/postgres_backend
+    curl http://127.0.0.1/status/stream/upstreams/postgres_backend/
     ```
 
 2.  **Вывод сервера на обслуживание (Drain):**
     ```bash
-    curl -X PATCH -d '{"drain": true}' \
-      http://localhost:8080/api/v1/stream/upstreams/postgres_backend/servers/0
+    curl -X PUT -d "drain" \
+      http://127.0.0.1/config/stream/upstreams/postgres_backend/servers/0/down
     ```
 
 3.  **Динамическое добавление сервера:**
     ```bash
-    curl -X POST -d '{"server": "192.168.1.55:5432", "weight": 2}' \
-      http://localhost:8080/api/v1/stream/upstreams/postgres_backend/servers/
+    curl -X PUT -d '{"server": "192.168.1.55:5432", "weight": 2}' \
+      http://127.0.0.1/config/stream/upstreams/postgres_backend/servers/192.168.1.55:5432
     ```
 
 *Примечание:* Для работы API и сохранения состояния после перезагрузки в PRO используется директива `state`.
@@ -322,5 +454,176 @@ stream {
 *   **[Обзор архитектуры Angie](./angie_overview.md)** — общие возможности.
 *   **[Балансировка нагрузки HTTP в Angie](./angie_http_load_balancing.md)** — сравнение с L7.
 *   **[Мониторинг Angie: концепции](./angie_monitoring/angie_monitoring_concepts.md)** — подробнее о зонах статуса.
-*   **[Руководство по Proxy Protocol](../../Networking/Protocols/proxy_protocol.md)** — детали работы протокола.
-*   **[Логирование в Angie](./angie_logging.md)** — настройка форматов и файлов логов.
+
+## Операции и команды
+
+### Валидация и управление конфигурацией
+
+```bash
+# Проверка синтаксиса stream-блока
+angie -t -g "daemon off;"
+# → [emerg] ... или silent success
+
+# Проверка только stream-конфигов
+angie -t -c /etc/angie/stream.d/*.conf
+
+# Поиск дублирующихся listen
+ss -tlnp | grep ':5432'
+# → Вывод: angie    LISTEN  0  4096  *:5432
+```
+
+### Диагностика соединений
+
+```bash
+# Активные TCP-сессии на слушающем порту
+ss -tnp | grep ':5432' | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -rn
+# → 45 10.0.0.5
+# → 12 10.0.0.6
+
+# Состояние TCP (retransmits, window scale)
+ss -ti | grep -E 'angie|bcke' | head -20
+
+# Захват трафика для отладки SNI или Proxy Protocol
+tcpdump -i any -nn port 443 -A | head -100
+# → Ищите ClientHello с полем server_name (SNI)
+```
+
+### Просмотр метрик через API
+
+```bash
+# Список всех stream upstream и их состояние
+curl -s http://127.0.0.1/status/stream/upstreams/ | jq '.'
+
+# Детали конкретного upstream
+curl -s http://127.0.0.1/status/stream/upstreams/postgres_backend/ | jq '.peers[] | {server, state, active, requests, time}'
+
+# Метрики слушающего порта (server_zone)
+curl -s http://127.0.0.1/status/stream/server_zones/pg_frontend/ | jq '.'
+
+# Проверка здоровья бэкендов
+curl -s http://127.0.0.1/status/stream/upstreams/rabbitmq_cluster/ | jq '.peers[] | {server, state, fails, selected}'
+```
+
+### Управление сервисом
+
+| Команда | Назначение |
+| :--- | :--- |
+| `angie -s reload` | Graceful reload конфигурации без потери соединений |
+| `angie -s stop` | Graceful shutdown с ожиданием завершения сессий |
+| `systemctl status angie` | Проверка статуса systemd-сервиса |
+| `journalctl -u angie -f` | Потоковый просмотр логов |
+
+## Устранение неисправностей
+
+### Клиент не может подключиться к слушающему порту
+
+**Причины:** Слушатель неактивен, firewall блокирует порт, порт занят другим процессом.
+
+**Диагностика:**
+```bash
+# Проверка что Angie слушает порт
+ss -tlnp | grep ':5432'
+# → Если пусто — listen не объявлен или порт конфликтует
+
+# Проверка firewall
+iptables -L -n | grep 5432
+# или
+firewall-cmd --list-ports | grep 5432
+```
+
+**Решение:** Добавьте `listen` в stream-блок, откройте порт в firewall, убедитесь что порт не занят.
+
+### 502 Bad Gateway при достижении max_conns
+
+**Причина:** Все серверы в upstream достигли лимита одновременных соединений (`max_conns`), очередь отсутствует или переполнена.
+
+**Диагностика:**
+```bash
+curl -s http://127.0.0.1/status/stream/upstreams/postgres_backend/ | jq '.peers[] | {server, active, max_conns}'
+# → {"server":"10.0.0.50:5432","active":100,"max_conns":100}
+```
+
+**Решение:** Увеличьте `max_conns`, добавьте резервные серверы (`backup`), настройте очередь в PRO (`queue`).
+
+### Не передается реальный IP клиента через Proxy Protocol
+
+**Причина:** Бэкенд не поддерживает Proxy Protocol или `proxy_protocol` не включен.
+
+**Диагностика:**
+```bash
+# Проверка что заголовок Proxy Protocol отправляется
+tcpdump -i any -nn port 5432 -X | grep -E 'PROXY|10\.0\.0'
+```
+
+**Решение:** Включите `proxy_protocol on` на слушателе и настройте бэкенд на прием Proxy Protocol (HAProxy: `accept-proxy`, Envoy: `allow_original_src`).
+
+### Sticky-сессии не работают в модуле stream
+
+**Причина:** В stream нет директивы `sticky`, используется только `hash` с переменной.
+
+**Диагностика:**
+```bash
+curl -s http://127.0.0.1/status/stream/upstreams/sticky_backend/ | jq '.peers[] | {server, active}'
+# → Проверьте распределение active соединений
+```
+
+**Решение:** Используйте `hash $remote_addr consistent;` в блоке `upstream`. Для MQTT используйте `hash $mqtt_preread_clientid;`. Проверьте что `zone` объявлена.
+
+### UDP-ответы теряются или таймаутят
+
+**Причина:** Неверный `proxy_responses`, слишком маленький `proxy_timeout`, или бэкенд отправляет несколько ответов.
+
+**Диагностика:**
+```bash
+# Проверка счетчиков UDP
+curl -s http://127.0.0.1/status/stream/upstreams/dns_upstream/ | jq '.peers[] | {server, requests, responses, fails}'
+# → requests: 100, responses: 0, fails: 50
+```
+
+**Решение:** Установите `proxy_responses 1` для DNS. Увеличьте `proxy_timeout`. Убедитесь что бэкенд не отправляет fragmented ответы.
+
+### Высокий p99 latency при нормальном RPS
+
+**Причина:** TCP retransmits, блокировка `max_conns`, отсутствие keepalive, slow start.
+
+**Диагностика:**
+```bash
+ss -ti | grep -E 'angie|bcke' | head -20
+# → Ищите high retransmit count или zero window
+
+curl -s http://127.0.0.1/status/stream/upstreams/pg_cluster/ | jq '.peers[] | {server, time, inflight}'
+# → time выше 500ms при нормальном RTS
+```
+
+**Решение:** Проверьте сетевые задержки (`mtr`). Увеличьте `max_conns`. Добавьте `slow_start` для восстановленных бэкендов. Настройте `proxy_connect_timeout`.
+
+## Лучшие практики
+
+### Производительность
+
+*   **Zone sizing:** 64 КБ на 50 серверов, 128 КБ на 100–200. Для тысяч контейнеров используйте `1m`. Без `zone` не работают `status_zone`, `upstream_probe`, `hash` в stream.
+*   **Таймауты:** `proxy_connect_timeout` должен быть минимально достаточным (1–5с). `proxy_timeout` для долгоживущих протоколов (Redis, MQTT) — до 1ч.
+*   **Slow start:** Всегда используйте `slow_start=30s`–`60s` для восстановленных бэкендов, чтобы защитить «холодный» кэш.
+*   **Keepalive в stream:** Не применим напрямую (нет HTTP keepalive), но параметр `proxy_timeout` контролирует длительность TCP-сессии. Для коротких сессий (DNS) — 1–5с, для долгих (базы данных) — до 1ч.
+*   **UDP optimization:** Всегда указывайте `proxy_responses 1` для запрос-ответ протоколов (DNS). Для потоковых UDP увеличивайте `proxy_timeout`.
+
+### Безопасность
+
+*   **Ограничение ресурсов:** Используйте `limit_conn_zone` + `limit_conn` для защиты от DDoS и монополизации соединений. Размер зоны: 10м на 10.000 IP.
+*   **Proxy Protocol:** Передавайте реальный IP только доверенным хостам. Включите `set_real_ip_from` на слушателе, чтобы предотвратить spoofing.
+*   **TLS в stream:** Используйте `ssl_preread on` вместо полной терминации TLS, если бэкенд сам управляет сертификатами. Это снижает накладные расходы.
+*   **Доступ к API:** Ограничьте `/status/stream/` и `/config/` только внутренней сетью или management-интерфейсом.
+
+### Эксплуатация
+
+*   **Логирование:** Всегда объявляйте `log_format` в блоке `stream` с `$upstream_addr`, `$session_time`, `$status`. Включайте `access_log` для всех слушателей.
+*   **Мониторинг:** Объявляйте `status_zone` на каждом `server` и `upstream`. Настройте алерты на `peers[].state != "up"` и `fails > 0`.
+*   **Валидация:** Перед `reload` всегда выполняйте `angie -t`. Используйте `ss`/`tcpdump` для проверки слушателей после реконфигурации.
+*   **Резервное копирование:** Сохраняйте `/etc/angie/stream.d/*.conf` и `/var/lib/angie/state/` (PRO) в системе контроля версий или резервной копии.
+
+### Ограничения
+
+*   **Вложенные location:** В модуле `stream` нет блока `location`. Вся логика маршрутизации определяется на уровне `server` и `upstream`.
+*   **Переменные в status_zone:** Директива `status_zone` принимает только статическое имя строки, нельзя использовать переменные.
+*   **Активные проверки в OSS:** Требуют подгрузки `upstream_check_module`. В PRO используется `upstream_probe`, который проще в настройке.
+*   **L7-функции в stream:** Нет доступа к HTTP-заголовкам, Cookie, URI. Для маршрутизации по HTTP-параметрам используйте модуль `http`.

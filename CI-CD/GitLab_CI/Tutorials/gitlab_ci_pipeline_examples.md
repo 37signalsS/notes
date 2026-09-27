@@ -69,8 +69,8 @@ variables:
 # Сборка с использованием BuildKit для ускорения
 build_job:
   stage: build
-  image: docker:27.0
-  services: [docker:27.0-dind]
+  image: docker:29.8
+  services: [docker:29.8-dind]
   variables:
     DOCKER_BUILDKIT: 1
   script:
@@ -206,7 +206,7 @@ test_python:
 container_security:
   stage: scan
   image: 
-    name: aquasec/trivy:latest
+    name: aquasec/trivy:0.74.0
     entrypoint: [""]
   script:
     - trivy image --format json --output report.json --exit-code 0 $FULL_IMAGE
@@ -292,7 +292,7 @@ include:
 - Всегда используйте `--atomic` при `helm upgrade` — автоматический откат при ошибке.
 - Добавьте `HEALTHCHECK` в Dockerfile для корректной работы с оркестраторами.
 - Используйте `timeout-minutes` к задачам для защиты от бесконечных пайплайнов.
-- Пинайте версии образов: `docker:27.0` вместо `docker:latest`.
+- Пинайте версии образов: `docker:29.8` вместо `docker:latest`.
 
 **Деплой:**
 - Для продакшен-деплоев всегда используйте `when: manual` в rules.

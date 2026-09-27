@@ -381,8 +381,109 @@ kubectl get pods -A --field-selector status.reason=Evicted --no-headers | awk '{
 | Потеря событий | Невозможно восстановить хронологию | Настройте `event-ttl` или централизованное логирование |
 | Игнорирование kubeReserved | Системные процессы выселяются первыми | Всегда резервируйте память для `kubelet` и ОС |
 
-### Смотрите также
+#### 12. Отличие OOMKilled от Eviction: практический алгоритм
+
+Частая ошибка — путаница двух механизмов принудительного завершения. Вот чёткий алгоритм различия:
+
+**Шаг 1: Проверка `status.reason` пода:**
+```bash
+kubectl get pod <pod-name> -o jsonpath='{.status.reason}'
+# → Evicted   = kubelet выселен весь под из-за давления ресурсов на узле
+# → (пусто)   = под мог упасть по другой причине
+```
+
+**Шаг 2: Проверка `status.lastState.terminated.reason`:**
+```bash
+kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.reason}'
+# → OOMKilled = ядро Linux убило конкретный контейнер (превышен limits.memory)
+```
+
+**Шаг 3: Если оба поля пусты — проверка Exit Code:**
+```bash
+kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.exitCode}'
+# → 137 = SIGKILL (может быть OOMKilled или Hard Eviction)
+# → 143 = SIGTERM (Soft Eviction или graceful shutdown)
+```
+
+**Шаг 4: Подтверждение через dmesg (если есть SSH-доступ к узлу):**
+```bash
+# OOM Killer всегда оставляет запись в dmesg
+dmesg -T | grep -iE "oom-killer|killed process" | tail -5
+# → [Sep  2 12:34:56] Out of memory: Killed process 12345 (java)
+```
+
+**Ключевое различие:** OOMKilled убивает **конкретный контейнер** (процесс), Eviction удаляет **весь под** целиком через kubelet.
+
+> Подробнее: **[Разбор ошибки OOMKilled](../oomkilled_pods.md)**, **[Выселение по памяти](./memory_eviction.md)**.
+
+### 13. Диагностика Graceful Node Shutdown
+
+Если поды завершаются при выключении/перезагрузке узла, проверьте настройки Graceful Node Shutdown:
+
+```bash
+# Проверка параметров в KubeletConfiguration
+ssh <node> 'cat /var/lib/kubelet/config.yaml | grep -A 5 shutdown'
+# → shutdownGracePeriod: 30s
+# → shutdownGracePeriodCriticalPods: 10s
+# → shutdownGracePeriodByPodPriority:
+#     - priority: 0
+#       shutdownGracePeriodSeconds: 10
+#     - priority: 1000000
+#       shutdownGracePeriodSeconds: 30
+
+# Проверка логов kubelet о shutdown
+journalctl -u kubelet | grep -i "shutdown"
+# → Attempting graceful shutdown of pods
+```
+
+**Важно:** Graceful Node Shutdown работает **только** при `systemctl poweroff`/`shutdown`. При аппаратном выключении (IPMI, power cord) механизм **не срабатывает**.
+
+> Подробнее: **[Graceful Node Shutdown](../../../../Concepts/node_lifecycle.md#graceful-node-shutdown)**, **[Node Unavailability: Definitions](../NodeUnavailability/definitions.md)**.
+
+### 14. Использование crictl для диагностики на узле
+
+Когда `kubectl` не даёт полной картины, используйте `crictl` напрямую на узле:
+
+```bash
+# Список всех контейнеров (включая остановленные)
+sudo crictl ps -a
+
+# Список подов на узле
+sudo crictl pods
+
+# Детальная информация о контейнере (PID, статус, лимиты)
+sudo crictl inspect <container-id> | jq '.info.pid, .info.runtimeType'
+
+# Проверка потребления ресурсов через cAdvisor
+sudo crictl stats
+
+# Логи контейнера (если kubectl logs недоступен)
+sudo crictl logs <container-id>
+
+# Очистка неиспользуемых образов (при DiskPressure)
+sudo crictl rmi --prune
+```
+
+> Подробнее: **[Container Runtime](../../../../Concepts/container_runtime.md)**, **[Node Unavailability: Diagnostics](../NodeUnavailability/diagnostics.md)**.
+
+### 15. Audit Logs для отслеживания eviction
+
+Kubernetes Audit Policy может логировать eviction-события через kube-apiserver:
+
+```bash
+# Просмотр audit log для eviction
+cat /var/log/kubernetes/audit.log | jq 'select(.verb == "delete" and .objectRef.resource == "pods") | {user: .user.username, pod: .objectRef.name, namespace: .objectRef.namespace, time: .requestReceivedTimestamp}'
+
+# Фильтрация по Eviction API
+cat /var/log/kubernetes/audit.log | jq 'select(.verb == "create" and .objectRef.resource == "pods/eviction") | {user: .user.username, pod: .objectRef.name, time: .requestReceivedTimestamp}'
+```
+
+> Подробнее: **[Kubernetes Audit Logs](../../../../GitOps/Concepts/audit_logs.md)**, **[Kubernetes Security: Audit](../../../../Kubernetes/Security/audit.md)**.
+
+## Смотрите также
 
 - **[Pod Evicted: Определения](./definitions.md)** — база по типам выселений.
 - **[Профилактика выселения](./prevention.md)** — как не допустить повторения.
 - **[QoS и выселение](./qos_and_eviction.md)** — влияние лимитов на выбор жертвы.
+- **[Разбор ошибки OOMKilled](../oomkilled_pods.md)** — когда контейнер убит OOM Killer.
+- **[Node Unavailability: Diagnostics](../NodeUnavailability/diagnostics.md)** — диагностика проблем с узлами.

@@ -402,3 +402,4 @@ echo -e "\n=== Диагностика завершена ==="
 *   [Проблемы с PVC](./pvc_issues.md)
 *   [Проблемы с RBAC и ServiceAccount](./rbac_issues.md)
 *   [Проблемы с томами](./volume_issues.md)
+*   [CRI и containerd](./cri_and_runtime.md) — Container Runtime Interface, взаимодействие kubelet с рантаймом

@@ -797,6 +797,68 @@ kubectl get pvc -A | grep -v Bound
 kubectl get pv | grep -v Bound
 ```
 
+### Диагностика приложения без логов (пустые логи, startup probe)
+
+**Ситуация:** Приложение (например, Spring Boot) падает на startup probe, логи пусты или отсутствуют, `describe pod` не даёт полезной информации.
+
+**Пошаговый алгоритм:**
+
+**Шаг 1: Быстрая проверка**
+```bash
+kubectl describe pod <pod-name>
+# Обратить внимание на:
+# - Exit Code (137 = OOMKilled, 143 = SIGTERM, 1 = общая ошибка)
+# - Причину остановки (Last State)
+# - Ресурсы: requests/limits, особенно memory
+```
+
+**Шаг 2: Проверка ресурсов**
+```bash
+kubectl top pod <pod-name> --containers
+# Если memory接近 limits → возможно, приложение не стартует из-за нехватки памяти
+```
+
+**Шаг 3: Переопределение entrypoint для доступа к контейнеру**
+```bash
+kubectl patch deployment <deploy-name> \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"app","command":["sleep","3600"]}]}}}}'
+
+# После перезапуска пода:
+kubectl exec -it <pod-name> -- /bin/sh
+# Внутри контейнера можно проверить:
+# - Наличие конфигурационных файлов
+# - Переменные окружения
+# - Подключение к зависимостям (БД, кэш)
+```
+
+**Шаг 4: Ручной запуск приложения**
+```bash
+# Внутри контейнера:
+java -jar /app/app.jar
+# Или с параметрами JVM:
+java -Xmx512m -Xms256m -jar /app/app.jar
+```
+
+**Шаг 5: Проверка startup probe**
+```yaml
+# Startup probe может быть слишком жёсткой для JVM-приложений:
+startupProbe:
+  httpGet:
+    path: /actuator/health
+    port: 8080
+  initialDelaySeconds: 60  # Увеличить для JVM с долгим прогревом
+  periodSeconds: 10
+  failureThreshold: 30     # 30 * 10s = 5 минут на старт
+```
+
+**Типичные причины пустых логов:**
+| Причина | Диагностика | Решение |
+|:---|:---|:---|
+| Приложение падает до инициализации логгера | Переопределение entrypoint + ручной запуск | Найти корень ошибки |
+| JVM не стартует из-за нехватки памяти | `kubectl top pod`, проверка limits | Увеличить `limits.memory` (для Java с запасом 20-30%) |
+| Startup probe слишком агрессивная | Проверка конфигурации probes | Увеличить `initialDelaySeconds` и `failureThreshold` |
+| Отсутствует критическая зависимость (БД, кэш) | Проверка connectivity изнутри пода | Добавить проверки зависимостей в startup probe |
+
 ### Мониторинг в реальном времени
 
 ```bash

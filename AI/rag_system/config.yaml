@@ -1,6 +1,9 @@
 excluded:
   dirs: [".git", ".obsidian", "venv", "rag_system"]
-  files: ["GEMINI.md", "MEMORY.md", ".DS_Store"]
+  # Agent instruction files and their changelog are tooling, not knowledge-base
+  # content. Indexing them lets the agent retrieve its own rules as a "source",
+  # which defeats §13 (Retrieval Mode) citation auditing.
+  files: ["AGENTS.md", "GEMINI.md", "GEMINI1.md", "GEMINI2.md", "MEMORY.md", ".DS_Store"]
   extensions: [".csv", ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".py"]
 
 qdrant:

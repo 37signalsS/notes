@@ -66,13 +66,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Установка Molecule с плагинами для Docker и Podman + Testinfra
-pip install "molecule>=24.0" "molecule-plugins[docker,podman]" ansible-lint pytest-testinfra
+pip install "molecule>=26.0" "molecule-plugins[docker,podman]" ansible-lint pytest-testinfra
 
 # Проверка установки
 molecule --version
-# → molecule 24.x.x using python 3.11.x
-#   molecule-plugins[docker,podman] version: 24.x.x
-#   ansible-core version: 2.17.x
+# → molecule 26.x.x using python 3.13.x
+#   molecule-plugins[docker,podman] version: 26.x.x
+#   ansible-core version: 2.21.x
 
 # Проверка доступных плагинов
 molecule drivers
@@ -597,9 +597,205 @@ ls molecule/                                            # Список
 - **Для ролей с зависимостями** добавьте `requirements.yml` в `dependency.options`.
 - **Тестируйте в порядке**: `default` (быстрый фидбек) → матрица ОС.
 
+### Тестирование ролей с Ansible Vault
+
+Роль, которая читает зашифрованные переменные, нужно тестировать с реальным `!vault`-блоком — иначе вы не проверите сам путь расшифровки. Ключевой принцип: **тестовый секрет — настоящий, но бесполезный**.
+
+#### Что тестировать, а что нет
+
+| Объект | Тестировать | Как |
+| :--- | :--- | :--- |
+| Путь расшифровки `!vault` | Да | Реальный зашифрованный файл в репозитории |
+| Логика роли с секретом | Да | Тестовый пароль вроде `test-only-not-a-real-secret` |
+| Схема валидации секрета | Да | Убедиться, что роль падает на пустом значении |
+| Боевые секреты | Нет | Никогда, даже в приватном репозитории |
+| `no_log` | Косвенно | Убедиться, что вывод задачи не содержит значение |
+
+#### Шаг 1: создать тестовый зашифрованный файл
+
+```bash
+# Пароль тестового vault — обычная строка в репозитории, это не секрет
+echo 'molecule-test-passphrase' > molecule/default/vault_test_pass
+ansible-vault encrypt \
+  --vault-id molecule@molecule/default/vault_test_pass \
+  --output molecule/default/vault_test.yml \
+  --encrypt-vault-id molecule \
+  molecule/default/vault_test_plain.yml
+```
+
+`molecule/default/vault_test_plain.yml` (исходник, кладётся в `.gitignore`):
+
+```yaml
+---
+vault_db_password: "test-only-not-a-real-secret"
+vault_api_token: "test-only-token-000000"
+```
+
+Результат `molecule/default/vault_test.yml` коммитится в репозиторий:
+
+```bash
+head -1 molecule/default/vault_test.yml
+# → $ANSIBLE_VAULT;1.2;AES256;molecule
+```
+
+#### Шаг 2: подключить переменные в сценарии
+
+```yaml
+# molecule/default/converge.yml
+---
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - vault_test.yml        # файл целиком зашифрован → Ansible расшифрует автоматически
+  tasks:
+    - name: Применить роль
+      ansible.builtin.include_role:
+        name: nginx
+
+    - name: Роль должна отвергнуть пустой секрет
+      ansible.builtin.include_role:
+        name: nginx
+      vars:
+        vault_db_password: ""
+      ignore_errors: true
+      register: empty_secret_result
+```
+
+#### Шаг 3: передать пароль Molecule
+
+Molecule проксирует дополнительные аргументы в `ansible-playbook` через `provisioner.executor.args.ansible_playbook`:
+
+```yaml
+# molecule/default/molecule.yml
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements.yml
+
+driver:
+  name: default
+  options:
+    managed: false
+
+platforms:
+  - name: molecule_test
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      vault_id_match: true
+      # Не печатать аргументы задач — страховка от утечки в лог Molecule
+      display_args_to_stdout: false
+  executor:
+    args:
+      ansible_playbook:
+        - "--vault-id"
+        - "molecule@molecule/default/vault_test_pass"
+
+verifier:
+  name: ansible
+```
+
+Проверить, что аргументы действительно применились:
+
+```bash
+molecule converge -s default -v
+# → ansible-playbook ... --vault-id molecule@molecule/default/vault_test_pass
+```
+
+#### Шаг 4: проверить, что секрет дошёл и не утёк
+
+```yaml
+# molecule/default/verify.yml
+---
+- name: Проверка доставки секрета
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Убедиться, что конфигурация содержит секрет
+      ansible.builtin.lineinfile:
+        path: /etc/nginx/conf.d/app.conf
+        regexp: '^\s*db_password'
+        line: "  db_password {{ vault_db_password }};"
+      check_mode: false
+      changed_when: false
+
+    - name: Значение должно совпадать с тестовым
+      ansible.builtin.assert:
+        that:
+          - vault_db_password == 'test-only-not-a-real-secret'
+        fail_msg: "Секрет не доставлен или искажён при расшифровке"
+        success_msg: "Секрет расшифрован и доставлен корректно"
+
+    - name: Файл пароля не должен попасть в итоговую конфигурацию
+      ansible.builtin.stat:
+        path: /etc/nginx/conf.d/vault_test_pass
+      register: leaked
+    - ansible.builtin.assert:
+        that: not leaked.stat.exists
+        fail_msg: "Файл пароля утёк на целевой хост"
+```
+
+#### Тест идемпотентности: главная ловушка
+
+Сценарий `idempotence` запускает `converge.yml` дважды и требует, чтобы второй прогон не менял хост. С зашифрованными переменными это ломается, если значение попадает в конфигурацию иначе при каждом запуске. Проверьте это явно:
+
+```yaml
+# molecule/default/molecule.yml
+lint:
+  # Прогонять pre-commit и ansible-lint как линтеры
+  config: true
+```
+
+Типичные причины провала идемпотентности с vault:
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| Второй прогон меняет файл | В конфиг попадает хеш или время, производные от значения секрета | Не выводите производные от секрета в шаблон |
+| `changed` на каждом прогоне | Секрет используется как имя ресурса | Используйте стабильный суффикс |
+| Ошибка во втором прогоне | Файл пароля удалён скриптом в `post_tasks` | Не удаляйте файл пароля до завершения сценария |
+
+#### Пароль на лету, без файла в репозитории
+
+Если не хочется держать файл пароля в репозитории, подставьте путь к процессу-источнику:
+
+```bash
+# molecule/default/vault_pass.sh  (исполняемый файл, +x)
+#!/usr/bin/env bash
+# Выводит пароль ТОЛЬКО в stdout, без перевода строки в конце
+printf '%s' 'molecule-test-passphrase'
+```
+
+```bash
+chmod +x molecule/default/vault_pass.sh
+```
+
+В `molecule.yml` укажите скрипт вместо файла:
+
+```yaml
+      ansible_playbook:
+        - "--vault-id"
+        - "molecule@molecule/default/vault_pass.sh"
+```
+
+Ansible определяет тип источника по биту execute: скрипт запускается без аргументов, пароль берётся из stdout. Схема и требования к скриптам — в [Ansible Vault: Управление паролями](./Vault/passwords.md).
+
+#### Частые ошибки
+
+- **`vault_id_match: true` и забытый `vault_id`.** Если в `molecule.yml` включён строгий режим, а в заголовке файла нет метки, расшифровка не пройдёт. Зашивайте метку при создании файла.
+- **Отсутствие `vars_files` в `converge.yml`.** Файл `vault_test.yml` лежит рядом, но не подключён — роль получит `undefined`.
+- **`no_log` без проверки.** Добавьте в `verify.yml` проверку, что секрет не появился в выводе: сравните `ansible_facts` с ожидаемым значением, а не смотрите глазами лог.
+- **Коммит файла пароля в `molecule.yml`.** Для тестового пароля это допустимо, но добавьте комментарий, что он не используется в production, и проверьте, что `molecule/default/vault_test_plain.yml` в `.gitignore`.
+
 ### Смотрите также
 
 * [Тестирование коллекций через ansible-test](./ansible-test.md) — для модулей и плагинов.
 * [Ansible Roles](./ansible_roles.md) — создание и структура ролей.
 * [Ansible: установка и настройка](./ansible_setup_and_config.md) — Bootstrap Python.
 * [Антипаттерны Ansible](./ansible_bad_practices.md) — типичные ошибки.
+* [Ansible Vault: Основы](./Vault/basics.md) — формат заголовков, `vault_id`, конфигурация `vault_id_match`.
+* [Ansible Vault: Лучшие практики](./Vault/best_practices.md) — `no_log`, ротация, работа с секретами в CI/CD.

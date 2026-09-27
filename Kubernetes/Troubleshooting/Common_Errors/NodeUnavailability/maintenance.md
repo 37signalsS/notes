@@ -512,3 +512,7 @@ groups:
 - [Проблемы рантайма](./runtime_issues.md) — если `containerd` не стартует после обслуживания.
 - [Pod Disruption Budget](../../../Autoscaling/pod_disruption_budget.md) — архитектура защитных бюджетов.
 - [Обслуживание узлов: Cordon, Drain и NodeMaintenance API](../../../Operations/node_maintenance.md) — полный регламент плановых работ.
+- [SELinux и AppArmor](./security_profiles.md) — проверка MAC-политик перед обслуживанием.
+- [Тюнинг ядра](./kernel_tuning.md) — настройка sysctl перед вводом узла в эксплуатацию.
+- [Hostname и DNS](./hostname_dns_issues.md) — проверка имени узла после обслуживания.
+- [SSH-доступ и bastion](./bastion_ssh_access.md) — доступ к узлам через bastion.

@@ -99,6 +99,42 @@ Nginx управляется через сигналы, посылаемые м�
 - **TERM/INT:** немедленная остановка.
 - **USR1:** переоткрытие лог-файлов (используется для ротации).
 - **USR2:** обновление бинарного файла сервера на лету без остановки соединений.
+- **WINCH:** после USR2 — постепенное завершение старых воркеров (завершает грациозную замену бинарника).
+
+#### Zero-downtime обновление бинарника (USR2/WINCH)
+
+Стандартный `systemctl restart` рвёт активные соединения. Для бесшовного обновления исполняемого файла Nginx используется сигнальный сценарий:
+
+```bash
+# 1. Подготовить новый бинарник (не перезапуская nginx)
+cp -a /usr/sbin/nginx /usr/sbin/nginx.old
+install -m 755 /usr/local/src/nginx-1.27.3/objs/nginx /usr/sbin/nginx
+
+# 2. Запустить новый master рядом (старый продолжает работать)
+kill -USR2 $(cat /run/nginx.pid)
+# Появится nginx.pid.oldbin (старый PID) и новый master
+
+# 3. Постепенно перевести трафик на новые воркеры
+kill -WINCH $(cat /run/nginx.pid.oldbin)
+# Старые воркеры завершаются после обработки текущих запросов
+
+# 4. Проверить новый процесс и зафиксировать состояние
+nginx -V && kill -QUIT $(cat /run/nginx.pid.oldbin)
+# Старый master полностью останавливается
+```
+
+Откат в случае проблем с новым бинарником:
+
+```bash
+kill -HUP $(cat /run/nginx.pid.oldbin)   # перезапустить старые воркеры
+kill -TERM $(cat /run/nginx.pid)         # остановить новый master
+```
+
+Механика идентична в Angie — детальный разбор сигналов и примеры см. в [обзоре Angie](../../Angie/angie_overview.md).
+
+#### Graceful shutdown и долгие соединения
+
+При плавном завершении воркеры могут «висеть» на долгоживущих соединениях (WebSocket, gRPC, HTTP/3). Для ограничения времени дожития используется `worker_shutdown_timeout` (рекомендуется `10s`–`30s` в прод). Подробнее — в [тюнинге производительности](../Performance/nginx_performance_tuning.md).
 
 ---
 
@@ -114,11 +150,32 @@ Nginx предоставляет богатый набор встроенных 
 - `$proxy_add_x_forwarded_for`: цепочка IP-адресов при проксировании.
 - `$request_method`: метод HTTP (GET, POST и т.д.).
 
+Переменные можно объявлять через `set`, а «словари» сопоставлений — строить на `map` (например, региональная маршрутизация, белые списки, канареечные веса). Полный разбор `set`/`map`/`geo` — в **[переменных, map и гео в Angie](../../Angie/angie_variables.md)** (директивы идентичны для Nginx OSS).
+
 ### Логирование
 
 Nginx поддерживает два типа логов:
 1.  **Error Log:** ошибки сервера и конфигурации. Уровни: `debug`, `info`, `notice`, `warn`, `error`, `crit`, `alert`, `emerg`.
 2.  **Access Log:** запись каждого обработанного запроса. Настраивается через `log_format` для интеграции с SIEM или системами аналитики (например, в формате JSON).
+
+Разбор access-логов (GoAccess, CLI-анализ, request_id, JSON) — в [анализе access-логов](../Operations/nginx_log_analysis.md).
+
+### Высокая доступность (High Availability)
+
+Один экземпляр Nginx — точка отказа. Классический пассивный HA-сценарий в bare-metal/VM: два (или более) узла Nginx объединяются плавающим IP (**VIP**) через **keepalived** (VRRP). Обычный Nginx не умеет синхронизировать `limit_req_zone`/`limit_conn_zone` между узлами — для «честных» лимитов в кластере используйте Angie (`sync`) или внешний распределённый кэш.
+
+```text
+Client → VIP 10.0.0.10 (active: nginx-1, backup: nginx-2)
+                 │ VRRP (vrrp_instance nginx_ha)
+                 ├─ nginx-1  (MASTER, priority 150)
+                 └─ nginx-2  (BACKUP, priority 100) → принимает при сбое nginx-1
+```
+
+- **keepalived** управляет VIP: при падении мастера/сервиса BACKUP становится MASTER и захватывает VIP (фейловер за секунды).
+- **Проверка здоровья:** скрипт проверки (`/usr/bin/curl -sf http://127.0.0.1/healthz`) в `vrrp_script`, при фейле — `weight`-понижение приоритета.
+- Альтернативы на L7: DNS round-robin (деградация), актив-актив кластеры, LTE-решения облачных LB.
+
+Пошаговая настройка nginx+keepalived — в [HA-конфигурации Angie с keepalived](../../Angie/angie_ha_with_keepalived.md) (directives идентичны для Nginx OSS) и [обзоре keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md). Общая модель HA/DR — в [Concepts HA](../../../Concepts/High_Availability/ha_overview.md).
 
 ### Современные технологии (2026)
 
@@ -136,3 +193,5 @@ Nginx поддерживает два типа логов:
 - **[Директива location: основы и приоритеты](./Location/basics.md)** — детальный разбор маршрутизации.
 - **[Тюнинг производительности Nginx](../Performance/nginx_performance_tuning.md)** — оптимизация архитектуры и ОС.
 - **[Безопасность Nginx](../Security/nginx_security_guide.md)** — защита от атак и харденинг.
+- **[Сборка Nginx из исходников и динамические модули](./nginx_build_from_source.md)** — компиляция и `load_module`.
+- **[njs — скриптовый модуль Nginx](./nginx_njs_module.md)** — автоматизация логики на JavaScript.

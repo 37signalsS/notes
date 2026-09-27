@@ -400,9 +400,134 @@ kubectl top pods -n kube-system
 docker logs etcd 2>&1 | tail -100
 ```
 
+## Дополнительные темы для изучения
+
+Ниже перечислены темы, которые не являются специфичными для RKE, но критически важны для эксплуатации кластеров в production. Каждая тема подробно рассмотрена в отдельных файлах知識.
+
+### Пакетный менеджер Helm
+
+Helm — де-факто стандарт для управления пакетами в Kubernetes. RKE не интегрирован с Helm напрямую, но все основные компоненты (Prometheus, cert-manager, Ingress Controller) устанавливаются через Helm-чарты.
+
+* Архитектура, команды, шаблонизация: [Helm: Обзор](../../ToolsUtilities/Helm/helm_overview.md)
+* Структура чартов: [Структура Helm-чарта](../../ToolsUtilities/Helm/helm_chart_structure.md)
+* Практические сценарии: [Helm: Практические сценарии](../../ToolsUtilities/Helm/helm_chart_practical_scenarios.md)
+* Безопасность: [Helm: Безопасность](../../ToolsUtilities/Helm/Advanced/security_best_practices.md)
+* Интеграция с secrets: [helm-secrets + SOPS](../../Base/secrets/helm_secrets.md)
+
+### Управление сертификатами (cert-manager)
+
+RKE управляет своими внутренними сертификатами (kube-apiserver, etcd, kubelet). Для пользовательских приложений (Ingress TLS, webhook-и) используется cert-manager.
+
+* Основы cert-manager: [cert-manager: Определения](../../ToolsUtilities/cert_manager/definitions.md)
+* Установка: [cert-manager: Установка](../../ToolsUtilities/cert_manager/installation.md)
+* Let's Encrypt: [Let's Encrypt: Сценарии](../../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md)
+* Интеграция с Ingress: [cert-manager + Ingress](../../ToolsUtilities/cert_manager/ingress/scenarios.md)
+* Troubleshooting: [cert-manager: Диагностика](../../ToolsUtilities/cert_manager/Administration/troubleshooting.md)
+
+### RBAC (Role-Based Access Control)
+
+RKE включает RBAC по умолчанию. Для production необходимо настраивать минимальные привилегии для сервис-аккаунтов и пользователей.
+
+* Обзор RBAC: [RBAC: Обзор](../../Security/rbac/rbac_overview.md)
+* Role и ClusterRole: [RBAC: Role и ClusterRole](../../Security/rbac/roles.md)
+* RoleBinding и ClusterRoleBinding: [RBAC: Bindings](../../Security/rbac/bindings.md)
+* ServiceAccount: [RBAC: Subjects](../../Security/rbac/subjects.md)
+* Агрегированные ClusterRoles: [RBAC: Агрегация](../../Security/rbac/aggregation_scenarios.md)
+
+### Сетевые политики (NetworkPolicy)
+
+RKE (Canal/Calico) поддерживает NetworkPolicy. Включите их для изоляции трафика между подами.
+
+* Практические сценарии (12+ примеров): [NetworkPolicy: Практика](../../Networking/Network/NetworkPolicy/practical_scenarios.md)
+* Определения и концепции: [NetworkPolicy: Определения](../../Networking/Network/NetworkPolicy/definitions.md)
+* Egress-паттерны: [NetworkPolicy: Egress](../../Networking/Network/NetworkPolicy/egress_patterns.md)
+* Multi-tenancy: [NetworkPolicy: Multi-tenancy](../../Networking/Network/NetworkPolicy/multi_tenancy.production_debugging.md)
+* Debugging в продакшене: [NetworkPolicy: Debugging](../../Networking/Network/NetworkPolicy/production_debugging.md)
+
+### Персистентное хранилище (Persistent Storage)
+
+Для stateful-приложений (БД, очереди) необходимы PersistentVolume и StorageClass.
+
+* PV и PVC: [PersistentVolume и PVC](../../Storage/pv_and_pvc.md)
+* StorageClass: [StorageClass](../../Storage/storageclass.md)
+* Динамический провижининг: [PV/PVC: Сценарии](../../Storage/pv_and_pvc_scenarios.md)
+* Longhorn (分布式 storage): [Longhorn](../../Storage/longhorn.md)
+* Local Path Provisioner (Rancher): [Local Path Provisioner](../../Storage/local-path-provisioner.md)
+* CSI: [CSI Overview](../../Storage/CSI/csi_overview.md)
+* Troubleshooting: [Storage Troubleshooting](../../Storage/k8s-storage-troubleshooting.md)
+
+### Автомасштабирование (HPA, VPA, Cluster Autoscaler)
+
+Для автоматического масштабирования подов и узлов.
+
+* HPA: [HPA: Обзор](../../Autoscaling/HPA/hpa_concepts.md)
+* HPA: Продвинутые сценарии: [HPA: Advanced](../../Autoscaling/HPA/hpa_advanced.md)
+* VPA: [VPA: Подробное руководство](../../Autoscaling/vpa_detailed.md)
+* Cluster Autoscaler: [Cluster Autoscaler](../../Autoscaling/cluster_autoscaler_detailed.md)
+* Karpenter: [Karpenter Overview](../../Autoscaling/Karpenter/overview.md)
+* KEDA (event-driven): [KEDA](../../Autoscaling/keda/keda_concepts.md)
+
+### Resource Quotas и LimitRange
+
+Ограничение ресурсов на уровне namespace.
+
+* QoS, requests/limits, LimitRange, ResourceQuota: [QoS и LimitRange](../../Scheduling/qos_limit_and_requests.md)
+* RBAC для квот: [ResourceQuota + RBAC](../../Security/rbac/resource_quota_rbac.md)
+
+### Pod Disruption Budgets (PDB)
+
+Защита при обновлениях и техническом обслуживании узлов.
+
+* PDB: Полное руководство: [PDB](../../Autoscaling/pod_disruption_budget.md)
+* PDB в HA: [HA: PDB](../../Base/high_availability.md)
+
+### Probes (Readiness, Liveness, Startup)
+
+Проверки здоровья приложений для оркестратора.
+
+* Полное руководство: [Probes](../../Base/probes.md)
+* Антипаттерны: [Probes: Антипаттерны](../../Base/probes.md#антипаттерны)
+
+### Init Containers и Sidecar Pattern
+
+* Init Containers: [Init Containers](../../Base/Pod/pod_init_containers.md)
+* Sidecar Patterns: [Sidecar Patterns](../../Base/Pod/pod_sidecar_patterns.md)
+
+### Taints, Tolerations и Node Affinity
+
+Управление распределением подов по узлам.
+
+* Taints и Tolerations: [Taints & Tolerations](../../Scheduling/taints_and_tolerations.md)
+* Affinity и Anti-Affinity: [Affinity](../../Scheduling/affinity.md)
+
+### Kernel Tuning
+
+Оптимизация ядра Linux для Kubernetes и etcd.
+
+* Kernel tuning для etcd: [etcd: Kernel Tuning](../../../etcd/kernel_tuning.md)
+* Sysctl для Docker-хостов: [Docker: Performance Tuning](../../Docker/Docker_performance_tuning.md)
+
+### CIS Benchmark и Pod Security Standards
+
+Безопасность кластера по стандартам CIS.
+
+* kube-bench (CIS): [kube-bench](../../Security/kube-bench.md)
+* Pod Security Standards: [PSS: Определения](../../Base/secrets/pod_security_and_secrets.md)
+* Pod Security Context: [Security Context](../../Security/pod_security_context.md)
+
+### Troubleshooting (Методология)
+
+Системный подход к поиску неисправностей.
+
+* Обзор методологии: [Troubleshooting: Обзор](../../Troubleshooting/troubleshooting_overview.md)
+* CrashLoopBackOff: [CrashLoopBackOff](../../Troubleshooting/Common_Errors/pod_crash_loop_back_off/)
+* Pod Pending: [Pod Pending](../../Troubleshooting/Common_Errors/pod_pending/)
+* OOMKilled: [OOMKilled](../../Troubleshooting/Common_Errors/oomkilled_pods.md)
+
 ---
 
 **См. также:**
+* [RKE: Высокая доступность](./rke_high_availability.md)
 * [RKE: Управление и поиск неисправностей](./rke_management_scenarios.md)
 * [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md)
 * [etcd: Архитектура и концепции](../../etcd/architecture-and-concepts.md)

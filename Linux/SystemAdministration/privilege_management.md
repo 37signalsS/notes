@@ -23,6 +23,16 @@
 - **Polkit (PolicyKit):** Системная служба для управления привилегиями непривилегированных процессов. Работает через DBus и позволяет гранулярно разрешать системные действия (монтирование дисков, управление сетью) без предоставления полного root-доступа.
 - **visudo:** Специализированный редактор для безопасного изменения файла `/etc/sudoers` с автоматической проверкой синтаксиса.
 - **pkexec:** CLI-инструмент Polkit для выполнения команд от имени другого пользователя (аналог sudo в мире Polkit).
+- **Запись сессий (session logging):** Механизм записи полного I/O потока sudo-сессии (`log_output`, `iolog_dir`) для последующего аудита и расследования инцидентов.
+- **tty_tickets:** Директива sudo, требующая ввода пароля для каждого нового терминала (не только раз в N минут).
+- **requiretty (устаревшая):** Директива, требующая наличия выделенного TTY для запуска sudo. Устарела в sudo 1.9.x+, заменена на `tty_tickets` и `pam_tty_audit`.
+- **setuid на скрипты:** Ядро Linux **игнорирует** бит SUID на интерпретируемых файлах (скрипты bash, python, perl). Это поведение зафиксировано в man 2 execve и не может быть изменено. Для эмуляции SUID используется `sudo` или capabilities.
+- **pam_tty_audit:** Модуль PAM, обеспечивающий запись всего ввода-вывода в аудит-логи для указанных пользователей или групп, независимо от sudo.
+- **sudo_logsrvd:** Демон journald/syslog в sudo 1.9+, принимающий и централизующий логи удаленных хостов.
+- **plugin-архитектура sudo (Sudo 1.9+):** Подключаемые модули (`audit`, `log_server`, `approval`) расширяют функциональность без перекомпиляции.
+- **Linux Capabilities:** Гранулярное разделение полномочий UID 0 на отдельные биты (например, `CAP_NET_BIND_SERVICE`, `CAP_SYS_ADMIN`). Подробнее: [**Linux Capabilities**](../Security/Mechanisms/Capabilities.md).
+- **auditd:** Демон аудита ядра Linux, фиксирующий все попытки повышения привилегий. Подробнее: [**auditd — аудит событий**](./Logging/auditd.md).
+- **pam_wheel:** Модуль PAM, ограничивающий доступ к `su` только членам группы `wheel` (или другой указанной группы).
 
 ## Основные концепции
 
@@ -73,29 +83,148 @@
 
 Пример использования: `ADMINS WEB_SERVERS = (DB_USERS) NETWORKING` (Админы на веб-серверах могут выполнять сетевые команды от имени пользователей БД).
 
-### Конфигурация sudoers
+### Таймауты и TTY-ограничения
 
-Файл `/etc/sudoers` (редактируемый исключительно через `visudo`) определяет политики делегирования полномочий. Для обеспечения модульности рекомендуется использовать директорию `/etc/sudoers.d/`.
+| Директива | Назначение | Значение по умолчанию |
+| :--- | :--- | :--- |
+| `timestamp_timeout=` | Время (минуты) кэширования пароля | 5 |
+| `tty_tickets` | Запрашивать пароль для каждого нового TTY | отключено (пароль кэшируется глобально) |
+| `requiretty` | (устаревшая) Разрешать sudo только из выделенного TTY | отключена в sudo 1.9+ |
+| `passwd_timeout=` | Время ожидания ввода пароля (секунды) | 5 |
+| `passwd_tries=` | Максимум попыток ввода пароля | 3 |
 
-**Безопасность правил:**
-*   **Белые списки (Allow):** рекомендуется разрешать только необходимые команды.
-*   **Полные пути:** всегда указывайте команды в `sudoers` полным путем (например, `/usr/bin/apt` вместо `apt`). Это предотвращает выполнение вредоносного скрипта с тем же именем, подсунутого пользователем в свой `PATH`.
-*   **Черные списки (Deny) — урок Линды:** подход «разрешить всё, кроме...» является фундаментально небезопасным. 
-    > **Пример:** Пользователю разрешено всё, кроме запуска оболочек (`!/bin/sh`, `!/bin/bash`). Линда копирует `/bin/sh` в `/tmp/mysh` и запускает его через `sudo /tmp/mysh`. Поскольку `/tmp/mysh` нет в черном списке, запрет обходится мгновенно.
-*   **Журналирование:** `sudo` обеспечивает детальный аудит (syslog, journald) с указанием времени, хоста, терминала и полной командной строки, что критически важно для расследования инцидентов.
+**TTY-ограничения в PAM:**
+- `pam_tty_audit.so` — записывает все нажатия клавиш в аудит-лог (не зависит от sudo).
+- `pam_time.so` — ограничивает время доступа к сессиям (например, запрет доступа root ночью).
 
-**Блокировка root (модель Ubuntu):**
-Для повышения безопасности рекомендуется полностью блокировать пароль root (`sudo passwd -l root`). Это отключает возможность прямого входа, сохраняя при этом работу системных служб и доступ через `sudo`. На физических серверах пароль часто оставляют как аварийный резерв на случай поломки `sudo`.
+### Plugin-архитектура sudo (Sudo 1.9+)
 
-**Синтаксис правил:**
-`Субъект Хост=(Запуск_от_имени) Команды`
+В sudo 1.9 и выше поддерживается подключаемая архитектура:
 
-Пример: `%wheel ALL=(ALL:ALL) ALL` (Группа wheel может выполнять любые команды от имени любого пользователя и любой группы на всех хостах).
+| Plugin | Назначение |
+| :--- | :--- |
+| `sudo_audit` | Отправляет события аудита в системный аудит (auditd) |
+| `sudo_logsrvd` | Централизованный сбор логов от удаленных хостов |
+| `sudo_approval` | Внешние approval-хендлеры (например, Slack-уведомление перед выполнением) |
+| `sudo_pair` | «Четыре глаза» — второе подтверждение для критических команд |
 
-**Важные опции (Defaults):**
-- `env_reset`: Сбрасывает переменные окружения для безопасности (включено по умолчанию).
-- `secure_path`: Ограничивает `PATH` при выполнении команд.
-- `timestamp_timeout`: Время (в минутах), в течение которого не будет повторно запрашиваться пароль (обычно 5 или 15).
+**Включение audit plugin:**
+```text
+# /etc/sudo.conf
+Plugin audit sudo_audit.so
+```
+
+### Логирование и централизация аудита
+
+**Локальное логирование sudo (syslog):**
+```text
+# /etc/sudoers
+Defaults logfile="/var/log/sudo.log"
+Defaults log_input, log_output
+Defaults iolog_dir=/var/log/sudo-io
+Defaults log_server="audit-host.example.com"
+```
+
+**Запись I/O (session recording):**
+```text
+# Включаем запись
+Defaults log_output
+Defaults iolog_dir=/var/log/sudo-io
+Defaults iolog_flush=yes
+
+# Просмотр
+sudo sudoreplay -l
+sudo sudoreplay replay/2026/09/13/username/
+```
+
+**Централизованный сбор логов (sudo_logsrvd):**
+```bash
+# На сервере-коллекторе
+sudo /usr/libexec/sudo/sudo_logsrvd -n
+
+# На клиентах
+# /etc/sudo.conf
+Plugin log_server sudo_logsrvd.so server=audit-host.example.com
+```
+
+### setuid/setgid на скрипты
+
+Ядро Linux **намеренно игнорирует** бит SUID/SGID на интерпретируемых файлах (скрипты с shebang `#!/bin/bash`, `#!/usr/bin/python` и т.д.). Это защита от race condition, когда злоумышленник заменяет интерпретатор в момент выполнения.
+
+**Почему SUID-скрипты опасны:**
+```text
+#!/bin/bash
+# Если бы SUID работал, злоумышленник мог бы:
+# 1. Создать /tmp/bash -> /bin/sh
+# 2. Создать скрипт с SUID, вызывающий /bin/bash
+# 3. В промежутке между exec() и open() подменить bash
+# 4. Получить root-оболочку
+```
+
+**Альтернативы:**
+- `sudo` с `NOPASSWD` на конкретный скрипт
+- `setcap` для конкретных бинарников
+- Политики Polkit для desktop-приложений
+
+### systemd и привилегии
+
+В systemd-юнитах есть несколько механизмов управления привилегиями без полного root-доступа:
+
+| Директива | Назначение |
+| :--- | :--- |
+| `DynamicUser=` | Создание временного пользователя/группы (отсутствуют в /etc/passwd) |
+| `SupplementaryGroups=` | Дополнительные группы (например, `wheel`, `docker`) |
+| `CapabilityBoundingSet=` | Ограничивающий набор capabilities (whitelist) |
+| `AmbientCapabilities=` | Capabilities, наследуемые дочерними процессами |
+| `NoNewPrivileges=` | Запрет на повышение привилегий через SUID или fsuid |
+| `PrivateTmp=` | Изолированный /tmp и /var/tmp |
+| `ProtectSystem=` | Ограничение записи в / (full, strict, yes) |
+| `ProtectHome=` | Ограничение доступа к /home (read-only, tmpfs) |
+
+**Пример: безопасный unit для веб-приложения:**
+```ini
+[Service]
+User=webapp
+Group=webapp
+DynamicUser=yes
+SupplementaryGroups=wheel
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/webapp
+```
+
+### SELinux и AppArmor
+
+Модули MAC (Mandatory Access Control) работают **поверх** традиционных UID/GID-разрешений и могут дополнительно ограничивать root.
+
+**SELinux:**
+- Типы контекстов (`unconfined_t`, `httpd_t`, `svirt_lxc_net_t`)
+- Даже root в домене `unconfined_t` может быть ограничен policy
+- `sudo` работает, но действия sudo-пользователя получают контекст `staff_u:sysadm_r:staff_t` (не `root:sysadm_r:sysadm_t`)
+- Политика `sudo` в SELinux отдельно разрешает переход между контекстами
+
+**AppArmor:**
+- Профили приложений в `/etc/apparmor.d/`
+- Профиль для `sudo` редко кастомизируется, но профиль для исполняемого файла (например, `/usr/sbin/nginx`) действует и при запуске через sudo
+
+**Взаимодействие:**
+```bash
+# Проверка контекста текущего пользователя
+id -Z
+# → unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023
+
+# Проверка контекста после sudo
+sudo id -Z
+# → staff_u:sysadm_r:sysadm_t:s0-s0:c0.c1023
+
+# Проверка denied событий в AppArmor
+sudo aa-status
+sudo dmesg | grep -i apparmor
+```
 
 ## Практические сценарии
 
@@ -134,7 +263,50 @@ sudo visudo -f /etc/sudoers.d/web-admin
 - `sudo -k`: Аннулировать текущую сессию (следующий вызов sudo потребует пароль).
 - `sudo -l`: Посмотреть список разрешенных команд для текущего пользователя.
 
-### 4. Настройка doas
+### 4. Аварийное восстановление sudo
+
+**Сценарий: ошибка в sudoers заблокировала все sudo-сессии**
+
+Если вы ошиблись в `/etc/sudoers` или каталоге `/etc/sudoers.d/`, следующая же проверка может вернуть `parse error`. В худшем случае вы потеряете способность выполнения любых команд через sudo.
+
+**Решение на уровне GRUB (без root-пароля):**
+
+```bash
+# 1. Перезагрузите сервер и в меню GRUB выберите ядро
+# 2. Добавьте к строке загрузки: init=/bin/bash
+#    (или systemd.unit=emergency.target для systemd)
+
+# 3. После загрузки в emergency shell:
+mount -o remount,rw /
+chmod 644 /etc/sudoers
+# или если кастомные файлы сломаны:
+rm /etc/sudoers.d/breaking-file
+visudo -c /etc/sudoers  # проверка синтаксиса
+mount -o remount,ro /
+reboot -f
+```
+
+**Восстановление из live-среды (физический доступ):**
+```bash
+# 1. Загрузитесь с USB/live CD
+# 2. Смонтируйте корневой раздеол
+mount /dev/sda1 /mnt
+# 3. Исправьте файлы
+chroot /mnt visudo
+# 4. Перезагрузитесь
+exit
+reboot
+```
+
+**Проверка синтаксиса перед сохранением:**
+```bash
+# всегда запускайте перед закрытием visudo:
+visudo -c
+# → /etc/sudoers: parsed OK
+# → /etc/sudoers.d/extra: parsed OK
+```
+
+### 5. Настройка doas
 
 Конфигурация в `/etc/doas.conf` предельно лаконична:
 
@@ -149,7 +321,7 @@ permit :wheel
 permit nopass bob as root cmd /sbin/reboot
 ```
 
-### 5. Правила Polkit
+### 6. Правила Polkit
 
 Polkit разделяет определение действий и авторизацию:
 - **Файлы действий (`/usr/share/polkit-1/actions/*.policy`):** XML-файлы, определяющие само действие (например, `org.freedesktop.login1.reboot`), описание и стандартные разрешения (yes, no, auth_admin).
@@ -166,7 +338,7 @@ polkit.addRule(function(action, subject) {
 });
 ```
 
-### 6. Аудит и sudoreplay
+### 7. Аудит и sudoreplay
 
 Sudo позволяет записывать полные сессии ввода-вывода (I/O logging), что полезно для обучения и детального расследования.
 
@@ -185,6 +357,32 @@ sudo sudoreplay -l
 sudo sudoreplay <ID>
 ```
 
+### 8. Централизованный аудит sudo через journald
+
+```bash
+# Просмотр всех sudo-сессий через journalctl
+journalctl _COMM=sudo --since "1 hour ago"
+# или по имени пользователя
+journalctl _AUDIT_USER=john --since "today"
+
+# Поиск по командной строке
+journalctl SUDO_COMMAND=/usr/bin/apt
+```
+
+### 9. Восстановление заблокированного sudo через rescue.target
+
+Если `/etc/sudoers` поврежден и обычный root-доступ заблокирован, используйте `emergency.target`:
+
+```bash
+# В GRUB добавьте: systemd.unit=emergency.target
+# После загрузки:
+mount -o remount,rw /
+# Исправьте sudoers или временно:
+usermod -aG wheel username
+# или восстановите из бэкапа:
+cp /etc/sudoers.bak /etc/sudoers
+```
+
 ## Укрепление безопасности (Hardening)
 
 - **sudoedit вместо sudo vim:** Используйте `sudoedit` (`sudo -e`) для редактирования файлов. Это предотвращает побег в оболочку (shell escape) через функции редактора.
@@ -193,6 +391,103 @@ sudo sudoreplay <ID>
 - **Важность обновлений (CVE-2021-3156):** Уязвимость "Baron Samedit" показала, что даже в таких зрелых инструментах, как `sudo`, могут годами существовать критические дыры переполнения буфера. Регулярное обновление утилит управления привилегиями критично.
 - **requiretty:** Устаревшая опция, часто мешающая автоматизации (например, Ansible). В современных системах обычно отключена.
 - **pwfeedback:** Опция, отображающая звездочки при вводе пароля. Считается менее безопасной, так как выдает длину пароля.
+- **Secure PATH:**
+  ```text
+  # /etc/sudoers
+  Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  ```
+  Защита от подстановки вредоносных путей в `PATH` пользователя.
+- **Запрет на shell-escape в редакторах:**
+  ```text
+  # Запрет запуска внешних команд из vim через sudo
+  Defaults!vim        !syslog
+  Defaults!/usr/bin/vim  !sudoedit
+  ```
+- **pam_securetty vs pam_wheel:** Используйте `pam_wheel.so` вместо `pam_securetty` — `wheel`-группа позволяет управлять доступом динамически без редактирования `/etc/securetty`.
+
+## Диагностика и устранение неисправностей
+
+| Симптом | Вероятная причина | Действие |
+| :--- | :--- | :--- |
+| `sudo: parse error in /etc/sudoers near line 42` | Ошибка синтаксиса | Исправьте строку через `pkexec visudo` или rescue mode |
+| `sudo: no tty present and no askpass program specified` | `requiretty` или отсутствие TTY в SSH/Ansible | `Defaults !requiretty` или `Defaults !tty_tickets` |
+| `sudo: PERM_ROOT_USER: command not allowed` | Команда не в sudoers | Добавьте полный путь через `visudo -f /etc/sudoers.d/...` |
+| `sudo: unknown uid: 1000` | `/etc/passwd` поврежден или NFS | Проверьте `getent passwd 1000` |
+| `sudo: unable to resolve host` | Несоответствие hostname в sudoers и `/etc/hostname` | Исправьте `Host_Name_` в `/etc/hostname` |
+| `sudo: command not allowed after authentication` | `Cmnd_Alias` конфликтует с путями | Проверьте `sudo -l` и точные пути |
+| `polkit: Authentication is required` | Правило Polkit не сработало | Проверьте `journalctl -u polkit` и логи Action IDs |
+| `sudo: syntax error` после установки плагина | Ошибка в `/etc/sudo.conf` | Переименуйте файл и перезагрузите `sudo` |
+| `sudo -l` показывает `(root) NOPASSWD: /usr/bin/less` | Риск shell escape (GTFOBins) | Немедленно удалите правило, используйте `sudoedit` |
+
+## Граничные случаи и edge cases
+
+### 1. setuid-скрипты не работают
+
+```bash
+# Это НЕ сработает (SUID игнорируется на скриптах):
+sudo chmod u+s /usr/local/bin/myscript.sh
+# → -rwrwsr-x 1 root root ... myscript.sh
+
+# Правильное решение:
+sudo visudo -f /etc/sudoers.d/myscript
+# → username ALL=(root) NOPASSWD: /usr/local/bin/myscript.sh
+```
+
+### 2. Sudo в chroot-окружении
+
+```bash
+# В chroot /mnt/rootfs должен быть /etc/sudoers
+# и все зависимости (libs, /etc/passwd, /etc/group):
+sudo chroot /mnt/rootfs visudo -c
+```
+
+### 3. Sudo и канары (pipes)
+
+```bash
+# sudo НЕ передает привилегии через pipe:
+echo "data" | sudo tee /root/file    # ✓ работает (tee запускается от root)
+echo "data" | cat | sudo tee /root/file  # ✗ cat запускается от user, ошибка доступа
+```
+
+### 4. Sudo в systemd-юнитах
+
+```ini
+[Service]
+User=deploy
+ExecStart=/usr/bin/sudo /opt/app/start.sh
+# Лучше: избегать sudo в юнитах, использовать DynamicUser= и capabilities
+```
+
+### 5. Sudo и NOPASSWD с устаревшими правилами
+
+```text
+# Опасное правило (все команды без пароля):
+%wheel ALL=(ALL) NOPASSWD: ALL
+
+# Безопасное правило (конкретные команды):
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nginx, /usr/bin/systemctl reload nginx
+```
+
+### 6. Sudo в Docker-контейнерах
+
+```dockerfile
+# Проблема: в контейнере обычно нет sudo, а root уже есть
+# Решение 1: использовать gosu/su-exec для демона
+ENTRYPOINT ["/usr/bin/gosu","appuser"]
+CMD ["app","start"]
+
+# Решение 2: установить sudo и настроить NOPASSWD
+RUN apt install -y sudo && \
+    echo "appuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/appuser
+```
+
+### 7. Sudo с пользовательским prompt
+
+```text
+# /etc/sudoers
+Defaults passprompt="[sudo] пароль для %u на %H: "
+Defaults badpass_message="Неверный пароль — попробуйте еще раз"
+```
 
 ## Сравнение механизмов
 
@@ -200,9 +495,12 @@ sudo sudoreplay <ID>
 | :--- | :--- | :--- | :--- | :--- |
 | **Пароль** | Целевого пользователя | Текущего пользователя | Текущего пользователя | Текущего (или Agent) |
 | **Гибкость** | Низкая (все или ничего) | Очень высокая | Средняя | Высокая (по действиям) |
-| **Аудит** | Ограничен | Полный (syslog) | Есть | Через journald |
+| **Аудит** | Ограничен | Полный (syslog + journald) | Есть | Через journald |
 | **Сложность** | Минимальная | Высокая | Низкая | Высокая |
 | **Окружение** | Сохраняет (или `-`) | Сбрасывает (по умолчанию) | Сбрасывает | Сбрасывает |
+| **Гранулярность** | Нет | Команды, хосты, пользователи | Команды, пользователи | Действия (Actions) |
+| **Запись сессий** | Нет | I/O logging (1.9+) | Нет | Нет |
+| **Совместимость** | Универсальна | Универсальна | OpenBSD/Unix-like | systemd-системы |
 
 ## Дополнительная информация
 
@@ -211,9 +509,66 @@ sudo sudoreplay <ID>
 - **SUID/SGID:** Специальные биты прав доступа. Подробнее: [**Специальные права доступа**](../Security/Concepts/File_Permissions/special_permissions.md).
 - **Capabilities:** Гранулярное разделение полномочий UID 0. Подробнее: [**Linux Capabilities**](../Security/Mechanisms/Capabilities.md).
 - **auditd:** Детальное отслеживание всех попыток повышения прав. Подробнее: [**auditd — аудит событий**](./Logging/auditd.md).
+- **LDAP-интеграция sudo:** В крупных инфраструктурах `/etc/sudoers` может храниться в LDAP (Centrify, SSSD), что позволяет централизованно управлять политиками. Конфигурация в `/etc/nsswitch.conf`: `sudoers: files ldap`.
+- **Сравнение оболочек через sudo:**
+  - `sudo -i`: Полная имитация входа root (login shell, читает `.profile`).
+  - `sudo -s`: Запуск оболочки `$SHELL` с сохранением большинства переменных окружения пользователя.
+  - `sudo su -`: "Грязный" способ получения root-оболочки, не рекомендуемый в пользу `sudo -i`.
+  - `sudo -u #0`: Прямой вызов как UID 0 (эквивалентно `sudo -i`, но без входа).
 
-### Сравнение оболочек через sudo
+### Типовые конфигурации sudoers.d
 
-- `sudo -i`: Полная имитация входа root.
-- `sudo -s`: Запуск оболочки `$SHELL` с сохранением большинства переменных окружения пользователя.
-- `sudo su -`: "Грязный" способ получения root-оболочки, не рекомендуемый в пользу `sudo -i`.
+**Сценарий A: DevOps-инженер (деплой, мониторинг, логи)**
+```text
+# /etc/sudoers.d/devops-team
+# Члены группы devops могут управлять сервисами и читать логи
+%devops ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *, /usr/bin/systemctl reload *
+%devops ALL=(ALL) NOPASSWD: /usr/bin/journalctl *, /usr/bin/tail -f /var/log/*
+Defaults!systemctl !logfile
+```
+
+**Сценарий B: SRE-инженер (только перезагрузка и вывод из standby)**
+```text
+# /etc/sudoers.d/sre-oncall
+%sre ALL=(ALL) NOPASSWD: /usr/sbin/reboot, /usr/sbin/shutdown -r now, /usr/bin/systemctl suspend
+Defaults!reboot log_input, log_output
+```
+
+**Сценарий C: Jenkins/CI-агент (деплой без полного root)**
+```text
+# /etc/sudoers.d/jenkins-deploy
+jenkins ALL=(www-data) NOPASSWD: /usr/bin/git pull, /usr/bin/systemctl reload nginx
+Defaults!/usr/bin/systemctl !requiretty
+```
+
+### Корпоративные сценарии (Enterprise)
+
+**Централизованный сбор логов через syslog:**
+```bash
+# На каждом хосте:
+Defaults log_host="audit-collector.corp.local"
+
+# На audit-collector:
+# /etc/rsyslog.d/sudo.conf
+if $programname == 'sudo' then /var/log/sudo/sudo.log
+```
+
+**Интеграция с SIEM (ELK/Graylog):**
+```bash
+# Формат JSON через sudo 1.9+
+Defaults log_format=json
+Defaults log_server="siem.corp.local"
+```
+
+### Рекомендации по размеру sudoers
+
+- Держите `/etc/sudoers` минимальным: только глобальные `Defaults` и включение каталога `#includedir /etc/sudoers.d`.
+- Каждый отдельный набор правил — в отдельном файле `/etc/sudoers.d/<название_команды>`.
+- Файлы в `sudoers.d` должны иметь права `0440` (владелец `root:root`).
+- Исключайте комментарии и пустые строки из критичных файлов — проверяйте через `visudo -c`.
+
+## См. также
+
+- [**Linux Capabilities**](../Security/Mechanisms/Capabilities.md) — гранулярное разделение привилегий UID 0 без SUID
+- [**Специальные права доступа**](../Security/Concepts/File_Permissions/special_permissions.md) — SUID, SGID, sticky bit
+- [**auditd — аудит событий**](./Logging/auditd.md) — детальный аудит всех попыток повышения прав

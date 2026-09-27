@@ -1,19 +1,8 @@
-# SonarQube / SonarCloud: статический анализ качества и безопасности кода
+# SonarQube: статический анализ качества и безопасности кода
 
 ## Определения
 
-**SonarQube** — open-source платформа (Community Edition) для непрерывного контроля качества кода (Continuous Code Quality), объединяющая статический анализ (SAST), метрики технического долга и контроль соблюдения стандартов кодирования. Является ключевым инструментом реализации практики **Clean Code**.
-
-**SonarCloud** — SaaS-версия SonarQube, управляемая разработчиками SonarSource. Использует тот же сканирующий движок, что и SonarQube, но не требует самостоятельной эксплуатации серверной инфраструктуры. Поддерживает интеграцию с GitHub, GitLab и Bitbucket через GitHub App / GitLab App.
-
-**Edition / Уровень лицензирования:**
-
-| Уровень | Модель | Ключевые ограничения / особенности |
-|:---|:---|:---|
-| **Community Edition** | Бесплатная, open-source | Базовый SAST, 30+ языков, пороги качества (Quality Gates), Branch Analysis. Нет PR Decoration, enterprise-фич и официальной поддержки. |
-| **Developer Edition** | Платная | Добавляет **PR Decoration** (комментарии в MR/PR), ветвление (Branch Analysis), пороги для веток, поддержку большего числа языков. |
-| **Enterprise Edition** | Платная | Добавляет управление порогами на уровне портфолио, Saas-безопасность, управление выпусками (Release), глобальные портфельные дашборды. |
-| **Data Center Edition** | Платная | Активный-активная кластеризация для критической инфраструктуры с требованиями к SLA. |
+**SonarQube** — платформа для непрерывного контроля качества кода (Continuous Code Quality), объединяющая статический анализ (SAST), метрики технического долга и контроль соблюдения стандартов кодирования. Является ключевым инструментом реализации практики **Clean Code**. Доступна в виде self-hosted сервера (Server editions) и Community Build (ранее Community Edition) — открытой версии под лицензией LGPL-3.0.
 
 **Clean Code** — философия и практика написания кода, который понятен, поддерживаем и безопасен. В контексте SonarQube Clean Code определяется через три измерения:
 - **Reliability (Надёжность):** Отсутствие багов, приводящих к падениям или неправильному поведению.
@@ -39,14 +28,23 @@
 
 **Branch Analysis (Анализ веток)** — функциональность Developer Edition+, позволяющая анализировать отдельные ветки и вычислять метрики качества только для нового кода (new code) в этой ветке, а не для всего проекта.
 
-## Архитектура
+**Edition / Уровень лицензирования:**
+
+| Уровень | Модель | Ключевые ограничения / особенности |
+|:---|:---|:---|
+| **Community Build** | Бесплатная, open-source (LGPL-3.0) | Базовый SAST, 20+ языков, Quality Gates, анализ только основной ветки. Нет PR Decoration, расширенного анализа веток и официальной поддержки. |
+| **Developer Edition** | Платная | Добавляет **PR Decoration**, ветвление (Branch Analysis), поддержку 35+ языков, расширенный SAST (taint analysis), обнаружение секретов. |
+| **Enterprise Edition** | Платная | Добавляет управление порогами на уровне портфолио, отчёты безопасности и соответствия, архитектурный анализ, управление выпусками (Release), глобальные портфельные дашборды. |
+| **Data Center Edition** | Платная | Активный-активная кластеризация для критической инфраструктуры с требованиями к SLA, автоматическое масштабирование в Kubernetes. |
+
+## Архитектура и основные концепции
 
 ### Компоненты SonarQube Server (self-hosted)
 
 ```text
 [Сканер (Scanner)] → HTTP/HTTPS → [SonarQube Server (Web + Search + Compute Engine)]
-                                                    ↓
-                                              [База данных (PostgreSQL)]
+                                                     ↓
+                                               [База данных (PostgreSQL)]
 ```
 
 1.  **SonarQube Server:** Выполняет три основные функции:
@@ -60,15 +58,14 @@
 
 3.  **База данных:** PostgreSQL (рекомендуемая) или MySQL/Microsoft SQL Server/Oracle (для Enterprise). Хранит конфигурацию, историю анализов, Issues, метрики.
 
-4.  **Плагины (Plugins):** Расширяют функциональность SonarQube. В 2024+ году большинство языков поддерживаются встроенно (SonarQube Language Plugin), внешние плагины используются реже.
+4.  **Плагины (Plugins):** Расширяют функциональность SonarQube. Начиная с версий 2024+, большинство языков поддерживаются встроенно (SonarQube Language Plugin), внешние плагины используются реже.
 
 ### Версионирование и поддержка
 
-- **LTA (Long-Term Active):** Мажорная версия с расширенным жизненным циклом (например, 2026.1 LTA). Рекомендуется для production. Поддержка до 18 месяцев.
-- **Active:** Промежуточные версии с новыми функциями, поддержка ~6 месяцев.
+- **LTA (Long-Term Active):** Мажорная версия с расширенным жизненным циклом (на 2026 год — 2026.1 LTA). Рекомендуется для production. Поддержка до 18 месяцев. Месячные патч-релизы (например, 2026.1.5, 2026.1.6) исправляют баги и уязвимости без изменения функциональности.
+- **Active:** Промежуточные версии с новыми функциями, поддержка ~6 месяцев (например, 2026.2, 2026.3, 2026.4).
 - **Миграция:** Обновление между LTA версиями поддерживается напрямую. Обновление с non-LTA на LTA может требовать промежуточных шагов. Рекомендуется проверять [LTA Update Hub](https://www.sonarsource.com/products/sonarqube/lta-update-hub/) перед обновлением.
-
-## Основные концепции
+- **Community Build:** Отдельный продуктовый ряд с собственной нумерацией версий (например, 26.8.0.126808). Собирается из открытых исходников и распространяется под LGPL-3.0.
 
 ### Quality Profiles (Профили качества)
 
@@ -82,7 +79,7 @@ Quality Profile определяет набор активных правил д
 
 Quality Gate вычисляется **асинхронно** после завершения фонового анализа (Compute Engine). Результат — бинарный статус `PASSED` или `FAILED`.
 
-**Стандартные условия (SonarQube Server 2026.x / SonarCloud 2026):**
+**Стандартные условия (SonarQube Server 2026.x):**
 - **Reliability Rating:** `A` или `B` (отсутствие критических и блокирующих багов на новом коде).
 - **Security Rating:** `A` или `B` (отсутствие критических уязвимостей на новом коде).
 - **Maintainability Rating:** `A` или `B` (технический долг < 5% на новом коде).
@@ -136,7 +133,7 @@ Quality Gate вычисляется **асинхронно** после заве
 ```yaml
 services:
   sonarqube:
-    image: sonarqube:2026.1-community
+    image: sonarqube:community
     container_name: sonarqube
     restart: unless-stopped
     ports:
@@ -176,6 +173,8 @@ volumes:
   postgresql_data:
 ```
 
+> **Примечание:** Тег `sonarqube:community` всегда указывает на последний Community Build. Для production зафиксируйте версию (например, `26.1.0.118079-community` для LTA 2026.1) — проверьте актуальные теги на [Docker Hub](https://hub.docker.com/_/sonarqube/tags).
+
 **Запуск:**
 
 ```bash
@@ -187,7 +186,7 @@ docker compose up -d
 ```bash
 # Ожидание готовности (около 1-2 минут)
 curl -s http://localhost:9000/api/system/status | jq .
-# → {"id":"...","version":"10.8.0","status":"UP"}
+# → {"id":"...","version":"2026.1.0.12345","status":"UP"}
 ```
 
 **Первоначальная настройка:**
@@ -211,7 +210,7 @@ variables:
 
 sonarqube-scan:
   stage: sonar-scan
-  image: sonarsource/sonar-scanner-cli:11
+  image: sonarsource/sonar-scanner-cli:11.2
   script:
     - sonar-scanner \
         -Dsonar.projectKey=my-project \
@@ -250,7 +249,7 @@ GitLab нативно не блокирует Merge Request при падени�
 1. В SonarQube: **My Account → Security → Generate Tokens** — создать токен проекта.
 2. В GitHub: **Settings → Secrets and variables → Actions**:
    - **Repository secret:** `SONAR_TOKEN` — токен аутентификации SonarQube.
-   - **Organization variable:** `SONAR_HOST_URL` — URL SonarQube Server (например, `https://sonarqube.example.com`).
+   - **Repository variable:** `SONAR_HOST_URL` — URL SonarQube Server (например, `https://sonarqube.example.com`).
 
 **Базовый workflow (`.github/workflows/sonarqube.yml`):**
 
@@ -274,7 +273,7 @@ jobs:
           fetch-depth: 0  # Полная история для корректного анализа веток
 
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v8
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -286,17 +285,17 @@ jobs:
             -Dsonar.python.coverage.reportPaths=coverage.xml
 
       # Блокировка деплоя при падении Quality Gate (опционально)
-      # - name: Quality Gate Check
-      #   uses: SonarSource/sonarqube-quality-gate-action@v1
-      #   timeout-minutes: 5
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Quality Gate Check
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 ```
 
 **Важные параметры GitHub Actions:**
 - `fetch-depth: 0` — отключает shallow clone для корректного вычисления blame-информации и анализа веток.
-- `SonarSource/sonarqube-scan-action@v8` — официальная GitHub Action (поддерживает Java 21, GPG-верификацию).
-- `SonarSource/sonarqube-quality-gate-action@v1` — опциональный шаг для блокировки workflow при `FAILED` Quality Gate.
+- `SonarSource/sonarqube-scan-action@v8.2.1` — официальная GitHub Action.
+- `SonarSource/sonarqube-quality-gate-action@v1.2.1` — опциональный шаг для блокировки workflow при `FAILED` Quality Gate.
 
 **Mono-repo конфигурация (Enterprise Edition+):**
 
@@ -309,7 +308,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Scan Project A
-        uses: SonarSource/sonarqube-scan-action@v8
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_A }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -323,7 +322,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Scan Project B
-        uses: SonarSource/sonarqube-scan-action@v8
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_B }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -391,18 +390,18 @@ create_quality_gate("My Corporate Gate", conditions)
 # → Quality Gate created with 3 conditions
 ```
 
-### Сценарий 5: Установка и настройка плагинов (Extensions)
+### Сценарий 5: Установка и настройка расширений
 
-**Установка плагина через Marketplace (SonarQube 2026.x+):**
+**Установка расширения через Marketplace (SonarQube 2026.x+):**
 
 1. **Administration → Marketplace.**
-2. Найти нужный плагин (например, `SonarJava`, `SonarPython`, `SonarJS`).
+2. Найти нужное расширение (например, `SonarJava`, `SonarPython`, `SonarJS`).
 3. Нажать **Install** и перезапустить SonarQube.
 
-**Установка плагина вручную (Docker):**
+**Установка расширения вручную (Docker):**
 
 ```bash
-# Скачать .jar плагина
+# Скачать .jar расширения
 curl -O https://binaries.sonarsource.com/Distribution/sonar-java-plugin/sonar-java-plugin-7.28.1.33619.jar
 
 # Скопировать в volume extensions
@@ -413,11 +412,11 @@ docker compose restart sonarqube
 ```
 
 **Список поддерживаемых языков (встроенно, 2026.x):**
-Java, C#, Python, JavaScript/TypeScript, Go, C/C++, Kotlin, Ruby, PHP, Swift, Scala, Apex, COBOL, PL/SQL, T-SQL, HTML, CSS, XML, ABAP, Cobol, т.д. Полный список доступен в [документации](https://docs.sonarqube.org/latest/analysis/languages/overview/).
+Java, C#, Python, JavaScript/TypeScript, Go, C/C++, Kotlin, Ruby, PHP, Swift, Scala, Apex, COBOL, PL/SQL, T-SQL, HTML, CSS, XML, ABAP, JCL, PL/I, RPG, VB6, Gosu, т.д. Полный список доступен в [документации](https://docs.sonarqube.org/latest/analysis/languages/overview/).
 
 ### Сценарий 6: Анализ конфигурации IaC (Terraform, Dockerfile, Kubernetes)
 
-**Важно:** SonarQube анализирует конфигурационные файлы как код. Для Terraform, Dockerfile и Kubernetes манифестов используются отдельные плагины/правила.
+**Важно:** SonarQube анализирует конфигурационные файлы как код. Для Terraform, Dockerfile и Kubernetes манифестов используются отдельные правила.
 
 ```yaml
 # Пример: SonarQube обнаруживает insecure defaults в Dockerfile
@@ -560,6 +559,162 @@ fi
 echo "OK: Quality Gate PASSED."
 ```
 
+## Эксплуатация и обслуживание
+
+### Резервное копирование и восстановление
+
+SonarQube не имеет встроенного инструмента для полного бэкапа. Резервное копирование состоит из двух независимых частей: база данных и файловые тома.
+
+**Бэкап базы данных (PostgreSQL):**
+
+```bash
+# На хосте или в отдельном контейнере
+pg_dump -U sonarqube -h db -F c -b -v -f sonarqube_db_backup.dump sonarqube
+# → backup completed
+```
+
+**Бэкап файловых томов (Docker):**
+
+```bash
+docker run --rm \
+  -v sonarqube_data:/data \
+  -v /backup/sonarqube:/backup \
+  alpine tar czf /backup/sonarqube_data_backup.tar.gz /data
+# → backup completed
+```
+
+**Восстановление:**
+
+```bash
+# Восстановление БД
+pg_restore -U sonarqube -h db -d sonarqube -v sonarqube_db_backup.dump
+
+# Восстановление томов
+docker run --rm \
+  -v sonarqube_data:/data \
+  -v /backup/sonarqube:/backup \
+  alpine tar xzf /backup/sonarqube_data_backup.tar.gz -C /
+```
+
+> **Важно:** Перед восстановлением остановите SonarQube Server, чтобы избежать повреждения индексов Elasticsearch.
+
+### Обновление версии
+
+**Порядок обновления между LTA:**
+1. Остановите SonarQube Server.
+2. Создайте полный бэкап (БД + тома).
+3. Обновите тег образа в `docker-compose.yml` на целевую LTA-версию.
+4. Запустите контейнер и дождитесь миграции БД (логи `docker compose logs -f sonarqube`).
+5. Проверьте статус: `curl -s http://localhost:9000/api/system/status | jq .status` → `"UP"`.
+6. Выполните проверку Quality Gate на тестовом проекте.
+
+**Обновление Community Build:**
+Community Build имеет собственную нумерацию версий (например, 26.1.0 → 26.8.0). Обновление Community Build между LTA-релизами Server не требуется — Community Build и Server версии не привязаны 1:1.
+
+### Мониторинг и диагностика
+
+**Эндпоинт здоровья (built-in):**
+
+```bash
+curl -s http://localhost:9000/api/system/status | jq .
+# → {"status":"UP","version":"2026.1.0.12345"}
+```
+
+**Мониторинг через Prometheus (Data Center / Enterprise):**
+SonarQube Data Center Edition экспортирует метрики для Prometheus. Для Developer/Community используйте внешний экспортер или кастомные дашборды на основе API.
+
+**Диагностические команды:**
+
+```bash
+# Проверка статуса SonarQube Server
+curl -s http://localhost:9000/api/system/status | jq .
+
+# Просмотр логов Compute Engine (Docker)
+docker compose logs -f --tail=100 sonarqube | grep -i "compute"
+
+# Проверка доступных расширений
+curl -s -u admin:password http://localhost:9000/api/plugins/installed | jq '.plugins[].name'
+
+# Проверка качества последнего анализа через API
+curl -s -u <token>: http://localhost:9000/api/project_analyses/search?project=my-project&ps=1 | jq .
+
+# Очистка старых данных (освобождение места)
+curl -s -u admin:password -X POST \
+  "http://localhost:9000/api/project_analyses/clean?project=my-project&to=2025-01-01"
+
+# Проверка использования ресурсов (Linux)
+docker stats sonarqube --no-stream
+```
+
+### Настройка производительности
+
+**Параметры JVM (Docker Compose):**
+
+```yaml
+services:
+  sonarqube:
+    image: sonarqube:community
+    environment:
+      - SONAR_JDBC_URL=jdbc:postgresql://db:5432/sonarqube
+      - SONAR_JDBC_USERNAME=sonarqube
+      - SONAR_JDBC_PASSWORD=<SECRET>
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+```
+
+**Рекомендации по ресурсам:**
+
+| Размер кодовой базы | CPU | RAM | Диск |
+|:---|:---|:---|:---|
+| < 100K LOC | 2 vCPU | 4 GB | 20 GB |
+| 100K – 1M LOC | 4 vCPU | 8 GB | 50 GB |
+| 1M – 5M LOC | 8 vCPU | 16 GB | 200 GB |
+| > 5M LOC | 16+ vCPU | 32+ GB | 500+ GB |
+
+**Elasticsearch:**
+- При запуске на Linux установите `vm.max_map_count=262144` (`sysctl -w vm.max_map_count=262144`).
+- Мониторьте использование диска индексов: при достижении watermark Elasticsearch перестаёт писать. Очистка старых анализов через API снижает нагрузку.
+
+### Высокая доступность
+
+**Data Center Edition:**
+- Активный-активная кластеризация (active-active) без единой точки отказа.
+- Автоматическое масштабирование в Kubernetes.
+- Рекомендуется для инсталляций с SLA > 99.9% и кодовыми базами > 5M LOC.
+
+**Developer / Enterprise Edition (HA-подобная конфигурация):**
+- Используйте внешний балансировщик (HAProxy, Nginx) перед несколькими инстансами SonarQube Server с разделяемой БД.
+- Однако в Developer/Enterprise Edition кластеризация не поддерживается — это решение для отказоустойчивости на уровне инфраструктуры, а не приложения.
+
+## Troubleshooting
+
+| Проблема | Причина | Решение |
+|:---|:---|:---|
+| `SonarQube Server не запускается` | Недостаточно памяти или порт 9000 занят. | Проверить `docker compose logs sonarqube`, увеличить RAM в `docker-compose.yml`, убедиться что порт 9000 свободен. |
+| `Elasticsearch: high disk watermark` | Закончилось место на диске для индексов Elasticsearch. | Расширить том данных (`sonarqube_data`), очистить старые анализы через API: `/api/project_analyses/delete`. |
+| `Cannot contact host` при сканировании | Scanner не может достучаться до Server. | Проверить `SONAR_HOST_URL`, убедиться что firewall не блокирует порт 9000, проверить `curl http://sonarqube:9000/api/system/status`. |
+| `Not authorized` / `401 Unauthorized` | Невалидный или отозванный токен. | Пересоздать токен в **My Account → Security**, убедиться что переменная `SONAR_TOKEN` передана корректно. |
+| `Quality Gate не отображается` | Анализ ещё не завершён или Compute Engine не обработал отчёт. | Проверить статус через API: `/api/project_analyses/search?project=<key>&ps=1`, ожидать статуса `COMPLETE`. |
+| `False Positives захламляют отчёт` | Стандартные правила не адаптированы под специфику проекта. | Настроить Quality Profile: отключить нерелевантные правила или пометить Issue как `Won't Fix` / `False Positive`. |
+| `Coverage не отображается` | Неправильный путь к отчёту покрытия. | Убедиться что файл `coverage.xml` (или `lcov.info`) существует и путь в `sonar.python.coverage.reportPaths` указан относительно `sonar.sources`. |
+| `Duplicate Issues после слияния веток` | Каждая ветка анализируется отдельно, Issues не дедуплицируются автоматически. | Использовать `sonar.scm.exclusions.disabled=true` или настроить `sonar.newCodeReferenceBranch` для инкрементального анализа. |
+| `Scanner зависает на large codebase` | Недостаточно heap у Scanner или Server. | Увеличить `SONAR_SCANNER_OPTS="-Xmx2G"`, проверить ресурсы CE. |
+
+## Best Practices
+
+1.  **Shift Left:** Запускайте SonarQube анализ на этапе PR, а не только на main. Это снижает стоимость исправления дефектов.
+2.  **Quality Gate как prerequisite:** Настройте Quality Gate так, чтобы падение блокировало деплой в Production. В GitLab это реализуется через `rules` и проверку статуса через API.
+3.  **Incremental Analysis:** Используйте анализ только нового кода (New Code), чтобы не накапливать долг Legacy-проекта.
+4.  **Custom Quality Profiles:** Не используйте стандартные профили "как есть". Адаптируйте их под корпоративные стандарты кодирования, отключая нерелевантные для проекта правила.
+5.  **IaC Scanning:** Включите анализ Dockerfile, Terraform, Kubernetes манифестов — уязвимости в инфраструктурном коде часто критичнее, чем в прикладном.
+6.  **Technical Debt Budget:** Установите лимит на приемлемый технический долг на нового кода (например, < 5%). Это предотвращает "долговую ловушку" в Legacy-проектах.
+7.  **Версионирование Quality Profiles:** Копируйте стандартные профили перед изменением, чтобы иметь возможность отката. Используйте именование `<Language> Corporate` для корпоративных профилей.
+8.  **Мониторинг ресурсов:** Отслеживайте потребление CPU/RAM Compute Engine — на больших проектах (>500K LOC) CE может становиться узким местом.
+9.  **Резервное копирование:** Настройте автоматический бэкап БД и томов. Тестируйте восстановление на изолированном стенде не реже одного раза в квартал.
+10. **Ротация токенов:** Токены доступа (`SONAR_TOKEN`) должны иметь срок действия. Настройте ротацию через SCIM/SAML (Enterprise) или процедуру вручную.
+
 ## Дополнительная информация
 
 ### Ключевые метрики SonarQube
@@ -589,11 +744,11 @@ echo "OK: Quality Gate PASSED."
 
 | Инструмент | Тип | Лицензия | Ключевые особенности |
 |:---|:---|:---|:---|
-| **SonarQube** | SAST / Platform | Community (OSS) + Proprietary | Clean Code, Quality Gates, PR Decoration, 30+ языков. |
-| **SonarCloud** | SaaS / SAST | Proprietary | Облачная версия SonarQube, интеграция с GitHub/GitLab/Bitbucket. |
+| **SonarQube** | SAST / Platform | Community Build (OSS) + Proprietary | Clean Code, Quality Gates, PR Decoration, 30+ языков, self-hosted. |
 | **Semgrep** | SAST | OSS + Proprietary | Быстрый, rule-based анализ с поддержкой кастомных правил. Меньший охват языков. |
 | **Checkmarx** | SAST / Platform | Proprietary | Enterprise-фокус, высокий охват языков, интеграция с ASPM. |
 | **CodeQL (GitHub)** | Semantic Analysis | OSS + Proprietary | Анализ кода как базы данных (query-based), глубокая интеграция в GitHub. |
+| **Coverity** | SAST | Proprietary | Тяжёлый data-flow анализ, фокус на embedded/C++. |
 
 ### Ограничения и важные нюансы
 
@@ -602,55 +757,7 @@ echo "OK: Quality Gate PASSED."
 3.  **Задержка анализа:** Полный анализ может занимать от нескольких минут до часа в зависимости от размера проекта. Инкрементальный анализ (PR Decoration) работает быстрее, но только в Developer Edition+.
 4.  **False Positives:** Автоматический анализ не способен понять бизнес-контекст. Разработчик должен вручную классифицировать Won't Fix / False Positive.
 5.  **Security Hotspots vs Vulnerabilities:** Security Hotspot — это не уязвимость, а сигнал для аудита. Ошибка классификации (все Hotspots считаются уязвимостями) приводит к необоснованному росту Technical Debt.
-6.  **Licensing:** Community Edition полностью бесплатна, но ограничена. Для PR Decoration, Branch Analysis и enterprise-фич требуется лицензия Developer/Enterprise.
-
-### Best Practices
-
-1.  **Shift Left:** Запускайте SonarQube анализ на этапе PR, а не только на main. Это снижает стоимость исправления дефектов.
-2.  **Quality Gate как prerequisite:** Настройте Quality Gate так, чтобы падение блокировало деплой в Production. В GitLab это реализуется через `rules` и проверку статуса через API.
-3.  **Incremental Analysis:** Используйте `sonar.scm.exclusions.disabled=true` и анализ только нового кода (New Code), чтобы не накапливать долг Legacy-проекта.
-4.  **Custom Quality Profiles:** Не используйте стандартные профили "как есть". Адаптируйте их под корпоративные стандарты кодирования, отключая нерелевантные для проекта правила.
-5.  **IaC Scanning:** Включите анализ Dockerfile, Terraform, Kubernetes манифестов и GitHub Actions workflows — уязвимости в инфраструктурном коде часто критичнее, чем в прикладном.
-6.  **Technical Debt Budget:** Установите лимит на приемлемый технический долг на нового кода (например, < 5%). Это предотвращает "долговую ловушку" в Legacy-проектах.
-7.  **Версионирование Quality Profiles:** Копируйте стандартные профили перед изменением, чтобы иметь возможность отката. Используйте именование `<Language> Corporate` для корпоративных профилей.
-8.  **Мониторинг ресурсов:** Отслеживайте потребление CPU/RAM Compute Engine — на больших проектах (>500K LOC) CE может становиться узким местом.
-
-### Типичные ошибки и их решение
-
-| Проблема | Причина | Решение |
-|:---|:---|:---|
-| `SonarQube Server не запускается` | Недостаточно памяти или порт 9000 занят. | Проверить `docker compose logs sonarqube`, увеличить RAM в `docker-compose.yml`, убедиться что порт 9000 свободен. |
-| `Cannot contact host` при сканировании | Scanner не может достучаться до Server. | Проверить `SONAR_HOST_URL`, убедиться что firewall не блокирует порт 9000, проверить `curl http://sonarqube:9000/api/system/status`. |
-| `Not authorized` / `401 Unauthorized` | Невалидный или отозванный токен. | Пересоздать токен в **My Account → Security**, убедиться что переменная `SONAR_TOKEN` передана корректно. |
-| `Quality Gate не отображается` | Анализ ещё не завершён или Compute Engine не обработал отчёт. | Проверить статус через API: `/api/project_analyses/search?project=<key>&ps=1`, ожидать статуса `COMPLETE`. |
-| `False Positives захламляют отчёт` | Стандартные правила не адаптированы под специфику проекта. | Настроить Quality Profile: отключить нерелевантные правила или пометить Issue как `Won't Fix` / `False Positive`. |
-| `Coverage не отображается` | Неправильный путь к отчёту покрытия. | Убедиться что файл `coverage.xml` (или `lcov.info`) существует и путь в `sonar.python.coverage.reportPaths` указан относительно `sonar.sources`. |
-| `Duplicate Issues после слияния веток` | Каждая ветка анализируется отдельно, Issues не дедуплицируются автоматически. | Использовать `sonar.scm.exclusions.disabled=true` или настроить `sonar.newCodeReferenceBranch` для инкрементального анализа. |
-| `Elasticsearch: high disk watermark` | Закончилось место на диске для индексов Elasticsearch. | Расширить том данных (`sonarqube_data`), очистить старые анализы через API: `/api/project_analyses/delete`. |
-
-### Диагностические команды
-
-```bash
-# Проверка статуса SonarQube Server
-curl -s http://localhost:9000/api/system/status | jq .
-# → {"status":"UP","version":"2026.1.0.12345"}
-
-# Просмотр логов Compute Engine (Docker)
-docker compose logs -f --tail=100 sonarqube | grep -i "compute"
-
-# Проверка доступных плагинов
-curl -s -u admin:password http://localhost:9000/api/plugins/installed | jq '.plugins[].name'
-
-# Проверка качества последнего анализа через API
-curl -s -u <token>: http://localhost:9000/api/project_analyses/search?project=my-project&ps=1 | jq .
-
-# Очистка старых данных (освобождение места)
-curl -s -u admin:password -X POST \
-  "http://localhost:9000/api/project_analyses/clean?project=my-project&to=2025-01-01"
-
-# Проверка использования ресурсов (Linux)
-docker stats sonarqube --no-stream
-```
+6.  **Licensing:** Community Build полностью бесплатен, но ограничен. Для PR Decoration, Branch Analysis и enterprise-фич требуется лицензия Developer/Enterprise.
 
 ### Очистка и откат изменений
 
@@ -679,13 +786,14 @@ docker compose down -v
 - **[SAST — Обзор](../DevSecOps/sast_overview.md)** — статический анализ безопасности, сопоставление инструментов.
 - **[Интеграция SAST/DAST в CI/CD](../DevSecOps/sast_dast_cicd_integration.md)** — практика встраивания в пайплайн.
 - **[Уязвимости SAST и DAST](../DevSecOps/sast_dast_vulnerabilities.md)** — классификация дефектов.
-- **[WAF (Web Application Firewall)](../../Security/ApplicationSecurity/waf.md)** — виртуальные патчи для runtime.
-- **[Mетрики тестового покрытия](../../Testing/testing_coverage_metrics.md)** — связь покрытия и Quality Gates.
+- **[Метрики тестового покрытия](../../Testing/testing_coverage_metrics.md)** — связь покрытия и Quality Gates.
+- **[GitLab CI — Основы](../GitLab_CI/Concepts/gitlab_ci_basics.md)** — интеграция инструментов качества в пайплайн.
 
 ### Внешние ресурсы
 
 - [Официальная документация SonarQube](https://docs.sonarqube.org/latest/)
-- [SonarQube Editions](https://www.sonarsource.com/plans-and-pricing/)
+- [SonarQube Editions and Pricing](https://www.sonarsource.com/plans-and-pricing/)
 - [Clean Code as You Code](https://www.sonarsource.com/solutions/clean-code/)
 - [SonarScanner CLI](https://docs.sonarqube.org/latest/analysis/scan/sonarscanner/)
 - [SonarQube GitLab Integration](https://docs.sonarqube.org/latest/analysis/gitlab/)
+- [LTA Update Hub](https://www.sonarsource.com/products/sonarqube/lta-update-hub/)

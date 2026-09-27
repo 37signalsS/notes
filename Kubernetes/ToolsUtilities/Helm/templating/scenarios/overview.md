@@ -102,6 +102,13 @@ Helm поддерживает однострочные и многострочн
 | Выполнение миграций БД перед обновлением | [Хуки и тестирование](../helm_hooks_and_tests.md) |
 | Централизация меток и селекторов | [Именованные шаблоны](../_helpers.md) |
 | Создание переиспользуемых библиотек шаблонов | [Зависимости и библиотечные чарты](../../helm_dependencies_and_library_charts.md) |
+| Настройка безопасности подов (SecurityContext) | [Шаблонизация SecurityContext](./security_context.md) |
+| Защита доступности при обслуживании (PDB) | [Шаблонизация PodDisruptionBudget](./pdb.md) |
+| Деплой stateful-приложений | [Шаблонизация StatefulSet](./statefulset.md) |
+| Персистентное хранилище (PVC) | [Шаблонизация PersistentVolumeClaim](./persistence.md) |
+| Сетевые сервисы и маршрутизация | [Шаблонизация Service и Ingress](./service_ingress.md) |
+| Управление ресурсами namespace | [Шаблонизация ResourceQuota и LimitRange](./resource_quota.md) |
+| Автоматический подбор ресурсов (right-sizing) | [Шаблонизация VerticalPodAutoscaler](./vpa.md) |
 
 ---
 
@@ -118,6 +125,13 @@ Helm поддерживает однострочные и многострочн
 ### Инфраструктурная интеграция
 - [**Проверка API-версий и возможностей**](./api_versions.md) — использование объекта `.Capabilities` для создания универсальных чартов, работающих в разных версиях Kubernetes.
 - [**Шаблонизация NetworkPolicy**](./networkpolicy.md) — динамическое управление сетевыми доступами, адаптация правил под различные окружения и сегменты сети.
+- [**Шаблонизация Service и Ingress**](./service_ingress.md) — типы сервисов, Ingress, TLS termination, Headless Service для StatefulSet.
+- [**Шаблонизация SecurityContext**](./security_context.md) — настройка безопасности подов: runAsNonRoot, seccompProfile, capabilities, Pod Security Standards.
+- [**Шаблонизация PodDisruptionBudget**](./pdb.md) — защита доступности при обслуживании узлов и обновлениях.
+- [**Шаблонизация PersistentVolumeClaim**](./persistence.md) — персистентное хранилище, volumeClaimTemplates, retentionPolicy.
+- [**Шаблонизация ResourceQuota и LimitRange**](./resource_quota.md) — управление ресурсами namespace, дефолтные limits, валидация.
+- [**Шаблонизация StatefulSet**](./statefulset.md) — stateful-приложения, Headless Service, partition, Canary-деплой.
+- [**Шаблонизация VerticalPodAutoscaler**](./vpa.md) — автоматический подбор requests/limits контейнеров, VPA + HPA, режимы обновления.
 
 ### Жизненный цикл и автоматизация
 - [**Инструкции NOTES.txt**](./notes_txt.md) — формирование динамической обратной связи после установки или обновления релиза. Вывод команд отладки, паролей и URL-адресов.
@@ -145,20 +159,20 @@ stages:
 
 helm:lint:
   stage: lint
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm lint ./my-chart --strict
     - helm template my-release ./my-chart -f values.yaml | kubeconform --strict
 
 helm:test:
   stage: test
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm unittest ./my-chart
 
 helm:diff:
   stage: build
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm dependency build ./my-chart
     - helm diff upgrade my-release ./my-chart -f values.yaml --allow-unreleased

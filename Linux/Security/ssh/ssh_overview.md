@@ -15,6 +15,18 @@
 
 **Постквантовая криптография (PQC)** — современные алгоритмы шифрования и обмена ключами, устойчивые к атакам с использованием квантовых компьютеров. В OpenSSH гибридная PQC (например, связка классического алгоритма и `mlkem768x25519-sha256`) используется для защиты от угрозы «запиши сейчас, расшифруй позже».
 
+**MAC (Message Authentication Code)** — криптографическая контрольная сумма, добавляемая к каждому пакету для проверки целостности и подлинности. В SSH MAC вычисляется на основе общего секрета сессии и содержимого пакета.
+
+**AEAD (Authenticated Encryption with Associated Data)** — современный режим шифрования, объединяющий шифрование данных и вычисление MAC в единой операции. Примеры: `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`. AEAD исключает атаки на порядок операций (encrypt-then-MAC vs MAC-then-encrypt).
+
+**SSH Subsystem (Подсистема)** — абстракция удаленного сервиса, зарегистрированного в `sshd_config`. Стандартная подсистема `sftp` заменяет shell-сессию для файловых операций. Подсистемы запускаются через запрос `subsystem` уровня соединения (SSH-CONN).
+
+**Perfect Forward Secrecy (PFS, Прямая секретность)** — свойство протокола, при котором компрометация долгосрочного секрета (приватного ключа сервера) не позволяет расшифровать ранее записанный трафик. Каждая SSH-сессия генерирует уникальный ephemeral-секрет, который не сохраняется на диске.
+
+**SSH Protocol Version 1** — устаревшая версия протокола, имеющая критическую уязвимость к атакам MITM из-за отсутствия алгоритма MAC в оригинальной реализации. Полностью deprecated, современные клиенты и серверы по умолчанию используют только версию 2.
+
+**Trust on First Use (TOFU)** — модель доверия, при которой при первом подключении к хосту его публичный ключ автоматически добавляется в `known_hosts` без предварительной проверки. Последующие подключения сравнивают ключ с сохраненным отпечатком.
+
 ### Сравнение с Telnet
 
 | Характеристика | SSH (Secure Shell) | Telnet |
@@ -36,20 +48,120 @@
     - Обеспечивает шифрование, сжатие и проверку целостности.
     - В современных шифрах (например, ChaCha20-Poly1305) скрывается даже **длина каждого пакета**, что мешает анализу трафика.
     - На этом этапе проверяется подлинность сервера через хостовые ключи.
-2.  **Уровень аутентификации (SSH-USERAUTH):**
-    - Работает внутри уже зашифрованного транспортного канала.
-    - Подтверждает личность пользователя серверу (ключи, пароль и др.).
-3.  **Уровень соединения (SSH-CONN):**
-    - Мультиплексирует зашифрованный канал на несколько логических каналов.
-    - Позволяет одновременно открывать сессии терминала (shell), выполнять команды, передавать файлы (SFTP) и пробрасывать порты.
+ 2.  **Уровень аутентификации (SSH-USERAUTH):**
+     - Работает внутри уже зашифрованного транспортного канала.
+     - Подтверждает личность пользователя серверу (ключи, пароль и др.).
+     - Поддерживает множественные методы аутентификации (Multi-Factor Authentication, MFA) через комбинацию `publickey` и `keyboard-interactive`.
+ 3.  **Уровень соединения (SSH-CONN):**
+     - Мультиплексирует зашифрованный канал на несколько логических каналов (channels).
+     - Типы каналов: session (shell/exec), direct-tcpip (проброс портов), forwarded-tcpip (удаленный проброс), x11, auth-agent@openssh.com.
+     - Позволяет одновременно открывать сессии терминала (shell), выполнять команды, передавать файлы (SFTP) и пробрасывать порты.
+     - **Subsystem:** специальный тип канала, запускающий серверные подсистемы (например, `sftp`).
+
+### Протокол SSH: версии и стандарты
+
+**SSH-1 (deprecated):**
+ - Имеет архитектурные недостатки: уязвимость к MITM, нет MAC.
+ - Удален из OpenSSH в версии 7.4 (2016).
+ - Современные клиенты отклоняют соединение с SSH-1 серверами.
+
+**SSH-2 (RFC 4251–4254):**
+ - Текущий стандарт, поддерживается всеми современными реализациями.
+ - Обязательный MAC/AEAD, PFS, множественные каналы.
+ - Поддерживает гибридную постквантовую криптографию.
+
+**Ключевые RFC:**
+ - RFC 4251 — Архитектура протокола.
+ - RFC 4252 — Аутентификация (SSH-USERAUTH).
+ - RFC 4253 — Транспортный уровень (SSH-TRANS), KEX.
+ - RFC 4254 — Уровень соединения (SSH-CONN), каналы.
+ - RFC 5656 — Elliptic Curve Cryptography (ECC) для SSH.
+ - RFC 8332 — RSA-SHA2-256/512 fingerprints.
 
 ### Этапы установления соединения
 
 1.  **TCP Handshake** — стандартное трехстороннее рукопожатие на порт 22.
 2.  **Согласование протокола** — обмен строками с версиями (например, `SSH-2.0-OpenSSH_9.8`).
-3.  **Key Exchange (KEX)** — выбор алгоритмов и генерация общего секрета сессии с использованием протокола Диффи-Хеллмана. Обеспечивает **Perfect Forward Secrecy (PFS)**. Используются гибридные PQC-алгоритмы для защиты от квантовых угроз.
-4.  **Аутентификация сервера** — сервер подписывает отпечаток разговора своим закрытым хостовым ключом. Клиент проверяет подпись по базе `known_hosts`.
-5.  **Аутентификация пользователя** — проверка прав доступа (публичный ключ, FIDO2, пароль, сертификат).
+3.  **Key Exchange (KEX)** — выбор алгоритмов и генерация общего секрета сессии с использованием протокола Диффи-Хеллмана (или его эллиптических аналогов). Обеспечивает **Perfect Forward Secrecy (PFS)**. Используются гибридные PQC-алгоритмы для защиты от квантовых угроз.
+     - **PFS** гарантирует, что компрометация приватного ключа сервера не позволяет расшифровать ранее записанные сессии.
+     - В OpenSSH 9.8+ по умолчанию используется `curve25519-sha256` или гибридный `mlkem768x25519-sha256`.
+ 4.  **Аутентификация сервера** — сервер подписывает отпечаток разговора своим закрытым хостовым ключом. Клиент проверяет подпись по базе `known_hosts`.
+ 5.  **Аутентификация пользователя** — проверка прав доступа (публичный ключ, FIDO2, пароль, сертификат, keyboard-interactive для MFA).
+
+### Шифрование, целостность и аутентификация
+
+**MAC (Message Authentication Code):**
+ - Дополняет шифрование проверкой целостности пакета.
+ - В SSH MAC вычисляется поверх зашифрованных данных (Encrypt-then-MAC, EtM) в современных конфигурациях, что исключает атаки на порядок операций.
+ - Устаревшие алгоритмы (`hmac-md5`, `hmac-sha1`) отключены по умолчанию в OpenSSH 10.0+.
+
+**AEAD (Authenticated Encryption with Associated Data):**
+ - Современная замена отдельному MAC: шифрование и аутентификация объединены в одной операции.
+ - Примеры: `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`.
+ - Преимущества: высокая производительность (ChaCha20 на CPU без AES-NI), меньшая поверхность атаки.
+
+### Хеширование known_hosts и конфиденциальность
+
+По умолчанию OpenSSH хеширует имена хостов в `known_hosts` при использовании `ssh-keyscan -H` или `HashKnownHosts yes`.
+- **Преимущество:** злоумышленник с доступом к файлу `known_hosts` не получает список целевых хостов.
+- **Недостаток:** усложняет ручной аудит файла.
+- **Проверка хоста без раскрытия:** `ssh-keygen -F <hashed_name>` работает с хешированными записями.
+
+### Неинтерактивное использование и автоматизация
+
+SSH поддерживает режимы, оптимизированные для скриптов и систем автоматизации (Ansible, CI/CD):
+
+```bash
+# Полностью неинтерактивный режим (отключение всех промптов)
+ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new user@host "uptime"
+
+# Прямое указание ключа и отключение agent
+ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes user@host
+
+# Передача переменной окружения
+ssh -o SendEnv=MY_VAR user@host "echo $MY_VAR"
+```
+
+**Важные директивы для автоматизации:**
+- `BatchMode=yes` — отключает запрос пароля/кода 2FA; при отсутствии ключа возвращает ошибку.
+- `StrictHostKeyChecking=accept-new` — автоматически добавляет новые ключи, но отклоняет измененные (компромисс между безопасностью и удобством CI/CD).
+- `UserKnownHostsFile=/dev/null` — отключает проверку known_hosts (используется только в изолированных CI/CD окружениях).
+- `IdentitiesOnly=yes` — использует только явно указанные ключи, игнорирует ключи из ssh-agent.
+
+### Переменные окружения SSH
+
+При установке сессии SSH автоматически экспортирует переменные окружения, полезные для скриптов и аудита:
+
+| Переменная | Описание |
+| :--- | :--- |
+| `SSH_CONNECTION` | `<client_ip> <client_port> <server_ip> <server_port>` |
+| `SSH_TTY` | Путь к псевдотерминалу (например, `/dev/pts/0`) |
+| `SSH_AUTH_SOCK` | Путь к Unix-сокету ssh-agent |
+| `SSH_ORIGINAL_COMMAND` | Команда, переданная клиентом (до переопределения `ForceCommand`) |
+
+Пример использования в `authorized_keys`:
+```text
+command="/usr/local/bin/audit-ssh-login.sh",no-pty,no-port-forwarding ssh-ed25519 AAAAC3... deploy-key
+```
+
+Где `audit-ssh-login.sh`:
+```bash
+#!/bin/bash
+echo "$(date) SSH login: user=$USER from=$SSH_CONNECTION cmd=$SSH_ORIGINAL_COMMAND" >> /var/log/ssh-access.log
+exec /bin/bash -l
+```
+
+### Управление сессиями и долгоживущие процессы
+
+При стандартном SSH-подключении дерево процессов выглядит следующим образом:
+`sshd (master) → sshd (user) → bash → [command]`.
+
+При разрыве соединения (timeout, потеря сети, закрытие ноутбука):
+1. Процесс `sshd (user)` завершается.
+2. Ядро посылает сигнал `SIGHUP` (Signal Hang Up) всем дочерним процессам.
+3. По умолчанию процессы, получившие `SIGHUP`, завершаются.
+
+Для сохранения долгоживущих задач при разрыве связи используются `tmux` или `screen` ([Управление сессиями](./ssh_session_management.md)).
 
 ### Универсальный транспорт
 
@@ -88,30 +200,122 @@ ssh-keygen -R <hostname_or_ip>
 
 ## Практические сценарии
 
-### Навигация по документации
+### Неинтерактивное выполнение команд (Batch Mode)
 
-База знаний по SSH разделена на специализированные разделы:
-
-*   **Аутентификация:** ключи, FIDO2, `authorized_keys`, права доступа — [SSH Authentication](./server/ssh_authentication.md).
-*   **Клиентские инструменты:** `scp`, `rsync`, `sftp`, `sshfs` — [Инструменты командной строки SSH](./ssh_cli_tools.md).
-*   **Конфигурация клиента:** `~/.ssh/config`, Jump-хосты, мультиплексирование — [Конфигурация клиента SSH](./ssh_client_config.md).
-*   **Безопасность сервера:** `sshd_config`, ограничение доступа, мониторинг — [Защита сервера SSH](./server/ssh_server_security_overview.md).
-*   **Hardening:** усиление защиты, аудит, лучшие практики — [SSH Hardening](./server/ssh_hardening_best_practices.md).
-*   **Траблшутинг:** диагностика ошибок, отладка соединений — [SSH Troubleshooting](./ssh_troubleshooting.md).
-*   **Туннелирование:** L3/L4 туннели, проброс портов — [SSH Usage and Tunnels](./ssh_usage_and_tunnels.md).
-
-### Использование аппаратных ключей (FIDO2)
-
-Для защиты от кражи ключей рекомендуется использовать аппаратные токены (YubiKey и аналоги) с типом ключа `ed25519-sk`.
+Для использования SSH в скриптах, CI/CD пайплайнах и системах управления конфигурациями (Ansible, Salt, Chef) необходимо отключить интерактивные промпты:
 
 ```bash
-# Генерация ключа, привязанного к аппаратному токену
-ssh-keygen -t ed25519-sk -O resident -f ~/.ssh/id_ed25519_sk
-# → result: Enter PIN for authenticator...
-# → result: You may need to touch your authenticator to authorize key generation.
+# Выполнение команды без запроса пароля и подтверждения fingerprint
+ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new user@host "uptime"
+
+# Передача скрипта на выполнение
+ssh user@host "bash -s" < ./deploy.sh
+
+# Пакетная обработка хостов из файла
+for host in $(cat hosts.txt); do
+    ssh -o ConnectTimeout=5 -o BatchMode=yes user@$host "hostname && uptime"
+done
 ```
-*   **resident** — позволяет восстановить ключ на новом ПК, считав его прямо с токена.
-*   **verify-required** — принудительно требует PIN или касание при каждом использовании.
+
+**Ключевые флаги для автоматизации:**
+- `BatchMode=yes` — отключает запрос пароля/кода 2FA; при отсутствии ключа возвращает ошибку.
+- `StrictHostKeyChecking=accept-new` — автоматически добавляет новые ключи, но отклоняет измененные (компромисс между безопасностью и удобством CI/CD).
+- `ConnectTimeout=10` — таймаут установления соединения (секунды).
+- `IdentitiesOnly=yes` — использовать только явно указанные ключи, игнорировать ssh-agent.
+
+### Deploy-ключи для CI/CD
+
+В CI/CD окружениях (GitLab CI, Jenkins, GitHub Actions) для доступа к серверам через SSH используются специальные ключи с ограниченными правами:
+
+```bash
+# 1. Генерация ключа для CI/CD (без пароля)
+ssh-keygen -t ed25519 -C "ci-runner@gitlab" -f ~/.ssh/ci_deploy_key -N ""
+
+# 2. Размещение публичного ключа на целевом сервере
+ssh-copy-id -i ~/.ssh/ci_deploy_key.pub deploy@target-server
+
+# 3. Валидация: тестовый запуск без интерактивности
+ssh -i ~/.ssh/ci_deploy_key -o BatchMode=yes deploy@target-server "echo 'CI access OK'"
+```
+
+**Рекомендации для CI/CD:**
+- Используйте отдельный ключ для каждого пайплайна/сервиса.
+- В `authorized_keys` добавьте ограничения: `from="<CI_RUNNER_IP>",command="<allowed_script>",no-pty,no-port-forwarding,no-X11-forwarding`.
+- Храните приватный ключ в секретном хранилище CI/CD (GitLab CI Variables, Jenkins Credentials).
+
+### Архитектура бастион-хостов (Jump Host)
+
+Для доступа к серверам в закрытых сетевых контурах (production, staging) используется архитектура с бастион-хостом — единственным сервером, открытым для SSH извне:
+
+```
+Интернет → Бастион (bastion.example.com:2239) → Внутренняя сеть (10.0.0.0/8)
+                                  ↓
+                         web01.internal (10.0.1.10)
+                         db01.internal (10.0.2.20)
+```
+
+**Конфигурация в `~/.ssh/config`:**
+
+```ssh
+Host bastion
+    HostName bastion.example.com
+    User deploy
+    Port 2239
+    IdentityFile ~/.ssh/id_ed25519_bastion
+
+Host web01
+    HostName 10.0.1.10
+    User deploy
+    ProxyJump bastion
+    IdentityFile ~/.ssh/id_ed25519_web01
+    # Запретить X11 и проброс портов на конечном хосте
+    X11Forwarding no
+    AllowTcpForwarding no
+
+Host db01
+    HostName 10.0.2.20
+    User deploy
+    ProxyJump bastion
+    IdentityFile ~/.ssh/id_ed25519_db01
+```
+
+**Безопасность:**
+- Бастион — единственный узел с публичным IP, все остальные серверы находятся за файрволом.
+- На бастионе отключены пароли, включен `LogLevel VERBOSE`, настроен fail2ban.
+- Конечные серверы принимают подключения только с IP бастиона.
+- Подробнее: [Конфигурация клиента SSH](./ssh_client_config.md#настройка-подключения-через-jump-host-proxyjump).
+
+### Валидация и проверка конфигурации
+
+Перед применением изменений в `sshd_config` или подключением к новому хосту выполните валидацию:
+
+```bash
+# 1. Проверка синтаксиса sshd_config (на сервере)
+sudo sshd -t
+# → (пустой вывод = синтаксис корректен; при ошибках — вывод с указанием строки)
+
+# 2. Просмотр итоговой конфигурации (учитываются все Include и Match)
+sudo sshd -T | grep -E "port|permitrootlogin|passwordauthentication|kexalgorithms"
+
+# 3. Проверка fingerprint хоста перед первым подключением
+ssh-keyscan -t ed25519 new-host.example.com | ssh-keygen -lf -
+# → 256 SHA256:AbCdEfGh... new-host.example.com (ED25519)
+
+# 4. Проверка активных SSH-сессий на сервере
+sudo ss -tnp | grep :22
+ps -ef | grep [s]shd:
+```
+
+### Быстрый чек-лист диагностики
+
+| Симптом | Первичная диагностика |
+| :--- | :--- |
+| `Connection timed out` | `nc -zv <host> 22`, проверка файрвола и маршрута |
+| `Connection refused` | `systemctl status sshd` на сервере, порт не прослушивается |
+| `Permission denied (publickey)` | `ssh-add -l`, права на `~/.ssh`, `sshd -T \| grep pubkeyauthentication` |
+| `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!` | `ssh-keyscan -t ed25519 <host> \| ssh-keygen -lf -` |
+| Зависание при передаче данных | `ping -M do -s 1472 <host>` (проверка MTU) |
+| Медленный вход | `GSSAPIAuthentication no`, `UseDNS no` в `sshd_config` |
 
 ## Дополнительная информация
 
@@ -123,6 +327,10 @@ ssh-keygen -t ed25519-sk -O resident -f ~/.ssh/id_ed25519_sk
 | **Host Key** | `ssh-ed25519`, `sk-ed25519@openssh.com` | `ssh-rsa` (SHA-1), `ssh-dss` |
 | **Шифрование** | `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com` | `aes128-cbc`, `3des-cbc` |
 | **MAC** | `hmac-sha2-512-etm@openssh.com` | `hmac-md5`, `hmac-sha1` |
+
+**Примечание по производительности:**
+- `chacha20-poly1305@openssh.com` предпочтительнее на CPU без поддержки AES-NI (виртуализация, ARM, старые серверы).
+- `aes256-gcm@openssh.com` эффективнее на современном железе с аппаратным ускорением AES.
 
 ### Безопасность и сопутствующие инструменты
 
@@ -141,3 +349,36 @@ ssh -p 2222 user@remote-host
 # → result: Welcome to Linux ...
 # → result: [user@remote-host ~]$
 ```
+
+### Крайние случаи и ограничения
+
+| Случай | Поведение / Риск | Рекомендация |
+| :--- | :--- | :--- |
+| **Смена IP без изменения DNS** | `known_hosts` содержит IP-привязку; при смене IP хоста SSH блокирует соединение | Используйте `CheckHostIP no` в `~/.ssh/config` или удалите старую запись: `ssh-keygen -R <old_ip>` |
+| **Большое количество ключей в ssh-agent** | Сервер возвращает `Too many authentication failures` и разрывает соединение | Используйте `IdentitiesOnly=yes` или настройте `IdentityAgent` для изоляции |
+| **PQC handshake через сеть с низким MTU** | Пакеты KEXINIT с PQC-алгоритмами превышают MTU; соединение зависает на этапе обмена ключами | Временно отключите PQC: `ssh -o "KexAlgorithms=curve25519-sha256"`; настройте MSS Clamping на роутере |
+| **Слишком длинный путь ControlPath** | Мультиплексирование не работает: `unix_listener: path too long` | Используйте короткий путь: `ControlPath ~/.ssh/S/%r@%h:%p` (максимум ~108 символов) |
+| **ChrootDirectory на NFS/CIFS** | deadlock при аутентификации: сервер не может смонтировать сетевую директорию до chroot | Используйте только локальные ФС для `ChrootDirectory`; для домашних директорий используйте `AuthorizedKeysCommand` |
+| **X11 Forwarding без X-сервера** | Ошибка `Failed to open display` или `Cannot open display` | Отключите `X11Forwarding no` на сервере или запустите `xauth` на клиенте |
+| **SSH через SOCKS5 с большим количеством соединений** | Динамический проброс (`-D`) не масштабируется на тысячи соединений | Используйте VPN (WireGuard) или полноценный L4 балансировщик для массового доступа |
+| **IPv6-only сервер** | Клиент пытается подключиться по IPv4, который не настроен | Укажите `ssh -6 user@host` или настройте `AddressFamily inet6` в `sshd_config` |
+
+### См. также
+
+*   [Конфигурация клиента SSH](./ssh_client_config.md) — `~/.ssh/config`, Jump-хосты, мультиплексирование.
+*   [Инструменты командной строки SSH](./ssh_cli_tools.md) — `scp`, `rsync`, `sftp`, `sshfs`, `pssh`.
+*   [SSH Troubleshooting](./ssh_troubleshooting.md) — диагностика соединений, verbose-режим, анализ логов.
+*   [SSH Usage and Tunnels](./ssh_usage_and_tunnels.md) — проброс портов, SOCKS5, туннелирование.
+*   [Управление сессиями SSH](./ssh_session_management.md) — `tmux`, `screen`, `mosh`, персистентность.
+*   [Защита сервера SSH](./server/ssh_server_security_overview.md) — архитектура `sshd`, модель угроз, привилегированное разделение.
+*   [SSH Hardening](./server/ssh_hardening_best_practices.md) — алгоритмы, systemd hardening, auditd.
+*   [SSH Authentication](./server/ssh_authentication.md) — ключи, FIDO2, CA, права доступа.
+*   [Инструменты сетевого мониторинга](../Tools/network_monitoring_tools.md) — tcpdump, tshark, ss для анализа SSH-трафика.
+
+#### Продвинутые темы
+
+*   [Управление SSH-ключами в масштабе](./server/ssh_key_management_at_scale.md) — Vault SSH CA, инвентаризация, ротация ключей.
+*   [SSH и Ansible: интеграция](./ssh_ansible_integration.md) — настройка SSH для Ansible, Pipelining, диагностика.
+*   [SSH-доступ к Kubernetes](./ssh_kubernetes_access.md) — bastion для K8s, kubectl debug, kubelet SSH.
+*   [SSH в CI/CD](./ssh_cicd_integration.md) — безопасная автоматизация, OIDC, Vault SSH.
+*   [SSH в отказоустойчивых системах](./ssh_ha_and_resilience.md) — Multiplexing, Keepalive, bastion HA.

@@ -816,6 +816,88 @@ kubectl describe kustomization billing-api-production -n flux-system
 kubectl logs -n flux-system -l app=kustomize-controller --tail=200
 ```
 
+### 3.11. Multi-cluster деплой через Kustomize
+
+При управлении несколькими кластерами (регионы, окружения) Kustomize используется для создания кластер-специфичных конфигураций из общей base.
+
+**Структура репозитория:**
+```text
+infra-repo/
+├── base/                          # Общая base
+│   └── web-server/
+│       ├── deployment.yaml
+│       ├── service.yaml
+│       └── kustomization.yaml
+├── clusters/
+│   ├── prod-eu/
+│   │   └── web-server/
+│   │       └── kustomization.yaml # EU-specific overlay
+│   ├── prod-us/
+│   │   └── web-server/
+│   │       └── kustomization.yaml # US-specific overlay
+│   └── staging/
+│       └── web-server/
+│           └── kustomization.yaml
+└── platform/                      # Аддоны (monitoring, ingress)
+```
+
+**Overlay для конкретного кластера:**
+```yaml
+# clusters/prod-eu/web-server/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../base/web-server
+  - ../cluster-vars.yaml
+
+namespace: web-server
+namePrefix: eu-
+
+patches:
+  - target:
+      kind: Deployment
+      name: web-server
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 5
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: REGION
+          value: eu-west-1
+```
+
+**ArgoCD ApplicationSet для автоматического деплоя во все кластеры:**
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: web-server
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - cluster: prod-eu
+            url: https://kubernetes-eu.internal
+          - cluster: prod-us
+            url: https://kubernetes-us.internal
+  template:
+    metadata:
+      name: 'web-server-{{cluster}}'
+    spec:
+      source:
+        repoURL: https://github.com/org/infra.git
+        path: 'clusters/{{cluster}}/web-server'
+      destination:
+        server: '{{url}}'
+        namespace: web-server
+```
+
+Подробнее: [Multi-cluster паттерны](./kustomize_multi_cluster.md).
+
 ## 5. Безопасность
 
 - **Минимум привилегий в CI:** ServiceAccount для apply должен иметь только `get/list/watch/create/update/patch/delete` на конкретные ресурсы в конкретном namespace, **не** `cluster-admin`. Используйте RBAC-role + RoleBinding на namespace.
@@ -871,6 +953,10 @@ kubectl logs -n flux-system -l app=kustomize-controller --tail=200
 - **[Обзор Kustomize: основные концепции](./kustomize_overview.md)** — базовые определения, установка, интеграция с `kubectl`.
 - **[Структура и синтаксис kustomization.yaml](./kustomize_structure_and_syntax.md)** — детальный разбор полей, transformers, generators.
 - **[Продвинутые возможности](./kustomize_advanced_features.md)** — components, replacements, hash-суффиксы, exec-плагины.
+- **[Debugging Kustomize](./kustomize_debugging.md)** — troubleshooting ошибок в CI/CD.
+- **[Multi-cluster паттерны](./kustomize_multi_cluster.md)** — multi-cluster деплой через overlays.
+- **[Git-автоматизация](./kustomize_git_automation.md)** — Renovate, image promotion, pre-commit.
+- **[Тестирование и валидация](./kustomize_testing_validation.md)** — conftest, snapshot, lint.
 - **[Валидация манифестов (kubeconform)](../kubeconform_overview.md)** — автоматическая проверка схем Kubernetes API.
 - **[ArgoCD: синхронизация и self-heal](../../../GitOps/ArgoCD/synchronization/synchronization.md)** — детали GitOps-модели ArgoCD.
 - **[Flux v2: Kustomize Controller](../../../GitOps/Flux/kustomize_controller.md)** — описание `Kustomization` API.

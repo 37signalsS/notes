@@ -7,6 +7,12 @@
 - **Memory-hard алгоритмы** — функции хэширования (Argon2, Yescrypt), требующие значительного объема оперативной памяти для вычисления. Это делает атаки с использованием GPU и ASIC (ориентированных на чистые вычисления) экономически нецелесообразными.
 - **Cost Factor (Сложность)** — параметры алгоритма (итерации, потребление памяти, параллелизм), определяющие время вычисления одного хэша.
 - **Криптографическая гибкость (Agility)** — способность системы менять алгоритмы хэширования без нарушения работы существующих аккаунтов (через префиксы идентификаторов в `/etc/shadow`).
+- **Modular Crypt Format (MCF)** — стандартное представление хэша пароля в виде строки `$id$options$salt$hashed`, позволяющее идентифицировать алгоритм и его параметры.
+- **crypt(3)** — библиотечная функция C, используемая системными утилитами (`passwd`, `login`, `sshd`) для преобразования пароля в хэш. Поддерживает различные алгоритмы через префиксы.
+- **PEP (Password Encryption Policy)** — набор правил, определяющих минимальную длину пароля, требуемые классы символов и допустимые алгоритмы хэширования. Реализуется через `pam_pwquality.so` и `/etc/security/pwquality.conf`.
+- **Pepper (Перец)** — секретный ключ приложения или глобальный секрет, добавляемый к паролю перед хэшированием на уровне приложения. Хранится отдельно от базы хэшей (например, в HSM или переменной окружения). В отличие от соли, pepper одинаков для всех пользователей.
+- **NSS (Name Service Switch)** — механизм ядра, через который приложения запрашивают данные о пользователях. `pam_unix.so` читает `/etc/shadow` через NSS → `files` → glibc `getspnam()`.
+- **Кэширование NSS/SSSD** — при использовании внешних каталогов (LDAP, AD) парольные хэши могут кэшироваться локально в `/var/lib/sss/db/`. Это означает, что даже после смены пароля на контроллере домена локальный хэш может оставаться актуальным до TTL кэша.
 
 ## Базовые концепции
 
@@ -20,6 +26,35 @@
 3.  **`salt`**: Случайная строка Base64.
 4.  **`hashed`**: Результат работы функции.
 
+**Полный формат строки `/etc/shadow`:**
+```
+username:password_hash:last_change:min:max:warn:inactive:expire:reserved
+```
+
+| Поле | Пример | Описание |
+| :--- | :--- | :--- |
+| **username** | `admin` | Имя пользователя. |
+| **password** | `$y$j9T$tO7...` | Хэш в MCF. `!` или `*` — блокировка входа. `!!` — пароль никогда не устанавливался. |
+| **last_change** | `20000` | Дней с 01.01.1970. `0` — принудительная смена при следующем входе. |
+| **min** | `0` | Минимальный интервал между сменами (дни). |
+| **max** | `90` | Максимальный срок действия пароля (дни). `99999` — бессрочно. |
+| **warn** | `7` | Предупреждение за N дней до истечения. |
+| **inactive** | `30` | Дней после истечения `max` до блокировки. |
+| **expire** | `''` | Абсолютная дата блокировки (дни с эпохи). Пусто — не истекает. |
+| **reserved** | `''` | Зарезервировано для будущих расширений. |
+
+### Историческая эволюция алгоритмов в Linux
+
+| Поколение | Алгоритм | Год | Статус в 2026 |
+| :--- | :--- | :--- | :--- |
+| **1-е** | DES crypt | 1976 | Полностью сломан. Не используется. |
+| **2-е** | MD5 crypt (`$1$`) | 1994 | Устарел. Уязвим к collision attacks и быстрому перебору. |
+| **3-е** | SHA-256 crypt (`$5$`) | 2008 | Устаревает. CPU-bound, не защищен от GPU. |
+| **3-е** | SHA-512 crypt (`$6$`) | 2008 | Приемлем как fallback. Все еще широко распространен. |
+| **4-е** | bcrypt (`$2a$`, `$2b$`) | 1999 | Приемлем. Проверен временем, но не memory-hard. |
+| **5-е** | Yescrypt (`$y$`) | 2016 | **Рекомендуется**. Оптимизирован для CPU, memory-hard. Дефолт в Debian 12+, Ubuntu 24.04+. |
+| **5-е** | Argon2id (`$argon2id$`) | 2015 | **Рекомендуется**. RFC 9106. Максимальная защита от GPU/ASIC. |
+
 ### Справочник алгоритмов (Стандарты 2026)
 
 | ID | Алгоритм | Префикс | Статус | Примечание |
@@ -32,8 +67,76 @@
 
 ### Почему Yescrypt и Argon2 вытесняют SHA-512?
 
-Алгоритмы семейства SHA являются **CPU-bound**. Злоумышленник может арендовать ферму GPU, где тысячи ядер будут параллельно вычислять хэши. 
+Алгоритмы семейства SHA являются **CPU-bound**. Злоумышленник может арендовать ферму GPU, где тысячи ядер будут параллельно вычислять хэши.
 **Argon2id** и **Yescrypt** задействуют **Memory Cost**. Если для вычисления одного хэша требуется 64 МБ RAM, то видеокарта с 16 ГБ памяти сможет проверять одновременно не более 256 паролей, что на порядки снижает скорость перебора по сравнению с миллионами попыток в секунду для SHA-512.
+
+### Глубокий разбор: как работает `crypt(3)`
+
+Системные утилиты (`passwd`, `login`, `sshd`) не хэшируют пароли самостоятельно. Они вызывают библиотечную функцию `crypt(3)` из glibc:
+
+1. Пользователь вводит пароль.
+2. `pam_unix.so` (или `login`) вызывает `crypt(password, settings)`.
+3. `crypt()` читает префикс хэша из `/etc/shadow` (например, `$y$`).
+4. В зависимости от префикса glibc dispatcher вызывает соответствующую реализацию:
+   - `$y$` → `yescrypt()`
+   - `$6$` → `sha512_crypt()`
+   - `$argon2id$` → `argon2id()` (через `libcrypt` из `libxcrypt`)
+5. Результат возвращается в MCF и записывается в `/etc/shadow`.
+
+Важно: **сама `crypt()` не знает о политиках сложности**. Проверка сложности происходит на уровне PAM (`pam_pwquality.so`) до вызова `crypt()`.
+
+### Взаимодействие с PAM и NSS
+
+```
+[Приложение: sshd / login / su]
+    ↓ вызывает PAM
+[PAM Stack: auth → account → session → password]
+    ↓ pam_unix.so → getspnam() через NSS
+[NSS: files → /etc/shadow]
+    ↓ возвращает хэш и поля aging
+[pam_unix.so] → crypt(plaintext, stored_hash)
+    ↓ сравнение
+[Результат: PAM_SUCCESS / PAM_AUTH_ERR]
+```
+
+### Генерация соли
+
+Соль генерируется автоматически утилитой `passwd` (через `crypt_gensalt()` из `libcrypt`):
+- **Длина**: 128 бит (16 байт) для современных алгоритмов.
+- **Источник**: `/dev/urandom` или `getrandom()`.
+- **Кодирование**: Base64 с алфавитом, совместимым с MCF (обычно `./0-9A-Za-z`).
+- **Уникальность**: вероятность коллизии соли ничтожно мала (~1 из 2^128).
+
+Пример соли Yescrypt: `j9T$tO7FkP2x...` (первые 4 символа — часть параметров, остальное — соль).
+
+### Политики и параметры алгоритмов
+
+Параметры хэширования задаются на двух уровнях:
+1. **Глобальный дефолт**: `/etc/login.defs` → `ENCRYPT_METHOD` (например, `YESCRYPT`).
+2. **PAM-уровень**: `/etc/pam.d/common-password` → аргументы `pam_unix.so` (например, `rounds=5000`).
+
+Для Yescrypt параметры задаются через префикс `$y$`:
+```
+$y$j9T$C6y...     # j9T — параметры (rounds/memory), C6y... — salt+hash
+```
+
+### Роль PAM в lifecycle пароля
+
+PAM отвечает за:
+- **Аутентификация**: проверка пароля (`pam_unix.so` → `crypt()`).
+- **Проверка сложности**: `pam_pwquality.so` (до вычисления хэша).
+- **Смена пароля**: фаза `password` в `/etc/pam.d/common-password`.
+- **Политики aging**: `pam_unix.so` читает поля `last_change`, `max`, `min` из `/etc/shadow` и возвращает `PAM_NEW_AUTHTOK_REQD`, если пароль истек.
+
+### systemd-homed и хэширование паролей
+
+В системах с `systemd-homed` пароли хранятся не в `/etc/shadow`, а в JSON-записи пользователя (Protected by LUKS2):
+```bash
+homectl list
+# → username: ... password hash: $y$j9T$...
+```
+
+`homectl` использует те же алгоритмы хэширования, что и `pam_unix.so`, но применяет их к отдельному файлу изображения домашней директории. Это изолирует учетные данные пользователя от корневой ФС.
 
 ## Практические сценарии
 
@@ -43,10 +146,20 @@
 
 ```bash
 # Вывод пользователей с типами их хэшей
-sudo awk -F: '$3 >= 1000 {print $1}' /etc/passwd | xargs -I {} sudo sh -c "grep '^{}:' /etc/shadow | cut -d: -f1,2"
+sudo awk -F: '$3 >= 1000 {print $1}' /etc/passwd | while read user; do
+  hash=$(sudo grep "^$user:" /etc/shadow | cut -d: -f2)
+  echo "$user: ${hash:0:10}..."
+done
 
 # Поиск критически устаревших алгоритмов (MD5/SHA-256)
 sudo grep -E '^\$1\$|^\$5\$' /etc/shadow
+
+# Статистика алгоритмов
+sudo awk -F: 'NR>1 && $2 ~ /^\$/{split($2,a,"$"); print a[2]}' /etc/shadow | \
+  sort | uniq -c | sort -rn
+
+# Проверка пустых паролей
+sudo awk -F: '$2 == "" {print $1}' /etc/passwd
 ```
 
 ### Настройка целевого алгоритма (PAM)
@@ -60,6 +173,12 @@ sudo grep -E '^\$1\$|^\$5\$' /etc/shadow
 password [success=1 default=ignore] pam_unix.so obscure yescrypt
 ```
 
+Проверка глобального дефолта:
+```bash
+grep ENCRYPT_METHOD /etc/login.defs
+# → ENCRYPT_METHOD YESCRYPT
+```
+
 #### Для RHEL/Fedora (authselect)
 Используйте утилиту `authselect` для безопасного внесения изменений:
 ```bash
@@ -68,6 +187,7 @@ sudo authselect select minimal with-sha512-rounds=65536 --force
 ```
 
 ### Настройка Argon2id (Продвинутый уровень)
+
 Если система требует максимальной защиты, установите `libpam-argon2` и настройте параметры в `/etc/security/argon2.conf`:
 - `mem`: объем памяти (например, 65536 для 64МБ).
 - `t_cost`: количество проходов (например, 3).
@@ -80,24 +200,243 @@ sudo authselect select minimal with-sha512-rounds=65536 --force
 # Генерация Yescrypt
 mkpasswd -m yescrypt "my_secret_pass"
 # → $y$j9T$tO7...
+
+# С указанием параметров
+mkpasswd -m yescrypt -R 5000 "my_secret_pass"
+
+# SHA-512 с раундами
+mkpasswd -m sha512crypt -R 65536 "my_secret_pass"
 ```
 
-#### Метод 2: Python (Современный подход)
+#### Метод 2: openssl passwd
+```bash
+# Алгоритм apr1 (Apache variant of MD5, устарел — для совместимости)
+openssl passwd -apr1 "my_secret_pass"
+
+# SHA-512
+openssl passwd -6 "my_secret_pass"
+
+# С солью
+openssl passwd -6 -salt "randomsalt" "my_secret_pass"
+```
+
+#### Метод 3: htpasswd (для веб-сервисов)
+```bash
+# bcrypt (дефолт)
+htpasswd -nbB admin "StrongPass123"
+# → admin:$2y$12$...
+
+# SHA-512
+htpasswd -nbs 6 admin "StrongPass123"
+```
+
+#### Метод 4: Python (Современный подход)
 Так как модуль `crypt` удален в Python 3.13, используйте библиотеку `passlib`:
 ```bash
 python3 -c "from passlib.hash import yescrypt; print(yescrypt.hash('my_pass'))"
+python3 -c "from passlib.hash import argon2; print(argon2.hash('my_pass'))"
+python3 -c "from passlib.hash import sha512_crypt; print(sha512_crypt.hash('my_pass'))"
+```
+
+#### Метод 5: Ansible (для IaC)
+```yaml
+# В playbook/role
+- name: Создать пользователя с Yescrypt хэшем
+  ansible.builtin.user:
+    name: deploy
+    password: "{{ 'AnsiblePass123!' | password_hash('yescrypt') }}"
+    shell: /bin/bash
+    state: present
+```
+
+### Настройка качества паролей (pam_pwquality)
+
+Файл `/etc/security/pwquality.conf`:
+```text
+minlen = 12           # Минимальная длина
+minclass = 4          # Минимум 4 класса символов (lower, upper, digit, other)
+dcredit = -1          # Требовать минимум 1 цифру
+ucredit = -1          # Требовать минимум 1 заглавную
+lcredit = -1          # Требовать минимум 1 строчную
+ocredit = -1          # Требовать минимум 1 спецсимвол
+maxrepeat = 3         # Макс. повторение символа подряд
+gecoscheck = 1        # Запрещать пароль, совпадающий с полем GECOS
+```
+
+Проверка:
+```bash
+sudo pamtester sshd deploy authenticate
+# → введите пароль; pam_pwquality отклонит слишком простые
 ```
 
 ### Стратегия миграции (Fleet-wide update)
 
 Смена алгоритма в конфигах не меняет старые хэши в `/etc/shadow`. Для принудительного обновления:
 
-1.  Обновите настройки PAM и `login.defs` (параметр `ENCRYPT_METHOD`).
-2.  Пометьте пароли пользователей как просроченные:
-    ```bash
-    # Принудительная смена при следующем входе (с генерацией нового типа хэша)
-    sudo chage -d 0 username
-    ```
+1. Обновите настройки PAM и `login.defs` (параметр `ENCRYPT_METHOD`).
+2. Пометьте пароли пользователей как просроченные:
+   ```bash
+   # Принудительная смена при следующем входе (с генерацией нового типа хэша)
+   sudo chage -d 0 username
+   ```
+3. Для автоматической массовой миграции используйте скрипт:
+   ```bash
+   #!/bin/bash
+   # migrate_hashes.sh — принудительная миграция на Yescrypt
+   for user in $(awk -F: '$3 >= 1000 && $3 != 65534 {print $1}' /etc/passwd); do
+     sudo chage -d 0 "$user"
+     echo "Пользователь $user: пароль истек, при следующем входе будет сгенерирован новый хэш"
+   done
+   ```
+
+### Аудит изменений через auditd
+
+```bash
+# Отслеживание всех изменений в /etc/shadow
+sudo auditctl -w /etc/shadow -p wa -k shadow_modification
+
+# Чтение логов
+sudo ausearch -k shadow_modification --start recent
+# или
+sudo aureport --file --summary | grep shadow
+```
+
+### Аудит SSH-входов через journald
+
+```bash
+# Неудачные попытки аутентификации
+journalctl -u sshd --since "7 days ago" | grep -c "Failed password"
+
+# Успешные входы
+journalctl -u sshd --since "7 days ago" | grep "Accepted password"
+```
+
+### Проверка целостности хэшей
+
+```bash
+# Проверка /etc/passwd и /etc/shadow
+sudo pwck -r
+
+# Проверка /etc/group и /etc/gshadow
+sudo grpck -r
+```
+
+### Восстановление utmp и lastlog
+
+```bash
+# Дамп базы utmp
+sudo utmpdump /var/run/utmp > utmp_backup.txt
+
+# Восстановление из дампа
+sudo utmpdump -r utmp_backup.txt > /var/run/utmp
+
+# Аналогично для wtmp (история входов)
+sudo utmpdump /var/log/wtmp > wtmp_backup.txt
+sudo utmpdump -r wtmp_backup.txt > /var/log/wtmp
+```
+
+### Учет времени работы (ac)
+
+```bash
+# Установка пакета acct
+sudo apt install acct   # Debian/Ubuntu
+sudo dnf install acct   # RHEL/Fedora
+
+# Статистика по пользователям
+sudo ac -p
+# → admin    12.35
+# → deploy    5.20
+
+# Общее время с последнего запуска
+sudo ac
+```
+
+### Мониторинг ресурсов пользователя
+
+```bash
+# CPU и память по пользователям (pidstat)
+sudo pidstat -u -p ALL 1 5
+
+# Использование cgroup по пользователям
+sudo systemd-cgtop -b -n 1
+```
+
+### Мониторинг в контейнерах
+
+В контейнерах (Docker/Podman) хэши обычно хранятся в volume или встраиваются в образ. Проверка:
+```bash
+# Извлечение /etc/shadow из контейнера
+sudo docker exec container_name cat /etc/shadow | grep deploy
+
+# Проверка алгоритма
+sudo docker exec container_name cat /etc/shadow | awk -F: '{print $1, $2}' | grep -v "^[a-z]" | head
+```
+
+### systemd-homed: управление хэшами
+
+```bash
+# Создание пользователя с явным указанием хэша
+sudo homectl create alice --real-name="Alice" \
+  --password-hash="$y$j9T$..."
+
+# Обновление пароля (генерирует новый хэш автоматически)
+sudo homectl update alice --set-password
+
+# Экспорт хэша для резервного копирования
+sudo homectl show alice | grep password
+```
+
+### SSSD/LDAP: особенности хэширования
+
+При работе с LDAP/AD парольные хэши хранятся на контроллере домена. `sssd` кэширует учетные данные локально. Важно:
+- Локальная смена пароля через `passwd` работает только для локальных пользователей.
+- Для сетевых пользователей используйте `kpasswd` (Kerberos) или веб-интерфейс контроллера.
+- Политика хэширования (алгоритм, rounds) задается на стороне LDAP-сервера (например, FreeIPA → Password Storage Scheme).
+
+### Режим FIPS и хэширование паролей
+
+В режиме FIPS 140-3 (RHEL, Ubuntu FIPS):
+- SHA-1 запрещен. `passwd` игнорирует `ENCRYPT_METHOD SHA256` и использует SHA-512.
+- Argon2 может требовать отдельного модуля FIPS.
+- `mkpasswd` и `libcrypt` автоматически отклоняют не-FIPS алгоритмы.
+
+Проверка:
+```bash
+cat /proc/sys/crypto/fips_enabled
+# → 1 (FIPS активен)
+```
+
+### Комплаенс-проверки
+
+```bash
+# Проверка: все ли пользователи используют Yescrypt/Argon2
+sudo awk -F: '($2 ~ /^\$y\$|^\$argon2id\$/) {print $1}' /etc/shadow | wc -l
+
+# Проверка: есть ли устаревшие MD5/SHA-256 хэши
+sudo grep -cE '^\$1\$|^\$5\$' /etc/shadow
+
+# Проверка прав на /etc/shadow
+stat -c "%a %U:%G" /etc/shadow
+# → 600 root:shadow
+```
+
+### Аудит через John the Ripper (офлайн)
+
+```bash
+# Объединение passwd и shadow
+sudo unshadow /etc/passwd /etc/shadow > myhashes.txt
+
+# Быстрый аудит (Single crack mode)
+john --single myhashes.txt
+
+# Словарная атака с правилами
+john --wordlist=/usr/share/wordlists/rockyou.txt --rules myhashes.txt
+
+# Просмотр взломанных
+john --show myhashes.txt
+```
+
+Подробнее: [John the Ripper (JtR)](../../Security/Tools/jtr.md).
 
 ## Дополнительная информация
 
@@ -106,6 +445,8 @@ python3 -c "from passlib.hash import yescrypt; print(yescrypt.hash('my_pass'))"
 1.  **Доступ к /etc/shadow**: Файл должен иметь права `0600` или `0640` (группа `shadow`). Любая возможность чтения хэша позволяет злоумышленнику запустить **Offline Brute-force**.
 2.  **Длина соли**: Для современных алгоритмов рекомендуется соль длиной не менее 128 бит (16 байт).
 3.  **FIPS 140-3**: В режимах строгого соответствия использование Argon2 может потребовать специфических модулей, сертифицированных вендором ОС.
+4.  **Срок действия пароля**: Соответствие требованиям регуляторов (PCI DSS, GDPR) требует политики срока действия не более 90 дней для привилегированных учетных записей.
+5.  **История паролей**: `pam_unix.so remember=N` хранит N последних хэшей (не сами пароли) для предотвращения циклической смены.
 
 ### Сравнение характеристик
 
@@ -115,10 +456,67 @@ python3 -c "from passlib.hash import yescrypt; print(yescrypt.hash('my_pass'))"
 | **Защита от GPU** | Низкая | Средняя | Высокая | Максимальная |
 | **Масштабируемость** | Раунды | Rounds | Memory/Rounds | M, T, P |
 | **Стандарт 2026** | Legacy | Legacy | Mainstream | Security-hardened |
+| **Скорость вычисления** | ~1 мс | ~10 мс | ~5 мс | ~20-100 мс |
+| **Память на хэш** | <1 КБ | 4 КБ | 16-128 МБ | 64-256 МБ |
+
+### Типичные ошибки и устранение неполадок
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `Authentication token manipulation error` | ФС в режиме `ro` или `/etc/shadow` поврежден. | `mount -o remount,rw /`; восстановить из бэкапа. |
+| `passwd: Authentication token manipulation error` | SELinux контекст нарушен. | `restorecon /etc/shadow` или `touch /.autorelabel`. |
+| `pam_unix(sshd:auth): authentication failure` | Неверный пароль или поврежден хэш. | Проверить `/etc/shadow`, `passwd -S <user>`. |
+| `Invalid password hash` в Ansible | Неверный формат хэша. | Используйте `password_hash('sha512')`. |
+| `Module is unknown` | Отсутствует `libpam-argon2.so` или аналогичный модуль. | Установить соответствующий пакет. |
+| `chage: user does not exist in /etc/shadow` | Пользователь сетевой (LDAP/AD). | Настроить политику на контроллере домена. |
+| `passwd: password unchanged` | Пароль совпадает с предыдущим (если `remember=N`). | Используйте действительно новый пароль. |
+| `pam_pwquality(...): Password fails quality check` | Пароль не соответствует политике. | Увеличить сложность или настроить `pwquality.conf`. |
+| `Failed to create session: Already running in a session` | Дублирующая строка `pam_systemd.so`. | Убрать дубликат из `/etc/pam.d/login`. |
+| `crypt: unknown cipher` | libcrypt не поддерживает алгоритм (старая glibc). | Обновить glibc или использовать fallback. |
+
+### Граничные случаи и ограничения
+
+1. **Максимальная длина пароля**: glibc `crypt()` обрезает пароль после 72 байт (символов) для SHA-512/Yescrypt. Пароли длиннее 72 символов обрезаются silently. Используйте префикс `$y$` с длинной солью для увеличения энтропии, но помните об ограничении.
+2. **Unicode и локали**: `crypt()` работает с байтовой строкой. Если ввод в UTF-8, многобайтовые символы (кириллица, иероглифы) занимают несколько байт, что может привести к неожиданному обрезанию. Рекомендуется нормализовать (NFC) и ограничиться ASCII для критичных систем.
+3. **Пустые пароли**: В `/etc/shadow` пустое поле пароля (`username:x:...` → `username::...`) разрешает вход без пароля в некоторых конфигурациях PAM. Всегда используйте `passwd -l` для блокировки.
+4. **Специальные символы**: `!`, `*`, `!!` в начале поля пароля блокируют вход. `!` может быть дополнен реальным хэшем (`!$6$...`) — это означает "заблокировано, но хэш сохранен для разблокировки".
+5. **NIS/NIS+**: В старых системах хэши могут храниться в NIS-мапе `passwd.byname`. NIS не поддерживает MCF — только DES или MD5.
+6. **Кэширование NSS**: `nscd` или `sssd` могут кэшировать записи из `/etc/shadow` до 5 минут. После смены пароля кэш может не обновляться сразу.
+7. **SSSD и LDAP**: При использовании `sssd` с `ldap_sasl_mech=GSS-SPNEGO` парольная аутентификация может идти через Kerberos, минуя локальный `/etc/shadow`.
+8. **systemd-homed ограничения**: Не все дистрибутивы поддерживают `homectl`. На серверах без GUI-сессий `systemd-homed` может не управлять некоторыми пользователями.
+9. **Алгоритм по умолчанию**: Если `ENCRYPT_METHOD` в `/etc/login.defs` не задан, glibc использует дефолт системы (обычно SHA-512 на старых системах, Yescrypt на новых).
+10. **Миграция хэшей**: Прямое копирование `/etc/shadow` между системами работает только если обе системы поддерживают одинаковые алгоритмы. Yescrypt хэш из Debian 12 не будет работать на CentOS 7 (только SHA-512/MD5).
+
+### Лучшие практики
+
+1.  **Алгоритм по умолчанию**: Используйте Yescrypt (`$y$`) или Argon2id. Настройте `ENCRYPT_METHOD YESCRYPT` в `/etc/login.defs`.
+2.  **Сложность**: Настройте `pam_pwquality.so` с `minlen >= 12`, `minclass >= 4`.
+3.  **Длина соли**: 128 бит минимум. libcrypt генерирует автоматически — не переопределяйте.
+4.  **SRE-паттерн**: Для fleet-wide управления используйте Ansible с фильтром `password_hash('yescrypt')`. Никогда не хардкодьте хэши в плейбуках.
+5.  **Мониторинг**: Настройте алерт на появление `$1$` или `$5$` хэшей в `/etc/shadow`.
+6.  **Бэкап**: Регулярно бэкапьте `/etc/shadow` в защищенное хранилище (шифрованное, с ограниченным доступом).
+7.  **Безопасность файлов**: `/etc/shadow` всегда `0600 root:shadow`. Никогда не меняйте на `644`.
+8.  **Отказ от `passwd -p`**: Параметр `-p` в `useradd`/`usermod` устарел и небезопасен (хранит пароль в открытом виде в команде/процессе). Используйте `--password` только с предварительно сгенерированным хэшем.
+9.  **Аудит**: Ведите журнал изменений `/etc/shadow` через `auditd`.
+10. **Документация**: Фиксируйте политику хэширования в runbook и регламентируйте её через Infrastructure as Code.
+
+### Сравнение инструментов генерации хэшей
+
+| Инструмент | Алгоритмы | Применение | Критерий выбора |
+| :--- | :--- | :--- | :--- |
+| `passwd` | Системный дефолт | Интерактивная смена пароля | Ежедневное использование |
+| `chpasswd` | Системный дефолт | Пакетная загрузка из файла `user:pass` | Массовое provision |
+| `mkpasswd` | DES, MD5, SHA-256/512, Yescrypt, bcrypt | Генерация хэшей для скриптов | Автоматизация, IaC |
+| `openssl passwd` | MD5, SHA-256, SHA-512, apr1 | Веб-сервисы, legacy | Совместимость со старыми системами |
+| `htpasswd` | bcrypt, SHA, MD5 | Basic Auth (Apache/Nginx) | Веб-приложения |
+| `python3 passlib` | 150+ алгоритмов | Программная генерация | Ансибль, кастомные скрипты |
+| `usermod --password` | Любой MCF-совместимый | Изменение хэша без знания пароля | Экстренный сброс |
 
 ### Смежные темы
 
 - [Файлы конфигурации (shadow)](./users_config_files.md) — детальный разбор структуры базы данных.
 - [Политики паролей (chage)](./password_policy_chage.md) — управление сроком действия.
-- [Обзор PAM](../../Security/pam_overview.md) — архитектура модулей аутентификации.
-- [Аудит безопасности](../../Security/audit_and_compliance_overview.md) — общие принципы защиты системы.
+- [Обзор PAM](../../Linux/Security/pam_overview.md) — архитектура модулей аутентификации.
+- [Аудит безопасности](../../../Security/audit_and_compliance_overview.md) — общие принципы защиты системы.
+- [Атаки методом перебора (Brute-force)](../../Security/Concepts/brute_force_attacks.md) — теория и защита.
+- [John the Ripper (JtR)](../../Security/Tools/jtr.md) — офлайн-аудит хэшей.

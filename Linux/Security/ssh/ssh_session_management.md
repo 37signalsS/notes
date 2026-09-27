@@ -214,3 +214,4 @@ systemd-run --user --scope ./long_task.sh
 - [Настройка SSH Multiplexing](./ssh_client_config.md#настройка-ssh-multiplexing) — ускорение подключений.
 - [Безопасность SSH-сервера](./server/ssh_hardening_best_practices.md) — защита доступа.
 - [Инструменты командной строки SSH](./ssh_cli_tools.md) — обзор Mosh и других утилит.
+- [Инструменты сетевого мониторинга](../Tools/network_monitoring_tools.md) — tcpdump, tshark, ss для анализа SSH-трафика.

@@ -140,6 +140,100 @@ spec:
 
 **Предупреждение:** `post-delete` хук не может быть откачен — он выполняется на удалении. Не размещайте в нём код, изменяющий внешние системы без подтверждения пользователя.
 
+### Multi-Environment Best Practices (dev / staging / prod)
+
+Паттерн управления одним чартом через множество окружений без форков и дублирования кода.
+
+#### Структура репозитория
+
+```
+repo/
+├── charts/
+│   └── my-app/
+│       ├── Chart.yaml
+│       ├── values.yaml              # базовые дефолты (minimal)
+│       └── templates/
+├── environments/
+│   ├── base/
+│   │   └── values.yaml              # общие параметры для всех окружений
+│   ├── dev/
+│   │   ├── values.yaml              # dev-specific: реплики=1, debug=true
+│   │   └── values-secrets.yaml      # зашифрованные через SOPS
+│   ├── staging/
+│   │   └── values.yaml
+│   └── prod/
+│       ├── values.yaml              # prod-specific: реплики=3, HPA
+│       └── values-secrets.yaml
+└── .sops.yaml                       # правила шифрования
+```
+
+#### Порядок наложения values
+
+```
+chart/values.yaml → base/values.yaml → env/values.yaml → --set (runtime)
+         ↑                ↑                  ↑                  ↑
+    дефолты чарта    общие параметры    специфика среды    override в CI
+```
+
+**Правило:** Каждый слой переопределяет только то, что отличается. Базовый `values.yaml` содержит maximum sensible defaults; environment-файлы — только deltas.
+
+#### Пример deployment через CLI
+
+```bash
+# Dev
+helm upgrade --install my-app ./charts/my-app \
+  -f environments/base/values.yaml \
+  -f environments/dev/values.yaml \
+  --namespace dev --create-namespace \
+  --atomic --wait --timeout 5m
+
+# Production (с secrets)
+helm upgrade --install my-app ./charts/my-app \
+  -f environments/base/values.yaml \
+  -f environments/prod/values.yaml \
+  -f environments/prod/values-secrets.yaml \
+  --namespace prod --create-namespace \
+  --atomic --wait --wait-for-jobs --timeout 15m \
+  --history-max 10
+```
+
+#### Декларативный подход (Helmfile)
+
+```yaml
+# helmfile.yaml
+environments:
+  dev:
+    values:
+      - environments/dev/values.yaml
+  staging:
+    values:
+      - environments/staging/values.yaml
+  prod:
+    values:
+      - environments/prod/values.yaml
+      - environments/prod/values-secrets.yaml
+
+releases:
+  - name: my-app
+    chart: ./charts/my-app
+    namespace: "{{ .Environment.Name }}"
+    atomic: true
+    wait: true
+    timeout: 600
+```
+
+#### Ключевые принципы
+
+| Принцип | Реализация |
+|---------|------------|
+| **Иммутабельность артефакта** | Один и тот же chart version деплоится через все среды без пересборки |
+| **Изоляция через namespace** | Dev/staging/prod в разных namespace, не в суффиксах имени |
+| **Секреты вне Git** | SOPS/ESO для secrets; values-secrets.yaml в .gitignore или зашифрован |
+| **Progressive promotion** | CI автоматически деплоит в dev; staging — после тестов; prod — с approval gate |
+| **Convergence** | GitOps-агент (ArgoCD/Flux) следит за drift и возвращает состояние к описанному в Git |
+
+---
+
 ### Антипаттерны (Чего следует избегать)
 
 - **Использование `latest` тегов**: Приводит к невозможности детерминированного отката (`helm rollback`) и нарушению reproducibility. Используйте семантические версии или SHA-дигесты.

@@ -458,6 +458,7 @@ VP Engineering / CTO (Executive)
 *   **[Disaster Recovery](./disaster_recovery.md)** — RPO/RTO, стратегии восстановления.
 *   **[Обзор DevOps](./devops_overview.md)** — SRE как практическая реализация DevOps.
 *   **[Chaos Engineering](../Chaos_Engineering/chaos_engineering_metrics.md)** — валидация надежности через инъекции сбоев.
+*   **[Паттерны микросервисной архитектуры](./microservice_patterns.md)** — отказоустойчивость и масштабируемость.
 *   **[Reliability Patterns](../CI-CD/Core_Concepts/reliability_patterns.md)** — Circuit Breaker, Bulkhead, Graceful Degradation.
 *   **[Интеграции эскалации](../Grafana/alerting/escalation_integrations.md)** — PagerDuty, OnCall, GoAlert.
 *   **[Incident Response](../CI-CD/Core_Concepts/incident_response_sre.md)** — жизненный цикл инцидентов в CI/CD контексте.

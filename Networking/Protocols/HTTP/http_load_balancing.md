@@ -307,6 +307,102 @@ backend canary_backend
 9. **HAProxy `option httpchk` и POST body:** `httpchk` отправляет только заголовки. Для POST с телом используйте `http-check send-buf`.
 10. **Session affinity и container orchestration:** В Kubernetes `ip_hash` нестабильна из-за динамического изменения IP пода. Используйте `service.kubernetes.io/topology-aware-hints` или sticky sessions через cookie.
 
+## L4 Load Balancing: IPVS и/macvlan
+
+### L4 vs L7: когда что использовать
+
+| Характеристика | L4 (Transport) | L7 (Application) |
+|:---|:---|:---|
+| **Уровень OSI** | TCP/UDP | HTTP/gRPC/WebSocket |
+| **Информация для принятия решений** | IP, порт, протокол | URL, заголовки, cookies, метод |
+| **Производительность** | Выше (нет разбора payload) | Ниже (разбор HTTP) |
+| **Алгоритмы** | Round-robin, LC, hash | Все + URL-based, header-based |
+| **Health checks** | TCP (порт открыт) | HTTP (код ответа, тело) |
+| **Session affinity** | Source IP hash | Cookie, header, URL |
+| **Примеры инструментов** | IPVS, LVS, MetalLB, cloud LB | Nginx, HAProxy, Traefik, Envoy |
+
+### IPVS (IP Virtual Server)
+
+IPVS — встроенная в ядро Linux подсистема L4-балансировки. Используется в Kubernetes (kube-proxy в IPVS-режиме) и Docker Swarm.
+
+```bash
+# Проверка наличия IPVS
+modprobe ip_vs
+ipvsadm -Ln
+
+# Добавление виртуального сервера (VIP: порт)
+ipvsadm -A -t 10.0.0.100:80 -s rr
+
+# Добавление бэкенд-серверов
+ipvsadm -a -t 10.0.0.100:80 -r 10.0.0.1:80 -g    # -g = NAT (gateway)
+ipvsadm -a -t 10.0.0.100:80 -r 10.0.0.2:80 -g
+ipvsadm -a -t 10.0.0.100:80 -r 10.0.0.3:80 -g
+
+# Просмотр таблицы
+ipvsadm -Ln
+# → TCP  10.0.0.100:80 rr
+#   -> 10.0.0.1:80     Masq    1      0          0
+#   -> 10.0.0.2:80     Masq    1      0          0
+#   -> 10.0.0.3:80     Masq    1      0          0
+
+# Статистика
+ipvsadm -Ln --stats
+```
+
+**Алгоритмы IPVS:**
+
+| Алгоритм | Флаг | Описание |
+|:---|:---|:---|
+| `rr` | Round-Robin | Поочерёдное распределение |
+| `wrr` | Weighted Round-Robin | С весами |
+| `lc` | Least Connections | Меньше активных соединений |
+| `wlc` | Weighted Least Connections | С весами (по умолчанию) |
+| `sh` | Source Hashing | Хэш по IP источника |
+| `dh` | Destination Hashing | Хэш по IP назначения |
+| `lblc` | Locality-Based Least Connections | С учётом локальности |
+| `sed` | Shortest Expected Delay | Минимальная задержка |
+| `nq` | Never Queue | Без очередей |
+
+**Production-пример с health checks:**
+```bash
+# Виртуальный сервер с активными проверками
+ipvsadm -A -t 10.0.0.100:80 -s wlc -p 300  # -p = persistence (sticky, секунды)
+
+# Бэкенды с весами и проверками
+ipvsadm -a -t 10.0.0.100:80 -r 10.0.0.1:80 -g -w 3
+ipvsadm -a -t 10.0.0.100:80 -r 10.0.0.2:80 -g -w 1
+
+# Мониторинг активных соединений
+watch -n 1 ipvsadm -Ln --stats
+```
+
+### MetalLB (bare-metal L4)
+
+MetalLB предоставляет LoadBalancer-type Service в bare-metal Kubernetes кластерах. Два режима:
+
+| Режим | Механизм | Плюсы | Минусы |
+|:---|:---|:---|:---|
+| **Layer 2 (ARP)** | Один узел анонсирует VIP через ARP | Простота | Failover через watchdog (до 10с), нет ECMP |
+| **BGP** | Маршрутизаторы получают маршруты через BGP | ECMP, балансировка на уровне маршрутизатора | Требует BGP-поддержки на маршрутизаторе |
+
+```yaml
+# MetalLB Layer 2 конфигурация
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: production-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 192.168.1.200-192.168.1.250
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: production-l2
+  namespace: metallb-system
+```
+
 ## Дополнительная информация
 
 ### PROXY Protocol в деталях

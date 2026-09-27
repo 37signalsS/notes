@@ -12,13 +12,14 @@
 
 Для успешной валидации клиент должен иметь возможность проследить путь доверия от серверного сертификата до доверенного корневого центра (Root CA).
 
-*   **Серверный сертификат**: Выдан для вашего домена (Leaf).
-*   **Промежуточные сертификаты (Intermediate CA)**: Используются центрами сертификации для подписи конечных сертификатов.
+- **Серверный сертификат**: Выдан для вашего домена (Leaf).
+- **Промежуточные сертификаты (Intermediate CA)**: Используются центрами сертификации для подписи конечных сертификатов.
 
 **Специфика Nginx**:
 Nginx требует передачи «полной цепочки» (Full Chain) в одном файле. Порядок сертификатов в файле критически важен:
-1.  Сертификат домена.
-2.  Промежуточные сертификаты (один или несколько).
+1. Сертификат домена.
+2. Промежуточные сертификаты (один или несколько).
+
 *Корневой сертификат (Root CA) обычно не включается, так как он уже есть в доверенном хранилище клиента.*
 
 Подробнее о форматах и диагностике: **[Диагностика SSL/TLS сертификатов](../../../../Security/Tools/ssl_certificate_diagnostics.md)**.
@@ -27,7 +28,36 @@ Nginx требует передачи «полной цепочки» (Full Chai
 
 Расширение TLS, которое позволяет клиенту и серверу согласовать используемый протокол прикладного уровня (например, HTTP/2 или HTTP/3) непосредственно в процессе TLS-рукопожатия, избегая дополнительных сетевых задержек.
 
+### SNI (Server Name Indication)
+
+Расширение TLS, позволяющее клиенту передавать имя хоста до завершения рукопожатия. Это критично для корректного выбора виртуального хоста (`server`) на одном IP-адресе. Без SNI сервер может предъявить только один сертификат (обычно первого виртуального хоста), что приводит к ошибкам доверия при доступе к остальным доменам.
+
+### HSTS (HTTP Strict Transport Security)
+
+Заголовок, заставляющий браузер использовать исключительно HTTPS, предотвращая атаки SSL Stripping. В 2026 году рекомендуется минимальное значение `max-age=63072000` (2 года) с флагами `includeSubDomains` и `preload` для публичных сервисов.
+
 ## Основные концепции
+
+### Архитектура TLS в Nginx
+
+TLS-обработка в Nginx распределена между несколькими уровнями:
+
+- **Блок `http` (глобальный уровень)**: Задает политики по умолчанию — версии протоколов, наборы шифров, параметры сессий и OCSP Stapling. Эти настройки применяются ко всем виртуальным хостам, если не переопределены на уровне `server`.
+- **Блок `server` (уровень хоста)**: Переопределяет глобальные параметры для конкретного домена. Здесь задаются пути к сертификатам, ключам, а также host-specific параметры (ECH, 0-RTT).
+- **Рабочие процессы (worker processes)**: Каждый `worker` управляет своими TLS-сессиями. Обмен ключами и рукопожатия выполняются в user-space с использованием библиотеки OpenSSL, за исключением kTLS, где симметричное шифрование offload-ится в ядро Linux.
+- **Кэш сессий**: Разделяемая память (`shared:SSL:...`) позволяет процессам обмениваться состояниями сессий для возобновления без полного рукопожатия.
+
+### Жизненный цикл TLS-соединения
+
+1. **Прием TCP/UDP**: Nginx принимает соединение на порт 443 (TCP) или 443/UDP (QUIC).
+2. **TLS Handshake**:
+   - Клиент отправляет `ClientHello` с поддержанными версиями, шифрами и SNI.
+   - Сервер отвечает `ServerHello`, выбирает параметры, передает сертификат и завершает рукопожатие.
+   - При наличии ECH поле SNI шифруется на стороне клиента.
+   - При mTLS сервер запрашивает сертификат у клиента.
+3. **Возобновление сессии**: При повторном визите клиент использует Session ID или Session Ticket для сокращения рукопожатия до 1-RTT или 0-RTT.
+4. **Прикладной обмен**: Данные передаются через защищенный канал. При kTLS шифрование выполняется в ядре, что позволяет использовать `sendfile()` без копирования в user-space.
+5. **Завершение**: При закрытии соединения сессия может быть сохранена в кэш для будущего использования (время хранения определяется `ssl_session_timeout`).
 
 ### Encrypted Client Hello (ECH)
 
@@ -38,7 +68,7 @@ Nginx требует передачи «полной цепочки» (Full Chai
 
 ### Постквантовая криптография (PQC)
 
-Защита от атак «Harvest Now, Decrypt Later» с использованием будущих квантовых компьютеров. 
+Защита от атак «Harvest Now, Decrypt Later» с использованием будущих квантовых компьютеров.
 - **Реализация**: В 2026 году **OpenSSL 3.5 LTS+** и **OpenSSL 4.0** включают поддержку алгоритма **ML-KEM (Kyber)** по умолчанию.
 - **Гибридный обмен**: Nginx автоматически использует гибридные схемы (например, `X25519MLKEM768`), сочетающие классическую эллиптическую криптографию и квантово-устойчивые алгоритмы для обеспечения максимальной безопасности без потери совместимости.
 
@@ -79,20 +109,339 @@ Nginx требует передачи «полной цепочки» (Full Chai
 
 ## Практические сценарии
 
-В данном разделе представлены ссылки на детализированные инструкции по настройке конкретных аспектов TLS в Nginx. Выбор руководства зависит от ваших требований к безопасности, производительности и совместимости.
+### Установка и первоначальная настройка
 
-| Направление | Что внутри | Файл |
+#### Предварительные требования
+
+Перед настройкой TLS в Nginx убедитесь, что система соответствует требованиям 2026 года:
+
+```bash
+# Проверка версии Nginx и версии OpenSSL, с которой он собран
+nginx -V 2>&1 | grep -o 'built with OpenSSL [0-9.]\+'
+
+# Проверка поддержки HTTP/3 (модуль ngx_http_v3_module)
+nginx -V 2>&1 | grep -o 'http_v3_module'
+
+# Проверка поддержки kTLS в ядре Linux (требуется ядро 5.10+)
+uname -r
+```
+
+**Минимальные версии компонентов (2026):**
+- **Nginx**: 1.30+ (Stable) или 1.29+ (Mainline)
+- **OpenSSL**: 3.5 LTS+ (рекомендуется 4.0 для ECH)
+- **Ядро Linux**: 5.10+ (для kTLS)
+
+#### Получение сертификатов
+
+Для публичных сервисов рекомендуется использование Let's Encrypt. Процесс получения сертификатов для двойного стека RSA + ECDSA:
+
+```bash
+# Установка certbot (Debian/Ubuntu)
+sudo apt install certbot
+
+# Получение ECDSA-сертификата (P-256)
+sudo certbot certonly --nginx -d example.com -d www.example.com --key-type ecdsa --elliptic-curve P-256
+
+# Получение RSA-сертификата (4096 бит) для резервной совместимости
+sudo certbot certonly --nginx -d example.com -d www.example.com --key-type rsa --rsa-key-size 4096
+```
+
+Сертификаты сохраняются в `/etc/letsencrypt/live/example.com/` (ECDSA) и `/etc/letsencrypt/live/example.com-rsa/` (RSA).
+
+#### Базовая конфигурация виртуального хоста
+
+Пример минимального рабочего конфига `/etc/nginx/conf.d/example.com.conf`:
+
+```nginx
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+
+    server_name example.com www.example.com;
+
+    # Пути к сертификатам (ECDSA приоритет, RSA резерв)
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    ssl_certificate     /etc/letsencrypt/live/example.com-rsa/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com-rsa/privkey.pem;
+
+    # Глобальные параметры TLS наследуются из блока http
+
+    location / {
+        proxy_pass http://backend_upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+#### Редирект HTTP → HTTPS
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    # Исключение для ACME-проверок (HTTP-01)
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+```
+
+#### Проверка и применение конфигурации
+
+```bash
+# Проверка синтаксиса конфигурации
+sudo nginx -t
+
+# Перезагрузка конфигурации без потерь соединений
+sudo nginx -s reload
+
+# Проверка активных TLS-сессий
+sudo ss -tnp | grep :443 | grep ESTAB
+```
+
+### Настройка нативной QUIC и HTTP/3
+
+```nginx
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    listen 443 quic;
+    listen [::]:443 quic;
+    http2 on;
+    http3 on;
+
+    # Защита от UDP-флуда и атак с подменой IP
+    quic_retry on;
+
+    # Информирование клиентов о поддержке HTTP/3
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+
+    # ... остальные настройки TLS ...
+}
+```
+
+## Операции и команды
+
+### Управление службой Nginx
+
+| Действие | Команда | Примечание |
 | :--- | :--- | :--- |
-| **Базовая настройка** | Listen 443, пути к ключам, редиректы с 80 порта | [Виртуальные хосты TLS](./nginx_tls_virtual_host_config.md) |
-| **Усиление защиты** | Выбор шифров, TLS 1.3, HSTS, OCSP Stapling | [Глобальные параметры TLS](./nginx_tls_global_parameters.md) |
-| **Взаимная аутентификация** | Настройка mTLS, проверка клиентских сертификатов | [Настройка mTLS в Nginx](./nginx_mtls_configuration.md) |
-| **Troubleshooting** | Ошибки рукопожатия, проблемы с цепочками, отладка | [Диагностика и совместимость](./nginx_tls_troubleshooting_and_compatibility.md) |
+| **Проверка конфигурации** | `nginx -t` | Обязательно выполнять перед reload |
+| **Перезагрузка конфигурации** | `nginx -s reload` | Graceful reload, без разрыва соединений |
+| **Принудительная перезагрузка** | `nginx -s reopen` | Повторное открытие лог-файлов |
+| **Остановка** | `nginx -s stop` | Быстрая остановка |
+| **Корректное завершение** | `nginx -s quit` | Ожидание завершения текущих запросов |
+| **Статус через systemd** | `systemctl status nginx` | Проверка активного статуса |
+
+### Диагностика TLS-соединений
+
+| Инструмент | Команда | Назначение |
+| :--- | :--- | :--- |
+| **openssl s_client** | `openssl s_client -connect domain.com:443 -servername domain.com -status` | Проверка цепочки, шифра, OCSP, версии TLS |
+| **openssl s_client (QUIC)** | `openssl s_client -connect domain.com:443 -servername domain.com -alpn h3` | Проверка поддержки HTTP/3 через ALPN |
+| **openssl x509** | `openssl x509 -in fullchain.pem -text -noout` | Просмотр деталей сертификата |
+| **openssl verify** | `openssl verify -CAfile ca.crt fullchain.pem` | Проверка цепочки доверия |
+| **curl (HTTP/3)** | `curl --http3 -v -I https://domain.com` | Проверка работоспособности QUIC |
+| **ss** | `ss -ulpn \| grep :443` | Проверка UDP-порта для HTTP/3 |
+| **openssl speed** | `openssl speed -evp aes-256-gcm` | Бенчмарк производительности шифрования |
+
+### Мониторинг TLS-сессий
+
+```bash
+# Количество активных TLS-сессий в разделяемой зоне
+# (требует ngx_http_stub_status_module)
+curl http://127.0.0.1/nginx_status
+
+# Анализ аудит-лога TLS
+awk '{print $8}' /var/log/nginx/tls_audit.log | sort | uniq -c | sort -rn
+```
+
+### Верификация после изменений
+
+```bash
+# 1. Проверка синтаксиса
+nginx -t
+
+# 2. Перезагрузка
+systemctl reload nginx
+
+# 3. Внешняя проверка через SSL Labs
+# Откройте https://www.ssllabs.com/ssltest/ и введите домен
+
+# 4. Локальная проверка протокола и шифра
+openssl s_client -connect domain.com:443 -servername domain.com -status 2>&1 | grep -E "Protocol|Cipher|OCSP"
+```
+
+## Устранение неполадок
+
+### Типичные ошибки TLS
+
+| Ошибка в логе / симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| `no shared cipher` | Нет пересечения в поддерживаемых шифрах между клиентом и сервером. | Проверьте `ssl_ciphers` в глобальных параметрах. В 2026 используйте только AEAD-шифры. |
+| `alert handshake failure (40)` | Клиент не передал SNI, несовместимая версия TLS или сервер требует mTLS. | Проверьте наличие SNI у клиента. Убедитесь, что `ssl_protocols` включает нужную версию. |
+| `certificate verify failed` | Ошибка в `ssl_client_certificate` или просроченный сертификат. | Убедитесь, что файл содержит всю цепочку до Root CA. Проверьте срок действия: `openssl x509 -in cert.pem -noout -dates`. |
+| `0-RTT early data rejected` | Клиент отправил Early Data, но бэкенд не настроен на их прием. | Включите `proxy_set_header Early-Data $ssl_early_data;` или отключите `ssl_early_data`. |
+| `ECH decryption failed` | Неверные ключи ECH в `ssl_ech_file` или отсутствие DNS-записей. | Обновите конфигурацию ECH и убедитесь, что DNS содержит записи HTTPS/SVCB. |
+| `SSL_do_handshake() failed` | Несовместимость версий OpenSSL или неверные пути к ключам. | Проверьте права доступа к файлам сертификатов и ключей. Убедитесь, что ключ соответствует сертификату. |
+
+### Диагностика совместимости клиентов
+
+```bash
+# Проверка поддержки TLS 1.3 конкретным клиентом
+openssl s_client -connect domain.com:443 -servername domain.com -tls1_3
+
+# Проверка цепочки сертификатов с детальным выводом
+openssl s_client -connect domain.com:443 -servername domain.com -showcerts -CAfile /etc/ssl/certs/ca-certificates.crt
+
+# Проверка поддержки HTTP/3
+curl --http3 -I https://domain.com 2>&1 | grep -i "alt-svc"
+```
+
+### Внешний аудит
+
+Для публичных сервисов используйте **SSL Labs Server Test** ([https://www.ssllabs.com/ssltest/](https://www.ssllabs.com/ssltest/)).
+
+**На что смотреть (2026):**
+- **Grade A+**: Требует наличия HSTS и отсутствия устаревших шифров.
+- **Chain issues**: Ошибки «Extra download» указывают на отсутствие Intermediate CA в `ssl_certificate`.
+- **PQC Support**: Проверка готовности к постквантовым атакам (Hybrid ML-KEM).
+
+### Логирование для аудита
+
+Для анализа совместимости реальных клиентов добавьте расширенный формат лога:
+
+```nginx
+log_format tls_audit '$remote_addr [$time_local] "$request" '
+                     'proto:$ssl_protocol cipher:$ssl_cipher '
+                     'curve:$ssl_curves ech:$ssl_ech_status';
+
+server {
+    access_log /var/log/nginx/tls_audit.log tls_audit;
+}
+```
+
+Для повышения детализации отладки установите уровень логирования `info` в блоке `http` или `main`:
+
+```nginx
+error_log /var/log/nginx/error.log info;
+```
+
+Детальная информация по отладке: **[Диагностика TLS/SSL в Nginx и совместимость клиентов](./nginx_tls_troubleshooting_and_compatibility.md)**.
+
+## Рекомендации и лучшие практики
+
+### Чеклист безопасности TLS (2026)
+
+- [ ] **Протоколы**: TLS 1.0 и 1.1 отключены; разрешены только TLSv1.2 и TLSv1.3.
+- [ ] **Шифры**: Используются только AEAD-шифры (AES-GCM, ChaCha20-Poly1305).
+- [ ] **PFS**: Включены алгоритмы ECDHE с гибридными кривыми (X25519MLKEM768).
+- [ ] **Цепочка сертификатов**: `ssl_certificate` содержит полную цепочку (Leaf + Intermediate). Корневой сертификат не включается.
+- [ ] **OCSP Stapling**: Включен на глобальном уровне с указанием резолвера.
+- [ ] **HSTS**: Заголовок установлен с `max-age=63072000; includeSubDomains; preload`.
+- [ ] **Default Server**: Настроен `ssl_reject_handshake on` для защиты от сканирования SNI.
+- [ ] **Кэширование сессий**: `ssl_session_cache shared:SSL:10m;` и `ssl_session_timeout 1d;`.
+- [ ] **Билеты сессий**: Отключены (`ssl_session_tickets off`) или настроена автоматическая ротация.
+- [ ] **kTLS**: Включен на уровне OpenSSL (`ssl_conf_command Options +KTLS`) для повышения производительности.
+- [ ] **Версия сервера**: Скрыта (`server_tokens off`).
+- [ ] **Сертификаты**: Резервное копирование приватных ключей в защищенном хранилище (например, HashiCorp Vault или зашифрованный архив).
+- [ ] **Автоматизация**: Настроен Certbot или аналогичный инструмент для автоматического обновления сертификатов.
+
+### Операционные рекомендации
+
+**Ротация сертификатов:**
+- Настраивайте автоматическое обновление за 30 дней до истечения срока действия.
+- Проверяйте работу таймера systemd: `systemctl list-timers | grep certbot`.
+- После обновления перезагружайте Nginx: `nginx -s reload`.
+
+**Мониторинг истечения:**
+- Добавьте в мониторинг (Prometheus + Node Exporter или Zabbix) проверку срока действия сертификатов.
+- Команда для ручной проверки: `echo | openssl s_client -connect domain.com:443 -servername domain.com 2>/dev/null | openssl x509 -noout -dates`.
+
+**Разделение обязанностей:**
+- Глобальные параметры TLS (`ssl_protocols`, `ssl_ciphers`, `ssl_ecdh_curve`) хранятся в `nginx.conf` (блок `http`).
+- Сертификаты и ключи хранятся в `/etc/nginx/ssl/` или `/etc/letsencrypt/live/`.
+- Права доступа: конфигурационные файлы — `root:root 640`, директория с сертификатами — `root:www-data 750`.
+
+### Производительность
+
+- **ECDSA vs RSA**: Используйте ECDSA (P-256/P-384) для новых сертификатов. Размер ключа меньше, скорость рукопожатия выше.
+- **kTLS**: Включайте на высоконагруженных серверах с большим объемом статики. Тестируйте на совместимость с HTTP/2.
+- **Буферы**: Настройка `ssl_buffer_size 4k` ускоряет передачу первого пакета при 0-RTT.
+- **Сессии**: `ssl_session_cache shared:SSL:10m` — оптимальный размер для большинства серверов. Для высоконагруженных увеличивайте до `20m` или `50m`.
+
+### Совместимость клиентов (Baseline 2026)
+
+| Категория | Поддержка | Рекомендация |
+| :--- | :--- | :--- |
+| **Современные (Chrome 125+, FF 125+)** | TLS 1.3, HTTP/3, ECH, Hybrid PQC | Полная поддержка всех функций безопасности 2026 года. |
+| **Apple (iOS 18+, macOS 15+)** | TLS 1.3, HTTP/3, Hybrid PQC | ECH поддерживается нативно при наличии DNS HTTPS записей. |
+| **Legacy Android (8.0 - 11.0)** | TLS 1.2 / 1.3 | Требуют наличия ECDHE-AES-GCM шифров для работы. |
+| **Инфраструктурные (Java 11, Go 1.22+)** | TLS 1.3 | Поддерживают современный TLS, но могут не поддерживать ECH. |
+
+**Важное замечание**: TLS 1.0 и 1.1 полностью выведены из эксплуатации. В Nginx 1.30+ поддержка этих протоколов может быть удалена на уровне сборки.
+
+### Взаимная TLS (mTLS)
+
+Для сценариев, требующих аутентификации клиента (M2M, API, админ-панели), используйте взаимный TLS. Подробная инструкция: **[Настройка mTLS в Nginx](./nginx_mtls_configuration.md)**.
+
+### Глобальная конфигурация (эталон)
+
+Пример эталонного блока `http` для `/etc/nginx/nginx.conf`:
+
+```nginx
+http {
+    # Версии протоколов
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Шифры (только AEAD)
+    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305';
+    ssl_prefer_server_ciphers off;
+
+    # Кэширование сессий
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    # Гибридная постквантовая криптография
+    ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1:secp384r1;
+
+    # OCSP Stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    resolver_timeout 5s;
+
+    # Оптимизация производительности
+    ssl_buffer_size 4k;
+    ssl_conf_command Options +KTLS;
+
+    # Сокрытие версии
+    server_tokens off;
+}
+```
+
+Детальная настройка глобальных параметров: **[Глобальные параметры TLS в Nginx](./nginx_tls_global_parameters.md)**.
 
 ## Дополнительная информация
 
 ### См. также
 
-*   **[Руководство по безопасности Nginx](../nginx_security_guide.md)** — комплексные меры защиты сервера.
-*   **[Инфраструктура открытых ключей (PKI)](../../../../Security/Concepts/pki_overview.md)** — архитектура центров сертификации.
-*   **[Оптимизация производительности Nginx](../../Performance/nginx_performance_tuning.md)** — системный тюнинг (kTLS, буферы).
-*   **[Конфигурация HTTP/2 и HTTP/3](../../Performance/nginx_http_versions.md)** — детальная настройка современных протоколов.
+- **[Руководство по безопасности Nginx](../nginx_security_guide.md)** — комплексные меры защиты сервера.
+- **[Инфраструктура открытых ключей (PKI)](../../../../Security/Concepts/pki_overview.md)** — архитектура центров сертификации.
+- **[Оптимизация производительности Nginx](../../Performance/nginx_performance_tuning.md)** — системный тюнинг (kTLS, буферы).
+- **[Конфигурация HTTP/2 и HTTP/3](../../Performance/nginx_http_versions.md)** — детальная настройка современных протоколов.
+- **[Диагностика TLS/SSL в Nginx и совместимость клиентов](./nginx_tls_troubleshooting_and_compatibility.md)** — отладка ошибок рукопожатия и матрица совместимости.
+- **[Протокол TLS — системный обзор](../../../../Networking/Protocols/tls.md)** — теория рукопожатия, шифров и возобновления сессий.

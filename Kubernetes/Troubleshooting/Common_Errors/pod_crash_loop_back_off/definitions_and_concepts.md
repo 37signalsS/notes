@@ -265,11 +265,20 @@ dmesg | grep -i "oom\|killed process"
 - **[Pressure Stall Information (PSI)](../../../../Linux/Core/kernel/psi.md)** — мониторинг давления на ресурсы.
 - **[eBPF в Kubernetes](../../../../Kubernetes/Networking/Network/CNI/ebpf.md)** — глубокая трассировка через Inspektor Gadget.
 - **[terminationMessage и диагностика](../../../Base/Pod/pod_advanced_topics.md)** — запись причины падения в файл.
+- **[NetworkPolicy](../../../../Kubernetes/Networking/Network/NetworkPolicy/definitions.md)** — сетевая изоляция подов.
+- **[ResourceQuota и LimitRange](../../../../Kubernetes/Scheduling/qos_limit_and_requests.md)** — управление квотами ресурсов.
+- **[Pod Security Standards (PSS/PSA)](../../../../Kubernetes/Base/secrets/pod_security_and_secrets.md)** — контроль безопасности подов.
+- **[Admission Controllers](../../../../Kubernetes/Concepts/admission_controllers.md)** — вебхуки допуска подов.
+- **[Service Mesh: Концепции](../../../../Service_Mesh/service_mesh_concepts.md)** — архитектура sidecar, mTLS.
+- **[Helm: Безопасность](../../../../Kubernetes/ToolsUtilities/Helm/Advanced/security_best_practices.md)** — best practices для production.
+- **[ArgoCD: Установка](../../../../GitOps/ArgoCD/argocd_installation_and_setup.md)** — базовая настройка GitOps.
+- **[Graceful Termination](../../../../Kubernetes/Networking/Network/traffic_path.md)** — настройка drain и PreStop hooks.
 
 ---
 
 ### Ссылки
 
 - **[Диагностика CrashLoopBackOff](./diagnostics.md)** — пошаговый алгоритм поиска неисправностей.
-- **[Распространенные решения](./common_cases_and_solutions.md)** — разбор типовых кейсов.
+- **[Распространенные решения](./common_cases_and_solutions.md)** — разбор типовых кейсов (30 сценариев).
 - **[Продвинутые темы](./advanced_topics.md)** — автоматизация и глубокая отладка (eBPF, Cgroup v2, Native Sidecars).
+- **[Runbook: CrashLoopBackOff](./runbook.md)** — шаблон для дежурного инженера.

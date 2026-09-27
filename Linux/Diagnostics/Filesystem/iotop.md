@@ -6,6 +6,11 @@
 - **IO> (I/O Wait):** Процент времени, в течение которого процесс ожидал завершения операций ввода-вывода (нахождение в состоянии `D` — uninterruptible sleep). Рассчитывается на основе статистики `taskstats` ядра.
 - **DISK READ/WRITE:** Мгновенная скорость чтения и записи данных процессом (в байтах/с, КБ/с или МБ/с).
 - **SWAPIN:** Процент времени, затраченного процессом на подкачку страниц из Swap в оперативную память. Высокий показатель указывает на критическую нехватку RAM.
+- **D-state (Uninterruptible Sleep):** Состояние процесса, заблокированного в ожидании завершения операции ввода-вывода или другого ресурса на уровне ядра. Процесс в этом состоянии не может быть прерван сигналами, включая `SIGKILL`, и напрямую увеличивает показатель `Load Average`.
+- **taskstats:** Интерфейс ядра Linux (через Netlink-сокеты), предоставляющий детальную статистику задержек и I/O для каждой задачи (task). Основа для работы `iotop` и `pidstat -d/-w`.
+- **kworker:** Ядерный поток (kthread), выполняющий фоновые операции, включая сброс грязных страниц (writeback). Часто отображается в `iotop` вместо исходного процесса-писателя.
+- **PSI (Pressure Stall Information):** Механизм ядра Linux (начиная с v4.20), позволяющий количественно оценить время ожидания ресурсов CPU, памяти и I/O. Показывает реальное «голодание» системы, даже если `iowait` низок.
+- **cgroups v2 I/O controller:** Механизм ограничения и приоритизации дисковых операций на уровне control groups. Позволяет задавать веса (`io.weight`) или жесткие лимиты (`io.max`) для групп процессов.
 - **iotop-c:** Современная реализация утилиты на языке C. Она значительно производительнее оригинальной версии на Python, потребляет на порядок меньше ресурсов и поддерживает дополнительные фильтры. Часто является версией по умолчанию в современных дистрибутивах (Debian 12+, Arch, Fedora).
 
 ## Основные концепции
@@ -14,11 +19,36 @@
 
 ### Механизм взаимодействия с ядром
 
-Утилита получает данные через **Netlink-сокеты**, используя интерфейс `taskstats`. Ядро Linux собирает статистику I/O для каждой задачи (task), если включены соответствующие опции. 
+Утилита получает данные через **Netlink-сокеты**, используя интерфейс `taskstats`. Ядро Linux собирает статистику I/O для каждой задачи (task), если включены соответствующие опции. Данные обновляются периодически, и `iotop` вычисляет разницу между сэмплами для определения скорости.
 
 **Ключевые отличия реализаций:**
 1.  **Python-версия:** Требует интерпретатор, может создавать заметную нагрузку на CPU (до 5–10% на нагруженных системах) при обработке тысяч потоков.
 2.  **C-версия (iotop-c):** Минимальный оверхед, более плавный интерфейс, расширенная поддержка Unicode и дополнительные возможности сортировки.
+
+### Ограничения сэмплирования
+
+`iotop` делает моментальные снимки (snapshots) с заданным интервалом (по умолчанию 1 секунда). Кратковременные всплески записи (менее 1 секунды) могут не попасть в отчет. Для их поимки лучше использовать `pidstat -d 1` или eBPF-инструменты (`biosnoop-bpfcc`).
+
+### Сравнение с альтернативными инструментами
+
+| Инструмент | Уровень | Преимущества | Ограничения |
+| :--- | :--- | :--- | :--- |
+| **`iotop`** | Процесс | Интерактивный поиск виновника в реальном времени, группировка потоков | Пропускает всплески < 1с, не видит `io_uring`, требует root/Netlink |
+| **`pidstat -d`** | Процесс | Точная интервальная статистика, CSV-экспорт, cron-формат | Не отображает ядерные потоки (`writeback`), не видит `io_uring` |
+| **`/proc/<pid>/io`** | Процесс | Точный счетчик байтов, включая кэшированные операции | Мгновенный снимок, нет истории, нет сортировки |
+| **`biolatency-bpfcc`** | Блок | Визуализирует Tail Latency через гистограммы, видит `io_uring` | Требует eBPF, дает накладные расходы при High I/O |
+
+### Фильтрация по cgroups v2
+
+В современных системах с systemd и контейнерами полезно фильтровать по unit-файлам или cgroup:
+
+```bash
+# Мониторинг только процессов из cgroup systemd-сервиса
+sudo iotop -P -o -C system.slice/postgresql.service
+
+# Или через grep (если iotop не поддерживает -C)
+sudo iotop -P -o | grep postgres
+```
 
 ## Практические сценарии
 
@@ -39,17 +69,121 @@ sudo iotop -a
 sudo iotop -P -o
 ```
 
-### Диагностика специфических нагрузок
+### Мониторинг системных служб (systemd)
 
 ```bash
-# Мониторинг активности конкретного пользователя (например, nginx или postgres)
+# Мониторинг конкретного пользователя (например, nginx или postgres)
 sudo iotop -u postgres
 
 # Мониторинг группы конкретных PID (например, при подозрении на утечку в приложении)
 sudo iotop -p 1234,5678,9012
 ```
 
-### Использование в пакетном режиме (Batch mode)
+### Диагностика Swap-активности
+
+Высокий `SWAPIN` в `iotop` указывает на то, что процесс actively использует swap. Это критично для производительности:
+
+```bash
+# Сортировка по SWAPIN для поиска процессов, тормозящих из-за нехватки RAM
+sudo iotop -o -a | sort -k5 -rn | head -n 10
+
+# Проверка общей ситуации с памятью
+free -h
+vmstat 1 5
+```
+
+### Использование в Docker-контейнерах
+
+Внутри Docker `iotop` может не видеть данных, если не запущен с флагом `--privileged` или не имеет доступа к `/proc` хоста и Netlink-интерфейсу.
+
+```bash
+# Быстрый тест внутри контейнера (требует --privileged)
+docker run --rm --privileged -v /tmp/fio-test:/data alpine sh -c "
+  apk add --no-cache fio iotop && \
+  fio --name=seq-read --directory=/data --rw=read --bs=1M --size=512M \
+      --numjobs=1 --runtime=30 --group_reporting && \
+  iotop -o -b -n 1
+"
+
+# Или через nsenter на хосте для конкретного контейнера
+CONTAINER_ID=$(docker ps -qf "name=myapp")
+PID=$(docker inspect --format '{{.State.Pid}}' $CONTAINER_ID)
+sudo nsenter -t $PID -n iotop -o -d 1 -n 5
+```
+
+### Использование в Kubernetes (Pod / Job)
+
+Для мониторинга в Kubernetes pod должен иметь доступ к PID-пространству хоста и привилегированным capability:
+
+```yaml
+# iotop-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: iotop-debug
+spec:
+  hostPID: true
+  containers:
+  - name: iotop
+    image: alpine:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      apk add --no-cache iotop && \
+      iotop -o -b -n 3 -d 2
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: host-proc
+      mountPath: /proc
+  volumes:
+  - name: host-proc
+    hostPath:
+      path: /proc
+```
+
+```bash
+# One-liner для быстрого дебага
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: iotop-debug
+spec:
+  hostPID: true
+  containers:
+  - name: iotop
+    image: alpine:latest
+    command: ["/bin/sh", "-c"]
+    args: ["apk add --no-cache iotop && iotop -o -b -n 3 -d 2"]
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: host-proc
+      mountPath: /proc
+  volumes:
+  - name: host-proc
+    hostPath:
+      path: /proc
+EOF
+```
+
+### База данных: PostgreSQL / MySQL
+
+Для СУБД важно анализировать не только общую активность, но и отдельные потоки (WAL writer, checkpointer, bgwriter):
+
+```bash
+# Поиск процессов PostgreSQL с highest I/O
+sudo iotop -oP -u postgres
+
+# Если WAL writer создает пиковые нагрузки:
+# В postgresql.conf: wal_buffers, checkpoint_timeout, max_wal_size
+
+# MySQL: поиск процессов InnoDB
+sudo iotop -oP -u mysql
+```
+
+### Пакетный режим и автоматизация (Batch mode)
 
 Полезно для сбора статистики в фоновом режиме или через скрипты автоматизации.
 
@@ -57,6 +191,35 @@ sudo iotop -p 1234,5678,9012
 # Вывод 5 итераций с интервалом в 2 секунды с меткой времени
 sudo iotop -b -n 5 -d 2 -t > /tmp/iotop_report.txt
 # → результат: текстовый файл с логом активности, удобный для grep
+
+# Сбор данных с указанием интервала и количества итераций
+sudo iotop -b -n 10 -d 1 -t -o > /tmp/iotop_cumulative.txt
+```
+
+### Автоматизация и парсинг вывода
+
+```bash
+# Извлечение топ-5 процессов по записи
+sudo iotop -b -n 1 -o | tail -n +4 | sort -k4 -rn | head -n 5
+
+# JSON-подобный вывод для Python-скриптов
+sudo iotop -b -n 1 -o -t > /tmp/iotop_snapshot.txt
+```
+
+**Пример анализа на Python:**
+
+```python
+import re
+
+with open('/tmp/iotop_snapshot.txt') as f:
+    lines = f.readlines()
+
+print(f"{'PID':<8} {'COMM':<20} {'DISK READ':>12} {'DISK WRITE':>12} {'SWAPIN':>8} {'IO>':>8}")
+print("-" * 70)
+for line in lines:
+    parts = line.strip().split()
+    if len(parts) >= 7 and parts[0].isdigit():
+        print(f"{parts[0]:<8} {parts[1]:<20} {parts[2]:>12} {parts[3]:>12} {parts[4]:>8} {parts[5]:>8}")
 ```
 
 ### Интерактивные команды (Hotkeys)
@@ -73,7 +236,22 @@ sudo iotop -b -n 5 -d 2 -t > /tmp/iotop_report.txt
 | **`q`** | Выход из программы |
 | **`Left/Right`** | Смена колонки для сортировки (READ, WRITE, IO, SWAPIN) |
 
-## Дополнительная информация
+## Установка
+
+```bash
+# Debian / Ubuntu
+sudo apt install iotop
+
+# RHEL / CentOS / Fedora
+sudo dnf install iotop
+
+# Arch Linux
+sudo pacman -S iotop
+
+# Проверка версии
+iotop --version
+# → iotop 0.6 (C version) или iotop 0.4 (Python version)
+```
 
 ### Требования к ядру
 
@@ -88,16 +266,61 @@ grep -E 'TASKSTATS|TASK_DELAY_ACCT|TASK_IO_ACCOUNTING' /boot/config-$(uname -r)
 # → результат: CONFIG_TASKSTATS=y ... (все три должны быть 'y')
 ```
 
+## Типичные ошибки и диагностика
+
+| Ошибка / Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| `iotop` показывает нули, хотя диск загружен | I/O через `io_uring` или writeback ядра | Используйте `pidstat -d`, `biosnoop-bpfcc`, `perf record -e block:block_rq_issue` |
+| Нет данных для конкретного PID | `/proc/<pid>/io` недоступен (hidepid, контейнер) | Запустите с `--privileged` или проверьте права доступа |
+| Низкий IOPS на NVMe | Планировщик `mq-deadline`/`bfq` или неверный `ioengine` | Переключите планировщик на `none`; проверьте `iostat -xz 1` |
+| Высокое `slat` относительно `clat` | Проблема в планировщике, NUMA, или переключении контекста | Проверьте `cpus_allowed`, `numactl --hardware`, планировщик устройства |
+| Высокий `SWAPIN` у процессов | Критическая нехватка RAM | Увеличьте RAM, проверьте `vm.swappiness`, найдите потребители через `smem` |
+| `EACCES` при запуске | Недостаточно прав для доступа к `taskstats` | Используйте `sudo` или добавьте в группу `adm`/`wheel` |
+| Контейнер не видит хостовые процессы | Недостаточно привилегий | Запустите с `--privileged`, `--pid=host`, или используйте `nsenter` |
+| Высокое потребление CPU при `hipri=1` | Режим Polling исключает прерывания | Нормально для latency-тестов; уменьшите `numjobs` или отключите `hipri` |
+
+## Мониторинг во время использования iotop
+
+```bash
+# В отдельном терминале
+iostat -x 1 5          # Дисковая подсистема (%util, await, aqu-sz)
+mpstat -P ALL 1 5      # Распределение нагрузки по ядрам CPU
+vmstat 1 5             # Сводная статистика (r, b, si, so)
+nstat -az 1            # TCP-статистика (retransmits) для iSCSI/NVMe-oF
+sar -n DEV 1           # Сетевая активность
+
+# Для NVMe
+sudo nvme smart-log /dev/nvme0 | grep -E 'Temperature|Percentage Used'
+
+# Для PSI
+cat /proc/pressure/io
+```
+
+## Дополнительная информация
+
 ### Ограничения и нюансы
 
-1.  **Проблема сэмплирования:** `iotop` делает моментальные снимки (snapshots). Кратковременные всплески записи (менее 1 секунды) могут не попасть в отчет. Для их поимки лучше использовать `pidstat -d 1`.
+1.  **Проблема сэмплирования:** `iotop` делает моментальные снимки (snapshots). Кратковременные всплески записи (менее 1 секунды) могут не попасть в отчет. Для их поимки лучше использовать `pidstat -d 1` или `biosnoop-bpfcc`.
 2.  **«Невидимый» ввод-вывод:** Иногда `iotop` может не показывать нагрузку, хотя диск занят на 100%. Это часто связано с работой системных потоков (kworker/flush) или кэшированием. Подробнее: **[Невидимый ввод-вывод: почему iotop «врет»](../Performance/DiskIO/invisible_io.md)**.
 3.  **Контейнеризация:** Внутри Docker/LXC `iotop` может не видеть данных, если не запущен с флагом `--privileged` или не имеет доступа к `/proc` хоста и Netlink-интерфейсу.
 4.  **NVMe и SSD:** На сверхбыстрых накопителях время ожидания (`IO>`) часто стремится к нулю, так как операции завершаются мгновенно. В таких случаях следует ориентироваться на колонки `DISK READ/WRITE`.
+5.  **`io_uring` и современные СУБД:** Базы данных нового поколения (ScyllaDB, PostgreSQL с `io_uring`) могут создавать нагрузку, невидимую для `iotop`. Используйте `perf record -e 'block:block_rq_issue'` или `biotop` через eBPF.
+6.  **NUMA locality:** Привязывайте `iotop` к ядрам NUMA-ноды, к которой относится тестируемый диск. Используйте `numactl --cpunodebind=X --membind=X iotop ...`.
+
+### Рекомендации по чистоте эксперимента
+
+1.  **Запуск от root:** Для получения полной статистики по всем процессам используйте `sudo`. Без привилегий `iotop` покажет только процессы текущего пользователя.
+2.  **Идентификация `kworker`:** Если видите нагрузку на `kworker/u*:flush-*`, используйте `bpftrace` для атрибуции исходному процессу:
+    ```bash
+    sudo bpftrace -e 'tracepoint:writeback:writeback_dirty_page { @[comm] = count(); }'
+    ```
+3.  **Корреляция с `iostat`:** Всегда сверяйте вывод `iotop` с `iostat -xz 1`. Если `iotop` показывает активность, но `await` низкий — нагрузка проходит через Page Cache (writeback).
+4.  **Серийный номер диска:** Для точной идентификации устройства используйте `lsblk -o NAME,SERIAL,SIZE,ROTA` и сверяйте с `iostat`.
 
 ### См. также
 
 - [Управление приоритетами ввода-вывода (ionice)](./ionice.md)
 - [Диагностика производительности дисков (iostat)](./iostat.md)
 - [Сбор статистики процессов (pidstat)](../Processes/pidstat.md)
+- [Невидимый ввод-вывод: почему iotop «врет»](../Performance/DiskIO/invisible_io.md)
 - [Диагностика дисковых узких мест в БД](../../../Databases/db_disk_bottleneck_troubleshooting.md)

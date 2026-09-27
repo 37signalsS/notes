@@ -88,7 +88,7 @@ EDA решает эти проблемы через модель **push**: вн�
 
 Для обратной совместимости старые имена (`ansible.eda.*`) всё ещё работают и автоматически маппятся на `eda.builtin`, но **не поддерживаются активно** в коллекции `ansible.eda`.
 
-### Устаревшие плагины (мигрировали в community.eda или cloud-коллекции)
+### Устаревшие плагины (мигрировали в community.eda)
 
 | Старое пространство имён | Новое пространство имён | Примечание |
 | :--- | :--- | :--- |
@@ -96,12 +96,9 @@ EDA решает эти проблемы через модель **push**: вн�
 | `ansible.eda.file_watch` | `community.eda.file_watch` | Требует DE с community.eda |
 | `ansible.eda.file` | `community.eda.file` | Требует DE с community.eda |
 | `ansible.eda.url_check` | `community.eda.url_check` | Требует DE с community.eda |
-| `ansible.eda.aws_cloudtrail` | `amazon.aws.aws_cloudtrail` | Amazon коллекция |
-| `ansible.eda.aws_sqs_queue` | `amazon.aws.aws_sqs_queue` | Amazon коллекция |
-| `ansible.eda.azure_service_bus` | `azure.azcollection.azure_service_bus` | Azure коллекция |
 | `ansible.eda.tick` | `eda.builtin.generic` или `eda.builtin.range` | Замена |
 
-**Важно:** При использовании плагинов из `community.eda` или cloud-коллекций необходимо создать кастомный Decision Environment с соответствующими зависимостями.
+**Важно:** При использовании плагинов из `community.eda` необходимо создать кастомный Decision Environment с соответствующими зависимостями.
 
 ---
 
@@ -112,8 +109,8 @@ EDA решает эти проблемы через модель **push**: вн�
 | Компонент | Минимальная версия | Рекомендуемая версия |
 | :--- | :--- | :--- |
 | Python | 3.9 | 3.11+ |
-| Ansible Core | 2.15 | 2.17+ |
-| ansible-rulebook | 1.0 | Последняя稳定ная |
+| Ansible Core | 2.15 | 2.21+ |
+| ansible-rulebook | 1.0 | Последняя стабильная |
 | Java Runtime Environment (JRE) | 17 | 21 |
 
 ### Установка ansible-rulebook
@@ -285,9 +282,6 @@ pip install -r requirements.txt
 | `community.eda.journald` | Чтение системного журнала Linux | Позволяет реагировать на специфические ошибки в системных логах. |
 | `community.eda.file_watch` | Мониторинг изменений файлов | Реакция на изменение конфигов или запись в лог-файлы. |
 | `community.eda.url_check` | Опрос доступности URL | Генерирует событие, если статус-код или содержимое изменились. |
-| `amazon.aws.aws_cloudtrail` | Аудит изменений AWS | Мониторинг действий в консоли AWS. |
-| `amazon.aws.aws_sqs_queue` | Очередь сообщений AWS SQS | Нативная интеграция с облаком Amazon. |
-| `azure.azcollection.azure_service_bus` | Очереди сообщений Azure | Нативная интеграция с облаком Microsoft. |
 
 ### Разработка собственного плагина-источника
 
@@ -628,8 +622,8 @@ rules:
 | AAP версия | Ключевые изменения EDA |
 | :--- | :--- |
 | AAP 2.5 | Первый релиз EDA Controller, Event Streams, Platform Gateway |
-| AAP 2.6 | Миграция плагинов `ansible.eda` → `eda.builtin`, новые builtin-модули |
-| AAP 2.7 | Удаление RPM-инсталлятора, PostgreSQL 17, Django 5.2, 12 content collections |
+| AAP 2.6 | Миграция плагинов `ansible.eda` → `eda.builtin`, новые builtin-модули, mTLS, event bus (Kafka) |
+| AAP 2.7 | Удаление RPM-инсталлятора, PostgreSQL 17, Django 5.2, 12 content collections, de-minimal/de-supported образы |
 
 **Пути обновления:**
 - AAP 2.4 → 2.6 → 2.7
@@ -866,22 +860,19 @@ ansible-rulebook -i inventory.yml --rulebook rulebook.yml -e env_vars.yml
 
 ---
 
-## Рекомендации и отладка
+## Лучшие практики и отладка
 
-### Использование Execution Environments
+### Использование Execution Environments и Decision Environments
 
-Всегда используйте Execution Environments для обеспечения идентичности среды разработки и эксплуатации. В AAP используйте Decision Environments — специализированные EE для EDA.
+Всегда используйте Execution Environments (EE) для обеспечения идентичности среды разработки и эксплуатации. В AAP используйте Decision Environments — специализированные EE для EDA. Собирайте кастомные DE только при необходимости подключения плагинов из `community.eda`, не добавляйте лишние зависимости.
 
-### Дедупликация
+### Идемпотентность и безопасность
 
-При использовании `run_job_template` в AAP настраивайте политики перекрытия (concurrency), чтобы не запускать одинаковые задачи слишком часто:
+EDA запускает действия в ответ на события многократно. Обеспечьте идемпотентность плейбуков и модулей, чтобы повторное срабатывание правила не привело к конфликтующим изменениям. Используйте `no_log` для задач с секретами, храните токены и пароли в Ansible Vault или внешних хранилищах секретов, никогда не фиксируйте их в rulebook.
 
-```yaml
-# В AAP API или интерфейсе
-concurrent_jobs_config:
-  max_concurrent: 3
-  job_type: "permit"
-```
+### Дедупликация и throttling
+
+При использовании `run_job_template` в AAP настраивайте политики перекрытия (concurrency), чтобы не запускать одинаковые задачи слишком часто. В rulebook используйте `throttle` с `accumulate_within` и `threshold` для подавления шумных алертов и предотвратии avalanche-эффекта при массовых сбоях.
 
 ### Память и Drools
 
@@ -890,6 +881,19 @@ concurrent_jobs_config:
 - Очищайте неиспользуемые факты через `retract_fact`.
 - Ограничивайте количество активных правил.
 - Мониторьте потребление памяти java-процесса.
+- Используйте `eda.builtin.json_filter` для сокращения объёма передаваемых данных.
+
+### Наблюдаемость для SRE
+
+Для SRE критически важно, чтобы EDA не стала «чёрным ящиком». Настройте следующие метрики и алерты:
+
+- Количество обработанных событий в минуту.
+- Количество ошибок при выполнении действий.
+- Время выполнения плейбука/модуля с момента события до завершения.
+- Потребление RAM и CPU процессом `ansible-rulebook` / `java`.
+- Размер очереди необработанных событий.
+
+Добавьте в действия `debug` или `run_module` с `ansible.builtin.assert` для проверки входных данных перед выполнением дорогих операций.
 
 ### Отладка фильтров
 
@@ -929,8 +933,14 @@ ansible-rulebook -i inventory.yml --rulebook rulebook.yml --log-file /var/log/ed
 | `Connection refused` к Kafka | Неверные параметры подключения | Проверьте `bootstrap_servers`, топик, аутентификацию |
 | Высокое потребление RAM | Большое количество фактов в Drools | Оптимизируйте правила, используйте `retract_fact` |
 | Событие не срабатывает | Неверный синтаксис условия | Используйте `debug` для просмотра структуры события |
-| `TimeoutError` при запуске playbook | Плейбук выполняется дольше таймаста | Увеличьте `json_timeout` или оптимизируйте плейбук |
+| `TimeoutError` при запуске playbook | Плейбук выполняется дольше таймаута | Увеличьте `json_timeout` или оптимизируйте плейбук |
 | Плагин из `community.eda` не найден | DE не содержит community.eda | Создайте кастомный DE с зависимостями community.eda |
+| Повторное срабатывание правила при массовых алертах | Отсутствует throttling | Добавьте `throttle` с `accumulate_within` и `threshold` |
+| Секреты в логах ansible-rulebook | Отсутствует `no_log` или Vault | Установите `no_log: true`, перенесите секреты в Vault |
+| Дерегуляция событий при рестарте rulebook | Отсутствует персистентность | Включите persistence в ansible-rulebook или EDA Controller |
+| Несовместимость пространств имён | Устаревшие имена плагинов | Обновите `ansible.eda.*` на `eda.builtin.*` |
+| Ошибки аутентификации в AAP при `run_job_template` | Неверный токен или учётные данные | Проверьте RBAC и OAuth токен в AAP Gateway |
+| Падение rulebook с `OutOfMemoryError` | Слишком большой объём фактов в Drools | Уменьшите количество правил, добавьте `retract_fact`, увеличьте лимит памяти JVM |
 
 ### Диагностические команды
 
@@ -957,12 +967,22 @@ pip list | grep -i aiokafka
 
 ## Безопасность
 
+### Общие рекомендации
+
 - **Секреты:** Никогда не храните пароли, токены или ключи API в rulebook. Используйте Ansible Vault или интеграцию с AAP Vault.
 - **HMAC-подпись:** При использовании webhook-источников настраивайте проверку подписи (HMAC) для верификации источника событий.
 - **Шифрование:** Для Kafka и PostgreSQL используйте SSL/TLS шифрование подключения.
 - **RBAC:** В AAP EDA Controller используйте Role-Based Access Control для ограничения доступа к rulebook и их действиям.
 - **Сетевая изоляция:** Ограничьте доступ к портам webhook/источников только доверенными системами.
 - **Аудит:** В AAP все запуски rulebook логируются и доступны для аудита.
+
+### Для DevOps/SRE/Sysadmin
+
+- **Управление активациями:** Храните rulebook в Git и разворачивайте через AAP проекты, чтобы иметь историю изменений и возможность rollback.
+- **Мониторинг самого EDA:** Добавьте в систему мониторинга алерты на недоступность источников событий, высокую задержку обработки и ошибки выполнения действий. EDA не должна быть точкой молчания.
+- **Средний czas reakcji (MTTR):** EDA снижает MTTR за счёт реактивного реагирования, но требует тщательного тестирования правил в staging-среде перед production.
+- **Факторы отказов:** Исключите из rulebook действия, которые могут вызвать каскадный отказ (например, массовый перезапуск всех сервисов одновременно). Используйте `locks` и ограничивайте `max_concurrent` в AAP.
+- **Хранение персистентности:** При использовании `feedback: true` или event persistence убедитесь, что хранилище событий защищено от потери данных и имеет резервное копирование.
 
 ---
 
@@ -973,3 +993,118 @@ pip list | grep -i aiokafka
 - **[Ansible Automation Platform (AAP)](./ansible-automation-platform.md)** — управление заданиями, workflow и RBAC в корпоративной среде.
 - **[Основные концепции Ansible](./ansible_core_concepts.md)** — база для понимания плейбуков.
 - **[Событийно-ориентированная архитектура](../Concepts/event-driven-architecture.md)** — теоретическая основа EDA (хореография, event sourcing, Sagas).
+
+### Дополнительные практические сценарии
+
+#### Сценарий 5: Реакция на изменения конфигурации
+
+Используется `community.eda.file_watch` для отслеживания изменений файлов конфигурации и автоматического перезапуска сервисов. Для работы требуется Decision Environment с `community.eda`.
+
+```yaml
+---
+- name: Configuration Change Monitor
+  hosts: config_servers
+  sources:
+    - community.eda.file_watch:
+        path: /etc/nginx/conf.d/
+        recursive: true
+  rules:
+    - name: Detect nginx config change
+      condition: event.type == "modified" and event.path is search("\\.conf$")
+      action:
+        run_playbook:
+          name: playbooks/reload_nginx.yml
+          extra_vars:
+            changed_file: "{{ event.path }}"
+            checksum: "{{ event.checksum }}"
+```
+
+#### Сценарий 6: Очистка временных файлов при заполнении
+
+Реакция на заполнение раздела `/tmp` или `/var/tmp` через webhook с метриками от node_exporter.
+
+```yaml
+---
+- name: Temporary Files Cleanup
+  hosts: storage_servers
+  sources:
+    - eda.builtin.webhook:
+        host: 0.0.0.0
+        port: 9091
+        # node_exporter или кастомный скрипт отправляют метрики при превышении порога
+  rules:
+    - name: tmp directory full
+      condition: event.payload.node_filesystem_avail_bytes{mountpoint="/tmp"} < 1073741824
+      action:
+        run_playbook:
+          name: playbooks/cleanup_tmp.yml
+          extra_vars:
+            filesystem: "/tmp"
+            threshold_bytes: 1073741824
+```
+
+#### Сценарий 7: Отслеживание сбоев systemd-сервисов
+
+Реакция на падение или зависание сервисов через системный журнал.
+
+```yaml
+---
+- name: Systemd Service Failure Monitor
+  hosts: all
+  sources:
+    - community.eda.journald:
+        filters:
+          _SYSTEMD_UNIT: sshd.service
+          PRIORITY: "err"
+  rules:
+    - name: SSH service failed
+      condition: event.message is search("Failed")
+      action:
+        run_playbook:
+          name: playbooks/restart_sshd.yml
+          extra_vars:
+            host: "{{ inventory_hostname }}"
+```
+
+#### Сценарий 8: Stateful-мониторинг последовательных сбоев
+
+Отслеживание количества последовательных сбоев и эскалация при превышении порога.
+
+```yaml
+---
+- name: Consecutive Failure Tracker
+  hosts: web_servers
+  sources:
+    - community.eda.url_check:
+        urls:
+          - "http://{{ inventory_hostname }}:8080/health"
+        poll_interval: 15
+        timeout: 5
+  rules:
+    - name: Track consecutive failures
+      condition: event.status == "down"
+      action:
+        set_fact:
+          key: "health_failures_{{ inventory_hostname }}"
+          value: "{{ (health_failures_{{ inventory_hostname }} | default(0)) | int + 1 }}"
+
+    - name: Escalate after 5 failures
+      condition:
+        all:
+          - event.status == "down"
+          - health_failures_{{ inventory_hostname }} >= 5
+      action:
+        run_playbook:
+          name: playbooks/escalate_unhealthy_service.yml
+          extra_vars:
+            service_name: "myapp"
+            failure_count: "{{ health_failures_{{ inventory_hostname }} }}"
+
+    - name: Reset counter on recovery
+      condition: event.status == "up"
+      action:
+        retract_fact:
+          key: "health_failures_{{ inventory_hostname }}"
+```
+
+---

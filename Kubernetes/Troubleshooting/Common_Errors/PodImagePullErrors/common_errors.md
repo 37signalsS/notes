@@ -517,3 +517,7 @@ journalctl -u containerd --since "30 min ago" > containerd.log
 - [Лучшие практики](./best_practices.md) — предотвращение ошибок в продакшене.
 - [Сетевые проблемы](./network_issues.md) — диагностика DNS, Proxy и MTU.
 - [Air-gapped кластеры](./airgapped.md) — настройка `hosts.toml` и работа в изоляции.
+- [NetworkPolicy и доступ к реестру](./network_policy_impact.md) — влияние NetworkPolicy и GlobalNetworkPolicy на image pull.
+- [Pod Security Standards и image pull](./pod_security_standards.md) — PSS/PSA и их влияние на загрузку образов.
+- [HPA и автоскейлинг](./hpa_and_scaling.md) — влияние масштабирования на image pull и rate limiting.
+- [Init-контейнеры и image pull](./init_container_image_pulls.md) — проблемы pull в init-контейнерах.

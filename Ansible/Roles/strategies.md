@@ -12,29 +12,78 @@
 
 **Function-based Role (Функциональная роль)** — роль, сгруппированная по домену ответственности или бизнес-функции (например, `monitoring_agent`, `backup_client`), объединяющая несколько компонентов для реализации конкретной функции ИТ-инфраструктуры.
 
+**Change Management (управление изменениями)** — процесс контроля всех изменений в инфраструктуре с целью минимизации рисков и влияния на производственные сервисы. В контексте Ansible роли обеспечивают атомарность и воспроизводимость изменений.
+
+**Observability (наблюдаемость)** — способность понимать внутреннее состояние системы по внешним сигналам (логи, метрики, трейсы). Роли Ansible должны генерировать структурированные логи и метрики для интеграции с системами мониторинга.
+
+**Compliance-as-Code** — практика реализации политик соответствия (PCI-DSS, HIPAA, SOC2) через код автоматизации. Структура роли должна поддерживать аудиторский след и валидацию соответствия.
+
+**Supply Chain Security (безопасность цепочки поставок)** — практики защиты контента ролей: проверка подписей, контроль версий зависимостей, аудит использованных компонентов.
+
+**Air-gapped Environment (изолированная среда)** — инфраструктурная среда без прямого выхода в интернет, требующая локальных зеркал репозиториев и предварительной загрузки всех зависимостей.
+
 ---
 
 ## Предварительные требования
 
-### Системные требования
+### Системные требования (Ansible 2.21.4)
 
-*   **Control Node:** Python 3.10+ (Ansible 2.17+)
-*   **Target Nodes:** Python 3.8+ (Ansible 2.18+ рекомендуется 3.10+)
-*   **Ansible:** 2.17+ для использования `argument_specs`, `end_role`, `public` в `include_role`
+*   **Control Node:** Требуется **Python 3.12+**.
+*   **Target Nodes:** Требуется **Python 3.9+** (для Ansible 2.21.4 рекомендуется Python 3.12+).
+*   **Ansible:** 2.7+ для `public` в `include_role`; 2.11+ для `argument_specs`; 2.18+ для `end_role`
 
 ### Инструменты
 
 ```bash
-# Проверка версии Ansible
-ansible --version
+# Установка ansible-core
+pip install ansible-core
 
-# Инициализация.roles для проверки структуры
+# Проверка версии
+ansible --version  # Должна быть 2.21.4
+
+# Инициализация роли для проверки структуры
 ansible-galaxy role init test_strategy
 rm -rf test_strategy
 
 # Линтинг перед коммитом
 ansible-lint roles/
 ```
+
+---
+
+## Архитектура и жизненный цикл роли
+
+### Как Ansible обнаруживает и загружает роли
+
+Ansible ищет роли в директориях, указанных в `roles_path` (по умолчанию `./roles` относительно плейбука, плюс `~/.ansible/roles`, `/usr/share/ansible/roles`). При вызове роли Ansible выполняет следующие этапы:
+
+1. **Обнаружение:** Проверяет наличие каталога с именем роли в путях поиска. Поддерживается FQCN (`namespace.collection.role_name`).
+2. **Загрузка зависимостей:** Выполняет роли из `meta/main.yml → dependencies` (неявные) или задачи из `tasks/main.yml` с `include_role` (явные).
+3. **Порядок компонентов:**
+   - `defaults/main.yml` — значения по умолчанию (самый низкий приоритет)
+   - `vars/main.yml` — переменные роли (высокий приоритет)
+   - `tasks/main.yml` — основная логика
+   - `handlers/main.yml` — обработчики (уведомления)
+   - `meta/main.yml` — зависимости и спецификация аргументов
+
+### Критерии выбора стратегии
+
+| Критерий | Рекомендуемая стратегия |
+| :--- | :--- |
+| Малый проект / быстрый старт | Component-based |
+| Enterprise / compliance / стандарты | Layered |
+| Высокое переиспользование кода | Composite + Utility |
+| Организационная структура по командам | Capability |
+| Максимальная гибкость, атомарные изменения | Micro-roles |
+
+### Жизненный цикл роли в инфраструктуре
+
+1. **Проектирование:** Выбор стратегии, определение интерфейса (`argument_specs.yml`), планирование зависимостей с учетом Change Management.
+2. **Реализация:** Написание задач, шаблонов, обработчиков с учетом идемпотентности и Observability.
+3. **Тестирование:** Molecule сценарии для разных ОС, check mode, интеграционное тестирование, валидация compliance.
+4. **Версионирование:** Семантическое версионирование, changelog, tagged releases, аудит Supply Chain Security.
+5. **CI/CD:** Линтинг (`ansible-lint`), тестирование в pipelines, автоматическое распространение через Galaxy или Git, проверка подписей.
+6. **Эксплуатация:** Мониторинг изменений, обновление зависимостей, аудит безопасности, обратная связь от Observability систем.
 
 ---
 
@@ -61,6 +110,7 @@ ansible-lint roles/
 - Легкое переиспользование в разных проектах
 - Четкое разделение ответственности
 - Простое обновление (каждый компонент обновляется независимо)
+- Удобство для Change Management: каждая роль = одно логическое изменение
 
 **Недостатки:**
 - Может привести к дублированию общих задач между ролями
@@ -84,6 +134,7 @@ roles/
 - Четкая иерархия зависимостей
 - Удобно для Enterprise-стандартов и compliance
 - Легко контролировать порядок выполнения
+- Поддержка аудита: каждый слой можно валидировать independently
 
 **Недостатки:**
 - Сложность в гибкости (изменение одного слоя может затронуть другие)
@@ -106,6 +157,7 @@ layers/
 - Максимальное переиспользование кода
 - Легкость добавления новых функций
 - Изоляция изменений
+- Централизованное управление общими политиками (безопасность, мониторинг)
 
 **Недостатки:**
 - Сложность отладки (много уровней абстракции)
@@ -132,6 +184,7 @@ roles/
 - Удобно для командной структуры (разные команды отвечают за разные функции)
 - Легко контролировать доступ и изменения
 - Соответствие организационной структуре
+- Удобство для Compliance: команда безопасности управляет всеми ролями безопасности
 
 **Недостатки:**
 - Может привести к дублированию компонентов между функциями
@@ -162,6 +215,7 @@ roles/
 - Максимальная гибкость и переиспользование
 - Легкость тестирования отдельных функций
 - Минимальный scope изменений
+- Идеально для атомарных изменений в Change Management
 
 **Недостатки:**
 - Сложность оркестрации (много мелких ролей)
@@ -208,7 +262,7 @@ roles/
 
 Используется для настройки внешних ролей (например, из Ansible Galaxy) под корпоративные стандарты без их модификации.
 *   **Логика:** Создается роль `mycompany_nginx`, которая вызывает `geerlingguy.nginx` с жестко заданными корпоративными параметрами безопасности.
-*   **Результат:* Внешняя роль остается неизменной (immutable), что упрощает её обновление (Upstream), а все специфичные настройки живут в обертке.
+*   **Результат:** Внешняя роль остается неизменной (immutable), что упрощает её обновление (Upstream), а все специфичные настройки живут в обертке.
 
 ### Стратегия досрочного завершения (Ansible 2.18+)
 
@@ -529,18 +583,160 @@ molecule test
 ansible-playbook site.yml --check
 ```
 
+### Сценарий 13: Роли в CI/CD пайплайне
+
+Интеграция стратегий ролей в конвейер непрерывной интеграции:
+
+```yaml
+# .github/workflows/ansible-roles.yml
+---
+name: Ansible Roles CI/CD
+on:
+  push:
+    paths:
+      - 'roles/**'
+      - 'requirements.yml'
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        role: [nginx, postgresql, lib_common, web_server]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: pip install ansible-core ansible-lint molecule docker
+      - name: Lint role
+        run: ansible-lint roles/${{ matrix.role }}/
+      - name: Test role
+        run: |
+          cd roles/${{ matrix.role }}
+          molecule test
+```
+
+### Сценарий 14: Change Management с ролями
+
+Стратегия атомарных изменений через роли:
+
+```yaml
+# playbooks/change-management.yml
+---
+- name: Change Management: Обновление Nginx с откатом
+  hosts: webservers
+  become: true
+  vars:
+    nginx_rollback_version: "1.24.0-1ubuntu3"
+
+  pre_tasks:
+    - name: Создание снапшота текущего состояния
+      ansible.builtin.command: dpkg -l | grep nginx
+      register: nginx_snapshot
+      changed_when: false
+
+    - name: Сохранение снапшота в лог
+      ansible.builtin.debug:
+        msg: "{{ nginx_snapshot.stdout }}"
+
+  roles:
+    - role: nginx_update
+
+  post_tasks:
+    - name: Валидация после обновления
+      ansible.builtin.uri:
+        url: http://localhost/
+        status_code: 200
+      register: validation_result
+
+    - name: Откат при ошибке валидации
+      ansible.builtin.include_role:
+        name: nginx_rollback
+      when: validation_result.status != 200
+```
+
+### Сценарий 15: Observability интеграция
+
+Роли должны генерировать структурированные логи для систем мониторинга:
+
+```yaml
+# roles/monitoring_agent/tasks/main.yml
+---
+- name: Установка агента мониторинга
+  ansible.builtin.package:
+    name: prometheus-node-exporter
+    state: present
+  notify: restart node_exporter
+  register: install_result
+
+- name: Отправка метрики установки
+  ansible.builtin.debug:
+    msg: "prometheus_node_exporter_installed={{ install_result.changed | lower }}"
+  when: install_result is defined
+
+- name: Проверка доступности метрик
+  ansible.builtin.uri:
+    url: http://localhost:9100/metrics
+    status_code: 200
+  register: metrics_check
+  retries: 3
+  delay: 5
+  until: metrics_check.status == 200
+```
+
+### Сценарий 16: Air-gapped среда
+
+Стратегия работы в изолированной среде без доступа к интернету:
+
+```bash
+# Подготовка в среде с доступом к интернету
+ansible-galaxy role download -r requirements.yml --output-path ./roles-cache/
+
+# Создание локального зеркала
+mkdir -p /opt/ansible-roles/
+cp -r roles-cache/* /opt/ansible-roles/
+
+# Настройка ansible.cfg для использования локальных ролей
+cat > ansible.cfg << 'EOF'
+[defaults]
+roles_path = /opt/ansible-roles:./roles
+EOF
+
+# Проверка без доступа к интернету
+ansible-galaxy role list
+```
+
 ---
 
-## Дополнительная информация
+## Операции и команды
 
-### Антипаттерны
+### Управление ролями через `ansible-galaxy`
 
-*   **God Role (Роль-Бог):** Роль, которая делает всё: от создания пользователей до бэкапа базы. Решение: разделение по стратегии Component-based.
-*   **Tight Coupling (Жесткая связность):** Использование `hostvars` для получения данных другой роли. Решение: вынос общих данных в `group_vars` или использование паттерна **[Utility Role](utility_role_pattern.md)**.
-*   **Deep Dependencies:** Цепочка зависимостей A -> B -> C -> D. Решение: переход к явным вызовам `include_role` в основном плейбуке (оркестрация на уровне Play).
-*   **Hardcoded Secrets:** Хранение паролей в `defaults/main.yml`. Решение: использование Ansible Vault или внешних Secret Managers через lookup-плагины.
-*   **God Play (Плейбук-Бог):** Плейбук, который делает всё. Решение: разбиение на отдельные playbooks для каждого домена.
-*   **Circular Dependencies:** Циклические зависимости между ролями. Решение: вынос общего кода в Utility-роль.
+| Команда | Описание | Пример |
+| :--- | :--- | :--- |
+| `ansible-galaxy role init <name>` | Инициализация структуры роли | `ansible-galaxy role init nginx` |
+| `ansible-galaxy role install <name>` | Установка роли из Galaxy | `ansible-galaxy role install geerlingguy.nginx` |
+| `ansible-galaxy role install -r requirements.yml` | Массовая установка из файла | `ansible-galaxy role install -r requirements.yml` |
+| `ansible-galaxy role list` | Список установленных ролей | `ansible-galaxy role list --format json` |
+| `ansible-galaxy role uninstall <name>` | Удаление роли | `ansible-galaxy role uninstall geerlingguy.nginx` |
+| `ansible-galaxy role search <query>` | Поиск ролей в Galaxy | `ansible-galaxy role search nginx` |
+| `ansible-galaxy role info <name>` | Информация о роли | `ansible-galaxy role info geerlingguy.nginx` |
+
+### Управление зависимостями
+
+| Команда / Файл | Описание | Пример |
+| :--- | :--- | :--- |
+| `requirements.yml` | Файл зависимостей с версиями | `name: geerlingguy.nginx, version: "3.2.0"` |
+| `ansible-galaxy role install -r requirements.yml --force` | Принудительное обновление | Переустановка всех ролей из файла |
+| `ansible-galaxy role list --format json \| jq` | Аудит установленных версий | Проверка drift версий |
+
+### Валидация и линтинг
+
+| Команда | Описание | Пример |
+| :--- | :--- | :--- |
+| `ansible-lint roles/` | Линтинг всех ролей | `ansible-lint roles/ -x schema` |
+| `ansible-playbook site.yml --list-tasks` | Просмотр порядка выполнения | Диагностика дублирования |
+| `ansible-playbook site.yml --syntax-check` | Проверка синтаксиса | Быстрая валидация перед коммитом |
+| `ansible-playbook site.yml --check` | Проверка в режиме dry-run | Валидация без внесения изменений |
 
 ---
 
@@ -630,6 +826,113 @@ ansible-doc -t vars 2>/dev/null || echo "См. документацию по п�
 # Остальные роли продолжают выполняться
 ```
 
+### Роль работает изолированно, но падает в композиции
+
+**Причина:** Конфликт переменных, обработчиков или порядок выполнения.
+
+**Диагностика:**
+```bash
+# Запуск с максимальной отладкой
+ansible-playbook site.yml -vvvv
+
+# Просмотр собранных переменных
+ansible-playbook site.yml --list-variables -l host1
+```
+
+**Решение:**
+- Используйте префиксы переменных для изоляции (`nginx_`, `postgresql_`).
+- Явно управляйте порядком через директиву `roles:` в плейбуке.
+- Для обработчиков используйте namespace в именах (`nginx_restart`, `php_restart`).
+
+### `ansible-galaxy role install` падает с таймаутом
+
+**Причина:** Нестабильное сетевое соединение или большая роль.
+
+**Решение:**
+```bash
+# Увеличение таймаута
+export ANSIBLE_GALAXY_SERVER_TIMEOUT=120
+
+# Установка через прокси
+ansible-galaxy role install geerlingguy.nginx --server https://galaxy.ansible.com
+
+# Альтернатива: клонирование через Git
+git clone https://github.com/geerlingguy/ansible-role-nginx.git roles/geerlingguy.nginx
+```
+
+### Molecule тесты failing на конкретной платформе
+
+**Причина:** Несовместимость пакетов или различия в ОС.
+
+**Диагностика:**
+```bash
+# Запуск конкретного сценария
+molecule test --scenario-name default
+
+# Подключение к контейнеру для отладки
+molecule converge
+docker exec -it instance bash
+```
+
+**Решение:**
+- Уточните образ в `molecule.yml` (`platforms → image`).
+- Используйте `dependency → name: galaxy` для установки зависимостей в тестовой среде.
+- Добавьте `ansible_install_method: pip` в `provisioner → env` если системный pip неактуален.
+
+### Лinting падает на старых версиях Ansible
+
+**Причина:** `ansible-lint` использует правила для новых версий.
+
+**Решение:**
+```yaml
+# .ansible-lint
+profile: production
+rule_files:
+  - builtins
+  - custom_rules
+```
+
+Или отключение конкретных правил:
+```bash
+ansible-lint roles/ -x schema,package-latest
+```
+
+### Конфликт версий зависимостей в CI/CD
+
+**Причина:** Разные версии ролей в development и production окружениях.
+
+**Решение:**
+```yaml
+# requirements.yml с фиксированными версиями
+---
+roles:
+  - name: geerlingguy.nginx
+    version: "3.2.0"  # Точная версия для production
+
+# Использование block в плейбуке для изоляции
+- block:
+    - role: geerlingguy.nginx
+      vars:
+        nginx_version: "1.24.0"
+  when: environment == "production"
+```
+
+### Роль не работает в air-gapped среде
+
+**Причина:** Отсутствие доступа к Galaxy или внешним репозиториям.
+
+**Решение:**
+```bash
+# Предварительная загрузка ролей
+ansible-galaxy role download -r requirements.yml --output-path ./offline-roles/
+
+# Установка из локального кэша
+ansible-galaxy role install ./offline-roles/geerlingguy.nginx/
+
+# Настройка локального сервера Galaxy (для больших команд)
+# Используйте pulldist или автоматизированные зеркала
+```
+
 ---
 
 ## Best Practices
@@ -668,6 +971,56 @@ ansible-doc -t vars 2>/dev/null || echo "См. документацию по п�
 2. **Сохраняйте обратную совместимость:** Не ломайте существующие плейбуки.
 3. **Тестируйте после каждого шага:** Убедитесь, что изменения не нарушают работу.
 4. **Документируйте изменения:** Описывайте что изменилось и почему.
+
+### CI/CD и автоматизация
+
+1. **Интегрируйте линтинг в pipeline:** Запускайте `ansible-lint` на каждом PR. Используйте `ansible-lint` в pre-commit hooks.
+2. **Автоматическое тестирование:** Запускайте Molecule в CI (GitHub Actions, GitLab CI) для каждой роли.
+3. **Проверка изменений:** Используйте `ansible-playbook --check --diff` для валидации без применения.
+4. **Автоматическое обновление зависимостей:** Используйте Renovate или Dependabot для `requirements.yml`.
+
+### Безопасность
+
+1. **Секреты вне ролей:** Никогда не храните пароли/ключи в `defaults/main.yml` или репозитории.
+2. **Используйте Ansible Vault:** Шифруйте чувствительные переменные (`vault_`-префикс).
+3. **Минимальные привилегии:** Используйте `become: false` там, где это возможно. Разделяйте `become_method`.
+4. **Аудит зависимостей:** Регулярно проверяйте роли из Galaxy на уязвимости (`ansible-galaxy role list --format json`).
+5. **no_log для чувствительных задач:** Указывайте `no_log: true` для задач с секретами.
+
+### Change Management
+
+1. **Атомарность:** Каждая роль должна выполнять одно логическое изменение (установка, конфигурация или удаление).
+2. **Обратимость:** Включайте задачи отката (`rollback.yml`) для критически важных изменений.
+3. **Валидация:** После выполнения роли добавляйте задачу проверки (`validate.yml`) с `changed_when: false`.
+4. **Теги:** Используйте теги `pre_deploy`, `deploy`, `rollback`, `validate` для фильтрации этапов change management.
+
+### Observability
+
+1. **Структурированные логи:** Используйте `ansible.builtin.debug` с четкими `msg` для ключевых этапов.
+2. **Метрики:** Регистрируйте результаты выполнения задач (`register`) для последующей агрегации в Prometheus/Grafana.
+3. **Callback-плагины:** Настройте `json` или `yaml` callback для отправки результатов в централизованный лог-агрегатор.
+4. **Вербозность:** Используйте `verbosity` в задачах для контроля объема вывода в production.
+
+### Compliance
+
+1. **Валидация аргументов:** Всегда используйте `meta/argument_specs.yml` для проверки входных параметров.
+2. **Документация:** Каждая роль должна иметь README с описанием соответствия требованиям compliance.
+3. **Версионирование:** Используйте Git tags для отслеживания изменений, влияющих на compliance.
+4. **Аудит:** Настройте `callback_whitelist` для логирования всех изменений во внешний SIEM.
+
+### Документирование
+
+1. **README.md:** Описание назначения, поддерживаемые ОС, входные параметры, примеры использования.
+2. **CHANGELOG.md:** История изменений по семантическому версионированию.
+3. **meta/main.yml:** Заполняйте `galaxy_info` (author, license, description) и `dependencies`.
+4. **Примеры:** Добавляйте готовые плейбуки в `examples/` или `docs/`.
+
+### Чистка и обслуживание
+
+1. **Регулярный аудит:** Удаляйте неиспользуемые роли, обновляйте устаревшие зависимости.
+2. **Стандартизация имен:** Используйте префиксы для утилитарных ролей (`lib_`, `util_`).
+3. **Единый стиль:** Придерживайтесь соглашений по именованию переменных (`snake_case`), структуре каталогов.
+4. **Архивация версий:** Не удаляйте старые версии из Galaxy/Git; используйте теги.
 
 ---
 
@@ -744,12 +1097,63 @@ ansible-galaxy role uninstall geerlingguy.nginx
 ansible-galaxy role uninstall --all
 ```
 
+### Роли в air-graded среде
+
+**Проблема:** Нет доступа к Galaxy для установки зависимостей.
+
+**Решение:**
+```bash
+# Предварительная загрузка всех ролей
+ansible-galaxy role download -r requirements.yml --output-path ./offline-roles/
+
+# Использование локального репозитория
+mkdir -p /opt/ansible/roles/
+cp -r offline-roles/* /opt/ansible/roles/
+
+# Настройка ansible.cfg
+cat > ansible.cfg << 'EOF'
+[defaults]
+roles_path = /opt/ansible/roles:./roles
+EOF
+```
+
+### Многоквантовая среда (multi-tenant)
+
+**Проблема:** Одна роль используется в нескольких окружениях (dev/stage/prod) с разными требованиями.
+
+**Решение:**
+- Используйте `defaults/main.yml` для общих значений.
+- Переопределяйте окружение-специфичные параметры через `group_vars/` или `host_vars/`.
+- Используйте `include_vars` для динамической загрузки конфигураций окружения.
+
+### Откат изменений в production
+
+**Проблема:** Необходимость быстрого отката развертывания без полного перезапуска плейбука.
+
+**Решение:**
+- Разделите задачи на `deploy.yml` и `rollback.yml`.
+- Используйте `meta: end_role` для досрочного завершения при обнаружении проблем.
+- Сохраняйте снапшоты конфигураций перед применением изменений.
+
+### Зависимости с нарушенными ссылками
+
+**Проблема:** Внешняя роль из Galaxy удалена или перемещена.
+
+**Решение:**
+```bash
+# Проверка целостности зависимостей
+ansible-galaxy role list --format json | jq '.[] | select(.installed == true)'
+
+# Восстановление из Git-резервной копии
+git clone https://github.com/your-org/ansible-role-nginx.git roles/geerlingguy.nginx
+
+# Использование source control для всех критичных ролей
+```
+
 ### См. также
 
-- [Ansible: OS Hardening и комплаенс](../ansible-os-hardening.md) — примеры реализации базового слоя безопасности через готовые роли.
-- [Структура роли](structure.md) — детальное описание каталогов (tasks, vars, meta) и SSoT по инициализации.
+- [Структура роли](structure.md) — детальное описание каталогов (tasks, vars, meta) и инициализации.
+- [Utility Role Pattern](utility_role_pattern.md) — использование ролей в качестве библиотек.
 - [Создание и использование ролей](usage.md) — техническая реализация подключения (`import_role`, `include_role`).
-- [Кроссплатформенность в Ansible](../CrossPlatform/concepts.md) — детали реализации для разных ОС.
-- [Ansible Galaxy](galaxy.md) — поиск и распространение готовых ролей.
-- [Антипаттерны Ansible](../ansible_bad_practices.md) — расширенный список ошибок проектирования.
-- [Паттерн Utility Role](utility_role_pattern.md) — использование ролей в качестве библиотек.
+- [Управление выполнением и отладка ролей](task-execution-and-debugging.md) — безопасность роли при rolling-деплое, `run_once`, `debugger`.
+- [Decision Framework](decision_framework.md) — когда использовать роль, плейбук или коллекцию.

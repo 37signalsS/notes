@@ -167,3 +167,8 @@ Kubelet требует разрешений на чтение/запись об�
 - [Обслуживание узлов](../../../Operations/node_maintenance.md) — регламент планового вывода из кластера.
 - [PodDisruptionBudget](../../../Autoscaling/pod_disruption_budget.md) — защитные бюджеты и их влияние на выселение.
 - [Node Maintenance API (K8s docs)](https://kubernetes.io/docs/concepts/architecture/nodes/#node-maintenance) — официальная документация по новому API.
+- [SELinux и AppArmor](./security_profiles.md) — профили MAC и их влияние на доступность узла.
+- [Тюнинг ядра](./kernel_tuning.md) — sysctl, ulimit, conntrack для Kubernetes.
+- [Синхронизация времени](./time_sync.md) — NTP, clock skew, влияние на TLS.
+- [Hostname и DNS](./hostname_dns_issues.md) — настройка имени узла и DNS-резолва.
+- [SSH-доступ и bastion](./bastion_ssh_access.md) — диагностика узлов через SSH.

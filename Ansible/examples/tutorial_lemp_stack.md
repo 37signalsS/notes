@@ -2,19 +2,25 @@
 
 ## Определения
 
-**LEMP (Linux, Nginx, MySQL/MariaDB, PHP)** — популярный и высокопроизводительный набор программного обеспечения с открытым исходным кодом для развертывания динамических веб-приложений.
+**LEMP (Linux, Nginx, MySQL/MariaDB, PHP)** — стек программного обеспечения с открытым исходным кодом для развертывания динамических веб-приложений. В рамках этого руководства рассматривается развертывание на целевых хостах под управлением Debian/Ubuntu.
 
 **Компоненты стека:**
-- **Linux** — операционная система, обеспечивающая базовые ресурсы и безопасность.
-- **Nginx** (Engine-X) — веб-сервер, известный своей эффективностью при обработке большого количества одновременных соединений, часто используемый как реверс-прокси.
-- **MySQL/MariaDB** — реляционные СУБД для надежного хранения и структурирования данных.
-- **PHP** (Hypertext Preprocessor) — серверный язык сценариев, обрабатывающий логику приложения.
+- **Linux** — операционная система, обеспечивающая базовые ресурсы, изоляцию процессов и безопасность.
+- **Nginx** (Engine-X) — веб-сервер и реверс-прокси, обрабатывающий HTTP/HTTPS-запросы и передающий PHP-запросы в PHP-FPM через Unix-сокет или TCP.
+- **MySQL/MariaDB** — реляционная СУБД для хранения структурированных данных приложения.
+- **PHP** (Hypertext Preprocessor) — серверный язык сценариев, обрабатывающий логику приложения. В связке с Nginx используется через PHP-FPM (FastCGI Process Manager).
+
+**Control Node** — машина, на которой установлен Ansible и хранятся плейбуки, роли и инвентарь. Все команды управления выполняются с Control Node.
+
+**Managed Node** — целевой хост, на который Ansible подключается по SSH и применяет конфигурацию. В этом руководстве — сервер(ы) с Ubuntu/Debian.
+
+**Ansible Vault** — механизм шифрования чувствительных данных (пароли, ключи) в репозитории. Файлы `vault.yml` расшифровываются в памяти во время выполнения плейбука.
 
 ## Предварительные требования
 
 | Компонент | Минимальная версия | Рекомендуемая | Проверка |
 |---|---|---|---|
-| Ansible Core | 2.15+ | ≥ 10.x | `ansible --version` |
+| Ansible Core | 2.15+ | ≥ 2.20 | `ansible --version` |
 | Python (управление) | 3.10+ | ≥ 3.12 | `python3 --version` |
 | Python (целевые хосты) | 3.10+ | ≥ 3.12 | `ansible all -m setup -a "filter=ansible_python_version"` |
 | PHP | 8.1+ | 8.3 | `php --version` |
@@ -29,7 +35,7 @@ ansible.builtin
 ansible.posix
 
 # Для работы с MySQL/MariaDB
-community.mysql
+ansible.mysql
 
 # Для настройки файрвола
 community.general
@@ -37,10 +43,9 @@ community.general
 
 Установка необходимых коллекций:
 ```bash
-ansible-galaxy collection install community.mysql community.general ansible.posix
+ansible-galaxy collection install ansible.mysql community.general ansible.posix
 # → Starting galaxy collection install process
 # → Process install dependency map
-# → Installing 'community.mysql' to ...
 ```
 
 ### Зависимости на целевых хостах
@@ -81,26 +86,34 @@ domain_name: "my-site.local"
 
 ## Базовые концепции
 
-### Структура управления и декларативность
+### Жизненный цикл LEMP-стека
 
-| Элемент | Назначение |
-|---|---|
-| `hosts` | Целевые группы серверов из инвентаря (например, `web_servers`). |
-| `become: true` | Выполнение задач с правами суперпользователя через `sudo`. |
-| `tasks` | Декларативный список действий для приведения системы к LEMP-стеку. |
-| `handlers` | Задачи (Restart/Reload), срабатывающие через `notify` только при изменении конфигурации. |
-| `vars` | Параметры для настройки версий (PHP 8.3) и путей. |
+LEMP-стек работает как цепочка обработки HTTP-запросов:
+1. Клиент отправляет HTTP-запрос на Nginx (порт 80/443).
+2. Nginx обслуживает статические файлы напрямую.
+3. Для PHP-скриптов Nginx передает запрос PHP-FPM через Unix-сокет `/var/run/php/php{{ php_version }}-fpm.sock`.
+4. PHP-FPM обрабатывает скрипт, при необходимости обращается к MariaDB/MySQL.
+5. Результат возвращается обратно через цепочку PHP-FPM → Nginx → Клиент.
 
-### Ключевые модули
+### Почему именно такой порядок развертывания
+
+Каждый компонент зависит от предыдущего:
+- Базовые пакеты и репозитории должны быть подключены до установки конкретных версий.
+- UFW настраивается до запуска веб-сервисов, чтобы не открывать лишние порты на промежуточных этапах.
+- Nginx развертывается до PHP-FPM, потому что конфигурация виртуального хоста зависит от путей и существования директорий.
+- PHP-FPM интегрируется с Nginx через симлинки в `sites-enabled`, поэтому Nginx должен быть уже установлен.
+- Тестовое приложение размещается последним, чтобы верифицировать работу всей цепочки.
+
+### Ключевые модули Ansible для LEMP
 
 | Модуль | Назначение |
 |---|---|
-| `ansible.builtin.apt` | Установка системных пакетов и управление кэшем |
+| `ansible.builtin.apt` | Установка системных пакетов и управление кэшем APT |
 | `ansible.builtin.apt_repository` | Подключение сторонних PPA (например, для свежих версий PHP) |
 | `ansible.builtin.template` | Генерация конфигурационных файлов на основе Jinja2 |
 | `ansible.builtin.copy` | Доставка статического контента |
-| `community.mysql.mysql_db` | Управление базами данных (требует `python3-pymysql` на хосте) |
-| `community.mysql.mysql_user` | Управление пользователями БД |
+| `ansible.mysql.mysql_db` | Управление базами данных (требует `python3-pymysql` на хосте) |
+| `ansible.mysql.mysql_user` | Управление пользователями БД |
 | `community.general.ufw` | Настройка межсетевого экрана |
 | `ansible.builtin.service` | Управление системными сервисами (systemd) |
 | `ansible.builtin.file` | Управление файлами, директориями, симлинками |
@@ -109,11 +122,11 @@ domain_name: "my-site.local"
 
 ```
 Шаг 1 (Vault) → Шаг 2 (Репозитории) → Шаг 3 (UFW)
-                                       → Шаг 4 (Nginx)
-                                       → Шаг 5 (MariaDB)
-                                       → Шаг 6 (PHP-FPM + Nginx vhost)
-                                       → Шаг 7 (Тестовое приложение)
-                                       → Шаг 8 (Валидация)
+                                        → Шаг 4 (Nginx)
+                                        → Шаг 5 (MariaDB)
+                                        → Шаг 6 (PHP-FPM + Nginx vhost)
+                                        → Шаг 7 (Тестовое приложение)
+                                        → Шаг 8 (Валидация)
 ```
 
 **Важно:** каждый шаг зависит от предыдущего. Например, PHP-FPM (Шаг 6) не может работать без Nginx (Шаг 4), а модули MySQL (Шаг 5) требуют `python3-pymysql`.
@@ -244,7 +257,7 @@ ansible web_servers -m shell -a "ls -la /var/www/" --become
 ```yaml
     - name: Установка MariaDB и Python-драйвера
       ansible.builtin.apt:
-        name: 
+        name:
           - mariadb-server
           - python3-pymysql
         state: present
@@ -256,13 +269,13 @@ ansible web_servers -m shell -a "ls -la /var/www/" --become
         enabled: true
 
     - name: Создание базы данных приложения
-      community.mysql.mysql_db:
+      ansible.mysql.mysql_db:
         name: "{{ db_name }}"
         state: present
         login_unix_socket: /var/run/mysqld/mysqld.sock
 
     - name: Создание пользователя БД и выдача прав
-      community.mysql.mysql_user:
+      ansible.mysql.mysql_user:
         name: "{{ db_user }}"
         password: "{{ db_password }}"
         priv: "{{ db_name }}.*:ALL"
@@ -439,7 +452,7 @@ ansible web_servers -m shell -a "ls -la /var/www/my-site.local/" --become
 # → -rw-r--r-- 1 www-data www-data ... index.php
 
 # Проверка прав на файлы
-ansible web_servers -m shell -a "stat -c '%U:%G %a' /var/www/my-site.local/*.php" --became
+ansible web_servers -m shell -a "stat -c '%U:%G %a' /var/www/my-site.local/*.php" --become
 # → www-data:www-data 644
 # → www-data:www-data 644
 ```
@@ -469,9 +482,9 @@ ansible-playbook playbook.yml -i hosts.ini --ask-vault-pass --limit web1
 
 **Проверка работоспособности стека:**
 
-1.  **Настройка локальных хостов**: Добавьте `127.0.0.1 my-site.local` в файл `/etc/hosts`.
-2.  **Проверка PHP**: Откройте `http://my-site.local` — должна отобразиться страница `phpinfo`.
-3.  **Проверка базы данных**: Откройте `http://my-site.local/db_test.php` — ожидается сообщение об успешном соединении.
+1. **Настройка локальных хостов**: Добавьте `127.0.0.1 my-site.local` в файл `/etc/hosts`.
+2. **Проверка PHP**: Откройте `http://my-site.local` — должна отобразиться страница `phpinfo`.
+3. **Проверка базы данных**: Откройте `http://my-site.local/db_test.php` — ожидается сообщение об успешном соединении.
 
 **Валидация через curl:**
 ```bash
@@ -551,6 +564,30 @@ lemp-project/
 
 ---
 
+## Операции и команды
+
+### Основные команды Ansible для LEMP-проекта
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible-playbook site.yml --syntax-check` | Проверка синтаксиса YAML | `ansible-playbook playbook.yml --syntax-check` |
+| `ansible-playbook site.yml --check --diff` | Dry-run с показом изменений | `ansible-playbook playbook.yml --check --diff` |
+| `ansible-playbook site.yml --list-tasks` | Просмотр задач без выполнения | `ansible-playbook playbook.yml --list-tasks` |
+| `ansible-playbook site.yml --list-tags` | Просмотр тегов | `ansible-playbook playbook.yml --list-tags` |
+| `ansible-playbook site.yml --list-hosts` | Просмотр хостов | `ansible-playbook playbook.yml --list-hosts` |
+| `ansible-playbook site.yml --step` | Пошаговое выполнение | `ansible-playbook playbook.yml --step` |
+| `ansible-playbook site.yml --start-at-task` | Запуск с конкретной задачи | `ansible-playbook playbook.yml --start-at-task="Deploy"` |
+| `ansible-inventory --graph` | Визуализация инвентаря | `ansible-inventory --graph --vars` |
+| `ansible-inventory --host` | Переменные хоста | `ansible-inventory --host web1` |
+| `ansible <host> -m setup` | Сбор фактов | `ansible web1 -m setup -a "filter=ansible_os_family*"` |
+| `ansible <host> -m debug` | Просмотр переменной | `ansible web1 -m debug -a "var=my_var"` |
+| `ansible <host> -m ping` | Проверка доступности | `ansible all -m ping` |
+| `ansible-vault create` | Создание зашифрованного файла | `ansible-vault create vars/vault.yml` |
+| `ansible-vault edit` | Редактирование зашифрованного файла | `ansible-vault edit vars/vault.yml` |
+| `ansible-galaxy collection install` | Установка коллекций | `ansible-galaxy collection install -r requirements.yml` |
+
+---
+
 ## Устранение типичных неполадок
 
 ### Проблема: Ошибка `python3-pymysql not found`
@@ -615,7 +652,7 @@ ansible web_servers -m shell -a "ufw reload" --become
 
 ### Проблема: PPA не добавляется
 
-**Симпptom:** `Failed to add PPA` или `Unable to locate package php8.3-fpm`.
+**Симптом:** `Failed to add PPA` или `Unable to locate package php8.3-fpm`.
 
 **Решение:**
 ```bash
@@ -631,14 +668,112 @@ ansible web_servers -m shell -a "apt-cache policy php8.3-fpm" --become
 
 ---
 
+## Рекомендации
+
+### Best Practices
+
+1. **Храните секреты в Vault**: Никогда не коммитьте пароли в открытом виде. Используйте `ansible-vault` с защищенным хранилищем паролей (например, `~/.vault_pass` с правами `600`).
+2. **Используйте FQCN**: Всегда указывайте полные имена модулей (`ansible.builtin.apt` вместо `apt`) для совместимости между версиями Ansible и коллекциями.
+3. **Настраивайте `no_log: true`** для задач с секретами. Это предотвращает утечку данных в логи CI/CD.
+4. **Проверяйте идемпотентность**: Второй запуск плейбука не должен вносить изменения (`changed=0`). Это подтверждает корректность декларативного подхода.
+5. **Используйте `block/rescue/always`** вместо `ignore_errors: true` для осмысленной обработки ошибок.
+6. **Документируйте переменные** в `README.md` проекта или в `defaults/main.yml` роли с комментариями.
+7. **Выносите логику в роли**: Для повторного использования развертывание LEMP должно быть оформлено как роль. Подробнее: **[Роли в Ansible](../ansible_roles.md)**.
+8. **Настраивайте `ansible.cfg`** с разумными таймаутами и `ControlPersist` для ускорения повторных подключений.
+9. **Используйте `--check --diff`** перед первым запуском в production. Это позволяет увидеть точные изменения без риска.
+10. **Валидируйте конфигурацию**: Всегда проверяйте `nginx -t` и `php-fpm -t` после развертывания конфигураций.
+
+### Чек-лист безопасности
+
+| Проверка | Команда | Ожидаемый результат |
+|---|---|---|
+| Vault зашифрован | `ansible-vault view vars/vault.yml` | Содержимое отображается только после ввода пароля |
+| No_log включен | `grep no_log playbook.yml` | Задачи с секретами имеют `no_log: true` |
+| Права на vault-файл | `ls -la vars/vault.yml` | `-rw-------` |
+| SSH-ключи | `ssh -o BatchMode=yes deploy@web1` | Подключение без пароля |
+| Sudo без пароля | `ansible web_servers -m command -a "whoami" --become` | `root` |
+| UFW активен | `ufw status` | `Status: active` |
+| Неиспользуемые порты закрыты | `ss -tlnp` | Открыты только 22, 80, 443 |
+
+---
+
 ## Дополнительная информация
 
-### Масштабирование и SSL (HTTPS)
+### Смотрите также
 
-- **Настройка HTTPS (Certbot)**: В современном веб-окружении SSL обязателен. Рекомендуется использовать роль `geerlingguy.certbot` или модуль `ansible.builtin.command` для вызова `certbot --nginx`.
-- **Универсальность**: Данный пример ориентирован на Debian/Ubuntu. Для RHEL/CentOS необходимо использовать модули `ansible.builtin.yum/dnf` и учитывать различия в путях конфигураций Nginx. Подробнее: **[Кроссплатформенные плейбуки](../CrossPlatform/concepts.md)**.
-- **Мониторинг**: Включите статус-страницу PHP-FPM для сбора метрик. Подробнее: **[Мониторинг PHP-FPM](../../WebServers/PHP/php-fpm-monitoring.md)**.
-- **Рефакторинг**: Для крупных проектов выносите логику в отдельные **[роли Ansible](../ansible_roles.md)**.
+- [Установка и настройка MySQL/MariaDB через Ansible](mysql_setup.md)
+- [Роли в Ansible](../ansible_roles.md)
+- [Обзор возможностей Nginx](../../WebServers/Nginx/Core/nginx_overview.md)
+- [Мониторинг PHP-FPM](../../WebServers/PHP/php-fpm-monitoring.md)
+- [Управление сертификатами TLS в Ansible](../ansible_certificate_management.md) — получение и обновление сертификатов Let's Encrypt через Certbot.
+
+### Дополнительный сценарий: Управление сертификатами TLS (Certbot)
+
+Для production-использования рекомендуется настроить автоматическое получение и обновление сертификатов Let's Encrypt через Certbot.
+
+```yaml
+---
+- name: Настройка HTTPS с Certbot
+  hosts: web_servers
+  become: true
+  vars:
+    domain: "my-site.local"
+    certbot_email: "admin@example.com"
+
+  tasks:
+    - name: Установка Certbot
+      ansible.builtin.apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+        state: present
+
+    - name: Получение сертификата Let's Encrypt
+      ansible.builtin.command: >
+        certbot --nginx -d {{ domain }}
+        --non-interactive --agree-tos
+        --email {{ certbot_email }}
+        --redirect
+      register: certbot_result
+      changed_when: "'Congratulations' in certbot_result.stdout"
+
+    - name: Настройка автоматического обновления
+      ansible.builtin.cron:
+        name: "Certbot auto-renewal"
+        minute: "0"
+        hour: "12"
+        job: "certbot renew --quiet --post-hook 'systemctl reload nginx'"
+
+    - name: Проверка срока действия сертификата
+      ansible.builtin.command: openssl x509 -enddate -noout -in /etc/letsencrypt/live/{{ domain }}/cert.pem
+      register: cert_expiry
+      changed_when: false
+```
+
+**Валидация:**
+
+```bash
+# Проверка сертификата
+ansible web_servers -m shell -a "openssl x509 -enddate -noout -in /etc/letsencrypt/live/my-site.local/cert.pem" --become
+# → notAfter=Dec 24 12:00:00 2026 GMT
+
+# Проверка автоматического обновления
+ansible web_servers -m shell -a "crontab -l | grep certbot" --become
+# → 0 12 * * * certbot renew --quiet --post-hook 'systemctl reload nginx'
+
+# Проверка HTTPS
+curl -I https://my-site.local
+# → HTTP/2 200
+# → server: nginx
+```
+
+### Кроссплатформенность
+
+Данный пример ориентирован на Debian/Ubuntu. Для RHEL/Rocky/Alma/CentOS необходимо использовать модули `ansible.builtin.dnf`/`yum`,firewalld вместо UFW и учитывать различия в путях конфигураций Nginx и PHP-FPM. Подробнее: **[Кроссплатформенный пример развертывания LAMP/LEMP](../CrossPlatform/lamp-example.md)**.
+
+### Масштабирование
+
+Для крупных проектов выносите логику в отдельные **[роли Ansible](../ansible_roles.md)**. Это упрощает тестирование (Molecule), повторное использование и поддержку версий.
 
 ### Граничные случаи
 
@@ -650,11 +785,40 @@ ansible web_servers -m shell -a "apt-cache policy php8.3-fpm" --become
 | Несколько сайтов | Конфликт виртуальных хостов | Используйте `server_name` для маршрутизации запросов |
 | IPv6 | Nginx слушает только IPv4 | Добавьте `listen [::]:80;` в конфигурацию |
 
----
+### Рефакторинг в роль
 
-## Смотрите также
+Для production-использования рекомендуется преобразовать плейбук в роль:
 
-- [Установка и настройка MySQL/MariaDB через Ansible](mysql_setup.md)
-- [Кроссплатформенный пример развертывания LAMP](../CrossPlatform/lamp-example.md)
-- [Шаблонизация Jinja2 в Ansible](../ansible_jinja_templating.md)
-- [Обзор возможностей Nginx](../../WebServers/Nginx/Core/nginx_overview.md)
+```text
+roles/lemp/
+├── defaults/
+│   └── main.yml       # Значения по умолчанию (php_version, domain_name)
+├── vars/
+│   └── main.yml       # Константы (порты, пути)
+├── tasks/
+│   ├── main.yml       # include_tasks для последовательности шагов
+│   ├── repositories.yml
+│   ├── firewall.yml
+│   ├── nginx.yml
+│   ├── database.yml
+│   └── php.yml
+├── templates/
+│   ├── nginx-php.conf.j2
+│   └── db_test.php.j2
+├── handlers/
+│   └── main.yml
+└── meta/
+    └── argument_specs.yml
+```
+
+Использование роли в плейбуке:
+```yaml
+- hosts: web_servers
+  become: true
+  vars_files:
+    - vars/vault.yml
+  roles:
+    - role: lemp
+      php_version: "8.3"
+      domain_name: "my-site.local"
+```

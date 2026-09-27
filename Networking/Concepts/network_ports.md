@@ -673,3 +673,4 @@ diff <(echo "22 80 443") <(sudo ss -tlnp | awk '{print $5}' | grep -oP ':\K[0-9]
 - [Диагностика сокетов: утилита ss](../../Linux/Diagnostics/Networking/ss.md) — команды и фильтры
 - [nmap — сканирование сетей](../../Linux/Diagnostics/Networking/nmap.md) — аудит безопасности
 - [NAT — практические сценарии](./nat/practical_scenarios.md) — проброс портов, DNAT/SNAT
+- [Ограничения хостинг-провайдеров на порты](./provider_port_restrictions.md) — заблокированные порты VPS/дедиков и обходы

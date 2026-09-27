@@ -16,9 +16,11 @@
 
 **Стратегия выполнения (Strategy)** — алгоритм, определяющий порядок обработки хостов Ansible. Основные стратегии: `linear` (синхронная), `free` (независимая), `host_pinned` (с фиксированным числом хостов). Подробнее: **[Выполнение плейбука: база](basics.md)**.
 
-**Обработчик (Handler)** — специальная задача, выполняемая только один раз после завершения всех задач в плее, если хотя бы одна задача отправила уведомление (`notify`). Используется для перезапуска сервисов и_reload конфигурации.
+**Обработчик (Handler)** — специальная задача, выполняемая только один раз после завершения всех задач в плее, если хотя бы одна задача отправила уведомление (`notify`). Используется для перезапуска сервисов и reload конфигурации.
 
 **Теги (Tags)** — метки, позволяющие запускать или исключать определенные задачи через CLI (`--tags`, `--skip-tags`). Позволяют точечно применять изменения без полного выполнения плейбука.
+
+**Drift Detection** — процесс обнаружения расхождений между фактическим состоянием инфраструктуры и состоянием, описанным в коде. Ansible обнаруживает дрейф автоматически при каждом запуске благодаря идемпотентности модулей.
 
 ## Базовые концепции
 
@@ -51,7 +53,17 @@ Ansible строго следует порядку выполнения секц
 5.  `post_tasks` — финальные задачи
 6.  `handlers` — все оставшиеся обработчики
 
-> **Примечание:** Использование `meta: flush_handlers` позволяет принудительно запустить все накопленные обработчики в любой момент внутри секции задач. Это критично, если нужно применить изменения до продолжения выполнения.
+> **Примечание:** Использование `meta: flush_handlers` позволяет принудительно запустить все накопленные обработчики в любой момент внутри секции задач. Это критично, если нужно применить изменения до продолжения выполнения. Подробнее: **[Продвинутые возможности](advanced.md)**.
+
+### Жизненный цикл плейбука
+
+1. **Парсинг** — чтение YAML, проверка синтаксиса.
+2. **Сбор фактов** — `gather_facts: true` опрашивает хосты через facts modules.
+3. **Загрузка переменных** — role defaults → group_vars → host_vars → extra_vars.
+4. **Импорт/включение** — `import_*` выполняется на этапе парсинга, `include_*` — во время выполнения.
+5. **Выполнение задач** — в соответствии с выбранной стратегией (`linear`, `free`, `host_pinned`).
+6. **Обработчики** — запускаются после секции задач, если были уведомления `notify`.
+7. **Очистка** — `post_tasks`, отключение от хостов, запись логов.
 
 ## Практические сценарии
 
@@ -124,244 +136,7 @@ Ansible строго следует порядку выполнения секц
 
 > **Примечание:** Детальная иерархия приоритетов переменных (22 уровня) описана в разделе **[Переменные и факты](variables.md)**.
 
-### Сценарий 2: Деплой с нулевым простоем (Zero-Downtime Deployment)
-
-Паттерн Rolling Update, демонстрирующий взаимодействие `serial`, `pre_tasks` (вывод из балансировки), `roles` (деплой) и `post_tasks` (возврат в балансировку).
-
-**Файл оркестрации** (`deploy.yml`):
-```yaml
----
-- name: Деплой веб-приложения без простоя
-  hosts: web_servers
-  become: true
-  serial: 1 # Обновлять строго по одному серверу
-  any_errors_fatal: true # Остановка при любой ошибке
-
-  pre_tasks:
-    - name: Вывести текущий узел из балансировщика HAProxy
-      community.general.haproxy:
-        state: disabled
-        host: "{{ inventory_hostname }}"
-        backend: app_backend
-      delegate_to: "{{ groups['load_balancers'][0] }}"
-
-  roles:
-    - role: application_update
-      vars:
-        app_version: "v2.3.1"
-
-  post_tasks:
-    - name: Проверка работоспособности после обновления
-      block:
-        - name: Проверить доступность локального порта приложения
-          ansible.builtin.wait_for:
-            port: 8080
-            state: started
-            timeout: 60
-
-        - name: Вернуть текущий узел в балансировщик HAProxy
-          community.general.haproxy:
-            state: enabled
-            host: "{{ inventory_hostname }}"
-            backend: app_backend
-          delegate_to: "{{ groups['load_balancers'][0] }}"
-      rescue:
-        - name: Оповещение о сбое Health Check
-          ansible.builtin.debug:
-            msg: "Узел {{ inventory_hostname }} не прошел проверку. Оставляю вне балансировки."
-```
-
-**Вариант с прогрессивным `serial` (Canary + масштабирование):**
-
-```yaml
-- name: Прогрессивный деплой
-  hosts: web_servers
-  become: true
-  serial: [1, 5, "50%"]  # Сначала 1 хост (canary), затем 5, затем 50%
-  max_fail_percentage: 10  # Остановка при 10%+ ошибок
-
-  pre_tasks:
-    - name: Вывести из балансировки
-      community.general.haproxy:
-        state: disabled
-        host: "{{ inventory_hostname }}"
-        backend: app_backend
-      delegate_to: "{{ groups['load_balancers'][0] }}"
-
-  roles:
-    - role: app_deploy
-
-  post_tasks:
-    - name: Проверка здоровья приложения
-      block:
-        - name: HTTP health check
-          ansible.builtin.uri:
-            url: "http://localhost:8080/health"
-            status_code: 200
-          register: health
-          until: health.status == 200
-          retries: 10
-          delay: 5
-
-        - name: Вернуть в балансировщик
-          community.general.haproxy:
-            state: enabled
-            host: "{{ inventory_hostname }}"
-            backend: app_backend
-          delegate_to: "{{ groups['load_balancers'][0] }}"
-      rescue:
-        - name: Каталог ошибки
-          ansible.builtin.debug:
-            msg: "FAILED: {{ inventory_hostname }} не прошел health check"
-
-        - name: Уведомление в Slack
-          ansible.builtin.uri:
-            url: "{{ slack_webhook_url }}"
-            method: POST
-            body_format: json
-            body:
-              text: "Ansible: {{ inventory_hostname }} FAILED health check after deploy"
-          delegate_to: localhost
-          run_once: true
-```
-
-**Вариант с `strategy: free` (независимое выполнение):**
-
-```yaml
-- name: Быстрый деплой без ожидания синхронизации
-  hosts: web_servers
-  become: true
-  strategy: free  # Каждый хост выполняется независимо
-  serial: "25%"   # Но по 25% за раз
-
-  tasks:
-    - name: Обновление кода
-      ansible.builtin.git:
-        repo: "https://github.com/app/repo.git"
-        dest: /opt/app
-        version: "{{ app_version }}"
-
-    - name: Рестарт сервиса
-      ansible.builtin.systemd:
-        name: myapp
-        state: restarted
-```
-
-> **Примечание:** Подробнее о стратегиях выполнения (`linear`, `free`, `host_pinned`) и пакетной обработке (`serial`) в разделе **[Выполнение плейбука: база](basics.md)**.
-
-### Сценарий 3: Управление контейнерами через Systemd (Podman/Docker)
-
-Идиоматичный подход к управлению контейнерами на серверах без внешних оркестраторов. Шаблонизация unit-файла systemd гарантирует автозапуск и корректное логирование.
-
-**Шаблон сервиса** (`templates/container-app.service.j2`):
-```ini
-[Unit]
-Description=Контейнер {{ item.name }}
-After=network-online.target
-
-[Service]
-Restart=always
-TimeoutStopSec=70
-ExecStartPre=-/usr/bin/podman stop {{ item.name }}
-ExecStartPre=-/usr/bin/podman rm {{ item.name }}
-ExecStart=/usr/bin/podman run --name {{ item.name }} \
-    {% if item.ports is defined %}{% for port in item.ports %} -p {{ port }} {% endfor %}{% endif %} \
-    {{ item.image }}
-ExecStop=/usr/bin/podman stop {{ item.name }}
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Задача в плейбуке**:
-```yaml
-- name: Настройка контейнерных сервисов
-  hosts: compute_nodes
-  vars:
-    containers:
-      - { name: 'web-frontend', image: 'nginx:alpine', ports: ['80:80'] }
-      - { name: 'redis-cache', image: 'redis:latest' }
-
-  tasks:
-    - name: Генерация unit-файлов Systemd
-      ansible.builtin.template:
-        src: container-app.service.j2
-        dest: "/etc/systemd/system/{{ item.name }}.service"
-        mode: '0644'
-      loop: "{{ containers }}"
-      notify: Reload Systemd
-
-    - name: Запуск и добавление в автозагрузку
-      ansible.builtin.systemd:
-        name: "{{ item.name }}"
-        state: started
-        enabled: true
-      loop: "{{ containers }}"
-
-  handlers:
-    - name: Reload Systemd
-      ansible.builtin.systemd:
-        daemon_reload: true
-```
-
-**Расширенный вариант с проверкой здоровья и откатом:**
-
-```yaml
-- name: Деплой обновленного контейнера
-  hosts: compute_nodes
-  vars:
-    new_image: "myapp:{{ app_version }}"
-  tasks:
-    - name: Проверка текущего образа
-      ansible.builtin.command: podman inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' myapp
-      register: current_image
-      changed_when: false
-      failed_when: false
-
-    - name: Остановка и удаление старого контейнера
-      block:
-        - name: Остановить старый контейнер
-          ansible.builtin.command: podman stop myapp
-          failed_when: false
-
-        - name: Удалить старый контейнер
-          ansible.builtin.command: podman rm myapp
-          failed_when: false
-
-        - name: Запустить новый контейнер
-          ansible.builtin.command: >
-            podman run -d --name myapp
-            -p 8080:80
-            --restart=always
-            {{ new_image }}
-          register: deploy_result
-
-        - name: Проверка здоровья нового контейнера
-          ansible.builtin.uri:
-            url: "http://localhost:8080/health"
-            status_code: 200
-          register: health
-          until: health.status == 200
-          retries: 10
-          delay: 5
-
-      rescue:
-        - name: Откат к старому образу
-          ansible.builtin.command: >
-            podman run -d --name myapp
-            -p 8080:80
-            --restart=always
-            {{ current_image.stdout | default('myapp:latest') }}
-          when: current_image.stdout is defined
-
-        - name: Оповещение об откате
-          ansible.builtin.debug:
-            msg: "Откат к {{ current_image.stdout }} из-за ошибки health check"
-```
-
-> **Примечание:** Использование `ExecStartPre` с префиксом `-` (тире) гарантирует, что команда не завершится ошибкой, если контейнер не запущен. Это обеспечивает идемпотентность.
-
-### Сценарий 4: Многоуровневая оркестрация (Multi-tier Orchestration)
+### Сценарий 2: Многоуровневая оркестрация (Multi-tier Orchestration)
 
 Координация между базой данных и приложением в одном плейбуке с контролем порядка и обработкой ошибок.
 
@@ -485,7 +260,119 @@ WantedBy=multi-user.target
 
 > **Примечание:** `import_playbook` выполняется статически на этапе парсинга. Если нужна условная логика, используйте `include_playbook` (через `ansible.builtin.include_tasks` с `apply`). Подробнее: **[Продвинутые возможности](advanced.md)**.
 
-### Сценарий 5: Адаптация под окружения (Environment-aware Structure)
+### Сценарий 3: Управление контейнерами через Systemd (Podman)
+
+Идиоматичный подход к управлению контейнерами на серверах без внешних оркестраторов. Шаблонизация unit-файла systemd гарантирует автозапуск и корректное логирование.
+
+**Шаблон сервиса** (`templates/container-app.service.j2`):
+```ini
+[Unit]
+Description=Контейнер {{ item.name }}
+After=network-online.target
+
+[Service]
+Restart=always
+TimeoutStopSec=70
+ExecStartPre=-/usr/bin/podman stop {{ item.name }}
+ExecStartPre=-/usr/bin/podman rm {{ item.name }}
+ExecStart=/usr/bin/podman run --name {{ item.name }} \
+    {% if item.ports is defined %}{% for port in item.ports %} -p {{ port }} {% endfor %}{% endif %} \
+    {{ item.image }}
+ExecStop=/usr/bin/podman stop {{ item.name }}
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Задача в плейбуке**:
+```yaml
+- name: Настройка контейнерных сервисов
+  hosts: compute_nodes
+  vars:
+    containers:
+      - { name: 'web-frontend', image: 'nginx:alpine', ports: ['80:80'] }
+      - { name: 'redis-cache', image: 'redis:latest' }
+
+  tasks:
+    - name: Генерация unit-файлов Systemd
+      ansible.builtin.template:
+        src: container-app.service.j2
+        dest: "/etc/systemd/system/{{ item.name }}.service"
+        mode: '0644'
+      loop: "{{ containers }}"
+      notify: Reload Systemd
+
+    - name: Запуск и добавление в автозагрузку
+      ansible.builtin.systemd:
+        name: "{{ item.name }}"
+        state: started
+        enabled: true
+      loop: "{{ containers }}"
+
+  handlers:
+    - name: Reload Systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+```
+
+**Расширенный вариант с проверкой здоровья и откатом:**
+
+```yaml
+- name: Деплой обновленного контейнера
+  hosts: compute_nodes
+  vars:
+    new_image: "myapp:{{ app_version }}"
+  tasks:
+    - name: Проверка текущего образа
+      ansible.builtin.command: podman inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' myapp
+      register: current_image
+      changed_when: false
+      failed_when: false
+
+    - name: Остановка и удаление старого контейнера
+      block:
+        - name: Остановить старый контейнер
+          ansible.builtin.command: podman stop myapp
+          failed_when: false
+
+        - name: Удалить старый контейнер
+          ansible.builtin.command: podman rm myapp
+          failed_when: false
+
+        - name: Запустить новый контейнер
+          ansible.builtin.command: >
+            podman run -d --name myapp
+            -p 8080:80
+            --restart=always
+            {{ new_image }}
+          register: deploy_result
+
+        - name: Проверка здоровья нового контейнера
+          ansible.builtin.uri:
+            url: "http://localhost:8080/health"
+            status_code: 200
+          register: health
+          until: health.status == 200
+          retries: 10
+          delay: 5
+
+      rescue:
+        - name: Откат к старому образу
+          ansible.builtin.command: >
+            podman run -d --name myapp
+            -p 8080:80
+            --restart=always
+            {{ current_image.stdout | default('myapp:latest') }}
+          when: current_image.stdout is defined
+
+        - name: Оповещение об откате
+          ansible.builtin.debug:
+            msg: "Откат к {{ current_image.stdout }} из-за ошибки health check"
+```
+
+> **Примечание:** Использование `ExecStartPre` с префиксом `-` (тире) гарантирует, что команда не завершится ошибкой, если контейнер не запущен. Это обеспечивает идемпотентность.
+
+### Сценарий 4: Адаптация под окружения (Environment-aware Structure)
 
 Использование динамических включений для разделения логики Stage и Production.
 
@@ -573,9 +460,82 @@ project/
 
 > **Примечание:** Подробнее о динамических включениях и `first_found` в разделе **[Продвинутые возможности](advanced.md)**.
 
+### Сценарий 5: Обнаружение и исправление дрейфа конфигурации (Drift Detection)
+
+Configuration drift — отклонение реального состояния сервера от описанного в коде. Ansible обнаруживает дрейф автоматически при каждом запуске благодаря идемпотентности модулей.
+
+**Анализ дрейфа через `--check --diff`:**
+
+```bash
+# Проверка текущего состояния без изменений
+ansible-playbook site.yml --check --diff 2>&1 | tee drift_report_$(date +%Y%m%d).log
+# → Показывает все расхождения между текущим состоянием и кодом
+
+# Анализ: задачи со статусом changed = потенциальный дрейф
+grep "changed:" drift_report_20240115.log
+# → web_01               : changed=1
+# → web_02               : changed=0
+```
+
+**Автоматический drift report:**
+
+```yaml
+---
+- name: Configuration drift detection
+  hosts: all
+  become: true
+  tasks:
+    - name: Проверка критичных файлов конфигурации
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: file_states
+      loop:
+        - /etc/ssh/sshd_config
+        - /etc/nginx/nginx.conf
+        - /etc/sysconfig/network-scripts/ifcfg-eth0
+
+    - name: Generate drift report
+      ansible.builtin.copy:
+        content: |
+          Drift Report: {{ inventory_hostname }} — {{ ansible_date_time.iso8601 }}
+          {% for item in file_states.results %}
+          {{ item.item }}: {{ item.stat.checksum }}
+          {% endfor %}
+        dest: "/var/log/drift_report_{{ inventory_hostname }}_{{ ansible_date_time.date }}.log"
+        mode: "0644"
+      when: file_states.results | selectattr('changed') | list | length > 0
+
+- name: Collect drift reports from all hosts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Gather drift reports
+      ansible.builtin.find:
+        paths: /var/log
+        patterns: "drift_report_*.log"
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] }}"
+      register: report_files
+      ignore_errors: true
+
+    - name: Aggregate drift data
+      ansible.builtin.set_fact:
+        drifted_hosts: >-
+          {{ report_files.results |
+             selectattr('failed', 'equalto', false) |
+             selectattr('files', 'length', 'gt', 0) |
+             map(attribute='item') |
+             list }}
+
+    - name: Report drifted hosts
+      ansible.builtin.debug:
+        msg: "Drift detected on: {{ drifted_hosts | join(', ') }}"
+```
+
 ### Сценарий 6: Стратегии выполнения (Strategy Patterns)
 
-Демонстрация различных стратегий выполнения и их применения.
+Подробный разбор стратегий выполнения, их влияния на производительность и выбор параметров `forks`/`serial` приведен в **[Оптимизация производительности](../ansible_performance_tuning.md)**.
 
 **`strategy: free` — независимое выполнение хостов:**
 
@@ -589,24 +549,6 @@ project/
       ansible.builtin.command: df -h
       register: disk_usage
       changed_when: false
-```
-
-**`strategy: free` + `throttle` — контроль нагрузки:**
-
-```yaml
-- name: Регистрация серверов во внешнем API
-  hosts: app_servers
-  strategy: free
-  tasks:
-    - name: Регистрация в сервисе
-      ansible.builtin.uri:
-        url: "https://api.example.com/register"
-        method: POST
-        body_format: json
-        body:
-          host: "{{ inventory_hostname }}"
-          ip: "{{ ansible_default_ipv4.address }}"
-      throttle: 5  # Максимум 5 одновременных запросов
 ```
 
 **`serial` + `max_fail_percentage` — безопасные обновления:**
@@ -690,39 +632,6 @@ project/
         state: reloaded
 ```
 
-**Обработчик с `listen` (группировка обработчиков):**
-
-```yaml
-tasks:
-  - name: Обновление конфига
-    ansible.builtin.template:
-      src: nginx.conf.j2
-      dest: /etc/nginx/nginx.conf
-    notify: Restart Web Services
-
-  - name: Обновление SSL
-    ansible.builtin.copy:
-      src: "{{ item }}"
-      dest: "/etc/nginx/ssl/{{ item }}"
-    loop:
-      - cert.pem
-      - key.pem
-    notify: Restart Web Services
-
-handlers:
-  - name: Restart Web Services
-    ansible.builtin.systemd:
-      name: nginx
-      state: restarted
-    listen: "restart web services"
-
-  - name: Reload Web Services
-    ansible.builtin.systemd:
-      name: nginx
-      state: reloaded
-    listen: "restart web services"
-```
-
 **Принудительный запуск обработчиков (`meta: flush_handlers`):**
 
 ```yaml
@@ -769,7 +678,7 @@ tasks:
         state: restarted
 ```
 
-> **Примечание:** Обработчики выполняются только один раз и только в конце секции, если хотя бы одна задача изменила состояние (`changed`). Подробнее: **[Выполнение плейбука: база](basics.md)**.
+> **Примечание:** Подробнее о `listen`, `force_handlers` и тонкостях обработчиков в разделе **[Продвинутые возможности](advanced.md)**.
 
 ### Сценарий 8: Теги и условное включение
 
@@ -814,15 +723,22 @@ tasks:
 ```bash
 # Выполнить только задачи с тегом "config"
 ansible-playbook site.yml --tags "config"
+# → PLAY [Настройка сервера] ****************************************************
 
 # Выполнить несколько тегов
 ansible-playbook site.yml --tags "install,config"
+# → PLAY [Настройка сервера] ****************************************************
 
 # Исключить задачи с тегом "ssl"
 ansible-playbook site.yml --skip-tags "ssl"
+# → PLAY [Настройка сервера] ****************************************************
 
 # Посмотреть все доступные теги
 ansible-playbook site.yml --list-tags
+# → TASK TAGS  *******************************************************************
+# → [install]        : Установка пакетов
+# → [config]         : Конфигурация Nginx
+# → [ssl]            : Настройка SSL
 ```
 
 **Динамические теги через `tags` на уровне play:**
@@ -838,117 +754,136 @@ ansible-playbook site.yml --list-tags
       tags: [always]  # Всегда выполняется, даже с --skip-tags
 ```
 
-### Сценарий 9: CI/CD интеграция (GitLab CI)
+> **Примечание:** Подробнее о тегах на уровне ролей и `import_role`/`include_role` в разделе **[Роли Ansible](../ansible_roles.md)**. Сравнение `import_role` vs `include_role` и наследование тегов: **[Создание и использование ролей](../Roles/usage.md)**.
 
-Интеграция Ansible в пайплайн CI/CD с линтингом, проверкой синтаксиса и безопасным деплоем.
+## Операции и команды
 
-**`.gitlab-ci.yml`:**
-
-```yaml
-stages:
-  - lint
-  - test
-  - deploy
-
-variables:
-  ANSIBLE_FORCE_COLOR: "true"
-  ANSIBLE_HOST_KEY_CHECKING: "False"
-
-ansible_lint:
-  stage: lint
-  image: cytopia/ansible-lint
-  script:
-    - ansible-lint playbooks/
-    - ansible-lint roles/
-
-syntax_check:
-  stage: lint
-  image: cytopia/ansible
-  script:
-    - ansible-playbook playbooks/site.yml --syntax-check
-    - ansible-playbook playbooks/site.yml --list-tasks
-
-deploy_staging:
-  stage: test
-  image: cytopia/ansible
-  script:
-    - ansible-playbook playbooks/site.yml -i inventory/staging/hosts.yml --check --diff
-  only:
-    - branches
-
-deploy_production:
-  stage: deploy
-  image: cytopia/ansible
-  script:
-    - ansible-playbook playbooks/site.yml -i inventory/production/hosts.yml
-  when: manual
-  only:
-    - main
-  environment:
-    name: production
-```
-
-**Проверка перед деплоем:**
-
-```bash
-# Синтаксис
-ansible-playbook site.yml --syntax-check
-
-# Линтинг
-ansible-lint site.yml
-
-# Просмотр задач
-ansible-playbook site.yml --list-tasks
-
-# Dry-run
-ansible-playbook site.yml --check --diff -i inventory/production/hosts.yml
-```
-
-## Валидация и отладка
-
-### Статический анализ
+### Статический анализ и проверка синтаксиса
 
 ```bash
 ansible-playbook site.yml --syntax-check
-# → Проверка синтаксиса YAML и структуры плейбука
+# → ERROR! Syntax Error while loading YAML.
+# → или: PLAY RECAP ***************************************************************** (если ошибок нет)
 
 ansible-lint site.yml
-# → Проверка по правилам ansible-lint (включая best practices)
+# → ansible-lint . [WARNING]: No config files found; using defaults
+# → 1 succeeded, 0 failed, 0 warnings
 ```
 
 ### Просмотр без выполнения
 
 ```bash
 ansible-playbook site.yml --list-tasks
-# → Показать все задачи без выполнения
+# → play #1: Деплой веб-приложения
+# →   tasks:
+# →     - Установка пакетов
+# →     - Копирование конфигурации
 
 ansible-playbook site.yml --list-tags
-# → Показать все доступные теги
+# → TASK TAGS: [always, config, deploy, verify]
 
 ansible-playbook site.yml --list-hosts
-# → Показать хосты, затронутые плейбуком
+# → play #1: Деплой веб-приложения
+# →   host count (3):
+# →     web_01
+# →     web_02
+# →     web_03
 ```
 
 ### Режим проверки и отладки
 
 ```bash
 ansible-playbook site.yml --check
-# → Dry-run: показать какие изменения были бы сделаны
+# → PLAY RECAP ********************************************************************
+# → web_01                    : ok=5    changed=2    unreachable=0    failed=0
 
 ansible-playbook site.yml --check --diff
-# → Dry-run с показом разницы в файлах
+# → PLAY RECAP ********************************************************************
+# → web_01                    : ok=5    changed=2    unreachable=0    failed=0
+# → --- before
+# → +++ after
+# → @@ -1,3 +1,3 @@
+# → - timeout 60;
+# → + timeout 120;
 
 ansible-playbook site.yml --step
-# → Пошаговое выполнение с интерактивным подтверждением каждой задачи
+# → PLAY [Деплой веб-приложения] *************************************************
+# → Perform task: Установка пакетов (y/n/c):
+# → y
 
 ansible-playbook site.yml --start-at-task="Выполнить миграцию"
-# → Начать выполнение с указанной задачи
+# → PLAY [Деплой веб-приложения] *************************************************
+# → TASK [Выполнить миграцию] ****************************************************
 
 ansible-playbook site.yml -vvv
-# → Подробный вывод (максимальная детализация -vvvv)
+# → <web_01> ESTABLISH SSH CONNECTION FOR USER: deploy
+# → <web_01> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s ...
 
 ansible-playbook site.yml --start-at-task="Деплой" --step
-# → Начать с конкретной задачи и подтверждать каждую шаг
+# → PLAY [Деплой веб-приложения] *************************************************
+# → Perform task: Деплой (y/n/c):
+# → y
+```
+
+### Проверка подключения и сбор фактов
+
+```bash
+ansible all -m ping
+# → web_01 | SUCCESS => {
+# →     "ansible_facts": {
+# →         "discovered_interpreter_python": "/usr/bin/python3"
+# →     },
+# →     "changed": false
+# → }
+
+ansible all -m ansible.builtin.setup -a "filter=ansible_os*"
+# → web_01 | SUCCESS => {
+# →     "ansible_facts": {
+# →         "ansible_os_family": "Debian",
+# →         "ansible_distribution": "Ubuntu",
+# →         "ansible_distribution_version": "22.04"
+# →     },
+# →     "changed": false
+# → }
+
+ansible-inventory --list
+# → {
+# →     "_meta": {
+# →         "hostvars": {
+# →             "web_01": {
+# →                 "ansible_host": "192.168.1.10"
+# →             }
+# →         }
+# →     },
+# →     "web_servers": {
+# →         "hosts": ["web_01", "web_02"]
+# →     }
+# → }
+
+ansible-inventory --graph
+# → @all:
+# →  |_@ungrouped:
+# →  |_web_servers:
+# →     |_web_01
+# →     |_web_02
+```
+
+### Просмотр инвентаря
+
+```bash
+ansible-inventory --list --yaml
+# → all:
+# →   hosts:
+# →     web_01:
+# →       ansible_host: 192.168.1.10
+
+ansible-doc -l | wc -l
+# → 3366
+
+ansible-doc ansible.builtin.systemd
+# → > SYSTEMD    (/usr/lib/python3/dist-packages/ansible/modules/service_systemd.py)
+# →
+# →  Manage systemd units.
 ```
 
 ### Отладка переменных и фактов
@@ -958,30 +893,32 @@ ansible-playbook site.yml --start-at-task="Деплой" --step
 - name: Отладка переменной
   ansible.builtin.debug:
     var: my_variable
+# → ok: [web_01] => {
+# →     "my_variable": "production"
+# → }
 
 # Вывод сообщения с интерполяцией
 - name: Отладка сообщения
   ansible.builtin.debug:
     msg: "Значение: {{ my_variable }}"
+# → ok: [web_01] => {
+# →     "msg": "Значение: production"
+# → }
 
 # Вывод всех фактов хоста
 - name: Все факты
   ansible.builtin.debug:
     var: hostvars[inventory_hostname]
+# → ok: [web_01] => {
+# →     "hostvars": {
+# →         "inventory_hostname": "web_01",
+# →         "ansible_host": "192.168.1.10",
+# →         ...
+# →     }
+# → }
 ```
 
 ## Типичные ошибки и troubleshooting
-
-### Ошибка: "No handler found" / "The requested handler 'X' was not found"
-
-**Причина:** Обработчик вызван через `notify`, но не определен в секции `handlers` или вcluded роли.
-
-**Решение:**
-```bash
-# Проверить наличие handlers в плейбуке и ролях
-grep -r "handlers:" playbooks/ roles/
-# Убедиться, что имя в notify совпадает с именем в handlers
-```
 
 ### Ошибка: "Could not match supplied host pattern"
 
@@ -990,40 +927,102 @@ grep -r "handlers:" playbooks/ roles/
 **Решение:**
 ```bash
 ansible-inventory --list  # Просмотр всех групп и хостов
+# → {"web_servers": {"hosts": ["web_01"]}, ...}
 ansible-inventory --graph  # Визуализация структуры инвентаря
+# → @all:
+# →  |_web_servers:
+# →     |_web_01
 ```
 
-### Ошибка: "Undefined variable" при использовании `include_tasks`
+### Ошибка: "FAILED! => {'msg': 'The field X is not allowed'}"
 
-**Причина:** `include_tasks` не может обратиться к переменной, которая еще не собрана (факты не собраны или переменная определена ниже по файлу).
+**Причина:** Использование несуществующего параметра модуля или устаревший синтаксис.
 
-**Решение:** Убедитесь, что переменная определена до `include_tasks`, или используйте `gather_facts: true`.
+**Решение:** Проверьте документацию модуля через `ansible-doc`:
+```bash
+ansible-doc ansible.builtin.systemd
+# → Проверьте допустимые параметры
+```
 
-### Ошибка: "ERROR! 'serial' is not a valid attribute for a Play"
+### Ошибка: "Undefined variable" при использовании `import_tasks`
 
-**Причина:** `serial` используется на уровне задачи вместо уровня play.
+**Причина:** `import_tasks` не может обратиться к переменной, которая еще не собрана (факты не собраны или переменная определена ниже по файлу).
 
-**Решение:** `serial` задается на уровне play, а не задачи:
+**Решение:** Убедитесь, что переменная определена до `import_tasks`, или используйте `gather_facts: true`.
+
+### Ошибка: "No such file or directory" при `include_tasks`
+
+**Причина:** Путь к файлу задач указан неверно или переменная, формирующая путь, пуста.
+
+**Решение:**
+```bash
+# Проверить существование файла
+ls -la tasks/{{ ansible_facts['os_family'] | lower }}_install.yml
+
+# Вывести значение переменной для отладки
+ansible-playbook site.yml -e "debug_var=true" -vvv
+```
+
+### Ошибка: "Handler 'X' not found"
+
+**Причина:** Обработчик вызван через `notify`, но не определен в секции `handlers` или included роли.
+
+**Решение:**
+```bash
+# Проверить наличие handlers в плейбуке и ролях
+grep -r "handlers:" playbooks/ roles/
+# Убедиться, что имя в notify совпадает с именем в handlers
+```
+
+### Ошибка: "Unexpected failure during module execution" при async
+
+**Причина:** Фоновая задача (`async`) не завершилась за отведенное время или Control Node потерял связь с хостом.
+
+**Решение:** Увеличьте `async` или проверьте статус задачи через `async_status`:
 ```yaml
-# ПРАВИЛЬНО
-- name: Пример
-  hosts: all
-  serial: 1
-  tasks: ...
-
-# НЕПРАВИЛЬНО
-- name: Пример
-  hosts: all
-  tasks:
-    - name: Задача
-      serial: 1  # ОШИБКА
+- name: Проверка статуса фоновой задачи
+  ansible.builtin.async_status:
+    jid: "{{ async_job.ansible_job_id }}"
+  register: job_result
+  until: job_result.finished
+  retries: 30
+  delay: 10
 ```
 
-### Ошибка: Теги не применяются к задачам внутри роли
+### Ошибка: `delegate_to` на недоступный хост
 
-**Причина:** Теги на `include_role` не видны вложенным задачам (в отличие от `import_role`).
+**Причина:** Хост, на который делегирована задача, недоступен или не указан в инвентаре.
 
-**Решение:** Используйте `import_role` для наследования тегов, или добавляйте теги напрямую к задачам внутри роли.
+**Решение:** Проверьте доступность делегированного хоста:
+```bash
+ansible load_balancers -m ping
+# → web_lb | SUCCESS => {"changed": false}
+```
+
+### Ошибка: `strategy: free` с разделяемым состоянием
+
+**Причина:** При `strategy: free` задачи на разных хостах выполняются независимо, но общие переменные (`set_fact`) не синхронизируются между хостами.
+
+**Решение:** Используйте `run_once: true` с `delegate_to: localhost` для сбора данных, или вернитесь на `linear`.
+
+### Ошибка: `async` задача потеряна после перезапуска Control Node
+
+**Причина:** Идентификатор фоновой задачи (`ansible_job_id`) хранится в переменной плейбука и теряется при прерывании.
+
+**Решение:** Сохраняйте `jid` в файл или внешнее хранилище:
+```yaml
+- name: Сохранить JID для последующего опроса
+  ansible.builtin.copy:
+    content: "{{ async_job.ansible_job_id }}"
+    dest: "/tmp/jid_{{ inventory_hostname }}"
+  delegate_to: localhost
+```
+
+### Ошибка: `include_role` в цикле вызывает каскадные ошибки
+
+**Причина:** `include_role` внутри `loop` создает отдельный экземпляр роли для каждого элемента, что может привести к race conditions или превышению лимитов.
+
+**Решение:** Используйте `block` с одной ролью и передавайте данные через `vars`, или замените на `import_role` если логика статична.
 
 ## Лучшие практики
 
@@ -1036,7 +1035,7 @@ ansible-inventory --graph  # Визуализация структуры инв�
 
 ### Rolling Updates и Zero-Downtime
 
-5. **`serial` для критичных обновлений.** Всегда используйте пакетную обработку при деплое на продакшен.
+5. **`serial` для критичных обновлений.** Всегда используйте пакетную обработку при деплое на продакшен. Подробнее: **[Стратегии деплоя и rolling updates](../ansible_deployment_strategies.md)**.
 6. **`max_fail_percentage`.** Устанавливайте порог падений для остановки при массовых сбоях.
 7. **`any_errors_fatal: true`** для Canary-хоста. Остановка при ошибке на первом хосте.
 8. **Health check после обновления.** Проверяйте работоспособность до возврата в балансировщик.
@@ -1044,21 +1043,228 @@ ansible-inventory --graph  # Визуализация структуры инв�
 ### Обработчики и теги
 
 9. **`notify` вместо прямого рестарта.** Используйте обработчики для условного перезапуска сервисов.
-10. **`listen` для группировки.** Объединяйте связанные обработчики через `listen`.
-11. **`meta: flush_handlers`** когда нужно применить изменения до продолжения.
+10. **`meta: flush_handlers`** когда нужно применить изменения до продолжения.
+11. **`force_handlers: true`** для критичных сервисов. Обработчики должны выполняться даже при ошибках.
 12. **Теги для точечных изменений.** Позволяйте запускать отдельные части плейбука через `--tags`.
 
 ### Безопасность и надежность
 
-13. **`force_handlers: true`** для критичных сервисов. Обработчики должны выполняться даже при ошибках.
-14. **`no_log: true`** для задач с секретами. Скрывайте пароли и ключи от логов.
-15. **`changed_when` / `failed_when`** для точной отчетности о статусе задач.
-16. **Dry-run перед деплоем.** Всегда проверяйте `--check --diff` перед применением на продакшене.
+13. **`no_log: true`** для задач с секретами. Скрывайте пароли и ключи от логов.
+14. **`changed_when` / `failed_when`** для точной отчетности о статусе задач.
+15. **Dry-run перед деплоем.** Всегда проверяйте `--check --diff` перед применением на продакшене.
+16. **Drift detection.** Регулярно запускайте плейбуки в `--check` для обнаружения несанкционированных изменений.
+17. **Аудит.** Настройте `log_path` в `ansible.cfg` и callback-плагины для централизованного логирования. Подробнее: **[Безопасность Ansible](../ansible_security_best_practices.md)**.
+
+### Импорты и включения
+
+18. **`import_*` для фиксированной структуры.** Используйте `import_role` и `import_tasks` когда логика известна на этапе парсинга.
+19. **`include_*` для гибкой логики.** Используйте `include_role` и `include_tasks` когда выбор зависит от фактов или переменных.
+20. **Явные пути.** Избегайте относительных путей без указания `paths:` в `lookup('first_found', ...)`.
+
+### Сценарий 9: Организация множества плейбуков в крупном проекте
+
+При росте числа ролей и окружений единый `site.yml` становится монолитом. Правильная структура каталога `playbooks/` и выбор между `import_playbook` и отдельными запусками определяют поддерживаемость проекта.
+
+```
+project/
+├── ansible.cfg
+├── inventories/
+│   ├── dev/
+│   ├── staging/
+│   └── prod/
+├── playbooks/
+│   ├── site.yml                 # Оркестратор верхнего уровня
+│   ├── provision.yml            # Базовое подключение хостов
+│   ├── deploy_app.yml           # Деплой приложения
+│   ├── deploy_db.yml            # Миграции БД
+│   ├── rollback.yml             # Откат последнего деплоя
+│   ├── drift_detection.yml      # Детект дрейфа
+│   ├── health_check.yml         # Проверка здоровья после деплоя
+│   └── cleanup.yml              # Очистка артефактов
+├── roles/
+└── collections/
+    └── requirements.yml
+```
+
+**Правила именования:**
+- `site.yml` — оркестратор, вызывает остальные плейбуки.
+- `deploy_*.yml` — деплой конкретного сервиса.
+- `rollback.yml` — универсальный откатный плейбук.
+- `*_check.yml` — проверки без изменений.
+
+**Паттерн 1: Оркестратор через `import_playbook` (статическая композиция)**
+
+```yaml
+# playbooks/site.yml
+---
+- name: Этап 1: Подготовка инфраструктуры
+  ansible.builtin.import_playbook: provision.yml
+
+- name: Этап 2: Деплой приложения
+  ansible.builtin.import_playbook: deploy_app.yml
+
+- name: Этап 3: Миграции базы данных
+  ansible.builtin.import_playbook: deploy_db.yml
+
+- name: Этап 4: Проверка здоровья
+  ansible.builtin.import_playbook: health_check.yml
+```
+
+`import_playbook` выполняется на этапе парсинга. Подходит, когда структура известна заранее и не требуется условная логика между этапами.
+
+**Паттерн 2: Условная композиция через `include_playbook` (динамическая)**
+
+```yaml
+# playbooks/site.yml
+---
+- name: Деплой с условным откатом
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Деплой приложения
+      ansible.builtin.include_playbook: deploy_app.yml
+
+    - name: Проверка здоровья
+      ansible.builtin.include_playbook: health_check.yml
+
+    - name: Откат при проблемах
+      ansible.builtin.include_playbook: rollback.yml
+      when: deployment_failed | default(false)
+```
+
+`include_playbook` выполняется во время выполнения. Позволяет использовать факты и переменные для выбора плейбука.
+
+**Паттерн 3: Независимые запуски через CI/CD (рекомендуется для production)**
+
+Вместо одного оркестратора каждый этап запускается отдельной командой. Это дает максимальную устойчивость и понятные артефакты выполнения:
+
+```bash
+# Этап 1: Проверка и подготовка
+ansible-playbook -i inventories/prod/hosts.yml playbooks/provision.yml --check --diff
+
+# Этап 2: Деплой БД (остановка при ошибке)
+ansible-playbook -i inventories/prod/hosts.yml playbooks/deploy_db.yml \
+  --tags migrate \
+  --extra-vars "db_version=v2.3.1"
+
+# Этап 3: Деплой приложения (rolling update)
+ansible-playbook -i inventories/prod/hosts.yml playbooks/deploy_app.yml \
+  --serial "25%" \
+  --max_fail_percentage 10
+
+# Этап 4: Проверка здоровья
+ansible-playbook -i inventories/prod/hosts.yml playbooks/health_check.yml
+
+# При ошибке на этапе 3 или 4 — откат
+ansible-playbook -i inventories/prod/hosts.yml playbooks/rollback.yml \
+  --extra-vars "target_version=v2.2.0"
+```
+
+**Преимущества отдельных запусков:**
+- Каждый этап имеет отдельный лог и статус в CI/CD.
+- При падении этапа 3 не нужно перезапускать этап 1.
+- Легче ограничивать blast radius через `serial` и `max_fail_percentage` на уровне отдельного плейбука.
+- Артефакты (логи, статусы) не смешиваются.
+
+**Когда использовать единый оркестратор:**
+- Малый проект (до 10 хостов), где все этапы логически связаны.
+- Необходимость атомарного отката всего деплоя через `block/rescue` на уровне оркестратора.
+- Ограниченная инфраструктура CI/CD (один джоб вместо нескольких).
+
+**Критерии разделения плейбуков:**
+
+| Критерий | Рекомендация |
+| :--- | :--- |
+| Количество хостов | >50 — разделяйте на этапы |
+| Количество ролей | >8 — каждый сервис = отдельный плейбук |
+| Частота изменений | БД меняется реже, чем приложение — разделите |
+| Риск операции | Миграции БД — отдельный плейбук с `any_errors_fatal: true` |
+| Время выполнения | >30 минут — разделите на этапы с сохранением состояния |
+
+### Сценарий 10: Версионирование и отслеживание изменений плейбуков
+
+В production-среде каждое изменение плейбука должно быть прослеживаемо. Git является стандартом хранения, но требует дисциплины.
+
+**Структура Git-репозитория:**
+
+```
+infrastructure/
+├── ansible/
+│   ├── ansible.cfg
+│   ├── playbooks/
+│   ├── roles/
+│   ├── collections/
+│   │   └── requirements.yml
+│   └── .gitignore
+├── terraform/                  # Если используется IaC
+└── README.md
+```
+
+**Версионирование плейбуков:**
+- Храните плейбуки в Git с подписанными коммитами (`git commit -S`).
+- Используйте ветки: `main` — production, `develop` — staging, `feature/*` — разработка.
+- Каждый деплой привязан к коммиту или тегу: `git checkout v1.2.3 && ansible-playbook site.yml`.
+- Для ролей фиксируйте версии в `requirements.yml`:
+
+```yaml
+# collections/requirements.yml
+collections:
+  - name: community.general
+    version: ">=6.0.0,<7.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0,<2.0.0"
+```
+
+**Аудит изменений:**
+- Включите `log_path = ./logs/ansible.log` в `ansible.cfg`.
+- Используйте callback-плагины для отправки событий в SIEM.
+- Никогда не коммитьте открытые секреты. Используйте `git diff --cached` и pre-commit hooks.
+
+### Сценарий 11: Валидация структуры плейбуков
+
+Перед запуском в production выполните статический анализ:
+
+```bash
+# 1. Проверка синтаксиса YAML
+ansible-playbook playbooks/site.yml --syntax-check
+
+# 2. Линтинг (включая security-профиль)
+ansible-lint playbooks/ roles/ --profile security
+
+# 3. Проверка целостности инвентаря
+ansible-inventory -i inventories/prod/hosts.yml --list | python3 -m json.tool > /dev/null
+
+# 4. Dry-run с diff
+ansible-playbook -i inventories/prod/hosts.yml playbooks/site.yml --check --diff
+```
+
+**Интеграция в CI/CD (GitHub Actions пример):**
+
+```yaml
+# .github/workflows/ansible-lint.yml
+name: Ansible Lint
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint playbooks
+        run: ansible-lint playbooks/ roles/ --profile security
+      - name: Syntax check
+        run: |
+          for pb in playbooks/*.yml; do
+            ansible-playbook "$pb" --syntax-check
+          done
+```
 
 ## Дополнительная информация
 
 * [Основы структуры плейбуков](basics.md) — компоненты плейбука (roles, pre_tasks, post_tasks).
-* [Продвинутые возможности](advanced.md) — подробнее о делегировании, асинхронности и обработке ошибок.
-* [Переменные в Ansible](variables.md) — детальный разбор приоритетов (22 уровня).
-* [Типовая структура проекта](../examples/example_project_layout.md) — организация файлов и каталогов.
-* [Антипаттерны Ansible](../ansible_bad_practices.md) — типичные ошибки проектирования сложных структур.
+* [Продвинутые возможности](advanced.md) — `include_playbook`, `vars_prompt`, callback-плагины, делегирование.
+* [Валидация и тестирование структуры плейбуков](testing_and_validation.md) — статический анализ, dry-run, идемпотентность и CI/CD.
+* [Стратегии деплоя и rolling updates](../ansible_deployment_strategies.md) — Blue-Green, Canary, Rolling Update.
+* [Оптимизация производительности](../ansible_performance_tuning.md) — `strategy`, `throttle`, `forks`, `async`.
+* [Роли Ansible](../ansible_roles.md) — `import_role`/`include_role`, структура ролей, теги.
+* [Управление мультисредами](../ansible_multi_environment_management.md) — изоляция dev/staging/prod.
+* [Тестирование с Molecule](../ansible_testing_with_molecule.md) — тестирование ролей на изолированных окружениях.

@@ -1403,4 +1403,5 @@ service:
 
 - **[Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)** (назад)
 - **[Тестирование и верификация](./lgtm_otel_minikube_test_app_verification.md)** (вперед)
+- **[Production Hardening](./lgtm_production_hardening.md)** (дополнительно)
 

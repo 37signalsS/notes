@@ -1126,6 +1126,6 @@ ansible-playbook deploy.yml -vvv --check --diff
 
 ## Дополнительная информация
 
-- [Динамический инвентарь](./dynamic_inventory.md) — подробнее о плагинах инвентаризации (включая k8s).
+- [Динамический инвентарь](./dynamic_inventory.md) — подробнее о плагинах инвентаризации.
 - [Kubespray: автоматизация развёртывания кластера](../Kubernetes/Installation/Kubespray/overview.md) — Ansible для установки Kubernetes.
 - [Ansible Vault](../Vault/overview.md) — безопасное хранение секретов.

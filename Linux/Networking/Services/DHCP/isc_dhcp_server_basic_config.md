@@ -28,6 +28,15 @@
 | `/etc/default/isc-dhcp-server` | Настройка интерфейсов и параметров запуска (Debian/Ubuntu). |
 | `/etc/sysconfig/dhcpd` | Настройка интерфейсов и аргументов (RHEL/Rocky). |
 
+### Предварительные требования и подготовка окружения
+
+Перед установкой и запуском `dhcpd` проверьте окружение:
+
+1.  **Сетевой интерфейс:** Интерфейс, указанный в конфигурации запуска, должен находиться в состоянии `UP` и иметь статический IP-адрес из обслуживаемой подсети. DHCP-сервер не может обслуживать сегмент, если сам находится в нём через динамический адрес от другого сервера.
+2.  **Права суперпользователя:** Все операции установки, редактирования конфигурации и управления службой требуют `sudo` или прямого доступа `root`.
+3.  **Порты:** UDP 67 (сервер) и UDP 68 (клиент) должны быть доступны на интерфейсах обслуживания. На хосте, где установлен `dhcpd`, порт 67 обычно слушается только на указанных интерфейсах.
+4.  **Хранилище:** Раздел, на котором находится `/var/lib/dhcp/`, должен быть достаточно надёжным. На SSD/NVMe влияние задержки `fsync` минимально; на устаревших HDD при большой частоте аренд (например, `default-lease-time 60`) возможны задержки в десятки миллисекунд на каждую запись.
+
 ---
 
 ## Практические сценарии
@@ -58,6 +67,22 @@ INTERFACESv4="eth0 vlan10"
 **RHEL/Rocky (`/etc/sysconfig/dhcpd`):**
 ```ini
 DHCPDARGS="eth0"
+```
+
+### Проверка готовности интерфейсов
+
+Перед запуском службы убедитесь, что интерфейсы активны и имеют корректные адреса:
+
+```bash
+# Проверка состояния всех интерфейсов
+ip -brief addr show
+
+# Проверка, что интерфейс UP и имеет IP из обслуживаемой подсети
+ip -4 addr show eth0 | grep inet
+# → inet 10.0.10.1/24 brd 10.0.10.255 scope global dynamic eth0
+
+# Если интерфейс DOWN — служба dhcpd не запустится или будет слушать на всех интерфейсах
+ip link set eth0 up
 ```
 
 ### Основная конфигурация (`dhcpd.conf`)
@@ -106,6 +131,129 @@ subnet 10.0.10.0 netmask 255.255.255.0 {
 }
 ```
 
+### Динамическое обновление DNS (DDNS)
+
+Для автоматического создания записей A/PTR в DNS-сервере (например, BIND9) используйте `ddns-update-style interim` с TSIG-ключом:
+
+```bash
+# 1. Создание секретного ключа для nsupdate/BIND
+dnssec-keygen -a HMAC-SHA512 -b 512 -n HOST dhcp-update-key
+# → Kdhcp-update-key.+165.+9999999999.key
+
+# 2. Извлечение секрета
+cat Kdhcp-update-key.+165.+9999999999.private | grep "^Key"
+# → Key "XXXXX..."
+
+# 3. Добавление ключа в dhcpd.conf (глобально)
+key dhcp-update-key {
+    algorithm HMAC-SHA512;
+    secret "XXXXX...";
+}
+ddns-update-style interim;
+ddns-domainname "corp.internal";
+zone corp.internal. {
+    primary 10.0.1.10; # IP DNS-сервера
+    key dhcp-update-key;
+}
+
+# 4. Разрешение обновлений в BIND (allow-update)
+# В named.conf.local:
+zone "corp.internal" IN {
+    type master;
+    file "/etc/bind/db.corp.internal";
+    allow-update { key dhcp-update-key; };
+};
+```
+
+### Классификация клиентов
+
+Классы позволяют применять политики к группам устройств:
+
+```conf
+# Классификация по Vendor Class Identifier (VCI)
+class "printers" {
+    match if substring (option vendor-class-identifier, 0, 6) = "HP Jet";
+}
+
+# Классификация по MAC-префиксу (OUI)
+class "apple-devices" {
+    match if binary-to-ascii (16, 8, ":", substring(hardware, 1, 3)) = "ac:de:48";
+}
+
+# Применение класса к пулу
+subnet 10.0.20.0 netmask 255.255.255.0 {
+    pool {
+        allow members of "printers";
+        range 10.0.20.50 10.0.20.100;
+        option printers 10.0.20.10; # Пример специфичной опции
+    }
+}
+```
+
+### Маршрутизация (Classless Static Routes — Option 121)
+
+Для передачи маршрутов, отличных от шлюза по умолчанию, используйте опцию 121 (RFC 3442):
+
+```conf
+subnet 10.0.30.0 netmask 255.255.255.0 {
+    range 10.0.30.100 10.0.30.200;
+    
+    # Стандартный шлюз (для клиентов, не поддерживающих опцию 121)
+    option routers 10.0.30.1;
+
+    # RFC 3442: список маршрутов в формате <бит_маски>, <байты_сети>, <шлюз>
+    # Пример: сеть 172.16.0.0/16 через 10.0.30.254 + маршрут по умолчанию
+    option rfc3442-classless-static-routes 
+        16, 172, 16, 10, 0, 30, 254, 
+        0, 10, 0, 30, 1;
+}
+```
+
+### Интеграция с PXE Boot
+
+Для загрузки по сети добавьте опции 66 (TFTP-сервер) и 67 (загрузочный файл):
+
+```conf
+subnet 10.0.40.0 netmask 255.255.255.0 {
+    range 10.0.40.100 10.0.40.200;
+    option routers 10.0.40.1;
+
+    # Для BIOS-клиентов
+    class "pxe-clients" {
+        match if substring (option vendor-class-identifier, 0, 9) = "PXEClient";
+        filename "pxelinux.0";
+        next-server 10.0.40.10;
+    }
+
+    # Для UEFI-клиентов
+    class "uefi-pxe" {
+        match if substring (option vendor-class-identifier, 0, 10) = "HTTPClient";
+        filename "grubx64.efi";
+        next-server 10.0.40.10;
+    }
+}
+```
+
+### Режим «Белого списка» (unknown-clients)
+
+Чтобы запретить выдачу адресов клиентам, не указанным явно:
+
+```conf
+# Глобально запретить неизвестных клиентов
+authoritative;
+deny unknown-clients;
+
+subnet 10.0.50.0 netmask 255.255.255.0 {
+    # Без range — адреса выдаются только через host declarations
+    option routers 10.0.50.1;
+}
+
+host known-server {
+    hardware ethernet 00:11:22:33:44:55;
+    fixed-address 10.0.50.10;
+}
+```
+
 ### Валидация и запуск
 
 Перед перезапуском службы **обязательно** проверяйте синтаксис:
@@ -122,6 +270,99 @@ sudo systemctl restart isc-dhcp-server
 # → active (running)
 ```
 
+### Служба systemd и безопасность
+
+#### Пакетный hardening через override
+
+Создайте override-файл для ограничения возможностей демона:
+
+```bash
+sudo systemctl edit isc-dhcp-server
+```
+
+Добавьте в редакторе:
+
+```ini
+[Service]
+# Ограничение доступа к файловой системе
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# Capabilities: только NET_RAW и NET_ADMIN (для raw сокетов)
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+
+# Ограничение доступа к сети
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+
+# Запрет на изменение системных настроек
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+```
+
+Примените изменения:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart isc-dhcp-server
+# → active (running)
+```
+
+> **Примечание:** На RHEL/Rocky имя службы — `dhcpd`. Используйте `sudo systemctl edit dhcpd`.
+
+### Межсетевые экраны
+
+Откройте порты DHCP на интерфейсах обслуживания.
+
+**Debian / Ubuntu (UFW):**
+```bash
+sudo ufw allow in on eth0 to any port 67 proto udp comment "DHCP Server"
+sudo ufw allow in on eth0 to any port 68 proto udp comment "DHCP Client"
+```
+
+**RHEL / Rocky / Alma (firewalld):**
+```bash
+sudo firewall-cmd --add-service=dhcp --permanent
+sudo firewall-cmd --reload
+# → success
+```
+
+**Универсально (nftables):**
+```bash
+sudo nft add rule inet filter input udp dport 67 accept
+sudo nft add rule inet filter input udp dport 68 accept
+```
+
+### SELinux и AppArmor
+
+#### RHEL / Rocky / AlmaLinux (SELinux)
+
+При ошибках доступа к файлам leases или сокетам проверьте контекст:
+
+```bash
+# Разрешить dhcpd доступ к сети и файлам
+sudo setsebool -P dhcpd_run_roothw 1
+sudo setsebool -P dhcpd_use_nfs 1 # Если leases на NFS
+
+# Проверка AVC-отказов
+sudo ausearch -m avc -ts recent | grep dhcpd
+```
+
+#### Debian / Ubuntu (AppArmor)
+
+Проверьте статус профиля:
+
+```bash
+sudo aa-status | grep dhcp
+# → /usr/sbin/dhcpd confined by profile ... (enforced)
+
+# Если возникают ошибки доступа — переключите в complain-режим
+sudo aa-complain /usr/sbin/dhcpd
+```
+
 ---
 
 ## Справочник DHCP-опций
@@ -134,6 +375,78 @@ sudo systemctl restart isc-dhcp-server
 | `option ntp-servers` | Список серверов времени. | `ntp1.pool.org` |
 | `option tftp-server-name` | Адрес сервера для загрузки (**PXE**). | `"10.0.10.5"` |
 | `option bootfile-name` | Имя загрузочного файла (**iPXE/GRUB**). | `"ipxe.efi"` |
+| `option rfc3442-classless-static-routes` | Статические маршруты (RFC 3442). | `16, 172, 16, 10, 0, 30, 254` |
+| `option wpad-url` | URL конфигурации WPAD (Proxy Auto-Config). | `"http://wpad.corp.internal/wpad.dat"` |
+| `option vendor-class-identifier` | Идентификатор класса клиента (PXE, VoIP). | `"PXEClient:Arch:00000"` |
+| `option dhcp-client-identifier` | Client Identifier (RFC 2132). | `1:00:11:22:33:44:55` |
+| `option dhcp-server-identifier` | IP-адрес DHCP-сервера (принудительно). | `10.0.10.1` |
+| `option subnet-mask` | Маска подсети (обычно определяется автоматически). | `255.255.255.0` |
+| `option broadcast-address` | Широковещательный адрес. | `10.0.10.255` |
+
+---
+
+## Управление базой аренд
+
+### Ротация и очистка
+
+Файл аренды дополняется новыми записями в конец. При большой нагрузке файл может разрастаться. Для ротации без потери данных:
+
+```bash
+# 1. Остановка сервиса (только для полной ротации)
+sudo systemctl stop isc-dhcp-server
+
+# 2. Ротация
+sudo mv /var/lib/dhcp/dhcpd.leases /var/lib/dhcp/dhcpd.leases.1
+sudo cp /var/lib/dhcp/dhcpd.leases.1 /var/lib/dhcp/dhcpd.leases
+
+# 3. Запуск
+sudo systemctl start isc-dhcp-server
+```
+
+### Очистка заброшенных адресов (Abandoned)
+
+Адреса помечаются как `abandoned` при получении `DHCPDECLINE`. Для освобождения:
+
+```bash
+# 1. Просмотр заброшенных адресов
+sudo grep -i "abandoning" /var/lib/dhcp/dhcpd.leases
+# → DHCPDECLINE of 10.0.10.50 from 00:11:22:33:44:55 via eth0: address in use!
+
+# 2. Проверка наличия адреса в сети
+sudo arping -D -I eth0 10.0.10.50 -c 3
+# → Sent 3 probes (0 duplicates) — адрес свободен
+
+# 3. Ручное освобождение через omshell (или редактирование файла)
+omshell
+> server localhost
+> port 7911
+> key omapi-key "..."
+> connect
+> new lease
+> set ip-address = 10.0.10.50
+> open
+> set binding-state = free
+> update
+> exit
+```
+
+### Восстановление после повреждения
+
+Если файл `dhcpd.leases` повреждён, восстановите его из резервной копии:
+
+```bash
+# 1. Остановка сервиса
+sudo systemctl stop isc-dhcp-server
+
+# 2. Восстановление
+sudo cp /backup/dhcpd.leases.$(date +%Y%m%d) /var/lib/dhcp/dhcpd.leases
+
+# 3. Проверка формата (последняя запись должна заканчиваться на '}')
+tail -5 /var/lib/dhcp/dhcpd.leases
+
+# 4. Запуск
+sudo systemctl start isc-dhcp-server
+```
 
 ---
 
@@ -146,6 +459,33 @@ sudo systemctl restart isc-dhcp-server
 2.  Добавьте в конфигурацию `/etc/rsyslog.conf`:
     `local7.* /var/log/dhcpd.log`
 3.  Перезапустите `rsyslog`.
+
+### Эксплуатация и бэкап
+
+```bash
+# Проверка активных аренд
+sudo cat /var/lib/dhcp/dhcpd.leases | grep "binding state active" | wc -l
+
+# Поиск аренды по MAC
+sudo grep "00:11:22:33:44:55" /var/lib/dhcp/dhcpd.leases -A 10
+
+# Мониторинг логов в реальном времени
+sudo journalctl -u isc-dhcp-server -f
+
+# Поиск ошибок за последний час
+sudo journalctl -u isc-dhcp-server --since "1 hour ago" | grep -iE "error|fail|abandon"
+```
+
+### Частые проблемы базовой настройки
+
+| Проблема | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Служба не запускается | Интерфейс не указан или DOWN | `journalctl -u isc-dhcp-server -n 20` | Указать интерфейс в `/etc/default/isc-dhcp-server` или `/etc/sysconfig/dhcpd` |
+| Клиенты не получают адрес | Синтаксическая ошибка в `dhcpd.conf` | `sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf` | Исправить ошибку (пропущена `;`, незакрыта `}`) |
+| Нет адресов (no free leases) | Пулы исчерпаны | `grep "no free leases" /var/log/syslog` | Увеличить `range` или сократить `default-lease-time` |
+| Клиент получает 169.254.x.x | Ответ не доходит до клиента | `tcpdump -i eth0 port 67 or port 68` | Проверить VLAN, Relay, фаерволл |
+| Permission denied на leases | Неправильные права на файл | `ls -la /var/lib/dhcp/dhcpd.leases` | `sudo chown dhcpd:dhcpd /var/lib/dhcp/dhcpd.leases` |
+| Дублирующиеся IP | Два сервера в одной подсети | `grep "duplicate" /var/log/syslog` | Использовать `authoritative;` или настроить Failover |
 
 ### Связанные разделы
 

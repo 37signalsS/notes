@@ -174,9 +174,9 @@ build-app:
 # ci-templates/docker-build.yml
 .docker-build-base:
   stage: build
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   variables:
     DOCKER_BUILDKIT: "1"
   script:
@@ -304,9 +304,9 @@ deploy:production:
 
 # templates/docker-build.yml
 .docker-build-base:
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   script:
     - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA

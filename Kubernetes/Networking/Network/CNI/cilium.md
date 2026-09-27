@@ -280,6 +280,19 @@ kubectl rollout restart ds cilium -n kube-system
 - Диапазоны Pod CIDR не должны пересекаться с существующими сетями организации.
 - Параметр `autoDirectNodeRoutes=true` работает только когда все узлы находятся в одном L2-сегменте (одной подсети). При распределении кластера по нескольким подсетям этот параметр нужно отключить и использовать BGP для всей маршрутизации.
 
+#### Путь пакета в native routing
+
+При использовании native routing пакеты между подами на разных узлах проходят через стандартную таблицу маршрутизации ядра Linux без инкапсуляции:
+
+1. Под на узле R1 отправляет пакет поду на узле R3. BPF Cilium на R1 видит, что Destination IP пода не принадлежит локальной подсети пода.
+2. Пакет передаётся в стек Linux для маршрутизации. Согласно таблице маршрутизации, для достижения Pod CIDR узла R3 используется next-hop — IP-адрес узла R3.
+3. Пакет arrives на узел R3. Маршрутизация ядра определяет, что пакет предназначен локальному узлу (под belongs to R3).
+4. BPF Cilium на R3 доставляет пакет непосредственно в целевой под.
+
+При таком подходе отсутствуют NAT и инкапсуляция, сохраняется нормальный MTU, а сетевые инструменты (tcpdump, DLP-системы) видят реальные IP-адреса подов без необходимости распаковки туннелей.
+
+При выходе пакета из кластера (egress) поведение зависит от настроек SNAT/masquerade. Если `ipv4-native-routing-cidr` включает подсеть назначения, пакет уходит с реального IP пода; в противном случае применяется masquerade (SNAT на IP узла).
+
 #### Конфигурация Helm
 
 ```yaml
@@ -305,6 +318,14 @@ routingMode: native
 autoDirectNodeRoutes: false
 bgpControlPlane:
   enabled: true
+```
+
+**Управление SNAT через ConfigMap:** При использовании native routing важно корректно настроить параметры маскарадинга в ConfigMap `cilium-config`. Параметр `ipv4-masquerade` (по умолчанию `true`) включает SNAT для исходящего трафика. Параметр `ipv4-native-routing-cidr` позволяет указать CIDR-диапазоны, для которых SNAT не применяется — поды сохраняют свои реальные IP-адреса при выходе в эти сети. Если внутренняя сеть организации не указана в `ipv4-native-routing-cidr`, пакеты из подов, направленные во внутреннюю сеть, будут натиться на IP узла, что может сломать работу корпоративных систем (DLP, фаерволы, мониторинг). Пример конфигурации:
+
+```yaml
+# В ConfigMap cilium-config
+ipv4-masquerade: "true"
+ipv4-native-routing-cidr: "10.244.0.0/16,192.168.2.0/24"
 ```
 
 #### Режимы BGP
@@ -354,6 +375,56 @@ spec:
   advertisements:
     - advertisementType: "PodCIDR"
 ```
+
+#### Анонсирование IP-адресов сервисов (LoadBalancer)
+
+Помимо маршрутов к Pod CIDR, Cilium может анонсировать IP-адреса сервисов типа `LoadBalancer`. Для этого используется тот же ресурс `CiliumBGPAdvertisement`, но с типом анонса `Service` и селектором, указывающим, какие сервисы нужно анонсировать:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumBGPAdvertisement
+metadata:
+  name: service-ip-advert
+  labels:
+    advertise: "bgp"
+spec:
+  advertisements:
+    - advertisementType: "Service"
+      service:
+        selector:
+          matchLabels:
+            bgp-speaker: "true"
+        serviceTypes:
+          - "LoadBalancer"
+```
+
+**Обязательность селектора (Cilium 1.16+):** Текущая версия Cilium требует явного указания селектора для анонса сервисов. Селектор сопоставляется с labels самого сервиса. Если селектор не указан, анонс не будет создан.
+
+Для того чтобы сервис участвовал в BGP-анонсе, его необходимо пометить соответствующим label:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-lb
+  namespace: production
+  labels:
+    bgp-speaker: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: my-app
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+**Влияние `externalTrafficPolicy` на анонсы:**
+
+Параметр `externalTrafficPolicy` в Service напрямую влияет, с каких узлов анонсируются маршруты:
+
+- **`Cluster` (по умолчанию):** Cilium анонсирует IP-адрес сервиса со **всех** узлов, на которых работает BGP-спикер, независимо от того, есть ли на них локальные эндпоинты. Это приводит к избыточным маршрутам на роутере.
+- **`Local`:** Анонс происходит **только** с тех узлов, где находятся локальные эндпоинты (поды) сервиса. Это сокращает количество маршрутов и позволяет маршрутизатору направлять трафик ближайшими путями.
 
 ```yaml
 # Кластерная конфигурация BGP
@@ -416,6 +487,87 @@ spec:
 
 BGP работает по TCP на порту 179; требуется открыть доступ между узлами кластера и роутером.
 
+##### Подготовка узлов
+
+На всех узлах кластера, где должен работать BGP-спикер, добавляется label:
+
+```bash
+kubectl label node <node-name> cilium.io/bgp-speaker=true
+```
+
+В примере метки добавлены на все пять узлов (включая control-plane, которые одновременно являются worker-узлами).
+
+##### Настройка BGP на MikroTik RouterOS
+
+В качестве BGP-роутера использовался MikroTik RouterOS. Ниже приведены команды CLI для настройки:
+
+```routeros
+# Создание BGP-инстанса
+/routing bgp instance add name=K8SBGP as=65001 router-id=192.168.2.189
+
+# Добавление BGP-connection (слушаем все, анонсируем в main routing-table)
+/routing bgp connection add \
+  connect=yes \
+  listen=yes \
+  out.filter=K8S-route-filter \
+  routing-table=main \
+  local.address=192.168.2.0/24 \
+  remote.address=192.168.2.189/32
+```
+
+Проверка сессий на MikroTik:
+
+```routeros
+# Статус BGP-сессий
+/routing bgp session print
+
+# Просмотр динамических маршрутов
+/ip route print
+```
+
+После установки сессии (статус `established`) в таблице маршрутизации MikroTik появятся динамические маршруты (B) к Pod CIDR узлов кластера.
+
+##### Проверка native routing внутри кластера
+
+Для проверки, что native routing активен, выполните в поде Cilium:
+
+```bash
+kubectl exec -it -n kube-system ds/cilium -- cilium-dbg bgp
+```
+
+В выводе должна присутствовать строка `routing native: true`.
+
+На каждом узле кластера в таблице маршрутизации должны присутствовать прямые записи к Pod CIDR других узлов:
+
+```bash
+# На узле R1 просмотр маршрутов к подсетям других узлов
+ip route | grep 10.244
+# → 10.244.2.0/24 via 192.168.2.132 dev eth0
+# → 10.244.3.0/24 via 192.168.2.134 dev eth0
+```
+
+##### Верификация из локальной сети
+
+После анонсирования маршрутов через BGP поды становятся доступными из локальной сети по их реальным IP-адресам:
+
+```bash
+# Пинг пода с рабочей станции в той же сети
+ping 10.244.1.5
+
+# Проверка HTTP-доступности
+curl http://10.244.1.5:8080
+
+# Трассировка маршрута
+tracepath 10.244.1.5
+```
+
+Для принудительного добавления маршрута на клиентской машине (если роутер не анонсирует маршрут автоматически):
+
+```bash
+# Linux/macOS
+sudo ip route add 10.244.0.0/16 via 192.168.2.189
+```
+
 #### Диагностика
 
 ```bash
@@ -427,6 +579,58 @@ kubectl get ciliumbgpnodeconfig
 
 # Статус BGP-инстанса на узле
 kubectl describe ciliumbgpnodeconfig <node-name>
+
+# Проверка, что native routing активен
+kubectl exec -it -n kube-system ds/cilium -- cilium-dbg bgp
+# → routing native: true
+
+# Просмотр маршрутов на узле
+ip route | grep <pod-cidr>
+```
+
+##### Проверка снаружи кластера
+
+После успешного анонсирования BGP-маршрутов поды должны быть доступны из локальной сети:
+
+```bash
+# Пинг пода по реальному IP
+ping 10.244.1.5
+
+# Проверка HTTP
+curl http://10.244.1.5:8080
+
+# Трассировка
+tracepath 10.244.1.5
+```
+
+##### Проверка на MikroTik
+
+```routeros
+# Статус BGP-сессий
+/routing bgp session print
+# → established
+
+# Динамические маршруты
+/ip route print
+# → Dyn active B ... 10.244.1.0/24 via 192.168.2.131
+```
+
+##### Проверка ConfigMap
+
+```bash
+# Параметры маскарадинга
+kubectl -n kube-system get configmap cilium-config -o jsonpath='{.data.ipv4-masquerade}'
+kubectl -n kube-system get configmap cilium-config -o jsonpath='{.data.ipv4-native-routing-cidr}'
+```
+
+##### Hubble: наблюдение за трафиком
+
+```bash
+# Просмотр потоков к/от пода
+hubble observe --pod <pod-name> -n <namespace> --follow
+
+# Просмотр отброшенных пакетов
+hubble observe --type drop --follow
 ```
 
 ### Настройка Load Balancer (L2 Mode)

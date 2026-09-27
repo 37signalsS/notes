@@ -480,25 +480,9 @@ scrape_configs:
 
 ### Federation для глобального представления
 
-**Federation** -- механизм агрегации метрик с нескольких Prometheus-серверов в один.
+**Federation** -- механизм агрегации метрик с нескольких Prometheus-серверов в один. Используется в air-gapped сетях или для простой иерархии Leaf -> Regional -> Global.
 
-```yaml
-# Конфигурация федерального Prometheus
-scrape_configs:
-  - job_name: 'federation'
-    honor_labels: true
-    metrics_path: '/federate'
-    params:
-      'match[]':
-        - '{job=~".+"}'  # Все метрики с job
-        - 'up'           # Метрика доступности
-    static_configs:
-      - targets:
-          - 'prometheus-dc1:9090'
-          - 'prometheus-dc2:9090'
-```
-
-**Подробнее:** [Масштабирование Prometheus](../../Prometheus/scaling/overview.md).
+**Подробнее:** [Федерация Prometheus](../../Prometheus/scaling/federation.md).
 
 ---
 

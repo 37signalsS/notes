@@ -2,199 +2,112 @@
 
 ## Определения
 
-- **Ansible** — это система автоматизации ИТ-инфраструктуры с открытым исходным кодом (Red Hat / IBM), предназначенная для управления конфигурациями, развертывания приложений и оркестрации сложных ИТ-процессов. Это один из ключевых инструментов реализации парадигмы **Infrastructure as Code (IaC)**.
-- **Infrastructure as Code (IaC)** — подход, при котором инфраструктура описывается в виде машиночитаемого кода (YAML, JSON, HCL), а не настраивается вручную. Позволяет версионировать конфигурацию, воспроизводить среды и автоматизировать изменения через CI/CD-пайплайны. Ansible реализует IaC через декларативные плейбуки.
-- **Декларативность** — основной подход Ansible, при котором пользователь описывает *желаемое состояние* системы (Desired State), а инструмент самостоятельно определяет необходимые действия для его достижения. Это избавляет инженера от написания сложных императивных скриптов с обработкой ошибок каждого шага. Подробнее см. в [Основных концепциях](./ansible_core_concepts.md).
-- **Agentless (безагентная архитектура)** — архитектурная особенность, при которой для управления узлами не требуется установка на них специального ПО (агентов). Связь осуществляется через стандартные протоколы: **SSH** для Linux/Unix, **WinRM** или **SSH** для Windows. Это упрощает внедрение и снижает накладные расходы на ресурсы.
-- **Идемпотентность** — свойство операции, гарантирующее, что повторное выполнение не изменит систему, если она уже находится в желаемом состоянии. Фундаментальный принцип надежности автоматизации. Подробнее см. **[Идемпотентность](../Concepts/idempotency.md)**.
-- **Push-архитектура** — модель работы, при которой Узел управления (Control Node) инициирует соединение и «проталкивает» конфигурацию на управляемые узлы. Это противоположность Pull-модели (Ansible Pull), где хосты сами запрашивают конфигурацию из репозитория.
+- **Ansible** — открытая система автоматизации ИТ-инфраструктуры (Red Hat / IBM) для управления конфигурациями, развертывания приложений и оркестрации процессов. Реализует парадигму **Infrastructure as Code (IaC)** через декларативные плейбуки на YAML.
+- **IaC (Infrastructure as Code)** — подход, при котором инфраструктура описывается в виде машиночитаемого кода (YAML, JSON, HCL), а не настраивается вручную. Позволяет версионировать конфигурацию, воспроизводить среды и автоматизировать изменения через CI/CD-пайплайны.
+- **Декларативность (Declarative Approach)** — основной принцип Ansible: пользователь описывает желаемое состояние системы (Desired State), а движок сам определяет действия для его достижения. Это избавляет от написания сложных императивных скриптов.
+- **Идемпотентность (Idempotency)** — свойство операции, гарантирующее, что повторное выполнение не изменит систему, если она уже находится в желаемом состоянии. Фундаментальный принцип надежности автоматизации.
+- **Agentless (безагентная архитектура)** — архитектурная особенность, при которой для управления узлами не требуется установка специального ПО. Связь осуществляется через стандартные протоколы: **SSH** для Linux/Unix, **WinRM/PSRP** для Windows.
+- **Push-модель** — модель работы, при которой Узел управления (Control Node) инициирует соединение и «проталкивает» конфигурацию на управляемые узлы. Противоположность Pull-модели (Ansible Pull), где хосты сами запрашивают конфигурацию.
+- **FQCN (Fully Qualified Collection Name)** — полное имя ресурса в формате `namespace.collection.resource` (например, `ansible.builtin.apt`). Использование FQCN обязательно в современных версиях для предотвращения конфликтов имен.
+- **Inventory (Инвентарь)** — список хостов и групп хостов. Может быть статическим файлом (INI/YAML) или динамическим скриптом, получающим данные из CMDB, Git или API. Подробнее: [Динамический инвентарь](./dynamic_inventory.md).
 
-## Основные концепции
+## Архитектура и принципы работы
 
-### Архитектура и компоненты
+### Компоненты системы
 
-1.  **Узел управления (Control Node):** Машина, на которой установлен Ansible. С неё запускаются все команды и сценарии. Поддерживаются только Unix-подобные системы (Linux, macOS, WSL2). Для Control Node требуется **Python 3.10+** (для Ansible 9+) или **Python 3.7+** (для более ранних версий).
-2.  **Управляемые узлы (Managed Nodes):** Целевые серверы, сетевые устройства или облачные ресурсы, которыми управляет Ansible. Для управления Linux-системами на них должен быть установлен **Python 3.7+**. Управление Windows-системами осуществляется через PowerShell и WinRM.
-3.  **Инвентарь (Inventory):** Список хостов и групп хостов. Может быть статическим файлом (INI/YAML) или [динамическим скриптом](./dynamic_inventory.md), получающим данные из облаков или CMDB. Подробнее: [Управление инвентарем](./ansible_setup_and_config.md#управление-инвентарем).
-4.  **Модули (Modules):** Исполняемые автономные блоки кода, выполняющие конкретные задачи (установка пакетов, копирование файлов). Современный стандарт требует использования полного имени ресурса — **FQCN (Fully Qualified Collection Name)** (например, `ansible.builtin.apt` вместо `apt`).
-5.  **Плейбуки (Playbooks):** Сценарии автоматизации, написанные на языке **YAML**, описывающие шаги развертывания и настройки. Каждый плейбук состоит из «плеев» (Plays), которые связывают группы хостов с набором задач. Подробнее: [Структура плейбуков](./PlaybookStructure/basics.md).
-6.  **Event-Driven Ansible (EDA):** Подход к реактивной автоматизации, позволяющий запускать действия на основе внешних событий (алертов, сообщений из очередей) в режиме реального времени. См. **[EDA — Реактивная автоматизация](./event-driven-ansible.md)**.
+1. **Узел управления (Control Node):** Машина, на которой установлен Ansible. С неё запускаются все команды и сценарии. Поддерживаются только Unix-подобные системы (Linux, macOS, WSL2). Требуется **Python 3.10+** (для современных версий). Подробные требования и способы установки: [Установка и настройка](./ansible_setup_and_config.md).
+2. **Управляемые узлы (Managed Nodes):** Целевые серверы, сетевые устройства или контейнеры, которыми управляет Ansible. Для Linux требуется **Python 3.7+**, для Windows — PowerShell. Агенты не требуются.
+3. **Модули (Modules):** Исполняемые автономные блоки кода, выполняющие конкретные задачи (установка пакетов, копирование файлов, управление сервисами).
+4. **Плейбуки (Playbooks):** Сценарии автоматизации на YAML, описывающие шаги развертывания и настройки. Каждый плейбук состоит из «плеев» (Plays), связывающих группы хостов с задачами.
+5. **Плагины:** Расширяют функциональность Ansible: Connection (ssh, winrm, local), Inventory (статический, динамический), Lookup, Filter, Callback, Vars.
+6. **Коллекции (Collections):** Формат распространения модулей, плагинов и ролей. Примеры: `ansible.builtin`, `community.general`, `community.proxmox`, `theforeman.foreman`.
 
 ### Разделение пакетов: ansible-core и ansible
 
-Для решения проблем с масштабированием проекта и скоростью выпуска обновлений, экосистема разделена на два компонента:
-- **ansible-core**: Минимальное ядро системы, содержащее движок выполнения, CLI-утилиты (`ansible`, `ansible-playbook`) и набор базовых модулей (`ansible.builtin`). Обновляется строго по циклу релизов ядра.
-- **ansible (Community пакет)**: Большой метапакет, включающий в себя `ansible-core` и тысячи модулей и плагинов от сообщества, упакованных в **Коллекции (Collections)**.
-- **Execution Environments (EE)**: Современный способ упаковки Ansible, коллекций и зависимостей в контейнеры (**[подробнее](./ansible-execution-environments.md)**) для обеспечения идентичности сред выполнения.
+- **ansible-core:** Минимальное ядро, содержащее движок выполнения, CLI-утилиты (`ansible`, `ansible-playbook`) и базовые модулы (`ansible.builtin`). Обновляется по циклу релизов ядра.
+- **ansible (Community пакет):** Метапакет, включающий `ansible-core` и тысячи модулей/плагинов от сообщества в виде коллекций.
+- **Execution Environment (EE):** Современный способ упаковки Ansible, коллекций и зависимостей в контейнеры для обеспечения идентичности сред выполнения.
 
-### Преимущества использования
+### Жизненный цикл выполнения плейбука
 
-- **Минимальный порог входа:** Использование человекочитаемого формата YAML и системы шаблонизации **Jinja2**.
-- **Единообразие инфраструктуры:** Исключение «серверов-снежинок» (уникальных серверов, настроенных вручную и невоспроизводимых автоматически).
-- **Масштабируемость:** Возможность управления тысячами узлов одновременно благодаря параллельному выполнению (параметр `forks`, по умолчанию 5).
-- **Безопасность:** Отсутствие постоянно запущенных агентов, использование стандартных механизмов аутентификации ОС (SSH-ключи) и интеграция с **Ansible Vault** для защиты чувствительных данных.
-- **Идемпотентность:** Безопасный повторный запуск плейбуков — система не будет «сломана» повторным применением.
+1. **Парсинг:** Чтение плейбука, проверка синтаксиса YAML и схемы Ansible.
+2. **Загрузка инвентаря:** Построение графа хостов и групп, подстановка переменных.
+3. **Сбор фактов (gather_facts):** Опрос управляемых узлов через `ansible.builtin.setup` для получения данных об ОС, сети, дисках.
+4. **Расширение переменных:** Объединение фактов, инвентаря, плейбуков, ролей и Vault-секретов в единое пространство имен.
+5. **Планирование задач:** Определение порядка выполнения, обработка `when`, `tags`, `handlers`.
+6. **Выполнение:** Параллельная отправка задач на управляемые узлы через SSH/WinRM.
+7. **Обработка результатов:** Вызов callback-плагинов, запись в лог, обновление фактов.
 
-## Предварительные требования
+### Идемпотентность и состояние
 
-### Для Control Node (машина, с которой запускается автоматизация)
+Ansible не хранит состояние на управляемых узлах. При каждом запуске он:
+- Сравнивает текущее состояние с желаемым (через модули)
+- Применяет изменения только если они необходимы
+- Помечает задачу как `changed` только при реальном изменении
 
-| Компонент | Минимальная версия | Рекомендуемая версия |
-| :--- | :--- | :--- |
-| Python | 3.7 | 3.11+ |
-| SSH-клиент | OpenSSH 7.0 | OpenSSH 9.0+ |
-| ОС | Linux, macOS, WSL2 | Ubuntu 22.04+ / RHEL 9+ |
-| Память | 512 MB RAM | 2 GB+ RAM |
-| Диск | 100 MB свободного места | 1 GB+ (с коллекциями) |
-
-### Для Managed Nodes (управляемые хосты)
-
-| Компонент | Минимальная версия | Примечание |
-| :--- | :--- | :--- |
-| Python | 3.7 | Обязательно дляinux-модулей |
-| SSH-сервер | OpenSSH 7.0 | Для подключения от Control Node |
-| sudo | Любая версия | Для повышения привилегий |
-
-> **Примечание:** Для Managed Nodes, на которых отсутствует Python, Ansible может использовать модуль `ansible.builtin.raw` для первоначальной установки (см. [Bootstrapping](#начальная-загрузка-python-на-хосте)).
-
-## Установка Ansible
-
-### Рекомендуемый способ: pip
-
-Установка через pip обеспечивает доступ к последней стабильной версии и изолирует Ansible от системных пакетов Python:
-
-```bash
-# Создание виртуального окружения (рекомендуется)
-python3 -m venv ~/ansible-venv
-source ~/ansible-venv/bin/activate
-
-# Установка ansible (включает ansible-core + все коллекции сообщества)
-pip install ansible
-
-# Или установка только ansible-core (минимальная версия)
-pip install ansible-core
-
-# Проверка версии
-ansible --version
-# → ansible [core 2.17.x]
-# → config file = None
-# → configured module search path = ['/home/user/.ansible/plugins/modules']
-# → ansible python module location = /home/user/ansible-venv/lib/python3.11/site-packages/ansible
-# → python version = 3.11.x
-```
-
-### Системные пакеты
-
-**Ubuntu / Debian:**
-```bash
-sudo apt update
-sudo apt install -y ansible
-# → Устанавливается из официального репозитория Ubuntu (может быть не последняя версия)
-```
-
-**RHEL / CentOS / Fedora:**
-```bash
-# RHEL 8/9 или CentOS Stream
-sudo dnf install -y epel-release
-sudo dnf install -y ansible-core
-
-# Fedora
-sudo dnf install -y ansible-core
-```
-
-**macOS (Homebrew):**
-```bash
-brew install ansible
-# → Устанавливает ansible-core через homebrew-core
-```
-
-### Проверка работоспособности
-
-```bash
-# Проверка версии и конфигурации
-ansible --version
-
-# Проверка подключения к localhost
-ansible all -m ping -i "localhost,"
-# → localhost | SUCCESS => {
-#     "changed": false,
-#     "ping": "pong"
-# }
-
-# Просмотр доступных модулей
-ansible-doc -l | head -20
-# → ansible.builtin.add_host
-# → ansible.builtin/apt
-# → ansible.builtin.command
-# → ...
-```
+Это делает автоматизацию безопасной для повторного запуска в production.
 
 ## Практические сценарии
 
-### Шаг 1: Создание первого инвентаря
+### Сценарий 1: Первый инвентарь и плейбук
 
-Создайте файл `inventory.yml` в корне проекта:
+Создайте структуру проекта:
+
+```bash
+mkdir -p ~/projects/ansible-first/{inventory,playbooks}
+cd ~/projects/ansible-first
+```
+
+**Шаг 1:** Создайте `inventory/hosts.yml`:
 
 ```yaml
-# inventory.yml — статический инвентарь
 all:
   children:
     webservers:
       hosts:
-        web1.example.com:
+        web01.example.com:
           ansible_user: deploy
           ansible_port: 22
-        web2.example.com:
-          ansible_user: deploy
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
       vars:
         http_port: 80
         ansible_become: true
 
     dbservers:
       hosts:
-        db1.example.com:
+        db01.example.com:
           ansible_user: admin
           ansible_ssh_private_key_file: ~/.ssh/id_ed25519
       vars:
         mysql_port: 3306
 
-    # Группа групп
     production:
       children:
         webservers:
         dbservers:
 ```
 
-Проверка инвентаря:
+**Шаг 2:** Проверьте инвентарь:
 
 ```bash
-# Дерево групп
-ansible-inventory -i inventory.yml --graph
+ansible-inventory -i inventory/hosts.yml --graph
 # → @all:
 #   ├── @webservers:
-#   │   ├── web1.example.com
-#   │   └── web2.example.com
+#   │   └── web01.example.com
 #   ├── @dbservers:
-#   │   └── db1.example.com
-#   └── @ungrouped:
+#   │   └── db01.example.com
+#   └── @production:
+#       ├── @webservers
+#       └── @dbservers
 
-# Вывод в JSON (для отладки)
-ansible-inventory -i inventory.yml --list
-
-# Проверка подключения ко всем хостам
-ansible all -i inventory.yml -m ping
-# → web1.example.com | SUCCESS => { "changed": false, "ping": "pong" }
-# → web2.example.com | SUCCESS => { "changed": false, "ping": "pong" }
-# → db1.example.com | SUCCESS => { "changed": false, "ping": "pong" }
+ansible all -i inventory/hosts.yml -m ping
+# → web01.example.com | SUCCESS => { "changed": false, "ping": "pong" }
 ```
 
-### Шаг 2: Написание первого плейбука
-
-Создайте файл `site.yml`:
+**Шаг 3:** Создайте `playbooks/site.yml`:
 
 ```yaml
 ---
-# site.yml — первый плейбук
 - name: Базовая настройка веб-серверов
   hosts: webservers
   become: true
@@ -232,120 +145,80 @@ ansible all -i inventory.yml -m ping
         timeout: 30
 ```
 
-### Шаг 3: Запуск плейбука
+**Шаг 4:** Запустите плейбук:
 
 ```bash
-# Первый запуск (изменения будут применены)
-ansible-playbook -i inventory.yml site.yml
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml
 # → PLAY [Базовая настройка веб-серверов] ****************************************
 # → TASK [Gathering Facts] ********************************************************
-# → ok: [web1.example.com]
-# → ok: [web2.example.com]
+# → ok: [web01.example.com]
 # → TASK [Установка пакетов] *******************************************************
-# → changed: [web1.example.com]
-# → changed: [web2.example.com]
+# → changed: [web01.example.com]
 # → TASK [Убедиться, что nginx запущен] *******************************************
-# → changed: [web1.example.com]
-# → changed: [web2.example.com]
+# → changed: [web01.example.com]
 # → TASK [Проверить, что порт 80 открыт] ******************************************
-# → ok: [web1.example.com]
-# → ok: [web2.example.com]
+# → ok: [web01.example.com]
 # → PLAY RECAP ********************************************************************
-# → web1.example.com : ok=4  changed=3  unreachable=0  failed=0  skipped=0
-# → web2.example.com : ok=4  changed=3  unreachable=0  failed=0  skipped=0
+# → web01.example.com : ok=4  changed=3  unreachable=0  failed=0  skipped=0
 
-# Повторный запуск (изменений не будет — идемпотентность)
-ansible-playbook -i inventory.yml site.yml
+# Повторный запуск (идемпотентность)
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml
 # → TASK [Установка пакетов] *******************************************************
-# → ok: [web1.example.com]  ← Вместо changed получаем ok (уже установлено)
-# → ok: [web2.example.com]
+# → ok: [web01.example.com]  ← Вместо changed получаем ok
 ```
 
-### Шаг 4: Анализ изменений (Check & Diff)
-
-Безопасное тестирование плейбука без реального применения изменений:
+**Шаг 5:** Проверка без применения изменений:
 
 ```bash
 # Check Mode — «сухой запуск»
-ansible-playbook -i inventory.yml site.yml --check
-# → TASK [Установка пакетов] *******************************************************
-# → changed: [web1.example.com]  ← Показывает, что изменение БЫЛО бы применено
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml --check
 
 # Diff Mode — показать разницу в конфигурационных файлах
-ansible-playbook -i inventory.yml site.yml --diff
-# → Используйте -C для комбинации check + diff
-ansible-playbook -i inventory.yml site.yml -C -D
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml --diff
+
+# Комбинация check + diff
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml -C -D
 ```
 
-### Шаг 5: Сбор фактов и условная логика
-
-Ansible автоматически собирает информацию о системе (**facts**) перед выполнением задач:
+### Сценарий 2: Условная логика и обработчики
 
 ```yaml
 ---
-- name: Условная логика на основе facts
-  hosts: all
+- name: Настройка веб-сервера с обработчиком
+  hosts: webservers
   become: true
   gather_facts: true
 
-  tasks:
-    # Вывод всех собранных фактов (для отладки)
-    - name: Показать facts о системе
-      ansible.builtin.debug:
-        var: ansible_facts
-      tags: debug
-
-    # Условная установка в зависимости от ОС
-    - name: Установка пакетов на Debian/Ubuntu
-      ansible.builtin.apt:
-        name: nginx
-        state: present
-      when: ansible_facts['os_family'] == 'Debian'
-
-    - name: Установка пакетов на RHEL/CentOS
-      ansible.builtin.dnf:
-        name: nginx
-        state: present
-      when: ansible_facts['os_family'] == 'RedHat'
-
-    # Вывод информации о системе
-    - name: Показать ключевые facts
-      ansible.builtin.debug:
-        msg: >
-          OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
-          Kernel: {{ ansible_facts['kernel'] }}
-          IP: {{ ansible_facts['default_ipv4']['address'] }}
-          RAM: {{ ansible_facts['memtotal_mb'] }} MB
-          CPUs: {{ ansible_facts['processor_vcpus'] }}
-```
-
-### Шаг 6: Обработчики (Handlers)
-
-Обработчики выполняются только при изменении 상태 и в конце плея:
-
-```yaml
----
-- name: Настройка веб-сервера
-  hosts: webservers
-  become: true
+  vars:
+    nginx_config_template: templates/nginx.conf.j2
 
   tasks:
-    - name: Скопировать конфигурацию nginx
-      ansible.builtin.template:
-        src: templates/nginx.conf.j2
-        dest: /etc/nginx/nginx.conf
-        owner: root
-        group: root
-        mode: '0644'
-        validate: 'nginx -t -c %s'  # Валидация перед применением!
-      notify: restart nginx
+    - name: Создать директорию для сайта
+      ansible.builtin.file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
 
     - name: Скопировать index.html
       ansible.builtin.copy:
         src: files/index.html
         dest: /var/www/html/index.html
         owner: www-data
+        group: www-data
         mode: '0644'
+      notify: restart nginx
+
+    - name: Установить nginx с валидацией конфига
+      ansible.builtin.template:
+        src: "{{ nginx_config_template }}"
+        dest: /etc/nginx/nginx.conf
+        owner: root
+        group: root
+        mode: '0644'
+        validate: 'nginx -t -c %s'
+      notify: restart nginx
 
   handlers:
     - name: restart nginx
@@ -354,29 +227,139 @@ Ansible автоматически собирает информацию о си
         state: restarted
 ```
 
-### Начальная загрузка Python на хосте
+### Сценарий 3: Bootstrap Python на хосте без интерпретатора
 
-Если на Managed Node отсутствует Python, стандартные модули не сработают. В этом случае используется модуль `ansible.builtin.raw`:
+Для Managed Nodes без Python (minimal installs, контейнеры) используйте `ansible.builtin.raw`:
 
 ```yaml
 ---
 - name: Play 1 — Bootstrap Python
   hosts: all
+  gather_facts: false
   become: true
-  gather_facts: false  # Отключаем сбор фактов, так как он требует Python
   tasks:
-    - name: Установить Python3
+    - name: Установить Python3 (Debian/Ubuntu)
       ansible.builtin.raw: apt-get update && apt-get install -y python3
-      changed_when: false  # Подавляем ложный статус changed
+      changed_when: false
 
 - name: Play 2 — Основная конфигурация
   hosts: all
   become: true
-  gather_facts: true  # Теперь Python установлен
+  gather_facts: true
   tasks:
     - name: Проверить подключение
       ansible.builtin.ping: {}
-      # → "ping": "pong"
+```
+
+### Сценарий 4: Интеграция с GitOps и CI/CD
+
+```yaml
+# playbooks/deploy_app.yml
+---
+- name: Развертывание приложения
+  hosts: webservers
+  become: true
+  vars_files:
+    - ../../group_vars/prod/vault.yml  # Зашифрованные секреты
+
+  pre_tasks:
+    - name: Проверить drift от последнего коммита
+      ansible.builtin.command: git diff HEAD~1 -- playbooks/
+      register: git_diff
+      delegate_to: localhost
+      changed_when: git_diff.stdout != ""
+
+  tasks:
+    - name: Развернуть версию {{ app_version }}
+      ansible.builtin.shell: |
+        cd /opt/app && git pull && systemctl restart app
+```
+
+В CI/CD-пайплайне (GitLab CI, GitHub Actions, Jenkins):
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - lint
+  - test
+  - deploy
+
+ansible-lint:
+  stage: lint
+  image: quay.io/ansible/ansible-lint:latest
+  script:
+    - ansible-lint playbooks/
+
+ansible-check:
+  stage: test
+  script:
+    - ansible-playbook -i inventory/prod/hosts.yml playbooks/site.yml --check
+
+deploy-prod:
+  stage: deploy
+  when: manual
+  script:
+    - ansible-playbook -i inventory/prod/hosts.yml playbooks/site.yml
+```
+
+## Операции и команды
+
+### Справочник CLI
+
+| Команда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `ansible` | Ad-hoc выполнение задачи на хостах | `ansible webservers -m ping -i inventory.yml` |
+| `ansible-playbook` | Запуск плейбука | `ansible-playbook -i inventory.yml site.yml --check` |
+| `ansible-inventory` | Просмотр и валидация инвентаря | `ansible-inventory -i inventory.yml --graph --list` |
+| `ansible-vault` | Шифрование/дешифрование секретов | `ansible-vault encrypt group_vars/prod/vault.yml` |
+| `ansible-galaxy` | Установка ролей и коллекций | `ansible-galaxy collection install community.general` |
+| `ansible-config` | Просмотр и проверка конфигурации | `ansible-config dump --only-changed` |
+| `ansible-doc` | Справка по модулям и плагинам | `ansible-doc ansible.builtin.apt` |
+| `ansible-lint` | Статический анализ плейбуков и ролей | `ansible-lint playbooks/` |
+
+### Распространенные комбинации флагов
+
+```bash
+# Проверка доступности всех хостов
+ansible all -i inventory.yml -m ping
+
+# Сбор фактов без выполнения задач
+ansible all -i inventory.yml -m setup -a "filter=ansible_distribution*"
+
+# Выполнение команды на группе хостов
+ansible webservers -i inventory.yml -m shell -a "systemctl status nginx"
+
+# Запуск с тэгом
+ansible-playbook -i inventory.yml site.yml --tags "packages"
+
+# Пропуск тэга
+ansible-playbook -i inventory.yml site.yml --skip-tags "restart"
+
+# Указание vault-пароля через файл
+ansible-playbook -i inventory.yml site.yml --vault-id prod@.vault_pass
+
+# Ограничение на конкретный хост
+ansible-playbook -i inventory.yml site.yml --limit web01.example.com
+
+# Проверка синтаксиса без выполнения
+ansible-playbook -i inventory.yml site.yml --syntax-check
+```
+
+### Проверка работоспособности окружения
+
+```bash
+# Проверка версии Ansible
+ansible --version
+# → ansible [core 2.18.x]
+
+# Проверка подключения ко всем хостам
+ansible all -i inventory.yml -m ping
+
+# Валидация инвентаря
+ansible-inventory -i inventory.yml --list | jq .
+
+# Проверка доступных модулей
+ansible-doc -l | grep ansible.builtin | head -20
 ```
 
 ## Типичные ошибки и их решение (Troubleshooting)
@@ -387,24 +370,23 @@ Ansible автоматически собирает информацию о си
 
 **Диагностика:**
 ```bash
-# Проверка наличия Python
 ansible all -m command -a "python3 --version"
 # → Если ошибка: «Failed to connect to the host via ssh: python3: command not found»
 ```
 
-**Решение:** Использовать `ansible.builtin.raw` для первичной установки Python (см. [Начальная загрузка Python](#начальная-загрузка-python-на-хосте)).
+**Решение:** Использовать `ansible.builtin.raw` для первичной установки Python (см. [Сценарий 3](#сценарий-3-bootstrap-python-на-хосте-без-интерпретатора)).
 
-### 2. «Unreachable» — проблемы с SSH-подключением
+### 2. «UNREACHABLE!» — проблемы с SSH-подключением
 
 **Симптом:** Хосты недоступны, ошибка `UNREACHABLE!`.
 
 **Диагностика:**
 ```bash
 # Проверка SSH вручную
-ssh -v deploy@web1.example.com
+ssh -v deploy@web01.example.com
 
 # Проверка инвентаря
-ansible-inventory -i inventory.yml --host web1.example.com
+ansible-inventory -i inventory.yml --host web01.example.com
 
 # Запуск с увеличенным уровнем логирования
 ansible all -m ping -vvv
@@ -423,19 +405,17 @@ pipelining = true
 retries = 3
 ```
 
-### 3. «FAILED — Permission denied» — проблемы с привилегиями
+### 3. «Permission denied» — проблемы с привилегиями
 
 **Симптом:** Ошибка `Permission denied` при выполнении задач с `become: true`.
 
 **Диагностика:**
 ```bash
-# Проверка sudo без пароля
 ansible all -m command -a "sudo whoami" --become
 ```
 
 **Решение:**
 ```yaml
-# Добавление переменных в инвентарь
 all:
   children:
     webservers:
@@ -453,14 +433,12 @@ all:
 
 **Решение:**
 ```yaml
-# Увеличение таймаута для конкретной задачи
 - name: Длинная операция
   ansible.builtin.command: /opt/long-task.sh
   async: 3600      # Максимальное время выполнения (секунды)
   poll: 0          # Не ждать завершения (fire and forget)
   register: long_task
 
-# Проверка статуса асинхронной задачи
 - name: Дождаться завершения
   ansible.builtin.async_status:
     jid: "{{ long_task.ansible_job_id }}"
@@ -491,6 +469,8 @@ export ANSIBLE_VAULT_PASSWORD_FILE=.vault_pass
 ansible-playbook site.yml --vault-id prod@prompt --vault-id dev@.vault_pass_dev
 ```
 
+Подробнее о работе с секретами: [Ansible Vault: Основы](./Vault/basics.md).
+
 ### 6. «ERROR! the role 'xxx' was not found» — отсутствие роли
 
 **Симптом:** Роль не найдена при запуске плейбука.
@@ -510,31 +490,41 @@ ansible-galaxy collection install community.general
 ansible-config dump | grep roles_path
 ```
 
-### Сравнение с другими инструментами
+## Лучшие практики
 
-#### Таблица сравнения
+- **Идемпотентность:** Всегда пишите задачи так, чтобы повторный запуск был безопасен. Используйте `state=present` вместо `state=installed`, проверяйте условия через `when`.
+- **FQCN:** Используйте полные имена модулей (`ansible.builtin.apt` вместо `apt`) для стабильности и предотвращения конфликтов.
+- **GitOps:** Храните инвентарь, плейбуки, роли и коллекции в Git. Используйте ветки для сред (`main` — production, `develop` — staging).
+- **Секреты:** Никогда не храните пароли в открытом виде. Используйте `ansible-vault` с `vault_password_file` в CI/CD. Для production используйте внешние хранилища (HashiCorp Vault, CyberArk).
+- **Check Mode:** Всегда запускайте `--check` перед первым применением на production. Используйте `--diff` для просмотра изменений.
+- **Логирование:** Настройте `log_path` в `ansible.cfg` для аудита. В CI/CD интегрируйте с ELK/Graylog для централизованного хранения.
+- **Статический анализ:** Внедрите `ansible-lint` в pre-commit hooks и CI/CD-пайплайны для контроля качества плейбуков.
+- **Ограничение параллелизма:** Для production используйте `forks = 10` и `serial` в плейбуках, чтобы избежать перегрузки управляемых узлов.
+- **Документация:** Комментируйте сложные задачи в плейбуках. Используйте `--start-at-task` для отладки.
+
+## Сравнение с другими инструментами
 
 | Критерий | Ansible | Puppet | Chef | SaltStack |
 | :--- | :--- | :--- | :--- | :--- |
 | **Архитектура** | Agentless | Agent/Agentless | Agent | Agent/Agentless |
-| **Язык** | YAML | DSL (Puppet DSL) | Ruby (ERB) | YAML + Jinja2 |
+| **Язык** | YAML + Jinja2 | DSL (Puppet DSL) | Ruby (ERB) | YAML + Jinja2 |
 | **Подход** | Push | Pull | Pull | Push/Pull |
 | **Кривая обучения** | Низкая | Высокая | Высокая | Средняя |
 | **Сообщество** | Огромное | Большое | Большое | Среднее |
 | **Лицензия** | GPLv3 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
-| **Фокус** | Configuration Management | Configuration Management | Configuration Management | Configuration Management + Event-driven |
+| **Фокус** | Configuration Management + Orchestration | Configuration Management | Configuration Management | CM + Event-driven |
 | **Протокол** | SSH/WinRM | Agent (8140) | Agent (443) | ZeroMQ (4505/4506) |
 
 Сравнение Ansible с Terraform/OpenTofu — в [Обзоре CM-инструментов](../Concepts/configuration_management_tools.md#terraform--opentofu--ansible).
 
-#### Когда использовать Terraform vs Ansible
+### Когда использовать Terraform vs Ansible
 
 См. раздел [Terraform / OpenTofu + Ansible](../Concepts/configuration_management_tools.md#terraform--opentofu--ansible).
 
-#### Puppet vs Chef vs Ansible: различия в подходе
+### Puppet vs Chef vs Ansible: различия в подходе
 
 | Инструмент | Парадигма | Стиль кода | Управление состоянием |
-| :--- | :--- | :--- | --- |
+| :--- | :--- | :--- | :--- |
 | **Puppet** | DSL (доменно-ориентированный язык) | Declarative, но требует изучения собственного языка | Pull (агент запрашивает манифесты) |
 | **Chef** | Ruby-скрипты (recipes/cookbooks) | Императивный, требует знания Ruby | Pull (chef-client запрашивает cookbook-и) |
 | **Ansible** | YAML + Jinja2 | Декларативный, человекочитаемый | Push (контрольный узел инициирует изменения) |
@@ -552,17 +542,14 @@ ansible-config dump | grep roles_path
 
 ### Рекомендации
 
-- Для повторяющихся задач и управления конфигурацией всегда используйте плейбуки вместо ad-hoc команд, так как они обеспечивают идемпотентность и контроль версий.
-- Используйте **FQCN** при вызове модулей для обеспечения стабильности и предотвращения конфликтов (например, `ansible.builtin.copy` вместо `copy`).
-- Храните инвентарь и плейбуки в системе контроля версий (Git), следуя принципам **GitOps**.
-- Не отключайте проверку SSH-ключей (`host_key_checking = False`) в production без крайней необходимости.
-- Всегда используйте `--check` (check mode) перед первым применением плейбука на production-хостах.
-- Используйте `ansible-lint` для проверки качества плейбуков перед коммитом.
+- Для повторяющихся задач используйте плейбуки вместо ad-hoc команд — они обеспечивают идемпотентность и контроль версий.
+- Настраивайте `ansible.cfg` на уровне проекта для изоляции параметров. Глобальный конфиг `/etc/ansible/ansible.cfg` используется только если нет локального.
+- Используйте `ansible-pull` для хостов с нестабильным подключением или динамическим масштабированием.
+- Интегрируйте `ansible-lint` в pre-commit hooks для предотвращения плохих практик в коде.
+- Настройте факт-кэширование (`fact_caching = jsonfile`) для ускорения повторных запусков на больших инвентарях.
 
 ### Смотрите также
 
-- [Основные концепции Ansible](./ansible_core_concepts.md) — архитектура, идемпотентность, модули и плагины.
-- [Установка и настройка](./ansible_setup_and_config.md) — подготовка рабочего окружения узла управления.
-- [Ansible Identity Management](./ansible-identity-management.md) — автоматизация Active Directory, FreeIPA и LDAP.
-- [Ansible Vault: работа с секретами](./Vault/basics.md) — защита конфиденциальных данных.
-- [Автоматизация Kubernetes через Ansible](./ansible-kubernetes-automation.md) — управление ресурсами кластера.
+- [Установка и настройка](./ansible_setup_and_config.md) — подробная установка, конфигурация `ansible.cfg`, настройка SSH и bootstrap.
+- [Основные концепции](./ansible_core_concepts.md) — идемпотентность, факты, плагины, стратегии выполнения.
+- [Динамический инвентарь](./dynamic_inventory.md) — CMDB, NetBox, Consul, Git-based инвентарь.

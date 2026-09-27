@@ -16,8 +16,8 @@
 
 В современной разработке (2025+) фокус сместился с вопроса «что упало?» на вопрос «почему упало и как это исправить?»:
 *   **Кластеризация падений (Failure Clustering):** Группировка сотен упавших тестов по схожим признакам (стектрейсам, ошибкам в логах) для быстрого анализа.
-*   **AI-диагностика:** Использование LLM (Large Language Models) для автоматического анализа логов и выдачи резюме о корневой причине (Root Cause Analysis).
-*   **Agentic-тестирование (2026):** Платформы отчётности научились принимать результаты не только классического автоматизированного, но и агентного (AI-agent) тестирования как отдельный тип выполнения и объединять их с обычными прогонами в одном интерфейсе (например, ReportPortal 26.x).
+*   **Автоматическая диагностика:** Использование правил и шаблонов для автоматического анализа логов и выдачи резюме о корневой причине (Root Cause Analysis).
+*   **Автономное тестирование (2026):** Платформы отчётности научились принимать результаты не только классического автоматизированного, но и автономного тестирования как отдельный тип выполнения и объединять их с обычными прогонами в одном интерфейсе (например, ReportPortal 26.x).
 *   **Анализ нестабильности (Flaky Tests):** Автоматическое выявление тестов, которые ведут себя недетерминированно, и их временная изоляция (карантин).
 
 ### Сравнение архитектурных подходов
@@ -25,7 +25,7 @@
 | Подход | Инструменты | Особенности |
 | :--- | :--- | :--- |
 | **Статические отчёты** | Allure, pytest-html | Генерируются как HTML-артефакты после завершения всех тестов. Подходят для малых и средних проектов. |
-| **Real-time платформы** | ReportPortal, Allure TestOps | Серверные решения с мгновенным доступом к результатам в процессе выполнения, долгосрочной историей и ML/LLM-аналитикой. Актуальные версии (2026): ReportPortal 26.x и Allure TestOps 26.2.x. |
+| **Real-time платформы** | ReportPortal, Allure TestOps | Серверные решения с мгновенным доступом к результатам в процессе выполнения, долгосрочной историей и предиктивной аналитикой. Актуальные версии (2026): ReportPortal 26.x и Allure TestOps 26.2.x. |
 | **Trace-based Testing** | Tracetest, Testkube | Тестирование на основе распределённых трассировок (OpenTelemetry) с ассертами против данных трейсов. Tracetest: коммерческое облако прекращено (EOL октября 2024), развивается OSS-версия. Testkube: Kubernetes-нативный оркестратор, с v1.21 (декабрь 2025) — унифицированный дашборд исполнений, PostgreSQL-бэкенд и TestWorkflows как единственный способ оркестрации. |
 
 ## 3. Практические сценарии
@@ -61,7 +61,74 @@ mvn test
 | .NET | `dotnet test --logger "junit;LogFilePath=report.xml"` |
 | Ruby (RSpec) | `rspec --format RspecJunitFormatter --out report.xml` |
 
-**Лёгкая альтернатива — pytest-html:** Для малых проектов или локальной верификации применим плагин `pytest-html`, генерирующий единый самодостаточный HTML-файл (`--html=report.html --self-contained-html`). Он проще в установке, чем Allure, но не даёт истории, трендов и вложенных шагов; для CI-артефактов и командных отчётов предпочтителен Allure.
+### Расширенные возможности JUnit XML
+
+Стандарт JUnit XML поддерживает вложения (attachments), свойства (properties) и вывод в stdout/stderr, что критически важно для отладки:
+
+```xml
+<testsuite name="auth" tests="3" failures="1" errors="0" skipped="0" time="2.45">
+  <testcase name="test_login_success" classname="auth.TestAuth" time="0.12">
+    <system-out>Username: admin, Password: ****</system-out>
+  </testcase>
+  <testcase name="test_login_failure" classname="auth.TestAuth" time="0.08">
+    <failure message="AssertionError: 401 != 200" type="AssertionError">
+      <![CDATA[Traceback (most recent call last): ...]]>
+    </failure>
+    <system-out>Response body: {"error": "invalid_token"}</system-out>
+  </testcase>
+</testsuite>
+```
+
+**Инструментарий:**
+- **pytest:** `pytest --junitxml=report.xml --junit-prefix=service-name --junit-family=xunit2`
+- **Jest:** `--reporters=jest-junit` с переменной `JEST_JUNIT_OUTPUT`
+- **Go:** `gotestsum --junitfile report.xml --format=standard-json`
+- **Maven:** `surefire-report:bundle` генерирует `TEST-*.xml` в `target/surefire-reports`
+
+**Вложения в отчёты:** Для Allure и ReportPortal используйте хук `pytest_runtest_makereport` в `conftest.py` для автоматического прикрепления скриншотов, логов и дампов при падении.
+
+### Шардирование и агрегация отчётов
+
+При запуске тестов в параллельных джобах (matrix builds, pytest-xdist) каждая джоба генерирует свой отчёт. Без сбора вместе вы получите заниженные цифры или потерю части результатов.
+
+**Сбор покрытия из параллельных джобов:**
+
+```bash
+# В каждой джобе: сохранение отчёта с уникальным именем
+pytest --junitxml=results-${CI_NODE_INDEX}.xml --alluredir=allure-results-${CI_NODE_INDEX}
+
+# В агрегирующей джобе: объединение JUnit
+python -c "
+import xml.etree.ElementTree as ET
+import glob
+
+combined = ET.Element('testsuite', name='combined')
+for f in sorted(glob.glob('results-*.xml')):
+    tree = ET.parse(f)
+    for tc in tree.findall('.//testcase'):
+        combined.append(tc)
+ET.ElementTree(combined).write('results-combined.xml')
+"
+```
+
+**Для Allure:**
+```bash
+# В каждой джобе: результаты в отдельной директории
+pytest --alluredir=allure-results-${CI_NODE_INDEX}
+
+# В агрегирующей джобе: объединение
+allure combine allure-results-* -o allure-results-combined
+allure generate allure-results-combined -o allure-report --clean
+```
+
+**Правила:**
+- Используйте уникальные имена файлов для каждого шарда (`results-${CI_NODE_INDEX}.xml`).
+- Для matrix builds собирайте артефакты из каждой джобы и объединяйте в `post`-джобе.
+- При использовании `pytest-xdist` каждый воркер сохраняет свой отчёт в `.coverage.*`; для JUnit используйте `--json-report` с `pytest-json-report`.
+
+### Лёгкая альтернатива — pytest-html
+
+Для малых проектов или локальной верификации применим плагин `pytest-html`, генерирующий единый самодостаточный HTML-файл (`--html=report.html --self-contained-html`). Он проще в установке, чем Allure, но не даёт истории, трендов и вложенных шагов; для CI-артефактов и командных отчётов предпочтителен Allure.
 
 ### Интеграция в пайплайны GitLab CI
 
@@ -86,6 +153,65 @@ test:integration:
     expire_in: 7 days
 ```
 
+### Интеграция в пайплайны GitHub Actions
+
+GitHub Actions отображает результаты тестов через Check Runs и Step Summary. Для публикации JUnit-отчёта требуется экшен с правами `checks: write`. Публикация должна выполняться при любом исходе (`if: always()`), иначе падающие тесты останутся без отчёта.
+
+```yaml
+# .github/workflows/test-report.yml
+name: Test Report
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-html allure-pytest
+      - name: Run tests with JUnit and Allure
+        run: |
+          pytest tests/ \
+            --junitxml=reports/junit.xml \
+            --alluredir=reports/allure-results \
+            --html=reports/report.html --self-contained-html
+      - name: Publish JUnit report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: reports/junit.xml
+          require_tests: true
+          annotate_notice: false
+      - name: Upload Allure artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: reports/allure-results/
+          retention-days: 14
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-report
+          path: reports/report.html
+          retention-days: 14
+```
+
+**Практические нюансы:**
+- **Права:** `permissions: checks: write` требуется для создания Check Run; для форк-PR токен read-only — используйте артефакт + follow-up воркфлоу на `workflow_run`.
+- **Аннотации:** `annotate_notice: false` публикует аннотации только для реальных падений, не засоряя PR.
+- **Валидация:** в PR появляется проверка «Tests report» со счётчиками; сломанный assert даёт аннотацию с именем кейса и путём к файлу прямо у строки кода.
+
 ## 4. Дополнительная информация
 
 ### Продвинутая визуализация в Grafana
@@ -102,6 +228,125 @@ test:integration:
 4.  **История (Trends):** Для Allure тренды строятся из каталога `history`, который необходимо переносить из предыдущего прогона в `allure-results/history` перед генерацией — иначе каждый отчёт будет «островом» без истории. В CI это делается скачиванием предыдущего отчёта из артефактов. Альтернатива — Allure TestOps или ReportPortal, где история автоматически хранится в БД.
 5.  **Флаг `--clean-alluredir`**: Применяйте его в CI, чтобы избежать смешивания артефактов разных прогонов, но учитывайте, что он стирает историю — используйте его совместно с переносом каталога `history`.
 6.  **Независимость от статуса задания:** Генерацию отчёта запускайте даже при падении тестов (`when: always` в GitLab, `continue-on-error: true` в GitHub Actions), иначе отчёт не соберётся именно тогда, когда он нужен больше всего.
+
+### Управление секретами для инструментов отчётности
+
+Self-hosted платформы отчётности (ReportPortal, Allure TestOps) требуют токены для доступа к API. В CI/CD секреты не должны храниться в репозитории.
+
+| Инструмент | Переменная окружения | Где хранить |
+| :--- | :--- | :--- |
+| **ReportPortal** | `RP_API_KEY` | CI/CD variables (GitLab) / Secrets (GitHub) |
+| **Allure TestOps** | `ALLURE_TOKEN` | CI/CD variables / Secrets |
+| **SonarQube** | `SONAR_TOKEN` | CI/CD variables / Secrets |
+
+**Правила:**
+- Используйте встроенные хранилища секретов CI/CD (GitLab CI variables, GitHub Secrets).
+- Для self-hosted раннеров храните токены в файлах с правами `600` или в HashiCorp Vault.
+- Ротация токенов: каждые 90 дней или при утеске.
+
+### Валидация артефактов отчётов
+
+Пустой или повреждённый артефакт отчёта бесполезен для анализа. Валидируйте его сразу после генерации:
+
+```bash
+# Проверка размера и валидности JUnit XML
+if [ ! -s reports/junit.xml ]; then
+  echo "ERROR: JUnit report is empty"
+  exit 1
+fi
+
+# Проверка валидности XML
+python -c "import xml.etree.ElementTree as ET; ET.parse('reports/junit.xml')"
+
+# Подсчёт статистики
+TESTS=$(xmllint --xpath 'string(/testsuite/@tests)' reports/junit.xml)
+FAILURES=$(xmllint --xpath 'string(/testsuite/@failures)' reports/junit.xml)
+echo "Tests: $TESTS, Failures: $FAILURES"
+
+# FAILURE -> красная сборка
+if [ "$FAILURES" -gt 0 ]; then
+  echo "Tests failed"
+  exit 1
+fi
+```
+
+**Правила:**
+- Проверяйте, что артефакт загружен и не пуст (`[ -s file ]`).
+- В GitLab используйте `coverage_report`, в GitHub — `actions/upload-artifact` + проверку размера.
+- Для Allure проверяйте наличие файлов в `allure-results/` (минимум один `.json`).
+
+### Именование тестов для читаемых отчётов
+
+Одинаковые имена тестов в разных классах/модулях размывают отчёт. Используйте консистентные префиксы:
+
+```python
+# Плохо
+def test_login(): ...
+
+# Хорошо
+def test_auth_login_success(): ...
+def test_auth_login_invalid_password(): ...
+```
+
+**Правила:**
+- Используйте префикс с именем модуля/компонента: `auth_`, `payment_`, `api_`.
+- Для Allure используйте `@allure.title("...")` и `@allure.description("...")` для человекочитаемых заголовков.
+- Для JUnit используйте `--junit-prefix=service-name` (pytest) или `--testNamePattern` (Maven).
+
+### Устранение неполноты отчётности
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| Отчёт не попал в PR | Нет `checks: write` (GitHub) или форк-PR | Добавить permission; для форков — артефакт + `workflow_run` |
+| Пустой JUnit XML | Неверный путь/репортер; тихий провал раннера | Проверить локально путь отчёта; добавить `require_tests` |
+| Дублированные тесты в отчёте | Запуск из разных директорий; duplicate test IDs | Использовать уникальные `classname` или `--junit-prefix` |
+| Отчёт не обновляется в CI | Кэширование артефактов; старый `history` | Очищать `allure-results`; не использовать кэш для артефактов отчётов |
+| Разные цифры локально и в CI | Отличается окружение, версии зависимостей | Использовать одинаковые версии инструментов; кэшировать зависимости |
+| Падающие тесты без деталей | Нет вложений (screenshots, logs) | Добавить хук `pytest_runtest_makereport` для `allure.attach` |
+
+### Self-hosted платформы отчётности
+
+Для изолированных сред (on-prem, air-gapped) используйте self-hosted решения:
+
+**ReportPortal (self-hosted):**
+- Бэкенд: PostgreSQL + Elasticsearch/OpenSearch
+- Агент: `rp-agent` или плагины для фреймворков (`rp-reportportal-allure`)
+- Провиженинг: Helm-чарт или Docker Compose
+- Минимальные требования: 4 CPU, 8 GB RAM, 50 GB SSD
+
+**Allure TestOps (self-hosted):**
+- Бэкенд: PostgreSQL
+- Агент: `allurectl` CLI
+- Провиженинг: Helm-чарт или Docker Compose
+- Минимальные требования: 2 CPU, 4 GB RAM, 20 GB SSD
+
+**Правила:**
+- Храните токены доступа в Vault или CI/CD variables, никогда в репозитории.
+- Настройте backup для PostgreSQL (ежедневный дамп, retention 30 дней).
+- Ограничьте доступ к веб-интерфейсу через VPN или IP-whitelist.
+
+### Бейджи покрытия в README
+
+Для быстрого визуального контроля качества добавьте бейдж покрытия в README проекта. Для self-hosted инфраструктуры генерируйте бейдж самостоятельно из JSON-отчёта:
+
+```bash
+# Генерация JSON отчёта о покрытии
+coverage json -o coverage.json
+
+# Извлечение процента и обновление бейджа (через скрипт)
+python -c "
+import json
+with open('coverage.json') as f:
+    data = json.load(f)
+percent = data['totals']['percent_covered']
+print(f'Coverage: {percent:.1f}%')
+"
+```
+
+**Правила:**
+- Используйте отдельный бейдж для каждой ветки (main, develop), чтобы не показывать заниженные цифры feature-веток.
+- При использовании сторонних сервисов (Codecov, Coveralls) убедитесь, что они не передают данные за пределы инфраструктуры.
+- Для полностью изолированных сред (air-gapped) храните бейдж как статический SVG в репозитории.
 
 ---
 

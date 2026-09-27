@@ -370,4 +370,5 @@ cat /sys/fs/cgroup/system.slice/docker-${CONTAINER_ID}.scope/memory.stat
 - **[Диагностика Swap и Page Faults](./swap_diagnostics.md)** — почему процесс находится в swap.
 - **[smem](../../Diagnostics/Memory/smem.md)** — глубокий разбор утилиты для точного расчета PSS/USS.
 - **[pmap](../../Diagnostics/Memory/pmap.md)** — детальный анализ сегментов виртуальной памяти.
+- **[Фактическое потребление vs Reporting](./memory_reporting_vs_reality.md)** — разница между free, top, smem; почему free всегда показывает мало.
 - **[/proc/meminfo — статистика памяти ядра](../../Diagnostics/Memory/proc_meminfo.md)** — расшифровка глобальных метрик, влияющих на процессы.

@@ -15,18 +15,56 @@
 
 ---
 
+## Базовые концепции и архитектура
+
+### Компоненты системы
+
+**Semaphore UI** — веб-сервер на Go, обрабатывает HTTP-запросы, управляет пользователями, проектами, шаблонами и очередями заданий.
+
+**База данных** — хранит метаданные: пользователей, проекты, шаблоны, ключи, переменные, журналы заданий. Поддерживаются:
+- **BoltDB** — встроенная, для небольших развертываний (до ~100 заданий/день)
+- **PostgreSQL** — для production (рекомендуется 16+)
+- **MySQL** — альтернативный реляционный вариант
+
+**Runners** — отдельные процессы, выполняющие задачи. Могут работать локально (на сервере UI) или удаленно. Поддерживают executors:
+- `local` — выполнение напрямую на хосте runner'а
+- `docker` — изоляция через контейнеры
+- `k8s` — выполнение в Kubernetes Pod
+
+**Git-репозитории** — источник плейбуков, ролей и инвентарей. Semaphore клонирует репозиторий при каждом запуске задания.
+
+### Жизненный цикл задания
+
+1. **Создание шаблона** — в UI или через API указывается проект, репозиторий, плейбук, инвентарь, переменные, SSH-ключ.
+2. **Запуск** — вручную через UI/API, по расписанию (cron) или через webhook.
+3. **Клонирование репозитория** — runner клонирует Git-репозиторий в临时目录.
+4. **Выполнение** — runner запускает `ansible-playbook` с переданными параметрами.
+5. **Сбор результатов** — выходные данные, статус, логи сохраняются в БД.
+6. **Уведомление** — отправка оповещений через Telegram/Slack/email в зависимости от статуса.
+
+### Модель данных
+
+- **Project** — контейнер для шаблонов, инвентарей, ключей и переменных.
+- **Template** — параметризованный запуск плейбука (аналог Job Template в AWX).
+- **Inventory** — статический (YAML/JSON) или динамический (скрипты).
+- **Key Store** — хранилище SSH-ключей, паролей и Vault-паролей.
+- **Environment (Variable Group)** — набор переменных, внедряемых в плейбук.
+- **Schedule** — cron-расписание для автоматического запуска шаблонов.
+
+---
+
 ## Предварительные требования
 
 ### Системные требования
 
 | Компонент | Минимальные требования | Рекомендуемые |
 | :--- | :--- | :--- |
-| **ОС** | Ubuntu 20.04+, Debian 10+, CentOS 7+ | Ubuntu 22.04+, Debian 12+ |
+| **OS** | Ubuntu 20.04+, Debian 11+, RHEL 8+ | Ubuntu 22.04+, Debian 12+, RHEL 9+ |
 | **RAM** | 1 ГБ | 2+ ГБ |
 | **CPU** | 1 ядро | 2+ ядра |
 | **Диск** | 10 ГБ | 20+ ГБ |
-| **Python** | 3.8+ | 3.10+ |
-| **Ansible** | 2.12+ | 2.17+ (ansible-core 2.18+) |
+| **Python** | 3.9+ | 3.12+ |
+| **Ansible** | 2.21+ (ansible-core) | 2.21+ |
 | **Git** | 2.0+ | Последняя стабильная версия |
 
 ### Необходимые компоненты
@@ -60,7 +98,7 @@ version: "3.8"
 
 services:
   semaphore:
-    image: semaphoreui/semaphore:latest
+    image: semaphoreui/semaphore:v2.19
     container_name: semaphore
     ports:
       - "3000:3000"
@@ -88,7 +126,7 @@ version: "3.8"
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: semaphore-postgres
     environment:
       POSTGRES_DB: semaphore
@@ -99,7 +137,7 @@ services:
     restart: unless-stopped
 
   semaphore:
-    image: semaphoreui/semaphore:latest
+    image: semaphoreui/semaphore:v2.19
     container_name: semaphore
     ports:
       - "3000:3000"
@@ -109,7 +147,6 @@ services:
       SEMAPHORE_DB_PORT: 5432
       SEMAPHORE_DB_USER: semaphore
       SEMAPHORE_DB_PASS: "${POSTGRES_PASSWORD}"
-      SEMAPHORE_DB_DIALECT: postgres
       SEMAPHORE_ADMIN_PASSWORD: "${SEMAPHORE_ADMIN_PASSWORD}"
       SEMAPHORE_ADMIN_NAME: admin
       SEMAPHORE_ADMIN_EMAIL: admin@yourdomain.com
@@ -171,7 +208,7 @@ version: "3.8"
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: semaphore-postgres
     environment:
       POSTGRES_DB: semaphore
@@ -182,7 +219,7 @@ services:
     restart: unless-stopped
 
   semaphore:
-    image: semaphoreui/semaphore:latest
+    image: semaphoreui/semaphore:v2.19
     container_name: semaphore
     environment:
       SEMAPHORE_DB_DIALECT: postgres
@@ -353,11 +390,12 @@ semaphore setup --config /etc/semaphore/config.json \
   "dialect": "postgres",
 
   "tmp_path": "/tmp/semaphore",
-  "tmpirc_path": "/tmp/semaphore",
   "max_parallel_tasks": 10,
   "max_task_duration_sec": 3600,
   "max_tasks_per_template": 100,
-  "schedule_timezone": "UTC",
+  "schedule": {
+    "timezone": "UTC"
+  },
 
   "git_client": "cmd_git",
   "ssh_config_path": "~/.ssh/config",
@@ -422,7 +460,7 @@ SEMAPHORE_DB_HOST=localhost
 SEMAPHORE_DB_PORT=5432
 SEMAPHORE_DB_USER=semaphore
 SEMAPHORE_DB_PASS=password
-SEMAPHORE_DB_NAME=semaphore
+SEMAPHORE_DB=semaphore
 
 # Администратор
 SEMAPHORE_ADMIN=admin
@@ -868,7 +906,7 @@ semaphore runner unregister --config /etc/semaphore-runner/config.json
 | :--- | :--- | :--- |
 | **local** (по умолчанию) | Выполнение на сервере runner'а | Простые сценарии, малая нагрузка |
 | **docker** | Запуск в Docker-контейнере | Изоляция, воспроизводимость |
-| **k8s** | Запуск в Kubernetes Pod | Масштабирование, облачные среды |
+| **k8s** | Запуск в Kubernetes Pod | Масштабирование, изоляция окружений |
 
 #### Docker executor
 
@@ -1088,6 +1126,56 @@ scrape_configs:
 
 ---
 
+## Высокая доступность и резервное копирование
+
+### Резервное копирование базы данных
+
+```bash
+# PostgreSQL (pg_dump)
+pg_dump -U semaphore -h localhost semaphore > semaphore_backup_$(date +%Y%m%d).sql
+
+# Восстановление
+psql -U semaphore -h localhost semaphore < semaphore_backup_20260923.sql
+
+# Для production используйте pg_dump с сжатием:
+pg_dump -U semaphore -h localhost semaphore | gzip > semaphore_backup_$(date +%Y%m%d).sql.gz
+```
+
+```bash
+# BoltDB (файловая БД)
+cp /var/lib/semaphore/semaphore.db /backup/semaphore_$(date +%Y%m%d).db
+```
+
+### Резервное копирование конфигурации
+
+```bash
+# Конфигурационный файл и переменные окружения
+tar czf semaphore_config_$(date +%Y%m%d).tar.gz \
+  /etc/semaphore/config.json \
+  /path/to/.env
+
+# Включите в бэкап: config.json, ключи SSH, Vault-пароли (зашифрованные)
+```
+
+### Восстановление после сбоя
+
+1. **Восстановите БД** из последнего бэкапа.
+2. **Восстановите конфигурацию** и переменные окружения.
+3. **Проверьте целостность** — запустите `semaphore db check`.
+4. **Выполните миграции** — `semaphore db migrate`.
+5. **Перезапустите сервис** и проверьте `/api/ping`.
+
+### Высокая доступность (HA)
+
+- **Без Runners:** Semaphore UI не имеет встроенного кластера. Для HA используйте:
+  - **Load Balancer** перед несколькими инстансами UI с общей БД (PostgreSQL).
+  - **Read Replicas** PostgreSQL для распределения чтения.
+  - **Runner-ы** распределяются автоматически; добавляйте их для отказоустойчивости.
+- **Runners:** Масштабируйте горизонтально. Runner-ы stateless; при падении задания переназначаются на другой runner.
+- **Хранилище:** Используйте сетевые файловые системы (NFS, Ceph) для общих томов при необходимости.
+
+---
+
 ## Сравнение с AWX
 
 | Характеристика | Semaphore | AWX | AAP |
@@ -1187,6 +1275,88 @@ fi
 
 ---
 
+## Операции и команды
+
+### Управление сервисом
+
+```bash
+# Запуск/остановка/перезагрузка (systemd)
+sudo systemctl start semaphore
+sudo systemctl stop semaphore
+sudo systemctl restart semaphore
+sudo systemctl status semaphore
+
+# Docker Compose
+docker compose up -d
+docker compose down
+docker compose restart semaphore
+docker compose logs -f semaphore
+docker compose pull && docker compose up -d
+```
+
+### Управление базой данных
+
+```bash
+# Проверка подключения
+semaphore db check --config /etc/semaphore/config.json
+
+# Применение миграций (после обновления)
+semaphore db migrate --config /etc/semaphore/config.json
+
+# Резервное копирование (PostgreSQL)
+pg_dump -U semaphore -h localhost semaphore | gzip > backup_$(date +%Y%m%d).sql.gz
+
+# Восстановление
+gunzip < backup_20260923.sql.gz | psql -U semaphore -h localhost semaphore
+```
+
+### Управление runners
+
+```bash
+# Регистрация runner'а
+semaphore runner register --config /etc/semaphore-runner/config.json
+
+# Запуск/остановка
+semaphore runner start --config /etc/semaphore-runner/config.json
+semaphore runner stop --config /etc/semaphore-runner/config.json
+
+# Удаление runner'а
+semaphore runner unregister --config /etc/semaphore-runner/config.json
+
+# Проверка статуса runner'ов через API
+curl -s http://localhost:3000/api/project/1/tasks \
+  -H "Authorization: Bearer $TOKEN" | jq '.[] | {id, status, runner}'
+```
+
+### Управление проектами через CLI
+
+```bash
+# Экспорт проекта
+semaphore project export --project-id 1 --file project_backup.tar.gz
+
+# Импорт проекта
+semaphore project import --file project_backup.tar.gz
+```
+
+### Проверка работоспособности
+
+```bash
+# Health check
+curl -s http://localhost:3000/api/ping
+# → pong
+
+# Проверка версии
+semaphore --version
+# → Semaphore v2.19.x
+
+# Проверка доступных команд
+semaphore --help
+semaphore setup --help
+semaphore runner --help
+```
+
+---
+
 ## Поиск и устранение неисправностей
 
 ### Типичные ошибки
@@ -1201,6 +1371,13 @@ fi
 | `database connection failed` | Проблемы с БД | Проверьте настройки подключения к БД |
 | `task timeout` | Задание выполняется слишком долго | Увеличьте `max_task_duration_sec` |
 | `runner offline` | Runner не подключен | Проверьте статус runner'а, перезапустите |
+| `git clone failed` | Проблемы с доступом к репозиторию | Проверьте SSH-ключ в Key Store, known_hosts |
+| `playbook not found` | Неверный путь к плейбуку | Проверьте путь в шаблоне задания |
+| `inventory not found` | Инвентарь отсутствует | Проверьте путь/настройки инвентаря в проекте |
+| `too many open files` | Превышен лимит файловых дескрипторов | Увеличьте `ulimit -n` в systemd или Docker |
+| `no space left on device` | Заполнен диск | Очистите `/tmp/semaphore`, логи, старые артефакты |
+| `authentication failed` | Неверный токен/пароль | Проверьте API-токен, срок его действия |
+| `runner registration failed` | Конфликт имени runner'а | Удалите старый runner и зарегистрируйте заново |
 
 ### Диагностические команды
 
@@ -1259,18 +1436,50 @@ ansible-playbook /path/to/playbook.yml -i /path/to/inventory
 
 ## Лучшие практики
 
-1. **Храните плейбуки в Git** —Semaphore работает с Git-репозиториями; используйте ветвление для environments.
-2. **Используйте Variable Groups** — разделяйте переменные для dev/staging/production.
-3. **Настройте Vault** — зашифровывайте пароли и секреты через Ansible Vault.
-4. **Регулярно обновляйте** — `docker compose pull && docker compose up -d` или `apt update && apt upgrade semaphore`.
-5. **Настройте бэкапы** — для PostgreSQL используйте `pg_dump`; для SQLite — копирование файла БД.
-6. **Ограничьте параллельность** — `max_parallel_tasks` предотвратит перегрузку сервера.
-7. **Настройте уведомления** — Telegram/Slack/email для мониторинга заданий.
-8. **Используйте Runners** — для изоляции задач и масштабирования.
-9. **Настройте SSL/TLS** — всегда используйте HTTPS в production.
-10. **Мониторьте `/api/ping`** — интегрируйте с Prometheus/Grafana/Zabbix.
+### Код и конфигурация
+
+1. **Храните плейбуки в Git** — Semaphore работает с Git-репозиториями; используйте ветвление для environments (`main`, `develop`, `feature/*`).
+2. **Используйте Variable Groups** — разделяйте переменные для dev/staging/production; избегайте хардкода.
+3. **Настройте Vault** — зашифровывайте пароли и секреты через Ansible Vault; ротируйте ключи периодически.
+4. **Версионируйте конфигурацию** — храните `config.json` (без секретов) и Docker Compose в Git.
+5. **Используйте FQCN** в плейбуках для предотвращения конфликтов имен модулей.
+6. **Идемпотентность** — плейбуки должны быть безопасными для повторного запуска (`--check`, `--diff`).
+
+### Тестирование и качество
+
+7. **Тестируйте роли через Molecule** — автоматизируйте проверку ролей перед коммитом в Git.
+8. **Используйте ansible-lint** — добавляйте в CI статический анализ плейбуков.
+9. **Dry-run перед production** — запускайте с `--check --diff` на staging-инвентаре.
+10. **Валидация синтаксиса** — `ansible-playbook site.yml --syntax-check` в CI-пайплайне.
+
+### Безопасность и аудит
+
+11. **SSL/TLS** — всегда используйте HTTPS в production; настройте Let's Encrypt с автообновлением.
+12. **Отдельный пользователь** — запускайте Semaphore от непривилегированного пользователя `semaphore`.
+13. **SSH-ключи** — используйте ed25519 с парольной фразой; ротируйте ключи каждые 90 дней.
+14. **RBAC** — используйте команды (Projects) для ограничения доступа к проектам; избегайте общего админ-аккаунта.
+15. **Аудит** — логируйте все запуски заданий; интегрируйте с SIEM (syslog, ELK, Loki).
+16. **Сканирование секретов** — используйте `git secrets` или `gitleaks` в CI для предотвращения утечек.
+17. **Сетевая изоляция** — Semaphore UI имеет только исходящий доступ к Git, хостам и системам мониторинга.
+
+### Производительность и масштабирование
+
+18. **Ограничьте параллельность** — настройте `max_parallel_tasks` с запасом 20-30% от capacity.
+19. **Используйте Runners** — распределяйте нагрузку; изолируйте окружения через Docker executor.
+20. **Мониторинг** — интегрируйте `/api/ping` и метрики Prometheus; настройте алерты на долгие задания.
+21. **Кеширование зависимостей** — используйте Docker-образы с предустановленными Python-зависимостями.
+22. **Планирование задач** — размещайте энергоемкие задания в нерабочие часы; избегайте пиковых периодов.
+
+### Управление изменениями и наблюдаемость
+
+23. **GitOps** — все изменения плейбуков через Merge Request; Semaphore запускает только проверенный код.
+24. **Canary-развертывание** — сначала применяйте изменения к 1-2 узлам через тег `canary`.
+25. **Ротация credentials** — ротируйте SSH-ключи, Vault-пароли и API-токены по расписанию.
+26. **Бэкапы** — автоматизируйте бэкапы БД (`pg_dump`) и конфигурации; тестируйте восстановление.
+27. **Документация** — поддерживайте актуальную документацию по шаблонам, инвентарям и переменным.
 
 ---
+
 
 ## Дополнительная информация
 
@@ -1281,7 +1490,7 @@ ansible-playbook /path/to/playbook.yml -i /path/to/inventory
 *   [Discord Community](https://discord.gg/5R6k7hNGcH)
 *   [Docker Hub](https://hub.docker.com/r/semaphoreui/semaphore)
 *   [Semaphore UI vs AWX](https://docs.semaphoreui.com/faq/semaphore-vs-awx)
-*   [Сравнение: AWX vs Semaphore](./awx_ansible.md) — подробное сравнение возможностей
-*   [Установка AWX](./awx_installation.md) — если нужен более функциональный вариант
+*   [Сравнение: AWX vs Semaphore](./ansible-automation-platform.md) — подробное сравнение возможностей
+*   [Ansible Automation Platform и AWX](./ansible-automation-platform.md) — установка и управление AWX
 *   [Ansible: Использование ролей](./ansible_roles.md) — работа с ролями через Semaphore
-*   [Ansible: Использование плейбуков](./ansible_playbooks.md) — создание плейбуков для запуска
+*   [Ansible: Выполнение плейбуков](./ansible_playbook_execution.md) — создание плейбуков для запуска

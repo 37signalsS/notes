@@ -412,6 +412,188 @@ kubectl delete namespace ca-restore-test
 
 ---
 
+## OCSP/CRL для приватных CA
+
+### Проблема отзыва сертификатов в Private CA
+
+cert-manager не предоставляет встроенный OCSP-Responder или генерацию CRL для приватных CA. Удаление ресурса `Certificate` не аннулирует уже выпущенный сертификат в Secret. Существует три подхода к решению:
+
+| Подход | Механизм | Когда использовать |
+| :--- | :--- | :--- |
+| **Короткие TTL** | Сертификат живёт 1-7 дней, отзыв заменяется непродлением | Рекомендуется для绝大多数 случаев |
+| **OCSP через Vault** | Vault PKI предоставляет встроенный OCSP-Responder | Enterprise, compliance |
+| **CRL через Step-CA** | Step-CA генерирует CRL автоматически | Air-gapped среды |
+
+### Рекомендация: короткие TTL вместо OCSP/CRL
+
+В контейнерных средах короткоживущие сертификаты (1-24 часа) являются предпочтительным подходом, так как:
+
+- Нет необходимости в инфраструктуре OCSP/CRL
+- Компрометированный сертификат автоматически становится бесполезным через TTL
+- Ротация ключей происходит часто, что снижает risk window
+- Проще в эксплуатации и масштабировании
+
+```yaml
+# Пример: сертификат с TTL 24 часа
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: short-lived-service
+spec:
+  duration: 24h
+  renewBefore: 1h
+  privateKey:
+    algorithm: Ed25519
+    rotationPolicy: Always
+```
+
+### Настройка CRL через Step-CA (если.required)
+
+```bash
+# Step-CA автоматически поддерживает CRL
+# Включение CRL в конфигурации Step-CA:
+step ca provisioner update acme --enable-SSH=false --crldp http://step-ca.step-ca.svc.cluster.local:9000/1.0/crl
+
+# Получение CRL
+curl http://step-ca.step-ca.svc.cluster.local:9000/1.0/crl -o crl.pem
+
+# Просмотр CRL
+openssl crl -inform PEM -in crl.pem -text -noout
+```
+
+---
+
+## Capacity planning для cert-manager
+
+### Ключевые метрики для планирования
+
+| Метрика | Описание | Порог для масштабирования |
+| :--- | :--- | :--- |
+| `certmanager_workqueue_depth` | Глубина очереди reconciler'ов | > 100 стабильно |
+| `certmanager_reconcile_errors_total` | Ошибки реконсиляции | > 0 в течение 5 минут |
+| `certmanager_certificate_ready_status` | Доля готовых сертификатов | < 95% |
+| `certmanager_webhook_request_duration_seconds` | Задержка webhook | P99 > 1 секунды |
+| `container_memory_working_set_bytes` | Потребление памяти контроллером | > 80% от limits |
+
+### Формулы расчета ресурсов
+
+```
+# Контроллер: 1 CPU core на ~500 активных сертификатов
+# Memory: ~1MB на каждый отслеживаемый Certificate ресурс
+# Webhook: 1 CPU core на ~100 запросов/сек
+
+# Пример для кластера с 2000 сертификатов:
+# controller.resources.limits.cpu = 4 cores
+# controller.resources.limits.memory = 4Gi
+# webhook.replicaCount = 3
+```
+
+### Рекомендуемая конфигурация по нагрузке
+
+| Количество сертификатов | Controller replicas | Memory limits | Webhook replicas |
+| :--- | :--- | :--- | :--- |
+| < 100 | 1 | 256Mi | 1 |
+| 100-500 | 2 | 512Mi | 2 |
+| 500-2000 | 3 | 1Gi | 3 |
+| > 2000 | 3+ (HPA) | 2Gi+ | 3+ |
+
+### Пример HPA для контроллера
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cert-manager-hpa
+  namespace: cert-manager
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cert-manager
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Pods
+    pods:
+      metric:
+        name: workqueue_depth
+      target:
+        type: AverageValue
+        averageValue: "50"
+```
+
+---
+
+## Чеклист миграции версий cert-manager
+
+### Перед обновлением
+
+- [ ] Проверить текущую версию: `helm list -n cert-manager`
+- [ ] Проверить версию CRD: `kubectl get crd certificates.cert-manager.io -o jsonpath='{.spec.versions[*].name}'`
+- [ ] Проверить совместимость API (v1beta1 → v1): `kubectl get issuers,clusterissuers,certificates -A -o yaml | grep apiVersion`
+- [ ] Сделать бэкап CA-секретов: `kubectl get secrets -n cert-manager -o yaml > backup.yaml`
+- [ ] Сделать бэкап всех ресурсов: `kubectl get issuers,clusterissuers,certificates -A -o yaml > resources.yaml`
+- [ ] Проверить статус всех сертификатов: `cmctl status certificate -A`
+- [ ] Убедиться, что webhook доступен: `cmctl check api`
+
+### Во время обновления
+
+```bash
+# 1. Обновление CRD (если требуется)
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v<NEW_VERSION>/cert-manager.crds.yaml
+
+# 2. Обновление Helm-чарта
+helm upgrade cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --version v<NEW_VERSION> \
+  --reuse-values \
+  --wait \
+  --timeout 5m
+
+# 3. Проверка подов
+kubectl get pods -n cert-manager
+# → Все поды должны быть Running и Ready
+
+# 4. Проверка webhook
+cmctl check api
+```
+
+### После обновления
+
+- [ ] Проверить статус всех сертификатов: `cmctl status certificate -A`
+- [ ] Проверить логи контроллера на ошибки: `kubectl logs -n cert-manager -l app=cert-manager --tail=50`
+- [ ] Проверить, что webhook работает: `cmctl check api`
+- [ ] Проверить trust-manager: `kubectl get bundles -A`
+- [ ] Протестировать выпуск нового сертификата (self-signed)
+- [ ] Проверить метрики в Prometheus: `certmanager_certificate_ready_status == 0`
+
+### Rollback при проблемах
+
+```bash
+# 1. Просмотр истории релизов
+helm history cert-manager -n cert-manager
+
+# 2. Откат на предыдущую версию
+helm rollback cert-manager <REVISION> -n cert-manager --wait --timeout 5m
+
+# 3. Если CRD были обновлены — откат CRD вручную
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v<OLD_VERSION>/cert-manager.crds.yaml
+
+# 4. Проверка после отката
+cmctl check api
+kubectl get certificate -A | grep False
+```
+
+### Известные проблемы при обновлении
+
+| Версия | Проблема | Решение |
+| :--- | :--- | :--- |
+| 1.19 → 1.20 | Удалены некоторые beta API | Мигрировать все ресурсы на `v1` |
+| 1.20 → 1.21 | Удалены права на создание ServiceAccount токенов | Добавить `serviceaccounts/token: create` в ClusterRole |
+| 1.21+ | Webhook timeout при большом количестве ресурсов | Увеличить `webhook.timeoutSeconds` до 30 |
+
+---
+
 ## Дополнительная информация
 
 ### Частые ошибки и решения
@@ -440,4 +622,6 @@ kubectl delete namespace ca-restore-test
 
 -   **[Приватный CA: Обзор](./index.md)** — архитектура и выбор типа иерархии.
 -   **[Приватный CA: Сценарии](./scenarios.md)** — готовые YAML-манифесты для развертывания.
+-   **[Обновление и миграция cert-manager](../Administration/upgrades_and_migration.md)** — пошаговый апгрейд версий.
+-   **[Масштабирование и производительность](../Administration/scaling_and_performance.md)** — capacity planning для Private CA.
 -   **[Cert-manager: Troubleshooting](../Administration/troubleshooting.md)** — общая диагностика контроллера.

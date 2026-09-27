@@ -2,26 +2,43 @@
 
 ## Определения
 
-**Отладка в Ansible** — систематический процесс идентификации и устранения неисправностей в коде автоматизации (плейбуки, роли), конфигурации инвентаря или сетевом взаимодействии.
+**Отладка в Ansible** — систематический процесс идентификации и устранения неисправностей в коде автоматизации (плейбуки, роли), конфигурации инвентаря, шаблонов или сетевом взаимодействии между контрольным узлом (Control Node) и managed node.
+
+**Managed node** — целевой хост, на котором Ansible выполняет задачи через SSH (или другой транспорт). Не требует установки агента.
+
+**Control Node** — рабочая станция или сервер, с которого запускаются плейбуки. Требует установленного Python 3 и Ansible.
+
+**Идемпотентность** — свойство плейбука давать одинаковый результат при многократном запуске. Нарушение идемпотентности является частой причиной логических ошибок.
+
+**Регистрация (`register`)** — механизм захвата вывода задачи в переменную для последующего использования в условиях `when` или отладке.
 
 **Основные категории ошибок:**
-- **Синтаксические:** нарушение структуры YAML (YAML Ain't Markup Language) или правил Jinja2 (например, незакрытые кавычки или скобки).
-- **Логические:** ошибки в условиях `when`, неправильное использование фильтров, неверный порядок выполнения задач или проблемы идемпотентности.
-- **Инфраструктурные:** проблемы SSH (Secure Shell) соединения, таймауты, отсутствие Python-зависимостей на целевых хостах или ошибки прав доступа (sudo/become).
-- **Среда исполнения:** несоответствие версий коллекций, ядра Ansible или конфликты интерпретаторов Python.
+- **Синтаксические:** нарушение структуры YAML или правил Jinja2 (незакрытые кавычки, отступы, опечатки в фигурных скобках).
+- **Логические:** ошибки в условиях `when`, неправильное использование фильтров, неверный порядок выполнения задач, нарушение идемпотентности.
+- **Инфраструктурные:** проблемы SSH-соединения, таймауты, отсутствие Python-зависимостей на managed node, ошибки прав доступа (sudo/become).
+- **Среда исполнения:** несоответствие версий коллекций, ansible-core или конфликты интерпретаторов Python.
+- **Данные:** неверные типы переменных, проблемы с приоритетом переменных, ошибки в шаблонах Jinja2.
 
-**Примечание:** подробное описание инструментов отладки (флаги CLI, модуль `debug`, интерактивный отладчик) находится в основном разделе **[Отладка плейбуков](../PlaybookStructure/advanced.md#сценарий-3-отладка-плейбуков)**. Данный файл содержит практические сценарии и "работу над ошибками".
+**Примечание:** подробное описание инструментов отладки (флаги CLI, модуль `ansible.builtin.debug`, интерактивный отладчик) находится в разделе [Точки останова и отладка (Debugger)](../PlaybookStructure/advanced.md#сценарий-6-точки-останова-и-отладка-debugger). Данный файл содержит практические сценарии устранения проблем и работу над ошибками.
 
 ## Базовые концепции
+
+### Архитектура отладки
+
+Процесс отладки в Ansible строится на трех уровнях:
+1. **Статический анализ** — проверка синтаксиса без запуска (`ansible-playbook --syntax-check`, `ansible-lint`).
+2. **Диагностика выполнения** — сбор фактов, просмотр переменных, проверка связности (`ansible-inventory`, `ansible -m setup`, `-vvvv`).
+3. **Интерактивный анализ** — пошаговое выполнение (`--step`), интерактивный отладчик (`debugger: on_failed`), dry-run (`--check --diff`).
 
 ### Предварительные требования (Prerequisites)
 
 | Компонент | Минимальная версия | Проверка |
 |---|---|---|
-| Ansible | 2.15+ (рекомендуется ≥ 10.x) | `ansible --version` |
-| Python | 3.10+ | `python3 --version` |
+| ansible-core | 2.15+ (рекомендуется ≥ 2.20) | `ansible --version` |
+| Python (Control Node) | 3.11+ | `python3 --version` |
 | SSH-доступ | Протестирован | `ansible all -m ping` |
 | Права `sudo` | Настроен `NOPASSWD` | `ansible all -m command -a "sudo whoami"` |
+| jmespath (опционально) | Любая | `pip3 install jmespath` |
 
 **Проверка зависимостей (однострочник):**
 
@@ -41,12 +58,13 @@ ansible-galaxy collection list 2>/dev/null | grep -E "community\.|ansible\."
 | Инструмент / Метод | Описание | Команда / Параметр |
 |---|---|---|
 | **Уровни детализации** | Вывод отладочной информации модулей и SSH. `-vvvv` включает логирование соединений. | `-v`, `-vv`, `-vvv`, `-vvvv` |
-| **Переменные окружения** | Глобальное включение отладки или смена вывода для лучшей читаемости. | `ANSIBLE_DEBUG=1`, `ANSIBLE_STDOUT_CALLBACK=yaml` |
+| **Переменные окружения** | Глобальное включение отладки или смена вывода для читаемости. | `ANSIBLE_DEBUG=1`, `ANSIBLE_STDOUT_CALLBACK=yaml` |
 | **Статический анализ** | Проверка синтаксиса, типичных ошибок и антипаттернов без запуска кода. | `ansible-lint`, `ansible-playbook --syntax-check` |
 | **Интерактивный отладчик** | Остановка выполнения при ошибке для инспекции переменных и выполнения команд. | `debugger: on_failed` (в плейбуке или задаче) |
 | **Анализ инвентаря** | Визуализация иерархии групп и переменных для отладки приоритетов. | `ansible-inventory --graph --vars` |
-| **Модуль debug** | Вывод значений переменных или произвольных сообщений. | `ansible.builtin.debug: var=my_var` |
-| **Callback-плагины** | Дополнительный вывод (JSON, YAML,的时间戳) для CI/CD и логирования. | `ANSIBLE_STDOUT_CALLBACK=yaml` или `callback_whitelist` |
+| **Модуль `ansible.builtin.debug`** | Вывод значений переменных или произвольных сообщений. | `ansible.builtin.debug: var=my_var` |
+| **Callback-плагины** | Дополнительный вывод (JSON, YAML, временные метки) для CI/CD и логирования. | `ANSIBLE_STDOUT_CALLBACK=yaml` или `callback_whitelist` в `ansible.cfg` |
+| **Анализ фактов** | Сбор и фильтрация фактов для диагностики окружения. | `ansible <host> -m setup -a "filter=ansible_os_family"` |
 
 ### Алгоритм изоляции проблемы
 
@@ -55,8 +73,6 @@ ansible-galaxy collection list 2>/dev/null | grep -E "community\.|ansible\."
 3.  **Проверка изменений (Dry Run)**: `--check` в сочетании с `--diff` показывает, какие именно строки в файлах были бы изменены, не применяя их.
 4.  **Запуск с определенной задачи**: `--start-at-task="Name"` экономит время при отладке длинных плейбуков, пропуская уже выполненные шаги.
 5.  **Просмотр отчета**: форматирование результата в JSON для анализа в CI/CD: `ansible-playbook site.yml -vvv --timeout=30 2>&1 | tee ansible_debug.log`.
-
----
 
 ## Практические сценарии
 
@@ -79,7 +95,7 @@ ansible-playbook site.yml --syntax-check
 - name: Копирование конфигурации
   ansible.builtin.copy:
     dest: /etc/app/config.ini
-    content: "base_path={{ base_path }}/data"
+    content: base_path={{ base_path }}/data
 ```
 
 - **Правильно:**
@@ -87,7 +103,7 @@ ansible-playbook site.yml --syntax-check
 - name: Копирование конфигурации
   ansible.builtin.copy:
     dest: /etc/app/config.ini
-    content: "base_path={{ base_path }}/data"  # Не забудьте кавычки вокруг всей строки
+    content: "base_path={{ base_path }}/data"
 ```
 
 **Валидация:**
@@ -248,7 +264,7 @@ ansible web1 -m command -a "grep 'config_option' /etc/app/config.ini"
 
 **Симптом:** статус `UNREACHABLE` для части хостов.
 
-**Причина:** опечатка в IP, закрытый порт 22, блокировка Firewall или проблемы с `ControlPersist` в SSH.
+**Причина:** опечатка в IP, закрытый порт 22, блокировка firewall или проблемы с `ControlPersist` в SSH.
 
 **Диагностика:**
 ```bash
@@ -516,7 +532,7 @@ ansible-playbook site.yml --tags "deploy" --list-tasks 2>&1 | grep "deploy"
 
 **Симптом:** `--check` не показывает ожидаемых изменений или показывает ложные срабатывания.
 
-**Причина:** не все модули поддерживают режим проверки. Некоторые модули (command, shell) всегда возвращают `changed` в режиме `--check`.
+**Причина:** не все модули поддерживают режим проверки. Некоторые модули (`command`, `shell`) всегда возвращают `changed` в режиме `--check`.
 
 **Диагностика:**
 ```bash
@@ -550,94 +566,246 @@ ansible-playbook site.yml --check --diff -vvv
 ```bash
 # Проверка что check mode работает
 ansible-playbook site.yml --check --diff --limit web1
-# →攉ing web1:
-#   - воt changed
+# → Playing web1:
+#   - not changed
 ```
 
----
+### Сценарий 13: Нарушение идемпотентности
 
-## Запуск и структура проекта
+**Симптом:** при повторном запуске плейбук возвращает `changed: true`, хотя система уже находится в желаемом состоянии.
 
-### Пример инвентаря (inventory)
+**Причина:** использование императивных модулей (`shell`, `command`) без корректного `changed_when`, или отсутствие проверки состояния в декларативных модулях.
 
-**Файл `inventory.ini`:**
+**Диагностика:**
+```bash
+# Запуск в check mode
+ansible-playbook site.yml --check --diff
+# → Если видите changed для уже настроенных ресурсов — проблема в идемпотентности
+
+# Проверка конкретной задачи
+ansible-playbook site.yml --start-at-task="Настройка Nginx" --check
+```
+
+**Решение:** используйте декларативные модули с параметром `state` или корректный `changed_when`.
+```yaml
+# Плохо: shell без changed_when
+- name: Add setting
+  ansible.builtin.shell: echo "Setting=true" >> /etc/app.conf
+
+# Хорошо: lineinfile гарантирует идемпотентность
+- name: Ensure setting is present
+  ansible.builtin.lineinfile:
+    path: /etc/app.conf
+    line: "Setting=true"
+    state: present
+
+# Проверка идемпотентности
+- name: Verify idempotency
+  ansible.builtin.assert:
+    that:
+      - not result is changed
+    fail_msg: "Задача не идемпотентна"
+```
+
+**Валидация:**
+```bash
+# Второй запуск не должен показывать changed
+ansible-playbook site.yml --check --diff 2>&1 | grep -c "changed:"
+# → 0 (идемпотентно)
+```
+
+### Сценарий 14: Ошибки асинхронных задач (async/poll)
+
+**Симптом:** длительные задачи завершаются таймаутом, или статус фоновой задачи не отслеживается.
+
+**Причина:** недостаточное значение `async` для длительной операции, отсутствие опроса `async_status`, или ошибка в `jid`.
+
+**Диагностика:**
+```bash
+# Просмотр запущенных фоновых задач
+ansible web1 -m async_status -a "jid=<job_id>"
+
+# Проверка результата асинхронной задачи
+ansible web1 -m fetch -a "src=/tmp/async_result.txt dest=./ flat=yes"
+```
+
+**Решение:** настройте корректные значения `async` и `poll`.
+```yaml
+- name: Запуск длительной миграции
+  ansible.builtin.command: /opt/scripts/migrate.sh
+  async: 7200       # Максимум 2 часа
+  poll: 0           # Fire-and-forget
+  register: migration_job
+
+- name: Ожидание завершения миграции
+  ansible.builtin.async_status:
+    jid: "{{ migration_job.ansible_job_id }}"
+  register: job_result
+  until: job_result.finished
+  retries: 60
+  delay: 30
+```
+
+**Валидация:**
+```bash
+# Проверка статуса задачи
+ansible web1 -m async_status -a "jid=<job_id>"
+# → {"finished": 1, "rc": 0, "stdout": "Migration complete"}
+```
+
+### Сценарий 15: Проблемы с callback-плагинами
+
+**Симптом:** вывод плейбука нечитаем, или данные не поступают в систему мониторинга/логирования.
+
+**Причина:** не настроен `ANSIBLE_STDOUT_CALLBACK`, конфликт callback-плагинов, или ошибка в конфигурации плагина.
+
+**Диагностика:**
+```bash
+# Проверка активного callback
+ansible-config dump | grep stdout_callback
+
+# Проверка доступных callback-плагинов
+ls /usr/share/ansible/collections/ansible_collections/ansible/posix/plugins/callback/
+```
+
+**Решение:** настройте callback в `ansible.cfg` или через переменные окружения.
 ```ini
-[dev]
-web1 ansible_host=10.0.5.20 ansible_user=deploy
-web2 ansible_host=10.0.5.21 ansible_user=deploy
+# ansible.cfg
+[defaults]
+stdout_callback = yaml
+# Для CI/CD:
+# stdout_callback = json
 
-[prod]
-db1 ansible_host=10.0.5.30 ansible_user=deploy
-db2 ansible_host=10.0.5.31 ansible_user=deploy
-
-[dev:vars]
-ansible_python_interpreter=/usr/bin/python3
-ansible_become=true
+# Или через переменную окружения
+export ANSIBLE_STDOUT_CALLBACK=yaml
 ```
 
-### Команды запуска отладки
+**Валидация:**
+```bash
+# Запуск с YAML-выводом
+ANSIBLE_STDOUT_CALLBACK=yaml ansible-playbook site.yml --limit web1
+# → Структурированный YAML-вывод
+```
+
+## Операции и команды
+
+### Таблица команд отладки
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible-playbook --syntax-check` | Проверка YAML-синтаксиса | `ansible-playbook site.yml --syntax-check` |
+| `ansible-lint` | Статический анализ кода | `ansible-lint site.yml` |
+| `ansible-playbook -vvvv` | Максимальная детализация | `ansible-playbook site.yml -vvvv --limit web1` |
+| `ansible-playbook --check --diff` | Dry-run с показом изменений | `ansible-playbook site.yml --check --diff` |
+| `ansible-playbook --step` | Пошаговое выполнение | `ansible-playbook site.yml --step` |
+| `ansible-playbook --start-at-task` | Запуск с конкретной задачи | `ansible-playbook site.yml --start-at-task="Deploy"` |
+| `ansible-inventory --graph` | Визуализация инвентаря | `ansible-inventory --graph --vars` |
+| `ansible-inventory --host` | Переменные хоста | `ansible-inventory --host web1` |
+| `ansible <host> -m setup` | Сбор фактов | `ansible web1 -m setup -a "filter=ansible_os_family*"` |
+| `ansible <host> -m debug` | Просмотр переменной | `ansible web1 -m debug -a "var=my_var"` |
+| `ansible-playbook --list-tasks` | Просмотр задач без выполнения | `ansible-playbook site.yml --list-tasks` |
+| `ansible-playbook --list-tags` | Просмотр тегов | `ansible-playbook site.yml --list-tags` |
+| `ansible-playbook --list-hosts` | Просмотр хостов | `ansible-playbook site.yml --list-hosts` |
+| `ansible-playbook --list-handlers` | Просмотр обработчиков | `ansible-playbook site.yml --list-handlers` |
+| `ANSIBLE_DEBUG=1` | Включение отладки | `ANSIBLE_DEBUG=1 ansible-playbook site.yml` |
+| `ANSIBLE_STDOUT_CALLBACK=yaml` | Форматирование вывода | `ANSIBLE_STDOUT_CALLBACK=yaml ansible-playbook site.yml` |
+
+## Диагностика и устранение неисправностей
+
+### Типовые ошибки и их решение
+
+| # | Ошибка | Причина | Решение |
+|---|---|---|---|
+| 1 | `Syntax Error while loading YAML` | Нарушение структуры YAML, незакрытые кавычки в Jinja2 | Заключите `{{ ... }}` в кавычки, проверьте отступы |
+| 2 | `The task includes an option with an undefined variable` | Переменная не определена или имеет неверный тип | Используйте `default()`, проверьте приоритет переменных через `ansible-inventory` |
+| 3 | `UNREACHABLE!` | Проблемы с SSH, firewall, опечатка в IP | Проверьте `ansible all -m ping --limit <host>`, `nc -zv <host> 22` |
+| 4 | `FAILED! => {"msg": "Failed to connect to the host via ssh"}` | Нет доступа по SSH, неверный ключ | Проверьте `ssh -v deploy@host`, `ansible.cfg` |
+| 5 | `Permission denied` / `Missing sudo password` | `become` не настроен, `requiretty` включен | Настройте `NOPASSWD` в sudoers, проверьте `ansible_become` |
+| 6 | `Timeout waiting for privilege escalation prompt` | `sudo` требует пароль | Используйте `-K` или настройте `become_ask_pass=False` |
+| 7 | `module xyz was not found in module_utils` | Модуль не установлен | `ansible-galaxy collection install <namespace.collection>` |
+| 8 | `No such file or directory` при `include_tasks` | Неверный путь к файлу задач | Укажите относительный путь от плейбука или настройте `roles_path` |
+| 9 | `Handler 'X' not found` | Обработчик не определен или опечатка в имени | Проверьте `notify` и `handlers`, используйте `--list-handlers` |
+| 10 | `--check` показывает ложные изменения | Модули `command`/`shell` не поддерживают check mode | Установите `check_mode: false` или используйте `changed_when` |
+| 11 | `Decryption failed` | Неверный пароль Vault или Vault ID | Проверьте `--vault-id` и парольные файлы |
+| 12 | `Could not match supplied host pattern` | Группа не определена в инвентаре | `ansible-inventory --list`, проверьте синтаксис inventory |
+| 13 | `The field X is not allowed` | Директива на неправильном уровне | `become`, `serial` задаются на уровне Play или Task |
+| 14 | `Undefined variable` при `import_tasks` | `import_tasks` видит только статические переменные | Используйте `include_tasks` для динамических данных |
+| 15 | `changed: true` при повторном запуске | Нарушение идемпотентности | Используйте декларативные модули, добавьте `changed_when` |
+
+### Диагностика переменных и фактов
 
 ```bash
-# Полный вывод отладки
-ansible-playbook site.yml -vvvv --limit web1
-
-# Только проверка синтаксиса
-ansible-playbook site.yml --syntax-check
-
-# Статический анализ (требуется ansible-lint)
-ansible-lint site.yml
-
-# Запуск с определенной задачи
-ansible-playbook site.yml --start-at-task="Установка пакетов"
-
-# Пошаговое выполнение
-ansible-playbook site.yml --step
-
-# Dry Run с показом различий
-ansible-playbook site.yml --check --diff --limit web1
-
-# Отладка интерактивным отладчиком
-ansible-playbook site.yml --limit web1  # debugger сработает автоматически при ошибке
-
-# Просмотр переменных хоста
+# Просмотр всех переменных хоста
 ansible-inventory --host web1
 
-# Просмотр структуры инвентаря
-ansible-inventory --graph
+# Просмотр с фильтром
+ansible web1 -m debug -a "var=hostvars['web1.example.com']"
 
-# Отладка конкретной переменной
-ansible web1 -m debug -a "var=my_var"
+# Сбор фактов с фильтром
+ansible web1 -m setup -a "filter=ansible_distribution*"
 
-# Просмотр зарегистрированных переменных
-ansible web1 -m debug -a "var=registered_var.stdout"
+# Проверка типа переменной
+ansible web1 -m debug -a "var=config_option | type_debug"
 ```
+
+### Диагностика выполнения плейбука
+
+```bash
+# Просмотр задач без выполнения
+ansible-playbook site.yml --list-tasks
+
+# Просмотр тегов
+ansible-playbook site.yml --list-tags
+
+# Просмотр обработчиков
+ansible-playbook site.yml --list-handlers
+
+# Просмотр хостов
+ansible-playbook site.yml --list-hosts
+```
+
+## Рекомендации
+
+### Best Practices
+
+1. **Используйте декларативные модули** вместо `shell`/`command` wherever possible. Это гарантирует идемпотентность и поддерживаемость.
+2. **Включайте `--check --diff`** перед первым запуском в production. Это позволяет увидеть точные изменения без риска.
+3. **Настройте `ansible.cfg`** с разумными таймаутами и `ControlPersist` для ускорения повторных подключений.
+4. **Используйте `debugger: on_failed`** только в debug-сборках плейбуков. Удаляйте перед коммитом в репозиторий.
+5. **Настраивайте `no_log: true`** для задач с секретами. Это предотвращает утечку данных в логи CI/CD.
+6. **Документируйте переменные** в `README.md` роли или в `vars/main.yml` с комментариями.
+7. **Используйте `block/rescue/always`** вместо `ignore_errors: true` для осмысленной обработки ошибок.
+8. **Проверяйте идемпотентность** через `molecule idempotence` при разработке ролей.
+9. **Не смешивайте логику и данные**: выносите значения в `defaults/main.yml` и `vars/`.
+10. **Используйте FQCN** (`ansible.builtin.copy` вместо `copy`) для совместимости с разными коллекциями.
 
 ### Чек-лист валидации после отладки
 
 | Проверка | Команда | Ожидаемый результат |
 |---|---|---|
 | Синтаксис YAML | `ansible-playbook site.yml --syntax-check` | `OK` без ошибок |
-| Синтаксис Jinja2 | `ansible-lint site.yml` | 0 ошибок |
+| Статический анализ | `ansible-lint site.yml` | 0 ошибок (или только info/warn) |
 | Связность SSH | `ansible all -m ping` | `pong` для всех хостов |
-| Python доступен | `ansible web1 -m setup -a "filter=ansible_python_version"` | Python 3.10+ |
-| become работает | `ansible web1 -m command -a "whoami" --become` | `root` |
+| Python доступен | `ansible web1 -m setup -a "filter=ansible_python_version"` | Python 3.9+ |
+| Become работает | `ansible web1 -m command -a "whoami" --become` | `root` |
 | Vault расшифровывается | `ansible-vault view secrets.yml` | Содержимое отображается |
 | Теги работают | `ansible-playbook site.yml --tags "test" --list-tasks` | Список задач |
-| Дисковое пространство | `ansible all -m shell -a "df -h / \| tail -1"` | Свободное место > 1GB |
+| Дисковое пространство | `ansible all -m shell -a "df -h / | tail -1"` | Свободное место > 1GB |
 | Handler запускается | `ansible-playbook site.yml --list-handlers` | Обработчик в списке |
-
----
+| Идемпотентность | `ansible-playbook site.yml --check --diff` | 0 changed |
 
 ## Дополнительная информация
+
+### Смотрите также
+
+- [Отладка плейбуков: Основные инструменты](../PlaybookStructure/advanced.md#сценарий-6-точки-останова-и-отладка-debugger)
+- [Официальная документация: Debugging modules](https://docs.ansible.com/ansible/latest/user_guide/playbooks_debugger.html)
+- [Ansible Inventory CLI: Справочник](https://docs.ansible.com/ansible/latest/cli/ansible-inventory.html)
+
+### Связанные разделы
 
 - **Тестирование ролей**: автоматизация проверок с использованием Molecule — **[ansible_testing_with_molecule.md](../ansible_testing_with_molecule.md)**.
 - **Безопасность**: лучшие практики настройки прав и пользователей — **[ansible_security_best_practices.md](../ansible_security_best_practices.md)**.
 - **Структура проекта**: рекомендации по организации файлов — **[example_project_layout.md](example_project_layout.md)**.
 - **Общие антипаттерны**: причины логических ошибок и плохие практики — **[ansible_bad_practices.md](../ansible_bad_practices.md)**.
 - **Переменные и факты**: глубокое погружение в приоритеты и иерархию — **[variables.md](../PlaybookStructure/variables.md)**.
-
-## Смотрите также
-
-- [Отладка плейбуков: Основные инструменты](../PlaybookStructure/advanced.md#сценарий-3-отладка-плейбуков)
-- [Официальная документация: Debugging modules](https://docs.ansible.com/ansible/latest/user_guide/playbooks_debugger.html)
-- [Ansible Inventory CLI: Справочник](https://docs.ansible.com/ansible/latest/cli/ansible-inventory.html)

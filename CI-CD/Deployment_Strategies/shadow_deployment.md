@@ -2,8 +2,7 @@
 
 ## Определения
 
-**Теневое развертывание (Shadow Deployment)**, также известное как **Зеркалирование трафика (Traffic Mirroring)** — стратегия прогрессивной поставки, при которой реальный пользовательский трафик дублируется и направляется на новую версию сервиса (**v2/Shadow**), не влияя на основной поток запросов к стабильной версии (**v1/Primary**).
-
+- **Теневое развертывание (Shadow Deployment)**, также известное как **Зеркалирование трафика (Traffic Mirroring)** — стратегия прогрессивной поставки, при которой реальный пользовательский трафик дублируется и направляется на новую версию сервиса (**v2/Shadow**), не влияя на основной поток запросов к стабильной версии (**v1/Primary**).
 - **Fire and Forget (Выстрелил и забыл)** — основной технический принцип зеркалирования: балансировщик копирует пакет/запрос и отправляет его в теневую среду, не дожидаясь ответа и не учитывая его результат при формировании ответа пользователю.
 - **Blast Radius = 0** — ключевое преимущество стратегии; технические сбои в теневой версии физически не могут привести к деградации сервиса для реальных клиентов.
 - **Comparison Engine (Движок сравнения)** — инструмент или компонент, сопоставляющий ответы от v1 и v2 для выявления логических расхождений.
@@ -11,6 +10,12 @@
 - **Dark Launch (Тёмный запуск)** — выпуск нового кода в продакшен без изменения пользовательского интерфейса и без маршрутизации ответа клиенту; часто реализуется на уровне приложения через feature flags и является подвидом shadow.
 - **Replay (Воспроизведение)** — повторная отправка предварительно захваченного трафика в теневую среду вне реального времени (офлайн-сценарий).
 - **Асимметрия ответов (Response Asymmetry)** — v2 формирует и возвращает ответ внутреннему контуру, но он никогда не доходит до пользователя; пользователю отдаётся только ответ v1.
+- **Shadow Database** — изолированная копия баз данных, к которой подключается теневая версия для предотвращения записи в продакшен.
+- **eBPF Mirroring** — дублирование пакетов на уровне ядра Linux через eBPF-программы (Cilium), без sidecar-прокси и с минимальными накладными расходами.
+- **L4 Mirroring** — дублирование трафика на транспортном уровне (TCP/UDP) через `tc mirred` или SPAN-порт коммутатора, независимо от протокола приложения.
+- **Diffy** — OSS-инструмент от Twitter для сравнения ответов primary, secondary (обе v1) и candidate (v2) с фильтрацией шума.
+- **Logical Replication / CDC** — механизм репликации данных (PostgreSQL `PUBLICATION`/`SUBSCRIPTION`, Change Data Capture), поддерживающий теневую БД в актуальном состоянии без полного дампа.
+- **Mirror Percentage** — доля трафика, дублируемая в тень (например, 10%); позволяет контролировать нагрузку на shadow-инфраструктуру.
 
 ## Основные концепции
 
@@ -22,6 +27,16 @@
 - **Прогрев кэшей** — использование Shadow для "прогрева" JIT-компиляторов, кэшей БД и пулов соединений перед реальным переключением трафика.
 - **Тестирование в продакшене без риска (Testing in Production)** — shadow относится к методам TiP: реальная нагрузка, нулевой риск для пользователя.
 - **Отсутствие влияния на бизнес-метрики** — поскольку ответ v2 не возвращается клиенту, конверсии, выручка и SLA по доступности пользовательского пути не затрагиваются.
+
+### Архитектура зеркалирования
+
+Выделяют несколько уровней реализации зеркалирования (применимы независимо от года выпуска; перечислены от L7 к L3 и к уровню приложения):
+
+1.  **L7 Proxy (Envoy/Istio):** Зеркалирование на уровне HTTP/gRPC запросов. Самый гибкий, но ресурсоемкий метод.
+2.  **eBPF / Network Level (Cilium):** Копирование пакетов на уровне ядра Linux. Минимальные накладные расходы, подходит для L4-протоколов.
+3.  **Application Level (GoReplay):** Захват трафика с сетевого интерфейса и его воспроизведение.
+4.  **L4 / Network Level (`tc mirred`, SPAN):** Дублирование пакетов на сетевом уровне ядра или коммутатора; не зависит от прикладного протокола.
+5.  **Application Level (Feature Flags / Dark Launch):** Дублирование вызовов внутри кода приложения без сетевого зеркалирования.
 
 ### Реализация в традиционной инфраструктуре (Bare Metal / VM)
 
@@ -48,16 +63,6 @@
 5.  **Логическая репликация / CDC:** Теневая БД поддерживается в актуальном состоянии через logical replication (PostgreSQL `PUBLICATION`/`SUBSCRIPTION`) или Change Data Capture, что исключает ручное копирование дампа. Архитектурные паттерны CDC — в **[cdc_architectural_patterns.md](../../Databases/Concepts/cdc_architectural_patterns.md)**.
 6.  **Dual-Write Suppression:** Если v2 делает запись, она перенаправляется в изолированное хранилище (отдельный schema/топик), а не в prod-источник.
 
-### Архитектура зеркалирования
-
-Выделяют несколько уровней реализации зеркалирования (применимы независимо от года выпуска; перечислены от L7 к L3 и к уровню приложения):
-
-1.  **L7 Proxy (Envoy/Istio):** Зеркалирование на уровне HTTP/gRPC запросов. Самый гибкий, но ресурсоемкий метод.
-2.  **eBPF / Network Level (Cilium):** Копирование пакетов на уровне ядра Linux. Минимальные накладные расходы, подходит для L4-протоколов.
-3.  **Application Level (GoReplay):** Захват трафика с сетевого интерфейса и его воспроизведение.
-4.  **L4 / Network Level (tc mirred, SPAN):** Дублирование пакетов на сетевом уровне ядра или коммутатора; не зависит от прикладного протокола.
-5.  **Application Level (Feature Flags / Dark Launch):** Дублирование вызовов внутри кода приложения без сетевого зеркалирования.
-
 ### SRE-подход: наблюдаемость и сравнительный анализ (Comparison Engine)
 
 Теневая версия бесполезна без оценки. SRE-практика сравнения описана в **[Мониторинге и оценке при Canary](./canary_monitoring_and_gating.md)** (методология относительного сравнения Ratio и дифференциального анализа применима и к shadow).
@@ -82,6 +87,16 @@ histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{version="
   /
 histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{version="v1"}[5m])) by (le))
 ```
+
+### Сравнение: Shadow vs Canary
+
+| Характеристика | Shadow Deployment | Canary Deployment |
+| :--- | :--- | :--- |
+| **Влияние на пользователя** | **Нулевое** (Blast Radius = 0) | Минимальное (Blast Radius = N%) |
+| **Реальные ответы** | Игнорируются | Возвращаются пользователю |
+| **Основная цель** | Нефункциональные тесты, Perf, Stability | Функциональные тесты, бизнес-метрики |
+| **Стоимость** | Высокая (2x ресурсы) | Низкая (1x + delta) |
+| **Сложность внедрения** | Высокая (изоляция Side Effects) | Средняя (L7 Routing) |
 
 ## Практические сценарии
 
@@ -360,7 +375,7 @@ def get_search_results(query: str):
     return legacy_results
 ```
 
-**Вариант Shadow Read для миграции БД** (чтение из старой и новой систем одновременно, возврат из старой):
+**Вариант Shadow Read для миграции БД** (чтение из старой и новых систем одновременно, возврат из старой):
 
 ```python
 def get_user_profile(user_id: str) -> dict:
@@ -418,6 +433,177 @@ def compare_and_log(resp_v1: dict, resp_v2: dict, req_id: str):
 
 Поля, которые заведомо отличаются (время, случайные ID), следует исключать до сравнения, иначе возникнут ложные срабатывания (False Positive).
 
+## Операции и команды
+
+### Nginx / Angie — включение и валидация mirror
+
+```bash
+# Проверка конфигурации перед применением
+nginx -t
+# → syntax is ok, test is successful
+
+# Применение конфигурации
+nginx -s reload
+
+# Проверка, что теневой апстрим получает копии
+tail -f /var/log/nginx/shadow_access.log
+
+# При больших payload отключить копирование тела для экономии памяти
+# mirror_request_body off;
+```
+
+### Envoy — запуск с зеркалированием
+
+```bash
+# Запуск с конфигом, содержащим request_mirror_policies
+envoy -c envoy-shadow.yaml --service-cluster shadow-cluster
+
+# Проверка статистики зеркалирования
+curl localhost:9901/stats | grep shadow
+# → cluster.shadow.upstream_cx_total ...
+```
+
+### Istio — применение VirtualService
+
+```bash
+# Применить конфигурацию зеркалирования
+kubectl apply -f virtualservice-mirror.yaml
+
+# Проверить, что mirror-политика попала в прокси
+istioctl proxy-config routes deploy/app-primary --name http.8080 -o json | jq '.virtualHosts[] | select(.name=="app.example.com:80") | .routes[] | select(.mirror != null)'
+```
+
+### Gateway API — применение HTTPRoute
+
+```bash
+kubectl apply -f httproute-shadow.yaml
+kubectl get httproute api-shadow-route
+# → NAME               PARENT REFS   HOSTNAMES   AGE
+# → api-shadow-route   [public-gw]   [*]         2m
+```
+
+### Cilium — применение политики зеркалирования
+
+```bash
+cilium apply shadow-policy.yaml
+
+# Проверка подключений и политик
+cilium connectivity test --test-namespace default
+```
+
+### Linux `tc mirred` — настройка L4-зеркала
+
+```bash
+# Загрузить модуль ifb
+sudo modprobe ifb
+
+# Поднять виртуальный интерфейс
+sudo ip link set ifb0 up
+
+# Добавить ingress-дисциплину на внешний интерфейс
+sudo tc qdisc add dev eth0 ingress
+
+# Зеркалировать весь входящий трафик на ifb0
+sudo tc filter add dev eth0 parent ffff: protocol ip u32 \
+    match u32 0 0 action mirred egress mirror dev ifb0
+
+# Проверить счётчики mirred
+sudo tc -s filter show dev eth0 parent ffff:
+# → filter parent ffff: protocol ip pref 49152 u32 chain 0
+# → filter parent ffff: protocol ip pref 49152 u32 chain 0 fh 0x0:
+# →     ht divisor 1fhash 1f (fifo) key 0 0 0 0
+# →     ... mirred (mirror to dev ifb0) 1321/1321
+
+# Для полного L4-зеркала добавить аналогичный фильтр на egress
+sudo tc filter add dev eth0 parent 1: protocol ip u32 \
+    match u32 0 0 action mirred egress mirror dev ifb0
+```
+
+### GoReplay — захват и воспроизведение
+
+```bash
+# Прямой mirror на shadow-сервер
+gor --input-raw :8000 --output-http "http://shadow-server:8000"
+
+# С фильтрацией URL, заголовком и таймаутом
+gor --input-raw :8000 \
+    --http-allow-url '/api/.*' \
+    --http-set-header 'X-Shadow: true' \
+    --output-http 'http://shadow-server:8000' \
+    --output-http-timeout 5s
+
+# Запись в файл для офлайн-воспроизведения
+gor --input-raw :8000 --output-file 'requests.gor'
+
+# Воспроизведение файла с ускорением x2
+gor --input-file 'requests.gor' --input-file-loop --rate 2 \
+    --output-http 'http://shadow-server:8000'
+
+# Выдача CAP_NET_RAW бинарному файлу gor
+sudo setcap cap_net_raw+ep $(which gor)
+```
+
+### tcpdump + tcpreplay — офлайн replay
+
+```bash
+# Захват продакшен-трафика
+sudo tcpdump -i eth0 -s 0 -w /tmp/prod.pcap port 8080
+
+# Воспроизведение в теневую сеть (eth1 → shadow)
+sudo tcpreplay -i eth1 --topspeed /tmp/prod.pcap
+
+# С контролем скорости (например, 2x от реальной)
+sudo tcpreplay -i eth1 --multiplier 2 /tmp/prod.pcap
+```
+
+### PostgreSQL — логическая репликация для Shadow DB
+
+```sql
+-- На primary: создать публикацию
+CREATE PUBLICATION shadow_pub FOR ALL TABLES;
+
+-- На shadow: подписка
+CREATE SUBSCRIPTION shadow_sub
+  CONNECTION 'host=primary dbname=app user=replicator'
+  PUBLICATION shadow_pub;
+
+-- Роль только для чтения для теневого приложения
+CREATE ROLE shadow_ro LOGIN PASSWORD '***' IN ROLE pg_read_all_data;
+```
+
+### Kafka — дублирование событий в теневой топик
+
+```bash
+# В коде продюсера (пример на Python)
+producer.send("orders", event)        # основной поток
+producer.send("orders-shadow", event) # теневой (read-only консьюмер)
+```
+
+### Diffy — запуск движка сравнения
+
+```bash
+java -jar diffy.jar \
+  -candidate=http://shadow-app:8080 \
+  -master.primary=http://v1-app:8080 \
+  -master.secondary=http://v1-app:8080 \
+  -service.protocol=http \
+  -proxy.port=:8880
+```
+
+### Prometheus — относительные запросы для Shadow
+
+```promql
+# Относительная ошибка shadow относительно stable
+sum(rate(http_requests_total{version="v2", status=~"5.."}[5m]))
+  /
+sum(rate(http_requests_total{version="v1", status=~"5.."}[5m]))
+
+# Отношение P99 латентности (должно быть близко к 1.0)
+histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{version="v2"}[5m])) by (le))
+  /
+histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{version="v1"}[5m])) by (le))
+```
+
 ## Устранение неполадок (Troubleshooting)
 
 | Проблема | Причина | Решение |
@@ -433,11 +619,34 @@ def compare_and_log(resp_v1: dict, resp_v2: dict, req_id: str):
 | **Утечка персональных данных (PII)** | Зеркалирование реальных запросов с PII в менее защищённую среду. | Анонимизация на прокси (`sub_filter`/Lua) или в GoReplay-middleware; маскирование полей до отправки. |
 | **Ложные расхождения из-за времени** | Clock skew между v1 и v2 искажает поля времени/последовательности. | Синхронизация NTP на обеих нодах; исключить timestamp-поля из diff. |
 | **Двойная нагрузка на внешний сервис** | Shadow вызывает тот же внешний API, что и prod. | Перехват через mock-слой или API Virtualization. |
+| **Таймауты балансировщика** | Слишком медленный Shadow-бэкенд удерживает ресурсы балансировщика, даже если ответ игнорируется. | Увеличить `proxy_read_timeout` на shadow-ape; настроить `mirror` так, чтобы таймаут не влиял на primary. |
+| **Внешние зависимости без мока** | Сервис вызывает внешний API, который невозможно замокать (банковский протокол, государственный шлюз). | Теневое развертывание этой функции невозможно; использовать отдельную нагрузочную среду с заглушкой. |
+| **gRPC/HTTP2 не зеркалируется в OSS Nginx** | `mirror` работает поверх HTTP/1.1 subrequest; HTTP2 и gRPC не поддерживаются. | Перейти на Envoy или Nginx Plus для L7-зеркала gRPC. |
+| **Буферизация тела запроса удваивает память** | При больших payload `mirror` копирует тело в буфер, что может привести к OOM прокси. | Отключить `mirror_request_body off`, если теневая версия не требует тела запроса. |
+| **Недостаточный capacity (2x)** | Теневая среда не выдерживает пиковую нагрузку, зеркало отбрасывает пакеты. | Capacity planning: shadow должен иметь запас 30–50% выше пика primary. |
+| **Sampling bias — редкие сценарии пропущены** | Зеркалирование 10% трафика пропускает низкочастотные ошибочные запросы. | Использовать 100% L4-зеркало (`tc mirred`) или полный capture+replay для ночных валидаций. |
+| **Shadow без idempotency keys** | При частичном разделении ресурсов теневая запись создаёт дубли в prod. | Внедрить idempotency keys на всех мутирующих операциях; проверять дубли перед записью. |
+
+## Лучшие практики
+
+1.  **Изолируйте stateful-сервисы:** используйте Shadow DB, read-only роль, CDC или логическую репликацию вместо общей БД.
+2.  **Анонимизируйте PII:** применяйте маскирование на прокси (`sub_filter`/Lua) или в middleware GoReplay перед отправкой в тень.
+3.  **Начинайте с малого процента:** 10% `mirrorPercentage` достаточно для валидации; 100% зеркало требуйте только при capacity >2x.
+4.  **Синхронизируйте часы:** NTP на primary и shadow нодах, иначе timestamp-поля дадут ложные расхождения.
+5.  **Исключайте динамические поля из diff:** requestId, timestamp, nonce — иначе Comparison Engine будет генерировать False Positive.
+6.  **Используйте eBPF/`tc mirred` для не-HTTP протоколов:** gRPC, raw TCP, UDP — Open Source Nginx mirror их не поддерживает.
+7.  **Планируйте capacity 2x:** shadow требует полной копии compute, DB, cache; без capacity planning есть риск OOM и деградации prod.
+8.  **Отключайте `mirror_request_body` для больших payload:** в Nginx это предотвращает дублирование буфера памяти.
+9.  **Используйте feature flags для Dark Launch, когда прокси-зеркалирование невозможно по архитектурным причинам.**
+10. **Мониторьте shadow-пул отдельно:** метрики CPU/RAM/fd shadow не должны смешиваться с primary в дашбордах.
+11. **При side effects используйте idempotency keys:** если shadow всё же попадает в prod-систему, повторная обработка не создаст дублей.
+12. **Для gRPC/HTTP2 выбирайте Envoy или Nginx Plus:** Open Source Nginx mirror работает поверх HTTP/1.1 subrequest.
+13. **Валидируйте mirroring перед полным включением:** проверяйте `tc -s filter`, `nginx -t`, `istioctl proxy-status` и логи `shadow_access.log`.
+14. **Используйте Comparison Engine с относительными метриками (Ratio), а не абсолютными порогами:** `error_rate(v2)/error_rate(v1)` корректнее при плавающей нагрузке.
 
 ## Граничные случаи и ограничения
 
 - **Таймауты балансировщика:** В некоторых реализациях слишком медленный Shadow-бэкенд может удерживать ресурсы балансировщика, даже если ответ игнорируется.
-- **Безопасность (PII):** Зеркалирование трафика, содержащего персональные данные (PII), в менее защищенную тестовую среду (Shadow) может нарушить комплаенс (GDPR/ФЗ-152). Требуется анонимизация на лету.
 - **Внешние зависимости (Side Effects):** Если сервис вызывает внешнюю систему, которую невозможно "замокать" (например, сложный банковский протокол), теневое развертывание этой функции невозможно.
 - **Протокольные ограничения OSS Nginx:** `mirror` работает только поверх HTTP/1.1 subrequest; зеркалирование gRPC/HTTP2 требует Envoy или Nginx Plus.
 - **Буферизация тела запроса:** `mirror` копирует тело запроса, что при больших payload удваивает потребление памяти прокси; использовать `mirror_request_body off`, если тело не нужно теневому сервису.
@@ -445,30 +654,108 @@ def compare_and_log(resp_v1: dict, resp_v2: dict, req_id: str):
 - **Смещение выборки (sampling bias):** Зеркалирование 10% трафика может пропустить редкие сценарии (ошибочные/граничные запросы). Для полноты используйте 100%-е L4-зеркало (`tc mirred`) или полный capture.
 - **Идемпотентность:** Если зеркало всё же вызывает side effect, необходимы idempotency keys, чтобы повторная обработка не создала дублей.
 
-## Сравнение: Shadow vs Canary
+## Интеграция с GitLab CI/CD
 
-| Характеристика | Shadow Deployment | Canary Deployment |
-| :--- | :--- | :--- |
-| **Влияние на пользователя** | **Нулевое** (Blast Radius = 0) | Минимальное (Blast Radius = N%) |
-| **Реальные ответы** | Игнорируются | Возвращаются пользователю |
-| **Основная цель** | Нефункциональные тесты, Perf, Stability | Функциональные тесты, бизнес-метрики |
-| **Стоимость** | Высокая (2x ресурсы) | Низкая (1x + delta) |
-| **Сложность внедрения** | Высокая (изоляция Side Effects) | Средняя (L7 Routing) |
+### Полный пайплайн Shadow Deployment
 
----
+```yaml
+stages:
+  - build
+  - deploy_shadow
+  - mirror
+  - analyze
 
-### Советы для собеседования
+build_image:
+  stage: build
+  image: docker:29.8
+  services:
+    - docker:29.8-dind
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker build -t $CI_REGISTRY_IMAGE:shadow-$CI_COMMIT_SHORT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:shadow-$CI_COMMIT_SHORT_SHA
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-**Вопрос:** Почему Shadow Deployment считается самой безопасной, но самой дорогой стратегией?
-**Ответ:** Самая безопасная, потому что пользователь никогда не видит ответов новой версии, что исключает функциональный риск. Самая дорогая, потому что требует полной копии инфраструктуры (Compute, DB, Cache) для адекватного воспроизведения нагрузки и изоляции побочных эффектов.
+deploy_shadow:
+  stage: deploy_shadow
+  image: bitnami/kubectl:1.37
+  needs:
+    - build_image
+  script:
+    - kubectl apply -f k8s/deployment-shadow.yaml
+    - kubectl rollout status deployment/my-app-shadow --timeout=300s
+  environment:
+    name: shadow
+    url: https://shadow.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-**Вопрос:** Как проверить корректность работы новой версии в Shadow, если ответы пользователю не уходят?
-**Ответ:** Через "движки сравнения" (например, Diffy), которые сопоставляют ответы v1 и v2 в фоне, или через анализ технических метрик (ошибки в логах, метрики Prometheus), которые должны коррелировать с основной версией.
+configure_mirror:
+  stage: mirror
+  image: bitnami/kubectl:1.37
+  needs:
+    - deploy_shadow
+  script:
+    - kubectl apply -f k8s/virtualservice-mirror.yaml
+    - kubectl get virtualservice my-app-mirror -o yaml
+  environment:
+    name: shadow
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+analyze_shadow:
+  stage: analyze
+  image: curlimages/curl:8.22.0
+  needs:
+    - configure_mirror
+  script:
+    - |
+      # Сравнение latency shadow vs stable
+      SHADOW_LATENCY=$(curl -s "http://prometheus:9090/api/v1/query?query=histogram_quantile(0.99,sum(rate(http_request_duration_seconds_bucket{version='shadow'}[5m]))by(le))" | jq '.data.result[0].value[1]')
+      STABLE_LATENCY=$(curl -s "http://prometheus:9090/api/v1/query?query=histogram_quantile(0.99,sum(rate(http_request_duration_seconds_bucket{version='stable'}[5m]))by(le))" | jq '.data.result[0].value[1]')
+      RATIO=$(echo "$SHADOW_LATENCY / $STABLE_LATENCY" | bc -l)
+      echo "Shadow/Stable latency ratio: $RATIO"
+      if (( $(echo "$RATIO > 1.2" | bc -l) )); then
+        echo "WARNING: Shadow latency 20% higher than stable"
+        exit 1
+      fi
+  environment:
+    name: shadow
+```
+
+### Shadow через Nginx mirror module (Bare Metal)
+
+```yaml
+shadow_nginx:
+  stage: deploy_shadow
+  image: alpine:3.24
+  before_script:
+    - apk add --no-cache openssh-client curl
+  script:
+    - scp nginx/shadow.conf deploy@lb:/etc/nginx/conf.d/
+    - ssh deploy@lb "nginx -t && nginx -s reload"
+    - ssh deploy@lb "tail -f /var/log/nginx/shadow_access.log" &
+    - sleep 5
+    - pkill -f "tail -f"
+  environment:
+    name: shadow
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
 
 ## Дополнительная информация
 
 ### Рекомендованные ссылки
 
 - **[Сравнение стратегий развертывания](./comparison.md)** — матрица выбора стратегий, включая пример зеркалирования на Nginx.
-- **[Балансировка нагрузки HTTP](../../Networking/Protocols/HTTP/http_load_balancing.md)** — механика весов, health checks и traffic mirroring на Nginx/HAProxy (SSoT по маршрутизации).
+- **[Балансировка нагрузки HTTP](../../Networking/Protocols/HTTP/http_load_balancing.md)** — механика весов, health checks и traffic mirroring на Nginx/HAProxy (авторитетный материал по маршрутизации).
 - **[Мониторинг и оценка трафика при Canary](./canary_monitoring_and_gating.md)** — методология дифференциального и относительного (Ratio) сравнения метрик, применимая к Comparison Engine.
+
+### Рекомендации для собеседований
+
+**Вопрос:** Почему Shadow Deployment считается самой безопасной, но самой дорогой стратегией?
+**Ответ:** Самая безопасная, потому что пользователь никогда не видит ответов новой версии, что исключает функциональный риск. Самая дорогая, потому что требует полной копии инфраструктуры (Compute, DB, Cache) для адекватного воспроизведения нагрузки и изоляции побочных эффектов.
+
+**Вопрос:** Как проверить корректность работы новой версии в Shadow, если ответы пользователю не уходят?
+**Ответ:** Через "движки сравнения" (например, Diffy), которые сопоставляют ответы v1 и v2 в фоне, или через анализ технических метрик (ошибки в логах, метрики Prometheus), которые должны коррелировать с основной версией.

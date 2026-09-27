@@ -1,10 +1,22 @@
-# Podman Compose
+> Актуально для: Podman 6.x (проверено на 6.0.2, июль 2026), podman-compose 1.6.0+
 
 ## Определения
 
 **Podman Compose** — инструмент для запуска многоконтейнерных приложений и управления ими с помощью файлов конфигурации, аналогичных Docker Compose. Он позволяет описывать сервисы, сети и тома в одном файле (обычно `compose.yaml` или `docker-compose.yml`).
 
 **Compose Spec** — открытая спецификация (`compose-spec.io`), описывающая формат файла Compose, общий для Docker Compose, Podman Compose и других реализаций. Podman Compose реализует именно эту спецификацию, что обеспечивает переносимость файлов между Docker и Podman.
+
+**FQIN (Fully Qualified Image Name)** — полное имя образа, включающее регистр, репозиторий и тег (например, `docker.io/library/nginx:alpine`). В Podman короткие имена (`nginx`) резолвятся через `registries.conf`, что может приводить к неожиданным источникам образов; для воспроизводимости рекомендуется использовать FQIN.
+
+**registries.conf** — конфигурационный файл Podman (`/etc/containers/registries.conf` или `~/.config/containers/registries.conf`), управляющий неавторизованным поиском образов через ключ `unqualified-search-registries`.
+
+**Netavark + Aardvark-dns** — сетевой стек Podman (по умолчанию с версии 4.x, единственный поддерживаемый в 6.x). Netavark отвечает за настройку интерфейсов и бриджей, Aardvark-dns — за DNS-резолвинг имен контейнеров внутри пользовательских сетей.
+
+**Pasta** — сетевой бэкенд rootless-режима (по умолчанию с Podman 5.0, полностью заменил `slirp4netns` в 6.x). Обеспечивает NAT и проброс портов без прав root.
+
+**conmon** — легковесный монитор жизненного цикла контейнера (один экземпляр на контейнер), который удерживает STDIN/STDOUT/STDERR и фиксирует код завершения процесса. Детали архитектуры см. в **[Daemonless архитектура](./podman_daemonless_architecture.md)**.
+
+**SQLite-бэкенд** — хранилище метаданных Podman (стандарт с 4.9, единственный бэкенд в 6.x). В отличие от Docker, где состояние ведется в памяти демона, Podman хранит метаданные в локальной SQLite-базе.
 
 В современной экосистеме выделяют следующие стандарты и инструменты:
 
@@ -88,6 +100,22 @@
 - `x-podman.disable_dns` / `x-podman.dns` — отключение или переопределение DNS для сети.
 
 Глобальный ключ `x-podman.docker_compose_compat: true` включает сразу все совместимости, перечисленные выше. Все настройки `x-podman` могут задаваться и переменными окружения с префиксом `PODMAN_COMPOSE_` (например, `PODMAN_COMPOSE_DOCKER_COMPOSE_COMPAT=true`).
+
+### Архитектура podman-compose
+
+`podman-compose` — это Python-скрипт, который выступает тонким слоем абстракции над нативным CLI Podman. В отличие от Docker Compose v2 (который общается с демоном через сокет), `podman-compose` запускает дочерние процессы `podman` напрямую:
+
+```bash
+# Внутренняя цепочка при podman-compose up -d
+podman-compose (Python)
+  → podman pod create ...
+  → podman run ... (для каждого сервиса)
+    → conmon (один на контейнер)
+      → crun/runc (OCI runtime)
+        → процесс приложения
+```
+
+Поскольку нет центрального демона, весь жизненный цикл проекта делегируется CLI-процессам и (в продакшене) systemd. Детали модели без демона см. в **[Daemonless архитектура](./podman_daemonless_architecture.md)**.
 
 ### Зависимости процесса (daemonless)
 
@@ -414,6 +442,392 @@ COMPOSE_PROFILES=debug podman-compose up -d
 
 Сервисы без `profiles:` запускаются всегда; сервисы с профилями — только когда соответствующий профиль активирован.
 
+### 11. Валидация и проверка конфигурации
+
+Перед запуском в продакшене проверьте финальный YAML и состояние окружения:
+
+```bash
+# Вывод полностью раскрытого конфига с подставленными переменными
+podman-compose config
+# → services:
+# →   db:
+# →     image: docker.io/postgres:16
+# →     environment:
+# →       POSTGRES_PASSWORD: supersecret
+
+# Проверка синтаксиса без запуска (сборка и запуск не выполняются)
+podman-compose config --validate
+# → Validated successfully
+
+# Dry-run: вывод команд podman, которые будут выполнены
+podman-compose up --dry-run
+# → podman pod create --name pod_web ...
+# → podman run --name web_db ... docker.io/postgres:16
+```
+
+**Проверка окружения:**
+
+```bash
+# Проверка версий
+podman --version
+# → podman version 6.0.2
+podman-compose --version
+# → podman-compose version 1.6.0
+
+# Проверка базы данных и хранилища
+podman info --format '{{.Host.DatabaseBackend}}'
+# → sqlite
+podman info --format '{{.Store.GraphDriverName}}'
+# → overlay
+```
+
+### 12. Типичные проблемы и диагностика
+
+#### Проблема: `permission denied` при монтировании тома (rootless)
+
+**Причина:** В rootless-режиме Podman не может монтировать директории, принадлежащие root, без явного изменения прав. Ошибка обычно выглядит как `mount: /host/path: permission denied.`
+
+**Решение:**
+
+```bash
+# Временное исправление прав на директорию тома
+podman unshare chown 1000:1000 /path/to/host/volume
+
+# Или запуск podman-compose через podman unshare (временный rootless namespace)
+podman unshare podman-compose up -d
+```
+
+#### Проблема: DNS не резолвит имена сервисов
+
+**Причина:** В Podman 6.x CNI полностью удален; DNS работает через Netavark/Aardvark. Если контейнеры не видят друг друга по именам, проверьте:
+
+```bash
+# Список сетей проекта
+podman network ls --filter label=project=web-stack
+
+# Проверка DNS внутри контейнера
+podman exec web_app nslookup db
+# → Non-existent domain
+```
+
+**Решение:** Убедитесь, что сервисы подключены к одной сети и не используется `network_mode: host` для обоих. Для внешних сетей укажите `external: true` + `name:`.
+
+#### Проблема: Порт хоста занят (`port is already allocated`)
+
+**Причина:** Другой процесс (или другой стек Podman/Docker) слушает тот же порт.
+
+```bash
+# Поиск процесса по порту
+sudo ss -tlnp | grep ':8080'
+# → LISTEN 0 128  *:8080  *:*  users:(("nginx",pid=1234,fd=6))
+
+# Проверка, какой контейнер Podman занял порт
+podman ps --filter publish=8080
+```
+
+**Решение:** Освободите порт или измените маппинг в `compose.yaml` на `"8081:80"`.
+
+#### Проблема: `podman-compose` зависает при ожидании Healthcheck
+
+**Причина:** В `podman-compose` (Python) реализация `depends_on.condition: service_healthy` ненадежна (открытые issues `containers/podman-compose#866`, `#1422`).
+
+**Решение:** Используйте `depends_on` без `condition` (порядок запуска гарантирован), а готовность проверяйте через wait-скрипт или Quadlet с `Notify=healthy`.
+
+```bash
+# Альтернатива: скрипт ожидания готовности
+podman-compose up -d db
+until podman inspect --format '{{.State.Health.Status}}' web_db | grep -q healthy; do
+  echo "Waiting for db..."
+  sleep 2
+done
+podman-compose up -d app
+```
+
+#### Проблема: Ошибка `no compose.yaml` при наличии файла
+
+**Причина:** `podman-compose` ищет файлы только в текущей директории (рекурсивно вверх на 10 уровней). Убедитесь, что вы запускаете команду из правильной директории или укажите файл явно:
+
+```bash
+podman-compose -f /path/to/project/compose.yaml up -d
+```
+
+### 13. Безопасность
+
+Podman Compose поддерживает все стандартные механизмы безопасности Podman. В Compose-файле они задаются на уровне сервиса:
+
+```yaml
+services:
+  app:
+    image: docker.io/nginx:alpine
+    read_only: true              # только для чтения (требует tmpfs для /run, /tmp)
+    tmpfs:
+      - /run
+      - /tmp
+    cap_drop:
+      - ALL                      # отозвать все capabilities
+    cap_add:
+      - NET_BIND_SERVICE          # добавить только необходимую
+    security_opt:
+      - no-new-privileges         # запрет повышения привилегий
+      - label=type:svirt_sandbox_file_t  # SELinux (контейнерный тип)
+    volumes:
+      - ./config:/etc/nginx/conf.d:ro,Z   # :Z — перемаркировать SELinux, ro — только чтение
+```
+
+**Параметры безопасности:**
+
+- `read_only: true` — монтирует корневую ФС контейнера в режиме только для чтения. Для записи используйте `tmpfs` или том.
+- `cap_drop` / `cap_add` — управление Linux capabilities. Рекомендуется `cap_drop: [ALL]` и явное добавление только требуемых.
+- `security_opt` — передаются в `podman run --security-opt`. Поддерживаются `no-new-privileges`, `seccomp=<профиль>`, `label=...` (SELinux).
+- `:Z` / `:z` — модификаторы SELinux для томов: `:Z` перемаркирует файлы для изолированного контейнера, `:z` — для общего доступа между контейнерами.
+- `:U` — модификатор rootless, который автоматически подстраивает UID/GID хоста под контейнер (полезно для томов в rootless-режиме).
+
+**Seccomp:** Podman использует встроенный профиль по умолчанию. Для кастомных правил укажите путь к JSON-файлу через `security_opt: ["seccomp=./nginx-seccomp.json"]`.
+
+### 14. Сборка образов (Build context)
+
+`podman-compose build` транслируется в `podman build`, который использует **Buildah** под капотом. Особенности:
+
+```bash
+# Сборка конкретного сервиса
+podman-compose build app
+
+# Сборка без кэша
+podman-compose build --no-cache app
+
+# Сборка с явным указанием файла
+podman-compose build -f Dockerfile.prod app
+```
+
+**Рекомендации для .dockerignore (аналогично Docker):**
+
+```text
+.git
+.gitlab-ci.yml
+README.md
+node_modules
+dist
+*.md
+!LICENSE.md
+```
+
+**Multi-stage builds** работают стандартно, так как OCI-образы поддерживаются нативно:
+
+```dockerfile
+# Dockerfile
+FROM golang:1.22 AS builder
+WORKDIR /app
+COPY go.* ./
+RUN go build -o myapp .
+
+FROM alpine:latest
+COPY --from=builder /app/myapp /usr/local/bin/myapp
+CMD ["myapp"]
+```
+
+### 15. Интеграция с CI/CD (on-prem)
+
+Для локальных раннеров GitLab CI / GitHub Actions (self-hosted, без облаков) используйте `podman-compose` для поднятия зависимостей тестов:
+
+**GitLab CI (`.gitlab-ci.yml`):**
+
+```yaml
+stages:
+  - test
+
+variables:
+  PODMAN_COMPOSE_PROJECT_NAME: ci-$CI_PIPELINE_ID
+
+services:
+  - name: docker:dind
+    alias: docker
+
+before_script:
+  - podman-compose --profile test up -d --wait --wait-timeout 60
+
+test:
+  stage: test
+  script:
+    - podman-compose exec app curl -f http://localhost:8080/health
+  after_script:
+    - podman-compose logs --no-color > compose_logs.txt
+    - podman-compose down -v
+
+artifacts:
+  when: on_failure
+  paths:
+    - compose_logs.txt
+```
+
+**GitHub Actions (self-hosted runner):**
+
+```yaml
+jobs:
+  integration-test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start test dependencies
+        run: podman-compose --profile test up -d --wait
+      - name: Run tests
+        run: podman-compose exec app pytest
+      - name: Collect logs on failure
+        if: failure()
+        run: podman-compose logs > compose_logs.txt
+      - name: Cleanup
+        if: always()
+        run: podman-compose down -v
+```
+
+**Важно:** На self-hosted раннере требуется активный `systemd --user` сессия или rootful-доступ к Podman. В rootless-режиме убедитесь, что `loginctl enable-linger $USER` выполнен для работы без интерактивного входа.
+
+### 16. Шаблоны приложений
+
+#### Шаблон 1: Веб-стек (Nginx + PHP-FPM + PostgreSQL)
+
+```yaml
+name: web-stack
+
+services:
+  db:
+    image: docker.io/postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app}"]
+      interval: 5s
+      retries: 5
+    restart: unless-stopped
+
+  php:
+    image: docker.io/php:8.3-fpm-alpine
+    volumes:
+      - ./app:/var/www/html:ro,Z
+    environment:
+      DB_HOST: db
+      DB_USER: ${POSTGRES_USER:-app}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: docker.io/nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro,Z
+      - ./app:/var/www/html:ro,Z
+    depends_on:
+      - php
+    restart: unless-stopped
+
+volumes:
+  db_data:
+    driver: local
+
+networks:
+  default:
+    name: web-stack-net
+```
+
+**Запуск и проверка:**
+
+```bash
+podman-compose up -d --wait --wait-timeout 120
+podman-compose ps
+# → Name                     Command             State           Ports
+# → web-stack_db_1           postgres            healthy         5432/tcp
+# → web-stack_nginx_1        nginx ...           healthy         0.0.0.0:8080->80/tcp
+# → web-stack_php_1          php-fpm ...         healthy
+
+curl -f http://localhost:8080/health
+# → HTTP/1.1 200 OK
+```
+
+#### Шаблон 2: Микросервисный стек (API + Redis + Worker)
+
+```yaml
+name: microservices
+
+services:
+  redis:
+    image: docker.io/redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  api:
+    image: docker.io/myregistry/api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://app:secret@db:5432/appdb
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    restart: unless-stopped
+
+  worker:
+    image: docker.io/myregistry/worker:latest
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+```
+
+**Масштабирование worker'ов:**
+
+```bash
+podman-compose up -d --scale worker=3
+podman-compose ps --format "table {{.Name}}\t{{.Status}}"
+```
+
+### 17. Очистка и рекомендации
+
+```bash
+# Остановка и удаление контейнеров, сетей проекта
+podman-compose down
+
+# Дополнительно удалить именованные тома
+podman-compose down -v
+
+# Удалить orphaned контейнеры (созданные вручную или другими инструментами)
+podman-compose down --remove-orphans
+
+# Принудительная пересоздание всех контейнеров
+podman-compose up -d --force-recreate
+
+# Удаление неиспользуемых образов и кэша
+podman system prune -f
+podman-compose build --no-cache
+```
+
+**Рекомендации:**
+
+- Используйте `restart: unless-stopped` или `always` только в Quadlet для продакшена; в Compose для локальной разработки это допустимо, но не является заменой systemd.
+- Для продакшена на Linux предпочитайте **Quadlet** (см. раздел «Альтернатива: Quadlet»).
+- Никогда не храните секреты в `compose.yaml` — используйте `.env` (не коммитьте в Git) или `podman secret`.
+- Указывайте FQIN для всех образов, чтобы избежать неожиданного разрешения через `registries.conf`.
+- Используйте имена сервисов вместо `localhost` для межсервисного взаимодействия.
+
 ## Миграция из Docker Compose
 
 1. **Проверка манифеста**: Большинство файлов версии 3.x и файлов Compose Spec работают "как есть". Уберите устаревший ключ `version:` (см. раздел «Конфигурационные файлы»).
@@ -432,6 +846,37 @@ COMPOSE_PROFILES=debug podman-compose up -d
 4. Запускайте через `podman compose up` (без дефиса). Podman проксирует команды в провайдер.
 
 Если `docker-compose` не установлен, `podman compose` автоматически использует `podman-compose`. Явно указать провайдера можно в `containers.conf` (`compose_providers` в секции `[engine]`) или переменной `PODMAN_COMPOSE_PROVIDER`. Предупреждение о внешней команде отключается через `compose_warning_logs = false` / `PODMAN_COMPOSE_WARNING_LOGS=false`.
+
+### Конвертация Compose → Quadlet
+
+Для продакшн-деплоя на Linux рассмотрите конвертацию Compose-файла в Quadlet. Пример для сервиса `app` из шаблона выше:
+
+**Файл:** `~/.config/containers/systemd/webapp.container`
+```ini
+[Unit]
+Description=Web Application
+After=network-online.target
+
+[Container]
+Image=docker.io/myregistry/app:latest
+Network=web-stack-net
+Environment=DATABASE_URL=postgresql://app:secret@db:5432/appdb
+PublishPort=8080:80
+AutoUpdate=registry
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Генерация шаблонов Quadlet из Compose выполняется утилитой `podlet` (отдельный инструмент на Rust, не входит в поставку Podman) или вручную. Подробное руководство см. в [Quadlet и Podlet](./podman-quadlet-vs-podlet.md). После размещения файла:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user start webapp.service
+systemctl --user status webapp.service
+# → Active: active (running) since ...
+```
 
 ## Дополнительная информация
 
@@ -461,10 +906,14 @@ podman generate kube <POD_ID>
 - Отсутствие зависимости от Python или сторонних утилит типа `podman-compose`.
 - Гибкость настройки через юниты.
 
-Подробнее: **[Миграция с Docker (Compose → Quadlet)](./migration-from-docker.md)**.
+Подробнее см. раздел «Конвертация Compose → Quadlet» в этой же главе и **[Миграция с Docker (Compose → Quadlet)](./migration-from-docker.md)**.
 
 ### См. также
 - **[Поды в Podman](./podman_pods.md)** — концепция групп контейнеров и сетевая модель пода.
-- **[Миграция с Docker (Compose → Quadlet)](./migration-from-docker.md)** — переход на Quadlet и различия в сетевом стеке.
 - **[Управление зависимостями и готовностью](./podman-dependencies.md)** — особенности `depends_on` и `condition: service_healthy` в Compose-эквивалентах Podman.
-- **[Rootless режим](./podman_rootless.md)** — особенности запуска без root.
+- **[Daemonless архитектура](./podman_daemonless_architecture.md)** — как работают процессы `conmon` и бездемонная модель.
+
+### Ссылки
+- **[Compose Specification](https://compose-spec.io/)** (англ.) — официальная спецификация формата Compose-файлов.
+- **[podman-compose Repository](https://github.com/containers/podman-compose)** (англ.) — исходный код и issue tracker.
+- **[Podman Compose Documentation](https://docs.podman.io/en/latest/markdown/podman-compose.1.html)** (англ.) — справочник по команде.

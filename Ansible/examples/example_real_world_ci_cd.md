@@ -2,44 +2,63 @@
 
 ## Определения
 
-**Безопасная архитектура Ansible для CI/CD** — комплексный подход к автоматизации, обеспечивающий изоляцию секретов, аудит действий и разделение логики автоматизации от данных конкретных окружений.
+**Безопасная архитектура Ansible для CI/CD** — систематический подход к интеграции автоматизации конфигураций в конвейеры непрерывной интеграции и доставки (CI/CD), обеспечивающий изоляцию секретов, аудит выполнения и строгое разделение логики автоматизации от данных окружений. Архитектура построена на принципах наименьших привилегий (Least Privilege) и недоверенного выполнения (Untrusted Execution).
 
-**Скрипт-обертка (Wrapper Script)** — сценарий с жестко ограниченными правами доступа (через `sudo`), выступающий единственным шлюзом для запуска `ansible-playbook` из недоверенных сред (например, CI/CD-агентов). Он предотвращает инъекцию произвольных аргументов и ограничивает область видимости инвентаря.
+**Скрипт-обертка (Wrapper Script)** — исполняемый файл с жестко ограниченными правами доступа через `sudo`, выступающий единственным шлюзом для запуска `ansible-playbook` из CI/CD-агентов. Он предотвращает инъекцию произвольных аргументов (например, `--extra-vars`), ограничивает область видимости инвентаря и обеспечивает централизованное аудирование всех запусков.
 
-**Control Node (Контрольный узел)** — защищенный сервер, являющийся единственной точкой входа в инфраструктуру. В современной архитектуре его роль часто выполняют **[Ansible Automation Platform (AAP)](../ansible-automation-platform.md)** или **AWX**, предоставляющие API и RBAC (Role-Based Access Control).
+**Control Node (Контрольный узел)** — защищенный сервер или контейнер Execution Environment, являющийся единственной точкой входа для выполнения автоматизации. В архитектуре CI/CD его роль выполняет изолированный раннер (GitLab Runner) с правами на запуск только скрипта-обертки.
 
-**Execution Environment (Среда исполнения, EE)** — контейнеризированное окружение (образ), содержащее Ansible Core, коллекции и Python-зависимости. Гарантирует идентичность запуска плейбуков в разных средах и исключает конфликты библиотек.
+**Execution Environment (Среда исполнения, EE)** — стандартизированный OCI-контейнер, содержащий Ansible Core, коллекции и Python-зависимости. Гарантирует идентичность запуска плейбуков в локальной разработке, CI/CD и production, исключая проблемы "dependency hell".
 
-**OIDC (OpenID Connect) / Workload Identity** — протокол аутентификации, позволяющий CI/CD-пайплайнам (GitLab CI, GitHub Actions) получать временные токены доступа к менеджерам секретов (HashiCorp Vault) или облачным провайдерам без использования статических паролей.
+**OIDC (OpenID Connect) / Workload Identity** — протокол аутентификации, позволяющий CI/CD-пайплайнам получать временные JWT-токены для доступа к HashiCorp Vault без использования статических паролей ("Secret Zero"). Токен подписывается CI-платформой и имеет ограниченный срок жизни.
 
-**ansible-lint** — утилита статического анализа плейбуков и ролей Ansible, выявляющая нарушения最佳实践, синтаксические ошибки и потенциальные проблемы безопасности. Используется как блокирующая стадия в CI/CD-пайплайнах.
+**AppRole** — метод аутентификации в HashiCorp Vault для машин и скриптов, использующий пару `RoleID` и `SecretID`. Подходит для CI/CD-пайплайнов, где OIDC недоступен, и обеспечивает минимально привилегированный доступ к секретам.
 
-**no_log** — параметр задачи Ansible, скрывающий чувствительные данные (пароли, ключи) из логов выполнения. Обязателен для задач, обрабатывающих секреты.
+**ansible-lint** — утилита статического анализа плейбуков и ролей Ansible, выявляющая нарушения лучших практик, синтаксические ошибки и потенциальные проблемы безопасности. Используется как блокирующая стадия в CI/CD-пайплайнах.
 
-**Masked Variables** — функция CI/CD-систем (GitLab CI, GitHub Actions), автоматически заменяющая значение защищенной переменной на `[MASKED]` в логах пайплайна.
+**no_log** — параметр задачи Ansible, скрывающий чувствительные данные (пароли, ключи, токены) из логов выполнения. Обязателен для всех задач, обрабатывающих секреты.
 
-**Protected Runners** — специализированные GitLab Runner, доступные только для веток с ограниченным доступом (main, production), обеспечивающие изоляцию от сторонних коммитов.
+**Masked Variables** — функция CI/CD-систем, автоматически заменяющая значение защищенной переменной на `[MASKED]` в логах пайплайна для предотвращения утечки учетных данных.
+
+**Protected Runners** — специализированные раннеры CI/CD, доступные только для защищенных веток (main, production), обеспечивающие изоляцию деплоев в production от недоверенных коммитов.
 
 ## Базовые концепции
 
-### Предварительные требования
+### Архитектура и принципы работы
 
-#### Версии и совместимость
+Безопасная архитектура CI/CD для Ansible строится на четырех уровнях изоляции:
 
-- **Ansible Core**: 2.15 или выше (рекомендуется 2.17+ для полной поддержки Execution Environments).
-- **ansible-builder**: 3.0+ (для сборки EE через `execution-environment.yml` v3).
-- **ansible-lint**: 24.2+ (для статического анализа плейбуков).
-- **Python на целевых хостах**: 3.7 или выше.
-- **GitLab CI**: 16.0+ (для поддержки `id_tokens` и OIDC).
-- **GitHub Actions**: `actions/checkout@v4`, `hashicorp/vault-action@v3`.
+1. **Уровень CI/CD-платформы** — GitLab CI (self-hosted) или аналогичные системы, запускающие пайплайн. Пайплайн не имеет прямого доступа к целевым серверам или секретам.
+2. **Уровень Control Node** — защищенный сервер (раннер) с установленным скриптом-оберткой. Все вызовы Ansible проходят через него. Раннер имеет доступ только к одному скрипту через `sudo` и не имеет доступа к SSH-ключам напрямую.
+3. **Уровень секретов** — HashiCorp Vault, предоставляющий временные учетные данные через OIDC или AppRole. Статические пароли не хранятся в CI/CD-переменных.
+4. **Уровень целевых хостов** — серверы, доступные только по SSH из Control Node. Каждое окружение (staging/production) использует отдельный SSH-ключ и сервисного пользователя.
 
-#### Структура репозитория
+**Ключевой принцип:** CI/CD-агент вызывает скрипт-обертку → скрипт-обертка вызывает Ansible → Ansible получает секреты из Vault → изменения применяются к целевым хостам. Ни один компонент не имеет прямого доступа ко всему пути.
+
+### Версии и совместимость
+
+| Компонент | Минимальная версия | Рекомендуемая | Проверка |
+|---|---|---|---|
+| Ansible Core | 2.15+ | ≥ 2.20 | `ansible --version` |
+| Python (управление) | 3.10+ | ≥ 3.12 | `python3 --version` |
+| Python (целевые хосты) | 3.10+ | ≥ 3.12 | `ansible all -m setup -a "filter=ansible_python_version"` |
+| ansible-lint | 26.x+ | ≥ 26.8.0 | `ansible-lint --version` |
+| ansible-builder | 3.0+ | 3.0+ | `ansible-builder --version` |
+| ansible-navigator | 4.x+ | 4.x+ | `ansible-navigator --version` |
+| GitLab CI | 16.0+ | 16.0+ | `gitlab-runner --version` |
+| HashiCorp Vault | 1.15+ | 1.15+ | `vault --version` |
+
+### Структура репозитория
 
 Рекомендуемая структура для проекта Ansible + CI/CD:
 
 ```text
 ansible-ci-cd/
 ├── ansible.cfg
+├── requirements.yml               # Зависимости (роли и коллекции)
+├── execution-environment.yml      # Конфигурация EE
+├── .ansible-lint                  # Правила статического анализа
+├── .gitlab-ci.yml                 # Конфигурация GitLab CI
 ├── inventory/
 │   ├── production/
 │   │   ├── hosts.yml
@@ -49,36 +68,33 @@ ansible-ci-cd/
 │   └── staging/
 ├── playbooks/
 │   ├── site.yml
-│   └── deploy.yml
+│   ├── deploy.yml
+│   └── rolling_deploy.yml
 ├── roles/
 │   ├── common/
 │   ├── nginx/
 │   └── postgresql/
-├── requirements.yml               # Зависимости (роли и коллекции)
-├── execution-environment.yml      # Конфигурация EE
-├── .ansible-lint                  # Правила статического анализа
-├── .gitlab-ci.yml                 # Конфигурация GitLab CI
-└── .github/
-    └── workflows/
-        └── deploy.yml             # Конфигурация GitHub Actions
+└── group_vars/
+    └── all/
+        └── vault.yml              # Зашифрованные секреты
 ```
 
 ### Разделение кода и конфигурации
 
 Фундаментальный принцип организации масштабируемой автоматизации:
 
-- **Логика (Код)**: Общие алгоритмы настройки («КАК») инкапсулируются в централизованном репозитории с **[Ansible-ролями](../ansible_roles.md)**.
-- **Данные (Конфигурация)**: Специфичные параметры («ЧТО» именно настраивать: инвентарь, версии, **[переменные](../PlaybookStructure/variables.md)**) хранятся в изолированных репозиториях проектов.
+- **Логика (Код):** Общие алгоритмы настройки ("КАК") инкапсулируются в централизованном репозитории с **[Ansible-ролями](../ansible_roles.md)**.
+- **Данные (Конфигурация):** Специфичные параметры ("ЧТО" именно настраивать: инвентарь, версии, **[переменные](../PlaybookStructure/variables.md)**) хранятся в изолированных репозиториях проектов.
 
 ### Безопасность и управление секретами
 
 Для минимизации рисков компрометации SSH-ключей и паролей применяются следующие методы:
 
-1.  **Делегирование через Sudo**: CI/CD-агент (например, GitLab Runner) имеет доступ только к скрипту-обертке, но не к SSH-ключам напрямую.
-2.  **Интеграция с Vault**: Использование зашифрованных файлов Ansible Vault, где пароль передается исключительно через защищенные переменные CI/CD (например, маскированные `id_tokens` или временные файлы). См. **[Основы Ansible Vault](../Vault/basics.md)**.
-3.  **Использование OIDC (Keyless)**: Современный стандарт, при котором Vault доверяет JWT-токену, сгенерированному CI-системой, исключая хранение "Secret Zero" (мастер-пароля) в переменных.
-4.  **Внешние хранилища секретов**: Использование HashiCorp Vault или AWS Secrets Manager для динамической генерации паролей или получения токенов в процессе выполнения. См. **[Управление секретами в CI/CD](../../CI-CD/DevSecOps/secrets_management.md)**.
-5.  **Ограничение области действия (Blast Radius)**: Строгое использование разных SSH-ключей и сервисных пользователей для разных окружений (Staging/Prod).
+1. **Делегирование через Sudo:** CI/CD-агент (GitLab Runner) имеет доступ только к скрипту-обертке, но не к SSH-ключам напрямую.
+2. **Интеграция с Vault:** Использование зашифрованных файлов Ansible Vault, где пароль передается исключительно через защищенные переменные CI/CD (маскированные файловые переменные). См. **[Основы Ansible Vault](../Vault/basics.md)**.
+3. **OIDC (Keyless):** Современный стандарт, при котором Vault доверяет JWT-токену, сгенерированному CI-системой, исключая хранение "Secret Zero" в переменных.
+4. **AppRole:** Метод аутентификации для сред, где OIDC недоступен. Использует пару `RoleID`/`SecretID` с ограниченным сроком жизни.
+5. **Ограничение области действия (Blast Radius):** Строгое использование разных SSH-ключей и сервисных пользователей для разных окружений (Staging/Prod).
 
 ### Переменные окружения Ansible в CI/CD
 
@@ -95,119 +111,22 @@ ansible-ci-cd/
 
 ### Сравнение CI/CD платформ для Ansible
 
-| Критерий | GitLab CI | GitHub Actions | AWX/AAP |
-|---|---|---|---|
-| **Хостинг** | Self-hosted / SaaS | SaaS | Self-hosted |
-| **OIDC / ID Tokens** | Встроенная поддержка | Через `id-token: write` | Встроенная (JWT) |
-| **Execution Environments** | Через Docker-образы | Через Docker-образы | Нативная поддержка |
-| **Аудит** | История пайплайнов | История работ | Детальный аудит (БД) |
-| **RBAC** | Ограниченный | Ограниченный | Полный (Organizations → Teams → Users) |
-| **Стоимость** | Free / Premium | Free / Teams | Open Source (AWX) / Коммерческая (AAP) |
+| Критерий | GitLab CI (Self-hosted) | AWX/AAP |
+|---|---|---|
+| **Хостинг** | Self-hosted | Self-hosted |
+| **OIDC / ID Tokens** | Встроенная поддержка | Встроенная (JWT) |
+| **Execution Environments** | Через Docker-образы | Нативная поддержка |
+| **Аудит** | История пайплайнов | Детальный аудит (БД) |
+| **RBAC** | Ограниченный | Полный (Organizations → Teams → Users) |
+| **Стоимость** | Open Source (CE) / Enterprise | Open Source (AWX) / Коммерческая (AAP) |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 3: Сборка и использование Execution Environment через ansible-builder
+### Сценарий 1: Скрипт-обертка и безопасный деплой в GitLab CI
 
-Для проектов, требующих кастомных зависимостей, рекомендуется собирать собственный EE.
-
-#### 1. Конфигурация `execution-environment.yml`
-
-```yaml
-version: 3
-
-images:
-  base_image:
-    name: quay.io/ansible/ansible-runner:latest
-
-dependencies:
-  ansible_core:
-    package_pip: ansible-core>=2.17.0
-  ansible_runner:
-    package_pip: ansible-runner
-  galaxy:
-    collections:
-      - name: community.general
-      - name: community.postgresql
-      - name: ansible.posix
-  python:
-    - psycopg2-binary
-    - boto3
-  system:
-    - git
-    - openssh-clients
-
-additional_build_steps:
-  append_final:
-    - RUN alternatives --set python /usr/bin/python3
-```
-
-#### 2. Сборка образа
-
-```bash
-# Сборка локально
-ansible-builder build -t my-registry.com/ansible-ee:v1.2
-
-# Проверка содержимого образа
-ansible-runner container list
-# → IMAGE ID     IMAGE NAME
-# → abc123def45  my-registry.com/ansible-ee:v1.2
-
-# Пуш в реестр
-docker push my-registry.com/ansible-ee:v1.2
-```
-
-#### 3. Использование в CI/CD (GitLab CI)
-
-```yaml
-deploy_ee:
-  stage: deploy
-  image: docker:24.0
-  services:
-    - docker:24.0-dind
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-  script:
-    - docker pull my-registry.com/ansible-ee:v1.2
-    - docker run --rm -v $(pwd):/workspace my-registry.com/ansible-ee:v1.2
-        ansible-playbook /workspace/site.yml -i /workspace/inventory/prod.yml
-  tags: [protected-runner]
-```
-
-**Валидация:**
-
-```bash
-# Проверка сборки
-ansible-builder build --tag my-ee:test --container-runtime docker
-# → Complete! Build Python or System package dependencies... DONE
-# → Complete! Build Collection dependencies... DONE
-
-# Проверка зависимостей внутри образа
-docker run --rm my-registry.com/ansible-ee:v1.2 \
-  ansible-galaxy collection list
-# → Collection        Version
-# → ----------------  -------
-# → community.general x.y.z
-# → community.postgresql x.y.z
-
-# Проверка версии Ansible Core
-docker run --rm my-registry.com/ansible-ee:v1.2 \
-  ansible --version
-# → ansible [core 2.17.x]
-```
-
-**Типичные ошибки:**
-
-| Проблема | Причина | Решение |
-|---|---|---|
-| `ERROR: Cannot find collection` | Коллекция не указана в `execution-environment.yml` | Добавьте коллекцию в секцию `dependencies.ansible_collections.galaxy.collections`. |
-| `pip install failed` | Конфликт версий Python-пакетов | Используйте `requirements.txt` для явного указания версий. |
-| `Container image build failed` | Нет доступа к реестру базового образа | Проверьте доступность `quay.io` или используйте альтернативный registry. |
-
-### Сценарий 1: Реализация безопасного пайплайна в GitLab CI
-
-Современный пайплайн включает этапы линтинга, проверки синтаксиса и безопасного деплоя через скрипт-обертку.
+Самый распространенный паттерн: CI/CD-агент вызывает скрипт-обертку, который выполняет Ansible с жестко ограниченными правами.
 
 #### 1. Структура репозиториев
 
@@ -225,20 +144,19 @@ stages:
   - lint
   - deploy
 
-# Этап статического анализа
 ansible_lint:
   stage: lint
-  image: quay.io/ansible/creator-ee:latest
+  image: python:3.12-slim
+  before_script:
+    - pip install ansible-lint ansible-core
   script:
-    - ansible-lint playbooks/site.yml
+    - ansible-lint playbooks/ --profile=production -p
     - ansible-playbook playbooks/site.yml --syntax-check
   tags: [docker-runner]
 
-# Этап безопасного деплоя
 deploy_prod:
   stage: deploy
   variables:
-    # Имя файла, куда GitLab CI сохранит значение защищенной переменной $VAULT_PASSWORD_PROD
     VAULT_PASS_FILE: "/tmp/.vault_pass_${CI_JOB_ID}"
   before_script:
     - echo "$VAULT_PASSWORD_PROD" > $VAULT_PASS_FILE
@@ -249,16 +167,16 @@ deploy_prod:
     - rm -f $VAULT_PASS_FILE
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-  tags: [protected-runner] # Shell Runner на защищенном контрольном узле
+  tags: [protected-runner]
 ```
 
-#### 3. Пример скрипта-обертки (`ansible_runner.sh`)
+#### 3. Пример скрипта-обертки (`/usr/local/bin/ansible_runner.sh`)
 
 Скрипт должен находиться в `/usr/local/bin/` с владельцем `root:root` и правами `0755`.
 
 ```bash
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Конфигурация
 ROLES_PATH="/opt/ansible/shared/roles"
@@ -294,14 +212,6 @@ gitlab-runner ALL=(ansible-deploy) NOPASSWD: /usr/local/bin/ansible_runner.sh
 **Валидация:**
 
 ```bash
-# Проверка синтаксиса плейбука
-ansible-playbook playbooks/site.yml --syntax-check
-# → playbook: playbooks/site.yml
-
-# Статический анализ
-ansible-lint playbooks/site.yml
-# →Passed: 0 failure(s), 0 warning(s) on 12 tasks.
-
 # Проверка прав скрипта-обертки
 ls -la /usr/local/bin/ansible_runner.sh
 # → -rwxr-xr-x 1 root root 1024 ... /usr/local/bin/ansible_runner.sh
@@ -310,6 +220,10 @@ ls -la /usr/local/bin/ansible_runner.sh
 sudo -l -U gitlab-runner
 # → User gitlab-runner may run the following commands on this host:
 # → (ansible-deploy) NOPASSWD: /usr/local/bin/ansible_runner.sh
+
+# Проверка блокировки --extra-vars
+sudo -u ansible-deploy /usr/local/bin/ansible_runner.sh --playbook site.yml --extra-vars "test=1"
+# → ОШИБКА: Использование --extra-vars запрещено политикой безопасности.
 ```
 
 **Типичные ошибки:**
@@ -317,119 +231,98 @@ sudo -l -U gitlab-runner
 | Проблема | Причина | Решение |
 |---|---|---|
 | `sudo: no tty present and no askpass program specified` | GitLab Runner не имеет доступа к sudo | Убедитесь, что файл `/etc/sudoers.d/gitlab-runner` существует и содержит правильное правило. |
-| `ERROR! the role 'xxx' was not found` | Роли не установлены на Runner | Проверьте, что `requirements.yml` корректен и `ansible-galaxy install` выполняется в `before_script`. |
-| `Vault password error` | Неверный пароль или переменная не определена | Проверьте переменную `VAULT_PASSWORD_PROD` в GitLab CI/CD Settings → CI/CD → Variables. |
-| `Permission denied: ansible_runner.sh` | Скрипт не имеет прав на выполнение | `sudo chmod +x /usr/local/bin/ansible_runner.sh` и `sudo chown root:root /usr/local/bin/ansible_runner.sh`. |
+| `ERROR! the role 'xxx' was not found` | Роли не установлены на Runner | Проверьте, что `requirements.yml` корректен и `ansible-galaxy install` выполняется в скрипте-обертке. |
+| `Vault password error` | Неверный пароль или переменная не определена | Проверьте переменную `VAULT_PASSWORD_PROD` в настройках GitLab CI/CD. |
+| `Permission denied: ansible_runner.sh` | Скрипт не имеет прав на выполнение | `sudo chmod +x /usr/local/bin/ansible_runner.sh` и `sudo chown root:root`. |
 
-### Сценарий 2: Использование Execution Environments в GitHub Actions
+### Сценарий 2: Сборка Execution Environment через ansible-builder
 
-Если политика безопасности позволяет запуск из облачного CI, используйте контейнеризированные среды (EE).
+Для проектов, требующих кастомных зависимостей, рекомендуется собирать собственный EE.
 
-#### 1. Базовый пример `.github/workflows/deploy.yml`
+#### 1. Конфигурация `execution-environment.yml`
 
 ```yaml
-name: Ansible EE Deploy
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+version: 3
 
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run ansible-lint
-        run: |
-          pip install ansible-lint
-          ansible-lint playbooks/site.yml
+images:
+  base_image:
+    name: registry.example.com/ansible/ansible-runner:latest
 
-  deploy:
-    needs: lint
-    runs-on: ubuntu-latest
-    container:
-      image: my-registry.com/ansible-ee:v1.2
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Playbook
-        run: |
-          ansible-playbook site.yml -i inventory/prod.yml --vault-password-file <(echo "${{ secrets.VAULT_PASS }}")
-        env:
-          ANSIBLE_HOST_KEY_CHECKING: "False"
-          ANSIBLE_FORCE_COLOR: "true"
+dependencies:
+  ansible_core:
+    package_pip: ansible-core>=2.20.0
+  ansible_runner:
+    package_pip: ansible-runner
+  galaxy:
+    collections:
+      - name: community.general
+      - name: community.postgresql
+      - name: ansible.posix
+  python:
+    - psycopg2-binary
+  system:
+    - git
+    - openssh-clients
+
+additional_build_steps:
+  append_final:
+    - RUN alternatives --set python /usr/bin/python3
 ```
 
-#### 2. Продвинутый пример с OIDC и Vault
+#### 2. Сборка образа
+
+```bash
+# Сборка локально
+ansible-builder build -t registry.example.com/ansible-ee:v1.2
+
+# Проверка содержимого образа
+ansible-runner container list
+# → IMAGE ID     IMAGE NAME
+# → abc123def45  registry.example.com/ansible-ee:v1.2
+```
+
+#### 3. Использование в GitLab CI
 
 ```yaml
-name: Secure Ansible Deploy
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write    # Обязательно для OIDC
-      contents: read
-    container:
-      image: my-registry.com/ansible-ee:v1.2
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Import Secrets from Vault
-        uses: hashicorp/vault-action@v3
-        with:
-          url: https://vault.internal.corp
-          role: ci-role
-          method: jwt
-          secrets: |
-            kv/data/production/db password | DB_PASSWORD
-            kv/data/production/ssh_key | SSH_PRIVATE_KEY
-
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-      - name: Run Playbook
-        run: |
-          ansible-playbook site.yml -i inventory/prod.yml
-        env:
-          ANSIBLE_HOST_KEY_CHECKING: "False"
-          ANSIBLE_PRIVATE_KEY_FILE: "~/.ssh/id_rsa"
-
-      - name: Cleanup
-        if: always()
-        run: rm -rf ~/.ssh
+deploy_ee:
+  stage: deploy
+  image: registry.example.com/ansible-ee:v1.2
+  script:
+    - ansible-playbook /workspace/site.yml -i /workspace/inventory/prod.yml
+  tags: [protected-runner]
 ```
 
 **Валидация:**
 
 ```bash
-# Проверка синтаксиса workflow
-act --list  # или GitHub CLI: gh workflow view deploy.yml
+# Проверка сборки
+ansible-builder build --tag my-ee:test --container-runtime podman
+# → Complete! Build Python or System package dependencies... DONE
+# → Complete! Build Collection dependencies... DONE
 
-# Локальная проверка плейбука (в Execution Environment)
-docker run --rm -v $(pwd):/workspace my-registry.com/ansible-ee:v1.2 \
-  ansible-playbook /workspace/site.yml --syntax-check
+# Проверка зависимостей внутри образа
+podman run --rm registry.example.com/ansible-ee:v1.2 \
+  ansible-galaxy collection list
+# → Collection        Version
+# → ----------------  -------
+# → community.general x.y.z
+# → community.postgresql x.y.z
 
-# Проверка OIDC-токена (GitHub CLI)
-gh api /repos/{owner}/{repo}/actions/runs/{run_id}/jobs
+# Проверка версии Ansible Core
+podman run --rm registry.example.com/ansible-ee:v1.2 \
+  ansible --version
+# → ansible [core 2.20.x]
 ```
 
 **Типичные ошибки:**
 
 | Проблема | Причина | Решение |
 |---|---|---|
-| `Error: OIDC token not available` | Отсутствует `id-token: write` в permissions | Добавьте `permissions: id-token: write` в job или workflow. |
-| `Vault: permission denied` | OIDC-entionPolicy не разрешает GitHub Actions | Обновите Vault Policy для роли `ci-role` ( bound_claims ). |
-| `Container image not found` | EE-образ не доступен из GitHub Actions | Убедитесь, что реестр образов доступен (Docker Hub, GHCR, приватный). |
+| `ERROR: Cannot find collection` | Коллекция не указана в `execution-environment.yml` | Добавьте коллекцию в секцию `dependencies.galaxy.collections`. |
+| `pip install failed` | Конфликт версий Python-пакетов | Используйте `requirements.txt` для явного указания версий. |
+| `Container image build failed` | Нет доступа к базовому образу | Проверьте доступность внутреннего registry или используйте альтернативный базовый образ. |
 
-### Сценарий 4: Локальная отладка через ansible-navigator
+### Сценарий 3: Локальная отладка через ansible-navigator
 
 Для обеспечения идентичности среды выполнения между локальной разработкой и CI/CD используйте `ansible-navigator`.
 
@@ -439,20 +332,20 @@ pip install ansible-navigator
 
 # Запуск плейбука в EE
 ansible-navigator run playbooks/site.yml \
-  --ee-image my-registry.com/ansible-ee:v1.2 \
+  --ee-image registry.example.com/ansible-ee:v1.2 \
   --ee-enable \
   --mode stdout
 
 # Интерактивный режим (TUI)
 ansible-navigator run playbooks/site.yml \
-  --ee-image my-registry.com/ansible-ee:v1.2 \
+  --ee-image registry.example.com/ansible-ee:v1.2 \
   --ee-enable \
   --mode interactive
 
 # Просмотр содержимого EE
 ansible-navigator container list
 ansible-navigator collection list
-ansible-navigator requirements list --ee-image my-registry.com/ansible-ee:v1.2
+ansible-navigator requirements list --ee-image registry.example.com/ansible-ee:v1.2
 ```
 
 **Валидация:**
@@ -464,10 +357,10 @@ ansible-navigator --version
 
 # Проверка конфигурации
 ansible-navigator configuration dump --mode stdout | grep container_engine
-# → container_engine='docker'
+# → container_engine='podman'
 ```
 
-### Сценарий 5: Обработка ошибок и восстановление в CI/CD
+### Сценарий 4: Обработка ошибок и восстановление в CI/CD
 
 Для предотвращения частичного деплоя и обеспечения консистентности инфраструктуры.
 
@@ -509,7 +402,6 @@ ansible-navigator configuration dump --mode stdout | grep container_engine
 #### 2. В CI/CD: артефакты и уведомления
 
 ```yaml
-# GitLab CI
 deploy_prod:
   script:
     - ansible-playbook site.yml --extra-vars "ansible_callback_whitelist=json"
@@ -525,15 +417,6 @@ deploy_prod:
         curl -X POST "$SLACK_WEBHOOK" \
           -d "{\"text\": \"FAILED: $CI_PIPELINE_URL\"}"
       fi
-
-# GitHub Actions
-- name: Upload artifacts
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: deployment-logs
-    path: logs/
-    retention-days: 7
 ```
 
 **Типичные ошибки:**
@@ -542,68 +425,372 @@ deploy_prod:
 |---|---|---|
 | Частичный деплой (некоторые хосты обновлены) | Нет `any_errors_fatal` или `serial` | Добавьте `any_errors_fatal: true` или `serial: 1` для последовательного обновления. |
 | Артефакты не собираются | Артефакты в `after_script` при ошибке | Используйте `when: always` для `artifacts`. |
-| Уведомление не отправляется | `SLACK_WEBHOOK` не определен | Проверьте переменную в CI/CD Settings. |
+| Уведомление не отправляется | `SLACK_WEBHOOK` не определен | Проверьте переменную в настройках CI/CD. |
+
+---
+
+## Операции и команды
+
+### Основные команды управления проектом
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible-playbook playbook.yml --syntax-check` | Проверка синтаксиса YAML | `ansible-playbook playbooks/site.yml --syntax-check` |
+| `ansible-playbook playbook.yml --check --diff` | Dry-run с показом изменений | `ansible-playbook playbooks/site.yml --check --diff` |
+| `ansible-playbook playbook.yml --list-tasks` | Просмотр задач без выполнения | `ansible-playbook playbooks/site.yml --list-tasks` |
+| `ansible-playbook playbook.yml --list-tags` | Просмотр тегов | `ansible-playbook playbooks/site.yml --list-tags` |
+| `ansible-playbook playbook.yml --list-hosts` | Просмотр хостов | `ansible-playbook playbooks/site.yml --list-hosts` |
+| `ansible-playbook playbook.yml --step` | Пошаговое выполнение | `ansible-playbook playbooks/site.yml --step` |
+| `ansible-playbook playbook.yml --start-at-task` | Запуск с конкретной задачи | `ansible-playbook playbooks/site.yml --start-at-task="Deploy"` |
+| `ansible-inventory --graph` | Визуализация инвентаря | `ansible-inventory -i environments/prod/hosts.yml --graph` |
+| `ansible-inventory --host` | Переменные хоста | `ansible-inventory -i environments/prod/hosts.yml --host web1` |
+| `ansible <host> -m setup` | Сбор фактов | `ansible web1 -m setup -a "filter=ansible_distribution"` |
+| `ansible <host> -m debug` | Просмотр переменной | `ansible web1 -m debug -a "var=my_var"` |
+| `ansible <host> -m ping` | Проверка доступности | `ansible all -m ping` |
+
+### Команды для работы с секретами
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible-vault create <file>` | Создание зашифрованного файла | `ansible-vault create group_vars/all/vault.yml` |
+| `ansible-vault edit <file>` | Редактирование зашифрованного файла | `ansible-vault edit group_vars/all/vault.yml` |
+| `ansible-vault encrypt <file>` | Зашифровывает существующий файл | `ansible-vault encrypt group_vars/prod/vault.yml` |
+| `ansible-vault decrypt <file>` | Расшифровывает файл | `ansible-vault decrypt group_vars/prod/vault.yml --ask-vault-pass` |
+| `ansible-vault view <file>` | Просмотр содержимого без записи | `ansible-vault view group_vars/prod/vault.yml --vault-password-file .vault_pass` |
+| `ansible-vault encrypt_string` | Шифрование отдельной строки | `ansible-vault encrypt_string 'secret' --name 'db_password'` |
+
+### Команды специфичные для Execution Environment
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible-builder build` | Сборка EE образа | `ansible-builder build -t registry.example.com/ansible-ee:v1.2` |
+| `ansible-builder create` | Генерация Dockerfile без сборки | `ansible-builder create --output-dir ./containerfiles` |
+| `ansible-navigator run` | Запуск плейбука в EE | `ansible-navigator run playbooks/site.yml --ee-enable` |
+| `ansible-navigator collection list` | Просмотр коллекций в EE | `ansible-navigator collection list --ee-image registry.example.com/ansible-ee:v1.2` |
+| `podman images` | Список локальных образов | `podman images | grep ansible-ee` |
+| `podman inspect` | Детали образа | `podman inspect registry.example.com/ansible-ee:v1.2` |
+
+### Валидация качества кода
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible-playbook playbook.yml --syntax-check` | Проверка синтаксиса YAML | `ansible-playbook playbooks/site.yml --syntax-check` |
+| `ansible-lint playbooks/` | Проверка качества кода | `ansible-lint playbooks/ --profile=production` |
+| `ansible-lint --fix` | Автоисправление нарушений | `ansible-lint playbooks/ --fix` |
+| `yamllint .` | Проверка синтаксиса YAML | `yamllint .` |
+
+---
+
+## Устранение типичных неполадок
+
+### Проблема: Роль не найдена при вызову
+
+**Симптом:** `ERROR! the role 'geerlingguy.postgresql' was not found`.
+
+**Решение:**
+```bash
+# Проверка установленных ролей
+ansible-galaxy role list
+
+# Установка роли
+ansible-galaxy role install geerlingguy.postgresql
+
+# Проверка структуры роли
+ls -la roles/geerlingguy.postgresql/
+# → defaults/ handlers/ tasks/ templates/ meta/ files/
+```
+
+### Проблема: Драйвер Python не найден
+
+**Симптом:** `ERROR! No module named 'psycopg2'`.
+
+**Решение:**
+```bash
+# Установка драйвера на целевой хост (Debian/Ubuntu)
+ansible postgres -m ansible.builtin.apt -a "name=python3-psycopg2 state=present" --become
+
+# Установка драйвера на целевой хост (RHEL)
+ansible postgres -m ansible.builtin.yum -a "name=python3-psycopg2 state=present" --become
+
+# Установка драйвера на контроллер
+pip install "psycopg[binary]"
+```
+
+### Проблема: Vault password file не найден
+
+**Симптом:** `ERROR! A Vault password is required` или `Decryption failed`.
+
+**Решение:**
+```bash
+# Проверка зашифрованного файла
+ansible-vault view group_vars/all/vault.yml --ask-vault-pass
+
+# Проверка Vault ID в заголовке
+head -1 group_vars/all/vault.yml
+# → $ANSIBLE_VAULT;1.2;AES256;prod
+
+# Запуск с правильным Vault ID
+ansible-playbook site.yml --vault-id prod@.vault_pass
+```
+
+### Проблема: Задачи выполняются дважды (нарушение идемпотентности)
+
+**Симптом:** Повторные запуски показывают `changed` там, где ожидается `ok`.
+
+**Решение:**
+```bash
+# Проверка идемпотентности
+ansible-playbook playbooks/site.yml --check --diff
+
+# Второй запуск должен показать changed=0
+ansible-playbook playbooks/site.yml 2>&1 | grep "changed="
+# → localhost                  : ok=XX   changed=0    unreachable=0    failed=0
+```
+
+### Проблема: Обработчик не выполняется
+
+**Симптом:** `notify: Restart PostgreSQL` не срабатывает при изменении конфигурации.
+
+**Решение:**
+```bash
+# Проверка, что notify привязан к задаче
+# В плейбуке:
+# - name: Копирование конфигурации
+#   ansible.builtin.template:
+#     src: postgresql.conf.j2
+#     dest: /etc/postgresql/16/main/postgresql.conf
+#   notify: Restart PostgreSQL   # ← Должно быть на одном уровне с задачей
+
+# Проверка обработчиков
+ansible-playbook playbooks/site.yml --list-handlers
+
+# Принудительный запуск обработчиков
+ansible-playbook playbooks/site.yml --handlers-first
+```
+
+### Проблема: Деплой останавливается на первом хосте
+
+**Симптом:** Плейбук завершается с ошибкой после первого неудачного хоста, остальные хосты не обрабатываются.
+
+**Решение:**
+```yaml
+# Добавьте serial и/или max_fail_percentage
+- hosts: webservers
+  serial: "25%"
+  max_fail_percentage: 10
+  strategy: linear
+  tasks:
+    - name: Deploy
+      ansible.builtin.include_tasks: deploy.yml
+```
+
+### Проблема: EE-образ не собирается
+
+**Симптом:** `Container image build failed` или `Cannot find collection`.
+
+**Решение:**
+```bash
+# Проверка базового образа
+podman pull registry.example.com/ansible/ansible-runner:latest
+
+# Проверка конфигурации EE
+ansible-builder create --output-dir ./containerfiles
+
+# Проверка Dockerfile
+cat containerfiles/Dockerfile
+```
+
+---
+
+## Рекомендации
+
+### Best Practices
+
+1. **Храните секреты в Vault:** Никогда не коммитьте пароли в открытом виде. Используйте `ansible-vault` с защищенным хранилищем паролей или внешние менеджеры секретов.
+2. **Используйте FQCN:** Всегда указывайте полные имена модулей (`community.postgresql.postgresql_db` вместо `postgresql_db`) для совместимости между версиями Ansible и коллекций.
+3. **Настраивайте `no_log: true`** для задач с секретами. Это предотвращает утечку данных в логи CI/CD.
+4. **Проверяйте идемпотентность:** Второй запуск плейбука не должен вносить изменения (`changed=0`). Это подтверждает корректность декларативного подхода.
+5. **Используйте `block/rescue/always`** вместо `ignore_errors: true` для осмысленной обработки ошибок.
+6. **Документируйте переменные** в `README.md` проекта или в `defaults/main.yml` роли с комментариями.
+7. **Выносите логику в роли:** Для повторного использования настройка сервисов должна быть оформлена как роль. Подробнее: **[Ansible: Роли](../ansible_roles.md)**.
+8. **Используйте Execution Environments:** Для гарантии идентичности сред разработки и CI/CD. Подробнее: **[Среды выполнения Ansible](../ansible-execution-environments.md)**.
+9. **Используйте `--check --diff`** перед первым запуском в production. Это позволяет увидеть точные изменения без риска.
+10. **Валидируйте конфигурацию:** Всегда проверяйте синтаксис YAML и плейбуков через `ansible-playbook --syntax-check` и `ansible-lint`.
+
+### Безопасность
+
+- **Управление секретами:** Для защиты конфиденциальных данных (пароли, TLS-ключи) всегда используйте шифрование. Подробнее: **[Основы Ansible Vault](../Vault/basics.md)** и **[Рекомендации по безопасности в Ansible](../ansible_security_best_practices.md)**.
+- **Минимизация привилегий:** Используйте `become_user: postgres` (или другой специализированный пользователь) для задач управления БД, чтобы не выполнять команды от имени суперпользователя ОС (`root`) внутри СУБД.
+- **Изоляция CI/CD:** Используйте Protected Runners для production-деплоев. Разные окружения должны использовать разные SSH-ключи и сервисных пользователей.
+- **Аудит:** Включайте детальное логирование всех запусков Ansible через callback-плагины (например, `json` или `yaml`).
+- **Верификация зависимостей:** Проверяйте GPG-подписи коллекций и ролей, устанавливаемых через `ansible-galaxy`.
+
+### Производительность и стабильность
+
+- **Execution Environments:** Используйте EE для изоляции зависимостей и гарантии воспроизводимости запусков.
+- **Параллельное выполнение:** Настройте `forks` в `ansible.cfg` (по умолчанию 5) в соответствии с мощностью Control Node.
+- **Check Mode:** Модули Ansible поддерживают `check_mode`. Используйте `--check` для предварительной проверки изменений.
+- **Кэширование зависимостей:** В CI/CD кэшируйте каталоги `.ansible/roles` и `.ansible/collections` для ускорения последующих запусков.
+- **Connection Pipelining:** Включите `ANSIBLE_PIPELINING=True` для уменьшения количества SSH-соединений (требует отключения `requiretty` в sudoers).
 
 ---
 
 ## Дополнительная информация
 
-### Лучшие практики
+### Смотрите также
 
-1. **Изоляция секретов**: Никогда не храните SSH-ключи, пароли или API-токены в Git-репозитории. Используйте **[Ansible Vault](../Vault/basics.md)** или внешние менеджеры секретов.
-2. **Идемпотентность**: Все плейбуки должны быть идемпотентными — повторные запуски не должны вызывать нежелательных изменений.
-3. **Статический анализ**: Внедрите `ansible-lint` как блокирующую стадию пайплайна.
-4. **Валидация перед деплоем**: Всегда выполняйте `--syntax-check` и `--check` (dry-run) перед реальным развертыванием.
-5. **Минимальные привилегии**: Используйте `become: true` только для конкретных задач, а не для всего плейбука.
-6. **Логирование**: Включайте `ANSIBLE_STDOUT_CALLBACK: yaml` для читаемых логов.
-7. **Тестирование**: Используйте Molecule для тестирования ролей перед интеграцией в CI/CD.
-8. **Ротация ключей**: Регулярно ротируйте SSH-ключи, пароли Vault и API-токены.
-9. **Эфемерные раннеры**: Для максимальной безопасности используйте контейнеризированные раннеры, уничтожаемые после каждого запуска.
+- **[Интеграция Ansible с GitLab CI](../../CI-CD/GitLab_CI/Tutorials/ansible_integration.md)** — детальные паттерны GitLab CI: dynamic inventory, Vault, Inputs, rollback стратегии.
+- **[Среды выполнения Ansible (Execution Environments)](../ansible-execution-environments.md)** — подробное руководство по созданию и использованию EE.
+- **[Ansible: Рекомендации по безопасности](../ansible_security_best_practices.md)** — защита Control Node, управление секретами, CI/CD-интеграция.
+- **[Event-Driven Ansible](../event-driven-ansible.md)** — автоматизация на основе событий с использованием EDA.
 
-### Типичные ошибки и устранение неполадок
+### Дополнительный сценарий: Интеграция Event-Driven Ansible (EDA) в CI/CD
 
-| Проблема | Вероятная причина | Диагностика | Решение |
-|---|---|---|---|
-| `UNREACHABLE! Failed to connect to the host via ssh` | SSH-ключ отсутствует или неверный | Проверьте `ssh-agent` и ключи на Runner | Убедитесь, что ключ добавлен в `ssh-agent` и `known_hosts` настроен. |
-| `Vault password error` | Неверный пароль или переменная не определена | Проверьте переменную в CI/CD Settings | Убедитесь, что переменная `VAULT_PASS` или `VAULT_PASSWORD_PROD` определена и зашифрована. |
-| `The role 'xxx' was not found` | Роли не установлены | Проверьте `requirements.yml` и `before_script` | Добавьте `ansible-galaxy install -r requirements.yml` в `before_script`. |
-| `Permission denied: ansible_runner.sh` | Нет прав на выполнение скрипта | `ls -la /usr/local/bin/ansible_runner.sh` | `sudo chmod +x` и `sudo chown root:root` скрипт. |
-| `ERROR! the field 'become_user' is not allowed` | Опечатка в имени параметра | Проверьте YAML-синтаксис | Исправьте `become_user` (должно быть через подчеркивание). |
-| `Timeout expired` | Сетевые проблемы или долгий запуск | Проверьте `ANSIBLE_TIMEOUT` и `ansible_timeout` | Увеличьте таймаут или оптимизируйте плейбук. |
+EDA позволяет запускать плейбуки в ответ на события из внешних систем (GitHub/GitLab webhooks, Prometheus alerts, изменения в CMDB). В контексте CI/CD это обеспечивает автоматический деплой при мерже PR или срабатывании алертов.
 
-### Граничные случаи и ограничения
+```yaml
+---
+# playbooks/event_driven_deploy.yml
+- name: Деплой при событии из EDA
+  hosts: production
+  become: true
+  vars:
+    app_version: "{{ event_data.tag | default('latest') }}"
+    deploy_reason: "{{ event_data.reason | default('manual') }}"
 
-1. **Windows-хосты**: Ansible поддерживает Windows через WinRM, но требует дополнительной настройки (PowerShell Remoting, сертификаты). Рекомендуется использовать отдельные Execution Environments для Windows.
-2. **Большие инфраструктуры (1000+ хостов)**: Используйте `ansible-pull` с расписанием или стратегию `free` для параллельного выполнения.
-3. **Приватные реестры образов**: Убедитесь, что CI/CD-агент имеет аутентификацию для доступа к приватным реестрам (Docker Hub, GHCR, Quay).
-4. **Сетевые ограничения**: Если Control Node не имеет прямого доступа к хостам, используйте SSH-туннели или ProxyJump.
-5. **Версионирование Ansible**: Разные проекты могут требовать разные версии Ansible Core. Используйте EE для изоляции версий.
-6. **Одновременные деплои**: Используйте `resource_group` (GitLab CI) или `concurrency` (GitHub Actions) для предотвращения race conditions.
+  tasks:
+    - name: Логирование причины деплоя
+      ansible.builtin.debug:
+        msg: "Deploy triggered by: {{ deploy_reason }}, version: {{ app_version }}"
 
-### Тестирование плейбуков перед production
+    - name: Скачивание артефакта
+      ansible.builtin.get_url:
+        url: "https://releases.example.com/app-{{ app_version }}.tar.gz"
+        dest: /tmp/app-{{ app_version }}.tar.gz
 
-1. **Syntax Check**: `ansible-playbook playbook.yml --syntax-check`
-2. **Check Mode (Dry Run)**: `ansible-playbook playbook.yml --check --diff`
-3. **Limit Hosts**: `ansible-playbook playbook.yml --limit staging`
-4. **Verbose Mode**: `ansible-playbook playbook.yml -vvv` для детальной отладки
-5. **Molecule Test**: `molecule test` для интеграционного тестирования ролей
-6. **ansible-navigator**: `ansible-navigator run playbook.yml --ee-enable` для проверки в EE
+    - name: Распаковка артефакта
+      ansible.builtin.unarchive:
+        src: /tmp/app-{{ app_version }}.tar.gz
+        dest: /opt/app
+        remote_src: yes
 
-### Масштабируемость и Enterprise-решения
+    - name: Перезапуск приложения
+      ansible.builtin.service:
+        name: app
+        state: restarted
 
-Для крупных организаций рекомендуется переход к специализированным платформам (см. подробнее **[Ansible Automation Platform (AAP)](../ansible-automation-platform.md)**):
+    - name: Проверка работоспособности
+      ansible.builtin.uri:
+        url: http://localhost/health
+        status_code: 200
+        timeout: 10
+      register: health_check
+      until: health_check.status == 200
+      retries: 30
+      delay: 2
+```
 
-- **Ansible Automation Platform (AAP)**: Коммерческое решение от Red Hat. Обеспечивает централизованное управление, детальный аудит (каждый запуск логируется в БД), управление секретами внутри платформы и интеграцию с LDAP/AD. Включает Execution Nodes для масштабирования вычислительных мощностей.
-- **AWX**: Upstream-версия AAP с открытым исходным кодом. Вместо bash-скриптов, CI/CD делает REST API запрос к AWX для запуска Job Template:
-  ```bash
-  # Пример вызова Job Template в AWX из CI/CD
-  curl -H "Authorization: Bearer $AWX_TOKEN" \
-       -X POST "$AWX_HOST/api/v2/job_templates/$ID/launch/"
-  ```
+**Пример правила EDA (eda-rulebook.yml):**
 
-## Смотрите также
+```yaml
+---
+- name: Deploy on GitLab merge
+  hosts: all
+  sources:
+    - name: gitlab
+      type: gitlab
+      config:
+        webhook_url: "https://eda.internal/webhook"
+        token: "{{ vault_gitlab_token }}"
+        events:
+          - Merge Request Hook
+          - Push Hook
+          - Tag Push Hook
 
-- [Интеграция Ansible с GitLab CI](../../CI-CD/GitLab_CI/Tutorials/ansible_integration.md)
-- [Типовая структура проекта Ansible](example_project_layout.md)
-- [Рекомендации по безопасности в Ansible](../ansible_security_best_practices.md)
-- [Среды выполнения Ansible (Execution Environments)](../ansible-execution-environments.md)
+  rules:
+    - name: Deploy on merge to main
+      condition: event.payload.object_attributes.target_branch == "main"
+      action:
+        run_playbook:
+          name: playbooks/event_driven_deploy.yml
+          extra_vars:
+            event_data: "{{ event }}"
+
+    - name: Deploy on tag
+      condition: event.payload.ref == "refs/tags/v*"
+      action:
+        run_playbook:
+          name: playbooks/event_driven_deploy.yml
+          extra_vars:
+            event_data:
+              tag: "{{ event.payload.ref | regex_replace('refs/tags/', '') }}"
+              reason: "tag_push"
+```
+
+**Запуск EDA Rulebook Agent:**
+
+```bash
+# Установка EDA
+pip install ansible-rulebook
+
+# Запуск rulebook
+ansible-rulebook --rulebook eda-rulebook.yml --inventory inventory/prod/hosts.yml --vault-id prod@.vault_pass
+
+# Или через systemd
+cat > /etc/systemd/system/eda-agent.service << 'EOF'
+[Unit]
+Description=Ansible EDA Agent
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ansible-rulebook --rulebook /etc/ansible/eda-rulebook.yml --inventory /etc/ansible/inventory/prod/hosts.yml
+Restart=always
+RestartSec=5
+Environment="ANSIBLE_VAULT_PASSWORD_FILE=/etc/ansible/.vault_pass"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now eda-agent
+```
+
+**Валидация:**
+
+```bash
+# Проверка статуса EDA Agent
+systemctl status eda-agent
+# → active (running)
+
+# Отправка тестового события
+curl -X POST https://eda.internal/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"event_name": "Push Hook", "ref": "refs/heads/main"}'
+
+# Проверка логов
+journalctl -u eda-agent -f
+# → показывает обработку события и запуск плейбука
+
+# Проверка выполнения плейбука
+# → TASK [Логирование причины деплоя]
+# → ok: [web1] => {
+# →     "msg": "Deploy triggered by: tag_push, version: v1.2.0"
+# → }
+```
+
+### Именование и организации
+
+- **Плейбуки:** Используйте префиксы `01_`, `02_` в `playbooks/` для визуализации порядка развертывания.
+- **Переменные:** Всегда используйте префиксы ролей (например, `postgresql_port`), чтобы избежать конфликтов при слиянии переменных из разных источников.
+- **Тегирование:** Используйте `tags` для избирательного выполнения задач (например, `tags: ['backup', 'maintenance']`).
+
+### Граничные случаи
+
+| Сценарий | Проблема | Решение |
+|---|---|---|
+| Несколько `ansible.cfg` | Конфликт настроек | Ansible использует ближайший `ansible.cfg` к плейбуку; не создавайте дубли. |
+| Windows-контрольный узел | Некоторые модули не работают | Используйте WSL2 или Linux-контрольный узел. |
+| Параллельный запуск | Файловые конфликты | Используйте `serial` в плейбуке или `forks` в `ansible.cfg`. |
+| Vault и CI/CD | Пароль Vault недоступен | Передавайте через защищенные файловые переменные CI/CD с маскированием. |
+| Большие инвентари | Медленная загрузка | Используйте динамический инвентарь или `yaml` вместо `ini` формата. |

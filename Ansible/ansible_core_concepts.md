@@ -4,10 +4,10 @@
 
 - **Декларативность (Declarative Approach)** — основной подход Ansible, при котором описывается *желаемое состояние* системы (например, «пакет Nginx должен быть установлен»), а движок сам определяет необходимые действия для достижения этого состояния, учитывая текущий статус. См. подробнее: **[Декларативное управление](../../Concepts/configuration_management_models.md)**.
 - **Идемпотентность (Idempotency)** — фундаментальный принцип, гарантирующий, что повторное выполнение операции не изменит систему, если она уже находится в целевом состоянии. Это позволяет безопасно запускать автоматизацию неограниченное количество раз без риска побочных эффектов. Большинство стандартных модулей Ansible идемпотентны по своей природе. См. глубокую теорию: **[Идемпотентность](../../Concepts/idempotency.md)**.
-- **Узел управления (Control Node)** — машина, на которой установлен Ansible и с которой запускаются команды. Требует Unix-подобную ОС (Linux, macOS, WSL2) и установленный интерпретатор Python. Подробнее: [Установка и настройка](./ansible_setup_and_config.md).
-- **Управляемые узлы (Managed Nodes)** — целевые серверы, сетевые устройства или облачные ресурсы, которыми управляет Ansible. Для большинства модулей на Linux требуется Python, на Windows — PowerShell.
+- **Узел управления (Control Node)** — машина, на которой установлен Ansible и с которой запускаются команды. Требует Unix-подобную ОС (Linux, macOS, WSL2) и установленный интерпретатор Python. Подробнее: [Введение в Ansible](./ansible_introduction.md).
+- **Управляемые узлы (Managed Nodes)** — целевые серверы и сетевые устройства, которыми управляет Ansible. Для большинства модулей на Linux требуется Python, на Windows — PowerShell. Подробнее: [Введение в Ansible](./ansible_introduction.md).
 - **FQCN (Fully Qualified Collection Name)** — полное имя ресурса в формате `namespace.collection.resource` (например, `ansible.builtin.copy`, `community.general.docker_image`). Использование FQCN является обязательным стандартом в современном Ansible (с версии 2.10) для предотвращения конфликтов имен и обеспечения предсказуемости выполнения кода.
-- **Факты (Facts)** — системные переменные, автоматически собираемые модулем `ansible.builtin.setup` перед выполнением задач (IP-адреса, ОС, архитектура CPU, смонтированные диски). Доступны через словарь `ansible_facts`. Факты кэшируются между запусками — см. [Кэширование фактов](#кэширование-фактов).
+- **Факты (Facts)** — системные переменные, автоматически собираемые модулем `ansible.builtin.setup` перед выполнением задач (IP-адреса, ОС, архитектура CPU, смонтированные диски). Доступны через словарь `ansible_facts`. Факты кэшируются между запусками — см. раздел [Кэширование фактов](#кэширование-фактов) ниже.
 - **Магические переменные (Magic Variables)** — зарезервированные внутренние переменные Ansible, значения которых вычисляются движком автоматически и не могут быть переопределены пользователем. Ключевые: `inventory_hostname`, `group_names`, `hostvars`, `ansible_facts`, `play_hosts`, `groups`.
 - **set_fact** — модуль, создающий или переопределяющий переменные во время выполнения плейбука. Значения сохраняются на уровне хоста и доступны во всех последующих задачах текущего плея. Имеют приоритет выше role vars и play vars.
 - **delegate_facts** — механизм, позволяющий собранные факты хоста сохранить у делегированного хоста (например, балансировщика) вместо целевого. Используется совместно с `delegate_to`.
@@ -15,7 +15,23 @@
 - **Become** — механизм повышения привилегий, позволяющий выполнять задачи от имени другого пользователя (обычно `root`) через `sudo`, `su`, `pbrun` или другие методы. Настраивается через директивы `become: true`, `become_method`, `become_user`.
 - **Плагин подключения (Connection Plugin)** — низкоуровневый компонент, реализующий способ связи с узлом. Стандартные: `ssh` (по умолчанию для Linux), `local` (выполнение на Control Node), `docker`, `winrm`, `psrp`, `network_cli`.
 
+**SRE/DevOps-контекст:**
+- **MTTR (Mean Time To Repair/Recovery)** — среднее время восстановления после сбоя. Идемпотентность и обработка ошибок в Ansible напрямую снижают MTTR за счет предсказуемости поведения и быстрого rollback.
+- **Configuration Drift** — расхождение между фактическим состоянием инфраструктуры и декларативным описанием в Ansible. Приводит к "зоопарку" конфигураций и увеличению MTTR.
+- **Change Failure Rate** — процент изменений, приведших к сбою. Хорошо структурированные плейбуки с обработкой ошибок и canary-подходом снижают этот показатель.
+- **Blast Radius** — масштаб последствий при сбое автоматизации. Ограничение `serial`, `throttle` и `max_fail_percentage` сужают радиус поражения.
+
 ## Архитектура и модели взаимодействия
+
+### Влияние антипаттернов на операционную деятельность (SRE/DevOps)
+
+Антипаттерны Ansible напрямую влияют на ключевые операционные метрики:
+
+- **Увеличение MTTR:** Непредсказуемое поведение плейбуков, отсутствие обработки ошибок и неидемпотентность усложняют диагностику и восстановление после инцидентов.
+- **Потеря наблюдаемости (Observability):** Отсутствие `changed_when`, скрытые изменения и неструктурированные логи не позволяют коррелировать изменения Ansible с инцидентами мониторинга.
+- **Снижение пропускной способности изменений (Change Capacity):** Каскадные сбои и необходимость ручного вмешательства замедляют деплои и увеличивают риск batch-изменений.
+- **Нарушение SLA/SLO:** Непредсказуемое время выполнения, отсутствие throttling и контроля параллелизма приводят к превышению временных рамок обслуживания.
+- **Compliance-риски:** Отсутствие аудита изменений, неконтролируемый `become` и хранение секретов в Git нарушают требования SOC2, PCI-DSS, HIPAA и внутренние политики безопасности.
 
 ### Модели Push и Pull
 
@@ -151,7 +167,9 @@ all:
     ansible_user: deploy
 ```
 
-- **Динамический инвентарь:** Плагины, получающие список хостов из внешних API (AWS, Yandex Cloud, NetBox, Kubernetes). Современный стандарт требует использования **Inventory Plugins** вместо устаревших скриптов. См. [Динамический инвентарь](./dynamic_inventory.md).
+- **Динамический инвентарь:** Плагины, получающие список хостов из внешних систем (NetBox, Foreman, Consul, Proxmox). Современный стандарт требует использования **Inventory Plugins** вместо устаревших скриптов. См. [Динамический инвентарь](./dynamic_inventory.md).
+
+**SRE-контекст:** Инвентарь — это источник истины для управления конфигурациями. Грязный инвентарь (устаревшие хосты, неактуальные переменные) — частая причина инцидентов. Регулярный аудит инвентаря, группировка по назначению (`production`, `staging`, `emergency`) и явное указание owner/service позволяют быстро локализовать проблему при инциденте.
 
 **Управление инвентарем из CLI:**
 ```bash
@@ -239,7 +257,7 @@ ansible-inventory --list | python3 -c "import sys,json; d=json.load(sys.stdin); 
 | **Жизненный цикл** | Краткосрочный (удаляются после выполнения задачи) | Постоянный (загружены на время работы процесса) |
 | **Назначение** | Изменение состояния системы (декларативность) | Расширение внутренней логики (связь, фильтры, парсинг). См. **[Action-плагины](./ansible-action-plugins.md)**. |
 
-> **Примечание:** Модули для сетевого оборудования (Cisco, Juniper) и облачных провайдеров обычно выполняются на **контрольном узле** через API, используя плагины связи `local` или `network_cli`. См. [Сетевая автоматизация](./ansible_network_automation.md).
+> **Примечание:** Модули для сетевого оборудования (Cisco, Juniper) обычно выполняются на **контрольном узле** через API, используя плагины связи `local` или `network_cli`. См. [Сетевая автоматизация](./ansible_network_automation.md).
 
 **Классификация плагинов по месту исполнения:**
 - **На Control Node:** Connection, Lookup, Filter, Callback, Inventory, Strategy, Shell.
@@ -330,7 +348,8 @@ ansible-inventory --list | python3 -c "import sys,json; d=json.load(sys.stdin); 
         msg: "RAM: {{ ansible_facts['ansible_memtotal_mb'] }} MB"
 ```
 
-**Кэширование фактов:**
+### Кэширование фактов
+
 Для ускорения повторных запусков факты можно сохранять во внешнее хранилище:
 ```ini
 # ansible.cfg
@@ -597,11 +616,102 @@ ansible-playbook site.yml -e "app_version=2.1.0"
 ansible-playbook site.yml --limit "web1.example.com"
 ```
 
+### Производственные сценарии (SRE/DevOps)
+
+#### Canary-деплой с автоматическим health-check
+
+Ограничиваем радиус поражения при сбое, разворачивая изменения на небольшом проценте хостов:
+
+```yaml
+---
+- name: Canary deployment Nginx
+  hosts: webservers
+  serial: "10%"
+  max_fail_percentage: 5
+  gather_facts: true
+  tasks:
+    - name: Deploy new config
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+      notify: Reload Nginx
+      tags: [canary, deploy]
+
+    - name: Health check after deploy
+      ansible.builtin.uri:
+        url: "http://localhost:{{ http_port | default(80) }}/health"
+        status_code: 200
+        timeout: 10
+      register: health
+      retries: 10
+      delay: 5
+      until: health.status == 200
+      tags: [canary, verify]
+
+    - name: Rollback on health check failure
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+      when: health.status != 200
+      tags: [canary, rollback]
+```
+
+#### Configuration drift как операционный инцидент
+
+Drift — не просто техническое отклонение, а инцидент, требующий MTTR-подхода:
+
+```yaml
+---
+- name: Incident response: configuration drift
+  hosts: all
+  become: true
+  serial: "50"
+  gather_facts: false
+  tasks:
+    - name: Create incident ticket (local log)
+      ansible.builtin.copy:
+        content: |
+          INCIDENT: Configuration drift detected on {{ inventory_hostname }}
+          Severity: P1
+          Owner: ops-team
+          Timestamp: {{ ansible_date_time.iso8601 }}
+        dest: "/var/log/incidents/drift_{{ inventory_hostname }}_{{ ansible_date_time.date }}.log"
+        mode: "0640"
+      delegate_to: localhost
+
+    - name: Backup current state
+      ansible.builtin.archive:
+        path:
+          - /etc/nginx/nginx.conf
+          - /etc/ssh/sshd_config
+        dest: "/var/backups/pre_remediation_{{ inventory_hostname }}_{{ ansible_date_time.iso8601 | regex_replace(':','') }}.tar.gz"
+        format: gz
+
+    - name: Apply baseline (remediation)
+      ansible.builtin.include_role:
+        name: baseline_config
+
+    - name: Verify remediation
+      ansible.builtin.command:
+        cmd: "ansible-playbook site.yml --check --limit {{ inventory_hostname }}"
+      register: verify
+      delegate_to: localhost
+      changed_when: false
+```
+
+#### Снижение MTTR: откатный сценарий (rollback)
+
+Каждый production-плейбук должен иметь откатный сценарий. Подробные примеры и стратегии: **[Стратегии отката (rollback) в Ansible](../examples/ansible_rollback_strategies.md)**.
+
+```
+
 ### Анализ изменений (Check & Diff)
 
 Безопасное тестирование автоматизации:
 - **Check Mode (`--check`):** «Сухой запуск». Ansible проверяет, какие изменения были бы внесены, не меняя состояние системы.
 - **Diff Mode (`--diff`):** Показывает разницу (diff) в текстовых файлах конфигурации.
+
+> **Важное ограничение:** Check Mode — это сильный сигнал, но не строгая гарантия. Поддержка зависит от модуля: декларативные модули (`file`, `template`, `apt`) корректно сравнивают состояние, а модули `command` и `shell` по умолчанию пропускаются в `--check`. Для принудительного выполнения команд в check mode используйте `check_mode: false`. Результат реального применения может отличаться от предсказания.
 
 ```bash
 # Полная проверка перед продакшеном
@@ -704,12 +814,20 @@ grep "changed:" drift_report_20240115.log
           {{ drifted }}
 
     - name: Send drift alert
-      ansible.builtin.uri:
-        url: "{{ slack_webhook_url }}"
-        method: POST
-        body_format: json
-        body:
-          text: "Configuration drift detected on {{ drifted_hosts | length }} hosts"
+      ansible.builtin.copy:
+        content: |
+          DRIFT ALERT: Configuration drift detected on {{ drifted_hosts | length }} hosts
+          Hosts: {{ drifted_hosts | join(', ') }}
+          Timestamp: {{ ansible_date_time.iso8601 }}
+        dest: "/var/log/drift_alert_{{ ansible_date_time.date }}.log"
+        mode: "0644"
+      when: drifted_hosts | length > 0
+      delegate_to: localhost
+
+    - name: Send drift notification (local mail)
+      ansible.builtin.shell: |
+        echo "Configuration drift detected on {{ drifted_hosts | length }} hosts" | \
+        mail -s "DRIFT ALERT" ops-team@localhost
       when: drifted_hosts | length > 0
       delegate_to: localhost
 
@@ -747,12 +865,19 @@ grep "changed:" drift_report_20240115.log
       changed_when: false
 
     - name: Report remediation status
-      ansible.builtin.uri:
-        url: "{{ slack_webhook_url }}"
-        method: POST
-        body_format: json
-        body:
-          text: "Drift remediated on {{ inventory_hostname }}: {{ verify_result.rc == 0 }}"
+      ansible.builtin.copy:
+        content: |
+          REMEDIATION REPORT: Drift remediated on {{ inventory_hostname }}
+          Status: {{ verify_result.rc == 0 }}
+          Timestamp: {{ ansible_date_time.iso8601 }}
+        dest: "/var/log/drift_remediation_{{ inventory_hostname }}_{{ ansible_date_time.date }}.log"
+        mode: "0644"
+      delegate_to: localhost
+
+    - name: Send remediation notification (local mail)
+      ansible.builtin.shell: |
+        echo "Drift remediated on {{ inventory_hostname }}: {{ verify_result.rc == 0 }}" | \
+        mail -s "REMEDIATION REPORT" ops-team@localhost
       delegate_to: localhost
 ```
 
@@ -1028,6 +1153,8 @@ grep "changed:" drift_report_20240115.log
   failed_when: "'ERROR' in update_result.stderr"
 ```
 
+> **Важно:** `changed_when` и `failed_when` влияют только на **отчётность** (статус задачи в выводе), но не отменяют фактическое выполнение команды. Действие модуля уже произошло; эти директивы лишь определяют, как Ansible интерпретирует результат. Для настоящей идемпотентности необходимо использовать специализированные модули или параметры `creates`/`removes`.
+
 #### Edge cases: когда идемпотентность ломается
 
 1. **Внешние зависимости:** Задача зависит от внешней системы (API, БД), которая изменилась между запусками
@@ -1194,6 +1321,129 @@ ansible-inventory --list --yaml
 ping -c 3 web1.example.com
 ```
 
+#### 7. «Drift detected on rerun»
+
+**Причина:** Неидемпотентные задачи, ручные изменения на хостах.
+
+**Диагностика:**
+```bash
+# Проверка дрейфа
+ansible-playbook site.yml --check --diff 2>&1 | grep "changed:"
+
+# Аудит фактов
+ansible -m setup -i inventory.ini all | grep -E "ansible_|gather_subset"
+```
+
+**Решение:** Добавьте `changed_when`, используйте декларативные модули, настройте periodic remediation.
+
+#### 8. «Callback plugin error»
+
+**Причина:** Несовместимость версий `ansible-core` и плагинов.
+
+**Решение:**
+```bash
+# Проверка версий
+ansible --version
+pip show ansible-core
+
+# Обновление плагинов
+pip install --upgrade ansible
+```
+
+#### 9. «Control Node OOM / Memory error»
+
+**Причина:** Большой инвентарь, неоптимальные `forks`, утечки памяти в плагинах.
+
+**Диагностика:**
+```bash
+# Проверка использования памяти
+ps aux | grep ansible
+free -m
+vmstat 1 10
+
+# Уменьшение параллелизма
+# ansible.cfg
+[defaults]
+forks = 5
+```
+
+**Решение:** Уменьшите `forks`, используйте fact caching, обновите `ansible-core`.
+
+### Диагностические команды (SRE)
+
+```bash
+# Проверка синтаксиса плейбука
+ansible-playbook playbook.yml --syntax-check
+
+# Проверка идемпотентности (без применения изменений)
+ansible-playbook playbook.yml --check --diff
+
+# Поиск секретов в репозитории (pre-commit hook)
+gitleaks detect --source=. --report-path=gitleaks-report.json
+
+# Аудит переменных на наличие секретов
+ansible-playbook playbook.yml --list-tasks | grep -i password
+
+# Проверка доступных фактов
+ansible -m setup -i inventory.ini all | grep -E "ansible_|gather_subset"
+
+# Валидация всех плейбуков в репозитории
+find playbooks/ -name '*.yml' -exec ansible-lint {} +
+
+# Проверка версий коллекций
+ansible-galaxy collection list
+
+# Дифференциальный анализ drift
+ansible-playbook site.yml --check --diff 2>&1 | tee drift_report_$(date +%Y%m%d).log
+grep "changed:" drift_report_*.log
+
+# Проверка callback-плагинов
+ansible-doc -t callback -l
+```
+
+### Лучшие практики (Best Practices)
+
+#### Идемпотентность по умолчанию
+
+- Все модули должны возвращать корректный `changed` статус.
+- Избегайте `shell`/`command` без `changed_when` и `failed_when`.
+- Используйте `check_mode: yes` для модулей, поддерживающих проверку без применения изменений.
+
+#### Безопасность (Shift-Left Security)
+
+- `no_log: true` для всех задач с секретами (токены, пароли, ключи).
+- `become: true` на уровне задачи, а не playbook.
+- Секреты только через Ansible Vault или внешние менеджеры (HashiCorp Vault, CyberArk).
+- Никогда не коммитьте файлы vault, `group_vars` с секретами, `.vault_pass`.
+
+#### Производительность и масштабирование
+
+- `gather_facts: false` на уровне play, если факты не нужны, или `gather_subset` для выборочного сбора.
+- Передавайте списки в модули пакетных менеджеров, избегайте `loop` для атомарных операций.
+- Используйте `serial` и `throttle` для контролируемого rollout и защиты целевых систем.
+- Асинхронные задачи только с контролем статуса (`async_status` + `until`).
+
+#### Наблюдаемость (Observability)
+
+- Единый callback-плагин (например, `yaml`, `json`, или `community.general.counter`) для структурированных логов.
+- Корреляция `run_id`/`playbook_name` с инцидентами мониторинга.
+- Включение `diff: true` для файловых операций в не production окружениях.
+- Регулярный аудит inventory на устаревшие хосты и неиспользуемые переменные.
+
+#### Управление изменениями (Change Management)
+
+- Каждый плейбук должен иметь откатный сценарий (rollback playbook).
+- Изменения применяются через canary-подход с автоматическим health-check.
+- Проблемные изменения автоматически откатываются при падении SLO-показателей.
+- Документация изменений в playbook-заголовке (описание, ссылка на тикет, author, дата).
+
+#### Версионирование и Supply Chain
+
+- Коллекции зафиксированы в `requirements.yml` с хешами.
+- Используйте `ansible-galaxy collection install -r requirements.yml --force-with-deps` для воспроизводимости.
+- Проверяйте GPG-подписи коллекций (`--keyring`).
+- Шаблоны (Jinja2) валидируются через `ansible-lint` и `ansible-playbook --syntax-check`.
+
 ### Контрольный список: лучшие практики
 
 - [ ] Используйте FQCN для всех модулей (`ansible.builtin.apt` вместо `apt`)
@@ -1210,6 +1460,5 @@ ping -c 3 web1.example.com
 ## Дополнительная информация
 
 - [Безопасность в Ansible](./ansible_security_best_practices.md) — защита данных и vault.
-- [Тестирование с Molecule](./ansible_testing_with_molecule.md) — проверка кода автоматизации.
 - [Антипаттерны Ansible](./ansible_bad_practices.md) — типичные ошибки и их решение.
 - [Выполнение плейбуков](./ansible_playbook_execution.md) — подробнее о режимах запуска.

@@ -373,7 +373,7 @@ CMD ["python", "-c", "exec(open('app.py').read())"]
 
 ### Edge Case: DaemonSet при обслуживании узла
 
-Pod'ы DaemonSet **не могут** использовать Pod Disruption Budget (PDB не действует на DaemonSet). При `kubectl drain` с `--ignore-daemonsets=false` поды DaemonSet удаляются принудительно, если узел помечен для обслуживания. Если DaemonSet настроен с `terminationGracePeriodSeconds: 0`, контейнеры будут убиты мгновенно без возможности завершения текущих операций.
+Pod'ы DaemonSet **не могут** использовать Pod Disruption Budget (PDB не действует на DaemonSet). При `kubectl drain` с `--ignore-daemonsets=false` поды DaemonSet удаляются принудительно, если узел помечен для обслуживания. Если DaemonSet настроен с `terminationGracePeriodSeconds: 0`, контейнеры будут убиты мгновенно без возможности завершения текущих операций. Подробнее: [DaemonSet и завершение подов](./daemonset_termination.md).
 
 ### Edge Case: Pod в Namespace с активным ResourceQuota
 

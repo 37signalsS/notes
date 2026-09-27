@@ -1,32 +1,38 @@
-# Ansible: автоматизация развертывания MongoDB Replica Set
+# Ansible: автоматизация развертывания и обслуживания MongoDB Replica Set
 
 ## Определения
 
-**MongoDB Replica Set** — отказоустойчивый кластер, состоящий из нескольких узлов `mongod`, который обеспечивает автоматическое переключение при сбоях (failover) и высокую доступность данных. Теоретические основы механизмов кворума, Oplog и Write Concern описаны в разделе **[Репликация в MongoDB](../../Databases/MongoDB/mongodb-replication.md)**.
+**MongoDB Replica Set** — отказоустойчивый кластер из нескольких узлов `mongod`, обеспечивающий автоматическое переключение при сбоях (failover) и высокую доступность данных. Теоретические основы кворума, Oplog и Write Concern описаны в разделе **[Репликация в MongoDB](../../Databases/MongoDB/mongodb-replication.md)**.
 
-**community.mongodb** — специализированная коллекция Ansible (FQCN), предоставляющая модули для управления конфигурацией, пользователями и репликацией MongoDB. Начиная с версии 8.0+, является основным инструментом автоматизации.
+**community.mongodb** — специализированная коллекция Ansible (FQCN), предоставляющая модули для управления конфигурацией, пользователями, репликацией и обслуживанием MongoDB. Текущая стабильная версия коллекции — 1.7.x.
 
-**mongosh (MongoDB Shell)** — современная интерактивная оболочка на базе Node.js, пришедшая на смену устаревшей `mongo`. В 2026 году является обязательной для выполнения административных скриптов через Ansible.
+**mongosh (MongoDB Shell)** — современная интерактивная оболочка на базе Node.js, пришедшая на смену устаревшей `mongo`. В 2026 году является обязательной для выполнения административных скриптов через Ansible. Текущая версия — 2.8.x.
 
 **keyFile** — секретный файл, используемый для взаимной аутентификации узлов внутри реплика-сета. Без него включение RBAC в кластере невозможно.
 
 **RBAC (Role-Based Access Control)** — система управления доступом на основе ролей (например, `root`, `readWrite`), критически важная для защиты данных в распределенных системах. Подробнее — в разделе **[Безопасность MongoDB](../../Databases/MongoDB/mongodb-security.md)**.
 
+**WiredTiger** — движок хранения MongoDB по умолчанию, обеспечивающий Document-level Concurrency, Snapshot Isolation и сжатие данных.
+
+**THP (Transparent Huge Pages)** — механизм ядра Linux, который должен быть отключен для MongoDB, так как вызывает непредсказуемые задержки.
+
 ## Базовые концепции
 
 ### Зависимости и инструментарий
 
-Автоматизация MongoDB 8.0+ требует актуальных версий Python-драйверов на целевых хостах.
+Автоматизация MongoDB 8.0+ требует актуальных версий Python-драйверов и инструментов на целевых хостах.
 
 | Компонент | Требование | Назначение |
 |---|---|---|
 | `community.mongodb` | Управляющий узел | Коллекция модулей для управления всеми аспектами БД. |
-| `pymongo` | Целевой хост | Python-библиотека для взаимодействия Ansible с протоколом MongoDB. |
-| `mongosh` | Целевой хост | CLI-инструмент для выполнения команд и проверки состояния кластера. |
+| `pymongo` | Целевой хост | Python-библиотека для взаимодействия Ansible с протоколом MongoDB. Рекомендуется 4.9+ для полной совместимости с MongoDB 8.0. |
+| `mongosh` | Целевой хост | CLI-инструмент для выполнения команд и проверки состояния кластера. Версия 2.x. |
+| `dnspython` | Целевой хост | Зависимость `pymongo` для разрешения SRV-записей (рекомендуется >= 2.6.1). |
 
-Установка коллекции:
+Установка коллекции на управляющем узле:
 ```bash
 ansible-galaxy collection install community.mongodb
+# → Installing 'community.mongodb' to ...
 ```
 
 ### Предварительные требования (Prerequisites)
@@ -37,18 +43,18 @@ ansible-galaxy collection install community.mongodb
 
 | Компонент | Минимальная версия | Проверка |
 |---|---|---|
-| Ansible | 2.15+ (рекомендуется ≥ 10.x для поддержки `community.mongodb`) | `ansible --version` |
+| Ansible | 2.16+ (рекомендуется >= 2.21) | `ansible --version` |
 | Python | 3.10+ | `python3 --version` |
-| `community.mongodb` | Последняя версия | `ansible-galaxy collection list community.mongodb` |
+| `community.mongodb` | 1.7.x | `ansible-galaxy collection list community.mongodb` |
 
 **Целевые хосты (Managed Nodes):**
 
 | Компонент | Требование | Назначение |
 |---|---|---|
-| Python 3 | 3.8+ | Модули Ansible работают через Python на целевом хосте |
-| `pymongo` | 4.0+ | Python-драйвер для MongoDB (обязателен для модулей `community.mongodb`) |
-| MongoDB Server | 7.0+ (рекомендуется 8.0+) | Целевая версия СУБД |
-| `mongosh` | 2.0+ | Современная оболочка для административных скриптов |
+| Python 3 | 3.9+ | Модули Ansible работают через Python на целевом хосте |
+| `pymongo` | 4.9+ | Python-драйвер для MongoDB (полная совместимость с MongoDB 8.0) |
+| MongoDB Server | 8.0+ | Целевая версия СУБД |
+| `mongosh` | 2.x | Современная оболочка для административных скриптов |
 | Права `sudo` | Настроен `NOPASSWD` | Выполнение задач с `become: true` |
 | SSH-доступ | Настроен и протестирован | Удаленное управление через Ansible |
 | Файловая система | XFS (рекомендуется) | WiredTiger работает эффективнее с XFS |
@@ -68,15 +74,18 @@ ansible-galaxy collection install community.mongodb
 # Debian/Ubuntu
 python3 -c "import pymongo; print(f'pymongo {pymongo.version}')" 2>/dev/null || echo "pymongo NOT installed"
 
+# RHEL/Rocky
+python3 -c "import pymongo; print(f'pymongo {pymongo.version}')" 2>/dev/null || echo "pymongo NOT installed"
+
 # Проверка mongosh
 mongosh --version 2>/dev/null || echo "mongosh NOT installed"
 ```
 
 ### Архитектура и роли узлов
 
-1.  **Primary:** Единственный узел, принимающий операции записи.
-2.  **Secondary:** Узлы, копирующие данные с Primary. Могут участвовать в выборах нового лидера.
-3.  **Arbiter:** Узел, который участвует только в голосовании и не хранит данные (используется для достижения нечетного количества голосующих узлов).
+1. **Primary:** Единственный узел, принимающий операции записи.
+2. **Secondary:** Узлы, копирующие данные с Primary. Могут участвовать в выборах нового лидера.
+3. **Arbiter:** Узел, который участвует только в голосовании и не хранит данные (используется для достижения нечетного количества голосующих узлов).
 
 ### Принципы безопасности и идемпотентности
 
@@ -84,13 +93,11 @@ mongosh --version 2>/dev/null || echo "mongosh NOT installed"
 - **Тюнинг системы**: Для работы MongoDB 8.0+ через Ansible необходимо обеспечить отключение **Transparent Huge Pages (THP)** (с персистентным сохранением через systemd) и установку лимитов `ulimit` (не менее 64000).
 - **Секреты**: Содержимое `keyFile` и пароли пользователей должны храниться исключительно в **[Ansible Vault](../Vault/basics.md)**.
 
----
-
 ## Практические сценарии
 
 ### Сценарий 1: Полный цикл развертывания кластера MongoDB 8.0
 
-Плейбук включает настройку репозиториев, установку, системную оптимизацию и инициализацию репликации.
+Плейбук включает настройку репозиториев, установку, системную оптимизацию и инициализацию репликации для Debian/Ubuntu и RHEL/Rocky.
 
 #### Play 1: Подготовка узлов
 
@@ -107,24 +114,54 @@ mongosh --version 2>/dev/null || echo "mongosh NOT installed"
       61626364656667686970...
 
   tasks:
-    - name: Импорт GPG-ключа MongoDB
-      ansible.builtin.apt_key:
+    - name: Загрузка GPG-ключа MongoDB (Debian/Ubuntu)
+      ansible.builtin.get_url:
         url: "https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc"
-        state: present
-        keyring: /usr/share/keyrings/mongodb-server.gpg
+        dest: /usr/share/keyrings/mongodb-server.asc
+        mode: "0644"
+      when: ansible_facts['os_family'] == 'Debian'
 
-    - name: Добавление официального репозитория
+    - name: Добавление официального репозитория (Debian/Ubuntu)
       ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/mongodb-server.gpg] https://repo.mongodb.org/apt/ubuntu {{ ansible_facts['distribution_release'] }}/mongodb-org/{{ mongodb_version }} multiverse"
+        repo: "deb [signed-by=/usr/share/keyrings/mongodb-server.asc] https://repo.mongodb.org/apt/ubuntu {{ ansible_facts['distribution_release'] }}/mongodb-org/{{ mongodb_version }} multiverse"
         state: present
+      when: ansible_facts['os_family'] == 'Debian'
 
-    - name: Установка пакетов MongoDB и Python-драйверов
+    - name: Импорт GPG-ключа MongoDB (RHEL/Rocky)
+      ansible.builtin.rpm_key:
+        state: present
+        key: https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Добавление официального репозитория (RHEL/Rocky)
+      ansible.builtin.copy:
+        content: |
+          [mongodb-org-{{ mongodb_version }}]
+          name=MongoDB Repository
+          baseurl=https://repo.mongodb.org/yum/redhat/$releasever/mongodb-org/{{ mongodb_version }}/x86_64/
+          gpgcheck=1
+          enabled=1
+          gpgkey=https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc
+        dest: /etc/yum.repos.d/mongodb-org-{{ mongodb_version }}.repo
+        mode: '0644'
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Установка пакетов MongoDB и Python-драйверов (Debian/Ubuntu)
       ansible.builtin.package:
         name:
           - mongodb-org
           - python3-pymongo
         state: present
         update_cache: yes
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Установка пакетов MongoDB и Python-драйверов (RHEL/Rocky)
+      ansible.builtin.package:
+        name:
+          - mongodb-org
+          - python3-pymongo
+        state: present
+      when: ansible_facts['os_family'] == 'RedHat'
 
     - name: Отключение Transparent Huge Pages (THP)
       ansible.builtin.shell: |
@@ -274,42 +311,6 @@ replication:
   replSetName: "{{ mongodb_replset_name }}"
 ```
 
-**Валидация (ожидаемый результат):**
-
-После выполнения плейбука проверьте корректность развертывания:
-
-```bash
-# Проверка статуса Replica Set
-mongosh --eval "rs.status().ok"
-# → 1
-
-# Проверка участников кластера
-mongosh --eval "rs.status().members.forEach(function(m) { print(m.name + ' - ' + m.stateStr) })"
-# → mongo1:27017 - PRIMARY
-# → mongo2:27017 - SECONDARY
-# → mongo3:27017 - SECONDARY
-
-# Проверка включения авторизации
-mongosh --eval "db.getAdminCmd({getParameter: 1, authenticationMechanisms: 1})"
-# → { "authenticationMechanisms" : [ "SCRAM-SHA-256" ] }
-
-# Проверка создания пользователя admin
-mongosh -u admin -p --authenticationDatabase admin --eval "db.getUser('admin')"
-# → { "user" : "admin", "roles" : [ { "role" : "root", "db" : "admin" } ] }
-
-# Проверка отключения THP
-cat /sys/kernel/mm/transparent_hugepage/enabled
-# → [always] madvise never  (never выделен квадратными скобками)
-
-# Проверка лимитов ulimit
-sudo -u mongodb bash -c "ulimit -n"
-# → 64000
-
-# Идемпотентность: повторный запуск не должен показать changes
-ansible-playbook playbook.yml --diff
-# → В идеале: 0 changed
-```
-
 ### Сценарий 2: Настройка TLS/SSL для защиты трафика
 
 Обязательный шаг для обеспечения безопасности в 2026 году. TLS 1.3 обеспечивает минимальные задержки при рукопожатии.
@@ -375,7 +376,111 @@ mongosh --tls --tlsCertificateKeyFile /etc/ssl/client.pem --tlsCAFile /etc/ssl/c
 # → Подключение успешно
 ```
 
-### Сценарий 3: Настройка брандмауэра (Firewall)
+### Сценарий 3: Автоматизация резервного копирования
+
+Регулярные бэкапы через `mongodump` с ротацией и хранением в локальном хранилище или сетевом NAS.
+
+```yaml
+- name: Автоматизация резервного копирования MongoDB
+  hosts: mongo_nodes
+  become: true
+  vars:
+    backup_dir: /opt/mongodb_backups
+    retention_days: 7
+    vault_mongodb_backup_user: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      ...
+    vault_mongodb_backup_pass: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      ...
+
+  tasks:
+    - name: Установка пакета mongodb-database-tools
+      ansible.builtin.package:
+        name:
+          - mongodb-database-tools
+        state: present
+
+    - name: Создание директории для бэкапов
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: '0750'
+
+    - name: Создание пользователя для бэкапов
+      community.mongodb.mongodb_user:
+        database: admin
+        name: backup_user
+        password: "{{ vault_mongodb_backup_pass }}"
+        roles:
+          - { db: "admin", role: "backup" }
+          - { db: "admin", role: "readAnyDatabase" }
+        state: present
+      no_log: true
+
+    - name: Деплой скрипта бэкапа
+      ansible.builtin.template:
+        src: templates/mongodb_backup.sh.j2
+        dest: /usr/local/bin/mongodb_backup.sh
+        owner: root
+        group: root
+        mode: '0750'
+      notify: Reload Systemd Timers
+
+    - name: Включение systemd-таймера для ежедневного бэкапа
+      ansible.builtin.template:
+        src: templates/mongodb_backup.timer.j2
+        dest: /etc/systemd/system/mongodb-backup.timer
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload Systemd Timers
+
+    - name: Включение systemd-сервиса бэкапа
+      ansible.builtin.template:
+        src: templates/mongodb_backup.service.j2
+        dest: /etc/systemd/system/mongodb-backup.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload Systemd Timers
+
+    - name: Запуск и включение таймера бэкапа
+      ansible.builtin.service:
+        name: mongodb-backup.timer
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Reload Systemd Timers
+      ansible.builtin.systemd:
+        daemon_reload: yes
+```
+
+**Пример шаблона `templates/mongodb_backup.sh.j2`:**
+```bash
+#!/bin/bash
+set -euo pipefail
+
+BACKUP_DIR="{{ backup_dir }}"
+RETENTION_DAYS="{{ retention_days }}"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="{{ backup_dir }}/mongodb_backup_${DATE}.archive"
+
+/usr/bin/mongodump \
+  --uri="mongodb://{{ vault_mongodb_backup_user }}:{{ vault_mongodb_backup_pass }}@localhost:27017/admin?replicaSet={{ mongodb_replset_name }}" \
+  --archive="$BACKUP_FILE" \
+  --gzip
+
+# Ротация старых бэкапов
+find "$BACKUP_DIR" -name "mongodb_backup_*.archive" -mtime +$RETENTION_DAYS -delete
+
+echo "Backup completed: $BACKUP_FILE"
+```
+
+### Сценарий 4: Настройка брандмауэра (Firewall)
 
 ```yaml
 - name: Настройка Firewall для MongoDB
@@ -418,13 +523,9 @@ mongosh --host mongo1 --port 27017 --eval "db.runCommand({ping: 1})"
 # → { "ok" : 1 }
 ```
 
----
+### Структура проекта и инвентарь
 
-## Запуск и структура проекта
-
-### Пример инвентаря (inventory)
-
-**Файл `inventory.ini`:**
+**Пример инвентаря (`inventory.ini`):**
 ```ini
 [mongo_nodes]
 mongo1 ansible_host=10.0.5.20 ansible_user=deploy
@@ -449,8 +550,15 @@ mongodb-automation/
 │   └── default.yml        # Обычные переменные
 ├── handlers/
 │   └── main.yml           # Handlers (Restart Mongodb, Reload Systemd)
-└── templates/
-    └── mongod.conf.j2     # Шаблон конфигурации MongoDB
+├── templates/
+│   ├── mongod.conf.j2     # Шаблон конфигурации MongoDB
+│   ├── mongodb_backup.sh.j2
+│   ├── mongodb_backup.service.j2
+│   └── mongodb_backup.timer.j2
+└── files/
+    └── certs/
+        ├── ca.pem
+        └── mongo1.pem
 ```
 
 **Создание зашифрованных переменных:**
@@ -460,12 +568,31 @@ ansible-vault create vars/vault.yml
 # → Содержимое:
 #   vault_mongodb_keyfile: "MIIB... (содержимое keyFile)"
 #   vault_mongodb_admin_pass: "StrongAdmin2026!"
+#   vault_mongodb_backup_user: "backup_user"
+#   vault_mongodb_backup_pass: "BackupPass2026!"
 
 # Шифрование отдельной строки (для вставки в YAML)
 ansible-vault encrypt_string 'SuperSecretKeyFileContent' --name 'vault_mongodb_keyfile'
 ```
 
-### Команды запуска
+### Чек-лист валидации после развертывания
+
+| Проверка | Команда | Ожидаемый результат |
+|---|---|---|
+| Служба запущена | `systemctl status mongod` | `active (running)` |
+| Порт слушается | `ss -tlnp \| grep 27017` | Процесс `mongod` на `0.0.0.0:27017` |
+| Replica Set инициализирован | `mongosh --eval "rs.status().ok"` | `1` |
+| Количество узлов | `mongosh --eval "rs.status().members.length"` | `3` (или заданное число) |
+| Primary определен | `mongosh --eval "rs.status().members.find(m=>m.stateStr=='PRIMARY').name"` | Имя основного узла |
+| Авторизация включена | `mongosh -u admin -p --authenticationDatabase admin --eval "1"` | Подключение успешно |
+| keyFile корректен | `stat -c %a /var/lib/mongodb/keyfile` | `400` |
+| THP отключен | `cat /sys/kernel/mm/transparent_hugepage/enabled` | `[never]` |
+| TLS активен (если настроен) | `mongosh --eval "db.adminCommand({getParameter:1,sslMode:1})"` | `requireSSL` |
+| Резервное копирование работает | `systemctl status mongodb-backup.timer` | `active (waiting)` |
+
+## Операции и команды
+
+### Команды запуска плейбуков
 
 ```bash
 # Полный запуск (с запросом пароля Vault)
@@ -489,21 +616,74 @@ ansible-playbook -i inventory.ini playbook.yml --limit "mongo_primary" --ask-vau
 ansible-playbook -i inventory.ini playbook.yml --limit "mongo1" --ask-vault-pass
 ```
 
-### Чек-лист валидации после развертывания
+### Основные параметры модулей
 
-| Проверка | Команда | Ожидаемый результат |
+| Модуль | Параметр | Значение | Назначение |
+|---|---|---|---|
+| `community.mongodb.mongodb_replicaset` | `replica_set` | Имя RS (например, `rs0`) | Идентификатор реплика-сета |
+| `community.mongodb.mongodb_replicaset` | `members` | Список хостов | Узлы кластера |
+| `community.mongodb.mongodb_replicaset` | `login_host` | `localhost` | Хост для подключения |
+| `community.mongodb.mongodb_user` | `database` | `admin` | БД для создания пользователя |
+| `community.mongodb.mongodb_user` | `name` | Имя пользователя | Логин |
+| `community.mongodb.mongodb_user` | `password` | Пароль из Vault | Пароль пользователя |
+| `community.mongodb.mongodb_user` | `roles` | Список ролей | Назначенные роли |
+
+### mongosh: основные команды
+
+```bash
+# Проверка статуса Replica Set
+mongosh --eval "rs.status().ok"
+# → 1
+
+# Проверка участников кластера
+mongosh --eval "rs.status().members.forEach(function(m) { print(m.name + ' - ' + m.stateStr) })"
+# → mongo1:27017 - PRIMARY
+# → mongo2:27017 - SECONDARY
+# → mongo3:27017 - SECONDARY
+
+# Проверка включения авторизации
+mongosh --eval "db.getAdminCmd({getParameter: 1, authenticationMechanisms: 1})"
+# → { "authenticationMechanisms" : [ "SCRAM-SHA-256" ] }
+
+# Проверка создания пользователя admin
+mongosh -u admin -p --authenticationDatabase admin --eval "db.getUser('admin')"
+# → { "user" : "admin", "roles" : [ { "role" : "root", "db" : "admin" } ] }
+
+# Проверка статуса бэкапа
+systemctl status mongodb-backup.timer
+# → Active: active (waiting) since ...
+```
+
+## Устранение неисправностей
+
+### Типичные ошибки
+
+| Ошибка | Причина | Решение |
 |---|---|---|
-| Служба запущена | `systemctl status mongod` | `active (running)` |
-| Порт слушается | `ss -tlnp \| grep 27017` | Процесс `mongod` на `0.0.0.0:27017` |
-| Replica Set инициализирован | `mongosh --eval "rs.status().ok"` | `1` |
-| Количество узлов | `mongosh --eval "rs.status().members.length"` | `3` (или заданное число) |
-| Primary определен | `mongosh --eval "rs.status().members.find(m=>m.stateStr=='PRIMARY').name"` | Имя основного узла |
-| Авторизация включена | `mongosh -u admin -p --authenticationDatabase admin --eval "1"` | Подключение успешно |
-| keyFile корректен | `stat -c %a /var/lib/mongodb/keyfile` | `400` |
-| THP отключен | `cat /sys/kernel/mm/transparent_hugepage/enabled` | `[never]` |
-| TLS активен (если настроен) | `mongosh --eval "db.adminCommand({getParameter:1,sslMode:1})"` | `requireSSL` |
+| `keyFile precision too open` | Права на файл превышают `0400`. | Убедитесь, что `mode: '0400'` и владелец `mongodb`. |
+| `mongosh not found` | Используется устаревшая версия MongoDB. | Обновите MongoDB до 8.0+. Shell `mongo` удален. |
+| `Replica set is not yet initialized` | Попытка создать пользователя до `rs.initiate()`. | Соблюдайте порядок задач в сценарии 1. |
+| `Authentication failed` | Несовпадение `keyFile` на разных узлах. | Используйте одну переменную из Vault для всех узлов. |
+| `No such file or directory: /var/lib/mongodb/keyfile` | MongoDB не может прочитать keyFile (права или путь). | Проверьте `ls -la /var/lib/mongodb/keyfile` и владельца. |
+| `pymongo.errors.OperationFailure: not authorized` | Авторизация включена до создания пользователя `admin`. | Включайте `security.authorization` только после Play 2. |
+| `Reconfiguration rejected: version number error` | Параллельная инициализация на нескольких узлах. | Используйте `run_once: true` и `limit: mongo_primary`. |
+| `Timed out waiting for port 27017` | Служба mongod не запустилась после деплоя конфигурации. | Проверьте `journalctl -u mongod -n 50` на наличие ошибок. |
+| `SSL: CERTIFICATE_VERIFY_FAILED` | Невалидный или просроченный сертификат TLS. | Проверьте срок действия: `openssl x509 -in cert.pem -noout -dates`. |
+| `Connection refused` | Firewall блокирует порт 27017. | Проверьте `ufw status` или `firewall-cmd --list-all`. |
+| `Illegal instruction (core dumped)` | CPU не поддерживает AVX. | Перейдите на старое оборудование или используйте MongoDB < 5.0 (не рекомендуется). |
+| `WiredTiger error (13)` | Проблемы с правами на `/var/lib/mongodb`. | `sudo chown -R mongodb:mongodb /var/lib/mongodb`. |
 
----
+## Рекомендации
+
+### Безопасность и лучшие практики
+
+- **Write Concern**: Для критических данных используйте `w: majority` и `j: true`.
+- **Ansible Vault**: Никогда не оставляйте `vault_mongodb_keyfile` в открытом виде. Используйте `ansible-vault encrypt_string` для шифрования.
+- **Принцип минимальных привилегий**: Приложениям выдавайте роль `readWrite` только в рабочей БД, не в `admin`.
+- **Резервное копирование**: Настройте автоматические бэкапы через `mongodump` с ротацией и проверяйте целостность восстановления.
+- **no_log**: Добавляйте `no_log: true` ко всем задачам, передающим пароли или keyFile — это предотвращает утечку секретов в логах Ansible.
+- **Логирование**: Настройте `systemLog.destination: file` и ротацию логов для аудита действий.
+- **Мониторинг**: Разверните `mongodb_exporter` для Prometheus и настройте алерты наReplica Lag, Oplog Window и доступность Primary.
 
 ## Дополнительная информация
 
@@ -515,12 +695,10 @@ ansible-playbook -i inventory.ini playbook.yml --limit "mongo1" --ask-vault-pass
 - name: Работа с MongoDB
   hosts: all
   module_defaults:
-    community.mongodb.mongodb_user:
+    group/community.mongodb:
       login_host: localhost
       login_user: admin
       login_password: "{{ vault_mongodb_admin_pass }}"
-    community.mongodb.mongodb_replicaset:
-      login_host: localhost
   tasks:
     - name: Создание пользователя приложения
       community.mongodb.mongodb_user:
@@ -546,21 +724,6 @@ ansible-playbook -i inventory.ini playbook.yml --limit "mongo1" --ask-vault-pass
     # ...
 ```
 
-### Типичные ошибки
-
-| Ошибка | Причина | Решение |
-|---|---|---|
-| `keyFile precision too open` | Права на файл превышают `0400`. | Убедитесь, что `mode: '0400'` и владелец `mongodb`. |
-| `mongosh not found` | Используется устаревшая версия MongoDB. | Обновите MongoDB до 8.0+. Shell `mongo` удален. |
-| `Replica set is not yet initialized` | Попытка создать пользователя до `rs.initiate()`. | Соблюдайте порядок задач в сценарии 1. |
-| `Authentication failed` | Несовпадение `keyFile` на разных узлах. | Используйте одну переменную из Vault для всех узлов. |
-| `No such file or directory: /var/lib/mongodb/keyfile` | MongoDB не может прочитать keyFile (права или путь). | Проверьте `ls -la /var/lib/mongodb/keyfile` и владельца. |
-| `pymongo.errors.OperationFailure: not authorized` | Авторизация включена до создания пользователя `admin`. | Включайте `security.authorization` только после Play 2. |
-| `Reconfiguration rejected: version number error` | Параллельная инициализация на нескольких узлах. | Используйте `run_once: true` и `limit: mongo_primary`. |
-| `Timed out waiting for port 27017` | Служба mongod не запустилась после деплоя конфигурации. | Проверьте `journalctl -u mongod -n 50` на наличие ошибок. |
-| `SSL: CERTIFICATE_VERIFY_FAILED` | Невалидный или просроченный сертификат TLS. | Проверьте срок действия: `openssl x509 -in cert.pem -noout -dates`. |
-| `Connection refused` | Firewall блокирует порт 27017. | Проверьте `ufw status` или `firewall-cmd --list-all`. |
-
 ### Краевые случаи (Edge Cases)
 
 **1. Первый запуск с существующими данными:**
@@ -576,19 +739,18 @@ ansible-playbook -i inventory.ini playbook.yml --limit "mongo1" --ask-vault-pass
 Повторный запуск модуля `mongodb_replicaset` с теми же параметрами не вызывает ошибок — модуль проверяет текущее состояние перед `rs.reconfig()`. Однако при изменении состава `members` (добавлении/удалении узлов) конфигурация будет обновлена.
 
 **5. Отличия MongoDB Community vs Enterprise:**
-Сценарии в этом файле适用于 Community Edition. Enterprise добавляет LDAP/Kerberos, auditing и nativet TLS — эти функции требуют дополнительных параметров модулей.
+Сценарии в этом файле относятся к Community Edition. Enterprise добавляет LDAP/Kerberos, auditing и native TLS — эти функции требуют дополнительных параметров модулей.
 
 **6. Восстановление после сбоя кластера:**
 Если все узлы Replica Set недоступны одновременно, после восстановления необходимо вручную инициировать `rs.initiate({force: true})` на узле с наиболее актуальными данными. Ansible-плейбук не обрабатывает этот edge case автоматически.
 
-### Безопасность и лучшие практики
+### Кроссплатформенные замечания
 
-- **Write Concern**: Для критических данных используйте `w: majority` и `j: true`.
-- **Ansible Vault**: Никогда не оставляйте `vault_mongodb_keyfile` в открытом виде. Используйте `ansible-vault encrypt_string` для шифрования.
-- **Принцип минимальных привилегий**: Приложениям выдавайте роль `readWrite` только в рабочей БД, не в `admin`.
-- **Резервное копирование**: Рекомендуется настройка `mongodb_exporter` для Prometheus и регулярный `mongodump`.
-- **no_log**: Добавляйте `no_log: true` ко всем задачам, передающим пароли или keyFile — это предотвращает утечку секретов в логах Ansible.
-- **Логирование**: Настройте `systemLog.destination: file` и ротацию логов для аудита действий.
+- Название пакета на RHEL/Rocky — `mongodb-org`. Репозиторий настраивается через `/etc/yum.repos.d/`.
+- Путь к конфигурационному файлу (`mongod.conf`) одинаков на Debian/Ubuntu и RHEL/Rocky (`/etc/mongod.conf`).
+- На RHEL/Rocky пакет Python-библиотеки называется `python3-pymongo`.
+- На RHEL/Rocky настройте контексты SELinux для `/var/lib/mongodb` и `/var/run/mysqld/` (если используется).
+- На RHEL/Rocky для установки `mongosh` используйте пакет `mongodb-mongosh-shared-openssl3` для OpenSSL 3 или `mongodb-mongosh-shared-openssl11` для OpenSSL 1.1.
 
 ## Смотрите также
 

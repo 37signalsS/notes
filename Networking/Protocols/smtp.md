@@ -764,3 +764,4 @@ sudo systemctl restart postfix
 - [TLS/SSL](./tls.md) — STARTTLS, Implicit TLS, сертификаты
 - [TCP](./TCP/overview.md) — транспортная основа SMTP
 - [OSI/TCP-IP модель](../OSI_TCP_IP_Model/osi_model.md) — прикладной уровень
+- [Ограничения хостинг-провайдеров на порты](../Concepts/provider_port_restrictions.md) — блокировка портов VPS/дедиков и альтернативные порты SMTP

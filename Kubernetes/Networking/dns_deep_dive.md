@@ -331,7 +331,183 @@ kubectl run dns-test --rm -it --image=busybox:1.37 -- nslookup external-database
 ```
 
 **ExternalDNS — автоматизация создания внешних записей:**
+
 ExternalDNS — отдельный контроллер, который синхронизирует сервисы/ингрессы Kubernetes с внешними DNS-провайдерами. CoreDNS управляет именами внутри кластера, ExternalDNS — снаружи.
+
+#### Статические записи vs ExternalDNS
+
+При выводе сервисов типа `LoadBalancer` наружу IP-адрес известен. Есть два способа сделать его доступным по имени:
+
+1.  **Ручная статическая A-запись:** В корпоративном DNS-сервере создается A-запись, указывающая на External IP сервиса.
+    - **Плюсы:** Простота, нет дополнительных зависимостей.
+    - **Минусы:** При удалении/пересоздании сервиса IP меняется, и запись становится невалидной. При большом количестве сервисов — рутинная работа, риск забыть удалить или обновить запись.
+
+2.  **ExternalDNS (автоматизация):** Контроллер следит за сервисами/ингрессами Kubernetes и автоматически создает/обновляет/удаляет записи во внешнем DNS-сервере.
+    - **Плюсы:** Нет ручной работы, IP всегда актуален.
+    - **Минусы:** Требуется развертывание дополнительного контроллера в кластере.
+
+#### Архитектура ExternalDNS
+
+ExternalDNS получает список сервисов/ингрессов из API Kubernetes, фильтрует их по аннотациям и обновляет записи во внешнем DNS-провайдере через соответствующий провайдерский драйвер.
+
+**Пример аннотации на сервисе:**
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: grafana.k8s.example.com
+spec:
+  type: LoadBalancer
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+```
+
+#### DNS-стратегия для Kubernetes: почему не CoreDNS
+
+CoreDNS является внутренним DNS-сервером кластера и **не предназначен** для обслуживания внешних пользователей:
+
+- **Назначение:** CoreDNS обеспечивает service discovery *внутри* кластера. Его основная задача — разрешение имен `<svc>.<ns>.svc.cluster.local`.
+- **Безопасность:** Делегирование внешней зоны на CoreDNS создает зависимость от работоспособности всего кластера. При проблемах внутри кластера внешнее преобразование имен перестает работать, что может парализовать корпоративную сеть.
+- **Управление:** Конфигурация зон в CoreDNS выполняется через ConfigMap и перезапуск деплоя. Для внешнего DNS это неудобно и небезопасно.
+- **Разделение ответственности:** Взрослые системы требуют отдельного внешнего DNS для внешних сервисов и отдельного внутреннего DNS для внутренних нужд.
+
+**Рекомендация:** Используйте выделенный корпоративный DNS-сервер (BIND, PowerDNS, Microsoft DNS) для внешних записей. CoreDNS используйте только для внутреннего service discovery кластера.
+
+#### Split-horizon DNS (расщепление зон)
+
+Split-horizon DNS — техника, при которой DNS-сервер возвращает разные ответы в зависимости от источника запроса:
+
+- **Изнутри корпоративной сети:** Возвращаются внутренние IP-адреса (например, `10.0.0.0/8`).
+- **Из интернета:** Возвращаются публичные IP-адреса или запрос блокируется.
+
+**Зачем нужно для Kubernetes:**
+- Внешние сервисы кластера (`grafana.k8s.example.com`) не должны раскрывать внутренние IP-адреса и структуру сети злоумышленникам.
+- Внутренние сервисы кластера не должны быть доступны извне по тем же именам.
+
+BIND поддерживает split-horizon через механизм **views**:
+```bash
+# В named.conf
+view "internal" {
+  match-clients { 10.0.0.0/8; 192.168.0.0/16; };
+  zone "k8s.example.com" {
+    type master;
+    file "k8s.internal.db";
+  };
+};
+
+view "external" {
+  match-clients { any; };
+  zone "k8s.example.com" {
+    type master;
+    file "k8s.external.db";
+  };
+};
+```
+
+#### Практика: ExternalDNS с BIND9 через RFC 2136
+
+ExternalDNS поддерживает обновление DNS-записей через протокол **RFC 2136** (Dynamic DNS Updates) без необходимости развертывать полноценный облачный провайдер. Это подходит для корпоративных сред с BIND9.
+
+**Предварительные требования:**
+- BIND 9.8+ с поддержкой TSIG (Transaction SIGnature) для аутентификации.
+- В зоне, которую будет изменять ExternalDNS, должны быть разрешены динамические обновления (allow-update) для ключевого клиента.
+
+**Шаг 1: Создание TSIG-ключа на стороне BIND9**
+
+```bash
+# Генерация ключа
+dnssec-keygen -a HMAC-SHA512 -b 512 -n HOST externaldns
+```
+
+Это создаст файлы `Kexternaldns.+165+00000.key` и `Kexternaldns.+165+00000.private`. Извлеките секрет:
+```bash
+# В private-файле находится Base64-секрет
+cat Kexternaldns.+165+00000.private | grep -oP '"[^"]*"' | tr -d '"'
+# → XXXXXXXXXXXXXX...
+```
+
+**Шаг 2: Конфигурация BIND9 (`named.conf.options` или `named.conf.local`)**
+
+```bash
+key "externaldns-key" {
+  algorithm hmac-sha512;
+  secret "XXXXXXXXXXXXXX...";
+};
+
+zone "k8s.example.com" {
+  type master;
+  file "/etc/bind/zones/k8s.example.com.db";
+  allow-update { key "externaldns-key"; };
+  also-notify { 192.168.1.10; };  # IP вторичного DNS, если есть
+};
+```
+
+**Важно:** `allow-update` разрешает динамические обновления *только* для указанного ключа. Никакие другие источники не смогут изменять зону.
+
+**Шаг 3: Конфигурация ExternalDNS (Helm values)**
+
+```yaml
+# values.yaml для ExternalDNS с BIND9 + RFC2136
+provider:
+  name: rfc2136
+env:
+  - name: EXTERNAL_DNS_RFC2136_TSIG_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: external-dns-bind9
+        key: tsig-secret
+rfc2136:
+  host: 192.168.1.5
+  port: 53
+  zone: k8s.example.com
+  tsigSecret: "XXXXXXXXXXXXXX..."
+  tsigKeyname: externaldns-key
+  tsigSecretAlg: hmac-sha512
+```
+
+**Шаг 4: Проверка работы**
+
+```bash
+# Создание сервиса с аннотацией
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: grafana.k8s.example.com
+spec:
+  type: LoadBalancer
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+EOF
+
+# Проверка логов ExternalDNS
+kubectl logs -n kube-system -l app=external-dns --tail=50
+# → "Adding record grafana.k8s.example.com -> 192.168.10.180"
+
+# Проверка DNS-записи
+dig @192.168.1.5 grafana.k8s.example.com A
+# → grafana.k8s.example.com. 300 IN A 192.168.10.180
+```
+
+#### Best Practices для DNS в Kubernetes
+
+1.  **Выделенный поддомен для Kubernetes:** Используйте отдельную зону (например, `k8s.corp.example.com`) для всех сервисов кластера. Это упрощает управление и позволяет легко отличить записи, созданные ExternalDNS, от статических записей.
+2.  **Split-horizon:** Настройте разные ответы для внутренних и внешних клиентов. Внешние клиенты не должны видеть внутренние IP-адреса подов.
+3.  **TSIG для безопасности:** Всегда используйте TSIG-ключи для динамических обновлений. Никогда не разрешайте открытые `allow-update { any; };` на корпоративном DNS.
+4.  **TTL:** Устанавливайте адекватный TTL (например, 300 секунд) для записей, создаваемых ExternalDNS. Это позволяет быстро переключать трафик при изменении IP.
+5.  **Не делегируйте корневые домены на CoreDNS:** CoreDNS предназначен только для внутреннего service discovery. Для внешних имен используйте корпоративный DNS.
 
 ### Оптимизация производительности DNS
 

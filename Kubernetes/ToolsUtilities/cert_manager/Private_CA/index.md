@@ -55,18 +55,35 @@ graph TD
 
 **Рекомендации по хранению:**
 
-| Метод | Уровень безопасности | Применение |
-| :--- | :--- | :--- |
-| **HSM (Hardware Security Module)** | Максимальный | Production, compliance (PCI DSS, SOC 2) |
-| **Оффлайн-машина** | Высокий | Корпоративные среды без HSM |
-| **Kubernetes Secret + RBAC** | Средний | Development, small-scale production |
-| **etcd (без шифрования)** | Низкий | Только dev/test, Never production |
+| Метод | Уровень безопасности | Применение | Интеграция с cert-manager |
+| :--- | :--- | :--- | :--- |
+| **HSM (Hardware Security Module)** | Максимальный | Production, compliance (PCI DSS, SOC 2) | Vault PKI + HSM backend |
+| **TPM (Trusted Platform Module)** | Высокий | Серверы с TPM 2.0 | Vault transit engine + TPM |
+| **Оффлайн-машина** | Высокий | Корпоративные среды без HSM | Ручной выпуск Intermediate CA |
+| **Kubernetes Secret + RBAC** | Средний | Development, small-scale production | Нативный CA Issuer |
+| **etcd (без шифрования)** | Низкий | Только dev/test, Never production | Не рекомендуется |
+
+#### HSM (Hardware Security Module)
+
+HSM — аппаратное устройство для хранения и использования криптографических ключей. Приватный ключ никогда не покидает устройство — все операции подписи выполняются внутри HSM.
+
+**Интеграция с cert-manager через Vault PKI:**
+
+```text
+cert-manager → Vault PKI Engine → Vault HSM Backend → Физический HSM (YubiHSM, CloudHSM, Thales)
+```
+
+- **CloudHSM (AWS):** Vault подключается через PKCS#11 interface.
+- **Azure Dedicated HSM:** Vault использует Managed HSM backend.
+- **Google Cloud HSM:** Vault подключается через Cloud KMS с HSM protection level.
+- **YubiHSM 2:** Локальный HSM для небольших сред, поддержка PKCS#11.
 
 **Практические меры:**
 - Root CA Secret должен быть доступен ТОЛЬКО ServiceAccount cert-manager.
 - Ограничьте `resourceNames` для Secret через RBAC.
 - Настройте алертинг на любой доступ к Secret с корневым ключом.
 - Не храните `ca.key` в GitOps-репозиториях — используйте External Secrets Operator или Vault.
+- Для compliance (PCI DSS, SOC 2) используйте HSM для хранения Root CA ключа.
 
 ### Выбор алгоритма ключа (Decision Guide)
 
@@ -191,9 +208,11 @@ spec:
 | Инструмент | Интеграция | Назначение |
 | :--- | :--- | :--- |
 | **HashiCorp Vault** | Issuer (Vault PKI) | Продвинутое управление ключами, HSM, audit |
+| **Step-CA (Smallstep)** | Issuer (ACME) | Легковесный CA для air-gapped и простых сред |
 | **SPIFFE/SPIRE** | Сервисная Identity | mTLS для service mesh (Istio, Linkerd) |
 | **External Secrets Operator** | Secret Management | Синхронизация CA из внешних хранилищ |
 | **Prometheus/Grafana** | Мониторинг | Алертинг на истечение сертификатов |
+| **Service Mesh (Istio/Linkerd)** | External CA | Единая PKI для mesh и приложений |
 
 ### Частые ошибки и решения
 
@@ -211,4 +230,10 @@ spec:
 
 -   **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов (Issuer, Certificate).
 -   **[Cert-manager: Администрирование](../Administration/index.md)** — мониторинг и общие операции.
+-   **[RBAC-примеры](../Administration/rbac_examples.md)** — Role/ClusterRole для CA-секретов и issuer management.
+-   **[Cert-manager: Интеграция с Vault PKI](./vault_integration.md)** — настройка Vault как CA для cert-manager.
+-   **[Cert-manager: Интеграция с Step-CA](./step_ca_integration.md)** — легковесная альтернатива Vault.
+-   **[Интеграция с Service Mesh (Istio/Linkerd)](./service_mesh_integration.md)** — cert-manager как CA для service mesh.
+-   **[Мультикластерный PKI](./multi_cluster_pki.md)** — управление доверием между кластерами.
+-   **[Disaster Recovery Runbook](./disaster_recovery_runbook.md)** — восстановление PKI после инцидентов.
 -   **[PKI — обзор и концепции](../../../../Security/Concepts/pki_overview.md)** — теоретическая база по иерархиям доверия.

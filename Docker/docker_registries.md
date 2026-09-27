@@ -96,6 +96,8 @@ helm install my-app oci://registry.example.com/charts/my-chart --version 0.1.0
 | :--- | :--- | :--- | :--- |
 | **Docker Hub** | Полная | Любые OCI | Интеграция Docker Scout, официальные образы |
 | **Harbor** | Полная (с v2.10+) | Любые OCI | RBAC, Сканирование Trivy, Репликация, GC |
+| **Sonatype Nexus** | Полная | Любые OCI | Универсальный реестр + управление зависимостями (Maven, npm, PyPI). Подходит для гибридных сред, где нужен единый артефактори |
+| **JFrog Artifactory** | Полная | Любые OCI | Кроссплатформенный артефактори с поддержкой Docker, Helm, Maven, npm, PyPI. Активно используется в enterprise-средах с требованиями к comply-сборкам и гео-репликации |
 | **GitHub (GHCR)** | Полная | Любые OCI | Бесшовная интеграция с GitHub Actions |
 | **Amazon ECR** | Полная | Любые OCI | Интеграция с IAM, AWS Inspector |
 | **Zot** | Полная | Любые OCI | Сверхлегкий, фокус на производительности OCI 1.1 |

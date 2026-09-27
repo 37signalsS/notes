@@ -370,3 +370,4 @@ sudo dracut -H --no-host-only --no-early-microcode /boot/initrd.img $(uname -r)
 * [Диагностика загрузки](./boot_troubleshooting.md) — решение проблем при невозможности старта.
 * [Таймеры systemd](./timers.md) — отладка расписаний и планировщика.
 * [Журналирование (journald)](../../SystemAdministration/Logging/journald.md) — анализ логов выполнения.
+* [DNS-резолвер (systemd-resolved)](./systemd_resolved.md) — влияние DNS на время загрузки.

@@ -41,8 +41,15 @@ Cert-manager реализует классическую архитектуру 
 - **[Интеграция с Ingress](./ingress/overview.md)** — использование cert-manager с Ingress-контроллерами.
 - **[Gateway API и TLS](./gateway_api/definitions_and_concepts.md)** — настройка сертификатов для ресурсов Gateway.
 - **[Приватный CA (Private PKI)](./Private_CA/index.md)** — управление внутренними иерархиями доверия.
+- **[Интеграция с Vault PKI](./Private_CA/vault_integration.md)** — настройка Vault как CA для cert-manager.
 - **[Администрирование и диагностика](./Administration/troubleshooting.md)** — отладка и эксплуатация системы.
 - **[Операции: мониторинг и бэкап](./Administration/operations.md)** — эксплуатация в Production.
+- **[Обновление и миграция cert-manager](./Administration/upgrades_and_migration.md)** — апгрейд версий, breaking changes, rollback.
+- **[Масштабирование и производительность](./Administration/scaling_and_performance.md)** — tuning при 1000+ сертификатах, HPA, PDB.
+- **[RBAC-примеры](./Administration/rbac_examples.md)** — готовые Role/ClusterRole для типичных ролей.
+- **[Ephemeral/Preview-среды](./Administration/ephemeral_environments.md)** — автоматизация TLS для динамических preview деплоев.
+- **[GitOps интеграция (ArgoCD/Flux)](./Administration/gitops_integration.md)** — настройка GitOps с cert-manager.
+- **[Тестирование в CI/CD](./Administration/cicd_testing.md)** — валидация манифестов перед деплоем.
 - **[Предотвращение истечения SSL-сертификатов](../Operations/ssl_expiration_prevention.md)** — стратегия ротации на всех эшелонах кластера.
 
 ---

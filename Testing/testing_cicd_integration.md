@@ -6,7 +6,7 @@
 
 **Shift-left Testing (Сдвиг влево)** — перенос тестирования на самые ранние этапы разработки (IDE, Pre-commit), чтобы обнаруживать ошибки до того, как они попадут в общую ветку кода.
 
-**Shift-right Testing (Сдвиг вправо)** — тестирование в среде эксплуатации (Production) через Canary-деплои, Feature Toggles и синтетический мониторинг. Ключевой принцип — управляемый «радиус поражения» (blast radius): каждое приём в production должно быть малым и обратимым. Подробнее о канареечном развёртывании и метриках автогейтов: **[Canary мониторинг и гейтинг](../../CI-CD/Deployment_Strategies/canary_monitoring_and_gating.md)**.
+**Shift-right Testing (Сдвиг вправо)** — тестирование в среде эксплуатации (Production) через Canary-деплои, Feature Toggles и синтетический мониторинг. Ключевой принцип — управляемый «радиус поражения» (blast radius): каждое приём в production должно быть малым и обратимым. Подробнее о канареечном развёртывании и метриках автогейтов: **[Canary мониторинг и гейтинг](../CI-CD/Deployment_Strategies/canary_monitoring_and_gating.md)**.
 
 **Test Observability (Наблюдаемость тестов)** — сбор и анализ телеметрии (трейсы, логи, метрики) непосредственно из процесса выполнения тестов для глубокой диагностики причин сбоев.
 
@@ -219,7 +219,7 @@ performance-prometheus:
 ```
 
 **Рекомендации 2026:**
-- **Baseline:** Храните эталонные результаты в Git (LFS) для критических релизов или в выделенном S3-бакете.
+- **Baseline:** Храните эталонные результаты в Git (LFS) для критических релизов или в выделенном объектном хранилище (MinIO, NAS).
 - **Изоляция:** Используйте `dedicated` раннеры, чтобы избежать влияния соседних сборок на Latency.
 - **Quality Gates:** Начинайте с "мягких" порогов (`allow_failure: true`), переводя их в блокирующие только после стабилизации окружения.
 
@@ -278,29 +278,138 @@ Snapshot-тестирование интерфейсов (Visual Diffing) нео
 
 **Практическое руководство, настройка Docker и примеры пайплайнов:** **[Visual Regression в CI/CD](../CI-CD/Testing/visual-regression-cicd.md)**.
 
+### Пайплайн для GitHub Actions (матрица и параллелизм)
+
+GitHub Actions использует другой синтаксис, но принципы те же: эфемерные раннеры, артефакты, матрицы для параллелизма.
+
+```yaml
+# .github/workflows/test.yml
+name: Integration Tests
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [postgres, redis, kafka]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests for ${{ matrix.service }}
+        run: pytest tests/integration/${{ matrix.service }}/
+        env:
+          SERVICE: ${{ matrix.service }}
+```
+
+**Примечание:** `cache: 'pip'` в `actions/setup-python` автоматически кэширует зависимости между запусками. Для Docker-слоёв используйте `actions/cache` с ключом по `Dockerfile.hash`.
+
+### Управление секретами для интеграционных тестов
+
+Интеграционные тесты часто требуют реальные credentials (пароли БД, API-ключи). В CI секреты поступают через защищенные переменные окружения.
+
+**Паттерн 1: Переменные окружения (рекомендуется для Testcontainers)**
+
+Testcontainers автоматически подхватывает переменные окружения раннера. Вместо хардкода используйте переменные CI:
+
+```python
+postgres = PostgresContainer("postgres:16")
+postgres.with_env("POSTGRES_PASSWORD", os.environ["DB_PASSWORD"])
+postgres.start()
+```
+
+**Паттерн 2: Временные файлы (для legacy-приложений)**
+
+Если приложение читает секрет из файла, запишите переменную во временный файл на раннере и прокините через bind mount:
+
+```bash
+echo "$DB_PASSWORD" > /tmp/db_secret
+```
+
+**Паттерн 3: HashiCorp Vault (on-prem)**
+
+Для on-prem сред с Vault используйте динамическую выдачу секретов в пайплайне:
+
+```bash
+vault kv get -format=json secret/test/db-credentials | jq -r '.data' > /tmp/creds.json
+```
+
+### Шардирование и параллелизм тестов
+
+Помимо TIA (запуск только затронутых тестов), для ускорения CI используются:
+
+1. **Матричные сборки (Matrix Builds):** Один пайплайн запускает тесты параллельно на нескольких комбинациях (ОС, версия Python, тип БД).
+2. **pytest-xdist:** Распределение тестов внутри джоба по нескольким процессам. Учитывайте изоляцию: каждый worker должен использовать отдельный порт/БД.
+3. **pytest-shard:** Разделение набора тестов на `N` примерно равных частей по хешу имени теста. Полезно для параллельного запуска на разных раннерах.
+4. **Ограничение:** Параллельные контейнеры Testcontainers потребляют память. Настройте `TESTCONTAINERS_RYUK_DISABLED=true` только если CI сам очищает контейнеры, или ограничьте количество параллельных джобов через `concurrent` в `.gitlab-ci.yml` / `concurrency` в GitHub Actions.
+
+### Артефакты и управление результатами тестов
+
+Артефакты тестов — это не только логи, но и структурированные отчёты для пост-фактум анализа:
+
+```yaml
+# GitLab CI
+test:integration:
+  stage: test
+  script:
+    - pytest tests/ --junitxml=report.xml --cov=src --cov-report=xml:coverage.xml
+  artifacts:
+    when: always
+    paths:
+      - report.xml
+      - coverage.xml
+      - logs/
+    expire_in: 7 days
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+```
+
+**Практики:**
+- **Retention:** Храните артефакты минимум 7–14 дней для возможности пересборки baseline. Для релизных джоб — бессрочно или по политике хранения.
+- **Размер:** Исключайте `node_modules/`, `.git/`, `__pycache__/` из артефактов. Используйте `artifacts:exclude`.
+- **Доступ:** В GitLab Premium/Ultimate артефакты доступны через API для построения дашбордов стабильности.
+
+### Оптимизация стоимости CI для тестов
+
+Интеграционные тесты — самая ресурсоёмкая часть пайплайна. Подходы 2026:
+
+1. **Триггеры:** Запускайте интеграционные тесты только при изменениях в relevant-коде (TIA, path filters), а не на каждый коммит.
+2. **Runner-ы:** Используйте self-hosted runners с spot/preemptible инстансами для не-critical джоб. Резервируйте dedicated раннеры только для нагрузочного тестирования.
+3. **Кэширование:** Кэшируйте зависимости (`pip`, `npm`, `~/.m2`) и Docker-слои. Для Testcontainers предварительно загружайте базовые образы на раннер.
+4. **Пропуск дублирующих запусков:** В GitHub Actions используйте `concurrency` с `cancel-in-progress: true`. В GitLab CI — `interruptible: true`.
+5. **Сагрегированные запуски:** Ночные/периодические полные прогоны вместо запуска всего на каждый коммит.
+
 ### 4. Дополнительная информация
 
+#### Управление нестабильностью тестов (Flaky Tests)
 
-### Борьба с нестабильностью (AI-Driven Flaky Detection)
+Нестабильные тесты не должны блокировать релизы. Подходы к детекции, карантину, автоматическому retry и root cause analysis описаны в **[Управление нестабильными тестами (Flaky Tests)](../CI-CD/Testing/flaky_test_management.md)**.
 
-В 2026 году системы CI используют AI для автоматического управления Flaky-тестами:
-*   **Авто-карантин:** Если тест падает с ошибкой тайм-аута, но проходит при перезапуске, AI помечает его как "Flaky" и убирает из блокирующих ворот качества.
-*   **Root Cause Analysis:** Система сопоставляет логи теста с изменениями в инфраструктуре (например, обновление версии БД) и предлагает решение.
-*   **Self-healing:** Автоматическое исправление локаторов в UI-тестах при изменении верстки.
+#### Наблюдаемость пайплайнов
 
-### CI/CD Observability (OpenTelemetry)
+Общая наблюдаемость пайплайнов (трассировка джобов, метрики раннеров, анализ DAG) — в отдельном SSoT: **[Наблюдаемость пайплайнов](../CI-CD/Core_Concepts/pipeline_observability.md)**.
 
-Интеграция пайплайнов с OpenTelemetry позволяет анализировать их как распределенные системы:
-*   Каждый джоб и шаг пайплайна генерирует **span**.
-*   Визуализация в Grafana/Tempo помогает найти "бутылочное горлышко" в процессе сборки и проанализировать критический путь в DAG.
-*   Корреляция логов тестов с трейсами приложения упрощает отладку интеграционных сценариев.
-
-**Подробнее:** **[Наблюдаемость пайплайнов](../../CI-CD/Core_Concepts/pipeline_observability.md)**.
+Для диагностики падений тестов достаточно корреляции артефактов (JUnit, логи) с системными метриками раннера (CPU, память, сеть).
 
 ---
 
 ### Связанные документы
 
 *   **[Виды тестов: Unit, Integration, E2E](./testing_types_unit_integration_e2e.md)** — база для выбора стратегии.
-*   **[Testcontainers: обзор](./testcontainers_overview.md)** — основа для интеграционных тестов.
+*   **[Testcontainers: обзор](./testcontainers_overview.md)** — основа для интеграционных тестов в CI.
+*   **[Управление нестабильными тестами (Flaky Tests)](../CI-CD/Testing/flaky_test_management.md)** — детекция, карантин, retry.
+*   **[Наблюдаемость пайплайнов](../CI-CD/Core_Concepts/pipeline_observability.md)** — трассировка и метрики CI.
 *   **[Метрики тестового покрытия](./testing_coverage_metrics.md)** — глубокий анализ полноты проверок и связи с TIA.

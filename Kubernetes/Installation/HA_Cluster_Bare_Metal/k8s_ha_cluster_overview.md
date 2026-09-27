@@ -126,7 +126,8 @@ Kubernetes etcd выбирает **CP** (Consistency + Partition Tolerance):
 5.  **Bootstrap**: [Инициализация первого мастера](../kubeadm/cluster_initialization.md) с флагом `--control-plane-endpoint`.
 6.  **Сетевой плагин**: Установка и настройка [CNI (Calico)](./cni_installation.md).
 7.  **Масштабирование CP**: [Присоединение остальных мастеров](./node_joining.md) через `join --control-plane`.
-8.  **Worker Nodes**: Присоединение рабочих узлов и [финальная верификация](./k8s_ha_cluster_verification.md).
+8. **Worker Nodes**: Присоединение рабочих узлов и [финальная верификация](./k8s_ha_cluster_verification.md).
+9. **Day-2**: [Эксплуатация и обслуживание](./k8s_ha_bare_metal_day2_operations.md) -- внешний доступ, мониторинг, обновления, бэкапы.
 
 ### Сценарий: Самовосстановление при отказе мастера
 
@@ -290,14 +291,25 @@ done
 
 ### Чек-лист готовности HA кластера к Production
 
+**Инфраструктура:**
 - [ ] Минимум 3 мастер-узла с нечетным кворумом etcd
 - [ ] Балансировщик нагрузки (Keepalived+HAProxy или kube-vip) настроен и протестирован
 - [ ] VIP автоматически мигрирует при отказе мастера
-- [ ] Снапшоты etcd создаются по расписанию и проверяются
-- [ ] Мониторинг ключевых метрик настроен (etcd, API, VIP)
 - [ ] Синхронизация времени (chrony) настроена на всех узлах
 - [ ] DNS резолвинг между узлами работает корректно
+
+**Данные и безопасность:**
+- [ ] Снапшоты etcd создаются по расписанию и проверяются
 - [ ] Сертификаты не истекают в ближайшие 90 дней
+
+**Day-2 операции:**
+- [ ] Внешний доступ настроен (MetalLB + Ingress-контроллер)
+- [ ] Мониторинг и алертинг настроен (Prometheus, Grafana, ключевые алерты)
+- [ ] Сбор логов настроен (Loki/EFK)
+- [ ] ResourceQuota и LimitRange установлены для production namespace
+- [ ] Pod Security Admission включен (baseline/restricted)
+- [ ] PDB созданы для критичных сервисов
+- [ ] Playbook обновления кластера подготовлен
 - [ ] Документация и runbook для инцидентов актуальны
 
 ### Связанные руководства
@@ -307,3 +319,4 @@ done
 - **Проверка**: [Верификация HA](./k8s_ha_cluster_verification.md).
 - **Инфраструктура**: [Балансировка HAProxy](../kubeadm/keepalived_haproxy_setup.md), [Концепции HA](../../../Concepts/High_Availability/ha_overview.md).
 - **Альтернативы**: [HA через Kubespray](../Kubespray/HA/index.md).
+- **Day-2 эксплуатация**: [Внешний доступ, мониторинг, обновления, бэкапы](./k8s_ha_bare_metal_day2_operations.md).

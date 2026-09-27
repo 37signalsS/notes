@@ -546,21 +546,21 @@ variables:
 
 helm-lint:
   stage: lint
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm lint $CHART_DIR --strict
     - helm template test-release $CHART_DIR > /dev/null
 
 helm-test:
   stage: test
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm unittest $CHART_DIR
     - helm template test-release $CHART_DIR | kubeconform -strict -kubernetes-version 1.30.0
 
 helm-package:
   stage: build
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm package $CHART_DIR --version $CI_COMMIT_TAG
     - helm push *.tgz $OCI_REGISTRY
@@ -569,7 +569,7 @@ helm-package:
 
 validate-staging:
   stage: validate
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm plugin install https://github.com/databus23/helm-diff
     - helm diff upgrade my-app $CHART_DIR -f values-staging.yaml --namespace staging
@@ -577,7 +577,7 @@ validate-staging:
 
 deploy-staging:
   stage: deploy-staging
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm upgrade --install my-app $CHART_DIR -f values-staging.yaml --namespace staging --atomic --timeout 10m
   environment:
@@ -585,7 +585,7 @@ deploy-staging:
 
 deploy-production:
   stage: deploy-production
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - helm upgrade --install my-app $CHART_DIR -f values-production.yaml --namespace prod --atomic --wait --timeout 15m
   environment:

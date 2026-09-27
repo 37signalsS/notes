@@ -20,12 +20,12 @@
 
 | Компонент | Минимальная версия | Рекомендуемая версия |
 | :--- | :--- | :--- |
-| **Python (контрольный узел)** | 3.10 (Ansible 2.17) | 3.11+ (Ansible 2.18+) |
-| **Python (управляемые узлы)** | 3.8 (Ansible 2.18) | 3.11+ |
-| **ansible-core** | 2.17 | 2.18+ |
+| **Python (контрольный узел)** | 3.12 (Ansible 2.21) | 3.14+ |
+| **Python (управляемые узлы)** | 3.9 (Ansible 2.21) | 3.12+ |
+| **ansible-core** | 2.21 | 2.21+ |
 | **ansible-galaxy** | Входит в ansible-core | Последняя стабильная версия |
-| **ansible-lint** | 24.x | Последняя стабильная версия |
-| **Molecule** (опционально) | 24.x | Последняя стабильная версия |
+| **ansible-lint** | 26.x | Последняя стабильная версия (v26.8.0+) |
+| **Molecule** (опционально) | 26.x | Последняя стабильная версия (v26.9.0+) |
 
 ### Установка и проверка
 
@@ -34,9 +34,9 @@
 pip install ansible-core molecule ansible-lint
 
 # Проверка версий
-ansible --version        # → ansible [core 2.18.x]
-ansible-lint --version   # → ansible-lint [core 24.x]
-molecule --version       # → molecule 24.x
+ansible --version        # → ansible [core 2.21.x]
+ansible-lint --version   # → ansible-lint [core 26.x]
+molecule --version       # → molecule 26.x
 
 # Проверка доступных ролей/коллекций
 ansible-galaxy role list
@@ -77,37 +77,26 @@ project/
 
 ### Роли: декомпозиция и изоляция
 
-Роли решают проблему монолитных плейбуков, разделяя логику по функциональным областям.
+Роли решают проблему монолитных плейбуков, разделяя логику по функциональным областям. Это основной механизм переиспользования кода и обеспечения консистентности окружений в масштабах инфраструктуры.
 
 *   **Иерархия поиска:** Ansible ищет ресурсы внутри роли (например, шаблоны в `templates/`) автоматически, избавляя от необходимости указывать полные пути.
-*   **Валидация (`argument_specs.yml`):** Начиная с Ansible 2.11, роли поддерживают декларативное описание входных параметров с проверкой типов и значений по умолчанию в `meta/argument_specs.yml`.
+*   **Валидация (`argument_specs.yml`):** Начиная с Ansible 2.11, роли поддерживают декларативное описание входных параметров с проверкой типов и значений по умолчанию в `meta/argument_specs.yml`. В 2.17+ поддерживается поле `context` для расширенной метаинформации, доступной в IDE и при автогенерации документации.
 *   **Область видимости:** Переменные в `defaults/main.yml` имеют самый низкий приоритет, что делает роли максимально гибкими для настройки через внешние параметры.
+*   **Идемпотентность:** Каждая задача роли должна converge к одному и тому же состоянию при повторном запуске. Используйте `changed_when` и `failed_when` для точного контроля.
+*   **Производственная готовность:** Роли должны включать обработчики (`handlers/`) для перезапуска сервисов, валидацию конфигураций (`validate` в `template` модуле) и проверки работоспособности (`assert`, `wait_for`).
 
 ### Коллекции: расширение возможностей
 
-Коллекции позволяют вендорам (AWS, VMware, Cisco) и сообществу обновлять свои инструменты независимо от релизного цикла самого Ansible.
+Коллекции позволяют вендорам (Cisco, VMware, Juniper) и сообществу обновлять свои инструменты независимо от релизного цикла самого Ansible.
 
 *   **Unified Layout (Ansible 2.14+):** Современный стандарт организации коллекций, где плагины выносятся в единую директорию `plugins/` на уровне коллекции, что упрощает их поиск и использование ролями внутри этой же коллекции.
 *   **Версионирование:** В отличие от классических ролей, коллекции поддерживают строгое семантическое версионирование, что критично для воспроизводимости сред в CI/CD.
+*   **FQCN (Fully Qualified Collection Name):** Полное имя ресурса в формате `namespace.collection.resource` (например, `community.general.docker_container`). Использование FQCN является обязательным стандартом для предотвращения конфликтов имен между коллекциями.
+*   **Распространение:** Коллекции публикуются в Ansible Galaxy или внутренних репозиториях. Устанавливаются через `ansible-galaxy collection install`.
 
 ### Структура роли
 
-| Каталог / Файл | Назначение | Приоритет переменных |
-| :--- | :--- | :--- |
-| `tasks/` | Основные задачи роли (`main.yml` — входная точка) | — |
-| `handlers/` | Обработчики уведомлений (перезапуск сервисов) | — |
-| `templates/` | Jinja2-шаблоны конфигураций (`.j2`) | — |
-| `files/` | Статические файлы для копирования | — |
-| `defaults/` | Переменные по умолчанию (настройка пользователем) | Самый низкий |
-| `vars/` | Внутренние переменные и константы роли | Высокий |
-| `meta/` | Метаданные: зависимости и `argument_specs.yml` | — |
-| `library/` | Собственные модули на Python | — |
-| `module_utils/` | Общий Python-код для модулей из `library/` | — |
-| `plugins/` | Плагины (lookup, filter, action) | — |
-| `molecule/` | Конфигурации для тестирования роли | — |
-| `README.md` | Описание роли, параметров и примеров | — |
-
-> Подробный разбор каждой директории — в [Структура роли](./Roles/structure.md).
+Подробный разбор каждой директории, назначения файлов, примеры конфигураций и лучшие практики — в [Структура роли](./Roles/structure.md).
 
 ### Способы подключения ролей в плейбуке
 
@@ -218,13 +207,7 @@ project/
 
 ### Приоритет переменных в ролях
 
-Ansible применяет переменные в следующем порядке (от низшего к высшему):
-
-1. **`defaults/main.yml`** — переменные по умолчанию (самый низкий приоритет)
-2. **`vars/main.yml`** — внутренние переменные роли (высокий приоритет)
-3. **Переменные роли** — переданные через `vars:` при подключении
-4. **Переменные инвентаря** — `group_vars/` и `host_vars/`
-5. **Extra-vars** (`-e`) — командная строка (самый высокий приоритет)
+Подробнее об иерархии переменных — в [Структура роли](./Roles/structure.md).
 
 ```yaml
 # roles/nginx/defaults/main.yml — пользователь может переопределить
@@ -241,7 +224,7 @@ nginx_pid_file: "/run/nginx.pid"
 
 ### Обработчики (Handlers)
 
-Обработчики выполняются **только** по сигналу `notify` из задач и только **один раз** в конце каждой секции плейбука (или при явном `ansible.builtin.flush_handlers`).
+Подробнее об обработчиках — в [Структура роли](./Roles/structure.md). Практический пример:
 
 ```yaml
 # roles/nginx/handlers/main.yml
@@ -372,7 +355,7 @@ galaxy_info:
   author: "DevOps Team"
   description: "Nginx web server configuration"
   license: "MIT"
-  min_ansible_version: "2.17"
+  min_ansible_version: "2.21"
   platforms:
     - name: Ubuntu
       versions:
@@ -463,11 +446,11 @@ dependencies:
 ---
 roles:
   - name: geerlingguy.docker
-    version: "6.1.0"
+    version: ">=8.0.0"
   - name: geerlingguy.nginx
-    version: "3.3.0"
+    version: ">=3.3.0"
   - name: geerlingguy.postgresql
-    version: "3.7.0"
+    version: ">=4.1.0"
 
 collections:
   - name: community.general
@@ -496,7 +479,7 @@ ansible-galaxy role install -r requirements.yml -p ./roles/
 roles:
   # Публичная роль из Galaxy
   - name: geerlingguy.nginx
-    version: "3.3.0"
+    version: ">=3.3.0"
 
   # Приватная роль из Git ( SSH )
   - name: internal_common
@@ -790,6 +773,213 @@ roles/lib_common/
 
 ---
 
+---
+
+## Лучшие практики
+
+### Код и архитектура
+
+1. **FQCN всегда:** Используйте полные имена модулей (`ansible.builtin.apt`, `community.docker.docker_container`).
+2. **Идемпотентность:** Каждая задача должна быть безопасна для повторного запуска. Используйте `changed_when` и `failed_when` для точного контроля.
+3. **Разделение `defaults` и `vars`:** Храните переопределяемые переменные в `defaults`, константы — в `vars`.
+4. **Теги:** Используйте теги для разделения задач (install, configure, deploy, test).
+5. **Минимализм:** Одна роль — один ответственный компонент. Не объединяйте логику.
+
+### Тестирование и качество
+
+6. **Тестирование:** Каждая роль должна иметь Molecule-тесты перед попаданием в production. Минимум — `syntax` + `verify`.
+7. **Линтинг:** Запускайте `ansible-lint` перед каждым коммитом. В CI/CD используйте профиль `production`.
+8. **Семантическое версионирование:** Используйте Git-теги для версионирования ролей (`v1.0.0`, `v1.1.0`, `v2.0.0`).
+9. **Pre-commit hooks:** Используйте `.pre-commit-config.yaml` с `ansible-lint`, `yamllint`, `flake8` для автоматической проверки перед коммитом.
+
+### Безопасность и аудит
+
+10. **Секреты:** Не храните секреты в `defaults/main.yml`. Используйте Ansible Vault с внешним бэкендом (HashiCorp Vault, системный keyring).
+11. **Документация:** Заполняйте `README.md` и `meta/main.yml` для каждой роли. Используйте `argument_specs.yml` для автогенерации документации.
+12. **Гранулярный доступ:** Запускайте роли от непривилегированного пользователя. Используйте `become` только где необходимо.
+13. **Аудит изменений:** Используйте `--verify-commit` и GPG-подпись коммитов для отслеживания изменений в коде инфраструктуры.
+14. **Сканирование зависимостей:** Регулярно проверяйте зависимости через `ansible-galaxy collection verify` и `ansible-lint`.
+
+### Управление изменениями (Change Management)
+
+15. **GitFlow / trunk-based:** Используйте отдельные ветки для изменений. Запрет прямых коммитов в `main`/`master`.
+16. **Code Review:** Все изменения ролей проходят через Merge Request с обязательным аппрувом.
+17. **Канареечное развертывание:** Развертывайте роли сначала на 1–2 тестовых узлах, затем на всю инфраструктуру.
+18. **Rollback:** Каждая роль должна иметь возможность быстрого отката (Git revert + `ansible-pull` или повторный запуск с предыдущей версией).
+19. **Change Management процедура:** Изменения в production-ролях требуют тикета/задачи, окна обслуживания и согласования.
+20. **Conventional Commits:** Используйте стандарт `feat(role):`, `fix(role):`, `chore(role):` для семантического коммитинга.
+
+### Наблюдаемость и эксплуатация
+
+21. **Логирование:** Включайте `log_path` в `ansible.cfg`. Используйте callback-плагины для структурированного вывода (`yaml`, `json`).
+22. **Мониторинг:** Добавляйте задачи проверки работоспособности сервисов (`uri`, `wait_for`, `service_facts`) после применения роли.
+23. **Обработчики:** Используйте `listen` для общих обработчиков. Убедитесь, что обработчики срабатывают только при изменении.
+24. **Консистентность окружений:** Используйте `requirements.yml` с зафиксированными версиями. Проверяйте зависимости в CI/CD.
+25. **Изоляция окружений:** Для тестирования используйте Molecule с драйверами Docker/Podman. Не тестируйте напрямую на production-хостах.
+
+---
+
+## GitOps и управление изменениями
+
+### Принципы
+
+GitOps для Ansible ролей подразумевает, что весь код инфраструктуры хранится в Git, а изменения развертываются через автоматизированные пайплайны.
+
+*   **СoS (Convergence over Mutation):** Роли должны быть идемпотентными и converge к желаемому состоянию при каждом запуске.
+*   **Версионирование:** Каждое изменение роли имеет Git-хеш/тег. В production попадает только проверенная версия.
+*   **Аудит:** Все изменения отслеживаются в Git-истории. Используйте `git log --stat` для анализа.
+
+### Бранчинг и защита
+
+```bash
+# Пример структуры веток
+main/                    # Production-ready код (защищен)
+├── develop/             # Интеграционная ветка
+├── feature/nginx-v2/    # Feature-ветка для новой версии роли
+├── release/v2.1.0/      # Релизная ветка
+└── hotfix/critical-fix/  # Срочные исправления
+```
+
+**Настройка branch protection (GitHub/GitLab):**
+*   `main` защищена: требуются Merge Request, апрувы, прохождение CI.
+*   Прямые пушы запрещены.
+*   Обязательно: `ansible-lint`, `molecule test`, `yaml-lint` в CI.
+
+### Conventional Commits
+
+```bash
+feat(nginx): add support for HTTP/3
+fix(nginx): correct worker_processes validation
+chore(nginx): update Molecule driver to docker 26.x
+docs(nginx): add TLS 1.3 configuration example
+refactor(nginx): split vhost logic into separate task file
+```
+
+### CI/CD пайплайн (GitLab CI пример)
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  ANSIBLE_ROLES_PATH: ./roles
+
+lint:
+  stage: lint
+  image: python:3.14
+  script:
+    - pip install ansible-lint==26.8.0 yamllint flake8
+    - ansible-lint roles/nginx/
+    - yamllint roles/nginx/
+
+molecule-test:
+  stage: test
+  image: python:3.14
+  script:
+    - pip install molecule[docker]==26.9.0 ansible-core==2.21
+    - cd roles/nginx && molecule test
+
+build-collection:
+  stage: build
+  script:
+    - ansible-galaxy collection build
+  artifacts:
+    paths:
+      - *.tar.gz
+
+deploy-canary:
+  stage: deploy
+  environment:
+    name: production
+  when: manual
+  script:
+    - ansible-playbook -i inventory/production/hosts.yml playbooks/deploy.yml --tags canary
+
+deploy-full:
+  stage: deploy
+  environment:
+    name: production
+  when: manual
+  script:
+    - ansible-playbook -i inventory/production/hosts.yml playbooks/deploy.yml
+```
+
+### Канареечное развертывание и откат
+
+*   **Canary:** Сначала применяйте роль к 1–2 узлам (тег `canary` или отдельный inventory).
+*   **Валидация:** Проверьте метрики, логи, работоспособность сервиса.
+*   **Full rollout:** При успехе — применяйте ко всей инфраструктуре.
+*   **Rollback:** `git revert <commit>` + повторный запуск плейбука или откат тега роли в `requirements.yml`.
+
+---
+
+## Безопасность и аудит
+
+### Управление доступом
+
+*   **Отдельный пользователь:** Запускайте `ansible-playbook` от непривилегированного пользователя с правами `sudo` только для необходимых команд через `/etc/sudoers.d/`.
+*   **SSH-ключи:** Используйте ed25519-ключи с парольной фразой. Никогда не храните приватные ключи в Git.
+*   **Deploy Keys:** Для доступа к Git-репозиториям используйте Deploy Keys с правами только на чтение (Read-Only).
+*   **Ограничение `become`:** Включайте `become: true` только на уровне задач, требующих привилегий, а не на весь плейбук.
+*   **Ротация ключей:** Периодически ротируйте SSH-ключи и пароли Vault. Используйте `password-store` или HashiCorp Vault для хранения.
+
+### Аудит и соответствие
+
+*   **GPG-подпись коммитов:** Все коммиты с изменениями ролей подписываются GPG. `git log --show-signature`.
+*   **Верификация коммитов:** Используйте `--verify-commit` при установке ролей из Git.
+*   **Аудит Vault:** Включите аудит в HashiCorp Vault для отслеживания доступа к секретам.
+*   **Сканирование секретов:** Используйте `git secrets`, `truffleHog` или `gitleaks` для предотвращения попадания секретов в Git.
+*   **Проверка подлинности:** `ansible-galaxy collection verify community.general` для проверки подписи коллекций.
+
+### Сетевая изоляция
+
+*   **Outbound-only:** Контрольные узлы должны иметь только исходящий доступ к Git-репозиторию, Ansible Galaxy и системам мониторинга.
+*   **Внутренний Git-сервер:** Для production-инфраструктуры используйте внутренний Git-сервер (Gitea, GitLab) вместо публичных GitHub/GitLab.
+*   **Segmentation:** Разделите сети управления (management plane) и рабочих нагрузок (data plane).
+
+---
+
+## Pre-commit hooks
+
+Используйте pre-commit framework для автоматической проверки кода ролей перед коммитом.
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/ansible/ansible-lint
+    rev: v26.8.0
+    hooks:
+      - id: ansible-lint
+        args: ['--profile', 'production']
+
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: ['-d', '{extends: default, rules: {line-length: {max: 160}}}']
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.1.1
+    hooks:
+      - id: flake8
+        args: ['--max-line-length=160', '--exclude=.git,__pycache__,.venv']
+```
+
+```bash
+# Установка pre-commit
+pip install pre-commit
+pre-commit install
+
+# Ручной запуск для всех файлов
+pre-commit run --all-files
+```
+
+---
+
 ## Поиск и устранение неисправностей
 
 ### Типичные ошибки и решения
@@ -805,6 +995,8 @@ roles/lib_common/
 | `ERROR! Conflicting action 'import_role' with 'when'` | `when` на уровне плейбука + `import_role` | Вынесите условие внутрь задачи |
 | `ERROR! Conflicting variable scope` | Переопределение vars в meta/main.yml | Используйте `defaults/main.yml` для переопределяемых переменных |
 | `WARNING: Skipping duplicate role` | Дублирование роли в разных путях | Проверьте `ANSIBLE_ROLES_PATH` |
+| `ERROR! galaxy_tag already registered` | Конфликт тегов Galaxy | Уникальные имена для `galaxy_tags` |
+| `ERROR! argument_specs validation failed` | Неверный тип или отсутствует обязательный параметр | Проверьте `meta/argument_specs.yml` |
 
 ### Диагностические команды
 
@@ -830,22 +1022,13 @@ ansible-playbook site.yml --list-tags
 # Проверка линтингом
 ansible-lint roles/nginx/
 ansible-lint roles/nginx/ --profile production
+
+# Проверка подлинности коллекций
+ansible-galaxy collection verify community.general
+
+# Проверка целостности роли
+ansible-galaxy role verify geerlingguy.nginx
 ```
-
----
-
-## Лучшие практики
-
-1. **FQCN всегда:** Используйте полные имена модулей (`ansible.builtin.apt`, `community.docker.docker_container`).
-2. **Идемпотентность:** Каждая задача должна быть безопасна для повторного запуска.
-3. **Разделение `defaults` и `vars`:** Храните переопределяемые переменные в `defaults`, константы — в `vars`.
-4. **Теги:** Используйте теги для разделения задач (install, configure, deploy, test).
-5. **Тестирование:** Каждая роль должна иметь Molecule-тесты перед попаданием в production.
-6. **Линтинг:** Запускайте `ansible-lint` перед каждым коммитом.
-7. **Документация:** Заполняйте `README.md` и `meta/main.yml` для каждой роли.
-8. **Версионирование:** Используйте Git-теги для версионирования ролей (`v1.0.0`, `v1.1.0`).
-9. **Минимализм:** Одна роль — один ответственный компонент. Не объединяйте логику.
-10. **Безопасность:** Не храните секреты в `defaults/main.yml`. Используйте Ansible Vault.
 
 ---
 
@@ -854,6 +1037,7 @@ ansible-lint roles/nginx/ --profile production
 ### Связанные файлы
 
 *   **[Структура роли](./Roles/structure.md)** — детальный разбор каталогов, включая `argument_specs`.
+*   **[Управление выполнением и отладка ролей](./Roles/task-execution-and-debugging.md)** — `run_once`, `delegate_facts`, уровни директив, `debugger`, `check_mode`/`diff`.
 *   **[Работа с Ansible Galaxy](./Roles/galaxy.md)** — управление зависимостями через `requirements.yml`.
 *   **[Стратегии проектирования](./Roles/strategies.md)** — паттерны «Служебная роль», «Композитная роль» и методы декомпозиции.
 *   **[Использование ролей](./Roles/usage.md)** — технические нюансы `import_role` vs `include_role`.
@@ -863,3 +1047,13 @@ ansible-lint roles/nginx/ --profile production
 *   **[Execution Environments](./ansible-execution-environments.md)** — контейнеризация для воспроизводимости.
 *   **[Cross-platform концепции](./CrossPlatform/concepts.md)** — кроссплатформенные роли (Linux/Windows).
 *   **[Модели Push vs Pull](../Concepts/configuration_management_push_vs_pull.md)** — архитектурные паттерны.
+
+### См. также
+
+*   **[Ansible Core Concepts](./ansible_core_concepts.md)** — архитектура, идемпотентность, FQCN.
+*   **[Ansible Vault и шифрование](./Vault/basics.md)** — управление секретами.
+*   **[Ansible Semaphore](./ansible_semaphore.md)** — веб-интерфейс и запуск плейбуков.
+*   **[Ansible Lint Guide](./ansible_lint_guide.md)** — статический анализ кода.
+*   **[Ansible Collections Deep Dive](./ansible_collections_deep_dive.md)** — углубленное изучение коллекций.
+
+---

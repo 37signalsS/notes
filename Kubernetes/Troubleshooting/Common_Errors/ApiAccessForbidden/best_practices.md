@@ -488,6 +488,185 @@ kubectl get flowschemas -o custom-columns=NAME:.metadata.name,PRIORITY:.spec.pri
 | **403 Forbidden из-за APF** | Запросы отклоняются с 429/403 | API Priority and Fairness блокирует "шумных" потребителей | Настроить FlowSchema с правильным приоритетом |
 | **403 Forbidden из-за OIDC** | Пользователь не может аутентифицироваться | Неверная конфигурация OIDC | Проверить `--oidc-*` флаги API-сервера |
 
+### Типичные RBAC-антипаттерны и их последствия
+
+| Антипаттерн | Риск | Как обнаружить | Решение |
+|-------------|------|----------------|---------|
+| **Wildcard `verbs: ["*"]` + `resources: ["*"]`** | Любое действие с любым ресурсом. Аналог cluster-admin, но без аудита | `kubectl get clusterroles -o json \| jq '.items[] \| select(.rules[]? \| .verbs[] == "*" and .resources[] == "*") \| .metadata.name'` | Перечислить конкретные ресурсы и глаголы |
+| **ClusterRoleBinding SA на `cluster-admin`** | Приложение получает полный доступ ко всему кластеру | `kubectl get clusterrolebindings -o json \| jq '.items[] \| select(.roleRef.name == "cluster-admin") \| {name: .metadata.name, subjects: .subjects}'` | Использовать RoleBinding с минимальной Role |
+| **default SA с `automountServiceAccountToken: true`** | Все поды без явного SA получают доступ к API | `kubectl get sa default -n <ns> -o jsonpath='{.automountServiceAccountToken}'` | Установить `automountServiceAccountToken: false` |
+| **Доступ ко всем secrets** | Чтение любых секретов в namespace | `kubectl auth can-i list secrets --as=system:serviceaccount:<ns>:<sa> -n <ns>` → yes | Ограничить через `resourceNames` |
+| **ClusterRoleBinding вместо RoleBinding** | Приложение видит ресурсы во всех namespace | `kubectl get clusterrolebindings -o json \| jq '.items[] \| select(.subjects[]?.kind == "ServiceAccount") \| {name: .metadata.name, role: .roleRef.name}'` | Использовать RoleBinding (ClusterRole + RoleBinding = локальная привязка) |
+| **`impersonate` + `bind` в одной роли** | Полная компрометация кластера | Анализ прав через `kubectl auth can-i --list` | Никогда не объединять эти глаголы в одной роли |
+
+**Как найти все опасные привязки в кластере:**
+```bash
+# Все ClusterRoleBinding на cluster-admin (кроме системных)
+kubectl get clusterrolebindings -o json | jq '.items[] | select(.roleRef.name == "cluster-admin" and (.subjects[]?.name | test("^system:") | not)) | {name: .metadata.name, subjects: .subjects}'
+
+# Все SA с доступом к secrets
+kubectl get clusterrolebindings,rolebindings -A -o json | jq '.items[] | select(.subjects[]?.kind == "ServiceAccount") | select(.roleRef.name | test("admin|secret|cluster-admin")) | {kind: .kind, name: .metadata.name, namespace: .metadata.namespace, role: .roleRef.name}'
+
+# Все роли с wildcard
+kubectl get clusterroles,roles -A -o json | jq '.items[] | select(.rules[]? | .verbs[] == "*") | {kind: .kind, name: .metadata.name, namespace: .metadata.namespace}'
+```
+
+> Подробнее о векторах атак через эскалацию привилегий: [../../../Security/rbac/privilege_escalation.md](../../../Security/rbac/privilege_escalation.md)
+
+### Откат RBAC-изменений в production
+
+Ошибка в RBAC-манифесте может заблокировать работу контроллеров или приложений. Пошаговый workflow отката:
+
+**Шаг 1: Быстрая идентификация проблемы**
+```bash
+# Определить, когда появились 403 ошибки
+kubectl get --raw /metrics | grep apiserver_request_total | grep code="403"
+
+# Найти Audit-Id последнего отказа
+kubectl <failing-command> -v=8 2>&1 | grep -E "Audit-Id|HTTP/"
+
+# Проверить, какие RoleBinding изменились недавно
+kubectl get rolebindings -A -o json | jq '.items[] | select(.metadata.creationTimestamp > "2026-01-01T00:00:00Z") | {name: .metadata.name, namespace: .metadata.namespace, role: .roleRef.name, created: .metadata.creationTimestamp}'
+```
+
+**Шаг 2: Восстановление из Git (GitOps rollback)**
+```bash
+# Если RBAC управляется через GitOps — откат через Git
+git revert <commit-with-broken-rbac>
+git push origin main
+# ArgoCD/Flux автоматически применит предыдущую версию
+
+# Или ручной откат через kubectl
+kubectl delete -f broken-rbac.yaml
+kubectl apply -f previous-working-rbac.yaml
+```
+
+**Шаг 3: Временное восстановление (если Git-репозиторий недоступен)**
+```bash
+# Создать временный ClusterRoleBinding для восстановления доступа
+cat <<EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: emergency-admin-$(date +%s)
+subjects:
+- kind: User
+  name: emergency-admin
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+EOF
+
+# После восстановления доступа — удалить временный биндинг
+kubectl delete clusterrolebinding emergency-admin-*
+```
+
+**Шаг 4: Валидация после отката**
+```bash
+# Проверить, что права восстановлены
+kubectl auth can-i <verb> <resource> --as=<subject> -n <ns>
+
+# Проверить, что контроллеры работают
+kubectl get pods -n kube-system | grep -E "controller|scheduler"
+
+# Проверить, что 403 ошибки прекратились
+kubectl get --raw /metrics | grep apiserver_request_total | grep code="403"
+```
+
+> Подробнее о `kubectl auth reconcile` для обнаружения drift'а: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
+
+### RBAC через GitOps: версионирование и аудит
+
+Хранение RBAC-манифестов в Git обеспечивает полный аудит-трейл, версионирование и автоматический rollback.
+
+**Рекомендуемая структура репозитория:**
+```
+rbac/
+├── base/
+│   ├── cluster-admin-binding.yaml      # ClusterRoleBinding на cluster-admin
+│   ├── monitoring-rbac.yaml            # RBAC для Prometheus/Grafana
+│   ├── ci-cd-rbac.yaml                 # RBAC для CI/CD пайплайнов
+│   └── app-rbac.yaml                   # RBAC для прикладных сервисов
+├── overlays/
+│   ├── prod/
+│   │   ├── kustomization.yaml
+│   │   └── namespace-labels.yaml
+│   └── staging/
+│       ├── kustomization.yaml
+│       └── relaxed-rbac.yaml
+└── audit/
+    └── rbac-review.sh                  # Скрипт проверки прав
+```
+
+**Интеграция с ArgoCD:**
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-rbac
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://git.example.com/rbac-manifests.git
+    path: overlays/prod
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+  ignoreDifferences:
+  - group: rbac.authorization.k8s.io
+    kind: RoleBinding
+    jsonPointers:
+    - /subjects                    # Игнорировать ручные изменения subjects
+```
+
+**Скрипт аудита RBAC для CI/CD:**
+```bash
+#!/bin/bash
+# rbac-audit.sh — проверка RBAC-манифестов перед деплоем
+
+set -euo pipefail
+
+echo "=== RBAC Audit ==="
+
+# 1. Проверка на wildcard
+WILDCARD=$(kubectl get clusterroles,roles -A -o json | jq '[.items[] | select(.rules[]? | .verbs[] == "*") | .metadata.name] | length')
+if [ "$WILDCARD" -gt 0 ]; then
+    echo "WARNING: Найдены роли с wildcard verbs:"
+    kubectl get clusterroles,roles -A -o json | jq '.items[] | select(.rules[]? | .verbs[] == "*") | .metadata.name'
+fi
+
+# 2. Проверка ClusterRoleBinding на cluster-admin
+ADMIN_BINDINGS=$(kubectl get clusterrolebindings -o json | jq '[.items[] | select(.roleRef.name == "cluster-admin" and (.subjects[]?.name | test("^system:") | not))] | length')
+if [ "$ADMIN_BINDINGS" -gt 0 ]; then
+    echo "WARNING: Найдены не-системные ClusterRoleBinding на cluster-admin:"
+    kubectl get clusterrolebindings -o json | jq '.items[] | select(.roleRef.name == "cluster-admin" and (.subjects[]?.name | test("^system:") | not)) | {name: .metadata.name, subjects: .subjects}'
+fi
+
+# 3. Проверка SA с доступом к secrets
+SECRET_ACCESS=$(kubectl auth can-i --list --as=system:serviceaccount:default:default -A 2>/dev/null | grep -c "secrets" || true)
+if [ "$SECRET_ACCESS" -gt 0 ]; then
+    echo "WARNING: default SA имеет доступ к secrets"
+fi
+
+echo "=== Audit завершён ==="
+```
+
+**Преимущества GitOps для RBAC:**
+- **Аудит-трейл:** каждое изменение фиксируется в Git с указанием автора и времени
+- **Rollback:** откат к предыдущей версии за секунды через `git revert`
+- **Валидация:** PR-процесс с обязательным ревью перед применением
+- **Drift detection:** GitOps-оператор автоматически обнаруживает и исправляет расхождения
+- **Multi-environment:** overlays для prod/staging/dev с общим base
+
+> Подробнее о GitOps и RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
+> ArgoCD RBAC конфигурация: [../../../GitOps/ArgoCD/argocd_rbac_deep.md](../../../GitOps/ArgoCD/argocd_rbac_deep.md)
+
 ### Связанные ресурсы
 
 - [Алгоритм диагностики 401/403](diagnostics.md)
@@ -500,4 +679,7 @@ kubectl get flowschemas -o custom-columns=NAME:.metadata.name,PRIORITY:.spec.pri
 - [NetworkPolicy](../../../Security/network_policies.md)
 - [Управление секретами](../../../Security/application_secrets_management.md)
 - [Pod Security Context](../../../Security/pod_security_context.md)
+- [Эскалация привилегий](../../../Security/rbac/privilege_escalation.md) — векторы атак через bind/escalate/impersonate
+- [API Priority and Fairness](../../../Concepts/api_priority_and_fairness.md) — защита API от перегрузки
+- [Multi-cluster RBAC](../../../Security/rbac/multi_cluster_rbac.md) — управление RBAC в мультикластерных средах
 - [Официальный гайд по безопасности Kubernetes](https://kubernetes.io/docs/concepts/security/pod-security-standards/)

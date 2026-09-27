@@ -360,6 +360,7 @@ vm.min_free_kbytes = 1048576
 * **[Slab Allocator](./slab_allocator.md)**: Утечки в кэшах ядра (SUnreclaim) часто являются причиной вытеснения приложений в swap.
 * **[/proc/meminfo](../../Diagnostics/Memory/proc_meminfo.md)**: Детальная расшифровка метрик памяти, включая SwapTotal/SwapFree и Zswap.
 * **[vmstat](../../Diagnostics/Memory/vmstat.md)**: Мониторинг активности swap (si/so) в реальном времени.
+* **[Справочник sysctl-параметров памяти](./sysctl_memory_reference.md)**: Единый reference по vm.swappiness, overcommit, watermarks и др.
 
 ### Литература и ссылки
 

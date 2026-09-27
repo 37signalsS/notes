@@ -384,6 +384,9 @@ kubectl top pods -n kube-system
 - **Node Maintenance**: [Node Maintenance](../Operations/node_maintenance.md) — обслуживание узлов, drain, cordon.
 - **RBAC**: [RBAC Overview](../Security/rbac/rbac_overview.md) — управление доступом в кластере.
 - **Pod Security**: [Pod Security Context](../Security/pod_security_context.md) — политики безопасности подов.
+- **Внешний etcd**: [External etcd Setup](./external-etcd-setup.md) — настройка внешнего etcd-кластера для kubeadm.
+- **Продвинутая конфигурация**: [Advanced kubeadm Configuration](./advanced-kubeadm-configuration.md) — детали YAML-конфигурации, extraArgs, extraVolumes.
+- **Troubleshooting kubeadm**: [Diagnostics и troubleshooting](./kubeadm-troubleshooting.md) — расширенная диагностика и решение проблем.
 
 ### Ссылки
 

@@ -41,3 +41,7 @@
 *   **[Защита ядра и среды выполнения](./kernel_runtime_protection.md)** — технические настройки ОС для соответствия требованиям.
 *   **[Управление доступом ФСТЭК](./user_access_control.md)** — требования к идентификации и аутентификации.
 *   **[Контроль прав доступа к файлам](./file_permissions_control.md)** — требования к целостности и DAC/MAC.
+*   **[Обзор механизмов безопасности Linux](../Linux_Security_Mechanisms_Overview.md)** — архитектура защиты.
+*   **[AIDE/Tripwire](../Concepts/file-integrity-checking.md)** — проверка целостности файлов (СКЦИ).
+*   **[auditd](../../Linux/SystemAdministration/Logging/auditd.md)** — аудит событий безопасности.
+*   **[CIS/STIG Compliance](../../Ansible/ansible-os-hardening.md)** — автоматизация приведения к стандартам.

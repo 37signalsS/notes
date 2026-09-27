@@ -112,6 +112,8 @@ frontend http-in
 
 ### tcpdump — захват пакетов
 
+Общий синтаксис, фильтры и параметры описаны в **[tcpdump — сетевой анализатор пакетов](../../../Linux/Diagnostics/Networking/tcpdump.md)**. Ниже — HTTP/TLS-специфичные примеры:
+
 ```bash
 # Захват HTTP-трафика на интерфейсе eth0, порт 80
 tcpdump -i eth0 -n port 80 -w /tmp/http.pcap

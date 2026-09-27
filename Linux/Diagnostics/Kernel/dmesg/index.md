@@ -6,6 +6,8 @@
 
 **Кольцевой буфер ядра** — специализированная область памяти фиксированного размера, куда ядро Linux записывает сообщения о своем состоянии, обнаруженном оборудовании, загрузке драйверов и критических ошибках.
 
+**`printk`** — внутренняя подсистема ядра, отвечающая за формирование и маршрутизацию сообщений. Она работает независимо от состояния пользовательского пространства: даже если `systemd` или `rsyslog` не запущены, `printk` продолжает записывать данные в кольцевой буфер, что делает `dmesg` незаменимым на ранних стадиях загрузки и при аварийных ситуациях.
+
 ---
 
 ## Базовые концепции
@@ -16,6 +18,12 @@
 
 *   **Размер буфера:** По умолчанию составляет от 256 КБ до 16 МБ в зависимости от архитектуры и конфигурации.
 *   **Настройка размера:** Изменяется через параметр загрузки ядра `log_buf_len` (например, `log_buf_len=1M` в конфигурации GRUB) или через `CONFIG_LOG_BUF_SHIFT` при компиляции ядра.
+
+### Ранние сообщения и загрузочные этапы
+
+Сообщения ядра делятся на две категории по времени появления:
+*   **Раннийboot (early boot):** Сообщения, генерируемые до инициализации консоли и драйверов. Часто содержат информацию об аппаратной инициализации (ACPI, PCI, RAM). Доступны через `dmesg` сразу после старта, но могут быть недоступны в `journalctl`, если `systemd-journald` стартовал с задержкой.
+*   **Позднийboot (late boot/runtime):** Сообщения после полной инициализации подсистем. Стандартный поток логов.
 
 ### Интерфейсы доступа
 
@@ -40,6 +48,27 @@
 | `debug` | 7 | Отладочные данные (Debug) |
 
 **Основные источники (Facilities):** `kern` (ядро), `user` (пользовательские процессы), `daemon` (системные службы), `auth` (безопасность).
+
+### Состояние «загрязнения» ядра (Kernel Taint)
+
+Флаги **Tainted** указывают на факторы, которые могут влиять на поведение ядра и осложнять отладку. Ищите строку `Tainted: ...` в сообщениях Oops или Panic.
+
+| Флаг | Значение | Описание |
+| :--- | :--- | :--- |
+| `P` | Proprietary | Загружен проприетарный модуль (например, NVIDIA). |
+| `F` | Force | Модуль загружен принудительно (игнорируя версии). |
+| `O` | Out-of-tree | Модуль скомпилирован вне дерева исходников ядра. |
+| `E` | Unsigned | Модуль не имеет валидной цифровой подписи. |
+
+Полный список флагов и их расшифровка описаны в [Поиск и устранение неисправностей](./troubleshooting.md).
+
+### Постоянство логов: pstore и ramoops
+
+Для анализа аварийных перезагрузок (Kernel Panic, Hard Lockup) используется механизм **pstore** (persistent storage), который сохраняет последние сообщения `dmesg` в энергонезависимой памяти (RAM, EEPROM или NVRAM) до перезагрузки.
+
+*   **`ramoops`:** Наиболее распространенный бэкенд pstore. Сохраняет дамп в `/sys/fs/pstore/` (например, `dmesg-ramoops-0`).
+*   **Назначение:** Позволяет получить доступ к логам, предшествовавшим панике, даже если основной корневой раздел был недоступен.
+*   **Диагностика:** `cat /sys/fs/pstore/dmesg-ramoops-0` — чтение сохраненного лога без монтирования корневой ФС.
 
 ### Ограничение интенсивности (Ratelimiting)
 
@@ -66,18 +95,194 @@
 | **Доступность** | Доступно сразу после старта ядра | Требует запущенного демона `systemd-journald` |
 | **Фильтрация** | Быстрая, базовая | Мощная (по времени, по юнитам, по приоритетам) |
 
-### Использование в контейнерах и Namespaces
+### Методология быстрой оценки (Rapid Assessment)
 
-В средах виртуализации и контейнеризации (Docker, LXC, Kubernetes) поведение `dmesg` зависит от настроек изоляции:
-*   **Изоляция логов:** По умолчанию сообщения ядра видны во всех контейнерах, если не включена изоляция именных пространств пользователя (User Namespaces).
-*   **Ограничения:** В большинстве PaaS-решений доступ к `dmesg` внутри контейнера заблокирован по соображениям безопасности.
-*   **Рекомендация:** Для диагностики проблем внутри контейнера лучше использовать `kubectl logs` или логи рантайма, а `dmesg` — только на уровне хоста.
+В практике SRE `dmesg` является одним из первых инструментов при аварийном реагировании (Incident Response). Рекомендуемый порядок диагностики:
+
+```bash
+# 1. Проверка последних критических событий ядра
+sudo dmesg -T | tail -n 50
+
+# 2. Поиск OOM и аппаратных сбоев
+sudo dmesg -T | grep -iE "oom|killed process|error|fail|panic|oops|mce|aer|thermal"
+
+# 3. Проверка ошибок файловой системы
+sudo dmesg -T | grep -iE "EXT4|XFS|I/O error|Buffer I/O|read-only|abort"
+```
+
+### Диагностика загрузки и раннего boot
+
+Если система не загружается или зависает на раннем этапе, `dmesg` помогает определить точку отказа:
+
+```bash
+# Анализ логов текущей загрузки (только ошибки)
+sudo dmesg -T | grep -iE "error|fail|panic|oops|firmware|bug"
+
+# Отслеживание в реальном времени при повторной загрузке
+sudo dmesg -w
+```
+
+Ключевые паттерны для ранней загрузки:
+*   `Failed to load module` — отсутствующий или несовместимый драйвер.
+*   `ACPI` — ошибки таблиц ACPI, часто требующие обновления BIOS.
+*   `RAM` — некорректное определение объема памяти (проверьте параметр `mem=` в GRUB).
+
+### Диагностика аппаратного обеспечения
+
+#### Сетевые интерфейсы (NIC)
+
+```bash
+# Проверка состояния линка и ошибок PHY
+dmesg | grep -iE "eth|link|error|carrier|timeout"
+
+# Обнаружение переполнения ring buffer NIC
+dmesg | grep -i "rx_missed_errors"
+```
+
+**Link Flapping:** Симптомы — повторяющиеся сообщения `Link is Down/Up` с указанием скорости. Причины: нестабильное соединение, проблемы с PoE, деградация SFP.
+
+#### Диски и массивы (RAID, NVMe)
+
+```bash
+# Поиск ошибок I/O и сбросов линка
+dmesg | grep -iE "sd[a-z]|ata|nvme|error|timeout|reset"
+
+# NVMe-specific
+dmesg -T | grep -Ei 'nvme|aer|pcie'
+```
+
+Критические сообщения NVMe:
+*   `AER: Corrected: Receiver Error (RxErr)` — проблемы физического уровня (кабель, слот).
+*   `nvme nvme0: I/O error` — сбой контроллера или носителя.
+
+#### Память (MCE / EDAC)
+
+```bash
+# Поиск аппаратных ошибок памяти
+dmesg | grep -iE "mce|edac|memory|correctable|uncorrectable"
+```
+
+*   `CE` (Correctable Error) — исправлено ECC.
+*   `UE` (Uncorrectable Error) — фатальный сбой RAM, требует замены модуля.
+
+#### Тепловые события
+
+```bash
+# Мониторинг throttling и критических температур
+dmesg | grep -iE "thermal|throttl|overheat|cpu.*temp"
+```
+
+### Диагностика сетевого стека
+
+> Подробный разбор: [**Диагностика сетевого стека через dmesg**](./network-stack.md)
+
+#### Переполнение таблицы conntrack
+
+```bash
+# Симптом переполнения таблицы соединений
+dmesg | grep -i "nf_conntrack: table full"
+```
+
+Причина: исчерпание лимита `nf_conntrack_max`. Решение: увеличение через `sysctl net.netfilter.nf_conntrack_max`.
+
+#### SYN Flood
+
+```bash
+# Симптом SYN flood
+dmesg | grep -i "TCP.*SYN.*flood\|sending cookies"
+```
+
+Решение: включить SYN cookies (`sysctl -w net.ipv4.tcp_syncookies=1`), увеличить `tcp_max_syn_backlog`.
+
+#### Переполнение ARP-таблицы
+
+```bash
+# Симптом: neighbor table overflow
+dmesg | grep -i "arp"
+```
+
+Решение: увеличение `gc_thresh1`, `gc_thresh2`, `gc_thresh3` через `sysctl net.ipv4.neigh.default.gc_thresh*`.
+
+#### Ошибки SELinux / AppArmor
+
+```bash
+# Поиск отклонений политики
+sudo dmesg | grep -iE "audit|denied|apparmor|selinux"
+```
+
+Для AppArmor также проверяйте `/var/log/audit/audit.log` (если установлен `auditd`).
+
+### Диагностика файловых систем
+
+```bash
+# Поиск ошибок ext4/XFS
+dmesg -T | grep -Ei 'EXT4|JBD2|XFS|I/O error|Buffer I/O|read-only|abort'
+```
+
+Типичные сценарии:
+*   `EXT4-fs error (device sdc1): ext4_journal_check_start_recovery` — повреждение журнала.
+*   `Buffer I/O error` — указывает на проблемы с диском или контроллером (проверьте `smartctl`).
+*   `Remounting filesystem read-only` — ядро принудительно перемонтировало ФС в защитном режиме из-за неисправимых ошибок.
+
+> Подробный разбор ошибок Block Layer: [**Диагностика Block Layer через dmesg**](./block-layer.md)
+
+### Диагностика виртуализации
+
+> Подробный разбор: [**Диагностика виртуализации через dmesg**](./virtualization.md)
+
+```bash
+# Виртуализационные события (KVM, VMware, Hyper-V)
+dmesg -T | grep -iE "kvm|virtio|vmxnet|hv_|balloon|steal"
+```
+
+### Диагностика модулей ядра
+
+> Подробный разбор: [**Диагностика жизненного цикла модулей**](./modules-lifecycle.md)
+
+```bash
+# Ошибки загрузки модулей
+dmesg -T | grep -iE "FATAL.*module|Unknown symbol|taint|Invalid module format"
+```
+
+### Диагностика частоты CPU и thermal
+
+> Подробный разбор: [**Диагностика частоты CPU**](./cpu-frequency.md)
+
+```bash
+# Тепловое троттлинг
+dmesg -T | grep -iE "thermal|throttl|overheat|cpu.*temp"
+```
+
+### Диагностика NUMA
+
+> Подробный разбор: [**Диагностика NUMA через dmesg**](./numa.md)
+
+```bash
+# NUMA-события
+dmesg -T | grep -iE "numa|node.*online|slit|srat"
+```
+
+### Live Patching
+
+> Подробный разбор: [**Диагностика live patching**](./live-patching.md)
+
+```bash
+# События live patching
+dmesg -T | grep -iE "livepatch|kpatch"
+```
 
 ### Управление состоянием буфера
 
 В процессе отладки часто требуется «обнулить» историю, чтобы видеть только новые события:
 *   `sudo dmesg -C`: Полная очистка буфера.
 *   `sudo dmesg -c`: Вывод текущего содержимого с последующей очисткой.
+
+### Использование в контейнерах и Namespaces
+
+В средах виртуализации и контейнеризации (Docker, LXC, Kubernetes) поведение `dmesg` зависит от настроек изоляции:
+*   **Изоляция логов:** По умолчанию сообщения ядра видны во всех контейнерах, если не включена изоляция именных пространств пользователя (User Namespaces).
+*   **Ограничения:** В большинстве PaaS-решений доступ к `dmesg` внутри контейнера заблокирован по соображениям безопасности.
+*   **Рекомендация:** Для диагностики проблем внутри контейнера лучше использовать `kubectl logs` или логи рантайма, а `dmesg` — только на уровне хоста.
 
 ---
 
@@ -87,11 +292,25 @@
 
 *   [**Использование и фильтрация**](./usage.md) — подробный разбор флагов, уровней и мониторинга в реальном времени.
 *   [**Поиск и устранение неисправностей**](./troubleshooting.md) — расшифровка Call Trace, Oops, Kernel Panic и аппаратных ошибок.
+*   [**Диагностика Block Layer**](./block-layer.md) — blk_update_request, I/O errors, queue depth.
+*   [**Диагностика сетевого стека**](./network-stack.md) — SYN flood, softirq, conntrack, TCP drops.
+*   [**Диагностика модулей ядра**](./modules-lifecycle.md) — загрузка/выгрузка, taint, Secure Boot.
+*   [**Диагностика виртуализации**](./virtualization.md) — KVM, VMware, Hyper-V, balloon, steal time.
+*   [**Диагностика частоты CPU**](./cpu-frequency.md) — cpufreq, thermal throttling, C-states.
+*   [**Диагностика NUMA**](./numa.md) — NUMA topology, миграция страниц.
+*   [**Диагностика live patching**](./live-patching.md) — kpatch, ftrace-based patching.
 
 ### Связанные темы
 
+*   [**Production sysctl**](../../../Core/kernel/sysctl_production.md) — kernel tunables для продакшена.
+*   [**Мониторинг dmesg**](../../../SystemAdministration/Logging/dmesg_monitoring.md) — экспорт в Prometheus/Loki/Grafana.
 *   [**Настройка параметров ядра (sysctl)**](../../../Core/kernel/sysctl.md)
 *   [**Диагностика OOM Killer**](../../../Core/processes/oom_killer_diagnostics.md)
 *   [**Журналирование (journalctl)**](../../journalctl/journalctl_overview.md)
-*   [**Анализ дампов памяти (kdump/crash)**](../../SystemAdministration/Logging/error_and_crash_analysis.md)
+*   [**Анализ дампов памяти (kdump/crash)**](../../../SystemAdministration/Logging/error_and_crash_analysis.md)
 *   [**Процесс загрузки Linux**](../../../Core/kernel/boot_process.md)
+*   [**Диагностика NVMe: AER и Controller Reset**](../../../Diagnostics/Hardware/nvme-errors-diagnostics.md)
+*   [**Быстрая диагностика сервера (Rapid Assessment)**](../../../Diagnostics/Troubleshooting/rapid_assessment.md)
+*   [**Зависания ядра: Soft Lockup, Hard Lockup**](../../../Core/kernel/lockups.md)
+*   [**Модули ядра Linux**](../../../Core/kernel/kernel_modules.md)
+*   [**Паника ядра (Kernel Panic)**](../../../Core/kernel/kernel_panic.md)

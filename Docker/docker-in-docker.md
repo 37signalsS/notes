@@ -38,7 +38,7 @@
 **Пример запуска (Docker 27):**
 
 ```bash
-docker run --privileged -d --name dind docker:27-dind
+docker run --privileged -d --name dind docker:29.8-dind
 docker exec -it dind docker run --rm hello-world
 ```
 
@@ -235,7 +235,7 @@ build:
   stage: build
   image: docker:27
   services:
-    - docker:27-dind
+    - docker:29.8-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   script:

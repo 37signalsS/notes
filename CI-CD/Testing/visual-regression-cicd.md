@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Визуальное регрессионное тестирование (Visual Regression Testing)** — процесс проверки пользовательского интерфейса на отсутствие нежелательных визуальных изменений путем сравнения текущего состояния (скриншота или DOM-слепка) с утвержденным эталоном (Baseline).
+**Visual Regression Testing (Визуальное регрессионное тестирование)** — процесс проверки пользовательского интерфейса на отсутствие нежелательных визуальных изменений путем сравнения текущего состояния (скриншота или DOM-слепка) с утвержденным эталоном (Baseline).
 
 **Baseline (Эталон)** — контрольное изображение или набор данных, отражающий корректное состояние интерфейса. Используется как точка сравнения для всех последующих тестов.
 
@@ -10,60 +10,90 @@
 
 **Snapshot Management (Управление снапшотами)** — стратегия хранения, обновления и версионирования эталонных изображений в условиях распределенной разработки и автоматизированных пайплайнов.
 
-**Visual AI (Визуальный ИИ)** — технология сравнения изображений с использованием алгоритмов машинного зрения, имитирующих человеческое восприятие. Позволяет игнорировать технический шум (сдвиги на 1px, разницу в рендеринге шрифтов) и фокусироваться на значимых изменениях контента или макета.
-
 **Threshold (Порог допуска)** — коэффициент чувствительности при сравнении. Определяет, какой процент несовпадающих пикселей или какая разница в цвете (`pixelmatch`) считается допустимой для признания теста успешным.
 
-## Основные концепции
+## Основные концепции и архитектура
 
 ### Типы сравнения интерфейсов
 
-В 2026 году выделяют три основных подхода к сравнению:
+В 2026 году выделяют два основных подхода к сравнению:
 
 1.  **Pixel-by-pixel (Попиксельное):** Самый простой и строгий метод. Сравнивает каждый пиксель по RGBA-значениям.
     - *Инструменты:* Playwright (`toHaveScreenshot`), BackstopJS.
     - *Минусы:* Крайне чувствителен к сглаживанию (anti-aliasing) и разным GPU.
-2.  **Structural / DOM-based (Структурное):** Сравнивает не картинки, а структуру DOM и CSS. Рендеринг происходит в контролируемой среде сервиса.
-    - *Инструменты:* Percy, Lost Pixel.
-    - *Плюсы:* Игнорирует проблемы с железом, так как снапшоты рендерятся в одной облачной среде.
-3.  **Perceptual / AI (Перцептивное):** Использует нейросети для анализа "смысла" страницы.
-    - *Инструменты:* Applitools Eyes.
-    - *Плюсы:* Самый стабильный метод, понимает динамический контент и игнорирует сдвиги макета, которые не видит глаз человека.
+2.  **Structural / DOM-based (Структурное):** Сравнивает не картинки, а структуру DOM и CSS. Рендеринг происходит в контролируемой среде.
+    - *Инструменты:* Playwright Visual, Lost Pixel.
+    - *Плюсы:* Игнорирует проблемы с железом, так как снапшоты рендерятся в одинаковой среде.
 
 ### Проблема консистентности рендеринга
 
 Главный вызов при внедрении Visual Regression в CI/CD — **недетерминизм рендеринга**. Одно и то же приложение может выглядеть по-разному из-за:
+
 -   **Anti-aliasing (Сглаживание):** Разные алгоритмы отрисовки шрифтов и кривых в Linux (CI) и macOS/Windows (разработка).
 -   **Версии ОС и браузеров:** Даже минорное обновление Chromium может изменить отрисовку тени или скругления углов.
--   **GPU Acceleration:** В облачных CI-раннерах часто отсутствует видеокарта, что переключает рендеринг на CPU (SwiftShader), меняя результат на 1–2 пикселя.
+-   **GPU Acceleration:** В CI-раннерах часто отсутствует видеокарта, что переключает рендеринг на CPU (SwiftShader), меняя результат на 1–2 пикселя.
 -   **Динамический контент:** Даты, случайные ID, курсоры, анимации загрузки, видео и GIF-файлы.
 
-**Решение 2026:** Использование строго идентичных Docker-контейнеров для локального запуска и CI. Все эталоны *должны* генерироваться внутри контейнера. Дополнительно применяется **маскирование** динамических областей.
+**Решение:** Использование строго идентичных Docker-контейнеров для локального запуска и CI. Все эталоны должны генерироваться внутри контейнера. Дополнительно применяется маскирование динамических областей.
 
-### Выбор инструментария
+### Архитектура визуального тестирования в CI/CD
+
+```mermaid
+graph LR
+    A[Developer] -->|commits / MR| B[CI Pipeline]
+    B -->|Docker container| C[Playwright / BackstopJS]
+    C -->|captures| D[Screenshots]
+    D -->|compares with| E[Baselines Storage]
+    E -->|Git LFS / NFS| F[Artifact Server / Git repo]
+    F -->|diff results| G[Quality Gate]
+    G -->|blocks / passes| B
+    G -->|notifies| H[Slack / Email / MR comment]
+```
+
+| Компонент | Роль | Особенности |
+| :--- | :--- | :--- |
+| **CI Pipeline** | Оркестрация | Запускает тесты в Docker, кэширует baselines, публикует артефакты |
+| **Docker Container** | Изоляция среды | Гарантирует идентичные шрифты, ОС, браузер и GPU-роллбэк (SwiftShader) |
+| **Playwright / BackstopJS** | Генерация и сравнение | Делает скриншоты, считает pixel diff, генерирует HTML-отчет |
+| **Baselines Storage** | Хранение эталонов | Git LFS, NFS-share или локальное хранилище в репозитории |
+| **Artifact Server** | Результаты | Хранит diff-изображения и HTML-отчеты для аудита (retention 30–90 дней) |
+| **Quality Gate** | Блокировка | Блокирует merge в защищённые бранчи при превышении порога; может требовать ручного approve |
+
+### Жизненный цикл визуального теста в CI/CD
+
+1.  **Baseline generation:** При первом запуске или обновлении дизайна baselines генерируются в Docker и коммитятся в Git LFS через отдельный MR.
+2.  **CI execution:** При каждом PR/merge pipeline запускает тесты в том же Docker-образе, что и при генерации baselines.
+3.  **Comparison:** Скриншоты сравниваются с порогом (`threshold`, `maxDiffPixelRatio`).
+4.  **Artifacts:** При падении публикуются diff-изображения и HTML-отчет.
+5.  **Quality gate:** Решение о блокировке merge или deploy.
+
+### Интеграция с CI/CD
+
+-   **Stages:** visual tests запускаются после deploy на staging или параллельно с E2E; блокируют merge в main.
+-   **Artifacts:** diff-изображения и HTML-отчеты сохраняются как артефакты pipeline минимум 30 дней.
+-   **Branch protection:** visual regression job должен стоять в required checks для merge в защищённые бранчи.
+-   **Cache:** baselines кэшируются между запусками через `actions/cache` или GitLab cache для ускорения.
+
+### Сравнение инструментов
 
 | Инструмент | Тип | Хранение эталонов | Особенности |
 | :--- | :--- | :--- | :--- |
-| **Playwright Visual** | Self-hosted | Локально (Git/LFS) | Бесплатно, требует настройки инфраструктуры и Docker. |
-| **Percy** | Managed | Облако Percy | Захватывает DOM, рендерит в своем облаке (нет проблем с Docker). |
-| **Applitools** | Managed (AI) | Облако Applitools | AI-сравнение (игнорирует сдвиги, ловит только смысл), дорого. |
-| **Lost Pixel** | Hybrid | Git или Cloud | Простое решение для монорепозиториев и современных веб-фреймворков. |
-| **Loki** | Component | Git / S3 | Оптимизирован для Storybook, очень быстрый за счет работы с компонентами. |
-| **BackstopJS** | Self-hosted | Локально | Олдскульный, но мощный инструмент с отличными HTML-отчетами. |
-
----
+| **Playwright Visual** | Self-hosted | Git LFS / локально | Бесплатно, встроен в Playwright, требует Docker-инфраструктуру. |
+| **BackstopJS** | Self-hosted | Локально / Git | Олдскульный, но мощный инструмент с отличными HTML-отчетами. |
+| **Lost Pixel** | Hybrid | Git | Open-source, подходит для монорепозиториев и современных веб-фреймворков. |
+| **Loki** | Component | Git / локальное хранилище | Оптимизирован для Storybook, быстрый за счет работы с компонентами. |
 
 ## Практические сценарии
 
-### Сценарий 1: Консистентная среда в Docker
+### Сценарий 1: Docker для консистентной среды
 
-Для исключения проблем с антиалиасингом и шрифтами необходимо использовать один и тот же образ для разработки и CI.
+Исключает проблемы с антиалиасингом и шрифтами за счет идентичного образа для разработки и CI.
 
 **Dockerfile для визуальных тестов (`tests/visual.Dockerfile`):**
 ```dockerfile
 FROM mcr.microsoft.com/playwright:v1.49.0-noble
 
-# Установка шрифтов для соответствия системным (важно для Pixelmatch)
+# Установка шрифтов для соответствия системным (важно для pixel-by-pixel)
 RUN apt-get update && apt-get install -y \
     fonts-liberation \
     fontconfig \
@@ -78,33 +108,30 @@ WORKDIR /work
 
 ### Сценарий 2: Playwright Visual в GitHub Actions
 
-Базовая конфигурация с использованием порогов чувствительности и маскирования динамических данных.
-
-#### 1. Настройка теста с маскированием и порогами
 ```typescript
 import { test, expect } from '@playwright/test';
 
 test('Dashboard visual check', async ({ page }) => {
   await page.goto('/dashboard');
-  
-  // 1. Ожидание стабильности
+
+  // Ожидание стабильности
   await page.waitForLoadState('networkidle');
-  
-  // 2. Маскирование динамических данных (даты, графики)
+
+  // Маскирование динамических данных (даты, графики)
   const chart = page.locator('.realtime-chart');
   const userDate = page.locator('.current-date');
-  
-  // 3. Сравнение с эталоном
+
+  // Сравнение с эталоном
   await expect(page).toHaveScreenshot('dashboard.png', {
-    mask: [chart, userDate], // Скрывает элементы черными прямоугольниками
-    maxDiffPixelRatio: 0.05, // Допуск 5% пикселей
-    threshold: 0.2,          // Чувствительность к изменению цвета
-    animations: 'disabled',   // Отключает CSS-анимации и переходы
+    mask: [chart, userDate],
+    maxDiffPixelRatio: 0.05,
+    threshold: 0.2,
+    animations: 'disabled',
   });
 });
 ```
 
-#### 2. Workflow для GitHub Actions (`.github/workflows/visual-tests.yml`)
+#### Workflow (`.github/workflows/visual-tests.yml`)
 ```yaml
 name: Visual Regression
 on: [pull_request]
@@ -112,7 +139,7 @@ on: [pull_request]
 jobs:
   visual:
     runs-on: ubuntu-latest
-    container: 
+    container:
       image: mcr.microsoft.com/playwright:v1.49.0-noble
     steps:
       - uses: actions/checkout@v4
@@ -130,9 +157,9 @@ jobs:
 
 ### Сценарий 3: Playwright Visual в GitLab CI (Self-hosted)
 
-Подходит для проектов, где критична приватность данных или отсутствие дополнительных затрат на сервисы.
+Для проектов с приватными данными или без дополнительных затрат на внешние сервисы.
 
-#### 1. Локальная генерация эталонов
+#### Локальная генерация эталонов
 Всегда генерируйте эталоны в Docker, чтобы они совпадали с CI-окружением.
 ```bash
 # Запуск тестов в Docker для получения "правильных" скриншотов
@@ -140,25 +167,14 @@ docker run --rm -v $(pwd):/work -w /work mcr.microsoft.com/playwright:v1.49.0-no
   npx playwright test --update-snapshots
 ```
 
-#### 2. Snapshot Management: Image Registry Pattern
-В 2026 году рекомендуется использовать внешнее хранилище (S3/GCS) для управления тысячами снапшотов.
-
-**Алгоритм Image Registry:**
-1.  **Storage:** Скриншоты хранятся в S3: `project/branch/browser/test_name.png`.
-2.  **Pull:** Перед тестом скрипт скачивает эталоны ветки-цели (`main`).
-3.  **Compare:** Запуск `playwright test`.
-4.  **Push:** Если задана переменная `UPDATE_SNAPSHOTS=true`, новые файлы загружаются в S3 в папку текущей ветки.
-5.  **Review:** В MR/PR бот присылает ссылку на HTML-отчет с визуальными диффами, хранящимися в S3.
-
-#### 3. Настройка пайплайна (`.gitlab-ci.yml`)
+#### Настройка пайплайна (`.gitlab-ci.yml`)
 ```yaml
 visual_test:
   stage: test
   image: mcr.microsoft.com/playwright:v1.49.0-noble
   script:
     - npm ci
-    # Скрипт синхронизации с S3 (условный)
-    - ./scripts/download-baselines.sh
+    - ./scripts/pull-baselines.sh
     - npx playwright test --grep @visual
   artifacts:
     when: on_failure
@@ -167,85 +183,224 @@ visual_test:
     expose_as: 'visual-diffs'
 ```
 
-### Сценарий 4: Интеграция с Percy (Managed)
+### Сценарий 4: BackstopJS
 
-Percy значительно упрощает процесс, убирая необходимость в Docker-консистентности на стороне CI, так как он получает DOM-снапшоты и сам их рендерит.
+Универсальный инструмент для pixel-by-pixel сравнения с гибкой конфигурацией.
 
-#### 1. Настройка теста
-```typescript
-import { test } from '@playwright/test';
-import percySnapshot from '@percy/playwright';
-
-test('Responsive visual check', async ({ page }) => {
-  await page.goto('/');
-  await page.waitForLoadState('networkidle');
-  // Percy сделает скриншоты для всех настроенных разрешений и браузеров
-  await percySnapshot(page, 'Home Page');
-});
+#### Конфигурация (`backstop.json`)
+```json
+{
+  "id": "frontend_visual",
+  "viewports": [
+    { "label": "desktop", "width": 1920, "height": 1080 },
+    { "label": "mobile", "width": 375, "height": 812 }
+  ],
+  "scenarios": [
+    {
+      "label": "Home Page",
+      "url": "http://localhost:3000/",
+      "selectors": ["document"],
+      "hideSelectors": [".current-date", ".realtime-chart"],
+      "delay": 500
+    }
+  ],
+  "paths": {
+    "bitmaps_reference": "backstop_data/bitmaps_reference",
+    "bitmaps_test": "backstop_data/bitmaps_test",
+    "engine_scripts": "backstop_data/engine_scripts",
+    "html_report": "backstop_data/html_report",
+    "ci_report": "backstop_data/ci_report.json"
+  },
+  "engine": "puppeteer",
+  "threshold": 0.2,
+  "report": ["CI"]
+}
 ```
 
-#### 2. Настройка пайплайна
-```yaml
-percy_visual:
-  stage: verify
-  script:
-    - npm ci
-    - npx percy exec -- npx playwright test
-  variables:
-    PERCY_TOKEN: $PERCY_TOKEN # Секретная переменная GitLab
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#### CLI
+```bash
+# Генерация эталонов (первый запуск)
+npx backstopjs reference
+
+# Запуск сравнения
+npx backstopjs test
+
+# Авто-апрув при сознательном обновлении дизайна
+npx backstopjs approve
 ```
 
----
+## Управление эталонами (Snapshot Management)
 
-## Snapshot Management (Углубленный разбор)
+В распределенной разработке критически важно централизовать хранение baselines и обеспечить reproducibility.
 
-В 2026 году для управления эталонами в крупных проектах рекомендуется использовать **Image Registry Pattern**:
+### Стратегии хранения
 
-1.  **Storage:** Скриншоты хранятся в Object Storage (S3), организованном по структуре `project/branch/browser/test_name.png`.
-2.  **Pull:** Перед запуском тестов CI-скрипт скачивает эталоны для `target branch` (например, `main`).
-3.  **Compare:** Playwright сравнивает текущие результаты с выкачанными эталонами.
-4.  **Push (Update):** Если разработчик инициирует обновление (`UPDATE_SNAPSHOTS=true`), новые скриншоты загружаются в папку текущей ветки в S3.
-5.  **Review:** В Merge Request добавляется комментарий со ссылкой на HTML-отчет, где отображаются диффы.
+| Стратегия | Масштаб | Инструменты | Особенности |
+| :--- | :--- | :--- | :--- |
+| **Git LFS** | Малый / средний | Git LFS | Простота, версионирование вместе с кодом; ограничение размера repo |
+| **NFS / Shared storage** | Средний / большой | NFS, SMB, MinIO (self-hosted) | Централизованное хранилище, быстрый доступ из всех runner'ов |
+| **Artifact Server** | Любой | Nexus, Artifactory, MinIO | Версионирование артефактов, retention policies, скачивание перед тестом |
 
----
+### Git LFS Pattern
 
-## Диагностика и устранение проблем
+Для небольших проектов baseline хранятся в Git LFS:
 
--   **Flaky Visual Tests (Мерцающие тесты):**
-    - *Причина:* Динамический контент, гифки, видео, мигающий курсор, анимации CSS.
-    - *Решение:* 
-        1. Используйте `page.addStyleTag` для скрытия динамических элементов (`visibility: hidden !important`).
-        2. Используйте Playwright-опцию `mask: [locator]`.
-        3. Отключайте анимации через `animations: 'disabled'` в конфиге.
--   **Разница в 1 пиксель на всей странице:**
-    - *Причина:* Разные версии браузера или изменение в рендеринге системных шрифтов.
-    - *Решение:* Убедитесь, что `image` в CI точно совпадает с версией Playwright в `package.json`. Используйте `threshold: 0.2` для игнорирования шума сглаживания.
--   **Сдвиги макета (Layout Shifts):**
-    - *Причина:* Асинхронная загрузка шрифтов или изображений.
-    - *Решение:* Используйте `page.waitForLoadState('networkidle')` или явно ждите загрузки критических шрифтов через `document.fonts.ready`.
--   **Медленные пайплайны:**
-    - *Причина:* Снятие скриншотов — тяжелая операция.
-    - *Решение:* Запускайте визуальные тесты только для изменений в UI-компонентах (используйте `rules:changes` в GitLab или `paths` в GitHub Actions) или только на стадии Merge Request.
+```bash
+# Инициализация
+git lfs install
+git lfs track "**/screenshots/**/*.png"
+git add .gitattributes
 
----
+# Синхронизация перед тестом
+git lfs pull origin main -- include="**/screenshots/**/*.png"
 
-## Лучшие практики 2026
+# После обновления baselines
+git add screenshots/
+git commit -m "chore: update visual baselines for v2.1"
+git push
+```
 
--   **Shift-left Visual Testing:** Используйте расширения для IDE (например, Playwright VS Code extension), чтобы проверять визуальные изменения еще до пуша в репозиторий, используя тот же Docker-контейнер.
--   **Тестируйте компоненты, а не страницы:** Visual Regression эффективнее всего работает на уровне Storybook или отдельных UI-библиотек. Это снижает количество "шума" от глобальных элементов (шапка, футер).
--   **Layout-only Mode:** Для страниц с часто меняющимся контентом используйте режим сравнения только структуры (границ элементов), игнорируя цвета и изображения. Это доступно в Percy и Applitools.
--   **Quality Gates & Auto-approval:** Настройте интеграцию с GitHub/GitLab Approval API. Если QA-инженер одобрил визуальные изменения в UI внешнего сервиса (Percy/Applitools), статус коммита в CI автоматически становится "Success".
--   **Игнорирование областей:** Всегда маскируйте области с динамическими данными (даты, ID сессий), чтобы избежать ложных срабатываний.
--   **Fail Fast:** Сначала запускайте быстрые Unit и API тесты, и только при их успехе — тяжелые визуальные тесты.
--   **Версионирование эталонов:** При использовании LFS или S3 всегда привязывайте версию эталона к ветке или тегу, чтобы избежать конфликтов при параллельной разработке разных фич.
+### Image Registry Pattern (Self-hosted)
 
----
+Для крупных проектов с множеством baseline:
+
+1.  **Storage:** Эталоны хранятся на NFS или MinIO: `project/branch/browser/test_name.png`.
+2.  **Pull:** Перед тестом CI-скрипт скачивает эталоны для `target branch` (например, `main`).
+3.  **Compare:** Playwright/BackstopJS сравнивает текущие результаты с выкачанными эталонами.
+4.  **Push (Update):** Если задана переменная `UPDATE_SNAPSHOTS=true`, новые скриншоты загружаются в папку текущей ветки.
+5.  **Review:** В MR добавляется комментарий со ссылкой на HTML-отчет с диффами.
+
+## Операции и команды
+
+### Playwright Visual
+
+| Команда | Назначение |
+| :--- | :--- |
+| `npx playwright test --grep @visual` | Запуск только визуальных тестов |
+| `npx playwright test --update-snapshots` | Обновление всех baselines |
+| `npx playwright test --update-snapshots --grep "dashboard"` | Обновление baseline для конкретного теста |
+| `npx playwright test --project=chromium` | Запуск только в Chromium |
+| `npx playwright test --workers=1` | Последовательный запуск (меньше шансов на гонки) |
+
+### BackstopJS
+
+| Команда | Назначение |
+| :--- | :--- |
+| `npx backstopjs reference` | Генерация всех эталонов |
+| `npx backstopjs test` | Запуск сравнения |
+| `npx backstopjs approve` | Авто-апрув изменений (переносит current в reference) |
+| `npx backstopjs test --filter="*dashboard*"` | Запуск только dashboard-сценариев |
+
+### Git LFS
+
+| Команда | Назначение |
+| :--- | :--- |
+| `git lfs install` | Инициализация Git LFS в репозитории |
+| `git lfs track "*.png"` | Добавление шаблона для отслеживания PNG |
+| `git lfs pull origin main` | Скачивание LFS-объектов из ветки |
+| `git lfs ls-files` | Проверка статуса LFS-файлов |
+| `git lfs migrate import --include="*.png"` | Миграция существующих PNG в LFS |
+
+### Bash-паттерны для CI
+
+```bash
+# Проверка: есть ли неучтенные LFS-изменения
+git lfs status | grep -c "modified"
+
+# Скачивание baselines из MinIO / NFS перед тестом
+curl -s -o baselines.tar.gz "http://minio:9000/baselines/${CI_COMMIT_REF_NAME}.tar.gz" && tar -xzf baselines.tar.gz
+
+# Экспорт CI-отчета BackstopJS
+jq '.tests | length' backstop_data/ci_report.json
+jq '.[] | select(.status == "fail") | .name' backstop_data/ci_report.json
+
+# Очистка старых артефактов (старше 30 дней)
+find test-results/ -type f -mtime +30 -delete
+```
+
+## Типичные ошибки и диагностика
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| Flaky: тест то проходит, то падает | Разные версии Chromium / GPU acceleration / антиалиасинг | Используйте идентичный Docker-образ; фиксируйте версию Playwright в `package.json` |
+| Разница в 1 пиксель на всей странице | Сдвиг из-за шрифтов или GPU (SwiftShader) | Установите `threshold: 0.2`; проверьте `fonts-liberation` в Dockerfile |
+| Layout shift на скриншоте | Асинхронная загрузка шрифтов / изображений | `await page.waitForLoadState('networkidle')` или `await document.fonts.ready` |
+| Dynamic content вызывает ложные падения | Даты, ID, курсоры, анимации | Маскируйте через `mask` или `hideSelectors`; отключайте анимации `animations: 'disabled'` |
+| Baseline не найден в CI | LFS-объекты не скачаны / неправильный путь | `git lfs pull` перед тестом; проверьте `paths` в конфиге |
+| Artifacts не загружаются | Диск runner'а переполнен / `when: on_failure` | Ограничьте размер артефактов; настройте `expire_in` |
+| Quality gate блокирует merge без изменений | Порог слишком чувствительный / stale baseline | Пересмотрите `threshold`; обновите baseline через `--update-snapshots` в отдельном MR |
+| Медленный прогон ( >10 мин) | Слишком много разрешений / браузеров / страниц | Ограничьте `viewports`; запускайте только для changed paths; используйте `--workers=1` |
+| Runner перегружен (noisy neighbor) | Другие jobs потребляют CPU/RAM на shared runner | Выделите dedicated runner'ы для visual tests; задайте `resource_group` в GitLab |
+| Конфликт LFS-блокировок | Параллельные MR обновляют одни baselines | Устанавливайте `git lfs lock` перед обновлением; используйте branch-specific baselines |
+
+### Диагностика в CI/CD
+
+```bash
+# Проверка доступности runner'а и ресурсов
+ssh ci-runner "nproc && free -h && df -h /tmp"
+
+# Проверка версии Chromium в Docker
+docker run --rm mcr.microsoft.com/playwright:v1.49.0-noble chromium --version
+
+# Проверка LFS-объектов
+git lfs ls-files | wc -l
+git lfs status
+
+# Быстрый smoke-test визуального сравнения локально
+npx playwright test --grep "Dashboard visual check" --headed
+
+# Просмотр HTML-отчета BackstopJS
+open backstop_data/html_report/index.html
+```
+
+## Best Practices
+
+### Проектирование и стабильность
+
+-   **Docker-first:** Всегда генерируйте baselines и запускайте тесты в одном и том же Docker-образе. Никогда не смешивайте локальный Chrome/Chromium с CI.
+-   **Маскируйте динамику:** Даты, случайные ID, курсы валют, анимации — всегда скрывайте через `mask` / `hideSelectors` или `addStyleTag`.
+-   **Идемпотентность:** Baseline generation должна быть детерминированной; фиксируйте версию Playwright/BackstopJS в `package.json` или `package-lock.json`.
+-   **Компоненты, а не страницы:** Визуальные тесты эффективнее на уровне Storybook или отдельных UI-библиотек. Это снижает шум от глобальных элементов (шапка, футер, спиннеры).
+-   **Fail fast:** Запускайте визуальные тесты только после успешных Unit и API-тестов. В GitLab/GitHub Actions используйте `needs` / `rules` для фильтрации по changed paths.
+
+### Управление версиями и baselines
+
+-   **Версионируйте baselines:** При использовании Git LFS каждая ветка имеет свои baselines. При слиянии MR обновляйте baselines в том же PR.
+-   **Осознанное обновление:** Обновляйте скриншоты только через `--update-snapshots` или `backstop approve` в отдельном коммите/MR с код-ревью.
+-   **Retention:** Настройте удаление старых артефактов в CI (обычно 30–90 дней). Для Git LFS используйте `git lfs prune` на runner'е.
+
+### CI/CD оркестрация и инфраструктура
+
+-   **Runner isolation:** Выделяйте dedicated runner'ы для visual tests. Генерация скриншотов требовательна к CPU и RAM; shared runner'ы страдают от noisy neighbors.
+-   **GPU / CPU роллбэк:** Если runner имеет GPU, убедитесь, что драйверы и `--disable-gpu` настроены единообразно. В контейнерах Playwright GPU отключен по умолчанию (SwiftShader), что обеспечивает детерминизм.
+-   **Артефакты:** Сохраняйте diff-изображения и HTML-отчеты как артефакты pipeline. Это обязательный минимум для отладки без локального воспроизведения.
+-   **Quality gates:** Визуальные тесты должны стоять перед deploy в staging/production. Настройте branch protection: merge в main блокируется при падении visual tests.
+-   **Secrets:** Токены для artifact store (MinIO, Nexus) храните в CI secrets (GitLab CI variables, GitHub Secrets). Не коммитьте credentials в репозиторий.
+-   **Caching:** Кэшируйте `node_modules` и baselines между запусками для ускорения. В GitHub Actions используйте `actions/cache@v4`; в GitLab — `cache:`.
+
+### Observability и отладка
+
+-   **Debug artifacts:** При падении всегда сохраняйте stderr от Playwright/BackstopJS, логи браузера и скриншоты failed-тестов.
+-   **Reproducibility:** Воспроизведите падение локально в том же Docker-образе: `docker run --rm -v $(pwd):/work mcr.microsoft.com/playwright:v1.49.0-noble npx playwright test --grep "failing test" --headed`.
+-   **Network policies:** В Kubernetes ограничьте доступ к artifact store и baselines только CI-runner'ам.
+-   **Metrics:** Собирайте метрики: среднее время прогона, процент flaky, количество failed visual tests per PR. Это помогает выявлять проблемы с runner'ами или шрифтами.
+
+### Безопасность
+
+-   **Авторизация в artifact store:** Включите basic auth или token-based auth в MinIO/Nexus. Отключите анонимный доступ.
+-   **HTTPS:** Используйте TLS для artifact store URL в production.
+-   **Secrets rotation:** Регулярно ротируйте токены доступа к artifact store. Храните их в секрет-менеджере.
 
 ## Дополнительная информация
 
 ### См. также
-- **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — общие принципы и другие виды тестов.
-- **[Специфика Frontend CI/CD](../Frontend_CI_CD/frontend_pipeline_specifics.md)** — контекст применения визуальных тестов в веб-разработке.
-- **[Playwright: Visual Comparisons](https://playwright.dev/docs/test-snapshots)** — официальная документация Playwright.
+
+* **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — общие принципы и другие виды тестов.
+* **[Специфика Frontend CI/CD](../Frontend_CI_CD/frontend_pipeline_specifics.md)** — контекст применения визуальных тестов в веб-разработке.
+* **[Testing Types: Unit, Integration, E2E](../../Testing/testing_types_unit_integration_e2e.md)** — обзор видов тестирования.
+
+### Внешние ресурсы
+
+- [Playwright Test Snapshots](https://playwright.dev/docs/test-snapshots) — официальная документация Playwright по визуальному сравнению.
+- [BackstopJS](https://github.com/garris/BackstopJS) — документация и конфигурация.
+- [Lost Pixel](https://www.lost-pixel.com/) — open-source визуальное регрессионное тестирование для монорепозиториев.

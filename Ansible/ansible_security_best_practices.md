@@ -11,7 +11,7 @@
 - **Ansible Vault** — встроенный механизм шифрования переменных и файлов с использованием AES-256. Поддерживает несколько ключей шифрования (Vault ID) для разделения секретов по средам (dev/staging/prod).
 - **HashiCorp Vault** — внешний менеджер секретов с динамической выдачей учетных данных, поддержкой OIDC/AppRole аутентификации и автоматической ротацией. Интегрируется с Ansible через коллекцию `community.hashi_vault`.
 - **AppRole** — метод аутентификации в HashiCorp Vault для машин и скриптов, использующий пару `RoleID` и `SecretID`. Подходит для CI/CD-пайплайнов, где OIDC недоступен.
-- **SOPS (Secrets OPerationS)** — инструмент для шифрования только значений в YAML/JSON файлах, поддерживающий облачные KMS (AWS, GCP, Azure) и PGP. Отличается от Ansible Vault тем, что сохраняет читаемость ключей YAML.
+- **SOPS (Secrets OPerationS)** — инструмент для шифрования только значений в YAML/JSON файлах, поддерживающий PGP и внешние KMS. Отличается от Ansible Vault тем, что сохраняет читаемость ключей YAML.
 - **Supply Chain Security** — практики защиты цепочки поставок ПО: проверка подписей, контроль версий зависимостей, аудит использованных компонентов. В контексте Ansible — проверка GPG-подписей коллекций и ролей.
 
 ## Основные концепции
@@ -22,9 +22,9 @@
 
 | Компонент | Минимальная версия | Назначение |
 | :--- | :--- | :--- |
-| **ansible-core** | 2.15+ | Ядро Ansible (рекомендуется 2.17+) |
-| **ansible-lint** | 6.0+ (24.x+) | Статический анализ и профиль `security` |
-| **Python** | 3.8+ | Совместимость с ansible-core |
+| **ansible-core** | 2.21+ | Ядро Ansible (рекомендуется 2.21+) |
+| **ansible-lint** | 26.x+ | Статический анализ и профиль `security` |
+| **Python** | 3.9+ | Совместимость с ansible-core (3.12+ рекомендуется) |
 | **GPG** | 2.2+ | Шифрование файлов паролей (опционально) |
 | **gitleaks** | 8.x+ | Обнаружение секретов в Git-истории |
 | **pre-commit** | 3.0+ | Автоматическая проверка перед коммитом |
@@ -33,10 +33,10 @@
 **Проверка окружения:**
 ```bash
 ansible --version | head -1
-# → ansible [core 2.17.x]
+# → ansible [core 2.21.x]
 
 ansible-lint --version
-# → ansible-lint 24.x.x
+# → ansible-lint 26.x.x
 
 gitleaks version
 # → v8.18.x
@@ -172,7 +172,7 @@ collections:
 
 roles:
   - name: geerlingguy.docker
-    version: "6.1.0"  # Точная версия!
+    version: ">=8.0.0"  # Актуальная версия!
 ```
 
 **Пример .pre-commit-config.yaml:**
@@ -336,7 +336,8 @@ callbacks_enabled = ansible.builtin.timer, ansible.builtin.profile_tasks
   hosts: app_servers
   vars:
     # Адрес Vault берется из переменной окружения VAULT_ADDR
-    db_password: "{{ lookup('community.hashi_vault.vault_kv2_get', 'kv/data/db/prod', engine_mount_point='secret').secret.password }}"
+    # path указывается относительно engine_mount_point, без сегмента /data/
+    db_password: "{{ lookup('community.hashi_vault.vault_kv2_get', 'db/prod').secret.password }}"
 
   tasks:
     - name: Конфигурация приложения
@@ -359,7 +360,7 @@ callbacks_enabled = ansible.builtin.timer, ansible.builtin.profile_tasks
     secret_id: "{{ vault_secret_id }}"
   tasks:
     - name: Аутентификация через AppRole
-      community.hashi_vault.hashi_vault_login:
+      community.hashi_vault.vault_login:
         method: approle
         role_id: "{{ role_id }}"
         secret_id: "{{ secret_id }}"
@@ -369,7 +370,7 @@ callbacks_enabled = ansible.builtin.timer, ansible.builtin.profile_tasks
 
     - name: Получение секрета
       community.hashi_vault.vault_kv2_get:
-        path: secret/data/db/prod
+        path: db/prod
         engine_mount_point: secret
         url: "{{ vault_addr }}"
         auth_method_token: "{{ vault_login.token }}"

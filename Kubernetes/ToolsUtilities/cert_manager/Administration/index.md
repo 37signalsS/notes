@@ -248,6 +248,175 @@ kubectl get clusterissuer -o json | jq '.items[] | {name: .metadata.name, manage
 
 ---
 
+## Безопасность и хранение секретов
+
+### Проблема: приватные ключи в etcd
+
+По умолчанию cert-manager хранит приватные ключи CA и сертификатов в Kubernetes Secrets, которые записываются в etcd в открытом виде (или с шифрованием через EncryptionConfiguration). Компрометация etcd приводит к утечке всех приватных ключей.
+
+### Решение 1: Sealed Secrets
+
+**Sealed Secrets** — контроллер, шифрующий Kubernetes Secrets с помощью RSA-OAEP так, что их безопасно хранить в Git.
+
+```yaml
+# Оригинальный Secret (НЕ хранится в Git)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: letsencrypt-prod-account-key
+  namespace: cert-manager
+type: Opaque
+data:
+  account-key: <base64-encoded-private-key>
+```
+
+```yaml
+# SealedSecret (БЕЗОПАСНО хранится в Git)
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: letsencrypt-prod-account-key
+  namespace: cert-manager
+spec:
+  encryptedData:
+    account-key: AgBy3i4OJSWK+PiTySYZZA9rO...
+  template:
+    metadata:
+      name: letsencrypt-prod-account-key
+      namespace: cert-manager
+```
+
+**Установка:**
+```bash
+# Установка Sealed Secrets через Helm
+helm install sealed-secrets bitnami-labs/sealed-secrets \
+  --namespace kube-system \
+  --set secretNameAnnotations."cert-manager\.io/cluster-issuer"=letsencrypt-prod
+```
+
+**Интеграция с cert-manager:** Sealed Secrets controller может использовать cert-manager для выпуска собственного TLS-сертификата для webhook.
+
+### Решение 2: External Secrets Operator
+
+**External Secrets Operator (ESO)** — контроллер, синхронизирующий секреты из внешних хранилищ (AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager) в Kubernetes Secrets.
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: letsencrypt-prod-account-key
+  namespace: cert-manager
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: letsencrypt-prod-account-key
+    creationPolicy: Owner
+  data:
+  - secretKey: account-key
+    remoteRef:
+      key: secret/cert-manager/letsencrypt-prod
+      property: account-key
+```
+
+**Преимущества:**
+- Приватные ключи никогда не хранятся в etcd
+- Автоматическая ротация внешних секретов
+- Централизованное управление доступом
+
+### Решение 3: OPA/Gatekeeper политики
+
+**OPA (Open Policy Agent)** — движок политик для принудительства стандартов безопасности. Gatekeeper — интеграция OPA с Kubernetes admission controller.
+
+#### Политика: Запрет RSA 2048
+
+```yaml
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: certmanagersecurity
+spec:
+  crd:
+    spec:
+      names:
+        kind: CertManagerSecurity
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            algorithms:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package certmanagersecurity
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Certificate"
+          alg := input.review.object.spec.privateKey.algorithm
+          not alg in input.parameters.algorithms
+          msg := sprintf("Алгоритм %v запрещен. Разрешены: %v", [alg, input.parameters.algorithms])
+        }
+```
+
+```yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: CertManagerSecurity
+metadata:
+  name: enforce-modern-algorithms
+spec:
+  match:
+    kinds:
+    - apiGroups: ["cert-manager.io"]
+      kinds: ["Certificate"]
+  parameters:
+    algorithms: ["ECDSA", "Ed25519"]
+```
+
+#### Политика: Ограничение срока действия
+
+```yaml
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: certmanagerduration
+spec:
+  crd:
+    spec:
+      names:
+        kind: CertManagerDuration
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            maxDurationDays:
+              type: integer
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package certmanagerduration
+
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Certificate"
+          dur := input.review.object.spec.duration
+          days := parse_duration_to_days(dur)
+          days > input.parameters.maxDurationDays
+          msg := sprintf("Срок действия %v дней превышает максимум %v дней", [days, input.parameters.maxDurationDays])
+        }
+
+        parse_duration_to_days(dur) = days {
+          endswith(dur, "h")
+          hours := to_number(trim_suffix(dur, "h"))
+          days := hours / 24
+        }
+```
+
+---
+
 ## Дополнительная информация
 
 ### Управление доверием (trust-manager)
@@ -280,9 +449,22 @@ kubectl get clusterissuer -o json | jq '.items[] | {name: .metadata.name, manage
 8.  **Сетевая изоляция:** Используйте `NetworkPolicy` для ограничения egress контроллера только необходимыми эндпоинтами.
 9.  **CSI-драйвер для высокосекретных сред:** Генерация ключей в памяти узла исключает хват приватных ключей в etcd.
 10. **Аудит:** Включите audit log для API-сервера с фокусом на ресурсы `cert-manager.io/v1`.
+11. **Мульти-тенантность:** Используйте Issuer per Tenant и namespace-scoped RBAC (подробнее: **[Мульти-тенантность](./multi_tenancy.md)**).
+12. **Внутренний mTLS:** Для сервисов используйте короткие TTL (≤72ч) и CSI Driver (подробнее: **[Внутренний mTLS](./internal_mtls.md)**).
 
 ### Смотрите также
 
 - **[Cert-manager: Операции](./operations.md)** — мониторинг, резервное копирование и обновление.
 - **[Cert-manager: Диагностика](./troubleshooting.md)** — глубокий анализ ошибок и troubleshooting.
+- **[Обновление и миграция cert-manager](./upgrades_and_migration.md)** — апгрейд версий, breaking changes, rollback.
+- **[Масштабирование и производительность](./scaling_and_performance.md)** — tuning при 1000+ сертификатах, HPA, PDB.
+- **[RBAC-примеры](./rbac_examples.md)** — готовые Role/ClusterRole для типичных ролей (dev, platform, CI/CD).
+- **[Ephemeral/Preview-среды](./ephemeral_environments.md)** — автоматизация TLS для динамических preview деплоев.
+- **[Cert-manager: GitOps интеграция](./gitops_integration.md)** — настройка ArgoCD/Flux с cert-manager.
+- **[Cert-manager: Тестирование в CI/CD](./cicd_testing.md)** — валидация манифестов перед деплоем.
+- **[Cert-manager: Production Playbooks](./production_playbooks.md)** — пошаговые инструкции по инцидентам.
+- **[Cert-manager: Отзыв сертификатов](./certificate_revocation.md)** — CRL, OCSP, короткие TTL.
+- **[Cert-manager: Мульти-тенантность](./multi_tenancy.md)** — изоляция tenant'ов, RBAC, NetworkPolicy.
+- **[Cert-manager: DNS-провайдеры](./dns_providers.md)** — Cloudflare, Route53, Google Cloud DNS.
+- **[Cert-manager: Внутренний mTLS](./internal_mtls.md)** — mTLS для баз, gRPC, Redis.
 - **[Cert-manager: Безопасность и TLS](../../../Security/tls_and_mtls_in_kubernetes.md)** — общие принципы защиты трафика.

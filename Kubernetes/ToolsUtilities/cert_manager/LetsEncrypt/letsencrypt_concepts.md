@@ -394,5 +394,7 @@ kubectl get certificate -A -o custom-columns=\
 - **[Let's Encrypt: Обзор](./index.md)** — лимиты, solvers и окружения
 - **[Практические сценарии Let's Encrypt](./letsencrypt_scenarios.md)** — конфигурация HTTP-01 и DNS-01
 - **[Cert-manager: Диагностика](./letsencrypt_advanced.md)** — решение проблем с ACME-заказами
+- **[Реагирование на инциденты (Incident Response)](./letsencrypt_incident_response.md)** — процедуры при просроченных сертификатах и компрометации ключей
+- **[Disaster Recovery и Backup](./letsencrypt_disaster_recovery.md)** — восстановление после потери кластера
 - **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов (Certificate, Issuer, Order, Challenge)
 - **[Cert-manager: Администрирование](../Administration/index.md)** — HA, ресурсы и ротация ключей

@@ -549,3 +549,4 @@ systemd-cgtop --batch --iterations=1 --raw | awk '\
 * [systemd-analyze: Диагностика](./performance.md) — проверка корректности расписаний (`calendar`).
 * [Пользовательские службы](./user_services.md) — режим `--user` и linger.
 * [Практические сценарии systemd](./systemd_practical_scenarios.md) — архитектурные паттерны.
+* [Шифрование дисков (systemd-cryptenroll)](./systemd_cryptenroll.md) — временные задачи для управления ключами.

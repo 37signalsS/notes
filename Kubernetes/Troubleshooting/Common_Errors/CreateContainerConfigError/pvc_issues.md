@@ -527,6 +527,7 @@ kubectl get volumeattachment -o json | jq -r '.items[] | select(.status.attached
 - [Общая диагностика CreateContainerConfigError](./diagnostics.md)
 - [Определения CreateContainerConfigError](./definitions.md)
 - [Проблемы с томами (не-PVC)](./volume_issues.md)
+- [CRI и containerd](./cri_and_runtime.md) — Container Runtime Interface, взаимодействие kubelet с рантаймом
 - [Общее диагностика проблем с PVC](./diagnostics.md#сценарий-3-диагностика-проблем-с-persistentvolumeclaim-pvc)
 - [Подробно о PV/PVC](../../../../Storage/pv_and_pvc.md)
 - [Настройка StorageClass](../../../../Storage/storageclass.md)

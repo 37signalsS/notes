@@ -713,7 +713,7 @@ k3s --version
 | **Loki** | Агрегация логов | 512 МБ RAM |
 | **Alertmanager** | Уведомления о критических событиях | 128 МБ RAM |
 
-Стек Prometheus + Grafana + Loki устанавливается через umbrella-чарт или отдельные Helm-чарты. Конфигурация выходит за рамки данного файла, но является логичным следующим шагом для превращения lab в полноценную observability-среду.
+Детали установки и конфигурации см. в [Мониторинг K3s](./k3s_monitoring.md) (Prometheus + Grafana) и [Логирование K3s](./k3s_logging.md) (Loki + Alloy).
 
 ---
 
@@ -829,10 +829,7 @@ sudo cat /etc/rancher/k3s/k3s.yaml
 
 ### Стратегия резервного копирования
 
-Даже в dev-окружении потеря кода или конфигурации критична. Рекомендуемая схема:
-- **Базы данных:** Регулярные дампы PostgreSQL в Minio через `CronJob`.
-- **Файлы:** Использование Velero с плагином для работы с файловой системой (Restic/Kopia) для бэкапа `Local Path` томов в S3-хранилище (Minio).
-- **Git:** GitLab должен быть настроен на хранение артефактов и LFS в Minio.
+Детали настройки бэкапа и восстановления см. в [Бэкап K3s](./k3s_backup_velero.md).
 
 ### Безопасность и сетевой доступ
 
@@ -854,3 +851,9 @@ sudo cat /etc/rancher/k3s/k3s.yaml
 - [Kubernetes Overview](../../kubernetes_overview.md) -- обзор архитектуры и ключевых концепций
 - [Создание Dev-контейнера с SSH](./dev_container_ssh.md) -- детали реализации workspace
 - [RKE2 vs K3s](../RKE/rke_concepts.md) -- сравнение дистрибутивов Rancher
+- [Обновление K3s](./k3s_cluster_upgrade.md) -- upgrade и rollback кластера
+- [Мониторинг K3s](./k3s_monitoring.md) -- Prometheus + Grafana + Alertmanager
+- [Логирование K3s](./k3s_logging.md) -- Loki + Alloy для централизованного сбора логов
+- [Бэкап K3s](./k3s_backup_velero.md) -- Velero + Minio для бэкапа и восстановления
+- [NetworkPolicy в K3s](./k3s_network_policies.md) -- Calico/Cilium вместо Flannel
+- [Управление ресурсами](./k3s_resource_management.md) -- ResourceQuota, LimitRange, HPA, PDB

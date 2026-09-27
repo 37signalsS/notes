@@ -390,6 +390,9 @@ spec:
 - **ldapsearch / ldapmodify** — стандартные утилиты для работы по сети.
 
 ### См. также
+- **[OpenLDAP: установка и конфигурация](./openldap_basics.md)** — bare-metal развертывание.
 - **[389DS — альтернатива OpenLDAP](./389ds/overview.md)** — сравнение и выбор решения.
 - **[LDAP в Linux](../Linux/SystemAdministration/users_management.md)** — базовые принципы и структура DIT.
 - **[Протокол Kerberos](../Security/Concepts/kerberos.md)** — использование LDAP в качестве бэкенда для аутентификации.
+- **[LDAP Troubleshooting](./ldap_troubleshooting.md)** — диагностика проблем.
+- **[LDAP backup/restore](./ldap_backup_restore.md)** — стратегии бэкапов.

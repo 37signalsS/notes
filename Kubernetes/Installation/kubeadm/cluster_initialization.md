@@ -626,3 +626,4 @@ sudo kubeadm init --config kubeadm-init.yaml --upload-certs
 - **[Присоединение узлов](../../Installation/HA_Cluster_Bare_Metal/node_joining.md)** — подробное руководство по join.
 - **[Управление сертификатами](../../Operations/certificate_management.md)** — ротация и проверка сертификатов.
 - **[Обновление кластеров](../../Operations/upgrading_clusters.md)** — бесшовное обновление версий Kubernetes.
+- **[Внешний etcd](./external-etcd-setup.md)** — настройка внешнего etcd-кластера для kubeadm.

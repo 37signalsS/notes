@@ -669,3 +669,7 @@ curl -sk https://127.0.0.1:10250/metrics | grep -E "^process_|^kubelet_"
 - [Проблемы рантайма](./runtime_issues.md) — если причина в `containerd`/`CRI-O`.
 - [Давление ресурсов](./resource_pressure.md) — влияние Memory/Disk Pressure.
 - [Управление сертификатами](../../../Operations/certificate_management.md) — детали ротации.
+- [SELinux и AppArmor](./security_profiles.md) — блокировка kubelet из-за MAC-политик.
+- [Тюнинг ядра](./kernel_tuning.md) — ulimit, pid_max, inotify для kubelet.
+- [Синхронизация времени](./time_sync.md) — clock skew и TLS-ошибки kubelet.
+- [Hostname и DNS](./hostname_dns_issues.md) — регистрация узла и TLS-сертификаты.

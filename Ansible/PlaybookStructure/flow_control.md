@@ -18,6 +18,10 @@
 
 **Директива ошибок блока (`errors`)** — параметр блока, определяющий политику обработки ошибок: `ignore` (продолжить как будто ошибки не было), `result` (продолжить, но сохранить статус ошибки в переменной `block_result`), `fatal` (прекратить выполнение, поведение по умолчанию).
 
+**Ограничение конкурентности (`throttle`)** — параметр задачи, ограничивающий количество параллельных выполнений этой задачи в пределах текущего батча хостов.
+
+**Пакетная обработка (`serial`)** — параметр плейбука, определяющий размер батча хостов, обрабатываемых одновременно в рамках rolling updates.
+
 ## Базовые концепции
 
 ### Условные конструкции (when)
@@ -127,7 +131,9 @@
       - name: db
         packages: [mysql, openssl]
 ```
+
 2.  **`until`, `retries`, `delay`**: Используются для ожидания события (например, доступности порта или завершения фонового процесса). Задача будет повторяться до выполнения условия в `until`.
+
 3.  **`loop_control`**:
     *   `loop_var`: Изменение имени переменной итерации (по умолчанию `item`). Критично для вложенных циклов.
     *   `pause`: Задержка между итерациями цикла.
@@ -174,14 +180,21 @@
     - host3.example.com
 ```
 
-Подробнее: **[Переменные и приоритеты](../../Ansible/PlaybookStructure/variables.md)**.
-
 ### Регистрация и переопределение статусов
 
 Ansible определяет успешность задачи по коду возврата (RC). Это поведение можно переопределить:
 *   **`register`**: Захватывает полный объект ответа модуля (`changed`, `failed`, `stdout`, `rc`).
 *   **`changed_when`**: Задает условие, при котором задача считается изменившей систему. Важно для модулей `command` и `shell`.
 *   **`failed_when`**: Задает специфическое условие сбоя, перекрывая стандартную проверку RC.
+
+### Жизненный цикл выполнения и SRE-контекст
+
+При проектировании плейбуков для крупных инфраструктур SRE учитывают следующие аспекты:
+
+*   **Изоляция ошибок**: Одна упавшая задача не должна ломать весь плей на всех хостах. Используйте `block/rescue`, `any_errors_fatal: false` по умолчанию.
+*   **Пакетное обновление (Rolling Updates)**: `serial` позволяет обновлять парк порциями. При ошибке в батче — останавливаться, а не катиться дальше. Для тонкой настройки параллелизма смотрите [Оптимизация производительности](../ansible_performance_tuning.md).
+*   **Детект дрейфа**: `check_mode` + `--diff` позволяет обнаружить несанкционированные изменения без модификации системы.
+*   **Ограничение нагрузки**: `throttle` защищает внешние API (мониторинг, лицензии, балансировщики) от rate limits при массовом запуске.
 
 ### Обработка ошибок и контроль выполнения
 
@@ -542,7 +555,7 @@ Ansible определяет успешность задачи по коду в�
 ### Сценарий 12: Ограничение нагрузки на API (throttle) и контроль ошибок
 
 ```yaml
-- name: Массовая регистрация серверов в внешнем сервисе
+- name: Массовая регистрация серверов во внешнем сервисе
   hosts: app_servers
   serial: "25%"
   max_fail_percentage: 5
@@ -575,9 +588,118 @@ Ansible определяет успешность задачи по коду в�
       throttle: 1  # Строго по одному запросу для сохранения кворума
 ```
 
-## Валидация и отладка
+### Сценарий 13: Rolling Update с контролем ошибок (SRE)
 
-### Статический анализ
+```yaml
+- name: Rolling Update веб-серверов
+  hosts: web_servers
+  become: true
+  serial: "25%"
+  max_fail_percentage: 10
+  any_errors_fatal: false
+
+  tasks:
+    - name: Проверка доступности сервиса перед обновлением
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}:{{ app_port }}/health"
+        status_code: 200
+      register: health_pre
+      until: health_pre.status == 200
+      retries: 5
+      delay: 10
+
+    - name: Обновление пакетов
+      ansible.builtin.package:
+        name: "{{ app_package }}"
+        state: latest
+      register: pkg_result
+      throttle: 10  # Не более 10 параллельных обновлений
+
+    - name: Проверка доступности после обновления
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}:{{ app_port }}/health"
+        status_code: 200
+      register: health_post
+      until: health_post.status == 200
+      retries: 5
+      delay: 10
+
+    - name: Откат при проблемах
+      block:
+        - name: Откат к предыдущей версии
+          ansible.builtin.yum:
+            name: "{{ app_package }}"
+            state: previous
+      when: pkg_result is failed
+```
+
+### Сценарий 14: Детект дрейфа конфигурации (SRE)
+
+```yaml
+- name: Детект дрейфа конфигурации
+  hosts: all
+  gather_facts: yes
+  serial: "20%"
+
+  tasks:
+    - name: Сбор текущих чексум файлов
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha256
+      register: file_states
+      loop: "{{ config_files }}"
+
+    - name: Сравнение с эталоном
+      ansible.builtin.assert:
+        that:
+          - item.stat.checksum == expected_checksums[item.item] | default('')
+        fail_msg: "Дрейф конфигурации: {{ item.item }}"
+      loop: "{{ file_states.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Отчет о дрейфе
+      ansible.builtin.copy:
+        content: "Дрейф конфигурации на {{ inventory_hostname }}\n"
+        dest: "/var/log/drift_report_{{ inventory_hostname }}_{{ ansible_date_time.date }}.log"
+        mode: "0644"
+      when: file_states.results | selectattr('changed') | list | length > 0
+```
+
+### Сценарий 15: Параллельное выполнение с контролем нагрузки (SRE)
+
+```yaml
+- name: Массовая регистрация в сервисе мониторинга
+  hosts: all
+  serial: "50%"
+  max_fail_percentage: 15
+
+  tasks:
+    - name: Регистрация хоста в мониторинге
+      ansible.builtin.uri:
+        url: "https://monitoring.example.com/api/v1/hosts"
+        method: POST
+        body_format: json
+        body:
+          hostname: "{{ inventory_hostname }}"
+          ip: "{{ ansible_default_ipv4.address }}"
+          os: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+        status_code: [200, 201]
+      register: reg_result
+      until: reg_result.status in [200, 201]
+      retries: 3
+      delay: 5
+      throttle: 5  # Не более 5 одновременных запросов
+
+    - name: Проверка доступности
+      ansible.builtin.ping:
+      register: ping_result
+      when: reg_result is success
+```
+
+## Операции и команды
+
+### Статический анализ и dry-run
 
 ```bash
 ansible-playbook site.yml --syntax-check
@@ -654,6 +776,41 @@ ansible web_servers -m setup -i inventory.ini
 
 ansible web_servers -m setup -i inventory.ini -a "filter=ansible_distribution*"
 # → Собрать только факты о дистрибутиве
+```
+
+### Управление тегами и пакетным выполнением
+
+```bash
+ansible-playbook site.yml --tags deploy
+# → Выполнить только задачи с тегом deploy
+
+ansible-playbook site.yml --skip-tags verify
+# → Пропустить задачи с тегом verify
+
+ansible-playbook site.yml --tags always
+# → Выполнить только задачи с тегом always (по умолчанию)
+
+ansible-playbook site.yml --serial 5
+# → Перезапустить с пакетным выполнением 5 хостов за раз (переопределяет serial в плейбуке)
+
+ansible-playbook site.yml --forks 20
+# → Увеличить количество параллельных процессов (по умолчанию fork=5)
+```
+
+### Валидация SRE-сценариев
+
+```bash
+# Проверка плейбука на детект дрейфа
+ansible-playbook drift_detection.yml --check
+# → Показать файлы, чья чексумма отличается от эталона
+
+# Проверка rolling update стратегии
+ansible-playbook rolling_update.yml --serial "25%" --check
+# → Симулировать обновление 25% хостов
+
+# Аудит подключений к хостам
+ansible-playbook audit.yml --forks 10
+# → Проверить 10 хостов одновременно (throttle friendly)
 ```
 
 ## Типичные ошибки и troubleshooting
@@ -746,101 +903,55 @@ ansible-inventory --graph  # Визуализация структуры инв�
         state: latest
 ```
 
-## Edge cases и ограничения
+### Ошибка: "when" с неопределенной переменной вызывает исключение
 
-### `when` с undefined переменными
+**Причина:** Ansible выбрасывает ошибку при оценке `when`, если переменная не определена.
 
-При использовании `when` с переменными, которые могут быть не определены, Ansible выбросит ошибку. Используйте `is defined` перед обращением:
-
+**Решение:**
 ```yaml
-# ОШИБКА: переменная может быть не определена
-- name: Опасное условие
-  ansible.builtin.debug:
-    msg: "Найдено"
-  when: optional_var == "value"
-
-# ПРАВИЛЬНО: сначала проверить существование
+# Правильно: проверяем существование перед сравнением
 - name: Безопасное условие
   ansible.builtin.debug:
     msg: "Найдено"
   when: optional_var is defined and optional_var == "value"
 ```
 
-### `loop` с пустым списком
+### Ошибка: "loop" с пустым списком
 
-Пустой список в `loop` не вызывает ошибку — задача просто не выполняется ни разу. Это безопасно и не требует дополнительных проверок:
+**Причина:** При попытке итерации по пустому списку задача просто не выполняется.
+
+**Решение:** Пустой список — это не ошибка, а ожидаемое поведение. Если нужно гарантировать хотя бы одну итерацию, проверяйте длину списка:
 
 ```yaml
-# Если package_list пуст, задача не выполнится ни разу
-- name: Установка пакетов
-  ansible.builtin.package:
-    name: "{{ item }}"
-    state: present
-  loop: "{{ package_list | default([]) }}"
+- name: Проверка наличия элементов
+  ansible.builtin.assert:
+    that:
+      - package_list | length > 0
+    fail_msg: "Список пакетов пуст"
 ```
 
-### `until` без `retries`
+### Ошибка: "async" задача теряется при перезапуске
 
-Параметр `until` без `retries` приводит к выполнению задачи только один раз. Всегда указывайте `retries` и `delay`:
+**Причина:** Фоновые задачи (`async` + `poll: 0`) теряются при перезапуске Ansible Control Node.
 
+**Решение:** Для критичных операций используйте `async_status` с длинными `retries`/`delay` или избегайте фоновых задач. Сохраняйте `ansible_job_id` в внешнее хранилище.
+
+### Ошибка: "loop_var" перезаписывается во вложенных циклах
+
+**Причина:** При использовании `include_tasks` с циклом внутренний цикл перезаписывает переменную `item`.
+
+**Решение:**
 ```yaml
-# ОШИБКА: задача выполнится только один раз
-- name: Проверка сервиса
-  ansible.builtin.uri:
-    url: http://localhost:8080/health
-  until: result.status == 200
-
-# ПРАВИЛЬНО: с указанием retries и delay
-- name: Ожидание сервиса
-  ansible.builtin.uri:
-    url: http://localhost:8080/health
-  register: result
-  until: result.status == 200
-  retries: 12
-  delay: 10
-```
-
-### `loop_var` во вложенных циклах
-
-При использовании `include_tasks` с циклом во внутреннем файле необходимо переименовывать `loop_var`, иначе переменная `item` будет перезаписана:
-
-```yaml
-# Внешний цикл — используем loop_var: app
+# Во внешнем цикле — используем loop_var: app_name
 - ansible.builtin.include_tasks: process_app.yml
   loop: [frontend, backend]
   loop_control:
-    loop_var: app
+    loop_var: app_name
 
-# Внутренний цикл в process_app.yml — использует стандартный item
+# Во внутреннем цикле — стандартный item
 - ansible.builtin.debug:
-    msg: "App: {{ app }}, Config: {{ item }}"
+    msg: "App: {{ app_name }}, Config: {{ item }}"
   loop: [config, service]
-```
-
-### `async` и потеря фоновых задач
-
-Фоновые задачи (`async` + `poll: 0`) теряются при перезапуске Ansible Control Node. Для критичных операций используйте персистентное хранение статуса или избегайте фоновых задач.
-
-### Вложенные `block` и каскадные ошибки
-
-При ошибке во вложенном `block` управление переходит в его `rescue`. Если `rescue` тоже падает, управление переходит в `rescue` внешнего блока. `always` выполняется всегда, даже при каскадных ошибках:
-
-```yaml
-- name: Внешний блок
-  block:
-    - name: Внутренний блок
-      block:
-        - name: Операция
-          ansible.builtin.command: risky_op
-      rescue:
-        - name: Восстановление внутреннее
-          ansible.builtin.command: recover_internal
-  rescue:
-    - name: Восстановление внешнее
-      ansible.builtin.command: recover_external
-  always:
-    - name: Очистка (выполнится ВСЕГДА)
-      ansible.builtin.file: path=/tmp/work state=absent
 ```
 
 ## Лучшие практики
@@ -863,21 +974,28 @@ ansible-inventory --graph  # Визуализация структуры инв�
 8. **`changed_when` / `failed_when` для отчетности.** Переопределяйте статусы задач для корректной информации об изменениях.
 9. **`any_errors_fatal` для критичных плеев.** Останавливайте весь плейбук при ошибке на одном хосте для критичных операций (миграции БД).
 
+### Пакетное выполнение и SRE
+
+10. **`serial` для rolling updates.** Используйте пакетную обработку для контроля нагрузки и возможности отката.
+11. **`max_fail_percentage` + `serial`.** Устанавливайте порог ошибок для автоматической остановки при массовых сбоях.
+12. **`throttle` для внешних API.** Ограничивайте конкурентность задач, обращающихся к внешним сервисам (мониторинг, лицензии).
+
 ### Производительность
 
-10. **`throttle` для API.** Ограничивайте конкурентность задач, обращающихся к внешним API.
-11. **`serial` для rolling updates.** Используйте пакетную обработку для контроля нагрузки и возможности отката.
-12. **`max_fail_percentage` + `serial`.** Устанавливайте порог ошибок для автоматической остановки при массовых сбоях.
+13. **`check_mode` для тестирования.** Используйте dry-run перед реальными изменениями.
+14. **`--forks` для ускорения.** Настройте `forks` в `ansible.cfg` в зависимости от размера парка (по умолчанию fork=5). Для парков >100 хостов рекомендуется fork=20–50. Детали настройки: [Оптимизация производительности](../ansible_performance_tuning.md).
 
 ### Безопасность
 
-13. **`no_log: true` для секретов.** Скрывайте задачи, содержащие пароли и ключи API.
-14. **`check_mode` для тестирования.** Используйте dry-run перед реальными изменениями.
-15. **FQCN модулей.** Всегда используйте полные имена модулей (`ansible.builtin.command` вместо `command`).
+15. **`no_log: true` для секретов.** Скрывайте задачи, содержащие пароли и ключи API.
+16. **FQCN модулей.** Всегда используйте полные имена модулей (`ansible.builtin.command` вместо `command`).
 
 ## Дополнительная информация
 
-* [Основы структуры плейбуков](basics.md) — базовые компоненты плейбука, FQCN и иерархия выполнения.
-* [Продвинутые возможности](advanced.md) — детали делегирования, асинхронные задачи и отладка.
+* [Базовая структура плейбуков](basics.md) — компоненты плейбука, FQCN и иерархия выполнения.
+* [Продвинутые возможности](advanced.md) — делегирование, асинхронные задачи и отладка.
 * [Переменные и факты](variables.md) — приоритеты переменных и фильтры Jinja2.
+* [Валидация и тестирование структуры плейбуков](testing_and_validation.md) — статический анализ, dry-run и идемпотентность.
 * [Антипаттерны Ansible](../ansible_bad_practices.md) — типичные ошибки в управлении логикой выполнения.
+* [Оптимизация производительности](../ansible_performance_tuning.md) — настройка `forks`, `ssh_pipelining`, `fact_caching` и тонкая настройка параллелизма `serial`/`throttle`.
+* [Управление обновлениями (Patch Management)](../ansible_patch_management.md) — применение rolling update стратегий и контроль ошибок в контексте патчинга.

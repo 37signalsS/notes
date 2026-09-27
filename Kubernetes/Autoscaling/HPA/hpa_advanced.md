@@ -751,6 +751,57 @@ histogram_quantile(0.95,
 )
 ```
 
+### HPA + TopologySpreadConstraints
+
+TopologySpreadConstraints ограничивают распределение подов по доменам (узлы, зоны, регионы). При масштабировании HPA может создавать поды, которые не могут быть размещены из-за этих ограничений.
+
+**Проблема:** HPA масштабирует до 10 подов, но `maxSkew: 1` и `DoNotSchedule` не позволяют разместить более 3 подов на одном узле → поды в Pending.
+
+**Решение 1: ScheduleAnyway (мягкие ограничения)**
+
+```yaml
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway  # Поды размещаются, но не равномерно
+    labelSelector:
+      matchLabels:
+        app: my-app
+```
+
+**Решение 2: HPA behavior для ограничения скорости**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-app-hpa
+spec:
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2       # Не более 2 подов за раз (ограничиваем перекос)
+          periodSeconds: 60
+```
+
+**Решение 3: Комбинация с Cluster Autoscaler**
+
+```yaml
+# HPA масштабирует → поды в Pending → CA добавляет узлы
+# CA использует --balance-similar-node-groups для распределения
+```
+
+**Диагностика:**
+```bash
+kubectl describe pod <pending-pod> | grep -A 5 "Events:"
+# → 0/5 nodes are available: 2 didn't match topology spread constraints
+
+kubectl get events --field-selector reason=FailedScheduling | grep topology
+# → Warning  FailedScheduling  0/5 nodes are available: 3 didn't match topology spread constraints
+```
+
 ### См. также
 
 - **[Устранение неполадок HPA](../../Troubleshooting/Common_Errors/hpa_troubleshooting.md)** — пошаговая диагностика типичных ошибок.
@@ -758,4 +809,6 @@ histogram_quantile(0.95,
 - **[HPA: Каскадное масштабирование](./cascading_scaling.md)** — цепочки зависимостей микросервисов.
 - **[HPA: Prometheus Adapter](./prometheus_adapter_setup.md)** — настройка кастомных метрик.
 - **[HPA: Cost и Right-sizing](./hpa_cost_rightsizing.md)** — оптимизация requests и затрат.
+- **[HPA + PriorityClass + Preemption](../hpa_priority_preemption.md)** — взаимодействие с приоритетами.
 - **[KEDA (Event-driven Autoscaling)](../keda/keda_concepts.md)** — масштабирование по событиям и до нуля.
+- **[Descheduler](../descheduler.md)** — исправление перекосов после масштабирования.

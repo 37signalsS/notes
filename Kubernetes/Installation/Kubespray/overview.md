@@ -139,7 +139,9 @@ inventory/mycluster/
 
 ### GitOps-интеграция
 
-Kubespray идеально подходит для GitOps-подхода, где вся конфигурация кластера хранится в Git:
+Kubespray идеально подходит для GitOps-подхода, где вся конфигурация кластера хранится в Git.
+
+**Структура Git-репозитория:**
 
 ```
 git-repo/
@@ -151,15 +153,276 @@ git-repo/
 │           └── k8s_cluster/
 │               ├── k8s-cluster.yml
 │           └── addons.yml
-├── playbook.yml          # Обертка над cluster.yml
-└── .gitlab-ci.yml        # CI/CD pipeline для автоматического деплоя
+├── playbooks/
+│   ├── cluster.yml       # Основной плейбук
+│   ├── scale.yml         # Масштабирование
+│   └── upgrade.yml       # Обновление
+├── .gitlab-ci.yml        # CI/CD pipeline
+└── ansible.cfg           # Конфигурация Ansible
 ```
 
-**Преимущества:**
-- Версионирование: отслеживание всех изменений конфигурации.
-- Ревью:.pull request'ы для изменений конфигурации кластера.
-- Воспроизводимость: развертывание идентичных кластеров из одного репозитория.
-- Аудит: история коммитов для отслеживания изменений.
+**Преимущества GitOps для Kubespray:**
+- **Версионирование:** отслеживание всех изменений конфигурации.
+- **Ревью:** pull request'ы для изменений конфигурации кластера.
+- **Воспроизводимость:** развертывание идентичных кластеров из одного репозитория.
+- **Аудит:** история коммитов для отслеживания изменений.
+- **Автоматизация:** CI/CD пайплайны для автоматического развертывания.
+
+**CI/CD Pipeline (пример для GitLab CI):**
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - validate
+  - deploy
+  - upgrade
+
+variables:
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+
+validate:
+  stage: validate
+  script:
+    - ansible-playbook -i inventory/mycluster/hosts.yaml --check --diff cluster.yml
+  only:
+    - merge_requests
+
+deploy:
+  stage: deploy
+  script:
+    - ansible-playbook -i inventory/mycluster/hosts.yaml --become cluster.yml
+  only:
+    - main
+  when: manual
+
+upgrade:
+  stage: upgrade
+  script:
+    - ansible-playbook -i inventory/mycluster/hosts.yaml --become upgrade-cluster.yml
+  only:
+    - tags
+  when: manual
+```
+
+**Инструменты GitOps для Kubernetes:**
+
+| Инструмент | Назначение | Особенности |
+| :--- | :--- | :--- |
+| **ArgoCD** | GitOps-контроллер | Автоматическая синхронизация состояния кластера с Git |
+| **Flux** | GitOps-контроллер | Легковесный, встраивается в Kubernetes |
+| **Jenkins X** | CI/CD для Kubernetes | Интеграция с Kubernetes, автоматические пайплайны |
+
+**Пример интеграции с ArgoCD:**
+
+```bash
+# Установка ArgoCD
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Создание Application для Kubespray
+cat <<EOF | kubectl apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubespray-cluster
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://gitlab.com/your-group/kubespray-config.git
+    targetRevision: main
+    path: inventory/mycluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+EOF
+```
+
+**Рекомендации по GitOps:**
+1. **Храните инвентарь в Git:** Все изменения в `hosts.yaml` и `group_vars` должны проходить через pull request.
+2. **Используйте branch protection:** Запретите прямые коммиты в ветку `main`.
+3. **Настраивайте CI/CD:** Автоматизируйте проверку и деплой изменений.
+4. **Версионируйте Kubespray:** Используйте теги для отслеживания версий Kubespray.
+5. **Документируйте изменения:** Описывайте назначение изменений в pull request'ах.
+
+## Безопасность в Kubespray
+
+### Сертификаты и PKI
+
+Kubespray автоматически управляет TLS-сертификатами для компонентов кластера:
+
+- **Срок действия:** Сертификаты компонентов Control Plane действуют 1 год, корневой CA — 10 лет.
+- **Ротация:** При обновлении через `upgrade-cluster.yml` сертификаты продлеваются автоматически.
+- **Ручная ротация:** Выполняется через `cluster.yml --tags=certificates`.
+
+```bash
+# Проверка сроков действия сертификатов
+sudo kubeadm certs check-expiration
+# → CERTIFICATE                EXPIRES                  RESIDUAL TIME   ...
+# → admin.conf                 Dec 30, 2026 23:59 UTC   364d
+# → apiserver                  Dec 30, 2026 23:59 UTC   364d
+```
+
+### RBAC (Role-Based Access Control)
+
+Kubernetes использует RBAC для разграничения доступа. Kubespray не предоставляет встроенных переменных для настройки RBAC, но рекомендует:
+
+1. **Минимальные привилегии:** Не используйте `cluster-admin` для приложений.
+2. **ServiceAccount:** Создавайте отдельные ServiceAccount для каждого приложения.
+3. **Namespace:** Ограничивайте доступ на уровне пространств имен.
+
+**Пример создания роли для приложения:**
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-reader
+  namespace: production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods
+  namespace: production
+subjects:
+- kind: ServiceAccount
+  name: app-reader
+  namespace: production
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### Pod Security Standards (PSS)
+
+С Kubernetes 1.25+ Pod Security Policy заменены на Pod Security Admission (PSA). Kubespray поддерживает настройку PSA через лейблы неймспейсов.
+
+**Уровни безопасности:**
+
+| Уровень | Описание | Примеры ограничений |
+| :--- | :--- | :--- |
+| **privileged** | Без ограничений (по умолчанию) | Запуск от root, привилегированные контейнеры |
+| **baseline** | Минимальные ограничения | Запрет privileged, hostNetwork, hostPID |
+| **restricted** | Строгие ограничения | Запрет hostPath, capabilities, только non-root |
+
+**Настройка PSA для неймспейса:**
+
+```bash
+# Применение baseline для неймспейса production
+kubectl label ns production \
+  pod-security.kubernetes.io/enforce=baseline \
+  pod-security.kubernetes.io/warn=restricted \
+  pod-security.kubernetes.io/audit=restricted
+```
+
+**Проверка:**
+
+```bash
+# Проверка лейблов неймспейса
+kubectl get ns production -o json | jq '.metadata.labels | with_entries(select(.key | startswith("pod-security")))'
+# → {
+#   "pod-security.kubernetes.io/audit": "restricted",
+#   "pod-security.kubernetes.io/enforce": "baseline",
+#   "pod-security.kubernetes.io/warn": "restricted"
+# }
+```
+
+### NetworkPolicy
+
+NetworkPolicy позволяет ограничивать сетевой трафик между подами. В Kubespray выбор CNI-плагина определяет поддержку NetworkPolicy:
+
+- **Calico:** Полная поддержка NetworkPolicy.
+- **Cilium:** Полная поддержка + расширения (L7-политики).
+- **Flannel:** Не поддерживает NetworkPolicy.
+
+**Пример базовой NetworkPolicy:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-only-frontend
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+```
+
+### Управление секретами
+
+Kubespray не предоставляет встроенных инструментов управления секретами (HashiCorp Vault, SOPS). Рекомендуется:
+
+1. **Kubernetes Secrets:** Базовое шифрование через etcd.
+2. **External Secrets Operator:** Синхронизация секретов из внешних хранилищ.
+3. **Sealed Secrets:** Шифрование секретов в Git.
+
+**Пример использования Kubernetes Secrets:**
+
+```bash
+# Создание секрета
+kubectl create secret generic db-credentials \
+  --from-literal=username=admin \
+  --from-literal=password=secret123 \
+  -n production
+
+# Монтирование секрета в под
+kubectl get secret db-credentials -n production -o jsonpath='{.data.password}' | base64 --decode
+```
+
+### CIS Benchmark и хардening
+
+Для соответствия стандартам безопасности (CIS Kubernetes Benchmark) рекомендуется:
+
+1. **kube-bench:** Инструмент для проверки соответствия CIS Benchmark.
+2. **kube-hunter:** Инструмент для поиска уязвимостей в кластере.
+3. **Trivy:** Сканирование образов контейнеров на уязвимости.
+
+**Установка kube-bench:**
+
+```bash
+# Запуск как под
+kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job.yaml
+
+# Просмотр результатов
+kubectl logs -l app=kube-bench
+```
+
+### Рекомендации по безопасности в Kubespray
+
+1. **Изоляция Control Plane:** Не запускайте приложения на мастер-узлах.
+2. **Ограничение доступа:** Используйте SSH-ключи вместо паролей.
+3. **Аудит:** Включите аудит API-сервера через `kube_apiserver_audit_log_path`.
+4. **Обновления:** Регулярно обновляйте Kubespray и Kubernetes.
+5. **Резервное копирование:** Настраивайте автоматические бэкапы etcd.
+
+> **Подробнее:** Детальная настройка безопасности — в [Security Overview](../../Security/overview.md).
 
 ## Дополнительная информация
 

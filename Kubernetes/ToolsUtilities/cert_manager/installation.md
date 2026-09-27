@@ -535,6 +535,7 @@ extraArgs:
 ### Смотрите также
 
 - **[Администрирование: Операции](./Administration/operations.md)** — обновление до v1.22+ и стратегии ротации.
+- **[Обновление и миграция cert-manager](./Administration/upgrades_and_migration.md)** — пошаговый апгрейд, breaking changes, rollback.
 - **[Администрирование: Index](./Administration/index.md)** — HA, RBAC, NetworkPolicy и Garbage Collection.
 - **[Приватный CA: Сценарии](./Private_CA/scenarios.md)** — использование trust-manager Bundle.
 - **[Troubleshooting](./Administration/troubleshooting.md)** — диагностика проблем с вебхуком и API.

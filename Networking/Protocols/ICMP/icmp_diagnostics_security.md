@@ -803,5 +803,6 @@ sudo tc filter add dev eth0 ingress bpf da obj icmp_filter.o sec classifier
 *   **[ICMP и namespaces/cgroups](./icmp_namespaces_cgroups.md)** — изоляция ICMP.
 *   **[ICMP: Мониторинг в продакшене](./icmp_monitoring.md)** — метрики и алертинг.
 *   **[nftables](../../../Linux/Networking/Settings/tools/nftables/)** — современный firewall.
+*   **[Hardening сетевого стека Linux](../../../Linux/Networking/Security/network_hardening.md)** — сводный sysctl-референс для hardening.
 *   **[Cilium документация](https://docs.cilium.io/)** — eBPF-based networking.
 

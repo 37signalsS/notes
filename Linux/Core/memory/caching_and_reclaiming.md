@@ -520,4 +520,5 @@ groups:
 - **[Slab Allocator](./slab_allocator.md)** — SReclaimable/SUnreclaim, shrinkers, утечки ядра.
 - **[/proc/meminfo — статистика памяти ядра](../../Diagnostics/Memory/proc_meminfo.md)** — расшифровка всех метрик.
 - **[Настройка writeback](../../Diagnostics/Performance/DiskIO/writeback_tuning.md)** — профили tuning для Dirty Pages.
+- **[Справочник sysctl-параметров памяти](./sysctl_memory_reference.md)** — единый reference по vm.swappiness, dirty_ratio, watermarks и др.
 - **[vmstat — статистика виртуальной памяти](../../Diagnostics/Memory/vmstat.md)** — мониторинг reclaim активности.

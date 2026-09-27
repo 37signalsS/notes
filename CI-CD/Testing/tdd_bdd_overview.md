@@ -13,60 +13,54 @@
 
 **TCR (Test && Commit || Revert)** — экстремальная форма TDD, предложенная Кентом Беком. Если тесты проходят — код фиксируется (commit), если падают — код автоматически откатывается (revert) к последнему успешному состоянию. Это заставляет делать минимальные, гарантированно рабочие шаги.
 
-## Основные концепции
+## Основные концепции и архитектура
 
 ### Процесс TDD: Цикл Red-Green-Refactor
 
-1.  **RED (Красный)**: Написание минимального падающего теста для новой функции. На этом этапе определяется интерфейс (дизайн) будущего кода.
-2.  **GREEN (Зеленый)**: Написание ровно такого количества кода, которое необходимо для прохождения теста. Допускается «грязное» решение.
-3.  **REFACTOR (Рефакторинг)**: Улучшение структуры кода, удаление дублирования и оптимизация без изменения поведения. Тесты гарантируют отсутствие регрессии.
+Жизненный цикл разработки через тестирование состоит из трех этапов:
 
-### TDD с поддержкой ИИ (AI-Assisted TDD)
+1. **RED (Красный)**: Написание минимального падающего теста для новой функции. На этом этапе определяется интерфейс (дизайн) будущего кода. Тест компилируется и запускается, но падает, так как реализация отсутствует.
 
-В 2026 году цикл TDD дополняется использованием LLM и агентных воркфлоу:
-*   **Prompt-Driven Test:** Использование ИИ для генерации тестовых сценариев на основе бизнес-требований (Intent Design).
-*   **Zero-step Implementation:** ИИ предлагает реализацию, проходящую сгенерированные тесты. Роль инженера смещается к верификации намерений и архитектурному надзору.
-*   **Self-Healing Tests:** Агенты автоматически исправляют тесты при изменении UI или API, если логика поведения осталась прежней.
+2. **GREEN (Зеленый)**: Написание ровно такого количества кода, которое необходимо для прохождения теста. Допускается «грязное» решение. Цель — быстро получить зеленый тест, а не идеальную архитектуру.
 
-Подробнее об агентном подходе см. в **[Методологии AI-First разработки](../../AI/ai-first-development.md)**.
+3. **REFACTOR (Рефакторинг)**: Улучшение структуры кода, удаление дублирования и оптимизация без изменения поведения. Тесты гарантируют отсутствие регрессии.
 
 ### Три закона TDD (Роберт Мартин)
 
-1.  Нельзя писать production-код, пока не написан падающий unit-тест.
-2.  Нельзя писать unit-тест больше, чем необходимо для его падения (ошибка компиляции — это тоже падение).
-3.  Нельзя писать production-код больше, чем необходимо для прохождения текущего падающего теста.
+1. Нельзя писать production-код, пока не написан падающий unit-тест.
+2. Нельзя писать unit-тест больше, чем необходимо для его падения (ошибка компиляции — это тоже падение).
+3. Нельзя писать production-код больше, чем необходимо для прохождения текущего падающего теста.
 
 ### Концепция Double Loop TDD
 
 Сочетание BDD и TDD для обеспечения качества на всех уровнях:
-1.  **Внешний цикл (BDD)**: Написание падающего приемочного теста (проверка поведения всей системы с точки зрения пользователя).
-2.  **Внутренний цикл (TDD)**: Множественные итерации Red-Green-Refactor для реализации конкретных модулей, пока приемочный тест не станет «зеленым».
+1. **Внешний цикл (BDD)**: Написание падающего приемочного теста (проверка поведения всей системы с точки зрения пользователя).
+2. **Внутренний цикл (TDD)**: Множественные итерации Red-Green-Refactor для реализации конкретных модулей, пока приемочный тест не станет «зеленым».
 
 ### Формат сценариев BDD (Gherkin)
 
 Сценарии описывают бизнес-логику в декларативном стиле:
-*   **Given (Дано)**: Предусловие или начальное состояние системы.
-*   **When (Когда)**: Действие, событие или триггер.
-*   **Then (Тогда)**: Ожидаемый проверяемый результат.
-*   **And/But (И/Но)**: Логические связки для дополнения условий.
+* **Given (Дано)**: Предусловие или начальное состояние системы.
+* **When (Когда)**: Действие, событие или триггер.
+* **Then (Тогда)**: Ожидаемый проверяемый результат.
+* **And/But (И/Но)**: Логические связки для дополнения условий.
 
-### Мутационное тестирование (Mutation Testing)
+### Сравнение методологий
 
-Метод проверки качества самих тестов. Инструмент вносит небольшие изменения (мутации) в production-код (например, меняет `>` на `<` или `+` на `-`).
-*   Если тест **упал** — мутант «убит» (тест качественный).
-*   Если тест **прошел** — мутант «выжил» (тест не покрывает данную логику, хотя coverage может быть 100%).
-
-### Property-Based Testing (Тестирование на основе свойств)
-
-Подход, при котором вместо фиксированных входных данных (как в обычном TDD) задаются свойства, которым должен соответствовать результат для любых валидных входных данных. Инструмент генерирует сотни случайных кейсов для поиска граничных условий.
+| Аспект | TDD | BDD | ATDD / CDC |
+| :--- | :--- | :--- | :--- |
+| **Фокус** | Дизайн и корректность кода | Поведение (User Story) | Контракты и приемка (Acceptance) |
+| **Участники** | Разработчики | Dev, QA, Аналитики | Заказчик, Dev, QA, DevOps |
+| **Уровень** | Unit-тесты | Интеграционные / E2E | API / System Integration |
+| **Инструменты** | Vitest, Pytest, Bun Test | Playwright, Behave | Pact, Robot Framework |
 
 ### Test-Driven Infrastructure (TDI)
 
 Применение принципов TDD к инфраструктурному коду (Terraform, Ansible, Kubernetes манифесты):
-1.  **Написание теста:** Определение желаемого состояния ресурса (например, "Bucket должен быть приватным").
-2.  **Запуск:** Тест падает, так как ресурс еще не создан или не настроен.
-3.  **Имплементация:** Написание HCL/YAML кода.
-4.  **Проверка:** Прогон тестов через **Terratest**, **Kitchen-Terraform** или **Checkov**.
+1. **Написание теста:** Определение желаемого состояния ресурса.
+2. **Запуск:** Тест падает, так как ресурс еще не создан или не настроен.
+3. **Имплементация:** Написание HCL/YAML кода.
+4. **Проверка:** Прогон тестов через Terratest, Kitchen-Terraform или Checkov.
 
 #### Инструменты TDI
 
@@ -75,16 +69,104 @@
 | **Terratest** | Go | Интеграционные | Terraform, Packer, Kubernetes, Docker, Helm |
 | **Kitchen-Terraform** | Ruby | Интеграционные | Terraform-модули с Testinfra/ServerSpec |
 | **Molecule** | Python | Интеграционные | Ansible-роли (Docker/Podman/Vagrant) |
-| **Testinfra** | Python | Интеграционные | Проверка фактического состояния ОС (сделано через Ansible, Chef, Puppet) |
+| **Testinfra** | Python | Интеграционные | Проверка фактического состояния ОС |
 | **conftest** | Rego/OPA | Policy | Валидация Kubernetes-манифестов, Terraform HCL, Dockerfile |
 | **InSpec** | Ruby | Compliance | Проверка безопасности и соответствия стандартам (CIS, NIST) |
 | **Goss / DGoss** | YAML/Go | Интеграционные | Быстрая проверка состояния системы (пакеты, порты, сервисы) |
-| **Checkov** | Python | SAST/Static | Статический анализ IaC (Terraform, CloudFormation, K8s) |
+| **Checkov** | Python | SAST/Static | Статический анализ IaC (Terraform, Kubernetes) |
 | **Ginkgo / Gomega** | Go | Unit/Integration | BDD-тестирование на Go (часто в паре с Terratest) |
 
-#### Пример Terratest (Go): интеграционный тест Terraform-модуля
+### Policy-as-Code как расширение TDD
 
-Terratest создаёт реальную инфраструктуру в облаке, проверяет её и уничтожает:
+TDD для инфраструктуры тесно связан с **Policy-Driven Development**. Проверки безопасности и соответствия (Compliance) пишутся в виде политик (Rego/OPA) до деплоя. Это позволяет реализовать Shift-Left для всей платформы.
+
+**Инструменты Policy-as-Code:**
+* **OPA / Gatekeeper** — движок политик для Kubernetes (Admission Control). Политики пишутся на Rego и применяются к ресурсам кластера.
+* **Kyverno** — альтернатива OPA с политиками на YAML (без изучения Rego). Валидация, мутация и генерация ресурсов.
+* **Checkov** — статический анализ Terraform/Kubernetes-манифестов на соответствие best practices и корпоративным стандартам.
+* **Sentinel** (HashiCorp) — язык политик для Terraform, блокирующий опасные конфигурации до apply.
+* **conftest** — CLI для тестирования YAML/HCL/Dockerfile через Rego-политики. Идеален для GitLab CI / GitHub Actions.
+
+**Workflow Policy-as-Code в CI/CD:**
+1. Инженер пишет Rego/YAML-политику (ожидаемое состояние).
+2. В CI-пайплайне перед `terraform apply` / `kubectl apply` запускается `conftest test` или `opa eval`.
+3. Нарушение политики блокирует деплой (hard gate) или генерирует предупреждение (soft gate).
+4. Результаты логируются и отправляются в Policy Reporter UI для визуализации.
+
+### Chaos Engineering как продолжение TDD
+
+Chaos Engineering тестирует устойчивость системы к сбоям, применяя те же принципы: гипотеза → эксперимент → наблюдение → вывод.
+
+**Связь с TDD:**
+* **TDD** проверяет, что код работает при **нормальных** условиях.
+* **Chaos Engineering** проверяет, что система работает при **ненормальных** условиях (отказ узла, сетевой partition, исчерпание ресурсов).
+* Оба подхода начинаются с **гипотезы** (ожидаемого поведения) и завершаются **автоматизированной проверкой**.
+
+**Инструменты:**
+* **Chaos Monkey / Litmus Chaos** — инъекция сбоев в Kubernetes (убийство подов, блокировка CPU/памяти).
+* **ToxiProxy / tc** — сетевые помехи (задержки, потеря пакетов, разрыв соединений).
+* **chaos-mesh** — управление хаосом на уровне Kubernetes с CRD и веб-интерфейсом.
+
+## Практические сценарии
+
+### Пример TDD на Python (pytest)
+
+```python
+import pytest
+
+# Этап RED: Тест падает (функция не реализована)
+# @pytest.mark.parametrize("a, b, expected", [(2, 3, 5), (-1, 1, 0), (0, 0, 0)])
+# def test_add_numbers(a, b, expected):
+#     assert add(a, b) == expected
+
+# Этап GREEN: Минимальная реализация
+def add(a, b):
+    return a + b
+
+# Этап REFACTOR: Использование параметризации для расширения покрытия
+@pytest.mark.parametrize("a, b, expected", [
+    (2, 3, 5),
+    (-1, 1, 0),
+    (10, 20, 30),
+    (0.1, 0.2, 0.3) # Пример, где требуется pytest.approx для float
+])
+def test_add_numbers_parametrized(a, b, expected):
+    assert add(a, b) == pytest.approx(expected)
+```
+
+### Пример BDD сценария (Gherkin)
+
+```gherkin
+Feature: Авторизация пользователя
+  Scenario: Успешный вход в систему
+    Given пользователь "admin" существует с паролем "pass123"
+    When пользователь вводит логин "admin" и пароль "pass123"
+    Then система перенаправляет пользователя на главную страницу
+    And отображается сообщение "Добро пожаловать, admin"
+```
+
+### Пример реализации BDD шагов (Python + Behave)
+
+Связывание Gherkin-сценария с кодом:
+
+```python
+from behave import given, when, then
+
+@given('пользователь "{user}" существует с паролем "{password}"')
+def step_impl(context, user, password):
+    context.auth_system.create_user(user, password)
+
+@when('пользователь вводит логин "{user}" и пароль "{password}"')
+def step_impl(context, user, password):
+    context.response = context.auth_system.login(user, password)
+
+@then('система перенаправляет пользователя на главную страницу')
+def step_impl(context):
+    assert context.response.status_code == 302
+    assert context.response.location == "/"
+```
+
+### Пример Terratest (Go): интеграционный тест Terraform-модуля
 
 ```go
 package test
@@ -117,19 +199,19 @@ func TestTerraformS3Bucket(t *testing.T) {
 	bucketId := terraform.Output(t, terraformOptions, "bucket_id")
 	assert.Equal(t, "test-bucket-terratest-001", bucketId)
 
-	// Проверка HTTP-эндпоинта (если.bucket настроен как static website)
+	// Проверка HTTP-эндпоинта (если bucket настроен как static website)
 	url := terraform.Output(t, terraformOptions, "website_endpoint")
 	http_helper.HttpGetWithRetry(t, url, nil, 200, "Hello", 10, 5*time.Second)
 }
 ```
 
 **Ключевые особенности Terratest:**
-*   `defer terraform.Destroy` — гарантирует очистку ресурсов даже при падении теста.
-*   `t.Parallel()` — параллельный запуск тестов для разных модулей.
-*   Retryable errors — автоматический ретраи при временных сбоях API облака.
-*   **Стоимость:** каждый запуск создаёт реальные ресурсы (AWS/GCP/Azure). В CI используйте выделенные песочницы и обязательный cleanup.
+* `defer terraform.Destroy` — гарантирует очистку ресурсов даже при падении теста.
+* `t.Parallel()` — параллельный запуск тестов для разных модулей.
+* Retryable errors — автоматический ретраи при временных сбоях API.
+* **Стоимость:** каждый запуск создаёт реальные ресурсы. В CI используйте выделенные песочницы и обязательный cleanup.
 
-#### Пример Molecule + Testinfra (Python): интеграционный тест Ansible-роли
+### Пример Molecule + Testinfra (Python): интеграционный тест Ansible-роли
 
 Структура директорий роли:
 
@@ -219,7 +301,7 @@ molecule test
 # → create → prepare → converge → idempotence → verify → destroy
 ```
 
-#### Пример conftest (OPA/Rego): policy-тестирование Kubernetes-манифестов
+### Пример conftest (OPA/Rego): policy-тестирование Kubernetes-манифестов
 
 Проверка YAML-манифестов на соответствие политикам безопасности до деплоя:
 
@@ -259,119 +341,11 @@ deny[msg] {
 ```
 
 **Цикл TDI для Kubernetes:**
-1.  Написать Rego-политику (ожидаемое поведение).
-2.  Запустить `conftest test` — политика падает (нет манифестов).
-3.  Написать Kubernetes-манифест/Helm-шаблон.
-4.  `helm template | conftest test -` — проверка проходит.
-5.  Запуск `helm test` / `kuttl test` для интеграционной проверки в кластере.
-
-### Policy-as-Code как расширение TDD
-
-В 2026 году TDD для инфраструктуры тесно связан с **Policy-Driven Development**. Проверки безопасности и соответствия (Compliance) пишутся в виде политик (Rego/OPA) до деплоя. Это позволяет реализовать Shift-Left для всей платформы.
-
-**Инструменты Policy-as-Code:**
-*   **OPA / Gatekeeper** — движок политик для Kubernetes (Admission Control). Политики пишутся на Rego и применяются к ресурсам кластера.
-*   **Kyverno** — альтернатива OPA с политиками на YAML (без изучения Rego). Валидация, мутация и генерация ресурсов.
-*   **Checkov** — статический анализ Terraform/CloudFormation/Kubernetes-манифестов на соответствие best practices и корпоративным стандартам.
-*   **Sentinel** (HashiCorp) — язык политик для Terraform Cloud/Enterprise, блокирующий опасные конфигурации до apply.
-*   **conftest** — CLI для тестирования YAML/HCL/Dockerfile через Rego-политики. Идеален для GitLab CI / GitHub Actions.
-
-**Workflow Policy-as-Code в CI/CD:**
-1.  Инженер пишет Rego/YAML-политику (ожидаемое состояние).
-2.  В CI-пайплайне перед `terraform apply` / `kubectl apply` запускается `conftest test` или `opa eval`.
-3.  Нарушение политики блокирует деплой (hard gate) или генерирует предупреждение (soft gate).
-4.  Результаты логируются и отправляются в Policy Reporter UI для визуализации.
-
-### Chaos Engineering как продолжение TDD
-
-Chaos Engineering тестирует устойчивость системы к сбоям, применяя те же принципы: гипотеза → эксперимент → наблюдение → вывод.
-
-**Связь с TDD:**
-*   **TDD** проверяет, что код работает при **нормальных** условиях.
-*   **Chaos Engineering** проверяет, что система работает при **ненормальных** условиях (отказ узла, сетевой partition, исчерпание ресурсов).
-*   Оба подхода начинаются с **гипотезы** (ожидаемого поведения) и завершаются **автоматизированной проверкой**.
-
-**Инструменты:**
-*   **Chaos Monkey / Litmus Chaos** — инъекция сбоев в Kubernetes (убийство подов, блокировка CPU/памяти).
-*   **ToxiProxy / tc** — сетевые помехи (задержки, потеря пакетов, разрыв соединений).
-*   **chaos-mesh** — управление хаосом на уровне Kubernetes с CRD и веб-интерфейсом.
-
-## Практические сценарии
-
-### Пример TDD на Python (pytest)
-
-```python
-import pytest
-
-# Этап RED: Тест падает (функция не реализована)
-# @pytest.mark.parametrize("a, b, expected", [(2, 3, 5), (-1, 1, 0), (0, 0, 0)])
-# def test_add_numbers(a, b, expected):
-#     assert add(a, b) == expected
-
-# Этап GREEN: Минимальная реализация
-def add(a, b):
-    return a + b
-
-# Этап REFACTOR: Использование параметризации для расширения покрытия
-@pytest.mark.parametrize("a, b, expected", [
-    (2, 3, 5),
-    (-1, 1, 0),
-    (10, 20, 30),
-    (0.1, 0.2, 0.3) # Пример, где требуется pytest.approx для float
-])
-def test_add_numbers_parametrized(a, b, expected):
-    assert add(a, b) == pytest.approx(expected)
-```
-
-### Пример BDD сценария (Gherkin)
-
-```gherkin
-Feature: Авторизация пользователя
-  Scenario: Успешный вход в систему
-    Given пользователь "admin" существует с паролем "pass123"
-    When пользователь вводит логин "admin" и пароль "pass123"
-    Then система перенаправляет пользователя на главную страницу
-    And отображается сообщение "Добро пожаловать, admin"
-```
-
-### Пример реализации BDD шагов (Python + Behave)
-
-Связывание Gherkin-сценария с кодом:
-
-```python
-from behave import given, when, then
-
-@given('пользователь "{user}" существует с паролем "{password}"')
-def step_impl(context, user, password):
-    context.auth_system.create_user(user, password)
-
-@when('пользователь вводит логин "{user}" и пароль "{password}"')
-def step_impl(context, user, password):
-    context.response = context.auth_system.login(user, password)
-
-@then('система перенаправляет пользователя на главную страницу')
-def step_impl(context):
-    assert context.response.status_code == 302
-    assert context.response.location == "/"
-```
-
-### Пример Property-Based тестирования (Hypothesis)
-
-```python
-from hypothesis import given, strategies as st
-
-def decode(s):
-    # Упрощенная логика
-    return s
-
-def encode(s):
-    return s
-
-@given(st.text())
-def test_encode_decode_identity(s):
-    # Свойство: декодирование закодированной строки должно возвращать оригинал
-    assert decode(encode(s)) == s
-```
+1. Написать Rego-политику (ожидаемое поведение).
+2. Запустить `conftest test` — политика падает (нет манифестов).
+3. Написать Kubernetes-манифест/Helm-шаблон.
+4. `helm template | conftest test -` — проверка проходит.
+5. Запуск `helm test` / `kuttl test` для интеграционной проверки в кластере.
 
 ### Пример CDC сценария (Pact)
 
@@ -400,15 +374,6 @@ def test_encode_decode_identity(s):
   ]
 }
 ```
-
-### Сравнение методологий
-
-| Аспект | TDD | BDD | ATDD / CDC |
-| :--- | :--- | :--- | :--- |
-| **Фокус** | Дизайн и корректность кода | Поведение (User Story) | Контракты и приемка (Acceptance) |
-| **Участники** | Разработчики | Dev, QA, Аналитики | Заказчик, Dev, QA, DevOps |
-| **Уровень** | Unit-тесты | Интеграционные / E2E | API / System Integration |
-| **Инструменты 2026** | **Vitest**, Pytest, Bun Test | **Playwright**, Behave | **Pact**, Robot Framework |
 
 ### Интеграция TDD/BDD в CI/CD pipeline (GitLab CI)
 
@@ -484,193 +449,119 @@ test:smoke:
 ```
 
 **Порядок выполнения в пайплайне:**
-1.  **Lint** — статический анализ (ruff, ansible-lint, helm lint, tflint).
-2.  **Unit** — быстрые изолированные тесты (TDD-цикл, < 2 мин).
-3.  **Integration** — проверка взаимодействия компонентов с Testcontainers (5–15 мин).
-4.  **Policy** — валидация IaC и K8s-манифестов через OPA/Rego (conftest).
-5.  **Deploy** — деплой в Staging/Production.
-6.  **Smoke** — BDD-сценарии проверки критических пользовательских путей (post-deploy).
+1. **Lint** — статический анализ (ruff, ansible-lint, helm lint, tflint).
+2. **Unit** — быстрые изолированные тесты (TDD-цикл, < 2 мин).
+3. **Integration** — проверка взаимодействия компонентов с Testcontainers (5–15 мин).
+4. **Policy** — валидация IaC и K8s-манифестов через OPA/Rego (conftest).
+5. **Deploy** — деплой в Staging/Production.
+6. **Smoke** — BDD-сценарии проверки критических пользовательских путей (post-deploy).
+
+## Операции и команды
+
+### Инструменты для TDD/BDD в CI/CD
+
+| Инструмент / команда | Назначение | Пример использования |
+| :--- | :--- | :--- |
+| `pytest` | Unit-тестирование Python | `pytest tests/unit/ --cov=app --cov-fail-under=80` |
+| `jest` / `vitest` | Unit-тестирование JavaScript/TypeScript | `vitest run --coverage` |
+| `behave` | BDD-фреймворк для Python | `behave tests/bdd/features/ --no-capture` |
+| `cucumber` | BDD-фреймворк (Java, JS, Ruby) | `cucumber-js features/ --format progress` |
+| `mutation testing` (mutmut, Stryker) | Проверка качества тестов | `mutmut run --paths-to-mutate=src/ --tests-dir=tests/` |
+| `conftest` | Policy-тестирование YAML/HCL | `conftest test k8s/ -p policy/` |
+| `opa` | Оценка политик Rego | `opa eval -i input.json -d policy.rego "data.main.deny"` |
+| `molecule` | Тестирование Ansible-ролей | `molecule test -s default` |
+| `terratest` | Интеграционные тесты Terraform | `go test -v -run TestTerraformModule` |
+| `goss` | Быстрая валидация состояния системы | `goss serve --port 8080 & goss validate --format tap` |
+| `testinfra` | Инфраструктурные тесты (Python) | `pytest tests/infra/ --hosts=ssh://app01` |
+| `helm test` | Тестирование Helm-чартов | `helm test my-release --namespace prod` |
+| `kuttl` | Kubernetes Test Toolkit | `kuttl test --config kuttl.yaml` |
+
+## Типичные ошибки и диагностика
+
+| Симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Unit-тесты падают после merge | Изменение зависимостей без обновления тестов | `pytest -v` для выявления конкретного теста | Обновить тесты под новый контракт |
+| BDD-сценарии не отрабатывают | Несоответствие шагов реализации | `behave --no-capture` для просмотра стека | Проверить матчинг шагов в `steps/*.py` |
+| Mutation score < 70% | Тесты не покрывают граничные условия | `mutmut results` для просмотра выживших мутантов | Добавить негативные тест-кейсы |
+| Molecule падает на idempotence | Ansible-роль не идемпотентна | `molecule converge` + `molecule idempotence` | Исправить handlers, убрать недетерминированные команды |
+| conftest блокирует деплой | Жёсткие политики без исключений | `conftest test --debug` для просмотра violations | Добавить исключения в политику или настроить soft gate |
+| Terratest утекает ресурсы | Отсутствие `defer Destroy` или падение теста до cleanup | Проверить облачный консоль/реестр | Использовать `t.Parallel()` и `defer terraform.Destroy` |
+| Pact contract устарел | Provider изменил API без обновления контракта | `pact-broker can-i-deploy` | Обновить контракт и перезапустить Pact verification |
+| Flaky BDD-тесты | Зависимости от внешних сервисов или таймауты | Логи behave, `--format=rerun` | Изолировать внешние зависимости, увеличить таймауты |
+
+## Лучшие практики
+
+### Проектирование тестов
+
+* **Первый принцип:** тесты должны проверять поведение, а не реализацию. Если тест ломается при рефакторинге без изменения поведения — он переусложнён.
+* **Изоляция:** unit-тесты не должны зависеть от состояния базы данных, внешних API или тестовых данных. Используйте моки для внешних зависимостей.
+* **Детерминированность:** результат не должен зависеть от времени суток, дня недели или нагрузки. Избегайте проверок, чувствительных к concurrency.
+* **Именование:** используйте описательные имена тестов, отражающие проверяемое поведение (`test_login_fails_with_invalid_password`).
+
+### Интеграция в pipeline
+
+* **Gate placement:** размещайте unit-тесты сразу после lint, smoke-тесты — после деплоя.
+* **Fail-fast:** при провале TDD-цикла инициируйте автоматический откат (revert) без ожидания ручного вмешательства.
+* **Parallel execution:** запускайте независимые тесты параллельно (pytest-xdist, matrix strategy в CI), чтобы минимизировать общее время.
+* **Artifacts:** сохраняйте coverage-отчёты, JUnit XML, логи behave/pact как артефакты pipeline.
+* **Promotion rules:** для стратегий blue-green и canary используйте TDD/BDD-тесты как prerequisite для promotion.
+
+### Observability и метрики
+
+* **Coverage:** определяйте пороги покрытия (например, 80% для unit, 70% для mutation score). Провал — сигнал о недостаточном тестировании.
+* **SLO context:** определяйте SLO на pass rate TDD-тестов (например, 99.9% успешных прогонов за 30 дней).
+* **Test flakiness:** трекайте flaky-тесты отдельно от стабильных. Используйте quarantine-механизм (как в [Управление нестабильными тестами](./flaky_test_management.md)).
+
+### Безопасность и compliance
+
+* **Secrets management:** не храните токены и пароли для тестов в репозитории. Используйте CI-native secrets (GitLab CI/CD Variables, GitHub Secrets).
+* **Read-only access:** тесты в CI должны иметь read-only доступ к production. Не запускайте тесты с кредами, дающими write-доступ.
+
+## Ограничения и особые случаи
+
+### TDD не покрывает всё
+
+TDD проверяет только корректность кода на уровне unit и интеграции. Он не выявляет:
+* Баги в бизнес-логике на уровне E2E
+* Проблемы с миграцией данных
+* Race conditions в production
+* Утечки памяти или ресурсов
+* Поведение при высокой нагрузке
+
+TDD — это **первая линия защиты**, а не единственное тестирование.
+
+### Флакивость тестов
+
+Частые причины флаков:
+* **Race condition:** тест запускается до завершения прогрева кэша или миграций.
+* **Timing issues:** проверка запущена во время ротации логов или ротации TLS-сертификатов.
+* **External dependencies:** сторонние сервисы недоступны или отвечают с задержкой.
+* **Resource starvation:** CI-раннер не имеет достаточно CPU/RAM.
+
+Меры против флаков:
+* Фильтруйте flaky-тесты из критериев успешности CI, но трекайте их отдельно.
+* Используйте quarantine-механизм для тестов с временными зависимостями.
+
+### Инфраструктурные ограничения
+
+* **TDI в air-gapped средах:** используйте локальные кэши модулей (Terraform module cache, Ansible Galaxy offline).
+* **Network segmentation:** размещайте CI-раннеры в отдельном VLAN/segment с минимально необходимыми доступом к production.
 
 ## Дополнительная информация
 
-### Антипаттерны и типичные ошибки
-
-*   **The Mockery (Избыточное моканье)**: Чрезмерное использование заглушек, при котором тесты проверяют детали реализации, а не конечное поведение. Это блокирует рефакторинг.
-*   **The Liar (Лжец)**: Тест, который всегда «зеленый», но не содержит реальных проверок или проверяет нерелевантные условия.
-*   **The Giant (Гигант)**: Тесты, покрывающие слишком много логики. Трудно диагностировать причину падения.
-*   **Тестирование приватных методов**: Нарушает инкапсуляцию. Логику приватного метода следует тестировать через публичный интерфейс или выделить в отдельный класс.
-*   **Fragile Tests (Хрупкие тесты)**: Тесты, ломающиеся при изменениях, не влияющих на функциональность (например, изменение порядка вызовов логгера).
-
-### Принципы качественных тестов
-
-**FIRST (Характеристики качественных unit-тестов):**
-*   **Fast** (Быстрые): Выполнение за миллисекунды.
-*   **Independent** (Независимые): Результат не зависит от порядка запуска.
-*   **Repeatable** (Повторяемые): Стабильность в любой среде.
-*   **Self-validating** (Самодокументированные): Четкий результат Pass/Fail.
-*   **Timely** (Своевременные): Написаны перед кодом.
-
-**AAA (Структура теста):**
-1.  **Arrange** (Подготовка): Настройка окружения и данных.
-2.  **Act** (Действие): Вызов тестируемого метода.
-3.  **Assert** (Проверка): Сравнение результата с ожидаемым.
-
-### Test Pyramid в CI/CD
-
-Пирамида тестирования определяет баланс между типами тестов. В 2026 году выделяют три модели:
-
-| Модель | Фокус | Пропорция | Когда использовать |
-| :--- | :--- | :--- | :--- |
-| **Testing Pyramid** | Unit-тесты (быстрые) | 70% Unit / 20% Integration / 10% E2E | Классические приложения |
-| **Testing Trophy** | Integration-тесты | 10% Unit / 60% Integration / 20% E2E / 10% Contract | Frontend, React/Vue |
-| **Testing Honeycomb** | API/Contract-тесты | 20% Unit / 40% Integration / 30% Contract / 10% E2E | Микросервисы |
-
-**Practical ratio для CI/CD:**
-- Unit-тесты: запуск < 2 мин (каждый коммит)
-- Integration-тесты: запуск 5-15 мин (каждый MR)
-- E2E-тесты: запуск 10-30 мин (MR или nightly)
-- Contract-тесты: запуск 2-5 мин (каждый MR)
-- Load-тесты: запуск 3-10 мин (MR, см. [Load Testing](./load_testing_ci_cd.md))
-
-### Property-Based Testing (Тестирование на основе свойств)
-
-Подход, при котором вместо фиксированных входных данных задаются **свойства**, которым должен соответствовать результат для **любых** валидных входных данных.
-
-#### Когда использовать
-- Граничные условия (edge cases) невозможно перечислить
-- Алгоритмы сортировки, парсинга, кодирования
-- Математические функции, cryptography, хеширование
-
-#### Python + Hypothesis
-
-```python
-from hypothesis import given, strategies as st, settings
-
-# Простой property-based тест
-@given(st.lists(st.integers()))
-def test_sort_preserves_length(xs):
-    """Сортировка не меняет длину списка."""
-    result = sorted(xs)
-    assert len(result) == len(xs)
-
-@given(st.lists(st.integers()))
-def test_sort_is_idempotent(xs):
-    """Двойная сортировка = одинарной."""
-    assert sorted(sorted(xs)) == sorted(xs)
-
-@given(st.lists(st.integers()))
-def test_sort_preserves_elements(xs):
-    """Сортировка сохраняет все элементы (с учётом дубликатов)."""
-    assert sorted(xs) == sorted(xs, reverse=True)[::-1]
-
-# Стратегии для специфичных типов
-@given(st.from_regex(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}"))
-def test_email_parsing(email):
-    """Парсер email не падает на任何 корректных адресах."""
-    result = parse_email(email)
-    assert "@" in result
-```
-
-#### Go + `testing/quick`
-
-```go
-func TestSortProperties(t *testing.T) {
-    f := func(nums []int) bool {
-        sorted := sort.Ints(nums)
-        return len(sorted) == len(nums)
-    }
-    if err := quick.Check(f, nil); err != nil {
-        t.Error(err)
-    }
-}
-```
-
-### Мутационное тестирование (Mutation Testing)
-
-Метод проверки **качества самих тестов**. Инструмент вносит небольшие изменения (мутанты) в production-код и проверяет, убивают ли тесты этих мутантов.
-
-| Метрика | Описание | Целевое значение |
-| :--- | :--- | :--- |
-| **Mutation Score** | Доля убитых мутантов / общее число мутантов | > 70% |
-| **Survived Mutants** | Мутанты, которые тесты НЕ убили | Чем меньше, тем лучше |
-
-#### Python + mutmut
-
-```bash
-# Установка
-pip install mutmut
-
-# Запуск мутационного тестирования
-mutmut run --paths-to-mutate=src/ --tests-dir=tests/
-
-# Результаты
-mutmut results
-mutmut html  # HTML-отчет
-```
-
-#### JavaScript + Stryker
-
-```bash
-# Установка
-npm install --save-dev @stryker-mutator/core @stryker-mutator/jest-runner
-
-# Конфигурация (stryker.config.json)
-{
-  "mutate": ["src/**/*.ts"],
-  "testRunner": "jest",
-  "coverageAnalysis": "perTest",
-  "thresholds": { "high": 80, "low": 60, "break": 70 }
-}
-
-# Запуск
-npx stryker run
-```
-
-#### Интеграция с CI
-
-```yaml
-mutation_test:
-  stage: test
-  image: python:3.12
-  script:
-    - pip install mutmut
-    - mutmut run --paths-to-mutate=src/ --tests-dir=tests/
-    - |
-      SCORE=$(mutmut results | grep "mutation score" | awk '{print $NF}')
-      if [ $(echo "$SCORE < 70" | bc -l) -eq 1 ]; then
-        echo "FAIL: Mutation score ${SCORE}% < 70% threshold"
-        exit 1
-      fi
-  allow_failure: true  # Опционально: не блокировать, но показывать
-```
-
 ### См. также
 
-*   **[Виды тестирования: Unit, Integration, E2E](../../Testing/testing_types_unit_integration_e2e.md)**
-*   **[Метрики тестового покрытия](../../Testing/testing_coverage_metrics.md)**
-*   **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)**
-*   **[Нагрузочное тестирование в CI/CD](./load_testing_ci_cd.md)** — k6, performance budget.
-*   **[API Тестирование](./api_testing_ci_cd.md)** — REST/gRPC тесты, Newman, Schema Validation.
-*   **[Контрактное тестирование](./contract_testing_ci_cd.md)** — Pact, PactFlow, consumer-driven contracts.
-*   **[Smoke Testing](./smoke_testing.md)** — post-deploy verification.
-*   **[Управление нестабильными тестами](./flaky_test_management.md)** — quarantine, retry, detection.
-*   **[Тестирование контейнеров](./container_testing.md)** — Hadolint, Trivy, SBOM.
-*   **[Observability-Driven Testing](./observability_driven_testing.md)** — Prometheus как gate.
-*   **[Molecule: тестирование Ansible-ролей](../../Ansible/ansible_testing_with_molecule.md)** — интеграционные тесты ролей с Testinfra и Docker.
-*   **[Testcontainers: обзор](../../Testing/testcontainers_overview.md)** — стандарт интеграционного тестирования с изолированными контейнерами.
-*   **[Юнит-тестирование Helm-чартов](../../Kubernetes/ToolsUtilities/Helm/Advanced/unit_testing.md)** — BDD-тестирование шаблонов черезhelm-unittest.
-*   **[IaC: обзор](../../Concepts/iac_overview.md#тестирование-инфраструктурного-кода)** — Terratest, Molecule, Compliance-тесты.
-*   **[Политики и Governance (Kyverno/OPA)](../../GitOps/Crossplane/policy_governance.md)** — Policy-as-Code для Kubernetes.
-*   **[Методология AI-First разработки](../../AI/ai-first-development.md)**
+* **[Контрактное тестирование](../../Testing/testing_types_unit_integration_e2e.md)** — Pact workflow, CDC.
+* **[Smoke Testing](./smoke_testing.md)** — post-deploy verification в CI/CD.
+* **[Управление нестабильными тестами](./flaky_test_management.md)** — quarantine, retry, detection.
 
 ### Внешние ресурсы
 
-*   [Test Driven Development: By Example (Kent Beck)](https://www.amazon.com/Test-Driven-Development-Kent-Beck/dp/0321146530) — фундаментальный труд.
-*   [The Cucumber Book](https://cucumber.io/docs/guides/overview/) — руководство по BDD и Gherkin.
-*   [Pact Foundation](https://docs.pact.io/) — документация по контрактному тестированию (CDC).
-*   [Mutation Testing (Stryker Mutator)](https://stryker-mutator.io/) — инструмент для мутационного тестирования.
-*   [Hypothesis (Python)](https://hypothesis.readthedocs.io/) — property-based testing для Python.
-*   [Terratest (Gruntwork)](https://terratest.gruntwork.io/docs/) — документация по тестированию инфраструктуры на Go.
-*   [Molecule (Ansible)](https://ansible.readthedocs.io/projects/molecule/) — официальное руководство по тестированию Ansible-ролей.
-*   [conftest (OPA)](https://www.conftest.dev/) — CLI для policy-тестирования YAML/HCL/Dockerfile.
-*   [Chaos Mesh](https://chaos-mesh.org/) — управление хаосом в Kubernetes.
+* [Test Driven Development: By Example (Kent Beck)](https://www.amazon.com/Test-Driven-Development-Kent-Beck/dp/0321146530) — фундаментальный труд.
+* [The Cucumber Book](https://cucumber.io/docs/guides/overview/) — руководство по BDD и Gherkin.
+* [Pact Foundation](https://docs.pact.io/) — документация по контрактному тестированию (CDC).
+* [Mutation Testing (Stryker Mutator)](https://stryker-mutator.io/) — инструмент для мутационного тестирования.
+* [Hypothesis (Python)](https://hypothesis.readthedocs.io/) — property-based testing для Python.
+* [Terratest (Gruntwork)](https://terratest.gruntwork.io/docs/) — документация по тестированию инфраструктуры на Go.
+* [Molecule (Ansible)](https://ansible.readthedocs.io/projects/molecule/) — официальное руководство по тестированию Ansible-ролей.
+* [conftest (OPA)](https://www.conftest.dev/) — CLI для policy-тестирования YAML/HCL/Dockerfile.

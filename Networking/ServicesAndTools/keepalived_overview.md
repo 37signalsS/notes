@@ -87,6 +87,105 @@ vrrp_instance VI_1 {
 | **BFD** | Bidirectional Forwarding Detection (RFC 5880). Позволяет Keepalived реагировать на разрыв связи за 50–100 мс, интегрируясь с демонами маршрутизации (например, FRR). |
 | **auth_hmac** | (v2.4.0+) HMAC-SHA256 подпись VRRP-анонсов. Закрывает уязвимость unicast-деплоев, где анонсы проходят через маршрутизаторы и TTL-guard не защищает от spoofing/replay. |
 
+### IPv6 и VRRPv3
+
+VRRPv3 (RFC 5798) — единственная версия протокола, поддерживающая IPv6. В отличие от VRRPv2, аутентификация в VRRPv3 отсутствует (используется `auth_hmac` v2.4.0+).
+
+**Особенности VRRPv3 для IPv6:**
+- МульICAST-адрес: `ff02::12` (вместо `224.0.0.18` для IPv4)
+- Протокол: IPv6 (Next Header 112)
+- Таймеры: миллисекунды (sub-second)
+- Адрес VIP: IPv6-адрес с префиксом `/128` или `Link-Local`
+
+**Конфигурация Keepalived для IPv6 (Dual-Stack VIP):**
+
+```keepalived
+vrrp_instance VI_INET6 {
+    state MASTER
+    interface eth0
+    virtual_router_id 52   # Отдельный VRID для IPv6 (не совпадать с IPv4!)
+    priority 101
+    advert_int 1
+
+    # VRRPv3 обязателен для IPv6
+    vrrp_version 3
+
+    # Unicast (рекомендуется для production)
+    unicast_src_ip fd00::1
+    unicast_peer {
+        fd00::2
+    }
+
+    # IPv6 Virtual IP
+    virtual_ipaddress {
+        fd00::100/128 dev eth0 label eth0:vip6
+    }
+
+    # Notify-скрипты (те же, что и для IPv4)
+    notify_master "/etc/keepalived/notify_master.sh"
+    notify_backup "/etc/keepalived/notify_backup.sh"
+    notify_fault  "/etc/keepalived/notify_fault.sh"
+}
+```
+
+**Dual-Stack конфигурация (IPv4 + IPv6 VIP):**
+
+```keepalived
+# IPv4 VRRPv2 instance
+vrrp_instance VI_INET4 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 101
+    advert_int 1
+
+    unicast_src_ip 10.0.0.1
+    unicast_peer {
+        10.0.0.2
+    }
+
+    virtual_ipaddress {
+        10.0.0.100/24 dev eth0 label eth0:vip4
+    }
+}
+
+# IPv6 VRRPv3 instance
+vrrp_instance VI_INET6 {
+    state MASTER
+    interface eth0
+    virtual_router_id 52   # VRID должен отличаться!
+    priority 101
+    advert_int 1
+
+    vrrp_version 3
+
+    unicast_src_ip fd00::1
+    unicast_peer {
+        fd00::2
+    }
+
+    virtual_ipaddress {
+        fd00::100/128 dev eth0 label eth0:vip6
+    }
+}
+
+# Синхронизация переключения IPv4 и IPv6
+vrrp_sync_group SG_INET {
+    group {
+        VI_INET4
+        VI_INET6
+    }
+    notify_master "/etc/keepalived/notify_all_master.sh"
+    notify_backup "/etc/keepalived/notify_all_backup.sh"
+}
+```
+
+**Важные замечания:**
+- `virtual_router_id` для IPv4 и IPv6 **должен** отличаться (VRID — это scope на L2-сегменте).
+- VRRPv2-пакеты отправляются на `224.0.0.18`, VRRPv3 для IPv6 — на `ff02::12`. Это разные multicast-группы, конфликта нет.
+- При использовании `vrrp_sync_group` переключение IPv4 и IPv6 VIP происходит одновременно.
+- Для обнаружения отказа за <100 мс используйте BFD (RFC 5880) поверх IPv6.
+
 ### Аутентификация
 
 **VRRPv2 — встроенная аутентификация:**

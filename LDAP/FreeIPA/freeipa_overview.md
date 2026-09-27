@@ -599,3 +599,8 @@ sudo ipa-server-upgrade
 - **[389 Directory Server](../389ds/overview.md)** — детальный обзор LDAP-движка.
 - **[Использование ролей Ansible](../../Ansible/Roles/usage.md)** — автоматизация настройки через официальные роли.
 - **[Диагностика SSSD](../../Linux/SystemAdministration/Users/LDAP_SSSD/operations.md)** — операции и отладка клиентского агента.
+- **[LDAP: основы протокола](../ldap_fundamentals.md)** — терминология и структура DIT.
+- **[LDAP Troubleshooting](../ldap_troubleshooting.md)** — диагностика проблем.
+- **[LDAP Security Hardening](../ldap_security.md)** — настройка безопасности.
+- **[LDAP мониторинг](../ldap_monitoring.md)** — метрики и алерты.
+- **[LDAP backup/restore](../ldap_backup_restore.md)** — стратегии бэкапов.

@@ -6,38 +6,75 @@
   - **Linux** — базовая операционная система (ядро инфраструктуры).
   - **Apache** (LAMP) или **Nginx** (LEMP) — веб-сервер, обрабатывающий HTTP-запросы.
   - **MySQL** или **MariaDB** — реляционная система управления базами данных (СУБД).
-  - **PHP** — серверный язык программирования для генерации динамического контента.
+  - **PHP** — серверный язык программирования для генерации динамического контента; в связке с Nginx используется через PHP-FPM (FastCGI Process Manager).
 - **Кроссплатформенный плейбук (Cross-Platform Playbook)** — сценарий Ansible, способный выполнять идентичные задачи на разных семействах ОС (Debian, RedHat, Alpine) путем динамической адаптации под специфику дистрибутива.
 - **FQCN (Fully Qualified Collection Name)** — стандарт именования модулей (например, `ansible.builtin.package`), обеспечивающий бесконфликтную работу в разных средах и версиях Ansible.
+- **Идемпотентность** — свойство задач Ansible сохранять целевое состояние системы при многократных запусках; повторный запуск роли не должен давать `changed` по перечню задач, если конфигурация уже соответствует желаемому состоянию.
+- **Control Node** — узел, на котором установлен ansible-core и запускаются `ansible-playbook`/`ansible`. Управляемые узлы (Managed Nodes) не требуют установки Ansible.
+- **Become** — механизм выполнения задач от другого пользователя (обычно root/Administrator): `sudo`/`su` на POSIX-системах.
+
+## Архитектура и принципы работы
+
+### Жизненный цикл LAMP/LEMP-стека
+
+LAMP/LEMP-стек работает как цепочка обработки HTTP-запросов:
+
+1. Клиент отправляет HTTP-запрос на веб-сервер (порт 80/443).
+2. **Nginx** обслуживает статические файлы напрямую (изображения, CSS, JS).
+3. Для PHP-скриптов Nginx передает запрос PHP-FPM через Unix-сокет или TCP.
+4. **PHP-FPM** обрабатывает скрипт, при необходимости обращается к **MySQL/MariaDB**.
+5. Результат возвращается обратно через цепочку PHP-FPM → Nginx → Клиент.
+
+### Зависимости между компонентами
+
+Каждый компонент зависит от предыдущего:
+- Базовые пакеты и репозитории должны быть подключены до установки конкретных версий.
+- Файрвол настраивается до запуска веб-сервисов, чтобы не открывать лишние порты на промежуточных этапах.
+- Nginx развертывается до PHP-FPM, потому что конфигурация виртуального хоста зависит от путей и существования директорий.
+- PHP-FPM интегрируется с Nginx через симлинки или директории конфигурации, поэтому Nginx должен быть уже установлен.
+- Модули `ansible.mysql` требуют наличия Python-коннектора на целевом хосте.
+
+### Идентификация операционной системы
+
+Ansible использует агентскую (agentless) модель: модуль `ansible.builtin.setup` подключается к узлу по SSH, выполняет на нем Python и возвращает словарь фактов. Для кроссплатформенности критически важно использование синтаксиса `ansible_facts['os_family']` вместо устаревшего плоского формата.
+
+Ключевые факты для LAMP/LEMP-роли:
+- `ansible_facts['os_family']` — для выбора пакетного менеджера (APT vs DNF) и структуры задач.
+- `ansible_facts['distribution_major_version']` — для выбора версии сторонних репозиториев (например, REMI для RHEL 8 vs 9).
+- `ansible_facts['distribution_release']` — для формирования путей в APT репозиториях (например, `jammy` для Ubuntu 22.04).
+- `ansible_facts['pkg_mgr']` — обнаруженный пакетный менеджер (`apt`, `dnf`, `apk`).
+- `ansible_facts['service_mgr']` — процесс инициализации (`systemd`, `openrc`, `launchd`).
+
+Детальнее о фактах и стратегиях кроссплатформенности — в [Кроссплатформенные концепции](./concepts.md).
 
 ## Предварительные требования
 
-Для успешного развертывания LAMP/LEMP-стека с помощью Ansible необходимо выполнение следующих условий:
-
 ### Версии и компоненты
 
-- **Ansible Core**: версия 2.10 или выше (рекомендуется 2.14+).
-- **Python на узлах управления**: Python 3.8 или выше.
-- **Python на управляемых хостах**: Минимум Python 2.7 или Python 3.6+ (рекомендуется Python 3.8+ для современных модулей).
-- **Целевые ОС**: Ubuntu 20.04+, Debian 11+, RHEL/Rocky/Alma 8+, CentOS 7+ (с ограничениями).
+| Компонент | Минимальная версия | Рекомендуемая | Проверка |
+| :--- | :--- | :--- | :--- |
+| **ansible-core** | 2.19+ | 2.21+ (стабильная на май 2026) | `ansible --version` |
+| **Python (Control Node)** | 3.11+ | 3.12–3.14 | `python3 --version` |
+| **Python (Managed Nodes, POSIX)** | 3.9+ | 3.11+ | `ansible all -m setup -a "filter=ansible_python_version"` |
+| **Целевые ОС** | Ubuntu 22.04+, Debian 12+, RHEL/Rocky/Alma 8+ | Ubuntu 24.04 LTS, Debian 13 | `lsb_release -a` |
+
+> **Важно:** CentOS 7 достиг EOL и не поддерживается современными ansible-core (отсутствует совместимый Python 3.9+). Для унаследованных систем используйте ansible-core 2.14 с Python 2.7 или 3.6, либо мигрируйте на Rocky/Alma Linux.
 
 ### Необходимые коллекции
 
-```bash
-# Основные коллекции
-ansible.builtin
-ansible.posix
-
-# Для работы с MySQL/MariaDB
-community.mysql
-
-# Для настройки файрвола
-community.general
+```yaml
+# requirements.yml
+collections:
+  - name: ansible.posix          # firewalld, seboolean, sysctl, mount
+  - name: ansible.mysql          # mysql_db, mysql_user, mysql_replication
+  - name: community.general      # ufw, homebrew, apparmor, pacman
 ```
 
-Установка необходимых коллекций:
+Установка коллекций:
 ```bash
-ansible-galaxy collection install community.mysql community.general ansible.posix
+ansible-galaxy collection install -r requirements.yml
+# → Starting galaxy collection install process
+# → Process install dependency map
 ```
 
 ### Сетевая доступность и аутентификация
@@ -45,27 +82,29 @@ ansible-galaxy collection install community.mysql community.general ansible.posi
 - SSH-доступ к управляемым хостам (порт 22 по умолчанию).
 - Параметр `become: true` для выполнения задач с привилегиями root.
 - Доступ к интернету для загрузки пакетов и репозиториев.
+- Порты 80 (HTTP) и 443 (HTTPS) открыты на целевых серверах или разрешены файрволом.
 
 ### Переменные окружения
 
-Перед запуском плейбука необходимо создать файл `vars/vault.yml` с чувствительными данными:
+Перед запуском плейбука создайте файл `vars/vault.yml` с чувствительными данными:
 
 ```bash
 ansible-vault create vars/vault.yml
+# → Откроется редактор. Введите переменные:
 ```
 
-Пример содержимого `vars/vault.yml`:
 ```yaml
+# Файл vars/vault.yml (хранится в зашифрованном виде)
 db_name: "app_database"
 db_user: "app_user"
-db_password: "SecurePassword123"
+db_password: "{{ vault_db_password }}"
 php_version: "8.3"
 domain_name: "my-site.local"
 ```
 
-## Основные концепции
+> **Безопасность:** Никогда не храните пароли в открытом виде в плейбуках или inventory. Используйте Ansible Vault. В примерах ниже переменные с префиксом `vault_` обозначают значения, хранящиеся в зашифрованном файле.
 
-### Структура кроссплатформенной роли
+## Структура кроссплатформенной роли
 
 Для эффективного управления различиями между дистрибутивами Linux рекомендуется разделять задачи и переменные. Это позволяет сохранить файл задач (`tasks/main.yml`) чистым, вынося всю специфику в `vars/`.
 
@@ -73,27 +112,27 @@ domain_name: "my-site.local"
 ```text
 roles/webserver/
 ├── meta/
-│   └── argument_specs.yml # Валидация входных данных (PHP версия, стек)
+│   └── argument_specs.yml     # Валидация входных данных (PHP версия, стек)
 ├── defaults/
-│   └── main.yml           # Общие безопасные параметры (порты, лимиты)
+│   └── main.yml               # Общие безопасные параметры (порты, лимиты)
 ├── vars/
-│   ├── Debian.yml         # Специфика Ubuntu/Debian (пути, пакеты)
-│   ├── RedHat.yml         # Специфика RHEL/Rocky/Alma (SELinux, пути)
-│   └── default.yml        # Резервные значения
+│   ├── Debian.yml             # Специфика Ubuntu/Debian (пути, пакеты)
+│   ├── RedHat.yml             # Специфика RHEL/Rocky/Alma (SELinux, пути)
+│   └── default.yml            # Резервные значения
 └── tasks/
-    ├── main.yml           # Точка входа: include_vars + include_tasks
-    ├── setup-debian.yml   # Репозитории Ondrej, PPA
-    ├── setup-redhat.yml   # Репозитории REMI, EPEL
-    ├── configure.yml      # Универсальные шаблоны Nginx/PHP
-    └── firewall.yml       # Адаптация под ufw (Debian) или firewalld (RHEL)
+    ├── main.yml               # Точка входа: include_vars + include_tasks
+    ├── setup-debian.yml       # Репозитории Ondřej Surý, PPA
+    ├── setup-redhat.yml       # Репозитории REMI, EPEL
+    ├── configure.yml          # Универсальные шаблоны Nginx/PHP
+    └── firewall.yml           # Адаптация под ufw (Debian) или firewalld (RHEL)
 ```
 
 ### Абстракция через факты ОС
 
 Использование словаря `ansible_facts` является обязательным для кроссплатформенности:
 - `ansible_facts['os_family']` — для выбора пакетного менеджера (APT vs DNF) и структуры задач.
-- `ansible_facts['distribution_major_version']` — для выбора версии сторонних репозиториев (например, REMI для RHEL 8 vs 9).
-- `ansible_facts['distribution_release']` — для формирования путей в APT репозиториях (например, `jammy` для Ubuntu 22.04).
+- `ansible_facts['distribution_major_version']` — для выбора версии сторонних репозиториев.
+- `ansible_facts['distribution_release']` — для формирования путей в APT репозиториях.
 
 ## Практические сценарии
 
@@ -197,7 +236,7 @@ location ~ \.php$ {
 
 ### Сценарий 5: Подготовка Python для работы с БД
 
-Модули `community.mysql` требуют наличия клиентских библиотек Python на целевом хосте.
+Модули `ansible.mysql` требуют наличия клиентских библиотек Python на целевом хосте.
 
 ```yaml
 - name: Установка Python-коннектора для MySQL/MariaDB
@@ -208,7 +247,7 @@ location ~ \.php$ {
     mysql_python_package: "{{ 'python3-pymysql' if ansible_facts['os_family'] == 'Debian' else 'python3-PyMySQL' }}"
 ```
 
-### Сценарий 6: Работа с Python-зависимостями (Pip и Venv) {#работа-с-python-зависимостями-pip-и-venv}
+### Сценарий 6: Работа с Python-зависимостями (Pip и Venv)
 
 В современных дистрибутивах (Ubuntu 24.04+, RHEL 9+) прямая установка пакетов через `pip` в системный интерпретатор запрещена (стандарт PEP 668).
 
@@ -256,6 +295,50 @@ ssl_cert_path: "/etc/pki/tls/certs"
   notify: Reload Nginx
 ```
 
+### Сценарий 8: Bootstrap узлов без Python
+
+Python на целевом узле не всегда предустановлен (минимальные контейнеры, старые дистрибутивы). Без Python не работает ни факт-сбор, ни модули — только `ansible.builtin.raw` и `ansible.builtin.script`, которые выполняют команды через shell. Bootstrap выполняется в отдельном плейбуке с `gather_facts: false`:
+
+```yaml
+# bootstrap_play.yml
+- name: Установка Python перед основным запуском
+  hosts: all
+  gather_facts: false          # фактов нет — Python еще не установлен
+  become: true
+  tasks:
+    - name: Debian/Ubuntu
+      ansible.builtin.raw: apt-get update && apt-get install -y python3
+      when: "'debian' in group_names"
+    - name: RHEL-семейство
+      ansible.builtin.raw: dnf install -y python3
+      when: "'rhel' in group_names"
+    - name: Alpine
+      ansible.builtin.raw: apk add python3
+      when: "'alpine' in group_names"
+
+- name: Основной плейбук
+  hosts: all
+  tasks:
+    - name: Теперь доступен полный набор фактов и модулей
+      ansible.builtin.package:
+        name: htop
+        state: present
+```
+
+После bootstrap сбор фактов идет штатно. Для узлов с нестандартным интерпретатором явно задайте путь:
+
+```ini
+# inventory.ini — группа [rhel8:vars]
+[rhel8:vars]
+ansible_python_interpreter=/usr/bin/python3
+```
+
+```ini
+# ansible.cfg — тихое автообнаружение вместо предупреждающего auto
+[defaults]
+interpreter_python=auto_silent
+```
+
 ## Валидация и проверка
 
 ### Проверка синтаксиса плейбука
@@ -273,6 +356,7 @@ ansible-playbook --syntax-check site.yml
 
 ```bash
 ansible-playbook --check --diff site.yml --limit web_servers
+# → ok=1 changed=0 без применения изменений
 ```
 
 ### Проверка идемпотентности
@@ -291,21 +375,43 @@ ansible-playbook site.yml --limit web_servers
 ```bash
 # Проверка статуса Nginx
 ansible web_servers -m shell -a "systemctl status nginx --no-pager" -b
+# → Active: active (running)
 
 # Проверка статуса PHP-FPM
 ansible web_servers -m shell -a "systemctl status php-fpm --no-pager" -b
+# → Active: active (running)
 
 # Проверка доступности веб-сервера
 curl -I http://your-domain.local
-# → Ожидаемый результат: HTTP/1.1 200 OK
+# → HTTP/1.1 200 OK
 ```
 
 ### Проверка базы данных
 
 ```bash
-# Проверка подключения к MySQL/MariaDB
-ansible web_servers -m shell -a "mysql -u {{ db_user }} -p{{ db_password }} -e 'SELECT 1;'" -b
+# Проверка подключения к MySQL/MariaDB (с использованием .my.cnf)
+ansible web_servers -m shell -a "mysql -e 'SELECT 1;'" -b
+# → 1
 ```
+
+> **Примечание:** Избегайте передачи паролей через аргументы командной строки (они попадают в историю shell и логи). Используйте файл `/root/.my.cnf` или Ansible Vault. В production-средах добавляйте `no_log: true` к задачам, работающим с паролями.
+
+## Операции и команды
+
+| Команда | Назначение | Ожидаемый результат |
+| :--- | :--- | :--- |
+| `ansible-playbook --syntax-check site.yml` | Проверка синтаксиса | `playbook: site.yml` |
+| `ansible-playbook site.yml --check --diff --limit web_servers` | Сухой прогон с диффами | `ok`/`changed` без применения изменений |
+| `ansible-playbook site.yml --list-tasks` | Список задач до выполнения | Список задач без выполнения |
+| `ansible-inventory --graph --vars` | Граф групп и переменных инвентаря | Дерево групп и переменных хостов |
+| `ansible web_servers -m ansible.builtin.setup -a "filter=ansible_os_family*"` | Просмотр фактов семейства ОС | `"ansible_facts": { "os_family": "Debian" }` |
+| `ansible all -m ansible.builtin.setup -a "gather_subset=!all,min,distribution"` | Быстрый сбор фактов дистрибутива | Перечень хостов с фактами |
+| `ansible web_servers -m shell -a "nginx -t" -b` | Проверка конфигурации Nginx | `syntax is ok`, `test is successful` |
+| `ansible web_servers -m shell -a "php -v" -b` | Проверка версии PHP | `PHP 8.3.x (cli)` |
+| `ansible web_servers -m shell -a "mysql -V" -b` | Проверка версии MySQL/MariaDB | `Ver 15.1 Distrib 10.11.x-MariaDB` |
+| `ansible-doc ansible.posix.firewalld` | Справка по модулю firewalld | Документация по параметрам модуля |
+| `ansible-lint .` | Статический анализ плейбуков/ролей | Отчет о нарушениях правил |
+| `ansible-galaxy collection install -r requirements.yml` | Установка коллекций по манифесту | Список установленных коллекций |
 
 ## Устранение типичных неполадок
 
@@ -327,6 +433,7 @@ ansible web_servers -m shell -a "mysql -u {{ db_user }} -p{{ db_password }} -e '
 1. Проверьте правильность переменных в `vars/vault.yml`.
 2. Убедитесь, что Python-коннектор установлен: `python3-pymysql` (Debian) или `python3-PyMySQL` (RHEL).
 3. Проверьте, запущен ли сервис MySQL/MariaDB.
+4. Для MySQL 8.0+ убедитесь, что пользователь создан с правильным плагином аутентификации (`caching_sha2_password` или `mysql_native_password` для совместимости).
 
 ### Проблема: SELinux блокирует соединения
 
@@ -336,6 +443,7 @@ ansible web_servers -m shell -a "mysql -u {{ db_user }} -p{{ db_password }} -e '
 ```bash
 # Проверка статуса SELinux
 ansible web_servers -m shell -a "getenforce" -b
+# → Enforcing
 
 # Установка булевых переменных SELinux
 ansible web_servers -m shell -a "setsebool -P httpd_can_network_connect 1" -b
@@ -350,6 +458,7 @@ ansible web_servers -m shell -a "setsebool -P httpd_can_network_connect_db 1" -b
 1. Проверьте статус PHP-FPM: `systemctl status php-fpm`
 2. Убедитесь, что сокет существует: `ls -la /run/php/`
 3. Проверьте права доступа к сокету.
+4. Проверьте конфигурацию Nginx: `nginx -t`
 
 ### Проблема: Сертификат SSL не работает
 
@@ -360,43 +469,64 @@ ansible web_servers -m shell -a "setsebool -P httpd_can_network_connect_db 1" -b
 2. Убедитесь, что права доступа корректны: `chmod 644 /etc/ssl/certs/*.pem`
 3. Проверьте конфигурацию Nginx для SSL.
 
+### Проблема: Факты не собираются
+
+**Симптом**: `module 'setup'` не найден или факты пустые
+
+**Решение**:
+1. Убедитесь, что Python установлен на целевом хосте.
+2. Проверьте переменную `ansible_python_interpreter` в inventory.
+3. Для минимальных контейнеров выполните bootstrap (Сценарий 8).
+
 ## Рекомендации и лучшие практики
 
 ### Безопасность
 
-1. **Используйте Ansible Vault** для хранения паролей и секретов.
+1. **Используйте Ansible Vault** для хранения паролей и секретов. Добавляйте `no_log: true` к задачам, работающим с паролями.
 2. **Минимизируйте права доступа**: сервисы должны работать от минимально необходимых пользователей.
 3. **Настройте файрвол**: откройте только необходимые порты (22, 80, 443).
 4. **Регулярно обновляйте системы**: используйте `ansible.builtin.package` с `state: latest` для критических обновлений.
+5. **Используйте `validate` параметр**: для шаблонов Nginx добавляйте `validate: "nginx -t -c %s"`, чтобы откатить изменения при ошибке синтаксиса.
 
 ### Производительность
 
 1. **Оптимизируйте сбор фактов**: используйте `gather_subset` для сбора только необходимых данных.
 2. **Кэшируйте пакеты**: для Debian/Ubuntu используйте `apt_cache_valid_time`.
 3. **Используйте handlers** для перезапуска сервисов только при изменении конфигурации.
+4. **Ограничивайте сбор фактов** на больших парках: `gather_subset: ['!all', '!min', 'distribution', 'os_family']`.
 
 ### Сопровождение
 
 1. **Версионируйте роли**: используйте `meta/argument_specs.yml` для документирования входных параметров.
 2. **Тестируйте изменения**: используйте Molecule для тестирования на разных платформах.
 3. **Документируйте переменные**: создайте README.md для каждой роли.
+4. **Используйте `changed_when`** для модулей `command`/`shell`, чтобы сохранить идемпотентность.
+
+### Деплой и откат
+
+1. **Check Mode перед деплоем**: всегда запускайте `ansible-playbook site.yml --check --diff --limit web_servers` перед применением на продакшен.
+2. **Validate параметр**: для шаблонов Nginx добавляйте `validate: "nginx -t -c %s"`, чтобы откатить изменения при ошибке синтаксиса.
+3. **Canary deployment**: начинайте с `serial: 1` на одном хосте, проверяйте health-check, затем расширяйте на весь парк.
+4. **Rollback через tags**: используйте `tags: [rollback]` для задач отката, которые не должны выполняться при обычном деплое.
+5. **Health-check после деплоя**: интегрируйте `ansible.builtin.uri` с `until`/`retries`/`delay` для автоматической проверки работоспособности.
+6. **Configuration snapshot**: создавайте бэкап конфигов перед изменением через `command: cp` или `synchronize`.
 
 ## Граничные случаи и ограничения
 
 ### Поддержка операционных систем
 
-- **Ubuntu 20.04+**: Полная поддержка.
-- **Debian 11+**: Полная поддержка.
+- **Ubuntu 22.04+**: Полная поддержка.
+- **Debian 12+**: Полная поддержка.
 - **RHEL/Rocky/Alma 8+**: Полная поддержка с учетом SELinux.
-- **CentOS 7**: Ограниченная поддержка (устаревшие пакеты, EOL).
-- **Alpine Linux**: Требует дополнительной настройки (отсутствуют некоторые пакеты).
+- **CentOS 7**: Ограниченная поддержка (устаревшие пакеты, EOL). Требует ansible-core 2.14 или ниже.
+- **Alpine Linux**: Требует дополнительной настройки (отсутствуют некоторые пакеты, OpenRC вместо systemd).
 
 ### Версии PHP
 
 - **PHP 7.4**: EOL, не рекомендуется для использования.
-- **PHP 8.0**: Поддерживается до 2025-11-26.
-- **PHP 8.1**: Рекомендуемая версия для новых проектов.
-- **PHP 8.2+**: Доступна в дополнительных репозиториях.
+- **PHP 8.0**: EOL 2025-11-26.
+- **PHP 8.1**: Поддерживается до 2025-11-26.
+- **PHP 8.2+**: Рекомендуемая версия для новых проектов, доступна в дополнительных репозиториях.
 
 ### Ограничения кроссплатформенности
 
@@ -406,8 +536,11 @@ ansible web_servers -m shell -a "setsebool -P httpd_can_network_connect_db 1" -b
 
 ## Дополнительная информация
 
-- [Кроссплатформенные концепции](./concepts.md) — фундаментальные паттерны и работа с `ansible_facts`.
-- [Развертывание LEMP (Walkthrough)](../examples/tutorial_lemp_stack.md) — пошаговое руководство для Ubuntu.
-- [Установка и настройка MySQL/MariaDB](../examples/mysql_setup.md) — детальное руководство по базам данных.
-- [Тестирование ролей с Molecule](../ansible_testing_with_molecule.md) — проверка кроссплатформенности в CI (Docker/Vagrant).
-- [Переменные в Ansible](../PlaybookStructure/variables.md) — иерархия, приоритеты и использование `hostvars`.
+- [Кроссплатформенные концепции](./concepts.md) — фундаментальные паттерны и работа с `ansible_facts`, матрица платформ, типичные проблемы кроссплатформенности.
+- [Кроссплатформенное выполнение](./ansible_cross_platform_execution_flow.md) — `strategy`, `serial`, `throttle`, `check_mode`, `async`, `tags`, `--limit` в mixed-парках.
+- [Кроссплатформенный инвентарь и факты](./ansible_cross_platform_inventory_and_facts.md) — динамический инвентарь, constructed plugin, host patterns, fact caching.
+- [Кроссплатформенные соединения](./ansible_cross_platform_connection.md) — SSH-тюнинг, WinRM, bastion, connection plugins.
+- [Кроссплатформенная конфигурация системы](./ansible_cross_platform_system_config.md) — `sysctl`, NTP/timezone, systemd timers, логи, файловые системы.
+- [Кроссплатформенный откат и drift detection](./ansible_cross_platform_rollback_testing_drift.md) — rollback стратегии, canary, drift detection в CI/CD, Molecule.
+- [Установка и настройка MySQL/MariaDB](../examples/mysql_setup.md) — детальное руководство по базам данных, репликации, SSL/TLS.
+- [Переменные в Ansible](../PlaybookStructure/variables.md) — иерархия, приоритеты и использование `ansible_facts`.

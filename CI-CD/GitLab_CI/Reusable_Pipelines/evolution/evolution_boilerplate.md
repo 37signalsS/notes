@@ -74,9 +74,9 @@ variables:
 
 docker-build:
   stage: build
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   script:
     # Проблема: Логика авторизации и сборки не инкапсулирована
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
@@ -279,9 +279,9 @@ variables:
 
 build:
   stage: build
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build --pull -t $DOCKER_IMAGE .
@@ -487,7 +487,7 @@ report_metrics:
 # Каждый проект содержит 120+ строк идентичного кода
 stages: [build, test, deploy]
 variables: { DOCKER_DRIVER: overlay2, IMAGE: ... }
-.build_job: { image: docker:27.0, services: [...], script: [...] }
+.build_job: { image: docker:29.8, services: [...], script: [...] }
 build: { extends: .build_job, stage: build }
 test: { stage: test, script: [pytest] }
 deploy: { stage: deploy, script: [ssh deploy.sh] }

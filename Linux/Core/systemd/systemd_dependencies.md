@@ -441,3 +441,4 @@ sudo systemctl daemon-reload
 * [Диагностика загрузки (boot_troubleshooting)](./boot_troubleshooting.md) — решение проблем с «зависшими» зависимостями.
 * [Типы сервисов (systemd_service_types)](./systemd_service_types.md) — как тип запуска влияет на определение «готовности» для `After=`.
 * [Анализ производительности (performance)](./performance.md) — `systemd-analyze critical-chain`, `dot`, `dump` для визуализации графов.
+* [DNS-резолвер (systemd-resolved)](./systemd_resolved.md) — настройка DNS и зависимостей сети.

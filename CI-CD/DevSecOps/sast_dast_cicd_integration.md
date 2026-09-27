@@ -169,3 +169,11 @@ pipeline {
 - **[Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**
 - **[Интеграция автоматизированных тестов в CI/CD](../../Testing/testing_cicd_integration.md)**
 - **[DevSecOps — обзор методологии](./devsecops_overview.md)**
+- **[Сравнение SCA-инструментов](../../Security/Supply_Chain_Security/sca_tools_comparison.md)**
+- **[Безопасность контейнеров](../../Docker/Docker_security/vulnerability_scanning.md)**
+- **[Подпись артефактов](../../Security/Supply_Chain_Security/artifact_signing.md)**
+- **[Falco runtime security](../../Security/Tools/falco.md)**
+- **[Compliance и аудит](../../Security/audit_and_compliance_overview.md)**
+- **[Vulnerability management и CVE triage](../../Security/Supply_Chain_Security/cve_triage_workflow.md)**
+- **[Incident response для CI/CD](../../CI-CD/GitLab_CI/Advanced/incident_response_cicd.md)**
+- **[Kubernetes incident response](../../Kubernetes/Security/incident_response.md)**

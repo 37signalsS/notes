@@ -14,6 +14,14 @@
 
 **Актуально для:** Podman 6.x (проверено на 6.0.2, июль 2026). Механизм стабилен с Podman 4.x.
 
+**FQIN (Fully Qualified Image Name)** — полное имя образа, включающее реестр, namespace, имя и тег/диджест (например, `docker.io/library/nginx:latest` или `docker.io/library/nginx@sha256:...`). В Podman короткие имена разрешаются только через `registries.conf`; для продакшена и автоматизации рекомендуется использовать FQIN для детерминированности.
+
+**Digest** — криптографический хэш (SHA256) содержимого образа. Используется для абсолютно детерминированных обновлений, когда важно, чтобы тег не изменился между запусками. В Quadlet можно задать `Image=...@sha256:...`.
+
+**Quadlet-юнит** — декларативный файл (`.container`, `.pod`, `.network`, `.volume`, `.kube`, `.image`, `.build`, `.artifact`), размещаемый в каталогах поиска systemd и автоматически транслируемый в `.service`-юнит при `daemon-reload`. Подробнее о каталогах и форматах: [Daemonless архитектура](./podman_daemonless_architecture.md).
+
+**conmon (Container Monitor)** — легковесный монитор жизненного цикла контейнера. В контексте зависимостей conmon выполняет роль MAINPID для systemd-юнита с `Type=notify`, передавая готовность через `sd_notify`. Подробнее о роли conmon: [Daemonless архитектура](./podman_daemonless_architecture.md).
+
 ---
 
 ## Основные концепции
@@ -91,6 +99,33 @@
 Для приложений внутри контейнера готовность отправляется командой `systemd-notify --ready` (пакет `systemd`) или библиотечным вызовом `sd_notify`; сокет передается через переменную окружения `NOTIFY_SOCKET`.
 
 Связка `HealthOnFailure=kill` + `Restart=on-failure` в `[Service]` обеспечивает автоматическое восстановление: контейнер, ставший `unhealthy`, убивается и перезапускается systemd.
+
+### Жизненный цикл контейнера в контексте зависимостей
+
+Когда systemd активирует Quadlet-юнит, запускается следующая цепочка:
+
+1. **Systemd** запускает сгенерированный `.service`-юнит с `Type=notify`.
+2. **Podman CLI** (внутри ExecStart) создает контейнер и порождает **conmon**.
+3. **Conmon** становится MAINPID для systemd и наблюдает за процессом контейнера.
+4. **sd_notify**: в зависимости от режима (`--sdnotify`) conmon или приложение отправляет `READY=1`.
+5. **Systemd** переводит юнит в `active`, и зависимые юниты (по `After=`) могут стартовать.
+
+`podman system service` (REST API, совместимый с Docker) не участвует в этой цепочке — он активируется по требованию через сокет и используется внешними инструментами, а не systemd-зависимостями.
+
+### Аутентификация в цепочках зависимостей
+
+Если зависимый сервис (например, база данных) загружается из приватного реестра, учетные данные должны быть доступны **до** запуска контейнера. В Quadlet это обеспечивается через:
+
+- `Authfile=~/.config/containers/auth.json` в секции `[Container]` (путь относительно домашней директории пользователя, который управляет юнитом).
+- Переменная окружения `REGISTRY_AUTH_FILE` в `[Container]` или `[Service]`.
+
+```ini
+[Container]
+Image=registry.example.com/internal/postgres:16
+Authfile=~/.config/containers/auth.json
+```
+
+Для rootful-служб путь к auth.json: `/run/containers/0/auth.json` (эфемерный) или `/etc/containers/auth.json` (персистентный).
 
 ---
 
@@ -298,6 +333,256 @@ podman inspect --format '{{.State.Health.Status}}' db
 systemd-analyze --user --generators=true verify app.container
 ```
 
+### 6. Rootless + Linger для постоянных служб
+
+В rootless-режиме пользовательские службы останавливаются при выходе пользователя из системы. Для постоянной работы включите linger:
+
+```bash
+# Включить linger (от root)
+sudo loginctl enable-linger $USER
+
+# Проверка
+loginctl show-user $USER -p Linger
+# → Linger=yes
+```
+
+После этого `systemctl --user enable --now app.service` будет работать без активной сессии. Для rootless-служб используйте каталог `~/.config/containers/systemd/` для Quadlet-файлов. Подробнее о rootless-окружении: [Rootless режим](./podman_rootless.md).
+
+```ini
+# ~/.config/containers/systemd/app.container
+[Unit]
+Description=App Service (rootless)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/my-app:latest
+Network=app.network
+Environment=DB_HOST=db
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now app.service
+```
+
+### 7. Приватный реестр и аутентификация в цепочках зависимостей
+
+Если образы зависимых сервисов хранятся в приватном реестре, настройте `auth.json` **до** запуска юнитов:
+
+```bash
+# Rootless: персистентный файл
+mkdir -p ~/.config/containers
+podman login --authfile ~/.config/containers/auth.json registry.example.com
+
+# Rootful: персистентный файл
+sudo mkdir -p /etc/containers
+sudo podman login --authfile /etc/containers/auth.json registry.example.com
+```
+
+В Quadlet:
+
+```ini
+[Container]
+Image=registry.example.com/internal/postgres:16
+Authfile=~/.config/containers/auth.json
+HealthCmd=pg_isready -U postgres
+Notify=healthy
+```
+
+Для CI/CD используйте переменную окружения:
+
+```ini
+[Service]
+Environment=REGISTRY_AUTH_FILE=/run/secrets/registry-auth.json
+```
+
+### 8. Ограничение ресурсов и изоляция
+
+В production задавайте лимиты на уровне Quadlet, чтобы зависимый сервис не потреблял все ресурсы хоста:
+
+```ini
+[Container]
+Image=docker.io/library/postgres:16
+Cpus=1.5
+Memory=1g
+PidsLimit=100
+HealthCmd=pg_isready -U postgres
+Notify=healthy
+
+[Service]
+Restart=on-failure
+RestartSec=5
+```
+
+Дополнительные параметры изоляции:
+
+```ini
+[Container]
+CapDrop=ALL
+SecurityOpt=no-new-privileges
+ReadOnly=true
+Tmpfs=/tmp:/tmp
+```
+
+В rootless-режиме для лимитов CPU и I/O требуется делегирование cgroup-контроллеров (см. [Rootless режим](./podman_rootless.md)).
+
+### 9. Production best practices
+
+**Стратегия обновления с откатом:**
+
+1. Используйте FQIN с Digest для детерминированности: `Image=registry.example.com/postgres@sha256:abc123...`.
+2. Настройте `HealthStartupCmd` как шлюз (Podman 5.0+) — основная проверка не начнется, пока старт не завершится.
+3. Задайте `HealthOnFailure=kill` для автоматического перезапуска при unhealthy.
+4. Мониторьте события: `podman events --filter event=health_status`.
+5. Сохраняйте старые образы: `podman image prune` удаляет только неиспользуемые; для отката оставьте предыдущий слой.
+
+**Резервное копирование auth.json:**
+
+```bash
+# Rootless
+cp ~/.config/containers/auth.json ~/.config/containers/auth.json.bak
+
+# Rootful
+sudo cp /etc/containers/auth.json /etc/containers/auth.json.bak
+```
+
+### 10. Мониторинг и алертинг
+
+Сбор логов и метрик из зависимых служб:
+
+```bash
+# Логи конкретного юнита
+journalctl --user -u app.service --since "1 hour ago" -f
+
+# События health_status в реальном времени
+podman events --filter event=health_status --format '{{.Time}} {{.Actor}} {{.Status}}'
+
+# Статус всех контейнеров с healthcheck
+podman ps --filter health=unhealthy --format 'table {{.Names}}\t{{.Status}}'
+```
+
+Synthetic Healthcheck из systemd (проверка зависимостей извне):
+
+```ini
+[Service]
+ExecStopPost=/usr/local/bin/check-db-health.sh
+```
+
+```bash
+#!/bin/bash
+# check-db-health.sh
+for i in $(seq 1 10); do
+  if podman exec db pg_isready -U postgres >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 1
+done
+echo "DB dependency failed" >&2
+exit 1
+```
+
+## Устранение неполадок
+
+### Ошибка: `db.service` завис в activating
+
+**Симптом:** `systemctl status app.service` показывает `activating (start)` бесконечно.
+
+**Причины и решения:**
+
+1. **Healthcheck не проходит:**
+   ```bash
+   # Проверка статуса healthcheck
+   podman inspect --format '{{.State.Health.Status}}' db
+   # → unhealthy
+
+   # Просмотр логов healthcheck
+   podman logs db
+   # Убедитесь, что команда HealthCmd существует в образе
+   ```
+
+2. **Notify=healthy без HealthCmd:**
+   ```bash
+   # Проверка Quadlet-файла
+   systemctl --user cat db.service | grep sdnotify
+   # → --sdnotify=healthy
+
+   # Если HealthCmd отсутствует, добавьте его в [Container]
+   # Или измените на Notify=true / Notify=conmon
+   ```
+
+3. **Таймаут systemd:**
+   ```bash
+   # Увеличьте TimeoutStartSec
+   systemctl --user set-property db.service TimeoutStartSec=120
+   ```
+
+### Ошибка: `Failed to start app.service: Unit not found`
+
+**Причина:** Зависимый юнит не найден. Убедитесь, что имена указаны правильно:
+
+```bash
+# В Quadlet ссылки указываются по имени файла без расширения
+Requires=db.container   # правильно
+Requires=db.service      # также допустимо
+Requires=db              # неправильно
+```
+
+### Ошибка: DNS не резолвит `db`
+
+**Симптом:** Приложение не может подключиться к `db` по имени.
+
+**Решение:**
+
+```bash
+# Проверка контейнерного DNS
+podman exec app nslookup db
+# → должен вернуть IP контейнера db
+
+# Если контейнеры в разных сетях, используйте FQIN с сетью
+Network=app.network
+
+# Или используйте localhost внутри пода
+Pod=myapp.pod
+Environment=DB_HOST=127.0.0.1
+```
+
+### Ошибка: `authentication required` при pull
+
+**Симптом:** Зависимый сервис не стартовал из-за ошибки авторизации.
+
+**Решение:**
+
+```bash
+# Проверка auth.json
+cat ~/.config/containers/auth.json | jq '.auths["registry.example.com"]'
+
+# Повторный логин
+podman login --authfile ~/.config/containers/auth.json registry.example.com
+
+# Для systemd-юнитов укажите authfile в Quadlet
+Authfile=~/.config/containers/auth.json
+```
+
+### Ошибка: `dial tcp` / `connection refused`
+
+**Симптом:** Приложение стартовало, но не может подключиться к зависимости.
+
+**Причина:** Зависимость еще не готова, несмотря на `After=`. Используйте `Notify=healthy` вместо простого `After=`.
+
+```ini
+[Container]
+Image=docker.io/library/postgres:16
+HealthCmd=pg_isready -U postgres
+Notify=healthy
+```
+
 ---
 
 ## Нюансы и ограничения
@@ -328,6 +613,18 @@ systemd-analyze --user --generators=true verify app.container
 - **[Проверки состояния (Healthcheck) в Podman](./podman_healthchecks.md)** — синтаксис проверок и параметры `HealthCmd`, используемые для готовности.
 - **[Поды в Podman](./podman_pods.md)** — разделяемое сетевое пространство имен и ограничения порядка запуска внутри пода.
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — интеграция Podman с systemd и Quadlet.
+- **[Rootless режим](./podman_rootless.md)** — linger, cgroup delegation, пользовательские службы.
+- **[Podman vs Docker](./podman_vs_docker.md)** — архитектурные различия и выбор инструмента.
+- **[Podman Compose](./podman-compose.md)** — особенности `depends_on` и `service_healthy`.
+
+### Версионирование
+
+| Версия Podman | Особенности зависимостей и готовности |
+| :--- | :--- |
+| **4.x** | Базовый `sdnotify=conmon`/`container`, Quadlet стабилен. `podman generate systemd` — основной способ. |
+| **5.0** | Добавлен Startup Healthcheck (Gate) как часть верификации. `pasta` по умолчанию для rootless. |
+| **5.3** | Улучшено взаимодействие rootless-контейнера с хостом (`host.containers.internal`). |
+| **6.0+** | Полная поддержка `HealthOnFailure`, динамическое обновление параметров Healthcheck через `podman update`. Удалена поддержка CNI, BoltDB, slirp4netns. Рекомендуемая версия. |
 
 ### Ссылки
 

@@ -223,6 +223,8 @@ systemctl --type=service --state=running | grep '^run-'
 * [Восстановление системы (общее)](../../Diagnostics/Troubleshooting/boot_failure_recovery.md) — стратегии LiveCD и chroot.
 * [Загрузчик GRUB](../../SystemAdministration/grub.md) — параметры ядра и восстановление загрузчика.
 * [Структура юнит-файлов](./systemd_unit_file_structure.md) — директивы и синтаксис.
+* [Переразметка дисков (systemd-repart)](./systemd_repart.md) — автоматическое создание разделов при загрузке.
+* [Шифрование дисков (systemd-cryptenroll)](./systemd_cryptenroll.md) — автоматическая разблокировка LUKS2.
 
 ## Диагностика и устранение неисправностей
 

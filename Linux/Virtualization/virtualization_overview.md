@@ -28,23 +28,27 @@
 
 ## Современные архитектуры гипервизоров (2025–2026)
 
-### Стандартные и облачные решения
+### Стандартные решения
 
 - **KVM (Kernel-based Virtual Machine):** Стандарт де-факто в Linux. Интегрирован в ядро, обеспечивает нативную производительность CPU и памяти.
-- **Xen:** Поддерживает глубокую паравиртуализацию. Используется в облаках (ранее AWS) и проектах с высокими требованиями к безопасности (Qubes OS).
-- **AWS Nitro:** Аппаратная разгрузка гипервизора. Функции сети, хранилища и безопасности вынесены на выделенные чипы (ASIC/SmartNIC), что минимизирует "налог на виртуализацию" (virtualization tax) до <1%.
+- **Xen:** Поддерживает глубокую паравиртуализацию. Используется в проектах с высокими требованиями к безопасности (Qubes OS) и корпоративных виртуализационных платформах.
+- **QEMU (TCG mode):** Программная эмуляция без аппаратного ускорения. Используется для отладки, запуска несовместимых архитектур и встраиваемых систем, где VT-x/AMD-V недоступен.
 
-### Rust-based VMM (Безопасность памяти)
+### Микро-VMM (MicroVM)
 
-Современные VMM пишутся на языке **Rust** для исключения целых классов уязвимостей, связанных с управлением памятью (buffer overflow, use-after-free).
-- **Firecracker (MicroVM):** Минималистичный VMM от AWS, оптимизированный для Serverless (Lambda, Fargate). Запуск за <125 мс, минимальное потребление RAM (~5MB на ВМ).
-- **Cloud Hypervisor:** Совместный проект Intel и Linux Foundation. Ориентирован на облачные нагрузки, поддерживает современные фичи (Live Migration, VFIO) при минимальном коде.
-- **Stratovirt:** Решение от Huawei для высокоплотных вычислений и AI-инфраструктур, оптимизированное под архитектуру ARM (Kunpeng).
+Современные VMM оптимизированы для высокой плотности размещения и быстрого запуска:
+
+- **Firecracker:** Минималистичный VMM с открытым исходным кодом. Запуск за <125 мс, минимальное потребление RAM (~5 MB на ВМ). Используется для изоляции на уровне функций (Function-as-a-Service) и безопасного запуска непроверенного кода.
+- **QEMU (с KVM):** Полноценная среда виртуализации для рабочих нагрузок общего назначения. Поддерживает широкий спектр устройств и гостевых ОС.
 
 ### Конфиденциальные вычисления (Confidential Computing)
 
 Защита данных непосредственно во время выполнения через аппаратное шифрование памяти ВМ.
 - **Intel TDX (Trust Domain Extensions)** и **AMD SEV-SNP**: Изолируют память и состояние регистров ВМ даже от гипервизора и администратора хоста.
+
+### Языки системного программирования в VMM
+
+Современные VMM пишутся на языке **Rust** для исключения целых классов уязвимостей, связанных с управлением памятью (buffer overflow, use-after-free). Это повышает безопасность гипервизора при работе с непроверенным гостевым кодом.
 
 ## Базовые концепции
 
@@ -93,7 +97,7 @@
 - Stateful-нагрузки (базы данных), требующие полноценного окружения ОС (systemd).
 - Общее ядро с хостом для минимальных задержек I/O.
 
-### Используйте виртуальные машины (KVM/Cloud Hypervisor), если требуется:
+### Используйте виртуальные машины (KVM/QEMU), если требуется:
 - Запуск разных ОС (Windows, BSD) на одном Linux-хосте.
 - Полная изоляция на уровне ядра для работы с недоверенным кодом.
 - Проброс физического оборудования (GPU, HBA) через VFIO.
@@ -106,22 +110,277 @@
 
 ## Рекомендации по выбору (DevOps Roadmap)
 
-1. **Docker/Podman:** Стандарт для разработки и CI/CD.
-2. **LXC/Incus:** Оптимально для домашних лабораторий и внутренних сервисов компании вместо тяжелых ВМ.
-3. **Kata Containers:** Рекомендуется для Multi-tenant Kubernetes кластеров (запуск чужого кода).
-4. **Proxmox/KVM:** Промышленный стандарт для серверной виртуализации и корпоративных ИТ-инфраструктур.
+1. **Docker/Podman:** Стандарт для изоляции приложений и CI/CD.
+2. **LXC/Incus:** Оптимально для инфраструктурных сервисов и stateful-нагрузок, где требуется полноценное окружение ОС (systemd).
+3. **Kata Containers:** Рекомендуется для изолированных сред с непроверенным кодом, где требуется аппаратная граница, но сохраняется совместимость с API контейнеров.
+4. **KVM/Proxmox:** Промышленный стандарт для серверной виртуализации, гетерогенных сред (Windows/Linux) и рабочих нагрузок с прямым доступом к оборудованию (GPU, NVMe через VFIO).
+
+## Практические сценарии
+
+### Сценарий 1: Выбор типа изоляции для рабочей нагрузки
+
+| Нагрузка | Рекомендуемый тип | Обоснование |
+| :--- | :--- | :--- |
+| Микросервис, stateless | Docker/Podman | Максимальная плотность, быстрый старт, совместимость с оркестрацией. |
+| Инфраструктурный сервис (DNS, VPN, DHCP) | LXC/Incus | Полноценный systemd, сохраняемое состояние, минимальные накладные. |
+| База данных (PostgreSQL, ClickHouse) | LXC/Incus или KVM | LXC — для общей производительности I/O; KVM — для максимальной изоляции и прямого доступа к дискам через VFIO. |
+| Непроверенный код, multi-tenant | Kata Containers или KVM | Аппаратная граница изоляции, предотвращающая побег из песочницы. |
+| Разные ОС (Windows, BSD) на одном хосте | KVM/QEMU | Полная виртуализация с поддержкой гостевых драйверов. |
+| Edge-устройства с ограниченными ресурсами | LXC или Firecracker MicroVM | Минимальное потребление RAM/CPU, быстрый запуск. |
+
+### Сценарий 2: Быстрый старт изолированной среды без контейнера
+
+Для разового запуска приложения или теста можно использовать `unshare` без предварительной настройки LXC/KVM:
+
+```bash
+# Изолированное окружение с собственными PID, Mount, Network и UTS namespace
+# -r маппит текущего пользователя в root внутри нового User Namespace
+sudo unshare -n -p -m -u --fork bash
+
+# Внутри namespace:
+hostname isolated-test-01
+ip link set lo up
+mount -t proc proc /proc
+```
+
+Для постоянного изолированного окружения с systemd используйте `systemd-nspawn`.
+
+### Сценарий 3: Подготовка rootfs для контейнера или ВМ
+
+Вместо запуска полного ВМ для подготовки образа, используйте mount namespace и `pivot_root`:
+
+```bash
+# 1. Создание временного корня
+mkdir -p /tmp/newroot /tmp/newroot/boot
+
+# 2. Монтирование базовых ФС
+mount -t proc proc /tmp/newroot/proc
+mount -t sysfs sysfs /tmp/newroot/sys
+mount -o bind /dev /tmp/newroot/dev
+
+# 3. Распаковка образа (Docker layer, debootstrap, etc.)
+debootstrap jammy /tmp/newroot
+
+# 4. Атомарная смена корня (pivot_root)
+cd /tmp/newroot
+pivot_root . oldroot
+umount -l /oldroot
+```
+
+### Сценарий 4: Мониторинг ресурсов гостевой ОС
+
+При диагностике проблем с производительностью важно отделить нагрузку хоста от гостевой:
+
+```bash
+# Список всех ВМ/контейнеров и их потребление CPU/RAM
+virsh list --all
+lxc-ls -f
+podman ps --size
+
+# Просмотр cgroup ВМ (KVM)
+CGROUP=/sys/fs/cgroup/system.slice/libvirt/qemu/<domain>.scope
+cat $CGROUP/cpu.max
+cat $CGROUP/memory.current
+
+# Просмотр cgroup LXC
+cat /sys/fs/cgroup/system.slice/lxc/<name>.scope/cpu.stat
+
+# Проверка IOMMU и прямого проброса устройств
+dmesg | grep -i "iommu"
+lspci -nnk -s 01:00.0
+```
+
+### Сценарий 5: Живая миграция ВМ между хостами
+
+Для планового обслуживания или балансировки нагрузки:
+
+```bash
+# Pre-copy миграция (стандарт)
+virsh migrate --live --auto-converge web-server-01 qemu+ssh://dest-host/system
+
+# Post-copy (при высокой частоте изменения памяти)
+virsh migrate --live --postcopy web-server-01 qemu+ssh://dest-host/system
+
+# Проверка статуса миграции
+virsh domstate web-server-01
+```
+
+### Сценарий 6: Изоляция приложения через systemd без контейнера
+
+SRE может изолировать сервис, не используя Docker/LXC:
+
+```ini
+# /etc/systemd/system/my-app.service
+[Service]
+ExecStart=/usr/bin/my-app
+PrivateMounts=true
+PrivateNetwork=true
+PrivatePID=true
+PrivateUsers=true
+# Дополнительные ограничения
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+```
+
+Проверка:
+```bash
+systemctl daemon-reload
+systemctl start my-app
+sudo lsns -p $(systemctl show --property=MainPID --value my-app)
+```
+
+## Диагностика и устранение неисправностей
+
+### Общие проблемы виртуализации
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| **ВМ не запускается** | Модуль KVM не загружен или недоступен `/dev/kvm` | `lsmod \| grep kvm`; добавление пользователя в группу `kvm`; проверка BIOS (VT-x/AMD-V). |
+| **ВМ работает медленно** | Отсутствует `virtio` драйвер в госте | Установка `virtio-win` (Windows) или `qemu-guest-agent` (Linux). |
+| **Контейнер не видит устройства** | Отсутствует `--privileged` или явный проброс `--device` | `docker run --device=/dev/sda ...`; проверка cgroup `device.allow`. |
+| **Ошибка "Cannot allocate memory"** | Недостаточно RAM или overcommit настроен агрессивно | Проверка `free -h` и `vm.overcommit_memory`; увеличение лимита ВМ/контейнера. |
+| **Сеть недоступна** | Не настроен bridge/VLAN или конфликт iptables | `brctl show`; `iptables -L -n -v`; проверка `virsh net-list`. |
+| **High latency / jitter** | THP дефрагментация или несбалансированная NUMA | Отключение `transparent_hugepage`; настройка `numatune` в XML ВМ. |
+| **OOM Killer убивает процессы** | Нет лимитов cgroups или `memory.high` не настроен | Установка `memory.max` и `memory.high`; проверка `journalctl -k \| grep -i oom`. |
+| **Permission denied при монтировании** | Отсутствует `CAP_SYS_ADMIN` или `MS_BIND` | Использование `--privileged` (крайняя мера) или bind-mount с правильными флагами. |
+
+### Диагностические команды
+
+```bash
+# Проверка аппаратной поддержки виртуализации
+grep -E "(vmx|svm|amd-v)" /proc/cpuinfo
+lsmod | grep -E "kvm|virt|vfio"
+
+# Статистика по ВМ (libvirt)
+virsh list --all
+virsh dominfo <domain>
+virsh cpu-stats <domain>
+
+# Статистика по контейнерам
+lxc-info -n <name>
+podman stats --no-stream
+
+# Анализ namespace процесса
+lsns -p <PID>
+readlink /proc/<PID>/ns/*
+
+# Проверка IOMMU
+dmesg | grep -i "iommu"
+ls -l /dev/vfio/*
+
+# Проверка THP (Transparent Hugepages)
+cat /sys/kernel/mm/transparent_hugepage/enabled
+
+# Мониторинг давления ресурсов (cgroup v2 PSI)
+cat /proc/pressure/cpu
+cat /proc/pressure/memory
+cat /proc/pressure/io
+```
+
+## Безопасность
+
+### Уровни изоляции
+
+В Linux существует градация изоляции от легкой до строгой:
+
+1. **Namespaces + Cgroups:** Базовая изоляция (Docker, Podman, LXC). Достаточна для доверенных рабочих нагрузок внутри одного кластера.
+2. **Namespaces + Cgroups + LSM (AppArmor/SELinux):** Добавляет принудительный контроль доступа (MAC). Рекомендуется для multi-tenant сред.
+3. **Микро-VМ (Kata, Firecracker):** Аппаратная изоляция через отдельное ядро гостя. Требует больше ресурсов, но обеспечивает строгую границу безопасности.
+4. **Полные ВМ (KVM):** Максимальная изоляция. Рекомендуется для непроверенного кода, compliance-рабочих нагрузок и проброса оборудования.
+
+### Основные угрозы и mitigation
+
+| Угроза | Влияние | Защита |
+| :--- | :--- | :--- |
+| **Побег из контейнера (Container Escape)** | Полный контроль над хостом | User Namespaces, rootless-режим, минимальные capabilities, `NoNewPrivileges=true`. |
+| **Утечка информации через /proc** | Раскрытие данных хоста | `hidepid=2` на `/proc`, использование cgroup namespace, LSM. |
+| **Noisy Neighbor** | Деградация производительности других ВМ/контейнеров | Cgroups v2 (`memory.high`, `cpu.weight`, `blkio.weight`), CPU pinning, IOMMU. |
+| **Уязвимости ядра (io_uring, netfilter)** | Компрометация хоста из контейнера | Регулярное обновление ядра, seccomp-профили, использование ВМ для непроверенного кода. |
+| **Атака на гипервизор** | Полный контроль над инфраструктурой | Минимизация кода гипервизора (Rust), отключение ненужных устройств, guest-agent. |
+
+### Жесткий контур (Hardening checklist)
+
+**Для контейнеров (Docker/Podman):**
+```bash
+# Минимальные привилегии
+docker run --read-only \
+  --cap-drop=ALL \
+  --cap-add=CHOWN --cap-add=DAC_OVERRIDE \
+  --pids-limit 100 \
+  --memory=512m --cpus=0.5 \
+  --security-opt=no-new-privileges \
+  --security-opt=seccomp=default \
+  my-app
+```
+
+**Для LXC:**
+```bash
+lxc.idmap = u 0 100000 65536
+lxc.idmap = g 0 100000 65536
+lxc.cap.drop = sys_admin sys_module sys_rawio
+lxc.apparmor.profile = lxc-default
+```
+
+**Для KVM/ВМ:**
+- Включить IOMMU (`intel_iommu=on iommu=pt` или `amd_iommu=on iommu=pt`).
+- Использовать sVirt (SELinux) или AppArmor для изоляции процессов ВМ.
+- Отключить ненужные устройства (USB, CD-ROM) в XML-конфигурации.
+- Использовать `virtio` драйверы вместо эмуляции IDE/SCSI.
+
+## Производительность и накладные расходы
+
+### Сравнение
+
+| Технология | CPU overhead | Memory overhead | Disk I/O | Network latency | Скорость запуска |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Docker/Podman** | <1% | Минимальный (shared pages) | Нативный (OverlayFS + CoW) | ~1–5 мкс (veth) | <1 с |
+| **LXC/Incus** | <1% | Минимальный | Нативный | ~1–5 мкс (veth) | <1 с |
+| **Kata Containers** | 2–5% | ~5–20 MB (гостовое ядро) | Через virtio-blk | ~10–50 мкс | <2 с |
+| **KVM/QEMU** | 1–3% (с VirtIO) | ~30–100 MB (QEMU + устройств) | Через virtio-blk/scsi | ~5–20 мкс | >10 с |
+
+### Факторы, влияющие на производительность
+
+1. **Драйверы VirtIO:** Всегда используйте паравиртуализированные драйверы вместо эмулированных (IDE, e1000). Они снижают количество VM-Exits на порядок.
+2. **NUMA拓扑:** Привязывайте vCPU и память ВМ к одному NUMA-узлу хоста. Переходы между узлами добавляют задержки.
+3. **Кэширование дисков:**
+   - Для баз данных используйте `cache=none` (O_DIRECT) или `directsync`.
+   - Избегайте `writeback` на хостах без UPS — риск потери данных при сбое питания.
+4. **vhost-net:** Переносит обработку сети из QEMU в ядро, снижая задержку на 30–50%.
+5. **Hugepages:** Резервирование страниц 2MB/1GB уменьшает расходы на TLB и повышает пропускную способность памяти для内存-интенсивных рабочих нагрузок.
+
+## Ограничения и известные проблемы
+
+1. **Общее ядро (Shared Kernel):** Все контейнеры используют ядро хоста. Уязвимость в системном вызове может привести к компрометации всех контейнеров. Для непроверенного кода используйте ВМ.
+2. **Mount Namespace + MS_SHARED:** Если родительская точка смонтирована как `MS_SHARED`, события монтирования могут проникать в дочерний namespace и обратно. Используйте `MS_PRIVATE` для полной изоляции.
+3. **Nested Virtualization:** Вложенная виртуализация имеет ограничения по поддерживаемым CPU моделям и может снижать производительность на 10–30%. Проверяйте поддержку в `kvm_intel`/`kvm_amd`.
+4. **Thundering Herd (cgroup v1):** В cgroup v1 одновременный доступ множества процессов к контроллеру может вызывать contention. Решение: миграция на cgroup v2.
+5. **Вложенные namespaces:** Глубина вложенности ограничена `kernel.pid_max`. На практике более 32 уровней нестабильны.
+6. **Time Namespace в контейнерах:** Docker по умолчанию не включает `CLONE_NEWTIME`. Для изоляции времени требуется ручная настройка рантайма.
+7. **OverlayFS limit:** Стандартное ограничение — 128 нижних слоев (`lowerdir`). При превышении возникает ошибка. Используйте `fuse-overlayfs` в rootless-средах.
+8. **User Namespace + YAMA LSM:** Если включён `YAMA` ptrace scope, создание User Namespace может быть запрещено для непривилегированных процессов.
+
+## Best Practices
+
+1. **Используйте User Namespace для непривилегированных рабочих нагрузок:** Это baseline безопасности для контейнеров. Настройте `/etc/subuid` и `/etc/subgid` для всех service-аккаунтов.
+2. **Применяйте минимальные capabilities:** Запускайте контейнеры с `--cap-drop=ALL` и добавляйте только необходимые (`--cap-add`). Для LXC используйте `lxc.cap.keep`.
+3. **Изоляция через systemd:** Для сервисов, не требующих контейнеризации, используйте `PrivateMounts`, `PrivateNetwork`, `ProtectSystem=strict` в юнитах systemd.
+4. **Мониторинг через cgroup v2 PSI:** Включайте `psi=1` в параметры ядра для получения метрик давления на CPU, память и I/O. Это позволяет прогнозировать деградацию до OOM.
+5. **Отключение THP для latency-sensitive workloads:** Установите `transparent_hugepage=never` в GRUB для хостов с базами данных и реального времени.
+6. **Используйте virtiofs вместо NFS/9p для shared storage:** В однохостовых сценариях virtiofs имеет меньшую задержку за счет разделяемой памяти.
+7. **Крепите персистентные namespaces:** Если namespace должен пережить перезапуск процесса, создайте bind-mount в `/run/netns/` или `/var/run/`.
+8. **Валидация образов и конфигураций:** Проверяйте overlayfs limit, seccomp-профили и SELinux/AppArmor метки перед деплоем в production.
+9. **Документируйте топологию NUMA и CPU pinning:** Для гетерогенных кластеров ведите реестр соответствия vCPU → pCPU и NUMA-узлов.
+10. **Тестируйте откат:** Для каждого изменения конфигурации ВМ/контейнера имейте проверенный сценарий отката (snapshot, export, restore).
 
 ## Дополнительная информация
 
 ### Эволюция механизмов в Linux
 
 ```
-[chroot](../Core/chroot.md) (1979) → Jails (2000) → [namespaces](../Core/namespaces.md) (2002) → [cgroups](../Core/cgroups.md) (2007) → [LXC](./lxc_overview.md) (2008) → Docker (2013) → Firecracker (2018) → WASM Cloud (2024+)
+[chroot](../Core/chroot.md) (1979) → Jails (2000) → [namespaces](../Core/namespaces.md) (2002) → [cgroups](../Core/cgroups.md) (2007) → [LXC](./lxc_overview.md) (2008) → Docker (2013) → Firecracker (2018) → Kata Containers (2019)
 ```
 
 - [KVM — Обзор и архитектура](./kvm/overview.md)
 - [LXC — системные контейнеры](./lxc_overview.md)
-- [Вложенная виртуализация (Nested)](./nested_virtualization/definitions_and_concepts.md)
-- [Образы ВМ — Определения](./vm_images/definitions.md)
-- [Юникернелы (Unikernels) — Обзор](../../Concepts/unikernel/use_cases.md)
-- [Изоляция в Linux: Namespaces и Cgroups (Docker context)](../../Docker/Concepts/linux_isolation.md)
+- [Пространства имён (namespaces)](../Core/namespaces.md)

@@ -19,6 +19,13 @@
 - **Returner**: Модуль, отправляющий результаты выполнения заданий во внешние системы (базы данных, Redis, SIEM) для хранения, аудита и анализа.
 - **Schedule**: Встроенный планировщик на миньоне, периодически запускающий состояния или команды по расписанию (реализует Pull-модель).
 - **Salt-API**: REST-интерфейс (модули `netapi`), позволяющий выполнять команды Salt через HTTP, обычно с внешней аутентификацией (eAuth).
+- **Wheel**: Интерфейс управления мастером (аналогично Runners, но для операций управления ключами, конфигурацией и инфраструктурой мастера). Доступен через `salt-run wheel.` или Salt-API с маркером `@wheel`.
+- **Job Cache (Кэш заданий)**: Хранилище на мастере, сохраняющее результаты выполнения заданий (JID, таргетинг, возвращённые данные). Настраивается через `master_job_cache` (встроенный `localjob`) или внешние системы (`ext_job_cache`) — PostgreSQL, Redis, Elasticsearch.
+- **ext_pillar**: Механизм динамической подгрузки данных в Pillar из внешних источников (Vault, Consul и др.) в момент компиляции на мастере.
+- **saltenv / pillarenv**: Именованные окружения для `file_roots` и `pillar_roots`, позволяющие использовать разные версии состояний и секретов для dev/staging/prod.
+- **Grains Cache**: Локальный кэш на миньоне (`/var/cache/salt/minion/grains`), хранящий собранные Grains для ускорения запусков. Обновляется при перезапуске миньона или по команде `salt '*' saltutil.refresh_grains`.
+- **Salt-SSH**: Агентский режим (Agentless), управляющий узлами через SSH без установки миньона. Использует `roster`-файл для хранения списка хостов и `thin mode` для временной установки библиотек Salt на целевом узле.
+- **Salt Syndic**: Узел-посредник между «Мастером Мастеров» и локальными мастерами. Передаёт команды сверху вниз и возвращает результаты обратно, позволяя масштабировать инфраструктуру на десятки тысяч узлов.
 
 ---
 
@@ -87,6 +94,108 @@ nodegroups:
 1.  **Императивный (Execution Modules)**: Прямые команды «здесь и сейчас». Пример: `salt '*' pkg.install vim`.
 2.  **Декларативный (State Modules)**: Описание *желаемого* состояния в SLS-файлах (YAML + Jinja). Salt сам вычисляет необходимые изменения ([модели управления конфигурацией](../Concepts/configuration_management_models.md)).
     *   Процесс применения состояний: [Highstate и порядок выполнения](Highstate_and_Execution_Order.md).
+
+### Salt File Server
+
+Файловый сервер мастера обслуживает миньонов по протоколу `salt://`. Конфигурация в `/etc/salt/master`:
+
+```yaml
+file_roots:
+  base:
+    - /srv/salt
+  production:
+    - /srv/salt/prod
+  staging:
+    - /srv/salt/staging
+```
+
+**Бэкенды (backends):**
+- **`roots`** (по умолчанию): локальная файловая система мастера.
+- **`gitfs`**: хранение SLS и шаблонов в Git-репозитории. Поддерживаются HTTPS/SSH, ветки (`branch`), теги (`root_type: tag`), каталоги (`mountpoint`).
+- **`svn`**: аналогично gitfs для Subversion.
+- **`minionfs`**: доступ к файлам на самом миньоне (например, для сбора артефактов).
+
+**Важные параметры:**
+- **`hash_type`**: алгоритм контрольных сумм файлов (`sha256`, `sha512`, `md5`). По умолчанию `sha256`; `md5` ускоряет сравнение, но снижает безопасность.
+- **`env_order`** / **`saltenv`**: порядок и выбор окружения. Миньон запрашивает `saltenv`, мастер ищет файлы в `file_roots[saltenv]`. По умолчанию `base` → `prod` → `staging` и т.д.
+- **`file_ignore_regex`** / **`file_ignore_glob`**: исключения при синхронизации (например, `*.tmp`, `.git/`).
+
+Практическое применение: хранение SLS в Git позволяет версионировать инфраструктуру, использовать code review и откатываться на любой коммит. При использовании `gitfs` Salt кэширует репозиторий; принудительное обновление — `salt-run fileserver.clear_cache`.
+
+### Pillar (Динамические данные)
+
+Pillar — иерархическая система конфиденциальных данных, компилируемая на мастере в момент выполнения задания и передаваемая миньону по зашифрованному каналу.
+
+**Структура:**
+- **`pillar_roots`**: каталоги с Pillar-SLS, аналогичные `file_roots` и поддерживающие окружения (`base`, `prod`).
+- **Pillar SLS**: YAML-файлы, рендеримые через Jinja. Пример: `/srv/pillar/users.sls`.
+- **Pillar Cache**: кэш отрендеренных Pillar на мастере (`pillar_cache: True`). Ускоряет повторные вызовы, но хранит данные в открытом виде — использовать только при необходимости и при защищённом каталоге кэша.
+
+**Динамическая подгрузка (ext_pillar):**
+```yaml
+ext_pillar:
+  - vault: path=secret/salt
+  - consul: 
+      host: consul.example.com
+      port: 8500
+      prefix: salt/pillar
+```
+
+Каждый `ext_pillar` драйвер запрашивает данные из внешней системы в момент компиляции Pillar и объединяет их с данными из SLS-файлов. Приоритет: данные из SLS переопределяют данные из `ext_pillar` при совпадении ключей.
+
+**SDB (Salt Data Backend):**
+Универсальный URI-интерфейс для получения секретов по требованию: `sdb://<profile>/<path>/<key>`. Используется внутри SLS-файлов для подстановки значений из Vault, keyring, env и других хранилищ без предварительной компиляции в Pillar.
+
+**Pillar и окружения:**
+- **`pillarenv`**: выбор окружения Pillar (по умолчанию совпадает с `saltenv`). Передаётся при вызове: `salt '*' state.apply pillar=foo pillarenv=prod`.
+- **`pillar_source_merging`**: стратегия слияния Pillar из разных источников (`merge`, `overwrite`).
+
+### Grains (Статические данные узла)
+
+Grains собираются на миньоне при старте и представляют собой статические факты (неизменяемые без перезапуска агента). Используются для таргетинга и шаблонизации.
+
+**Встроенные Grains:** `id`, `os`, `os_family`, `kernel`, `kernelrelease`, `cpuarch`, `num_cpus`, `hostname`, `domain`, `fqdn`, `ipv4`, `ipv6`, `mem_total` и сотни других.
+
+**Custom Grains (пользовательские):**
+Размещаются в `/etc/salt/grains` (статический YAML) или генерируются через Python-скрипт в `/etc/salt/grains/` (динамические). Пример динамического grain:
+
+```python
+# /etc/salt/grains/role.py
+def role():
+    with open('/etc/myapp/role') as f:
+        return {'role': f.read().strip()}
+```
+
+После добавления/изменения grains требуется обновление кэша:
+```bash
+salt '*' saltutil.refresh_grains
+salt '*' grains.items
+```
+
+**Grains Cache:** хранится в `/var/cache/salt/minion/grains` (формат `pickle`). Ускоряет запуск Salt-команд, но при изменении окружения (обновление ОС, переконфигурация сети) требует принудительного обновления.
+
+**sync_grains:** загрузка grains из модулей Salt (`salt://_grains/`) позволяет централизованно управлять grains на множестве миньонов без правки локальных файлов.
+
+### Wheel
+
+Wheel — интерфейс управления мастером (в отличие от Runners, которые управляют инфраструктурой Salt, Wheel управляет самим мастером). Доступен через:
+
+```bash
+salt-run wheel key.accept match='web-*'
+salt-run wheel key.delete match='old-node'
+salt-run wheel config.values saltmaster
+```
+
+Через Salt-API с eAuth и маркером `@wheel`:
+```bash
+curl -sk https://salt-master:8000/run \
+  -H "X-Auth-Token: $TOKEN" \
+  -d client='wheel' \
+  -d fun='key.accept' \
+  -d match='web-*'
+```
+
+Основные Wheel-модули: `key.*` (accept, delete, reject, list), `config.*` (values, get), `file_roots.*` (update), `pillar_roots.*` (update).
 
 ---
 
@@ -197,6 +306,165 @@ curl -sSk https://salt-master:8000/run -H "X-Auth-Token: <token>" \
   -d client='local' -d tgt='*' -d fun='test.ping'
 ```
 
+### 8. Управление без агента (Salt-SSH)
+
+Управление узлами через SSH без установки миньона. Подходит для начальной настройки, периодических проверок или закрытых сегментов, где установка постоянного агента невозможна.
+
+```bash
+salt-ssh '*' test.ping
+salt-ssh '*' state.apply webserver
+```
+
+**Roster-файл** (`/etc/salt/roster`):
+```yaml
+web-01:
+  host: 192.168.1.10
+  user: root
+  port: 22
+  sudo: True
+  priv: /root/.ssh/id_rsa
+
+db-01:
+  host: 192.168.1.20
+  user: admin
+  ssh_options:
+    - StrictHostKeyChecking=no
+```
+
+**Thin mode:** Salt-SSH копирует минимальный набор библиотек (`salt-ssh`) в `/tmp/` на целевом узле и запускает команды через Python без установки. При последующих вызовах используется кэш (`--priv` или `--roster-file`). Удаление thin-файлов: `salt-ssh --clean`.
+
+**Ограничения:** Salt-SSH не поддерживает Beacons, Reactors, Schedule на миньоне и постоянные исходящие соединения. Для полноценной событийной автоматизации требуется переход на классический Minion.
+
+### 9. Failover с несколькими мастерами (Multi-Master)
+
+Подключение миньона к нескольким мастерам для отказоустойчивости. Минон периодически проверяет доступность мастеров и автоматически переключается при падении основного.
+
+```yaml
+# /etc/salt/minion
+master:
+  - salt-master-01.example.com
+  - salt-master-02.example.com
+master_retry_timeout: 30
+master_retry_interval: 10
+```
+
+**Синхронизация данных:** все мастера должны иметь доступ к одним `file_roots` (NFS, Git) и `pillar_roots`. Ключи миньонов хранятся на каждом мастере независимо; при добавлении миньона ключ должен быть принят на всех мастерах. Для автоматизации используется `salt-run salt-key.sync_all` или внешний инструмент.
+
+### 10. Возврат результатов (Returners)
+
+Returners отправляют результаты заданий во внешние системы для хранения, аудита и построения отчётов.
+
+**Встроенные returners:**
+```yaml
+# /etc/salt/master.d/returners.conf
+ext_job_cache: redis
+master_job_cache: mysql
+```
+
+```yaml
+# /etc/salt/minion.d/returners.conf
+return: redis
+```
+
+**Пример настройки PostgreSQL (master_job_cache):**
+```yaml
+mysql.user: salt
+mysql.pass: secure_password
+mysql.db: salt
+mysql.host: localhost
+mysql.port: 3306
+```
+
+**Пример настройки Redis (ext_job_cache + returner):**
+```yaml
+# /etc/salt/master.d/redis.conf
+redis.host: redis.example.com
+redis.port: 6379
+redis.db: 0
+
+# /etc/salt/minion.d/redis.conf
+redis.host: redis.example.com
+redis.port: 6379
+```
+
+Проверка работы:
+```bash
+salt '*' test.ping
+salt-run jobs.list_jobs
+# данные о задании появятся в PostgreSQL/Redis
+```
+
+### 11. Резервное копирование и аварийное восстановление
+
+Для аварийного восстановления мастера необходимо регулярно бэкапить:
+1. **Ключи PKI:** `/etc/salt/pki/` (master.pem, master.pub, accepted_minion_keys, pending_minion_keys).
+2. **Конфигурации:** `/etc/salt/master`, `/etc/salt/minion`, `/etc/salt/master.d/`, `/etc/salt/minion.d/`.
+3. **Файловый сервер:** каталоги `file_roots` (обычно `/srv/salt`).
+4. **Pillar:** каталоги `pillar_roots` (обычно `/srv/pillar`).
+5. **Job Cache:** содержимое `master_job_cache` (если используется внешняя БД — бэкапить её).
+
+**Сценарий восстановления:**
+```bash
+# 1. Остановить master
+systemctl stop salt-master
+
+# 2. Восстановить PKI и конфигурации
+tar -xzf /backup/salt-master.tar.gz -C /
+
+# 3. Восстановить file_roots и pillar_roots
+rsync -avz /backup/srv/ /srv/
+
+# 4. Запустить master
+systemctl start salt-master
+
+# 5. Проверить подключение миньонов
+salt '*' test.ping
+
+# 6. При необходимости повторно принять ключи (если PKI не восстановлен)
+salt-key -A
+```
+
+### 12. Соответствие стандартам (Compliance)
+
+Salt может использоваться для автоматической проверки соответствия инфраструктуры стандартам безопасности (CIS, PCI-DSS, HIPAA).
+
+**Паттерн:**
+1. Написать SLS-состояния, проверяющие конфигурацию (например, `file.managed` с нужными permissions, `service.running`, `pkg.installed` с конкретной версией).
+2. Запустить `salt '*' state.apply compliance.cis_ubuntu_2204`.
+3. Результаты сохранить в Returner (Elasticsearch) для формирования отчётов.
+
+**Пример:**
+```yaml
+# /srv/salt/compliance/sshd_config.sls
+sshd_config:
+  file.managed:
+    - name: /etc/ssh/sshd_config
+    - source: salt://compliance/files/sshd_hardened.conf
+    - mode: 600
+    - user: root
+    - group: root
+    - require:
+      - pkg: openssh-server
+```
+
+### 13. Мониторинг инфраструктуры Salt
+
+Контроль за состоянием самого Salt-инфраструктуры:
+- **Healthcheck мастера:** `salt-run manage.up` (доступные миньоны), `salt-run manage.status` (все миньоны с статусом).
+- **Мониторинг миньонов:** `salt '*' test.ping` + Returner в Prometheus Pushgateway илиVictoriaMetrics.
+- **Мониторинг Event Bus:** `salt-run state.event pretty=True` + `event_return` в Elasticsearch/Splunk.
+- **Salt-Ext:** модуль `hubblestack` (`hubblestack_nova`) выполняет сканирования соответствия CIS и отправляет результаты в Elasticsearch.
+
+### 14. Масштабирование на 10 000+ узлов
+
+**Рекомендации SRE:**
+- **Железо мастера:** 4+ CPU ядер, 8+ GB RAM (на 10 000 миньонов — 16+ ядер, 32+ GB RAM).
+- **ZeroMQ:** использовать аппаратный тюнинг (`tcp_keepalive`, `tcp_keepcnt`, `tcp_keepidle`) в `/etc/salt/master`.
+- **Batching:** при массовом обновлении использовать `batch: 20%` или фиксированное число, чтобы избежать шторма.
+- **Job Cache:** внешнее хранилище (PostgreSQL/Redis) вместо локального файлового кэша.
+- **Salt Syndic / Multi-Master:** распределение нагрузки между несколькими мастерами.
+- **gitfs:** кэширование репозиториев на мастере (`gitfs_provider: gitpython`), уменьшение количества файлов в одном окружении.
+
 ---
 
 ## Дополнительная информация
@@ -219,14 +487,64 @@ curl -sSk https://salt-master:8000/run -H "X-Auth-Token: <token>" \
 - **Salt-SSH**: Агентский режим (Agentless). Управление через SSH без установки миньона. Идеально для начальной настройки или закрытых сегментов.
 - **Masterless**: Использование `salt-call --local` для применения состояний без мастера (например, при сборке образов Packer или в изолированных средах).
 
+### Типичные проблемы и решения (Troubleshooting)
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `Minion did not return` | Минон не запущен или недоступен | `systemctl status salt-minion`; проверить сеть (порты 4505/4506 на мастере); `salt '*' test.ping` |
+| `Key rejected` | Ключ не принят на мастере | `salt-key -L`, `salt-key -a <minion_id>`; проверить отпечаток (`salt-key -F`) |
+| `Authentication failure` | Несовпадение ключей, MitM-атака | Проверить `master_finger` на миньоне; включить `master_sign_pubkey: True` и `verify_master_pubkey_sign: True` |
+| `Grains устарели` | Изменение окружения без обновления кэша | `salt '*' saltutil.refresh_grains` |
+| `Pillar не подгружается` | Ошибка Jinja/SLS, отсутствие прав | `salt '*' saltutil.refresh_pillar`; `salt-run state.show_pillar <minion>` |
+| `State не идемпотентен` | Плохое состояние, меняющее систему без проверки | Использовать `test=True` перед применением; проверять логи миньона (`/var/log/salt/minion`) |
+| `Salt-SSH connection refused` | Отсутствие ключа SSH, неправильный пользователь | Проверить `ssh-copy-id`; roster-файл; права на ключ (`chmod 600`) |
+| `Event Bus перегружен` | Слишком много Beacons/реакций | Увеличить `interval` у Beacons; добавить фильтры; использовать `disable_during_state_run: True` |
+| `Циклические зависимости` | Ошибка в SLS-файле | Salt сообщает на этапе компиляции; проверить `require`/`watch`/`prereq` |
+
+**Диагностика:**
+```bash
+salt-run manage.status                  # статус всех миньонов
+salt-run state.event pretty=True        # события шины
+tail -f /var/log/salt/master            # логи мастера
+tail -f /var/log/salt/minion            # логи миньона
+salt '*' saltutil.sync_all              # синхронизация модулей/грайнов/статов
+```
+
+### Производительность и тюнинг
+
+- **Parallel execution:** состояния на миньонах выполняются параллельно по умолчанию. Для длинных задач на одном узле используйте `parallel: True` (отдельный процесс, версия 2017.7.0+).
+- **Batch:** ограничение количества одновременно обновляемых миньонов (`batch: 20%` или `batch: 100`).
+- **State Aggregate:** объединение одинаковых состояний в один вызов менеджера пакетов (`state_aggregate: True`).
+- **Cache:** `file_list_cache` для кэширования списка файлов; `pillar_cache` для Pillar; `grains_cache` для Grains.
+- **ZeroMQ tuning:** в `/etc/salt/master`:
+  ```yaml
+  zeromq:
+    tcp_keepalive: 1
+    tcp_keepcnt: 5
+    tcp_keepidle: 60
+  ```
+- **Job Cache cleanup:** `keep_jobs: 24` (часы) для автоматической очистки старых заданий.
+- **Minion threads:** `multiprocessing: True` (по умолчанию) использует пул процессов; для очень больших сред можно ограничить `process_count_max`.
+
+### Лучшие практики SRE (2026)
+
+1. **Версионирование:** храните SLS, Pillar и оркестрацию в Git (через gitfs). Используйте Git-ветки для окружений (`base`, `prod`, `staging`).
+2. **Изоляция окружений:** `saltenv` и `pillarenv` должны соответствовать веткам Git; никогда не храните production-секреты в `base`.
+3. **Безопасность по умолчанию:** `auto_accept: False`, `publisher_acl_blacklist` для `root` и опасных модулей, Salt-API за reverse-proxy с HSTS.
+4. **Идемпотентность:** все состояния должны быть безопасными для повторного запуска. Тестируйте через `test=True` перед применением в продакшене.
+5. **Наблюдаемость:** интегрируйте Salt с SIEM (Splunk, Elasticsearch) через `event_return` и `master_job_cache`. Мониторьте Event Bus на аномалии.
+6. **Аварийное восстановление:** регулярный бэкап PKI, `file_roots`, `pillar_roots` и Job Cache. Тестируйте восстановление на стенде.
+7. **Масштабирование:** начинайте с одного мастера, переходите на Syndic/Multi-Master при росте. Используйте `batch` и внешний Job Cache.
+8. **Документация:** для каждого SLS-файла указывайте `__doc__` в YAML; ведите changelog оркестрации в Git.
+
+---
+
 ### Экосистема и свежесть (2026)
 
 - **Salt 3008 LTS**: Актуальная ветка с мая 2026 года (3008.0 — 27 мая 2026, текущий релиз 3008.2 — 1 июля 2026). Включает улучшенную поддержку Python 3.12+ и оптимизацию шины ZeroMQ. Активная поддержка — до 30 июня 2027, CVE-фиксы — до 30 июня 2028 ([жизненный цикл версий](https://endoflife.date/salt)).
 - **Salt 3006 LTS / 3007 STS**: Ветка 3006 (LTS) переведена в режим только критических CVE-фиксов до 30 июня 2027; поддержка ветки 3007 (STS) завершена 31 июля 2026. Рекомендуется планировать миграцию на 3008.
 - **Python 3**: Начиная с версии 3000+ требуется только Python 3; в 3008 поддерживается Python 3.12+.
 - **Salt-API**: REST-интерфейс для интеграции Salt с внешними системами (CI/CD, порталы самообслуживания), обычно с внешней аутентификацией (eAuth).
-- **Salt Cloud**: Инструмент для автоматического развертывания виртуальных машин в облаках (AWS, Azure, GCP, OpenStack) с последующей установкой миньона.
-- **Salt Extensions**: Модули сообщества для интеграции с облачными провайдерами (AWS boto3, Azure, GCP).
 - **Tiamat / Onedir**: Современный метод распространения Salt в виде единого бинарного файла со всеми зависимостями (упрощает установку в изолированных ОС).
 - **Контейнеризация**: Поддержка управления контейнерами Docker, Podman; интеграция с Kubernetes.
 - **Event-Driven Automation**: Использование связки [Beacon + Reactor](Orchestration_and_Automation_Methods.md) для создания самовосстанавливающейся инфраструктуры.

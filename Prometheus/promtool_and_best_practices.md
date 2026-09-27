@@ -67,9 +67,114 @@ promtool test rules /etc/prometheus/test.yml
 curl -s http://localhost:9100/metrics | promtool check metrics
 ```
 
-### 2. Анализ состояния TSDB
+### 2. Юнит-тестирование PromQL-правил
 
-Для поиска утечек кардинальности и самых "тяжелых" метрик:
+Тестирование правил через `promtool test rules` позволяет проверить логику без запуска реального сервера. Тест описывает входные данные (`input_series`), ожидаемые результаты recording rules (`exp_samples`) и алертов (`exp_alerts`).
+
+**Структура тестового файла:**
+
+```yaml
+# tests/promql_tests.yml
+rule_files:
+  - ../rules.yml                    # Файл с тестируемыми правилами
+
+evaluation_interval: 1m            # Интервал вычисления правил
+
+tests:
+  # --- Тест 1: Recording rule для rate() ---
+  - interval: 1m
+    name: "Rate calculation"
+    input_series:
+      - series: 'http_requests_total{job="api", instance="host1"}'
+        values: '0+100x10'          # 0, 100, 200, ... 900 (100 запросов/мин)
+    alert_rule_test: []             # Нет алертов для этого теста
+    promql_expr_test:
+      - expr: rate(http_requests_total{job="api"}[5m])
+        eval_time: 5m
+        exp_samples:
+          - labels: '{job="api", instance="host1"}'
+            value: 1.6666666666666667  # ~100/60 = 1.67 req/s
+
+  # --- Тест 2: Alerting rule (High Error Rate) ---
+  - interval: 1m
+    name: "High error rate alert"
+    input_series:
+      # Нормальный трафик: 100 запросов/мин, 0 ошибок
+      - series: 'http_requests_total{job="api", status="200"}'
+        values: '0+100x10'
+      # Ошибки появляются на 3-й минуте
+      - series: 'http_requests_total{job="api", status="500"}'
+        values: '0 0 0 30 30 30 30 30 30 30'
+    alert_rule_test:
+      # На 2-й минуте алерта нет (ошибок нет)
+      - eval_time: 2m
+        alertname: HighErrorRate
+        exp_alerts: []
+      # На 5-й минуте алерт срабатывает (доля > 5% в течение 5 минут)
+      - eval_time: 5m
+        alertname: HighErrorRate
+        exp_alerts:
+          - labels:
+              alertname: HighErrorRate
+              job: api
+              severity: critical
+
+  # --- Тест 3: Histogram quantile ---
+  - interval: 1m
+    name: "Latency p99 calculation"
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{job="api", le="0.1"}'
+        values: '0+50x10'
+      - series: 'http_request_duration_seconds_bucket{job="api", le="0.5"}'
+        values: '0+80x10'
+      - series: 'http_request_duration_seconds_bucket{job="api", le="1.0"}'
+        values: '0+95x10'
+      - series: 'http_request_duration_seconds_bucket{job="api", le="+Inf"}'
+        values: '0+100x10'
+      - series: 'http_request_duration_seconds_sum{job="api"}'
+        values: '0+25x10'
+      - series: 'http_request_duration_seconds_count{job="api"}'
+        values: '0+100x10'
+    promql_expr_test:
+      - expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="api"}[5m])))
+        eval_time: 5m
+        exp_samples:
+          - labels: '{le="0.99"}'
+            value: 0.94  # p99 между 0.5 и 1.0
+```
+
+**Запуск тестов:**
+
+```bash
+# Запуск всех тестов
+promtool test rules tests/promql_tests.yml
+# → Unit Testing: PASS
+
+# Запуск с подробным выводом
+promtool test rules --log.level=debug tests/promql_tests.yml
+
+# Запуск конкретного теста по имени (v3.0+)
+promtool test rules --test.name="High error rate alert" tests/promql_tests.yml
+```
+
+**Формат `input_series`:**
+
+| Синтаксис | Описание | Пример |
+|:---|:---|:---|
+| `0+100x10` | Старт 0, прирост 100, 10 шагов | 0, 100, 200, ... 900 |
+| `0 0 0 30 30` | Явные значения через пробел | 0, 0, 0, 30, 30 |
+| `0+100x5 0+50x5` | Конкатенация: 5 шагов +100, затем 5 шагов +50 | 0..400, 0..200 |
+
+**Формат `exp_samples`:**
+
+| Поле | Описание |
+|:---|:---|
+| `labels` | Лейблы ожидаемого ряда (могут отличаться от входных) |
+| `value` | Ожидаемое числовое значение (допускается погрешность ~1e-6) |
+
+### 3. Анализ состояния TSDB
+
+Для поиска утечек кардинальности и самых "тяжёлых" метрик используйте команды, описанные в разделе [Внутреннее устройство TSDB — анализ через promtool](./concepts/tsdb.md#анализ-tsdb-с-помощью-promtool). Краткий список:
 
 ```bash
 # Офлайн анализ всей базы (Prometheus должен быть остановлен или это должен быть снимок)
@@ -80,8 +185,12 @@ promtool tsdb analyze --block-id <block-id> /path/to/tsdb/data
 
 # Проверка целостности индексных файлов и блоков (Corruption check)
 promtool tsdb check-blocks /path/to/tsdb/data
+
+# Дамп сырых данных (series/samples) в текстовом виде
+promtool tsdb dump /path/to/tsdb/data
 ```
-*Вывод команд покажет топ-10 метрик по количеству рядов, самые тяжелые лейблы и общую статистику.*
+
+*Вывод команд покажет топ-10 метрик по количеству рядов, самые тяжёлые лейблы и общую статистику.*
 
 ### 3. Kubernetes: Оптимальная конфигурация ресурсов
 
@@ -118,11 +227,14 @@ spec:
 | :--- | :--- |
 | `promtool check config <file>` | Полная валидация YAML-конфигурации (в v3 проверяет UTF-8 совместимость). |
 | `promtool check rules <file>` | Проверка синтаксиса файлов правил записи и оповещения. |
-| `promtool test rules <file>` | Выполнение юнит-тестов (Mock data -> Expected results). |
+| `promtool test rules <file>` | Выполнение юнит-тестов (Mock data -> Expected results). Подробнее: [Юнит-тестирование PromQL](#2-юнит-тестирование-promql-правил). |
+| `promtool query instant <server> <expr>` | Мгновенный запрос к Prometheus (отладка). |
+| `promtool query range <server> <expr>` | Запрос диапазона (отладка графиков). |
+| `promtool query diff <server> <expr1> <expr2>` | Сравнение результатов двух запросов. |
 | `promtool check metrics` | Валидация формата экспозиции (через stdin). |
-| `promtool tsdb analyze <path>` | Сбор статистики по кардинальности, churn rate и лейблам. |
-| `promtool tsdb check-blocks <path>` | Валидация целостности данных TSDB на диске. |
-| `promtool tsdb dump <path>` | Дамп сырых данных (series/samples) в текстовом виде. |
+| `promtool tsdb analyze <path>` | Сбор статистики по кардинальности, churn rate и лейблам. Подробнее: [Внутреннее устройство TSDB](./concepts/tsdb.md#анализ-tsdb-с-помощью-promtool). |
+| `promtool tsdb check-blocks <path>` | Валидация целостности данных TSDB на диске. Подробнее: [Внутреннее устройство TSDB](./concepts/tsdb.md#анализ-tsdb-с-помощью-promtool). |
+| `promtool tsdb dump <path>` | Дамп сырых данных (series/samples) в текстовом виде. Подробнее: [Внутреннее устройство TSDB](./concepts/tsdb.md#анализ-tsdb-с-помощью-promtool). |
 
 ### Выбор решений для долгосрочного хранения (LTS)
 

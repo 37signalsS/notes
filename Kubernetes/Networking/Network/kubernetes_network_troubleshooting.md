@@ -315,6 +315,31 @@ top -bn1 | grep kube-proxy
 2. Проверьте, что CNI не добавляет лишний overhead
 3. Настройте topology-aware routing
 
+### 10. TLS-ошибки и проблемы с сертификатами
+
+**Симптом:** `x509: certificate signed by unknown authority`, `certificate has expired or is not yet valid`, `SSL: CERTIFICATE_VERIFY_FAILED`.
+
+**Диагностика:**
+```bash
+# Проверка сертификата в поде
+kubectl exec <pod> -- openssl s_client -connect <host>:443 -servername <host> 2>/dev/null | openssl x509 -noout -dates -issuer -subject
+
+# Проверка времени на ноде
+kubectl get node <node> -o jsonpath='{.status.conditions[?(@.type=="Ready")].lastTransitionTime}'
+date -u
+```
+
+**Типичные причины и решения:**
+
+| Причина | Решение |
+| :--- | :--- |
+| **Отсутствует пакет корневых сертификатов в поде** | Добавьте в образ `ca-certificates` (Debian/Ubuntu) или `curl-ca-bundle` (Alpine). Минификатые образы (distroless, scratch) часто не содержат корневые сертификаты. |
+| **Устаревшие корневые сертификаты на ноде** | На старых образах нод (например, Ubuntu 18.04 или кастомные сборки) корневой сертификат может быть просрочен. Обновите пакет `ca-certificates` на уровне ОС или используйте актуальный образ ноды. |
+| **Сбитое время на worker node** | Проверьте `chronyc tracking` или `timedatectl`. Если нода убежала вперед/назад, сертификат может считаться недействительным или просроченным. Исправьте NTP-синхронизацию. |
+| **Неверный CN/SAN в сертификате** | Убедитесь, что поле `Subject Alternative Name` (SAN) содержит доменное имя или IP, по которому под обращается к сервису. |
+
+> **Важно:** При отладке TLS-проблем всегда проверяйте время на ноде (`date -u`) и наличие корневых сертификатов в образе пода (`kubectl exec <pod> -- ls /etc/ssl/certs`). Это исключает большинство "тривиальных" причин.
+
 ---
 
 ## Диагностика и устранение неполадок

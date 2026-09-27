@@ -312,11 +312,148 @@ echo "=== Диагностика завершена ==="
 
 | Ловушка | Описание | Решение |
 |---------|----------|---------|
-| **False positive от `can-i`** | `kubectl auth can-i create configmap/fluentd` может вернуть `yes`, но реальный `POST` на коллекцию вернет 403 | Всегда проверяйте реальное выполнение команды |
+| **False positive от `can-i`** | `kubectl auth can-i create configmap/fluentd` может вернуть `yes`, но реальный `POST` на коллекцию вернет 403 | Всегда проверяйте реальное выполнение команды (см. детали ниже) |
 | **Immutable roleRef** | Изменение `roleRef` в RoleBinding/ClusterRoleBinding не работает через `kubectl apply` | Удалите и создайте биндинг заново |
 | **Wildcard `*` vs resourceNames** | Wildcard `verbs: ["*"]` не работает с `resourceNames` для `create`/`deletecollection` | Используйте конкретные глаголы или проверяйте с field selector |
 | **Смешанные группы API** | Опечатка в `apiGroups` (например, `""` вместо `"apps"`) приводит к 403 | Проверяйте группу через `kubectl api-resources` |
 | **Case sensitivity** | Имена ресурсов и глаголы чувствительны к регистру | Всегда используйте нижний регистр |
+| **Неверный контекст kubeconfig** | `kubectl apply` выполняется не в том кластере из-за активного контекста | Всегда проверяйте `kubectl config current-context` перед деплоем |
+| **kubeconfig + KUBECONFIG** | При слиянии файлов через `KUBECONFIG` одинаковые имена контекстов переопределяются | Проверяйте итоговый контекст через `kubectl config get-contexts` |
+
+#### False positive от `kubectl auth can-i`: детальный разбор
+
+Команда `kubectl auth can-i create configmap/fluentd-extra-config` может вернуть `yes`, хотя фактический `kubectl create configmap` завершится `403 Forbidden`.
+
+**Причина:** `can-i` проверяет разрешение на **именованный** эндпоинт (URL вида `/api/v1/namespaces/{ns}/configmaps/{name}`), тогда как реальный `POST`-запрос идёт на **коллекцию** (`/api/v1/namespaces/{ns}/configmaps` без имени). При наличии `resourceNames` в роли, разрешающих доступ к конкретному имени, `can-i` ответит `yes`, но POST на коллекцию будет отклонён.
+
+**Как обнаружить проблему:**
+```bash
+# Шаг 1: can-i говорит yes
+kubectl auth can-i create configmap/my-config --as=system:serviceaccount:default:my-sa -n default
+# → yes
+
+# Шаг 2: Реальная попытка — 403
+kubectl create configmap my-config --from-literal=key=value -n default --as=system:serviceaccount:default:my-sa
+# → Error: configmaps "my-config" is forbidden
+
+# Шаг 3: Проверка через --list для полной картины
+kubectl auth can-i --list --as=system:serviceaccount:default:my-sa -n default | grep configmaps
+# → configmaps   []   [create get update patch delete]   [my-config]    ← ограничение по имени
+
+# Шаг 4: Проверка через прямой запрос к API (самый надёжный способ)
+kubectl get configmaps --as=system:serviceaccount:default:my-sa -n default -v=8 2>&1 | grep HTTP/
+# → HTTP/1.1 403 Forbidden (если list запрещён)
+```
+
+**Правило:** При отладке RBAC всегда проверяйте реальное выполнение команды, а не только `can-i`. Дополнительно анализируйте вывод `can-i --list` на наличие ограничений `resourceNames`.
+
+> Подробнее о `resourceNames` и их поведении с разными глаголами: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
+
+#### Диагностика ошибок контекста kubeconfig
+
+Ошибки 403/401 из-за неправильного контекста — частая причина инцидентов в мультикластерных средах.
+
+**Типичные сценарии:**
+1. `kubectl apply -f deployment.yaml` деплоит не в тот кластер (активный контекст — dev, а не prod)
+2. `kubectl get pods` возвращает пустой список (wrong namespace в контексте)
+3. 403 Forbidden при деплое (user в контексте не имеет прав в целевом кластере)
+
+**Пошаговая диагностика:**
+```bash
+# Шаг 1: Определить текущий контекст
+kubectl config current-context
+# → dev-cluster  ← ожидается prod-cluster!
+
+# Шаг 2: Просмотреть все доступные контексты
+kubectl config get-contexts
+# NAME           CLUSTER       AUTHINFO       NAMESPACE
+# *dev-cluster   dev-server    dev-user       default
+#  prod-cluster  prod-server   prod-user      production
+
+# Шаг 3: Проверить, какой кластер и user привязаны к текущему контексту
+kubectl config view --minify
+# → cluster: dev-server, user: dev-user, namespace: default
+
+# Шаг 4: Для одноразовой команды — использовать флаг --context (без переключения)
+kubectl --context=prod-cluster apply -f deployment.yaml
+
+# Шаг 5: Переключить контекст глобально
+kubectl config use-context prod-cluster
+```
+
+> Подробное описание kubeconfig и управления контекстами: [../../../Operations/kubeconfig_and_connection.md](../../../Operations/kubeconfig_and_connection.md)
+
+#### Диагностика 403 от NetworkPolicy (не RBAC)
+
+Если RBAC настроен верно, но под не может подключиться к API-серверу (порт 6443), проблема может быть на сетевом уровне.
+
+**Симптомы:** Приложение внутри пода получает `connection refused` или `timeout` при обращении к API-серверу, хотя `kubectl auth can-i` извне работает.
+
+**Диагностика:**
+```bash
+# Шаг 1: Проверить, есть ли NetworkPolicy в namespace пода
+kubectl get networkpolicy -n <pod-namespace>
+
+# Шаг 2: Проверить, блокирует ли политика egress к API-серверу
+kubectl get networkpolicy <policy-name> -n <pod-namespace> -o yaml | grep -A5 "egress"
+
+# Шаг 3: Тест доступности API-сервера из пода
+kubectl exec <pod-name> -- wget -qO- --timeout=5 https://kubernetes.default.svc:6443/healthz 2>&1
+
+# Шаг 4: Проверить, есть ли Allow/Egress правила для порта 6443
+kubectl get networkpolicy -A -o yaml | grep -B5 -A5 "6443"
+```
+
+> Подробнее о NetworkPolicy для control plane: [../../../Networking/Network/NetworkPolicy/control_plane_network_policy.md](../../../Networking/Network/NetworkPolicy/control_plane_network_policy.md)
+> Взаимодействие NetworkPolicy и Service Mesh: [../../../Networking/Network/NetworkPolicy/service_mesh_interaction.md](../../../Networking/Network/NetworkPolicy/service_mesh_interaction.md)
+
+#### Диагностика 403 от API Priority and Fairness (APF)
+
+При перегрузке API-сервера APF может отклонять запросы с кодом 429 или даже 403.
+
+**Симптомы:** Периодические ошибки 429/403, которые исчезают при снижении нагрузки. Особенно часто страдают контроллеры и CI/CD пайплайны.
+
+**Диагностика:**
+```bash
+# Шаг 1: Проверить количество отклонённых запросов
+kubectl get --raw /metrics | grep apiserver_flowcontrol_rejected_requests_total
+
+# Шаг 2: Определить, какие FlowSchema отклоняют запросы
+kubectl get --raw /metrics | grep 'apiserver_flowcontrol_rejected_requests_total' | awk -F'flow_schema="' '{print $2}' | awk -F'"' '{print $1}' | sort | uniq -c | sort -rn
+
+# Шаг 3: Проверить текущую нагрузку на очереди
+kubectl get --raw /metrics | grep apiserver_flowcontrol_current_inqueue_requests
+
+# Шаг 4: Просмотреть время ожидания в очереди
+kubectl get --raw /metrics | grep apiserver_flowcontrol_request_wait_duration_seconds
+
+# Шаг 5: Проверить, какие FlowSchema матчат запросы
+kubectl get flowschemas -o custom-columns=NAME:.metadata.name,PRECEDENCE:.spec.matchingPrecedence,LEVEL:.spec.priorityLevelConfiguration.name
+```
+
+> Подробное описание APF, FlowSchema и PriorityLevelConfiguration: [../../../Concepts/api_priority_and_fairness.md](../../../Concepts/api_priority_and_fairness.md)
+
+#### Анализ Audit Log для RCA (Root Cause Analysis)
+
+При сложных случаях 403, когда RBAC и Admission выглядят корректно, используйте audit log для поиска первопричины.
+
+**Ключевые jq-фильтры:**
+```bash
+# Все 403 ответы за последние 10 минут
+jq 'select(.responseStatus.code==403) | {user: .user.username, resource: .objectRef.resource, namespace: .objectRef.namespace, time: .requestReceivedTimestamp}' /var/log/kubernetes/audit.log | tail -20
+
+# 403 от конкретного admission webhook
+jq 'select(.responseStatus.code==403 and .annotations["admission.webhook.configuration.name"] != null) | {webhook: .annotations["admission.webhook.configuration.name"], user: .user.username, resource: .objectRef.name}' /var/log/kubernetes/audit.log
+
+# Поиск по Audit-Id (полученному из kubectl -v=8)
+AUDIT_ID="2f7e4b51-7d9a-4e8c-b0f1-2d83a9e12345"
+jq "select(.auditID==\"$AUDIT_ID\")" /var/log/kubernetes/audit.log
+
+# Все действия конкретного пользователя
+jq 'select(.user.username=="system:serviceaccount:prod:my-sa") | {verb: .verb, resource: .objectRef.resource, code: .responseStatus.code}' /var/log/kubernetes/audit.log | tail -30
+```
+
+> Полное описание политики аудита, уровней детализации и настройки: [../../../Security/audit.md](../../../Security/audit.md)
 
 ### Производительность при отладке
 
@@ -341,3 +478,8 @@ kubectl api-resources --cached=true
 - [Расширенные сценарии (Admission Control)](advanced.md)
 - [Методы аутентификации и отладка 401](authentication_methods.md)
 - [Объекты RBAC: структура и ошибки](rbac_objects.md)
+- [Лучшие практики и превентивные меры](best_practices.md)
+- [Аудит в Kubernetes](../../../Security/audit.md) — настройка и анализ audit log для RCA
+- [API Priority and Fairness](../../../Concepts/api_priority_and_fairness.md) — диагностика 403/429 от APF
+- [NetworkPolicy для Control Plane](../../../Networking/Network/NetworkPolicy/control_plane_network_policy.md) — сетевые блокировки доступа к API
+- [Kubeconfig и управление подключениями](../../../Operations/kubeconfig_and_connection.md) — ошибки контекста

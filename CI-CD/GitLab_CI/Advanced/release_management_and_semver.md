@@ -185,9 +185,9 @@ create_release:
 ```yaml
 publish_image:
   stage: publish
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $CI_REGISTRY_IMAGE:$NEW_TAG .

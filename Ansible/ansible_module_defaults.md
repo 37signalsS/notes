@@ -95,25 +95,25 @@
   hosts: mysql_servers
   become: true
   module_defaults:
-    group/community.mysql:
+    group/ansible.mysql:
       login_unix_socket: /var/run/mysqld/mysqld.sock
       login_user: root
       login_password: "{{ vault_mysql_root_pass }}"
   tasks:
     - name: Create database
-      community.mysql.mysql_db:
+      ansible.mysql.mysql_db:
         name: production
         state: present
 
     - name: Create user
-      community.mysql.mysql_user:
+      ansible.mysql.mysql_user:
         name: app_user
         password: "{{ vault_app_pass }}"
         priv: "production.*:ALL"
         state: present
 
     - name: Configure replication
-      community.mysql.mysql_replication:
+      ansible.mysql.mysql_replication:
         mode: configure_primary
         server_id: 1
         state: present
@@ -319,7 +319,7 @@ Ansible автоматически группирует модули по кол
 | `group/azure.azcollection` | Все модули Azure |
 | `group/google.cloud` | Все модули GCP |
 | `group/community.postgresql` | Все PostgreSQL-модули |
-| `group/community.mysql` | Все MySQL-модули |
+| `group/ansible.mysql` | Все MySQL-модули |
 | `group/community.mongodb` | Все MongoDB-модули |
 | `group/kubernetes.core` | Все Kubernetes-модули |
 

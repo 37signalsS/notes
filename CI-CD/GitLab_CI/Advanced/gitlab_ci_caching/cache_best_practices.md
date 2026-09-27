@@ -264,7 +264,7 @@ backend_test:
 build_docker:
   stage: build
   image: docker:27
-  services: [docker:27-dind]
+  services: [docker:29.8-dind]
   variables:
     DOCKER_BUILDKIT: "1"
     CACHE_IMAGE: "$CI_REGISTRY_IMAGE/cache"

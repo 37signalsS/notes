@@ -2,53 +2,111 @@
 
 ## Определения
 
-**GitLab iOS CI/CD** — это реализация процессов сборки, тестирования и доставки приложений для экосистемы Apple с использованием инфраструктуры GitLab. Основная сложность заключается в необходимости использования проприетарного оборудования (macOS) и жестких правил подписи кода (Code Signing).
+**GitLab iOS CI/CD** — реализация процессов сборки, тестирования и доставки iOS/macOS-приложений на инфраструктуре GitLab. Отличается необходимостью проприетарного оборудования (macOS), жестких правил подписи кода и управления эфемерными связками ключей.
 
-**Shell Executor** — рекомендуемый тип исполнителя для macOS-раннеров. В отличие от Docker, он предоставляет прямой доступ к Xcode, симуляторам и системной связке ключей (Keychain), что критично для сборки iOS.
+**Shell Executor** — тип исполнителя GitLab Runner, предоставляющий прямой доступ к Xcode, симуляторам и системной связке ключей (Keychain). Рекомендуется для macOS-раннеров, поскольку Docker-Executor не поддерживает доступ к графическим инструментам Xcode и аппаратному ускорению симуляторов.
 
-**Ephemeral Keychain** — временная связка ключей, создаваемая внутри джобы GitLab CI для безопасного хранения сертификатов и их автоматического удаления после завершения сборки.
+**Ephemeral Keychain** — временная связка ключей, создаваемая внутри джобы CI для безопасного хранения сертификатов. Автоматически удаляется после завершения сборки, исключая утечку секретов между джобами.
+
+**GitLab Runner Token (`glrt-`)** — регистрационный токен, создаваемый в UI GitLab для привязки раннера к инстансу. Существует два типа: `glrt-` для проектных раннеров и групповых токенов.
+
+**Golden Image** — предварительно настроенный шаблон macOS, содержащий Xcode, Fastlane, Ruby, симуляторы и политики безопасности. Гарантирует идемпотентность развертывания и исключает «дрейф» конфигурации.
+
+**Error Budget (бюджет ошибок)** — допустимый процент проваленных сборок, связывающий надёжность пайплайна и скорость поставки. При исчерпании бюджета фокус смещается на стабилизацию, а не на новые фичи.
 
 ---
 
 ## Базовые концепции
 
-### Архитектура macOS-раннеров
+### Архитектура macOS-раннеров в GitLab CI/CD
 
-Для эффективной работы iOS-команд рекомендуется гибридная схема:
-1.  **Dedicated Runners:** Физические Mac mini или Mac Studio для тяжелых сборок и UI-тестов.
-2.  **Virtualization (Tart/Orka):** Использование эфемерных виртуальных машин для обеспечения чистоты окружения и параллелизма.
-3.  **Tags:** Обязательное использование тегов (например, `ios`, `macos`, `xcode-16.1`) для точного подбора раннера с нужной версией SDK.
+Для iOS-команд рекомендуется гибридная схема, сочетающая predictable latency и изоляцию:
+
+| Тип раннера | Технические особенности | Сфера применения |
+| :--- | :--- | :--- |
+| **Dedicated Mac mini / Mac Studio** | Физические машины на Apple Silicon (M2/M3/M4), NVMe SSD, `launchd`-сервис для `gitlab-runner`. Предсказуемая производительность. | Release-сборки, UI-тесты на реальных устройствах, тяжелые задачи. |
+| **Virtualized Pool (Tart/Orka)** | Эфемерные виртуальные машины на базе гипервизора Apple. Каждая джоба получает чистую среду. | Параллельные сборки, изоляция Keychain между джобами, тестирование на разных версиях Xcode. |
+| **Shared Runners** | Общий пул раннеров, управляемых через GitLab UI. Подходит для мелких команд с нестабильной нагрузкой. | PR-валидация, lint, unit-тесты. Не рекомендуется для релизных сборок из-за риска утечки сертификатов. |
+
+**Важно для Sysadmin:** macOS не имеет `systemd`; вместо него используется `launchd`. Раннер регистрируется как системный сервис с автозапуском и автоматическим восстановлением (`KeepAlive`). SIP (System Integrity Protection) ограничивает изменения защищённых разделов; для установки инструментов на dedicated-раннерах может потребоваться `csrutil disable` (не рекомендуется для shared-пулов).
+
+### Принципы SRE для GitLab iOS CI/CD
+
+- **Error Budget для пайплайна:** Договоритесь с командой о допустимом проценте проваленных сборок (например, 5% в месяц). При исчерпании бюджета фокус смещается на стабилизацию пайплайна.
+- **MTTR (Mean Time To Repair):** Среднее время восстановления после инцидента. Целевое значение: < 30 минут для blocking-инцидентов (например, истечение сертификатов).
+- **Toil Reduction:** Автоматизируйте обновление SDK, очистку DerivedData, ротацию симуляторов. Измеряйте долю toil в работе команды.
+- **Flaky Test Management:** Ведите реестр «мигающих» тестов. Устанавливайте SLA на починку (например, 5 рабочих дней).
+- **Runbook'и:** Для каждого типичного сбоя (падение Keychain, зависание симулятора, исчерпание лимитов Apple) должно быть пошаговое руководство.
+
+### Управление секретами в GitLab
+
+GitLab предоставляет два уровня хранения секретов:
+- **Project Variables:** Доступны только в рамках проекта. Подходит для `MATCH_PASSWORD`, `KEYCHAIN_PASSWORD`.
+- **Group/Instance Variables:** Наследуются дочерними проектами. Подходит для общих ключей (например, `ASC_API_KEY_ID` + `ASC_API_KEY_ISSUER_ID`).
+
+Типы переменных:
+- **Variable (Masked):** Обычные переменные, маскируются в логах.
+- **File:** Переменная-файл, доступная как временный файл на раннере. Используется для `.p8` ключей и сертификатов `.p12`.
 
 ---
 
-## Практическая реализация
+## Практические сценарии
 
 ### 1. Установка и регистрация раннера на macOS
 
-**Шаг 1: Установка через Homebrew**
+#### Предварительные требования
+
+- macOS 14+ (Sonoma) или macOS 15+ (Sequoia) на Apple Silicon.
+- Xcode Command Line Tools: `xcode-select --install`.
+- Homebrew: `/bin/bash -c "$(curl -fsSL https://brew.sh/install)"`.
+- Ruby >= 3.2 (через `mise`, `asdf` или системный).
+- Fastlane: `gem install fastlane` или `mise use ruby@3.3 && gem install fastlane`.
+
+#### Регистрация Shell Executor
+
 ```bash
 brew install gitlab-runner
 brew services start gitlab-runner
 ```
 
-**Шаг 2: Регистрация (Shell Executor)**
-При регистрации обязательно используйте `glrt-` токен, созданный в UI GitLab.
 ```bash
 gitlab-runner register \
   --non-interactive \
-  --url "https://gitlab.com/" \
+  --url "https://gitlab.example.com/" \
   --token "glrt-YOUR_MAC_TOKEN" \
   --executor "shell" \
   --tag-list "ios,macos,xcode-16" \
-  --description "Mac Mini M2 - Office Infrastructure"
+  --description "Mac Mini M2 - $(hostname)"
 ```
 
-**Шаг 3: Настройка multiple runners на одном Mac**
+#### Конфигурация `config.toml`
+
+```toml
+concurrent = 4
+check_interval = 3
+
+[[runners]]
+  name = "Mac Mini M2 - iOS"
+  url = "https://gitlab.example.com/"
+  token = "glrt-XXX"
+  executor = "shell"
+  shell = "zsh"
+  environment = ["IOS_BUILD_ENV=true", "LC_ALL=en_US.UTF-8"]
+  limit = 2
+  [runners.cache]
+    Type = "local"
+    Shared = true
+    Path = "/Users/runner/gitlab-runner/cache"
+```
+
+**Важно:** Используйте локальный кэш (`Type = "local"`). Удалённые хранилища добавляют сетевую задержку, что критично для macOS-раннеров из-за большого объёма зависимостей.
+
+#### Множественные раннеры на одном Mac
+
 ```bash
-# Регистрация второго раннера для другой версии Xcode
 gitlab-runner register \
   --non-interactive \
-  --url "https://gitlab.com/" \
+  --url "https://gitlab.example.com/" \
   --token "glrt-SECOND_TOKEN" \
   --executor "shell" \
   --tag-list "ios,macos,xcode-15" \
@@ -57,43 +115,19 @@ gitlab-runner register \
   --config "/etc/gitlab-runner/config-second.toml"
 ```
 
-**Шаг 4: Настройка concurrent jobs в `config.toml`**
-```toml
-concurrent = 4
-check_interval = 3
+#### Управление раннерами через CLI
 
-[[runners]]
-  name = "Mac Mini M2 - iOS"
-  url = "https://gitlab.com/"
-  token = "glrt-XXX"
-  executor = "shell"
-  shell = "zsh"
-  environment = ["IOS_BUILD_ENV=true"]
-  limit = 2  # Лимит параллельных задач на этом раннере
-  [runners.cache]
-    Type = "s3"
-    Shared = true
-```
-
-**Шаг 5: Управление раннерами через CLI**
 ```bash
-# Просмотр всех зарегистрированных раннеров
 gitlab-runner list
-
-# Проверка статуса раннера
 gitlab-runner verify
-
-# Остановка/перезапуск раннера
-gitlab-runner stop
-gitlab-runner start
-
-# Удаление старого раннера
+gitlab-runner stop && gitlab-runner start
 gitlab-runner unregister --name "Mac Mini M1 - Legacy Support"
 ```
 
 ### 2. Управление Keychain в CI/CD
 
 **Создание ephemeral keychain:**
+
 ```bash
 #!/bin/bash
 # ci_create_keychain.sh
@@ -101,22 +135,16 @@ gitlab-runner unregister --name "Mac Mini M1 - Legacy Support"
 KEYCHAIN_NAME="ci_build_keychain"
 KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
 
-# Создание keychain
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME.keychain"
-
-# Отключение auto-lock
 security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME.keychain"
-
-# Разблокировка keychain
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME.keychain"
-
-# Добавление в search list
 security list-keychains -d user -s "$KEYCHAIN_NAME.keychain" login.keychain
 
 echo "Keychain создан: $KEYCHAIN_NAME.keychain"
 ```
 
-**Импорт сертификатов в ephemeral keychain:**
+**Импорт сертификатов:**
+
 ```bash
 #!/bin/bash
 # ci_import_certificates.sh
@@ -125,41 +153,29 @@ KEYCHAIN_NAME="ci_build_keychain"
 CERTIFICATE_PATH="$1"
 CERTIFICATE_PASSWORD="$2"
 
-if [ -z "$CERTIFICATE_PATH" ] || [ -z "$CERTIFICATE_PASSWORD" ]; then
-  echo "Usage: $0 <certificate.p12> <password>"
-  exit 1
-fi
-
-# Импорт сертификата
 security import "$CERTIFICATE_PATH" \
   -k "$KEYCHAIN_NAME.keychain" \
   -P "$CERTIFICATE_PASSWORD" \
   -T /usr/bin/codesign \
   -T /usr/bin/security
 
-# Настройка ACL для codesign
 security set-key-partition-list -S apple-tool:,apple:,codesign: \
   -s -k "" "$KEYCHAIN_NAME.keychain"
-
-echo "Сертификат импортирован"
 ```
 
-**Очистка keychain после сборки:**
+**Очистка после сборки:**
+
 ```bash
 #!/bin/bash
 # ci_cleanup_keychain.sh
 
 KEYCHAIN_NAME="ci_build_keychain"
-
-# Удаление keychain
 security delete-keychain "$KEYCHAIN_NAME.keychain"
-
-echo "Keychain удален"
 ```
 
-### 2. Конфигурация .gitlab-ci.yml
+### 3. Конфигурация `.gitlab-ci.yml`
 
-Пример базового пайплайна для iOS с использованием Fastlane:
+#### Базовый пайплайн
 
 ```yaml
 variables:
@@ -172,7 +188,6 @@ stages:
   - build
   - deploy
 
-# Шаблон для всех джоб iOS
 .ios_base:
   tags:
     - ios
@@ -213,11 +228,10 @@ build_ipa:
     - if: $CI_COMMIT_TAG
 ```
 
-**Расширенный пайплайн с параллельными тестами и кэшированием:**
+#### Расширенный пайплайн с параллельными тестами и кэшированием
+
 ```yaml
 variables:
-  LC_ALL: "en_US.UTF-8"
-  LANG: "en_US.UTF-8"
   DERIVED_DATA_PATH: "$CI_PROJECT_DIR/.derived_data"
   MAX_PARALLEL_TESTS: 4
 
@@ -319,9 +333,10 @@ distribute_testflight:
   when: on_success
 ```
 
-**Сценарий: Multi-project pipeline с общими артефактами:**
+#### Multi-project pipeline
+
 ```yaml
-# В основном проекте (config.gitlab-ci.yml)
+# config.gitlab-ci.yml
 build_ipa:
   extends: .ios_base
   stage: build
@@ -332,7 +347,7 @@ build_ipa:
       - ./build/*.ipa
     expire_in: 1 week
 
-# В другом проекте, ссылающемся на артефакты
+# В другом проекте
 trigger_qa:
   stage: deploy
   trigger:
@@ -343,164 +358,78 @@ trigger_qa:
     - build_ipa
 ```
 
-### 3. Управление секретами в GitLab
-
-Для работы iOS CI/CD необходимо добавить следующие переменные в **Settings > CI/CD > Variables**:
+### 4. Управление секретами
 
 | Переменная | Тип | Описание |
 | :--- | :--- | :--- |
-| `MATCH_PASSWORD` | Variable (Masked) | Пароль для расшифровки репозитория с сертификатами. |
-| `ASC_API_KEY` | **File** | Содержимое файла `.p8` (App Store Connect API Key). |
-| `KEYCHAIN_PASSWORD` | Variable | Пароль для создания временного Keychain на раннере. |
-| `MATCH_GIT_URL` | Variable | URL приватного репозитория с сертификатами. |
+| `MATCH_PASSWORD` | Variable (Masked) | Пароль для шифрования репозитория с сертификатами (AES-256). |
+| `ASC_API_KEY` | **File** | Содержимое `.p8` (App Store Connect API Key). |
+| `KEYCHAIN_PASSWORD` | Variable | Пароль для создания временного Keychain. |
+| `MATCH_GIT_URL` | Variable | URL приватного Git-репозитория с сертификатами. |
+| `ASC_API_KEY_ID` | Variable | `Key ID` из App Store Connect. |
+| `ASC_API_KEY_ISSUER_ID` | Variable | `Issuer ID` из App Store Connect. |
 
 ---
 
-## Тестирование в CI/CD
+## Операции и команды
 
-### Unit-тесты
-```ruby
-lane :test do
-  run_tests(
-    project: "MyApp.xcodeproj",
-    scheme: "MyAppTests",
-    devices: ["iPhone 15 Pro"],
-    code_coverage: true,
-    output_types: "junit",
-    output_directory: "fastlane/test_output"
-  )
-end
-```
+### Жизненный цикл раннера
 
-### UI-тесты и скриншоты
-```ruby
-lane :snapshot do
-  capture_screenshots(
-    project: "MyApp.xcodeproj",
-    scheme: "MyAppUITests",
-    devices: ["iPhone 15 Pro", "iPhone 15 Pro Max"],
-    languages: ["en-US", "ru-RU"],
-    clear_previous_screenshots: true
-  )
-end
-```
-
-### Lint и анализ кода
-```ruby
-lane :lint do
-  swiftlint(
-    mode: :lint,
-    raise_if_swiftlint_error: true,
-    ignore_exit_status: false
-  )
-end
-```
-
-### Быстрые команды для проверки:
 ```bash
-# Проверка сборки без подписи
-xcodebuild -project MyApp.xcodeproj \
-  -scheme MyApp \
-  -destination 'platform=iOS Simulator,name=iPhone 15 Pro' \
-  build
+# Просмотр зарегистрированных раннеров
+gitlab-runner list
 
-# Запуск тестов
-xcodebuild test \
-  -project MyApp.xcodeproj \
-  -scheme MyAppTests \
-  -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
+# Проверка работоспособности
+gitlab-runner verify
 
-# Очистка DerivedData
-rm -rf ~/Library/Developer/Xcode/DerivedData
+# Перезапуск сервиса
+sudo launchctl unload /Library/LaunchDaemons/com.gitlab.runner.plist
+sudo launchctl load /Library/LaunchDaemons/com.gitlab.runner.plist
+
+# Очистка кэша
+rm -rf /Users/runner/gitlab-runner/cache/*
 ```
 
----
+### Проверка окружения
 
-## Оптимизация и кэширование
+```bash
+# Проверка Xcode
+xcodebuild -version
+xcode-select -p
 
-На macOS-раннерах кэширование через GitLab Runner (S3/GCS) может быть медленнее, чем использование локального кэша, из-за размера зависимостей.
+# Проверка доступных симуляторов
+xcrun simctl list devices available
 
-**Рекомендуемые пути для кэширования:**
-```yaml
-cache:
-  paths:
-    - vendor/bundle
-    - Pods/
-    - .build/ # Swift Package Manager
+# Проверка сертификатов в Keychain
+security find-identity -v -p codesigning
+
+# Проверка DerivedData
+du -sh ~/Library/Developer/Xcode/DerivedData
 ```
 
-**Важно:** Для Xcode DerivedData лучше использовать локальный механизм очистки (например, `fastlane clear_derived_data`) или выделенные папки для каждой ветки, чтобы избежать конфликтов при параллельных сборках.
+### Управление Keychain
 
-### Продвинутое кэширование для macOS
-```yaml
-# Использование тегов для кэширования по версиям Xcode
-cache:
-  key:
-    files:
-      - Gemfile.lock
-      - Podfile.lock
-      - .xcode-version
-  paths:
-    - vendor/bundle
-    - Pods/
-    - DerivedData/
-  policy: pull-push
+```bash
+# Создание ephemeral keychain
+security create-keychain -p "$PASSWORD" ci_build.keychain
+security set-keychain-settings -lut 21600 ci_build.keychain
+security unlock-keychain -p "$PASSWORD" ci_build.keychain
+security list-keychains -d user -s ci_build.keychain login.keychain
 
-# Раздельное кэширование для build и test
-.unit_tests_cache:
-  cache:
-    key: test-$CI_COMMIT_REF_SLUG
-    paths:
-      - DerivedData/Build/Products/
-    policy: pull
+# Импорт сертификата
+security import cert.p12 -k ci_build.keychain -P "$CERT_PASS" \
+  -T /usr/bin/codesign -T /usr/bin/security
 
-.build_cache:
-  cache:
-    key: build-$CI_COMMIT_REF_SLUG
-    paths:
-      - DerivedData/
-    policy: pull
+# Настройка ACL
+security set-key-partition-list -S apple-tool:,apple:,codesign: \
+  -s -k "$PASSWORD" ci_build.keychain
+
+# Удаление keychain
+security delete-keychain ci_build.keychain
 ```
 
-### Оптимизация времени сборки
-```yaml
-# Параллельная сборка модулей
-build_ipa:
-  script:
-    - |
-      xcodebuild build \
-        -project MyApp.xcodeproj \
-        -scheme MyApp \
-        -destination 'generic/platform=iOS' \
-        -parallelizeTargets \
-        -maximumParallelizationTargets 4 \
-        CODE_SIGN_IDENTITY="" \
-        CODE_SIGNING_REQUIRED=NO
-```
+### Автоматический скрипт проверки окружения
 
----
-
-## Валидация и проверка
-
-1.  **Проверка доступности Xcode:** В начале пайплайна добавьте `xcodebuild -version`, чтобы убедиться, что выбрана верная версия через `xcode-select`.
-2.  **Health Check раннера:**
-    ```bash
-    gitlab-runner verify
-    security find-identity -v -p codesigning # Проверка доступных сертификатов
-    ```
-3.  **Проверка Keychain:**
-    ```bash
-    # Просмотр всех keychains
-    security list-keychains
-    
-    # Проверка доступа к конкретному keychain
-    security unlock-keychain -p "$KEYCHAIN_PASSWORD" ci_build_keychain.keychain
-    
-    # Просмотр сертификатов в keychain
-    security find-identity -v -p codesigning ci_build_keychain.keychain
-    ```
-
-**Автоматический скрипт проверки окружения:**
 ```bash
 #!/bin/bash
 # ci_env_check.sh
@@ -509,25 +438,20 @@ set -e
 
 echo "=== Проверка окружения iOS CI/CD ==="
 
-# Проверка Xcode
 if xcodebuild -version &> /dev/null; then
-  XCODE_VERSION=$(xcodebuild -version | head -1)
-  echo "✓ Xcode: $XCODE_VERSION"
+  echo "✓ Xcode: $(xcodebuild -version | head -1)"
 else
   echo "✗ Xcode не найден"
   exit 1
 fi
 
-# Проверка fastlane
 if bundle exec fastlane --version &> /dev/null; then
-  FASTLANE_VERSION=$(bundle exec fastlane --version | head -1)
-  echo "✓ Fastlane: $FASTLANE_VERSION"
+  echo "✓ Fastlane: $(bundle exec fastlane --version | head -1)"
 else
   echo "✗ Fastlane не найден"
   exit 1
 fi
 
-# Проверка сертификатов
 CERTS=$(security find-identity -v -p codesigning | grep -c "iPhone")
 if [ "$CERTS" -gt 0 ]; then
   echo "✓ Найдено $CERTS сертификат(ов) для подписи"
@@ -536,10 +460,8 @@ else
   exit 1
 fi
 
-# Проверка DerivedData
 if [ -d "$HOME/Library/Developer/Xcode/DerivedData" ]; then
-  DERIVED_SIZE=$(du -sh "$HOME/Library/Developer/Xcode/DerivedData" | cut -f1)
-  echo "✓ DerivedData: $DERIVED_SIZE"
+  echo "✓ DerivedData: $(du -sh ~/Library/Developer/Xcode/DerivedData | cut -f1)"
 else
   echo "✓ DerivedData не существует (чистое окружение)"
 fi
@@ -553,65 +475,80 @@ echo "=== Все проверки пройдены ==="
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **"Could not find a valid identity"** | Сертификат не импортирован или Keychain заблокирован. | Проверьте использование `setup_ci_keychain` в Fastfile. |
-| **"Operation not permitted"** | TCC (Transparency, Consent, and Control) в macOS блокирует доступ терминала к папкам. | Добавьте `gitlab-runner` в **Full Disk Access** в системных настройках Mac. |
-| **Runner застрял в Pending** | Нет раннеров с соответствующими тегами. | Проверьте теги в `.gitlab-ci.yml` и в настройках зарегистрированного раннера. |
-| **Slow Builds (IO bound)** | Использование HDD или медленного сетевого хранилища. | Используйте Mac на базе Apple Silicon с NVMe SSD. |
-| **"No signing certificate "iOS Distribution" found"** | Сертификат не найден в Keychain. | Убедитесь, что сертификат импортирован в ephemeral keychain перед сборкой. |
-| **"The executable was signed with invalid entitlements"** | Entitlements в проекте не соответствуют App ID. | Проверьте `TARGET` > `Signing & Capabilities` в Xcode и сверьте с Apple Developer Portal. |
-| **"Provisioning profile doesn't match signing identity"** | Сертификат в профиле не совпадает с Keychain. | Выполните `security find-identity -p codesigning` и сверьте с Match. |
-| **"xcodebuild: error: Unable to find a destination matching the provided destination specifier"** | Указанное устройство/симулятор не найдено. | Проверьте список доступных устройств: `xcrun simctl list devices`. |
-| **"The file is corrupted or cannot be read"** | IPA поврежден при загрузке или архивирован неверно. | Проверьте целостность артефакта и повторите сборку с `clean: true`. |
-| **"No space left on device"** | Недостаточно места на диске для сборки. | Очистите DerivedData: `rm -rf ~/Library/Developer/Xcode/DerivedData`. |
-| **"Bundle identifier is not unique"** | Попытка загрузить приложение с занятым bundle identifier. | Проверьте уникальность bundle ID в App Store Connect и проекте. |
-| **"fastlane: command not found"** | Fastlane не установлен или не добавлен в PATH. | Добавьте `bundle exec` перед fastlane или установите `gem install fastlane`. |
-| **"Runner is not healthy"** | Раннер не отвечает на ping. | Перезапустите раннер: `gitlab-runner restart`. |
-| **"Could not resolve host: gitlab.com"** | Проблемы с DNS или сетью. | Проверьте DNS и прокси-настройки на раннере. |
-| **"Certificate has expired"** | Сертификат или Provisioning Profile истек. | Обновите сертификаты через Match: `fastlane match appstore --force_for_new_devices`. |
+| **"Could not find a valid identity"** | Сертификат не импортирован или Keychain заблокирован. | Проверьте `setup_ci_keychain` в Fastfile. |
+| **"Operation not permitted"** | TCC блокирует доступ терминала к папкам. | Добавьте `gitlab-runner` в **Full Disk Access**. |
+| **Runner застрял в Pending** | Нет раннеров с соответствующими тегами. | Проверьте теги в `.gitlab-ci.yml` и регистрации. |
+| **Slow Builds (IO bound)** | HDD или медленного сетевого хранилища. | Используйте Apple Silicon с NVMe SSD. |
+| **"No signing certificate found"** | Сертификат не найден в Keychain. | Убедитесь, что сертификат импортирован в ephemeral keychain. |
+| **"Invalid entitlements"** | Entitlements не соответствуют App ID. | Проверьте `Signing & Capabilities` в Xcode и Apple Developer Portal. |
+| **"Provisioning profile doesn't match"** | Сертификат в профиле не совпадает с Keychain. | Выполните `security find-identity -p codesigning`. |
+| **"Unable to find destination"** | Указанный симулятор/устройство не найден. | Проверьте: `xcrun simctl list devices`. |
+| **"File is corrupted"** | IPA поврежден при архивации. | Повторите сборку с `clean: true`. |
+| **"No space left on device"** | Недостаточно места на диске. | Очистите DerivedData: `rm -rf ~/Library/Developer/Xcode/DerivedData`. |
+| **"Bundle identifier is not unique"** | Занят bundle ID в App Store Connect. | Проверьте уникальность bundle ID. |
+| **"fastlane: command not found"** | Fastlane не установлен или не в PATH. | Используйте `bundle exec fastlane` или `gem install fastlane`. |
+| **"Runner is not healthy"** | Раннер не отвечает на ping. | Перезапустите: `gitlab-runner restart`. |
+| **"Could not resolve host"** | Проблемы с DNS или сетью. | Проверьте DNS и прокси на раннере. |
+| **"Certificate has expired"** | Сертификат или Provisioning Profile истек. | Обновите через Match: `fastlane match appstore --force_for_new_devices`. |
 
 ---
 
-## Edge Cases и ограничения
+## Рекомендации
 
-1.  **Лимиты GitLab Runner:** Один раннер может обрабатывать только одно задание одновременно с Shell Executor. Используйте `concurrent` в `config.toml` для параллелизма.
-2.  **Лимиты Xcode:** Apple устанавливает лимиты на количество сертификатов и Provisioning Profiles. Используйте Match для автоматического управления.
-3.  **Кэширование DerivedData:** Не кэшируйте DerivedData между разными ветками — это может привести к конфликтам. Используйте уникальные ключи кэша.
-4.  **Очистка Keychain:** Всегда удаляйте ephemeral keychain после сборки (`after_script`), даже при падении джобы.
-5.  **Обновление Xcode:** При обновлении Xcode на раннере необходимо обновить все Provisioning Profiles через Match.
-6.  **Параллельные тесты:** Убедитесь, что симуляторы не конфликтуют при параллельном запуске. Используйте `xcodebuild -parallel-testing`.
-7.  **Лимиты артефактов:** GitLab ограничивает размер артефактов (по умолчанию 100 МБ). Настройте `expire_in` для старых сборок.
-8.  **Сетевая задержка:** На удаленных раннерах может быть высокая задержка при загрузке зависимостей. Используйте локальные зеркала.
+### Best Practices
+
+- **Error Budget:** Установите допустимый процент проваленных сборок (например, 5% в месяц). При исчерпании бюджета фокусируйтесь на стабилизации.
+- **MTTR:** Целевое время восстановления — < 30 минут для blocking-инцидентов. Автоматизируйте процедуры восстановления.
+- **Toil Reduction:** Автоматизируйте обновление SDK, очистку кэша, ротацию симуляторов. Измеряйте долю toil.
+- **Golden Image:** Используйте шаблон окружения для быстрого развертывания новых раннеров. Храните образ в управляемом репозитории.
+- **Ephemeral Keychain:** Всегда создавайте временный Keychain внутри джобы и удаляйте в `after_script`, даже при падении джобы.
+- **Local Cache:** На macOS-раннерах используйте локальный кэш (`Type = "local"`). Удалённые хранилища замедляют сборки из-за объёма зависимостей.
+- **DerivedData:** Не кэшируйте DerivedData между ветками. Используйте уникальные ключи кэша или `fastlane clear_derived_data`.
+- **Backup Certificates:** Регулярно создавайте бэкап репозитория Match. Храните `MATCH_PASSWORD` в защищённых системах (HashiCorp Vault, GitLab CI Variables).
+
+### Edge Cases и ограничения
+
+1. **Один джоб на раннер:** Shell Executor обрабатывает одну задачу одновременно. Используйте `concurrent` в `config.toml` или несколько раннеров на одном Mac.
+2. **Лимиты Apple:** Ограничение на количество сертификатов и Provisioning Profiles. Используйте Match для автоматического управления.
+3. **SIP:** System Integrity Protection ограничивает изменения в системных разделах. Для некоторых инструментов может потребоваться отключение на dedicated-раннерах.
+4. **Обновление Xcode:** При обновлении Xcode обновите все Provisioning Profiles через Match.
+5. **Параллельные тесты:** Убедитесь, что симуляторы не конфликтуют. Используйте `xcodebuild -parallel-testing`.
+6. **Лимиты артефактов:** GitLab ограничивает размер артефактов (по умолчанию 100 МБ). Настройте `expire_in`.
+7. **Сетевая задержка:** На удалённых раннерах используйте локальные зеркала для зависимостей (CocoaPods, SPM).
+8. **TCC/Full Disk Access:** `gitlab-runner` должен иметь доступ к папкам проекта и DerivedData. Добавьте в системные настройки.
 
 ### Мониторинг и Observability
 
-**Метрики для отслеживания:**
-- **Build Success Rate:** Процент успешных сборок (целевое значение: > 95%).
-- **Build Duration:** Среднее время сборки (целевое значение: < 10 минут для PR, < 20 минут для release).
-- **Test Pass Rate:** Процент пройденных тестов.
-- **Flaky Test Rate:** Процент "мигающих" тестов (целевое значение: < 2%).
-- **Runner Utilization:** Процент использования раннеров (целевое значение: < 80%).
+**Метрики:**
+- **Build Success Rate:** > 95%.
+- **Build Duration:** < 10 минут для PR, < 20 минут для release.
+- **Test Pass Rate:** процент пройденных тестов.
+- **Flaky Test Rate:** < 2%.
+- **Runner Utilization:** < 80%.
 
-**Интеграция с метриками (Prometheus):**
+**Интеграция с Prometheus Pushgateway:**
+
 ```yaml
-# В .gitlab-ci.yml
 report_metrics:
   stage: .post
   script:
     - |
-      # Отправка метрик в Prometheus pushgateway
       echo "gitlab_ci_build_duration_seconds{project=\"$CI_PROJECT_NAME\",branch=\"$CI_COMMIT_BRANCH\"} $CI_JOB_DURATION" | \
       curl -X POST --data-binary @- http://localhost:9091/metrics/job/gitlab_ci
   when: always
 ```
 
-### См. также:
-
 ### Безопасность
-*   **Protected Tags:** Используйте теги только для защищенных веток, если на раннере хранятся долгоживущие сессии или специфические лицензии.
-*   **Automatic Cleanup:** Убедитесь, что скрипты очистки срабатывают даже при падении джобы (`after_script`).
 
-### См. также:
-*   **[iOS CI/CD: Подпись кода и Match](./ios-ci-cd.md)**
-*   **[Автоматизация через Fastlane](./fastlane-guide.md)**
-*   **[Регистрация GitLab Runner](../GitLab_CI/Tutorials/runner_registration.md)**
-*   **[Обзор GitLab Runner и Executor](../GitLab_CI/Advanced/gitlab_ci_runners_executors.md)**
+- **Protected Tags:** Используйте теги только для защищённых веток.
+- **Automatic Cleanup:** Обеспечьте удаление Keychain и секретов в `after_script`, даже при падении джобы.
+- **Token Rotation:** Ротируйте `glrt-` токены периодически. Удаляйте неиспользуемые раннеры.
+- **Least Privilege:** Runner-аккаунт должен иметь минимальные права. Не запускайте `gitlab-runner` под `root`.
+
+---
+
+## Дополнительная информация
+
+- **[iOS CI/CD: Подпись кода и Match](./ios-ci-cd.md)** — детали Provisioning Profiles, Fastlane Match и Keychain management.
+- **[Fastlane: Автоматизация Mobile CI/CD](./fastlane-guide.md)** — lanes, plugins, обработка ошибок, интеграция с GitLab CI.
+- **[Обзор Mobile CI/CD и инфраструктуры](./index.md)** — архитектура macOS-раннеров, Tart/Orka, golden image.

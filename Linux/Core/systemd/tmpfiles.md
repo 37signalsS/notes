@@ -273,5 +273,6 @@ journalctl -u systemd-tmpfiles-clean.service -n 50
 * [Централизованное логирование (journald)](../../SystemAdministration/Logging/journald.md) — работа с логами.
 * [Планирование задач (timers)](./timers.md) — таймеры и периодические задания.
 * [Механизм Control Groups (cgroups)](../cgroups.md) — ограничение ресурсов для процессов.
+* [Переразметка дисков (systemd-repart)](./systemd_repart.md) — создание разделов и файловых систем.
 
 Связанные механизмы: [Control Groups (cgroups)](../cgroups.md), [Namespaces](../namespaces.md), [Журналирование (journald)](../../SystemAdministration/Logging/journald.md).

@@ -221,3 +221,5 @@ kustomize build overlays/production | kubeconform -strict -summary -
 - **[Обзор и основные концепции](./kustomize_overview.md)** — введение и установка.
 - **[Структура и синтаксис](./kustomize_structure_and_syntax.md)** — разбор `kustomization.yaml`.
 - **[Продвинутые возможности](./kustomize_advanced_features.md)** — генераторы, компоненты и replacements.
+- **[Debugging Kustomize](./kustomize_debugging.md)** — диагностика ошибок патчинга.
+- **[Работа с CRD](./kustomize_crd_patterns.md)** — JSON Patch для кастомных ресурсов.

@@ -1,56 +1,53 @@
-# Отладка миграции на выделенного пользователя в Ansible
+# Миграция на выделенного пользователя Ansible
 
 ## Определения
 
-**Миграция на выделенного пользователя** — архитектурный процесс перехода от запуска плейбуков от имени суперпользователя `root` к использованию отдельной системной учетной записи (например, `ansible-deploy`) с ограниченными привилегиями и механизмом `sudo` (substitute user do). Это критическая мера безопасности, требующая согласованной настройки SSH (Secure Shell) и прав доступа.
+**Миграция на выделенного пользователя** — процесс перехода от запуска плейбуков от имени `root` к использованию отдельной системной учетной записи (например, `ansible-deploy`) с ограниченными привилегиями и механизмом `sudo`. Это критическая мера безопасности в практиках DevOps/SRE, требующая согласованной настройки SSH, прав доступа и аудита выполнения.
 
-**Privilege Escalation (повышение привилегий)** — встроенный механизм Ansible (директива `become`), позволяющий выполнять задачи от имени другого пользователя (обычно `root`) после успешного первоначального SSH-подключения от имени непривилегированного пользователя.
+**Принцип наименьших привилегий (PoLP — Principle of Least Privilege)** — базовый принцип безопасности, согласно которому учетная запись автоматизации должна иметь только те права, которые необходимы для выполнения её функций. Выполнение от имени `root` по умолчанию нарушает этот принцип.
 
-**`become`** — директива уровня плейбука или задачи, включающая механизм повышения привилегий. Принимает логическое значение `true`/`false`. По умолчанию `false`.
+**Bootstrap-плейбук** — идемпотентный плейбук, выполняемый один раз для первоначальной настройки выделенного пользователя. Запускается от имени `root` (последний раз с использованием суперпользователя), после чего все последующие запуски выполняются от имени выделенного пользователя с `sudo`.
 
-**`become_method`** — параметр, определяющий утилиту для повышения привилегий. Допустимые значения: `sudo` (по умолчанию), `su`, `pbrun`, `pfexec`, `doas`, `ksu`. На OpenBSD рекомендуется `doas`.
+**Privilege Escalation (повышение привилегий)** — встроенный механизм Ansible (директива `become`), позволяющий выполнять задачи от имени другого пользователя после успешного SSH-подключения от имени непривилегированного пользователя.
 
-**`become_user`** — целевой пользователь, от имени которого выполняется команда после повышения привилегий (по умолчанию `root`). Позволяет выполнять задачи от имени любого пользователя, а не только суперпользователя.
+**`become`** — директива уровня плейбука или задачи, включающая механизм повышения привилегий. Принимает логические значения `true`/`false`. По умолчанию `false`.
+
+**`become_method`** — параметр, определяющий утилиту для повышения привилегий. Допустимые значения: `sudo` (по умолчанию), `su`, `doas` (OpenBSD), `pbrun`, `pfexec`. На большинстве дистрибутивов Linux используется `sudo`.
+
+**`become_user`** — целевой пользователь, от имени которого выполняется команда после повышения привилегий (по умолчанию `root`). Позволяет выполнять задачи от имени специализированных пользователей (например, `postgres`, `www-data`), минимизируя время работы в контексте суперпользователя.
 
 **`ansible_user`** — переменная инвентаря, определяющая имя пользователя для первоначального SSH-подключения к управляемому хосту. Заменяет использование флага `-u` в командной строке.
 
 **`ansible_become`** — переменная инвентаря, эквивалент директивы `become: true` на уровне плейбука. Позволяет глобально включить повышение привилегий для всех задач.
 
-**`sudoers`** — конфигурационный файл (`/etc/sudoers` или файлы в `/etc/sudoers.d/`), определяющий правила доступа к `sudo`. Управляется утилитой `visudo`. Ошибка в синтаксисе приводит к полной блокировке механизма `sudo`.
+**sudoers** — конфигурационный файл (`/etc/sudoers` или файлы в `/etc/sudoers.d/`), определяющий правила доступа к `sudo`. Управляется утилитой `visudo`. Ошибка в синтаксисе приводит к полной блокировке механизма `sudo`.
 
 **`NOPASSWD`** — директива в конфигурации `sudoers`, позволяющая выполнять команды от имени суперпользователя без запроса пароля. Критически важна для автоматизации Ansible, так как предотвращает зависание пайплайна на запросе ввода пароля.
 
 **`visudo`** — утилита безопасного редактирования файла `sudoers`. Обязательно проверяет синтаксис перед сохранением, предотвращая блокировку `sudo` из-за синтаксических ошибок.
 
-**`ControlPersist` (SSH Multiplexing)** — механизмreuse SSH-соединений для ускорения последующих подключений. Соединения кэшируются в сокет-файле и переиспользуются. Может вызывать проблемы при смене прав доступа, так как старая сессия удерживает соединение с неактуальными правами.
+**ControlPersist (SSH Multiplexing)** — механизм переиспользования SSH-соединений для ускорения последующих подключений. Соединения кэшируются в сокет-файле и переиспользуются. Может вызывать проблемы при смене прав доступа, так как старая сессия удерживает соединение с неактуальными правами.
 
-**SELinux (Security-Enhanced Linux)** — механизм强制ного контроля доступа (MAC) в ядре Linux. На системах с SELinux (RHEL, CentOS, Fedora) контексты безопасности директории `.ssh` должны быть корректными, иначе SSH-сервер отклонит ключ даже при правильном `authorized_keys`.
+**SELinux (Security-Enhanced Linux)** — механизм принудительного контроля доступа (MAC) в ядре Linux. На системах с SELinux (RHEL, CentOS, Fedora, Rocky Linux) контексты безопасности директории `.ssh` должны быть корректными, иначе SSH-сервер отклонит ключ даже при правильном `authorized_keys`.
 
 **`no_log`** — параметр задачи Ansible, предотвращающий запись чувствительных данных (пароли, ключи, токены) в логи и вывод консоли. Устанавливается как `no_log: true` на уровне задачи.
 
 ## Базовые концепции
 
-### Ключевые требования для успешной миграции
-
-Чтобы миграция прошла без потери доступа к серверу ("lockout"), необходимо строго соблюдать последовательность:
-
-1.  **Создание пользователя**: Пользователь должен существовать в ОС, иметь домашнюю директорию и корректную оболочку (shell).
-2.  **Доступ по SSH**: Контрольный узел должен иметь возможность подключиться по SSH от имени нового пользователя. Публичный ключ должен быть добавлен в `~/.ssh/authorized_keys`.
-3.  **SELinux и права**: На системах с SELinux (RHEL/CentOS) контексты безопасности директории `.ssh` должны быть корректными, иначе SSH-сервер отклонит ключ.
-4.  **Привилегии sudo**: Пользователь должен иметь права на выполнение команд от имени суперпользователя. Для автоматизации рекомендуется настраивать беспарольный доступ (`NOPASSWD`). Пакет `sudo` должен быть установлен.
-5.  **Блокировка root**: Только после верификации пп. 1-4 можно отключать `PermitRootLogin` в конфигурации SSH-сервера.
-
 ### Жизненный цикл SSH-ключей
 
 При миграции на выделенного пользователя необходимо правильно управлять SSH-ключами:
 
-1. **Генерация ключей**: Используйте Ed25519 (современный стандарт) или RSA 4096 бит:
+1. **Генерация ключей:** Используйте Ed25519 (современный стандарт) или RSA 4096 бит:
    ```bash
-   ssh-keygen -t ed25519 -C "ansible@control-node"
+   ssh-keygen -t ed25519 -C "ansible@control-node" -f ~/.ssh/id_ed25519_ansible
+   # → Generating public/private ed25519 key pair.
+   # → Enter passphrase (empty for no passphrase): 
+   # → Your identification has been saved in /Users/.../.ssh/id_ed25519_ansible
    ```
-2. **Распространение публичного ключа**: Используйте модуль `ansible.posix.authorized_key` для добавления ключа в `~/.ssh/authorized_keys` нового пользователя.
-3. **Очистка старых ключей**: Параметр `exclusive: yes` в `ansible.posix.authorized_key` удаляет все старые ключи, оставляя только указанные.
-4. **Ротация ключей**: Регулярно обновляйте SSH-ключи. Старые ключи хостов хранятся в `~/.ssh/known_hosts` и должны обновляться через `ansible.builtin.known_hosts`.
+2. **Распространение публичного ключа:** Используйте модуль `ansible.posix.authorized_key` для добавления ключа в `~/.ssh/authorized_keys` нового пользователя.
+3. **Очистка старых ключей:** Параметр `exclusive: yes` в `ansible.posix.authorized_key` удаляет все старые ключи, оставляя только указанные.
+4. **Ротация ключей:** Регулярно обновляйте SSH-ключи. Старые ключи хостов хранятся в `~/.ssh/known_hosts` и должны обновляться через `ansible.builtin.known_hosts`.
 
 ### Конфигурация SELinux для SSH
 
@@ -63,8 +60,8 @@ ls -Z /home/ansible-deploy/.ssh
 
 # Восстановление контекстов (при ручных правках)
 restorecon -Rv /home/ansible-deploy/.ssh
-# → restoredcon /home/ansible-deploy/.ssh
-# → restoredcon /home/ansible-deploy/.ssh/authorized_keys
+# → restorecon /home/ansible-deploy/.ssh
+# → restorecon /home/ansible-deploy/.ssh/authorized_keys
 
 # Проверка логов SELinux при проблемах
 ausearch -m avc -ts recent | grep sshd
@@ -75,7 +72,23 @@ ausearch -m avc -ts recent | grep sshd
 | Симптом | Причина | Решение |
 |---|---|---|
 | SSH-ключ отклоняется despite `authorized_keys` | Неверный контекст `authorized_keys` | `restorecon -Rv /home/user/.ssh` |
-| `Permission denied (publickey)` в audit.log | SELinux запрещает чтение ключа | `setsebool -P ssh_sysadm_login on` (только для Trusted Endpoints) |
+| `Permission denied (publickey)` в audit.log | SELinux запрещает чтение ключа | Проверка контекстов через `ls -Z`, восстановление через `restorecon` |
+
+### Влияние ControlPersist на миграцию
+
+Механизм SSH Multiplexing (ControlPersist) может вызывать проблемы при смене прав, так как старая сессия удерживает соединение с неактуальными привилегиями:
+
+```bash
+# Проверка активных сокетов
+ps aux | grep ssh
+# → user   12345 ssh -o ControlMaster=auto -o ControlPersist=600s ...
+
+# Сброс через Ansible
+ansible all -m shell -a "exit" --ssh-extra-args="-O exit"
+
+# Или ручной сброс
+rm -f ~/.ansible/cp/ansible-ssh-*
+```
 
 ### Синтаксис sudoers для автоматизации
 
@@ -86,14 +99,14 @@ ausearch -m avc -ts recent | grep sshd
 ansible-deploy ALL=(ALL) NOPASSWD: ALL
 
 # Гранулярный доступ (рекомендуется для production)
-ansible-deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nginx, /usr/bin/apt-get update
+ansible-deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *, /usr/bin/apt-get update
 
 # С выключенным mail (без почтовых уведомлений)
 Defaults:ansible-deploy !mail_always
 ansible-deploy ALL=(ALL) NOPASSWD: ALL
 ```
 
-**Валидация синтаксиса (критически важно):**
+**Валидация синтаксиса (критически важна):**
 
 ```bash
 # Всегда проверяйте синтаксис перед сохранением
@@ -104,45 +117,33 @@ visudo -cf /etc/sudoers.d/ansible-deploy
 # и sudo останется работоспособным
 ```
 
-### Влияние ControlPersist на миграцию
+### Разделение кода и конфигурации
 
-Механизм SSH Multiplexing (ControlPersist) может вызывать проблемы при смене прав:
+Фундаментальный принцип организации масштабируемой автоматизации:
 
-```bash
-# Проверка активных сокетов
-ps aux | grep ssh
-# → ssh -o ControlPersist=600s -o ...
-```
+- **Логика (Код):** Общие алгоритмы настройки ("КАК") инкапсулируются в централизованном репозитории с **[Ansible-ролями](../ansible_roles.md)**.
+- **Данные (Конфигурация):** Специфичные параметры ("ЧТО" именно настраивать: инвентарь, версии, **[переменные](../PlaybookStructure/variables.md)**) хранятся в изолированных репозиториях проектов.
 
-**Решение**: Сброс сокетов перед продолжением работы:
+### Версии и совместимость
 
-```bash
-# Сброс через Ansible
-ansible all -m shell -a "exit" --ssh-extra-args="-O exit"
-
-# Или ручной сброс
-rm -f ~/.ansible/cp/ansible-ssh-*
-```
-
-### Типовые ошибки и диагностика
-
-| Ошибка | Вероятная причина | Решение |
-| :--- | :--- | :--- |
-| `UNREACHABLE! Permission denied (publickey)` | Ansible пытается войти как `root`, но `PermitRootLogin` уже отключен, либо для нового пользователя не добавлен SSH-ключ. | Проверить `ansible_user` в инвентаре. Убедиться, что публичный ключ добавлен в `authorized_keys` нового пользователя. |
-| `Permission denied` (в логах задачи) | Задача требует прав суперпользователя (например, `apt`, `systemd`), но директива `become: true` отсутствует. | Добавить `become: true` на уровне сценария (play) или конкретной задачи. |
-| `Missing sudo password` или зависание | Для пользователя не настроен `NOPASSWD` в `sudoers`, а пароль для `become` не передан. | Настроить конфигурацию в `/etc/sudoers.d/` (заканчивать файл новой строкой) или передать пароль через `--ask-become-pass`. |
-| `sudo: command not found` | Пакет `sudo` не установлен в системе (характерно для минимальных образов Debian/Alpine). | Установить пакет `sudo` при последнем запуске от имени `root`. |
-| Зависание (Timeout) после правок | Активен `ControlPersist` (SSH Multiplexing). Старая сессия удерживает соединение с неактуальными правами. | Сбросить сокеты: `ansible all -m shell -a "exit" --ssh-extra-args="-O exit"`. |
+| Компонент | Минимальная версия | Рекомендуемая | Проверка |
+|---|---|---|---|
+| Ansible Core | 2.15+ | ≥ 2.20 | `ansible --version` |
+| Python (Control Node) | 3.11+ | ≥ 3.12 | `python3 --version` |
+| Python (Target) | 3.9+ | ≥ 3.12 | `ansible all -m setup -a "filter=ansible_python_version"` |
+| ansible-lint | 26.x+ | ≥ 26.8.0 | `ansible-lint --version` |
+| ansible.builtin.user | Стандартный модуль | Стандартный | `ansible-doc ansible.builtin.user` |
+| ansible.posix.authorized_key | 2.2+ | 2.2+ | `ansible-galaxy collection list | grep ansible.posix` |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий: Безопасная миграция с `root` на `ansible-deploy`
+### Сценарий 1: Безопасная миграция с `root` на `ansible-deploy`
 
 Ниже представлен **идемпотентный плейбук (Bootstrap)**, который безопасно выполняет все этапы миграции за один запуск. Этот плейбук запускается в последний раз от имени `root`.
 
-#### 1. Подготовка конфигурации (Bootstrap Playbook)
+#### 1. Bootstrap Playbook
 
 Файл `bootstrap.yml`:
 
@@ -154,7 +155,7 @@ rm -f ~/.ansible/cp/ansible-ssh-*
   vars:
     deploy_user: "ansible-deploy"
     # Читаем публичный ключ контрольного узла из локального файла
-    deploy_pub_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+    deploy_pub_key: "{{ lookup('file', '~/.ssh/id_ed25519_ansible.pub') }}"
 
   tasks:
     - name: Установка пакета sudo (для минимальных образов)
@@ -211,23 +212,40 @@ rm -f ~/.ansible/cp/ansible-ssh-*
 
 ```bash
 ansible-playbook -i inventory.ini bootstrap.yml -u root
-# → Результат: Пользователь создан, ключи добавлены, root заблокирован.
+# → PLAY [Безопасная миграция на выделенного пользователя Ansible] *******
+# → TASK [Установка пакета sudo (для минимальных образов)] ******************
+# → ok: [server1]
+# → ...
+# → PLAY RECAP **************************************************************
+# → server1                     : ok=6    changed=3    unreachable=0    failed=0
 ```
 
-#### 2. Диагностика ошибки после изменений
+#### 2. Валидация миграции
 
-Если попытаться запустить обычный плейбук от имени `root` после успешной миграции:
+После успешного выполнения bootstrap-плейбука необходимо проверить:
 
 ```bash
-ansible-playbook -i inventory.ini app_deploy.yml -u root
-# → fatal: [server1]: UNREACHABLE! msg: Permission denied (publickey,password)
+# Проверка создания пользователя
+ansible all -m shell -a "id ansible-deploy" --become
+# → server1 | CHANGED | rc=0 > uid=1001(ansible-deploy) gid=1001(ansible-deploy) ...
+
+# Проверка SSH-подключения от имени нового пользователя
+ssh -i ~/.ssh/id_ed25519_ansible ansible-deploy@server1 "echo OK"
+# → OK
+
+# Проверка sudoers
+ansible all -m shell -a "sudo -l -U ansible-deploy" --become
+# → (ALL : ALL) ALL
+
+# Проверка доступности
+ansible all -m ping -u ansible-deploy
+# → server1 | SUCCESS => {
+# →     "changed": false,
+# →     "ping": "pong"
+# → }
 ```
 
-**Диагноз:** SSH-сервер отвергает подключение, так как удаленный доступ для `root` (`PermitRootLogin no`) закрыт в `sshd_config`.
-
-#### 3. Переход на новую конфигурацию (После миграции)
-
-Теперь необходимо обновить конфигурацию проекта для использования нового пользователя и повышения привилегий.
+#### 3. Обновление конфигурации проекта
 
 **Обновление инвентаря `inventory.ini`:**
 
@@ -238,12 +256,13 @@ server1 ansible_host=192.168.1.10
 ```
 
 **Инспекция через `ansible-inventory`:**
-Убедитесь, что переменные применились корректно:
+
 ```bash
 ansible-inventory --host server1 --vars | grep ansible_user
+# → ansible_user: ansible-deploy
 ```
 
-**Настройка переменных (`group_vars/all.yml` или `ansible.cfg`):**
+**Настройка переменных (`group_vars/all.yml`):**
 
 ```yaml
 ---
@@ -255,8 +274,6 @@ ansible_become_method: sudo
 
 **Адаптация рабочих плейбуков:**
 
-Теперь все задачи, меняющие состояние системы, должны явно запрашивать права суперпользователя через `become: true`.
-
 ```yaml
 ---
 - name: Деплой приложения
@@ -267,9 +284,10 @@ ansible_become_method: sudo
     - name: Обновление кэша пакетов (apt)
       ansible.builtin.apt:
         update_cache: yes
+      become: true
 ```
 
-### Сценарий: Откат миграции (Rollback)
+### Сценарий 2: Откат миграции (Rollback)
 
 Если миграция прошла неуспешно или требуется вернуть доступ от `root`, используйте следующий плейбук отката:
 
@@ -306,7 +324,7 @@ ansible_become_method: sudo
       ansible.posix.authorized_key:
         user: root
         state: absent
-        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+        key: "{{ lookup('file', '~/.ssh/id_ed25519_ansible.pub') }}"
 
   handlers:
     - name: Restart SSH
@@ -315,7 +333,7 @@ ansible_become_method: sudo
         state: restarted
 ```
 
-**Запуск отката:**
+Запуск отката:
 
 ```bash
 # Запуск от имени root (если еще доступен)
@@ -325,7 +343,7 @@ ansible-playbook -i inventory.ini rollback.yml -u root
 ansible-playbook -i inventory.ini rollback.yml -u ansible-deploy --ask-become-pass
 ```
 
-### Сценарий: Миграция с поддержкой SELinux
+### Сценарий 3: Миграция с поддержкой SELinux
 
 На системах с SELinux (RHEL/CentOS/Fedora) миграция требует дополнительных шагов:
 
@@ -336,7 +354,7 @@ ansible-playbook -i inventory.ini rollback.yml -u ansible-deploy --ask-become-pa
   become: false
   vars:
     deploy_user: "ansible-deploy"
-    deploy_pub_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+    deploy_pub_key: "{{ lookup('file', '~/.ssh/id_ed25519_ansible.pub') }}"
 
   tasks:
     - name: Установка пакета sudo
@@ -404,7 +422,7 @@ ansible-playbook -i inventory.ini rollback.yml -u ansible-deploy --ask-become-pa
       become: yes
 ```
 
-### Сценарий: Мульти-пользовательская миграция (разные роли)
+### Сценарий 4: Мульти-пользовательская миграция (разные роли)
 
 Для разделения ответственности рекомендуется создавать отдельных пользователей для разных задач:
 
@@ -489,61 +507,336 @@ ansible all -m shell -a "sudo -l -U ansible-deploy" --become
 
 ---
 
-## Дополнительная информация
+## Операции и команды
 
-### Лучшие практики
+### Основные команды управления пользователями
 
-1. **Принцип минимальных привилегий**: Создавайте отдельных пользователей для каждой задачи (deploy, monitoring, backup) с гранулярными правами sudo.
-2. **Идемпотентность**: Bootstrap-плейбук должен быть безопасным для повторного запуска — не должен пытаться создать уже существующего пользователя.
-3. **Валидация sudoers**: Всегда используйте `validate: 'visudo -cf %s'` — ошибка в синтаксисе приводит к полной блокировке `sudo`.
-4. **SELinux**: На системах с SELinux всегда выполняйте `restorecon -Rv` после настройки SSH-ключей.
-5. **Ротация ключей**: Регулярно ротируйте SSH-ключи. Используйте `exclusive: yes` в `ansible.posix.authorized_key` для полной замены ключей.
-6. **Логирование**: Включайте `no_log: true` для задач, содержащих пароли или ключи.
-7. **Тестирование**: Всегда тестируйте миграцию на staging-сервере перед production.
-8. **Документация**: Фиксируйте всех выделенных пользователей и их назначение в инвентаре.
-9. **Мониторинг**: Настройте аудит входов через `auditd` или `journald` для отслеживания действий выделенных пользователей.
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible all -m shell -a "id ansible-deploy"` | Проверка существования пользователя | `ansible all -m shell -a "id ansible-deploy" --become` |
+| `ansible all -m shell -a "sudo -l -U ansible-deploy"` | Проверка прав sudo | `ansible all -m shell -a "sudo -l -U ansible-deploy" --become` |
+| `ansible all -m ping -u ansible-deploy` | Проверка доступности | `ansible all -m ping -u ansible-deploy` |
+| `ansible-inventory --host server1 --vars` | Просмотр переменных хоста | `ansible-inventory --host server1 --vars \| grep ansible_user` |
+| `ansible all -m setup -a "filter=ansible_user_dir"` | Сбор фактов о домашней директории | `ansible all -m setup -a "filter=ansible_user_dir"` |
+
+### Команды для работы с SSH
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ssh -i ~/.ssh/id_ed25519_ansible ansible-deploy@server1` | Проверка SSH-подключения | `ssh -i ~/.ssh/id_ed25519_ansible ansible-deploy@server1 "echo OK"` |
+| `ssh -vvv ansible-deploy@server1` | Детальная диагностика SSH | `ssh -vvv ansible-deploy@server1` |
+| `ansible all -m shell -a "exit" --ssh-extra-args="-O exit"` | Сброс ControlPersist сокетов | `ansible all -m shell -a "exit" --ssh-extra-args="-O exit"` |
+| `rm -f ~/.ansible/cp/ansible-ssh-*` | Ручной сброс сокетов | `rm -f ~/.ansible/cp/ansible-ssh-*` |
+
+### Команды для работы с sudoers
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `visudo -cf /etc/sudoers.d/ansible-deploy` | Валидация синтаксиса sudoers | `visudo -cf /etc/sudoers.d/ansible-deploy` |
+| `sudo -l -U ansible-deploy` | Просмотр прав пользователя | `sudo -l -U ansible-deploy` |
+| `cat /etc/sudoers.d/ansible-deploy` | Просмотр файла прав | `cat /etc/sudoers.d/ansible-deploy` |
+
+### Команды для работы с SELinux
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ls -Z /home/ansible-deploy/.ssh` | Просмотр контекстов безопасности | `ls -Z /home/ansible-deploy/.ssh` |
+| `restorecon -Rv /home/ansible-deploy/.ssh` | Восстановление контекстов | `restorecon -Rv /home/ansible-deploy/.ssh` |
+| `ausearch -m avc -ts recent \| grep sshd` | Поиск denial в логах | `ausearch -m avc -ts recent \| grep sshd` |
+| `getenforce` | Проверка режима SELinux | `getenforce` |
+
+---
+
+## Устранение типичных неполадок
+
+### Проблема: `UNREACHABLE! Permission denied (publickey)`
+
+**Симптом:**
+```bash
+# fatal: [server1]: UNREACHABLE! msg: Permission denied (publickey,password)
+```
+
+**Причины и решения:**
+
+| Причина | Диагностика | Решение |
+|---|---|---|
+| SSH-ключ не добавлен | `ssh -vvv ansible-deploy@server1` | Добавьте ключ через `ansible.posix.authorized_key` |
+| `PermitRootLogin no` активен, а плейбук запускается от `root` | Проверьте `ansible_user` в инвентаре | Обновите `ansible_user: ansible-deploy` |
+| Неверные права на `.ssh` | `ls -la /home/ansible-deploy/.ssh` | `chmod 700 /home/ansible-deploy/.ssh && chmod 600 /home/ansible-deploy/.ssh/authorized_keys` |
+| SELinux блокирует доступ | `ausearch -m avc -ts recent` | `restorecon -Rv /home/ansible-deploy/.ssh` |
+
+### Проблема: `Permission denied` при выполнении задачи
+
+**Симптом:**
+```bash
+# fatal: [server1]: FAILED! => {"changed": false, "msg": "Permission denied"}
+```
+
+**Причины и решения:**
+
+| Причина | Диагностика | Решение |
+|---|---|---|
+| Отсутствует `become: true` | Проверьте лог задачи | Добавьте `become: true` на уровне play или task |
+| `sudo` требует пароль | `sudo -l -U ansible-deploy` | Настройте `NOPASSWD` в `/etc/sudoers.d/` |
+| Пакет `sudo` не установлен | `which sudo` | Установите через `ansible.builtin.package` |
+
+### Проблема: `sudo: a password is required`
+
+**Симптом:**
+```bash
+# fatal: [server1]: FAILED! => {"msg": "sudo: a password is required"}
+```
+
+**Решение:**
+```bash
+# Проверка прав
+sudo -l -U ansible-deploy
+# → (ALL : ALL) ALL
+
+# Если NOPASSWD не настроен — добавьте:
+echo 'ansible-deploy ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/ansible-deploy
+sudo visudo -cf /etc/sudoers.d/ansible-deploy
+```
+
+### Проблема: Зависание после правок (ControlPersist)
+
+**Симптом:** После блокировки `root` плейбуки зависают или используют старые права.
+
+**Решение:**
+```bash
+# Сброс сокетов
+ansible all -m shell -a "exit" --ssh-extra-args="-O exit"
+
+# Или ручной сброс
+rm -f ~/.ansible/cp/ansible-ssh-*
+
+# В ansible.cfg можно уменьшить время жизни
+# [ssh_connection]
+# ControlPersist = 30s
+```
+
+### Проблема: Обработчик SSH не выполняется
+
+**Симптом:** После изменения `sshd_config` сервис не перезапускается.
+
+**Решение:**
+```yaml
+# Убедитесь, что notify находится на одном уровне с задачей
+- name: Изменение конфигурации
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: 'PermitRootLogin no'
+  notify: Restart SSH  # ← На одном уровне с задачей
+
+# Проверка обработчиков
+ansible-playbook playbook.yml --list-handlers
+```
+
+### Проблема: SELinux блокирует SSH-ключ
+
+**Симптом:** `Permission denied (publickey)` при корректных правах и ключе.
+
+**Диагностика:**
+```bash
+# Проверка контекстов
+ls -Z /home/ansible-deploy/.ssh
+# → unconfined_u:object_r:user_home_t:s0 authorized_keys
+
+# Проверка логов
+ausearch -m avc -ts recent | grep sshd
+```
+
+**Решение:**
+```bash
+# Восстановление контекстов
+restorecon -Rv /home/ansible-deploy/.ssh
+
+# Если не помогает — проверка через semanage
+semanage fcontext -a -t ssh_home_t "/home/ansible-deploy/.ssh(/.*)?"
+restorecon -Rv /home/ansible-deploy/.ssh
+```
+
+### Проблема: Частичный деплой при миграции
+
+**Симптом:** После блокировки `root` часть хостов осталась недоступной.
+
+**Решение:**
+```yaml
+# Используйте serial для последовательного обновления
+- hosts: all
+  serial: "25%"
+  max_fail_percentage: 10
+  any_errors_fatal: true
+  tasks:
+    - name: Миграция
+      ansible.builtin.include_tasks: migrate.yml
+```
+
+---
+
+## Рекомендации
+
+### Best Practices
+
+1. **Принцип наименьших привилегий:** Создавайте отдельных пользователей для каждой задачи (deploy, monitoring, backup) с гранулярными правами sudo.
+2. **Идемпотентность:** Bootstrap-плейбук должен быть безопасным для повторного запуска — не должен пытаться создать уже существующего пользователя.
+3. **Валидация sudoers:** Всегда используйте `validate: 'visudo -cf %s'` — ошибка в синтаксисе приводит к полной блокировке `sudo`.
+4. **SELinux:** На системах с SELinux всегда выполняйте `restorecon -Rv` после настройки SSH-ключей. Подробнее: **[Управление SELinux через Ansible](../Modules/ansible_service_and_system_config_modules.md#selinux)**.
+5. **Ротация ключей:** Регулярно ротируйте SSH-ключи. Используйте `exclusive: yes` в `ansible.posix.authorized_key` для полной замены ключей.
+6. **Логирование:** Включайте `no_log: true` для задач, содержащих пароли или ключи.
+7. **Тестирование:** Всегда тестируйте миграцию на staging-сервере перед production.
+8. **Документация:** Фиксируйте всех выделенных пользователей и их назначение в инвентаре.
+9. **Аудит:** Настройте аудит входов через `auditd` или `journald` для отслеживания действий выделенных пользователей.
+10. **Rollback-план:** Всегда имейте плейбук отката и протестируйте его на staging перед production-миграцией.
+
+### Безопасность
+
+- **Минимизация привилегий:** Используйте `become_user: postgres` (или другой специализированный пользователь) для задач управления БД, чтобы не выполнять команды от имени суперпользователя ОС (`root`) внутри СУБД. Подробнее: **[Рекомендации по безопасности в Ansible](../ansible_security_best_practices.md)**.
+- **Управление секретами:** Для защиты конфиденциальных данных (пароли, TLS-ключи) всегда используйте шифрование. Подробнее: **[Основы Ansible Vault](../Vault/basics.md)**.
+- **Изоляция CI/CD:** Используйте Protected Runners для production-деплоев. Разные окружения должны использовать разные SSH-ключи и сервисных пользователей. Подробнее: **[CI/CD с Ansible: безопасные пайплайны](example_real_world_ci_cd.md)**.
+
+### Производительность и стабильность
+
+- **SSH Multiplexing:** Настройте `ControlPersist` в `ansible.cfg` для ускорения последующих подключений. При миграции учитывайте, что старые сессии могут удерживать неактуальные права.
+- **Connection Pipelining:** Включите `ANSIBLE_PIPELINING=True` для уменьшения количества SSH-соединений (требует отключения `requiretty` в sudoers).
+- **Check Mode:** Модули Ansible поддерживают `check_mode`. Используйте `--check` для предварительной проверки изменений перед миграцией.
 
 ### Граничные случаи и ограничения
 
-1. **Минимальные образы (Docker, Alpine)**: Пакет `sudo` отсутствует по умолчанию. Добавьте его установку в bootstrap-плейбук.
-2. **Windows-хосты**: Механизм `become` работает через `runas` (local) или凭据 Windows. SSH-ключи не используются — применяются凭据 WinRM.
-3. **BSD-системы**: На OpenBSD используется `doas` вместо `sudo`. Настройте `ansible_become_method: doas`.
-4. **Контейнеры**: В Docker-контейнерах `sudo` может быть недоступен. Рекомендуется запускать контейнеры от нужного пользователя через `USER` в Dockerfile.
-5. **LDAP/AD интеграция**: При использовании централизованных каталогов убедитесь, что выделенный пользователь существует в LDAP и имеет корректные атрибуты.
-6. **Сетевые ограничения**: Если Control Node не имеет прямого доступа к хостам, используйте SSH-туннели или ProxyJump.
-
-### Типичные ошибки и устранение неполадок
-
-| Проблема | Вероятная причина | Диагностика | Решение |
-|---|---|---|---|
-| `UNREACHABLE! Permission denied (publickey)` | SSH-ключ не добавлен или `PermitRootLogin no` | `ssh -vvv user@host` для деталей | Добавьте ключ в `authorized_keys`, проверьте `sshd_config`. |
-| `Missing sudo password` | `NOPASSWD` не настроен | `sudo -l -U user` | Настройте `/etc/sudoers.d/` с `NOPASSWD: ALL`. |
-| `sudo: command not found` | Пакет `sudo` не установлен | `which sudo` | Установите `sudo` через `apt`/`yum`. |
-| `Permission denied` (задача) | Отсутствует `become: true` | Проверьте лог задачи | Добавьте `become: true` на уровне play или task. |
-| Зависание после правок | Активен `ControlPersist` | `ps aux \| grep ssh` | Сбросьте сокеты: `rm -f ~/.ansible/cp/ansible-ssh-*`. |
-| SSH-ключ отклоняется (SELinux) | Неверный контекст `.ssh` | `ls -Z ~/.ssh` | `restorecon -Rv /home/user/.ssh`. |
-| `sudo: a password is required` | Пароль не передан через `--ask-become-pass` | Проверьте переменную | Используйте `--ask-become-pass` или `ansible_become_password`. |
-| `Connection reset by peer` | Сервис `sshd` перезапущен во время задачи | Проверьте `sshd` лог | Добавьте `delay` перед перезапуском SSH. |
+1. **Минимальные образы (Alpine, Distroless):** Пакет `sudo` отсутствует по умолчанию. Добавьте его установку в bootstrap-плейбук.
+2. **Windows-хосты:** Механизм `become` работает через `runas` (local) или учетные данные Windows. SSH-ключи не используются — применяются учетные данные WinRM.
+3. **BSD-системы:** На OpenBSD используется `doas` вместо `sudo`. Настройте `ansible_become_method: doas`.
+4. **Контейнеры:** В Docker-контейнерах `sudo` может быть недоступен. Рекомендуется запускать контейнеры от нужного пользователя через `USER` в Dockerfile.
+5. **LDAP/AD интеграция:** При использовании централизованных каталогов убедитесь, что выделенный пользователь существует в LDAP и имеет корректные атрибуты.
+6. **Сетевые ограничения:** Если Control Node не имеет прямого доступа к хостам, используйте SSH-туннели или ProxyJump.
 
 ### Тестирование миграции перед production
 
-1. **Синтаксис**: `ansible-playbook bootstrap.yml --syntax-check`
-2. **Check Mode (Dry Run)**: `ansible-playbook bootstrap.yml --check --diff`
-3. **Limit Hosts**: `ansible-playbook bootstrap.yml --limit staging`
-4. **Verbose Mode**: `ansible-playbook bootstrap.yml -vvv` для детальной отладки
-5. **Инспекция переменных**: `ansible-inventory --host server1 --vars | grep ansible_user`
-6. **Валидация SSH**: `ssh -i ~/.ssh/id_rsa ansible-deploy@server1 "echo OK"`
-7. **Валидация sudo**: `ansible all -m shell -a "sudo -l -U ansible-deploy" --become`
+1. **Синтаксис:** `ansible-playbook bootstrap.yml --syntax-check`
+2. **Check Mode (Dry Run):** `ansible-playbook bootstrap.yml --check --diff`
+3. **Limit Hosts:** `ansible-playbook bootstrap.yml --limit staging`
+4. **Verbose Mode:** `ansible-playbook bootstrap.yml -vvvv` для детальной отладки
+5. **Инспекция переменных:** `ansible-inventory --host server1 --vars | grep ansible_user`
+6. **Валидация SSH:** `ssh -i ~/.ssh/id_ed25519_ansible ansible-deploy@server1 "echo OK"`
+7. **Валидация sudo:** `ansible all -m shell -a "sudo -l -U ansible-deploy" --become`
 
-## Смотрите также
+---
 
-- [Рекомендации по безопасности в Ansible](../ansible_security_best_practices.md)
-- [Модули управления пользователями и безопасностью](../Modules/ansible_security_and_user_management_modules.md)
-- [Основы Ansible Vault](../Vault/basics.md)
-- [Примеры отладки типовых проблем](debugging_examples.md)
-- [Управление политиками паролей в Linux (chage)](../../Linux/SystemAdministration/Users/password_policy_chage.md)
-- [Управление пользователями и группами в Linux](../../Linux/SystemAdministration/users_management.md)
-- [Автоматизация управления идентификацией (Identity Management)](../ansible-identity-management.md)
-- [Закалка ОС и базовая безопасность](../ansible-os-hardening.md)
-- [Типовая структура проекта Ansible](example_project_layout.md)
-- [CI/CD с Ansible: безопасные пайплайны](example_real_world_ci_cd.md)
+## Дополнительная информация
+
+### Смотрите также
+
+- **[Ansible: Рекомендации по безопасности](../ansible_security_best_practices.md)** — общая стратегия защиты, настройка выделенного пользователя, Vault, аудит.
+- **[Управление пользователями и идентификацией в Ansible](../ansible-identity-management.md)** — управление учетными записями, группами, sudoers и SSH-ключами.
+- **[Примеры отладки типовых проблем](debugging_examples.md)** — общие подходы к отладке плейбуков и диагностике соединений.
+
+### Дополнительный сценарий: Security hardening выделенного пользователя
+
+После миграции на выделенного пользователя важно применить дополнительные меры hardening для повышения безопасности.
+
+```yaml
+---
+- name: Security hardening для ansible-deploy
+  hosts: all
+  become: true
+  vars:
+    deploy_user: "ansible-deploy"
+
+  tasks:
+    - name: Настройка ограничений sudo (гранулярный доступ)
+      ansible.builtin.copy:
+        content: |
+          {{ deploy_user }} ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *, /usr/bin/systemctl reload *, /usr/bin/apt-get update, /usr/bin/apt-get upgrade, /usr/bin/journalctl *
+        dest: "/etc/sudoers.d/{{ deploy_user }}"
+        owner: root
+        group: root
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Ограничение SSH доступа (AllowUsers)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?AllowUsers'
+        line: 'AllowUsers {{ deploy_user }}'
+        state: present
+        validate: 'sshd -t -f %s'
+      notify: Restart SSH
+
+    - name: Настройка SSH idle timeout
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?ClientAliveInterval'
+        line: 'ClientAliveInterval 300'
+        state: present
+        validate: 'sshd -t -f %s'
+      notify: Restart SSH
+
+    - name: Отключение SSH аутентификации по паролю
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+        validate: 'sshd -t -f %s'
+      notify: Restart SSH
+
+    - name: Настройка auditd для отслеживания sudo команд
+      ansible.builtin.package:
+        name: auditd
+        state: present
+
+    - name: Добавление правила audit для sudo
+      ansible.builtin.lineinfile:
+        path: /etc/audit/rules.d/ansible-sudo.rules
+        line: '-a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -F key=ansible-sudo'
+        state: present
+      register: audit_rule
+      changed_when: "'added' in audit_rule.stdout or 'already exists' in audit_rule.stdout"
+
+    - name: Перезагрузка auditd
+      ansible.builtin.systemd:
+        name: auditd
+        state: restarted
+      when: audit_rule.changed
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+```
+
+**Валидация hardening:**
+
+```bash
+# Проверка гранулярного sudo
+sudo -l -U ansible-deploy
+# → (ALL : ALL) NOPASSWD: /usr/bin/systemctl restart *, /usr/bin/systemctl reload *, /usr/bin/apt-get update, /usr/bin/apt-get upgrade, /usr/bin/journalctl *
+
+# Проверка AllowUsers
+grep AllowUsers /etc/ssh/sshd_config
+# → AllowUsers ansible-deploy
+
+# Проверка audit логов
+ausearch -k ansible-sudo -ts recent
+# → показывает команды, выполненные через sudo
+```
+
+### Именование и организации
+
+- **Пользователи:** Используйте согласованные имена: `ansible-deploy` (основной), `ansible-monitoring`, `ansible-backup` для разделения ответственности.
+- **SSH-ключи:** Храните ключи с описанием: `id_ed25519_ansible-deploy`, `id_ed25519_ansible-monitoring`.
+- **Плейбуки:** Bootstrap-плейбук (`bootstrap.yml`) должен быть отделен от рабочих плейбуков и запускаться только при первоначальной настройке.
+- **Репозитории:** Bootstrap-логика хранится в общем репозитории, конфигурация окружения — в проектном.
+
+### Граничные случаи
+
+| Сценарий | Проблема | Решение |
+|---|---|---|
+| Несколько `ansible.cfg` | Конфликт настроек | Ansible использует ближайший `ansible.cfg` к плейбуку; не создавайте дубли. |
+| Windows-контрольный узел | Некоторые модули не работают | Используйте WSL2 или Linux-контрольный узел. |
+| Параллельный запуск | Файловые конфликты | Используйте `serial` в плейбуке или `forks` в `ansible.cfg`. |
+| ControlPersist | Старая сессия удерживает неактуальные права | Сбросьте сокеты: `ansible all -m shell -a "exit" --ssh-extra-args="-O exit"`. |
+| SELinux | Контексты `.ssh` неверны | `restorecon -Rv /home/user/.ssh`. |
+| Vault и CI/CD | Пароль Vault недоступен | Передавайте через защищенные файловые переменные CI/CD с маскированием. |
+| Большие инвентари | Медленная загрузка | Используйте динамический инвентарь или `yaml` вместо `ini` формата. |

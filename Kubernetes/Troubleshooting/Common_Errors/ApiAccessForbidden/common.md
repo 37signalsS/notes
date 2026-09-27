@@ -354,6 +354,9 @@ rules:
 | `secrets "my-secret" is forbidden: ... resourceNames` | `list` без field selector | Использовать `get` или `--field-selector=metadata.name=...` |
 | `User "system:anonymous" cannot ...` | Анонимный доступ без прав | Включить аутентификацию или предоставить права `system:unauthenticated` |
 | `namespaces "prod" is forbidden` | Role вместо ClusterRole для кластерного ресурса | Использовать ClusterRole + ClusterRoleBinding |
+| `error: You must be logged in to the server` | kubeconfig указывает не на тот кластер/user | Проверить `kubectl config current-context` и `kubectl config view --minify` |
+| `connection refused` к API из пода | NetworkPolicy блокирует egress к порту 6443 | Добавить Egress-правило для API-сервера (6443/TCP) |
+| `429 Too Many Requests` / `403` при нагрузке | API Priority and Fairness отклоняет запросы | Проверить `kubectl get flowschemas` и метрики APF |
 
 ## Дополнительная информация
 
@@ -408,3 +411,7 @@ kubectl access-matrix serviceaccount/prometheus -n monitoring
 - [Объекты RBAC: детальный разбор](rbac_objects.md)
 - [Лучшие практики и превентивные меры](best_practices.md)
 - [Детали wildcard и resourceNames](../../../Security/rbac/roles.md)
+- [API Priority and Fairness (APF)](../../../Concepts/api_priority_and_fairness.md) — 403/429 при перегрузке API-сервера
+- [NetworkPolicy для Control Plane](../../../Networking/Network/NetworkPolicy/control_plane_network_policy.md) — сетевые блокировки доступа к API
+- [NetworkPolicy и Service Mesh](../../../Networking/Network/NetworkPolicy/service_mesh_interaction.md) — L7-авторизация вне Kubernetes RBAC
+- [Kubeconfig и управление подключениями](../../../Operations/kubeconfig_and_connection.md) — ошибки контекста

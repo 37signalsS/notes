@@ -146,6 +146,111 @@ generators:
 
 ## 4. Дополнительная информация
 
+### Продвинутые паттерны Components
+
+Components позволяют создавать переиспользуемые «пакеты логики», которые подмешиваются к приложениям горизонтально. В отличие от base (которая задаёт фундамент), компоненты — опциональны и независимы.
+
+**Паттерн 1: Monitoring sidecar**
+```yaml
+# components/prometheus-sidecar/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - service-monitor.yaml
+
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: prometheus-exporter
+          image: prom/node-exporter:latest
+          ports:
+            - containerPort: 9100
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+```
+
+**Паттерн 2: Security hardening (см. [Security Hardening](./kustomize_security_hardening.md))**
+```yaml
+# components/restricted-pss/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext/runAsNonRoot
+        value: true
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext/capabilities/drop
+        value: ["ALL"]
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext/readOnlyRootFilesystem
+        value: true
+```
+
+**Паттерн 3: Log shipping (Fluent Bit sidecar)**
+```yaml
+# components/log-shipper/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: log-shipper
+          image: fluent/fluent-bit:latest
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: varlog
+          emptyDir: {}
+```
+
+**Использование нескольких компонентов:**
+```yaml
+# overlays/production/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/prometheus-sidecar
+  - ../../components/restricted-pss
+  - ../../components/log-shipper
+```
+
+**Сравнение Base vs Components:**
+
+| Критерий | Base | Components |
+| :--- | :--- | :--- |
+| **Роль** | Фундамент проекта | Опциональные возможности |
+| **Связь** | Вертикальная (иерархия) | Горизонтальная (подмешивание) |
+| **Количество** | Одна base на overlay | Неограниченное количество компонентов |
+| **Namespace/namePrefix** | Нет (нейтральны) | Могут содержать |
+| **Патчи** | Ресурсы — статичные | Патчи + ресурсы |
+
 ### Ограничения и особенности
 
 1. **Порядок обработки:** Kustomize выполняет операции в строгом порядке: `resources` → `generators` → `transformers` → `validators`. Патчи применяются в фазе трансформации.
@@ -153,9 +258,11 @@ generators:
 3. **Версионность:** Replacements доступны только в Kustomize v4.0.0+. Использование `vars` в новых проектах запрещено (deprecated).
 
 ### См. также
-- **[Обзор и основные концепции](./kustomize_overview.md)** — базовые определения и установка.
+- **[Обзор Kustomize: основные концепции](./kustomize_overview.md)** — базовые определения и установка.
 - **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — механизм работы Strategic Merge и JSON патчей.
 - **[Интеграция в CD конвейеры](./kustomize_cd_integration.md)** — использование в Jenkins и GitOps.
+- **[Security Hardening](./kustomize_security_hardening.md)** — PSS, NetworkPolicy, OPA через компоненты.
+- **[Multi-cluster паттерны](./kustomize_multi_cluster.md)** — multi-cluster и multi-tenancy через overlays.
 
 ### Внешние ресурсы
 - [Kustomize Built-in Plugins](https://kubectl.docs.kubernetes.io/guides/extending_kustomize/builtins/)

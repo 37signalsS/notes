@@ -265,7 +265,7 @@ releases:
 # .gitlab-ci.yml
 deploy:
   stage: deploy
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     - apk add --no-cache helmfile yq
     - helmfile -e production sync --wait --timeout 600s

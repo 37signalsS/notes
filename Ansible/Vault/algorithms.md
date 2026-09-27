@@ -2,44 +2,37 @@
 
 ## Определения
 
-- **Криптографическая схема (Cipher Suite)**: Набор алгоритмов, обеспечивающих защиту данных. В Ansible Vault используется фиксированная схема, которую пользователь не может изменить, что гарантирует высокий уровень безопасности и совместимость между версиями.
-- **PBKDF2 (Password-Based Key Derivation Function 2)**: Функция формирования ключа на основе пароля. Она делает перебор паролей (брутфорс) вычислительно дорогим за счет тысяч итераций хеширования. В Ansible используется реализация `PBKDF2-HMAC-SHA256`.
+- **Cipher Suite**: Набор алгоритмов, обеспечивающих защиту данных. В Ansible Vault используется фиксированная схема, которую пользователь не может изменить, что гарантирует высокий уровень безопасности и совместимость между версиями.
+- **PBKDF2 (Password-Based Key Derivation Function 2)**: Функция формирования ключа на основе пароля. Она делает перебор паролей (брутфорс) вычислительно дорогим за счет тысяч итераций хеширования. В Ansible используется реализация `PBKDF2-HMAC-SHA256` с **10 000 итераций**.
 - **KDF (Key Derivation Function)**: Функция формирования ключа, преобразующая входной секрет (пароль) в криптографически стойкие ключи для шифрования и аутентификации.
 - **HMAC (Hash-based Message Authentication Code)**: Код аутентификации сообщений, использующий хеш-функцию. Обеспечивает проверку целостности и подлинности данных, предотвращая их модификацию в зашифрованном виде.
 - **CTR (Counter Mode)**: Режим счетчика в блочном шифровании, превращающий блочный шифр в потоковый. Позволяет шифровать данные произвольной длины без необходимости дополнения (padding) и обеспечивает высокую производительность за счет параллелизации.
-- **Salt (Соль)**: Случайные данные, добавляемые к паролю перед хешированием. Гарантирует, что одинаковые пароли дают разные ключи, предотвращая атаки по таблицам rainbow tables.
-- **Data Tagging**: Механизм отслеживания происхождения данных в Ansible, предотвращающий случайные утечки зашифрованных значений в логи CI/CD (доступен с версии ansible-core 2.19+).
-
-## Предварительные требования
-
-Перед работой с алгоритмами шифрования Ansible Vault убедитесь в наличии:
-
-- **Python**: версия 3.8+ (для совместимости с ansible-core 2.12+).
-- **Библиотека `cryptography`**: установите через `pip install cryptography` (обычно уже установлена как зависимость ansible-core).
-- **OpenSSL**: для ручных операций с сертификатами (опционально).
-- **Хранилище паролей**: файл или скрипт с правами доступа `chmod 600` (для тестирования алгоритмов).
-
-Для проверки версий:
-```bash
-python3 -c "import cryptography; print(cryptography.__version__)"
-openssl version
-ansible --version | head -1
-```
+- **Salt (Соль)**: Случайные данные (32 байта), добавляемые к паролю перед хешированием. Гарантирует, что одинаковые пароли дают разные ключи, предотвращая атаки по таблицам rainbow tables.
+- **Encrypt-then-MAC**: Криптографическая схема, при которой данные сначала шифруются, а затем вычисляется код аутентификации от шифротекста. Это исключает атаки на целостность до расшифровки.
+- **Энтропия (Entropy)**: Мера случайности данных. Высокая энтропия шифротекста (близкая к 8 бит/байт) указывает на качественное шифрование без искажений.
 
 ## Основные концепции
 
-### Компоненты защиты
+### Архитектура шифрования Ansible Vault
 
-Ansible Vault реализует схему **Encrypt-then-MAC** (шифрование, затем аутентификация). Это современный стандарт безопасности, гарантирующий, что любые изменения в зашифрованном файле будут обнаружены ДО попытки расшифровки.
+Ansible Vault использует схему **Encrypt-then-MAC**: сначала данные шифруются алгоритмом AES-256-CTR, затем вычисляется HMAC-SHA256 от шифротекста. Это гарантирует, что любые изменения в зашифрованном файле будут обнаружены ДО попытки расшифровки.
 
-| Компонент | Технология | Технические подробности |
-| :--- | :--- | :--- |
-| **Шифрование** | `AES-256-CTR` | Симметричный алгоритм с ключом 256 бит. Режим CTR превращает его в потоковый шифр, что исключает атаки на дополнение (padding oracle attacks). |
-| **Производная ключа** | `PBKDF2-HMAC-SHA256` | Использует SHA-256 как базовую хеш-функцию. Зафиксировано **10 000 итераций** и 32-байтная случайная соль (Salt), генерируемая при каждом создании файла. |
-| **Целостность (MAC)** | `HMAC-SHA256` | Вычисляется от зашифрованного содержимого. Гарантирует целостность: если байты файла изменены, Ansible выдаст ошибку аутентификации. |
-| **Крипто-библиотека** | `cryptography` | Современная Python-библиотека (на базе OpenSSL), используемая в `ansible-core` для всех низкоуровневых операций. |
+```
+Планировочный цикл работы:
+1. Чтение файла → проверка заголовка Vault
+2. Извлечение соли (Salt, 32 байта) и Vault ID из заголовка
+3. Деривация ключа: PBKDF2-HMAC-SHA256 (10 000 итераций) → 80 байт ключевого материала
+   - 0-31 байт: ключ шифрования AES-256
+   - 32-63 байт: ключ HMAC-SHA256
+   - 64-79 байт: вектор инициализации (IV) для CTR
+4. Проверка HMAC целостности
+5. Расшифровка AES-256-CTR → возврат plaintext в YAML-парсер
+6. Пометка значений как EncryptedString (ansible-core 2.19+)
+```
 
-### Процесс формирования ключа (KDF Details)
+**Для Sysadmin:** Временные файлы создаются в `$TMPDIR`. На shared Control Node контролируйте права доступа к этой директории. Используйте `umask 0077` для ограничения создания файлов с правами OTHER.
+
+### Детали формирования ключа (KDF)
 
 При выполнении расшифровки или проверки целостности Ansible выполняет следующие этапы деривации ключей:
 
@@ -50,23 +43,63 @@ Ansible Vault реализует схему **Encrypt-then-MAC** (шифрова
    - **Байты 32-63 (256 бит)**: Ключ для вычисления и проверки HMAC (MAC Key).
    - **Байты 64-79 (128 бит)**: Вектор инициализации (IV — Initialization Vector) для режима CTR.
 
-### Ограничения безопасности и атаки на GPU (2024-2026)
+**Для SRE:** Фиксированное число итераций (10 000) — исторический компромисс между безопасностью и скоростью работы. По современным меркам (OWASP 2025 — от 600 000 итераций) это значение считается **низким**. Компенсируйте это мастер-паролями длиной **от 20 символов** с высокой энтропией. При массовом расшифровании (>100 файлов) учитывайте задержку ~50-100 мс на файл для современного CPU.
 
-Количество итераций (10 000) в Ansible Vault является историческим компромиссом между безопасностью и скоростью работы на слабых управляющих узлах. По современным меркам (рекомендации OWASP на 2025 год — от 600 000 итераций) это значение считается **низким**.
+### Ограничения безопасности
 
-**Риски:** При компрометации зашифрованного файла злоумышленник может использовать мощные видеокарты (GPU) для высокоскоростного перебора паролей.
-**Защита:** Единственный надежный способ компенсировать низкое число итераций — использование **мастер-паролей длиной от 20 символов** с высокой энтропией (случайные фразы, комбинации символов).
+- **Количество итераций PBKDF2**: 10 000 итераций защищают от быстрого перебора на CPU, но уязвимы для GPU-атак (видеокарты). Единственный надежный способ компенсации — длинные мастер-пароли.
+- **Режим CTR**: не требует дополнения (padding), что исключает padding oracle attacks. Однако CTR не обеспечивает аутентичность самостоятельно — поэтому используется paired с HMAC-SHA256 (Encrypt-then-MAC).
+- **Ключи в памяти**: ключи расшифровки и открытый текст присутствуют в памяти Control Node. На shared серверах убедитесь, что система имеет механизмы защиты памяти (например, `mlock`).
+- **Data Tagging**: начиная с ansible-core 2.19+, Ansible помечает зашифрованные значения тегом `VaultedValue`. Это позволяет проверить происхождение значения, но **не скрывает его**: `debug` напечатает секрет открытым текстом. Защита — только `no_log`.
 
-### Версии формата и заголовков
+### Формат заголовков
 
 Первая строка файла определяет логику обработки секретов:
-- `$ANSIBLE_VAULT;1.1;AES256`: Классический формат (Ansible 1.5+). Поддерживает только один пароль.
-- `$ANSIBLE_VAULT;1.2;AES256;prod`: Современный формат (Ansible 2.4+). Включае метку **Vault ID**, что позволяет Ansible мгновенно выбрать нужный ключ из списка предоставленных (вместо перебора всех).
 
-**Data Tagging и EncryptedString (Core 2.19+):**
-В последних версиях Ansible внедрен внутренний тип данных `EncryptedString`. Это развитие системы отслеживания секретов в памяти процесса. Объект секрета «помечается», и если разработчик попытается вывести его через модуль `debug` без явного указания параметров, Ansible блокирует вывод или заменяет его на `[VALUE_IS_ENCRYPTED]`, предотвращая случайные утечки в логи CI/CD.
+- `$ANSIBLE_VAULT;1.1;AES256`: Формат без метки. Ansible не знает, какой пароль подходит, поэтому перебирает **все** предоставленные секреты, пока один не сработает.
+- `$ANSIBLE_VAULT;1.2;AES256;label`: Современный формат с меткой **Vault ID**. Ansible сразу выбирает нужный пароль по метке, без перебора. При `vault_id_match: true` несовпадение метки даёт ошибку сразу.
+
+Формат 1.2 — результат `ansible-vault rekey` или `ansible-vault encrypt --encrypt-vault-id`. Ansible не повышает версию формата автоматически при перешифровке, поэтому файлы в репозитории могут оставаться в 1.1, пока вы явно не выполните `rekey`.
+
+> **Примечание:** Детальное сравнение форматов 1.1 и 1.2, настройка `vault_id_match` и логику выбора ключа см. в [Использование нескольких хранилищ (Multi-Vault)](./multi_vault.md#основные-концепции) и [Ansible Vault: Основы](./basics.md#основные-концепции).
+
+### Криптобиблиотека
+
+Ansible Vault использует Python-библиотеку `cryptography` (на базе OpenSSL) для всех низкоуровневых операций. Это обеспечивает:
+- **Совместимость**: зашифрованные файлы работают на Linux, macOS и Windows при условии совместимых версий Python и ansible-core.
+- **Безопасность**: регулярные обновления библиотеки исправляют уязвимости в криптографических примитивах.
+- **Производительность**: реализация на C с аппаратным ускорением (AES-NI) на современных CPU.
+
+**Для DevOps:** Устанавливайте `ansible-core[crypto]` для гарантии корректной версии библиотеки:
+```bash
+pip install 'ansible-core[crypto]'
+python3 -c "import cryptography; print(cryptography.__version__)"
+# → 45.0.0 или выше
+```
 
 ## Практические сценарии
+
+### Предварительные требования
+
+Перед работой с алгоритмами шифрования Ansible Vault убедитесь в наличии:
+
+- **Ansible (ansible-core)**: 2.19+ (для поддержки `EncryptedString` и Data Tagging).
+- **Python**: 3.11+ (требование ansible-core 2.19+).
+- **Библиотека `cryptography`**: установите через `pip install cryptography` (обычно уже установлена как зависимость ansible-core).
+- **OpenSSL**: для ручных операций с сертификатами (опционально).
+- **Хранилище паролей**: файл или скрипт с правами доступа `chmod 600`.
+
+Для проверки версий:
+```bash
+python3 -c "import cryptography; print(cryptography.__version__)"
+# → 45.0.0
+
+openssl version
+# → OpenSSL 3.0.0 или выше
+
+ansible --version | head -1
+# → ansible [core 2.19.0] или выше
+```
 
 ### Сценарий 1: Анализ заголовка зашифрованного файла
 
@@ -86,6 +119,8 @@ head -1 secrets.yml | cut -d';' -f2
 # → 1.2
 ```
 
+**Для Sysadmin:** Заголовок хранится в открытом виде. Избегайте использования чувствительных названий в метках Vault ID (например, `prod-db-root-admin`). Используйте нейтральные имена (`prod`, `db`, `app`).
+
 ### Сценарий 2: Принудительное обновление формата (Rekey)
 
 При переносе старых проектов (версии 1.1) на современные стандарты:
@@ -101,63 +136,7 @@ find group_vars -name "*.yml" -exec ansible-vault rekey --vault-id dev@.vault_pa
 ansible-vault rekey --vault-id old@prompt --new-vault-id new@prompt secrets.yml
 ```
 
-### Сценарий 3: Бенчмаркинг времени работы PBKDF2
-
-Измерение времени, затрачиваемого на деривацию ключа для конкретного пароля:
-
-```python
-#!/usr/bin/env python3
-# benchmark_pbkdf2.py
-
-import time
-import hashlib
-import os
-
-def benchmark_pbkdf2(password: str, iterations: int = 10000, salt: bytes = None):
-    """Бенчмарк PBKDF2-HMAC-SHA256 с фиксированной солью (32 байта)."""
-    if salt is None:
-        salt = os.urandom(32)
-
-    start = time.perf_counter()
-    dk = hashlib.pbkdf2_hmac(
-        'sha256',
-        password.encode(),
-        salt,
-        iterations,
-        dklen=80  # 3 Cipher Key + 32 MAC Key + 16 IV
-    )
-    elapsed = time.perf_counter() - start
-
-    cipher_key = dk[:32].hex()
-    mac_key = dk[32:64].hex()
-    iv = dk[64:80].hex()
-
-    return {
-        'time_ms': round(elapsed * 1000, 2),
-        'cipher_key': cipher_key[:16] + '...',
-        'mac_key': mac_key[:16] + '...',
-        'iv': iv[:16] + '...',
-        'iterations': iterations
-    }
-
-if __name__ == '__main__':
-    import sys
-    password = sys.argv[1] if len(sys.argv) > 1 else 'test_password'
-    result = benchmark_pbkdf2(password)
-    print(f"Password: {password[:4]}...{password[-4:]}")
-    print(f"Iterations: {result['iterations']}")
-    print(f"Time: {result['time_ms']} ms")
-    print(f"Cipher Key: {result['cipher_key']}")
-    print(f"MAC Key: {result['mac_key']}")
-    print(f"IV: {result['iv']}")
-```
-
-Запуск:
-```bash
-python3 benchmark_pbkdf2.py "MySecretPassword"
-```
-
-### Сценарий 4: Проверка целостности зашифрованного файла
+### Сценарий 3: Проверка целостности зашифрованного файла
 
 Валидация HMAC без расшифровки (для обнаружения повреждений):
 
@@ -192,166 +171,12 @@ fi
 ```bash
 chmod +x check_vault_integrity.sh
 ./check_vault_integrity.sh group_vars/prod/vault.yml
+# → OK: целостность подтверждена ($ANSIBLE_VAULT;1.2;AES256;prod)
 ```
 
-### Сценарий 5: Сравнение производительности AES-256-CTR vs AES-256-CBC
+**Для Sysadmin:** Включайте проверку целостности в cron на critical Vault-файлы. Это позволит обнаружить повреждение диска или несанкционированное изменение до попытки расшифровки в production.
 
-Измерение разницы в скорости между режимами шифрования:
-
-```python
-#!/usr/bin/env python3
-# benchmark_modes.py
-
-import time
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
-def benchmark_mode(mode_name, mode_obj, data, key, iv):
-    cipher = Cipher(algorithms.AES(key), mode_obj)
-    encryptor = cipher.encryptor()
-
-    start = time.perf_counter()
-    ct = encryptor.update(data) + encryptor.finalize()
-    elapsed = time.perf_counter() - start
-
-    return {
-        'mode': mode_name,
-        'time_ms': round(elapsed * 1000, 3),
-        'throughput_mbps': round((len(data) / 1024 / 1024) / elapsed, 2),
-        'ciphertext_len': len(ct)
-    }
-
-if __name__ == '__main__':
-    key = os.urandom(32)  # 256 bits
-    iv = os.urandom(16)   # 128 bits
-    data = os.urandom(1024 * 1024)  # 1 MB
-
-    # CTR (как в Ansible Vault)
-    ctr_result = benchmark_mode(
-        'AES-256-CTR',
-        modes.CTR(iv),
-        data, key, iv
-    )
-
-    # CBC (альтернатива)
-    cbc_result = benchmark_mode(
-        'AES-256-CBC',
-        modes.CBC(iv),
-        data, key, iv
-    )
-
-    print("Результаты бенчмарка (1 МБ данных):")
-    print(f"  CTR: {ctr_result['time_ms']}ms ({ctr_result['throughput_mbps']} MB/s)")
-    print(f"  CBC: {cbc_result['time_ms']}ms ({cbc_result['throughput_mbps']} MB/s)")
-    print(f"\nCTR быстрее на {(cbc_result['time_ms'] / ctr_result['time_ms'] - 1) * 100:.1f}%")
-```
-
-### Сценарий 6: Визуализация структуры зашифрованного файла
-
-Анализ и визуализация компонентов Vault-файла:
-
-```bash
-#!/bin/bash
-# visualize_vault_structure.sh
-
-VAULT_FILE="${1:?Укажите путь к зашифрованному файлу}"
-
-if [ ! -f "$VAULT_FILE" ]; then
-    echo "Файл не найден: $VAULT_FILE"
-    exit 1
-fi
-
-HEADER=$(head -1 "$VAULT_FILE")
-VERSION=$(echo "$HEADER" | cut -d';' -f2)
-ALGORITHM=$(echo "$HEADER" | cut -d';' -f3)
-VAULT_ID=$(echo "$HEADER" | cut -d';' -f4)
-
-echo "=== Структура Vault-файла ==="
-echo "Путь: $VAULT_FILE"
-echo "Размер: $(wc -c < "$VAULT_FILE") байт"
-echo ""
-echo "Заголовок: $HEADER"
-echo "├── Версия формата: $VERSION"
-echo "├── Алгоритм: $ALGORITHM"
-echo "├── Vault ID: ${VAULT_ID:-<отсутствует>}"
-echo "└── Данные: $(wc -l < "$VAULT_FILE") строк"
-echo ""
-
-if [ "$VERSION" = "1.2" ]; then
-    echo "✓ Формат 1.2: поддержка Vault ID, быстрый выбор ключа"
-else
-    echo "⚠ Формат 1.1: нет Vault ID, перебор всех ключей"
-fi
-
-echo ""
-echo "=== Сравнение версий ==="
-echo "Формат 1.1: \$ANSIBLE_VAULT;1.1;AES256"
-echo "  • Один пароль, перебор всех ключей"
-echo "  • Медленно при большом количестве хранилищ"
-echo ""
-echo "Формат 1.2: \$ANSIBLE_VAULT;1.2;AES256;label"
-echo "  • Метка Vault ID, мгновенный выбор ключа"
-echo "  • Рекомендуется для новых проектов"
-```
-
-### Сценарий 7: Тестирование стойкости пароля к перебору
-
-Оценка времени перебора для различных длин и энтропии паролей:
-
-```python
-#!/usr/bin/env python3
-# password_strength.py
-
-import math
-
-def entropy_chars(password: str) -> float:
-    """Энтропия пароля на основе множества символов."""
-    charset = 0
-    if any(c.islower() for c in password): charset += 26
-    if any(c.isupper() for c in password): charset += 26
-    if any(c.isdigit() for c in password): charset += 10
-    if any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in password): charset += 32
-    return len(password) * math.log2(charset) if charset > 0 else 0
-
-def estimate_crack_time(entropy_bits: float, guesses_per_second: float = 1e10) -> float:
-    """Оценка времени перебора в секундах (10 млрд попыток/сек — GPU)."""
-    combinations = 2 ** entropy_bits
-    return combinations / guesses_per_second / 2  # В среднем нужно перебрать половину
-
-def format_time(seconds: float) -> str:
-    """Форматирование времени в читаемый вид."""
-    if seconds < 60: return f"{seconds:.1f} секунд"
-    if seconds < 3600: return f"{seconds / 60:.1f} минут"
-    if seconds < 86400: return f"{seconds / 3600:.1f} часов"
-    if seconds < 31536000: return f"{seconds / 86400:.1f} дней"
-    if seconds < 31536000 * 1000: return f"{seconds / 31536000:.1f} лет"
-    return f"{seconds / 31536000 / 1000:.1f} тысяч лет"
-
-if __name__ == '__main__':
-    test_passwords = [
-        "password",
-        "MyPassword123",
-        "MyStr0ng!P@ssw0rd",
-        "Correct-Horse-Battery-Staple",
-        "Xk9#mP2$vL8qR!nY5wZ7",
-    ]
-
-    print("=== Анализ стойкости паролей ===\n")
-    print(f"{'Пароль':<30} {'Энтропия':<12} {'Время перебора'}")
-    print("-" * 70)
-
-    for pwd in test_passwords:
-        entropy = entropy_chars(pwd)
-        crack_time = estimate_crack_time(entropy)
-        display_pwd = pwd[:27] + '...' if len(pwd) > 30 else pwd
-        print(f"{display_pwd:<30} {entropy:<10.1f} бит  {format_time(crack_time)}")
-```
-
-Запуск:
-```bash
-python3 password_strength.py
-```
-
-### Сценарий 8: Миграция с Vault 1.1 на 1.2 в массовом порядке
+### Сценарий 4: Миграция с Vault 1.1 на 1.2 в массовом порядке
 
 Скрипт для автоматического обновления формата всех зашифрованных файлов в проекте:
 
@@ -390,7 +215,7 @@ echo ""
 echo "Итого: обновлено $COUNT файлов, ошибок: $ERRORS"
 ```
 
-### Сценарий 9: Проверка совместимости версий Ansible
+### Сценарий 5: Проверка совместимости версий Ansible
 
 Определение минимальной версии Ansible для работы с зашифрованными файлами:
 
@@ -424,7 +249,7 @@ if [ "$VERSION" = "1.2" ]; then
     echo ""
     if [[ "$CURRENT_ANSIBLE" < "2.4" ]]; then
         echo "⚠ ВНИМАНИЕ: Текущая версия не поддерживает Vault ID!"
-        echo "  Рекомендуется обновить Ansible до версии 2.4+"
+        echo "  Рекомендуется обновить Ansible до версии 2.20+"
     else
         echo "✓ Текущая версия совместима"
     fi
@@ -437,137 +262,32 @@ else
 fi
 ```
 
-### Сценарий 10: Анализ криптографических свойств файла
+## Операции и команды
 
-Проверка случайности соли и распределения байтов зашифрованных данных:
+### Переменные окружения, влияющие на криптографические алгоритмы
 
-```python
-#!/usr/bin/env python3
-# analyze_vault_crypto.py
+| Переменная | Описание | Влияние |
+|------------|----------|----------|
+| `PYTHONPATH` | Путь к модулям Python | Может потребоваться для нестандартных криптографических библиотек |
+| `CRYPTOGRAPHY_OPENSSL_NO_LEGACY` | Отключение legacy-алгоритмов OpenSSL | Влияет на доступные алгоритмы (не рекомендуется менять) |
 
-import sys
-import math
-from collections import Counter
+> **Примечание:** Общие переменные окружения Ansible Vault (`ANSIBLE_VAULT_PASSWORD_FILE`, `ANSIBLE_VAULT_IDENTITY_LIST` и др.) описаны в [Ansible Vault: Основы — Операции и команды](./basics.md#операции-и-команды).
 
-def analyze_vault_file(filepath: str):
-    """Анализ криптографических свойств зашифрованного Vault-файла."""
-    with open(filepath, 'rb') as f:
-        data = f.read()
+### Верификация криптографических компонентов
 
-    lines = data.split(b'\n')
-    header = lines[0].decode('utf-8', errors='ignore')
-    ciphertext = b''.join(lines[1:])
+```bash
+# Проверка версии библиотеки cryptography
+python3 -c "import cryptography; print(cryptography.__version__)"
 
-    print(f"=== Анализ: {filepath} ===")
-    print(f"Заголовок: {header}")
-    print(f"Общий размер: {len(data)} байт")
-    print(f"Размер шифротекста: {len(ciphertext)} байт")
-    print()
+# Проверка версии OpenSSL
+openssl version
 
-    # Анализ энтропии шифротекста
-    byte_counts = Counter(ciphertext)
-    total = len(ciphertext)
-    entropy = -sum((count/total) * math.log2(count/total) for count in byte_counts.values())
-
-    print(f"Энтропия шифротекста: {entropy:.3f} бит/байт (максимум 8.0)")
-    print(f"Уникальных байтов: {len(byte_counts)}/256")
-    print()
-
-    # Распределение частот (для визуального анализа)
-    print("Распределение байтов (первые 64):")
-    freq_bar = ""
-    max_count = max(byte_counts.values())
-    for i in range(64):
-        count = byte_counts.get(i, 0)
-        bar_len = int(count / max_count * 20) if max_count > 0 else 0
-        freq_bar += "█" * bar_len
-    print(f"  {freq_bar}")
-    print()
-
-    if entropy > 7.5:
-        print("✓ Высокая энтропия — данные хорошо зашифрованы")
-    elif entropy > 5.0:
-        print("⚠ Средняя энтропия — возможны проблемы с шифрованием")
-    else:
-        print("✗ Низкая энтропия — данные могут быть не зашифрованы")
-
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Использование: python3 analyze_vault_crypto.py <vault_file>")
-        sys.exit(1)
-    analyze_vault_file(sys.argv[1])
+# Проверка поддержки AES-NI (аппаратное ускорение)
+grep -o aes /proc/cpuinfo | wc -l
+# → 0 (отсутствует) или >0 (поддерживается)
 ```
 
-### Сценарий 11: Оптимизация времени расшифровки для больших файлов
-
-Тестирование производительности при различных размерах данных:
-
-```python
-#!/usr/bin/env python3
-# benchmark_vault_performance.py
-
-import time
-import os
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
-def benchmark_vault_workflow(password: str, data_size_mb: int):
-    """Бенчмарк полного цикла Vault: KDF + шифрование + расшифрование."""
-    salt = os.urandom(32)
-    iv = os.urandom(16)
-    data = os.urandom(data_size_mb * 1024 * 1024)
-
-    # Этап 1: KDF (PBKDF2)
-    start_kdf = time.perf_counter()
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=80,
-        salt=salt,
-        iterations=10000,
-    )
-    key_material = kdf.derive(password.encode())
-    cipher_key = key_material[:32]
-    mac_key = key_material[32:64]
-    elapsed_kdf = time.perf_counter() - start_kdf
-
-    # Этап 2: Шифрование (AES-256-CTR)
-    start_enc = time.perf_counter()
-    cipher = Cipher(algorithms.AES(cipher_key), modes.CTR(iv))
-    encryptor = cipher.encryptor()
-    ct = encryptor.update(data) + encryptor.finalize()
-    elapsed_enc = time.perf_counter() - start_enc
-
-    # Этап 3: Расшифрование
-    start_dec = time.perf_counter()
-    cipher = Cipher(algorithms.AES(cipher_key), modes.CTR(iv))
-    decryptor = cipher.decryptor()
-    pt = decryptor.update(ct) + decryptor.finalize()
-    elapsed_dec = time.perf_counter() - start_dec
-
-    return {
-        'data_size_mb': data_size_mb,
-        'kdf_ms': round(elapsed_kdf * 1000, 1),
-        'encrypt_ms': round(elapsed_enc * 1000, 1),
-        'decrypt_ms': round(elapsed_dec * 1000, 1),
-        'total_ms': round((elapsed_kdf + elapsed_enc + elapsed_dec) * 1000, 1),
-        'throughput_mbps': round(data_size_mb / (elapsed_enc + elapsed_dec), 1) if (elapsed_enc + elapsed_dec) > 0 else 0
-    }
-
-if __name__ == '__main__':
-    print("=== Бенчмарк производительности Ansible Vault ===\n")
-    print(f"{'Размер':<10} {'KDF':<10} {'Шифр.':<10} {'Расш.':<10} {'Итого':<10} {'Пропуск.'}")
-    print("-" * 60)
-
-    for size_mb in [1, 10, 50, 100]:
-        result = benchmark_vault_workflow("test_password", size_mb)
-        print(f"{result['data_size_mb']} МБ"
-              f"  {result['kdf_ms']}ms"
-              f"  {result['encrypt_ms']}ms"
-              f"  {result['decrypt_ms']}ms"
-              f"  {result['total_ms']}ms"
-              f"  {result['throughput_mbps']} МБ/с")
-```
+**Для Sysadmin:** AES-NI (AES New Instructions) — аппаратное ускорение шифрования в CPU. На серверах без AES-NI расшифровка будет медленнее. Проверьте поддержку: `grep -o aes /proc/cpuinfo | wc -l`.
 
 ## Устранение неполадок
 
@@ -578,7 +298,7 @@ if __name__ == '__main__':
 ```bash
 pip install cryptography
 # Или через ansible
-pip install ansible-core[crypto]
+pip install 'ansible-core[crypto]'
 ```
 
 ### Ошибка: `Unsupported algorithm` при расшифровке
@@ -593,31 +313,50 @@ head -1 secrets.yml
 # Если заголовок отсутствует — файл не является Vault-файлом
 ```
 
-### Ошибка: `Invalid token` при проверке HMAC
+### Ошибка: `HMAC verification failed` / `Invalid token`
 
-**Причина**: данные файла были модифицированы после шифрования.
+**Эта ошибка неоднозначна.** Ansible проверяет HMAC до расшифровки, но HMAC вычисляется ключом, который *произведён из пароля*. Поэтому одинаковую ошибку дают:
+
+- неверный пароль;
+- повреждённый или подменённый шифротекст (любой изменённый байт);
+- файл перешифрован другим паролем.
+
+Отличить причины по тексту ошибки нельзя. Диагностируйте по порядку:
 
 ```bash
-# Восстановление из Git
+# 1. Файл вообще читается как Vault?
+head -1 secrets.yml
+# → $ANSIBLE_VAULT;1.2;AES256;prod
+
+# 2. Метка совпадает с тем Vault ID, который вы передаёте?
+grep -o 'vault_test_pass\|\.vault_pass' .vaultpass.sh 2>/dev/null
+
+# 3. Восстановление из Git
 git checkout HEAD -- secrets.yml
 
-# Или перешифровка с тем же паролем
+# 4. Перешифровка тем же паролем
 ansible-vault encrypt --vault-id prod@prompt secrets.yml
 ```
 
-### Ошибка: `PBKDF2 iteration count too low` (предупреждение)
+**Для SRE:** регулярно проверяйте целостность зашифрованных файлов в CI (см. [Сценарий 3](#сценарий-3-проверка-целостности-зашифрованного-файла)) — иначе повреждение обнаружится только на этапе расшифровки в проде.
 
-**Причина**: версия Ansible или `cryptography` считает 10 000 итераций недостаточными.
+### Ошибка: файл не помечается как зашифрованный
+
+**Причина**: `git` фильтровал файл, либо файл вообще не был зашифрован (например, забыли `ansible-vault encrypt` при копировании шаблона).
 
 ```bash
-# Проверка текущего числа итераций
-python3 -c "
-import hashlib, os
-salt = os.urandom(32)
-dk = hashlib.pbkdf2_hmac('sha256', b'password', salt, 10000)
-print(f'Итерации: 10000 (рекомендуется >= 600000)')
-print(f'Длина ключа: {len(dk)} байт')
-"
+# Что видит git после фильтрации
+git show HEAD:secrets.yml | head -1
+# → $ANSIBLE_VAULT;1.2;AES256;prod
+
+# Локально на диске
+head -1 secrets.yml
+```
+
+Проверьте, что `ansible.cfg` или `.gitattributes` не отключили `diff=vault`:
+
+```bash
+grep -rn "filter=.*vault\|diff=vault" .gitattributes ansible.cfg 2>/dev/null
 ```
 
 ### Ошибка: `Memory error` при работе с большими файлами
@@ -632,34 +371,67 @@ ansible-vault encrypt_string "$(cat large_secret.txt)" --name 'large_secret'
 split -b 1M large_vault.yml large_vault_part_
 ```
 
-## Граничные случаи и ограничения
+## Лучшие практики
 
-- **Максимальный размер файла**: теоретических ограничений нет, но для файлов >100 МБ рекомендуется использование `encrypt_string` или разбиение.
-- **Длина пароля**: нет верхнего ограничения; PBKDF2 обработает пароль любой длины, но рекомендуется 16+ символов.
-- **Число Vault ID**: нет технических ограничений; на практике >10 Vault ID замедляют расшифровку при версии 1.1.
-- **Производительность KDF**: 10 000 итераций PBKDF2 занимают ~50-100 мс на современном CPU; для Raspberry Pi может потребоваться ~300 мс.
-- **Параллельные расшифрования**: при одновременном запуске нескольких плейбуков каждый процесс выполняет свою деривацию ключа; общих ресурсов не разделяется.
-- **Кроссплатформенность**: зашифрованные файлы совместимы между Linux, macOS и Windows (с Python и ansible-core).
-- **Соль (Salt)**: генерируется случайно при каждом шифровании; одинаковые пароли дают разные ключи для разных файлов.
-- **Версия формата 1.1**: не поддерживает Vault ID; при использовании нескольких хранилищ Ansible перебирает все ключи последовательно.
+### Рекомендации по паролям и KDF
 
-## Справочник переменных окружения
+- **Длина пароля**: нет верхнего ограничения; PBKDF2 обработает пароль любой длины, но рекомендуется 16+ символов. Для компенсации низкого числа итераций (10 000) используйте пароли длиной **от 20 символов** с высокой энтропией.
+- **Энтропия**: используйте случайные фразы (passphrase) или комбинации символов; избегайте словарных паролей и повторных шаблонов.
+- **Уникальность**: каждый Vault ID должен иметь уникальный пароль; не повторяйте пароли между окружениями.
 
-| Переменная | Описание | Влияние на алгоритмы |
-|------------|----------|----------------------|
-| `ANSIBLE_VAULT_PASSWORD_FILE` | Путь к файлу/скрипту с паролем | Не влияет на алгоритмы; определяет только источник ключа |
-| `ANSIBLE_VAULT_IDentities` | Список Vault ID через запятую | Влияет на выбор ключа (формат 1.2); для 1.1 — порядок перебора |
-| `PYTHONPATH` | Путь к модулям Python | Может потребоваться для нестандартных криптографических библиотек |
-| `CRYPTOGRAPHY_OPENSSL_NO_LEGACY` | Отключение legacy-алгоритмов OpenSSL | Влияет на доступные алгоритмы (не рекомендуется менять) |
-| `ANSIBLE_VAULT_ENCRYPT_identity` | Vault ID для шифрования по умолчанию | Определяет метку в заголовке формата 1.2 |
+**Для SRE:** Внедрите политику паролей (minimum 20 символов, rotation каждые 90 дней). Автоматизируйте аудит через скрипт (Сценарий 12).
+
+### Ограничения производительности
+
+- **Производительность KDF**: 10 000 итераций PBKDF2 занимают ~50-100 мс на современном CPU; для Raspberry Pi может потребоваться ~300 мс. Учитывайте это при массовом расшифровании (>100 файлов).
+- **Максимальный размер файла**: теоретических ограничений нет, но для файлов >100 МБ рекомендуется использование `encrypt_string` или разбиение на части.
+- **Параллельные расшифрования**: при одновременном запуске нескольких плейбуков каждый процесс выполняет свою деривацию ключа; общих ресурсов не разделяется, что может создавать пиковую нагрузку на CPU.
+- **AES-NI**: на серверах без аппаратного ускорения AES шифрование/расшифрование замедляется в 5-10 раз. Для production-хостов выбирайте CPU с поддержкой AES-NI.
+
+### Безопасность хранения
+
+- **Файлы паролей**: всегда используйте `chmod 600` для файлов паролей Vault; добавляйте их в `.gitignore`.
+- **Временные файлы**: при использовании `ansible-vault edit` убедитесь, что `$TMPDIR` указывает на защищенную директорию (особенно на общих серверах).
+- **no_log**: всегда используйте `no_log: true` в задачах, работающих с секретами. `EncryptedString` (ansible-core 2.19+) дополнительно помечает значения, но не заменяет `no_log`.
+
+**Для Sysadmin:** На shared Control Node настройте `umask 0077` и контролируйте права доступа к `$TMPDIR`. Используйте `ansible-vault view` вместо `decrypt` для чтения секретов на production-хостах — `decrypt` оставляет открытый текст на диске.
+
+### Ограничения формата и кроссплатформенность
+
+- **Версия формата 1.1**: не поддерживает Vault ID; при использовании нескольких хранилищ Ansible перебирает все ключи последовательно. Для новых проектов используйте формат 1.2.
+- **Число Vault ID**: нет технических ограничений; на практике >10 Vault ID замедляют расшифровку при формате 1.1.
+- **Кроссплатформенность**: зашифрованные файлы совместимы между Linux, macOS и Windows (при условии использования одной версии Python и ansible-core).
+- **Соль (Salt)**: генерируется случайно при каждом шифровании; одинаковые пароли дают разные ключи для разных файлов, что исключает атаки по rainbow tables.
+
+## См. также
+
+- [Ansible Vault: Основы](./basics.md) — базовый синтаксис, архитектура шифрования и команды.
+- [Управление паролями и источниками](./passwords.md) — детали работы с клиентскими скриптами и CLI.
+- [Использование нескольких хранилищ (Multi-Vault)](./multi_vault.md) — Vault ID, формат 1.2, `vault_id_match`.
+- [Лучшие практики по безопасности](./best_practices.md) — рекомендации по защите секретов в Git и логах.
 
 ## Дополнительная информация
 
-### Связанные темы
-- [Ansible Vault: Основы](./basics.md) — базовые команды и начало работы.
-- [Управление паролями и источниками](./passwords.md) — детали работы с клиентскими скриптами и CLI.
+### Граничные случаи
 
-### Углубленные руководства
-- [Использование нескольких хранилищ (Multi-Vault)](./multi_vault.md) — работа с иерархией Vault ID.
-- [Лучшие практики по безопасности](./best_practices.md) — рекомендации по защите секретов в Git и логах.
-- [Практические примеры использования](./examples.md) — реальные сценарии применения в инфраструктуре.
+- **Смешанные файлы**: файл может содержать как обычные, так и зашифрованные переменные. Ansible расшифровывает только зашифрованные значения.
+- **Кэширование фактов**: обычный `set_fact` **не** попадает в кэш — Ansible сохраняет только факты, помеченные `cacheable: true`. Если секрет задан через `set_fact` с `cacheable: true`, его открытое значение попадёт в кэш на диске (JSON, pickle, redis) вместе со всем остальным. Секреты из vault не должны быть `cacheable`.
+- **Память**: секреты расшифровываются в память Control Node. Убедитесь, что у системы достаточно оперативной памяти для крупных инвентарей.
+- **Редакторы**: Некоторые редакторы создают резервные файлы в том же каталоге. При использовании `ansible-vault edit` убедитесь, что резервные файлы не попадают в Git.
+- **no_log и debug**: `no_log: true` скрывает вывод задачи, но не скрывает переменные, используемые в `register` или `debug` без `no_log`.
+- **Data Tagging**: `EncryptedString` работает только с переменными, полученными из Vault. Для секретов из других источников (env, lookup) используйте `no_log: true` явно.
+
+### Исторические изменения алгоритмов
+
+| Версия Ansible | Формат | Алгоритм | Особенности |
+|----------------|--------|----------|-------------|
+| 1.5+ | 1.1 | AES-256-CTR + HMAC-SHA256 | Один пароль, перебор всех ключей |
+| 2.4+ | 1.2 | AES-256-CTR + HMAC-SHA256 | Vault ID, мгновенный выбор ключа |
+| 2.19+ | 1.2 | AES-256-CTR + HMAC-SHA256 | EncryptedString / Data Tagging |
+
+### Ссылки на спецификации
+
+- **NIST SP 800-108**: рекомендации по KDF на основе HMAC.
+- **NIST SP 800-38A**: рекомендации по режимам работы блочных шифров (CTR, CBC).
+- **OWASP Password Storage**: рекомендации по хешированию паролей (600 000+ итераций для PBKDF2).
+- **cryptography.io**: документация Python-библиотеки, используемой в ansible-core.

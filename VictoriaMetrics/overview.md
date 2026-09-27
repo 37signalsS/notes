@@ -99,10 +99,54 @@ VictoriaMetrics является стандартом де-факто для д�
 
 * **`vmagent`** — агент для сбора метрик (scraper). Может заменять Prometheus. Поддерживает фильтрацию/переименование меток, буферизацию данных на диске (persistent queue) при обрыве связи с центральным хранилищем, streaming aggregation (Enterprise) и приём данных по OTLP/InfluxDB/Graphite.
 * **`vmalert`** — выполнение правил алертинга и записи. Может использовать в качестве источника данных как метрики VictoriaMetrics, так и логи из VictoriaLogs (LogsQL) и трейсы VictoriaTraces. Подробнее: [`vmalert_overview.md`](./vmalert_overview.md).
-* **`vmestimator`** — оценка кардинальности в реальном времени на этапе сбора. Позволяет получать алерты до наступления взрыва кардинальности. Подробнее: [`vmestimator.md`](./vmestimator.md).
-* **`vmctl`** — утилита для миграции данных из Prometheus (snapshot), InfluxDB, OpenTSDB, Thanos, Mimir и между инстансами VictoriaMetrics (native mode). Полезен для переноса исторических данных без простоя.
-* **`vmbackup` / `vmrestore`** — утилиты для инкрементального резервного копирования в S3, GCS, Azure Blob Storage и локальное хранилище.
+* **vmestimator** — оценка кардинальности в реальном времени на этапе сбора. Позволяет получать алерты до наступления взрыва кардинальности. Подробнее: [`vmestimator.md`](./vmestimator.md).
+* **vmctl** — утилита для миграции данных из Prometheus (snapshot), InfluxDB, OpenTSDB, Thanos, Mimir и между инстансами VictoriaMetrics (native mode). Полезен для переноса исторических данных без простоя.
+* **vmbackup / vmrestore** — утилиты для инкрементального резервного копирования в S3, GCS, Azure Blob Storage и локальное хранилище.
 * **VictoriaMetrics Operator** — Kubernetes-оператор для автоматизации деплоя, масштабирования, rolling update, бэкапов и управления ресурсами (VMSingle, VMCluster, VMAgent, VMAlert, VMRule, VMServiceScrape, VMPodScrape и др.). Поддерживает миграцию из Prometheus CRDs.
+
+## Требования к окружению
+
+### Операционная система и среда
+
+VictoriaMetrics поддерживает запуск на любом современном Linux-дистрибутиве (Debian, Ubuntu, RHEL, CentOS, Rocky Linux, Alpine) и через Docker/Podman. Для production на bare-metal рекомендуется:
+
+- **Ядро Linux:** версия 4.14+ (для `io_uring` и эффективной работы с диском)
+- **FS:** XFS или ext4 (с отключением `atime` или использованием `noatime,nodiratime`)
+- **Пользователь:** создайте отдельного непривилегированного пользователя `victoriametrics` с домашним каталогом на том же разделе, что и `-storageDataPath`
+- **Лимиты:** увеличьте `ulimit -n` (open files) до минимум 65535 для single-node и 200000+ для cluster-режима
+
+### Аппаратные требования (single-node)
+
+| Активные временные ряды | CPU | RAM | Диск (SSD) | Retention |
+| :--- | :--- | :--- | :--- | :--- |
+| до 500 000 | 2 ядра | 4 ГБ | 50 ГБ | 30–90 дней |
+| 500 000 – 5 000 000 | 4 ядра | 8 ГБ | 200 ГБ | 90–365 дней |
+| 5 000 000 – 20 000 000 | 8 ядер | 16 ГБ | 1 ТБ | 1–2 года |
+| > 20 000 000 | рассмотреть cluster | 32+ ГБ | 4+ ТБ | 2+ года |
+
+**Важные замечания:**
+- VictoriaMetrics оптимизирована для HDD, но для production с высокой нагрузкой SSD/NVMe обязателен.
+- При работе на HDD увеличьте `-search.maxQueryDuration` и ограничьте параллелизм запросов (`-search.maxQueries`), так как случайные чтения будут доминировать.
+- Для сжатия и компакции критически важны CPU и IOPS. При недостатке IOPS данные не успевают компактироваться — растет число мелких частей (parts) и деградирует производительность запросов.
+
+### Аппаратные требования (cluster-режим)
+
+| Компонент | CPU | RAM | Диск (SSD) | Рекомендации |
+| :--- | :--- | :--- | :--- | :--- |
+| `vminsert` | 4+ ядра | 4+ ГБ | — | CPU-bound при высокой скорости инжеста |
+| `vmselect` | 4+ ядера | 8+ ГБ | — | Memory-bound при сложных запросах |
+| `vmstorage` | 8+ ядер | 8+ ГБ | 1+ ТБ на узел | Disk/IOPS-bound; масштабируется горизонтально |
+
+**Общие рекомендации для cluster:**
+- Запускайте не менее 3 узлов `vmstorage` для отказоустойчивости (данные реплицируются между storage-узлами).
+- Размещайте `vminsert` и `vmselect` на отдельных хостах или используйте resource limits/requests в Kubernetes.
+- Для `vmstorage` используйте локальные SSD (non-shared), так как Shared-Nothing архитектура не даёт преимуществ от сетевых дисков.
+
+### Программные зависимости
+
+- **Docker/Podman:** образ `victoriametrics/victoria-metrics:latest` (single) или отдельные компоненты (`victoriametrics/vminsert`, `victoriametrics/vmselect`, `victoriametrics/vmstorage`)
+- **Helm:** для Kubernetes-деплоя используйте официальный Helm-репозиторий `https://victoriametrics.github.io/helm-charts/`
+- **vmctl, vmbackup, vmrestore:** поставляются как отдельные бинарники в том же релизе, что и основная платформа
 
 ## Практические сценарии
 
@@ -117,7 +161,35 @@ docker run --rm -it \
 # → приём от Prometheus: http://localhost:8428/api/v1/write
 ```
 
-### Запуск данных из Prometheus
+### Валидация установки
+
+После запуска single-node выполните проверку:
+
+```bash
+# 1. Проверка здоровья
+curl -s http://localhost:8428/health
+# → {}
+
+# 2. Проверка встроенных метрик
+curl -s http://localhost:8428/metrics | head -20
+
+# 3. Запись тестовой метрики
+curl -i -X POST \
+  -H "Content-Encoding: snappy" \
+  --data-binary @- \
+  http://localhost:8428/api/v1/write \
+  <<< '{"metric":{"__name__":"test_metric","job":"validation"},"values":[1],"timestamps":[1234567890000]}'
+# → HTTP/1.1 204 No Content
+
+# 4. Проверка появления данных
+curl -s 'http://localhost:8428/api/v1/query?query=test_metric' | jq .
+# → {"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"test_metric","job":"validation"},"value":[1234567890,"1"]}]}}
+
+# 5. Проверка в UI
+# Откройте http://localhost:8428/vmui и выполните запрос test_metric
+```
+
+### Импорт данных из Prometheus
 
 ```bash
 ./vmctl prometheus \
@@ -181,6 +253,237 @@ docker run -d \
 
 Для алертинга используется **vmalert**, который consuming метрики из VictoriaMetrics по MetricsQL/PromQL. Правила описываются через ресурс [VMRule](./vmalert_rules_management_with_manifests.md).
 
+### Деплой на bare-metal (systemd)
+
+Для production-развертывания на физических серверах или виртуальных машинах без контейнеризации используйте systemd-сервис.
+
+**1. Скачайте бинарник:**
+
+```bash
+VICTORIA_VERSION="v1.148.0"
+wget -O /usr/local/bin/victoria-metrics \
+  "https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/${VICTORIA_VERSION}/victoria-metrics-${VICTORIA_VERSION}-linux-amd64.tar.gz"
+chmod +x /usr/local/bin/victoria-metrics
+```
+
+**2. Создайте пользователя и каталоги:**
+
+```bash
+useradd --no-create-home --shell /bin/false victoriametrics
+mkdir -p /var/lib/victoria-metrics
+chown victoriametrics:victoriametrics /var/lib/victoria-metrics
+```
+
+**3. Создайте systemd-сервис `/etc/systemd/system/victoria-metrics.service`:**
+
+```ini
+[Unit]
+Description=VictoriaMetrics Single Node
+Documentation=https://docs.victoriametrics.com
+After=network.target
+
+[Service]
+Type=simple
+User=victoriametrics
+Group=victoriametrics
+ExecStart=/usr/local/bin/victoria-metrics \
+  -storageDataPath=/var/lib/victoria-metrics \
+  -retentionPeriod=30d \
+  -httpListenAddr=:8428 \
+  -vminsert.maxConcurrentInserts=128 \
+  -search.maxQueryDuration=30s \
+  -logToStderr=true \
+  -loggerFormat=json
+Restart=always
+RestartSec=5
+LimitNOFILE=200000
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**4. Запустите сервис:**
+
+```bash
+systemctl daemon-reload
+systemctl enable --now victoria-metrics
+systemctl status victoria-metrics
+# → active (running)
+
+# Проверка логов
+journalctl -u victoria-metrics -f
+```
+
+**5. Валидация:**
+
+```bash
+curl -s http://localhost:8428/health
+# → {}
+```
+
+### Высокая доступность (HA) для single-node
+
+Для отказоустойчивости разверните два независимых инстанса на разных хостах. VictoriaMetrics автоматически дедуплицирует данные от HA-пар Prometheus по флагу `-dedup.minScrapeInterval`.
+
+**Конфигурация Prometheus с remote write:**
+
+```yaml
+# prometheus.yml
+remote_write:
+  - url: "http://victoriametrics-host1:8428/api/v1/write"
+    remoteTimeout: 30s
+    queue_config:
+      capacity: 25000
+      max_shards: 50
+  - url: "http://victoriametrics-host2:8428/api/v1/write"
+    remoteTimeout: 30s
+    queue_config:
+      capacity: 25000
+      max_shards: 50
+```
+
+На стороне VictoriaMetrics включите дедупликацию:
+
+```bash
+victoria-metrics \
+  -storageDataPath=/var/lib/victoria-metrics \
+  -dedup.minScrapeInterval=1s
+```
+
+**Валидация HA:**
+
+```bash
+# Проверка метрики дедупликации
+curl -s 'http://localhost:8428/api/v1/query?query=vm_deduplicated_rows_total' | jq .
+# → Должен расти при параллельной записи из двух Prometheus
+```
+
+### Конфигурация vmauth (аутентификация и маршрутизация)
+
+`vmauth` работает как обратный прокси перед `vminsert`/`vmselect`, обеспечивая аутентификацию (JWT, OIDC, Basic Auth) и маршрутизацию по путям.
+
+**Пример базовой конфигурации `/etc/victoriametrics/vmauth.yml`:**
+
+```yaml
+# routes:
+#   - src_path: /insert/0/prometheus/api/v1/write
+#     dst_path: /insert/0/prometheus/api/v1/write
+#     upstreams:
+#       - http://vminsert1:8480
+#       - http://vminsert2:8480
+#     # Ограничение по rete limiting (опционально)
+#     max_requests_per_second: 10000
+
+#   - src_path: /select/0/prometheus
+#     dst_path: /select/0/prometheus
+#     upstreams:
+#       - http://vmselect1:8481
+#       - http://vmselect2:8481
+```
+
+**Запуск vmauth:**
+
+```bash
+docker run -d \
+  -p 8427:8427 \
+  -v /path/to/vmauth.yml:/etc/victoriametrics/vmauth.yml \
+  victoriametrics/vmauth \
+  -auth.config=/etc/victoriametrics/vmauth.yml
+```
+
+Для Enterprise-версии доступна поддержка mTLS между `vminsert`/`vmselect` и `vmauth`.
+
+### Настройка retention и downsampling
+
+**Retention на уровне single-node:**
+
+```bash
+victoria-metrics \
+  -storageDataPath=/var/lib/victoria-metrics \
+  -retentionPeriod=90d \
+  -retention.maxDiskSpaceUsageBytes=500G
+```
+
+`-retention.maxDiskSpaceUsageBytes` приоритетно ограничивает место. Когда лимит достигнут, старые данные удаляются вне зависимости от `-retentionPeriod`.
+
+**Per-series retention filters (Enterprise):**
+
+```json
+[
+  {
+    "match": {"job": "short-lived"},
+    "retention": "7d"
+  },
+  {
+    "match": {"job": "long-term"},
+    "retention": "2y"
+  }
+]
+```
+
+```bash
+victoria-metrics-enterprise \
+  -storageDataPath=/var/lib/victoria-metrics \
+  -retentionSpec=retention.json
+```
+
+### Миграция данных (vmctl)
+
+**Миграция из InfluxDB:**
+
+```bash
+vmctl influxdb \
+  -influxdb.addr=http://influxdb:8086 \
+  -influxdb.database=metrics \
+  -vm-addr=http://localhost:8428/api/v1/write
+```
+
+**Миграция из OpenTSDB:**
+
+```bash
+vmctl opentsdb \
+  -opentsdb.addr=http://opentsdb:4242 \
+  -vm-addr=http://localhost:8428/api/v1/write
+```
+
+**Миграция между инстансами VictoriaMetrics (native mode):**
+
+```bash
+vmctl victoriametrics \
+  -vmAddr=http://source-vm:8428 \
+  -dstAddr=http://dest-vm:8428/api/v1/write
+```
+
+### Планирование мощностей (Capacity Planning)
+
+**Формула оценки диска (single-node, Community):**
+
+```
+Диск (ГБ) ≈ (active_series × samples_per_series_per_day × 10 байт × retention_days) / 1024³
+```
+
+Пример: 5 млн активных серий, 15s scrape, 30 дней retention:
+
+```
+(5 000 000 × 5760 × 10 × 30) / 1024³ ≈ 8.1 ГБ
+```
+
+С запасом рекомендуется указывать в 2–3 раза больше (компакция, индексы, WAL).
+
+**Оценка RAM (память на метаданные):** память у storage растёт от кардинальности серий/меток, а не от объёма диска. Ориентир — ~100 тыс. – 1 млн серий на ~1 ГБ RAM storage-узла; метод подбора и метрики диагностики описаны в [storage_internals.md: RAM](./storage_internals.md#оценка-памяти-ram-под-метаданные). Для точного прогноза — [vmestimator](./vmestimator.md), до боевой нагрузки — прямое наблюдение `/api/v1/status/tsdb`.
+
+**Для cluster-режима:**
+
+```
+storage_nodes × disk_per_node = общий disk budget
+```
+
+При 10 млн активных серий и retention 90 дней на 3 узлах `vmstorage`:
+- ~40 ГБ на узел (с запасом 120 ГБ)
+- 8+ ядер и 16+ ГБ RAM на узел
+
 ### Сравнение с альтернативами
 
 | Характеристика | VictoriaMetrics | Thanos | Grafana Mimir (v3.x) |
@@ -190,7 +493,112 @@ docker run -d \
 | **Сжатие данных** | Экстремальное | Среднее (через Downsampling) | Высокое |
 | **Интеграция** | `remote_write` (PRW 1/2) | Sidecar / Receiver | `remote_write` |
 | **Типы данных** | Метрики, Логи, Трейсы | Метрики | Метрики |
-| **AI/Аномалии** | Встроено: vmanomaly (Enterprise) / vmui | Нет | Grafana Machine Learning |
+| **Алертинг/аналитика** | vmalert, vmanomaly (Enterprise), vmui | Thanos Ruler | Grafana Machine Learning |
+| **On-prem готовность** | Нативная (единый бинарник) | Требует объектное хранилище | Требует объектное хранилище |
+
+## Поиск и устранение неисправностей (Troubleshooting)
+
+### Single-node
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| `vm_rows_inserted_total` не растет | Неправильный URL `remote_write` или блокировка firewall | Проверить URL, сетевую доступность и логи vmagent/Prometheus |
+| Данные не появляются после записи | Не применен `Content-Encoding: snappy` или ошибка в формате | Использовать snappy-сжатие; проверить `/api/v1/write` на 204 |
+| Медленные запросы | Недостаток IOPS или слишком широкий временной диапазон | Проверить `vm_slow_queries`, увеличить `-search.maxQueryDuration`, добавить индексы через лейблы |
+| `read-only` режим | Диск заполнен (`-retention.maxDiskSpaceUsageBytes`) или файловая система в READ-ONLY | Проверить `df -h`, очистить место или увеличить лимит |
+| Высокое потребление RAM | Взрыв кардинальности или слишком большой `-search.maxQueryDuration` | Проверить `vm_active_series`, настроить `relabel_configs` для удаления динамических лейблов |
+| Потеря данных при перезагрузке | Нет persistent queue в vmagent | Включить `-remoteWrite.maxQueueSize` и `-remoteWrite.diskQueueDir` в vmagent |
+| Ошибка дедупликации | `-dedup.minScrapeInterval` не установлен или меньше actual scrape interval | Установить `-dedup.minScrapeInterval` ≥ максимального scrape interval среди всех Prometheus-инстансов |
+
+### Cluster-режим
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| `vm_dropped_rows_total` растет | `vminsert` перегружен или `vmstorage` недоступен | Проверить доступность `vmstorage` (health-check), увеличить количество `vminsert` или `vmstorage` |
+| Медленные запросы в кластере | Слишком много `vmselect` реплик или не均衡ная нагрузка | Проверить `vm_active_queries`, добавить `vmselect`, настроить `vmauth` балансировку |
+| Данные не реплицируются между `vmstorage` | Неправильная конфигурация репликации или сетевые таймауты | Проверить логи `vmstorage` на ошибки репликации, увеличить `-storageDataPath` на каждом узле |
+| `vmstorage` переходит в READ-ONLY | Диск заполнен или файловая система повреждена | Проверить `df -h`, логи `vmstorage`; восстановить из бэкапа |
+| Медленная загрузка данных (ingestion lag) | Недостаточно `vminsert` или узлов `vmstorage` | Масштабировать `vminsert` горизонтально; проверить `vm_rows_inserted_total` |
+| Ошибки аутентификации в `vmauth` | Неверные JWT/OIDC настройки или истекший токен | Проверить конфигурацию `vmauth.yml`, логи `vmauth` |
+
+## Рекомендации по эксплуатации и очистке (Best Practices & Cleanup)
+
+### Resource Limits и планирование
+
+- **Устанавливайте `LimitNOFILE`** в systemd-сервисе не менее 200000 для single-node и 500000 для cluster-компонентов.
+- **Ограничьте `-search.maxQueryDuration`** (например, 30s для single-node, 60s для cluster), чтобы предотвратить долгие запросы, блокирующие компакцию.
+- **Используйте `-vminsert.maxConcurrentInserts`** для ограничения параллельных вставок в cluster-режиме (по умолчанию 100).
+- **Мониторьте `vm_parts`** на `vmstorage`: при росте числа частей выше 1000 на узел — проверьте IOPS и размер партиций.
+
+### Retention и управление данными
+
+- **Начинайте с `-retentionPeriod=30d`** для dev-окружений и `90d–1y` для production. Дольше 2 лет — рассматривайте downsampling (Enterprise).
+- **Используйте `-retention.maxDiskSpaceUsageBytes`** как приоритетный лимит, особенно на SSD с ограниченным местом.
+- **Настраивайте алерты на диск:** `disk_usage_percent{path="/victoria-metrics-data"} > 85` за 10 минут.
+- **Проводите бэкап перед major upgrade:** vmbackup инкрементален, но восстановление требует останова сервиса.
+
+### Безопасность
+
+- **Изолируйте `8428`/`8480`/`8481`** firewall-ом в production. Доступ к `/api/v1/write` должен быть только у scrapers/агентов.
+- **Используйте vmauth** для аутентификации в cluster-режиме. В Enterprise доступен mTLS между компонентами.
+- **Не запускайте single-node с `-httpListenAddr=0.0.0.0`** без firewall в интернете.
+
+### Upgrade и обновление
+
+**Процедура обновления single-node:**
+
+```bash
+# 1. Создайте снапшот
+curl -s http://localhost:8428/snapshot/create | jq -r '.status'
+
+# 2. Остановите сервис
+systemctl stop victoria-metrics
+
+# 3. Обновите бинарник
+wget -O /usr/local/bin/victoria-metrics \
+  "https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/v${VERSION}/victoria-metrics-v${VERSION}-linux-amd64.tar.gz"
+chmod +x /usr/local/bin/victoria-metrics
+
+# 4. Запустите
+systemctl start victoria-metrics
+
+# 5. Проверьте
+curl -s http://localhost:8428/health
+```
+
+**Важно:** VictoriaMetrics обратно совменима в рамках мажорных версий (например, v1.136.x → v1.148.x). Данные на диске не требуют миграции. Перед обновлением проверяйте [релизные заметки](https://docs.victoriametrics.com/lts-releases/) на breaking changes.
+
+### Очистка окружения
+
+- **Удалите неиспользуемые метрики:** настройте `write_relabel_configs` в Prometheus или vmagent для dropped нерелевантных метрик.
+- **Проверяйте `vm_dropped_rows_total`** — если растет, значит, данные отбрасываются на стороне vminsert.
+- **При удалении инстанса:** убедитесь, что все `vmstorage` узлы остановлены, прежде чем удалять данные, чтобы избежать corruption.
+
+## Ограничения и особые случаи (Edge Cases & Limitations)
+
+### Кардинальность
+
+- **Практический лимит single-node:** ~50 млн активных временных рядов (при 16+ ГБ RAM и SSD). При превышении — переходите в cluster-режим.
+- **Взрыв кардинальности:** если в лейблы попадают уникальные значения (request_id, IP клиентов), RAM может быть исчерпана за минуты. Используйте `relabel_configs` для удаления динамических лейблов на этапе сбора.
+- **Native Histograms:** поддерживаются с v1.143.0. При приеме конвертируются во внутренний формат `vmrange`. Ограничение: не все функции MetricsQL поддерживают `vmrange` — используйте `histogram_quantile` для совместимости.
+
+### Диск и WAL
+
+- **WAL (Write-Ahead Log):** хранится в `-storageDataPath/wal`. При аварийном завершении VictoriaMetrics автоматически восстанавливает не записанные данные из WAL. Не удаляйте WAL вручную при остановленном сервисе.
+- **Shared-Nothing:** в cluster-режиме каждый `vmstorage` независим. Не монтируйте общие диски (NFS, CIFS) для `-storageDataPath` — это приведет к corruption.
+- **Компакция (compaction):** фоновый процесс, требующий IOPS. При недостатке IOPS число `parts` растет, и запросы замедляются. Мониторьте `vm_parts` на `vmstorage`.
+
+### Сеть
+
+- **Remote Write таймауты:** при высокой латентности между scrapers и VictoriaMetrics увеличьте `remoteTimeout` в Prometheus (по умолчанию 30s) и `-search.maxQueryDuration` в VictoriaMetrics.
+- **Асинхронная запись в cluster:** `vminsert` возвращает 204 сразу после распределения данных по `vmstorage`. Если `vmstorage` потом откажет, данные могут быть потеряны. Для критичных сценариев используйте persistent queue в vmagent.
+- **Дублирование при HA:** без `-dedup.minScrapeInterval` два Prometheus, скрейпящие одни и те же таргеты, создадут двойные данные. Установите флаг на стороне VictoriaMetrics.
+
+### Ограничения версий
+
+- **Enterprise-функции недоступны в Community:** downsampling, retention filters, multitenancy advance, streaming aggregation в vmagent, Anomaly Detection.
+- **MetricsQL vs PromQL:** VictoriaMetrics поддерживает PromQL, но некоторые продвинутые функции (например, `label_replace` с regex) работают быстрее в MetricsQL. Полная совместимость сохраняется для стандартных запросов.
+- **OTLP ingestion:** поддерживается, но для сложной обработки (transformation, filtering) лучше использовать vmagent с `relabel_configs` или отдельный OTel Collector.
 
 ## Дополнительная информация
 
@@ -199,6 +607,23 @@ VictoriaMetrics рекомендуется использовать в Kubernete
 Смотрите также:
 * [VictoriaLogs: внутреннее устройство](./victorialogs_internals.md) — детальный разбор хранения и обработки логов;
 * [vmalert](./vmalert_overview.md) — подробный обзор компонента алертинга;
+* [vmagent](./vmagent_overview.md) — сбор и доставка метрик;
+* [MetricsQL](./metricsql_reference.md) — язык запросов;
+* [vmbackup/vmrestore](./vmbackup_restore.md) — резервное копирование;
+* [vmctl](./vmctl_migration.md) — миграция исторических данных;
+* [vmauth](./vmauth_overview.md) — прокси аутентификации и маршрутизации;
+* [cluster_operations](./cluster_operations.md) — работа с кластерным режимом;
+* [storage_internals](./storage_internals.md) — внутренности хранилища метрик;
+* [security](./security.md) — безопасность стека;
+* [HTTP API](./http_api_reference.md) — справочник эндпоинтов, экспорт/импорт, снапшоты;
+* [Grafana: интеграция](./grafana_integration.md) — подключение VM/VictoriaLogs к Grafana;
+* [vmui](./vmui_overview.md) — встроенный веб-интерфейс;
+* [DR: аварийное восстановление](./disaster_recovery.md) — RPO/RTO, сценарии восстановления;
+* [k8s-stack: чарт](./helm_victoria_metrics_k8s_stack.md) — деплой мониторинга в Kubernetes;
+* [Enterprise-функции](./enterprise_features.md) — downsampling, retention filters, vmgateway и др.
+* [operator](./operator_overview.md) — Kubernetes-оператор;
+* [VictoriaLogs: инжест](./victorialogs_ingestion.md) — протоколы приёма логов;
+* [VictoriaTraces](./victoriatraces.md) — хранение трейсов (pre-GA);
 * [vmestimator](./vmestimator.md) — оценка кардинальности в реальном времени;
 * [Управление правилами в K8s](./vmalert_rules_management_with_manifests.md) — декларативный подход к алертингу;
 * [Prometheus: обзор](../Prometheus/overview.md) — основа экосистемы метрик.

@@ -36,6 +36,14 @@
 
 **PriorityClass (класс приоритета)** — объект API, определяющий приоритет Pod при планировании и вытеснении. Pod с более высоким приоритетом может вытеснять Pod с более низким приоритетом. Подробнее: [PriorityClass — приоритеты](../../../Concepts/priorityclass.md).
 
+**Pod Security Admission (PSA)** — встроенный admission controller (GA v1.25+), заменивший PSP. Работает через метки namespace (`pod-security.kubernetes.io/enforce`, `warn`, `audit`) и отклоняет Pod, нарушающие Pod Security Standards (privileged / baseline / restricted). Может блокировать Pod на уровне API-сервера до планирования, что выглядит как Pending без событий `FailedScheduling`. Подробнее: [Pod Security Context](../../../Security/pod_security_context.md).
+
+**Admission Webhooks** — кастомные валидирующие/мутирующие контроллеры, вызываемые API-сервером при создании Pod. Могут отклонять Pod (ValidatingWebhookConfiguration) или модифицировать их (MutatingWebhookConfiguration). Если webhook отклоняет Pod, он не создаётся — ошибки не попадают в events Pod. Типичные причины: Kyverno/Gatekeeper policy violations, отсутствие required labels. Подробнее: [Admission Controllers](../../../Concepts/admission_controllers.md).
+
+**Node Allocatable** — количество ресурсов узла, доступных для Pod. Формула: `Allocatable = Capacity - kube-reserved - system-reserved - eviction-threshold`. Планировщик работает с Allocatable, а не с Capacity. Некорректные значения `kube-reserved`/`system-reserved` приводят к тому, что Pod "не влезает" в узел. Подробнее: [Kubelet — Allocatable](../../../Concepts/kubelet.md).
+
+**Ресурсная фрагментация (Resource Fragmentation)** — ситуация, когда суммарно ресурсов на узлах достаточно, но ни один узел не подходит из-за granular `requests`. Пример: узел A — 1.5Gi RAM свободно, узел B — 1.5Gi RAM свободно, Pod требует 2Gi → Pending (суммарно 3Gi доступно). Решения: right-sizing, bin-packing (MostRequestedPriority), VPA.
+
 ---
 
 ## Базовые концепции
@@ -310,6 +318,8 @@ PreFilter → Filter → PostFilter → Reserve → Permit → PreBind → Bind 
 ### Диагностика
 - **[Диагностика Pending-статуса](./diagnostics.md)** — алгоритмы и команды для глубокой диагностики.
 - **[Продвинутые темы](./advanced_topics.md)** — Scheduling Gates, DRA, Queuing Hints и мониторинг.
+- **[Вопросы для собеседования](./interview_questions.md)** — типичные вопросы и ответы по Pending.
+- **[Postmortem кейсы](./postmortem_cases.md)** — реальные сценарии из продакшена.
 
 ### Планирование
 - **[Kube-scheduler — архитектура](../../../Concepts/kube_scheduler.md)** — как работают внутренние плагины.
@@ -322,7 +332,16 @@ PreFilter → Filter → PostFilter → Reserve → Permit → PreBind → Bind 
 
 ### Автомасштабирование
 - **[Cluster Autoscaler — детальный обзор](../../Autoscaling/cluster_autoscaler_detailed.md)** — логика Scale-Up/Down.
+- **[Karpenter](../../Autoscaling/Karpenter/overview.md)** — альтернатива CA, динамическое масштабирование.
 - **[PodDisruptionBudget](../../Autoscaling/pod_disruption_budget.md)** — защита доступности при disruptions.
+
+### Безопасность
+- **[Pod Security Context](../../../Security/pod_security_context.md)** — PSA и безопасность Pod.
+- **[Admission Controllers](../../../Concepts/admission_controllers.md)** — вебхуки admission.
+
+### Компоненты узла
+- **[Kubelet](../../../Concepts/kubelet.md)** — system-reserved, kube-reserved, Allocatable, eviction.
+- **[Container Runtime](../../../Concepts/container_runtime.md)** — containerd, CRI-O, crictl, диагностика CRI.
 
 ### Жизненный цикл
 - **[Жизненный цикл Pod](../../Base/Pod/pod_lifecycle_and_state.md)** — глубокий разбор состояний и переходов.

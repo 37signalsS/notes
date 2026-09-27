@@ -2,17 +2,163 @@
 
 ## Определения
 
-**Архитектура Feature Toggles** — это комплексная инфраструктурная экосистема, обеспечивающая централизованное управление, безопасную доставку и высокопроизводительное вычисление состояний флагов функций в рантайме. Современная архитектура (2026+) ориентирована на минимизацию сетевых задержек, защиту персональных данных (PII) и полную интеграцию с процессами прогрессивной поставки (Progressive Delivery).
+**Архитектура Feature Toggles** — комплексная инфраструктурная экосистема, обеспечивающая централизованное управление, безопасную доставку и высокопроизводительное вычисление состояний флагов функций в рантайме. Современная архитектура (2026+) ориентирована на минимизацию сетевых задержек, защиту персональных данных (PII) и полную интеграцию с процессами прогрессивной поставки (Progressive Delivery).
+
+**FFaaS (Feature Flag as a Service)** — платформа управления флагами, предоставляющая Admin UI, API, Targeting Engine и Audit Service. Примеры self-hosted решений: Unleash, Flipt.
+
+**flagd** — демон оценки флагов от OpenFeature, вычисляющий значение флага по правилам таргетинга и возвращающий результат по gRPC/HTTP. Обеспечивает оценку без сетевого вызова во внешнюю систему.
+
+**Relay / Proxy Layer** — промежуточный слой кеширования и/или вычисления между SDK и Control Plane. Снижает нагрузку на FFaaS и обеспечивает PII Stripping.
+
+**Evaluation Strategy** — метод вычисления значения флага: Local (в памяти процесса), Remote (на сервере), или Hybrid (комбинация).
+
+**Bootstrap File** — локальный JSON-файл с последними известными состояниями флагов, используемый SDK при старте до установления соединения с сервером.
 
 ---
 
-## Предварительные требования
+## Основные концепции
 
-### Инструментарий
+### Принципы архитектуры 2026+
+
+Современная архитектура систем управления флагами строится на пяти ключевых принципах:
+
+1.  **Vendor-Neutral API** — использование OpenFeature SDK позволяет абстрагироваться от конкретной FFaaS-платформы. Смена вендора (Unleash → Flipt → собственная реализация) не требует изменения кода приложения.
+2.  **Local-First Evaluation** — вычисление происходит как можно ближе к приложению (в процессе или в flagd sidecar), обеспечивая `O(1)` производительность без внешних вызовов в hot path.
+3.  **Privacy by Design** — PII Stripping выполняется на уровне Proxy до попадания контекста в FFaaS. Используется хеширование (SHA-256) вместо передачи raw-значений.
+4.  **Fail-Safe by Default** — архитектура гарантирует работу приложения при полной недоступности системы флагов через Bootstrap File → In-Memory Cache → Hardcoded Defaults.
+5.  **Observability-Native** — состояние флагов инжектируется в спаны OpenTelemetry, а метрики SDK экспортируются в Prometheus для построения дашбордов и алертинга.
+
+### Многоуровневая архитектура
+
+```text
+┌──────────────────────────────────────────────────────────────────────────┐
+│                      УРОВЕНЬ ИСПОЛНЕНИЯ (SDK)                            │
+│  ┌──────────────┐      ┌───────────────┐      ┌──────────────────────┐  │
+│  │ OpenFeature  │◄────►│  Evaluation   │◄────►│     App Logic       │  │
+│  │   Wrapper    │      │    Engine     │      │    (Wrapped)        │  │
+│  └──────────────┘      └───────────────┘      └──────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
+                                    ▲
+                                    │ gRPC/HTTP/SSE
+                                    │
+┌──────────────────────────────────────────────────────────────────────────┐
+│                   СЛОЙ ПРОКСИРОВАНИЯ / КЕШИРОВАНИЯ                       │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  Relay / Proxy (flagd centralized / custom implementation)       │   │
+│  │  • PII Stripping                                                 │   │
+│  │  • Connection Offloading (1 connection to FFaaS per cluster)     │   │
+│  │  • Local Evaluation Engine                                       │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────┘
+                                    ▲
+                                    │
+┌──────────────────────────────────────────────────────────────────────────┐
+│                   ЦЕНТРАЛЬНЫЙ СЕРВЕР ВЫЧИСЛЕНИЙ (API)                    │
+│   (Targeting Engine, Segment Manager, Audit Service, Event Stream)       │
+└──────────────────────────────────────────────────────────────────────────┘
+                                    ▲
+                                    │
+┌──────────────────────────────────────────────────────────────────────────┐
+│      ПЛОСКОСТЬ УПРАВЛЕНИЯ (Control Plane) / СЛОЙ ХРАНЕНИЯ               │
+│  ┌─────────────────────────┐            ┌────────────────────────────┐   │
+│  │  Admin UI / API / RBAC  │            │  PostgreSQL / Redis / S3   │   │
+│  └─────────────────────────┘            └────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Ключевые компоненты и их функции
+
+#### 1. SDK (Evaluation Engine)
+
+**Evaluation (Вычисление):** В 2026 году стандартом является OpenFeature SDK. Вычисление логики (таргетинг) происходит внутри процесса приложения, что дает `O(1)` производительность без внешних вызовов в hot path.
+
+**Synchronization:** SDK поддерживает три протокола получения обновлений:
+- **Polling** — HTTP GET с интервалом 30-60 секунд. Простой, но создает избыточную нагрузку.
+- **SSE (Server-Sent Events)** — персистентное HTTP-соединение, обновления приходят по событию (<1с задержка). Рекомендуется для Production.
+- **gRPC Streaming** — bidirectional streaming с минимальной задержкой. Для высоконагруженных систем.
+
+#### 2. Relay / Proxy Layer
+
+**Privacy Guard:** Слой проксирования удаляет или хеширует PII до того, как контекст пользователя попадет в FFaaS.
+
+**Connection Offloading:** Прокси держит одно соединение с сервером, обслуживая тысячи инстансов приложения, снижая нагрузку на Control Plane.
+
+**Local Evaluation:** Современные прокси (flagd) выполняют вычисление локально, полностью исключая необходимость выхода во внешнюю сеть для каждой проверки.
+
+#### 3. flagd (OpenFeature Daemon)
+
+**flagd** — демон оценки флагов, который вычисляет значение флага по правилам таргетинга и отдает результат по gRPC/HTTP. Локальный flagd рядом с приложением обеспечивает оценку без сетевого вызова во внешнюю систему.
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Pod (Kubernetes)                                │
+│                                                                     │
+│  ┌──────────────────┐           ┌──────────────────────────────┐    │
+│  │  App Container  │           │  flagd Sidecar / Proxy       │    │
+│  │                  │           │                              │    │
+│  │  OpenFeature     │◄─────────►│  gRPC :8013 / HTTP :8014    │    │
+│  │  SDK             │           │  Evaluation Engine           │    │
+│  │                  │           │  Rules Cache                  │    │
+│  └──────────────────┘           └──────────────┬───────────────┘    │
+│                                                 │                   │
+└─────────────────────────────────────────────────┼───────────────────┘
+                                                  │
+                                    ┌─────────────▼─────────────┐
+                                    │  ConfigMap / HTTP API     │
+                                    │  (источник правил)         │
+                                    └───────────────────────────┘
+```
+
+**Режимы работы flagd:**
+
+| Режим | Описание | Протокол | Применимость |
+| :--- | :--- | :--- | :--- |
+| **Sidecar** | flagd запущен в каждом Pod как sidecar-контейнер | gRPC/HTTP `localhost:8013` | Kubernetes, максимальная изоляция |
+| **Centralized** | Один инстанс flagd обслуживает несколько подов | gRPC/HTTP через Service | Малые кластеры, dev-окружения |
+| **Kubernetes Operator** | open-feature-operator управляет жизненным циклом flagd | CRD (`FlagSourceConfiguration`) | GitOps, декларативное управление |
+
+### Методы вычисления флагов (Evaluation Strategies)
+
+| Метод | Описание | Применимость | Риски |
+| :--- | :--- | :--- | :--- |
+| **Local Evaluation** | SDK скачивает Ruleset и вычисляет результат в памяти процесса. | Бэкенд-сервисы, высоконагруженные API. | Утечка правил сегментации (код видит всю логику). |
+| **Remote Evaluation** | SDK отправляет контекст на сервер и получает только результат. | Клиентские приложения (JS, Mobile). | Сетевой latency, риск отказа API. |
+| **Hybrid Evaluation** | Публичные правила локально, чувствительные — удаленно через Relay. | Корпоративные системы с высокими требованиями безопасности. | Усложнение конфигурации SDK. |
+
+### Стратегии кеширования в SDK
+
+| Стратегия | Описание | TTL | Использование памяти | Рекомендация |
+| :--- | :--- | :--- | :--- | :--- |
+| **In-Memory Cache** | Хранение Ruleset в памяти процесса | Зависит от протокола синхронизации | Низкая (<1MB) | По умолчанию для всех SDK |
+| **Persistent Cache** | Запись Ruleset на диск (SQLite/JSON) | До перезапуска приложения | Средняя | Mobile/offline-приложения |
+| **Bootstrap File** | Локальный JSON-файл с последними известными состояниями | До первого успешного обновления | Низкая | Fail-safe при недоступности сервера |
+| **Distributed Cache** | Распределенный кеш (Redis) | Настроенный TTL | Средняя | Relay/Proxy, кластерные deployments |
+
+**Порядок приоритетов при вычислении флага:**
+
+```text
+1. Hardcoded default (в коде приложения)
+         ▼
+2. Bootstrap File (локальный JSON)
+         ▼
+3. In-Memory Cache (Ruleset из памяти)
+         ▼
+4. Remote Server (FFaaS API / flagd gRPC)
+```
+
+При недоступности сервера флагов SDK последовательно спускается по этому списку, гарантируя что всегда есть значение для возврата.
+
+---
+
+## Практические сценарии
+
+### Предварительные требования
+
+#### Инструментарий
 
 | Компонент | Назначение | Минимальная версия |
 | :--- | :--- | :--- |
-| **FFaaS платформа** | Хранение и управление флагами (Unleash, Flipt, Flagsmith) | Unleash v5+ / Flipt v1.35+ |
+| **FFaaS платформа** | Хранение и управление флагами (Unleash, Flipt) | Unleash v5+ / Flipt v1.35+ |
 | **OpenFeature SDK** | Унифицированный API для проверки флагов в коде | v0.4+ (Python/Go/Java/Node) |
 | **flagd** | Локальный демон оценки флагов (OpenFeature) | v0.8+ |
 | **OpenTelemetry Collector** | Сбор и передача телеметрии по состоянию флагов | v0.95+ |
@@ -21,7 +167,7 @@
 | **PostgreSQL** | Хранилище конфигурации флагов (Unleash/Flipt) | PostgreSQL v15+ |
 | **Kubernetes** (опционально) | Оркестрация Relay/Proxy и flagd sidecar | v1.28+ |
 
-### Локальное окружение для тестирования
+#### Локальное окружение для тестирования
 
 ```bash
 # Развертывание полного стека: FFaaS + Redis + PostgreSQL
@@ -37,553 +183,12 @@ curl -s http://localhost:4242/api/admin/user | jq '.user.permissions'
 # → ["admin"]
 ```
 
-### Базовые знания
+### Развертывание flagd в Kubernetes
 
-Перед изучением архитектуры рекомендуется ознакомиться с:
-- Общими принципами Feature Toggles ([Обзор](./overview.md))
-- Классификацией флагов по типам ([Типы](./types.md))
-- Паттернами программирования ([Реализация в коде](./implementation.md))
-
----
-
-## Основные концепции
-
-### Многоуровневая архитектура (2026+)
-
-Современные системы управления флагами разделяются на независимые плоскости управления и исполнения, аналогично архитектуре Service Mesh.
-
-```text
-┌────────────────────────────────┐      ┌────────────────────────────────┐
-│      ПЛОСКОСТЬ УПРАВЛЕНИЯ      │      │       СЛОЙ ХРАНЕНИЯ            │
-│        (Control Plane)         │      │       (Storage Layer)          │
-│ ┌────────────────────────────┐ │      │ ┌────────────────────────────┐ │
-│ │  Admin UI / API / RBAC     │ │      │ │  PostgreSQL / Redis / S3   │ │
-│ └──────────────┬─────────────┘ │      │ └──────────────┬─────────────┘ │
-└────────────────┼───────────────┘      └────────────────┼───────────────┘
-                 │                                       │
-                 ▼                                       ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                   ЦЕНТРАЛЬНЫЙ СЕРВЕР ВЫЧИСЛЕНИЙ (API)                  │
-│   (Targeting Engine, Segment Manager, Audit Service, Event Stream)     │
-└────────────────────────────────┬───────────────────────────────────────┘
-                                 │
-         ┌───────────────────────┴───────────────────────┐
-         │                                               │
-         ▼                                               ▼
-┌──────────────────┐                           ┌──────────────────┐
-│  RELAY / PROXY   │                           │  EDGE WORKERS    │
-│ (Local caching,  │                           │ (WASM, Cloudflare│
-│  PII Stripping)  │                           │  Logic at Edge)  │
-└────────┬─────────┘                           └────────┬─────────┘
-         │                                              │
-         └───────────────────────┬──────────────────────┘
-                                 │
-                                 ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                      УРОВЕНЬ ИСПОЛНЕНИЯ (SDK)                          │
-│   ┌─────────────┐       ┌──────────────┐       ┌─────────────┐         │
-│   │ OpenFeature │ ◄──── │  Evaluation  │ ◄──── │  App Logic  │         │
-│   │   Wrapper   │       │    Engine    │       │  (Wrapped)  │         │
-│   └─────────────┘       └──────────────┘       └─────────────┘         │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-### Ключевые компоненты и их функции
-
-1.  **SDK (Evaluation Engine)**:
-    *   **Evaluation (Вычисление)**: В 2026 году стандартом является **OpenFeature SDK**. Вычисление логики (таргетинг) происходит внутри процесса приложения, что дает `O(1)` производительность без внешних вызовов.
-    *   **Synchronization**: SDK поддерживает постоянное соединение (gRPC/SSE) с Relay/API для получения диффов (изменений) правил.
-2.  **Relay / Proxy Layer**:
-    *   **Privacy Guard**: Слой проксирования удаляет или хеширует PII (Personally Identifiable Information) до того, как контекст пользователя попадет в облако внешнего вендора (Unleash/LaunchDarkly).
-    *   **Connection Offloading**: Прокси держит одно соединение с сервером, обслуживая тысячи инстансов приложения, снижая нагрузку на Control Plane.
-3.  **Edge / Global Layer**:
-    *   Использование **WASM** на CDN-узлах позволяет выполнять сложные правила сегментации максимально близко к пользователю, минимизируя "мерцание" (flicker) интерфейса на фронтенде.
-
----
-
-### Ключевой компонент: flagd (OpenFeature Daemon)
-
-**flagd** — демон оценки флагов от OpenFeature, который вычисляет значение флага по правилам таргетинга и отдает результат по gRPC/HTTP. Локальный flagd рядом с приложением обеспечивает оценку без сетевого вызова во внешнюю систему.
-
-```text
-┌─────────────────────────────────────────────────────┐
-│                     Pod (Kubernetes)                 │
-│                                                     │
-│  ┌──────────────────┐    ┌──────────────────────┐   │
-│  │   App Container  │    │  flagd Sidecar       │   │
-│  │                  │    │                      │   │
-│  │  OpenFeature     │───▶│  gRPC :8013          │   │
-│  │  SDK             │    │  Evaluation Engine   │   │
-│  │                  │◀───│  Rules Cache         │   │
-│  └──────────────────┘    └──────────┬───────────┘   │
-│                                     │               │
-└─────────────────────────────────────┼───────────────┘
-                                      │
-                          ┌───────────▼───────────┐
-                          │  ConfigMap / HTTP API  │
-                          │  (источник правил)     │
-                          └───────────────────────┘
-```
-
-**Режимы работы flagd:**
-
-| Режим | Описание | Протокол | Применимость |
-| :--- | :--- | :--- | :--- |
-| **Sidecar** | flagd запущен в каждом Pod как sidecar-контейнер | gRPC/HTTP `localhost:8013` | Kubernetes, максимальная изоляция |
-| **Centralized** | Один инстанс flagd обслуживает несколько подов | gRPC/HTTP через Service | Малые кластеры, dev-окружения |
-| **Kubernetes Operator** | open-feature-operator управляет жизненным циклом flagd | CRD (`FlagSourceConfiguration`) | GitOps, декларативное управление |
-
-**Пример FlagSourceConfiguration (Kubernetes):**
-```yaml
-apiVersion: core.openfeature.dev/v1alpha1
-kind: FlagSourceConfiguration
-metadata:
-  name: checkout-flagsource
-  namespace: billing
-spec:
-  sources:
-    - source: billing/checkout-flags       # namespace/name ConfigMap
-      type: kubernetes
-    - source: http://flags.internal/flags.json
-      type: http
-      interval: 10s                        # Интервал обновления правил
-  defaultSyncProvider: kubernetes
-  port: 8013                               # gRPC-порт flagd
-  logLevel: info
-  metricsPort: 8014                        # Метрики flagd для Prometheus
-```
-
----
-
-### Методы вычисления флагов (Evaluation Strategies)
-
-| Метод | Описание | Применимость | Риски |
-| :--- | :--- | :--- | :--- |
-| **Local Evaluation** | SDK скачивает набор правил (Ruleset) и вычисляет результат в памяти процесса. | Бэкенд-сервисы, высоконагруженные API. | Утечка правил сегментации (код видит всю логику). |
-| **Remote Evaluation** | SDK отправляет контекст (user_id, attributes) на сервер и получает только результат (true/false). | Клиентские приложения (JS, Mobile). | Сетевой latency, риск отказа API. |
-| **Hybrid Evaluation** | Публичные правила вычисляются локально, чувствительные — удаленно через Relay. | Корпоративные системы с высокими требованиями безопасности. | Усложнение конфигурации SDK. |
-
-### Протоколы синхронизации SDK с сервером флагов
-
-SDK поддерживает три основных протокола получения обновлений. Выбор зависит от архитектуры и требований к задержке.
-
-| Протокол | Механизм | Задержка обновления | Нагрузка на сеть | Применимость |
-| :--- | :--- | :--- | :--- | :--- |
-| **Polling** | HTTP GET с интервалом (`/api/client/features`) | Интервал polling (30-60с) | Высокая (много запросов) | Простые deployments, dev-окружения |
-| **SSE (Server-Sent Events)** |ersistent HTTP-соединение, сервер отправляет события | Мгновенно (<1с) | Низкая (одно соединение) | Production, рекомендуемый |
-| **gRPC Streaming** | Bidirectional streaming через gRPC | Мгновенно (<1с) | Минимальная | Высоконагруженные системы |
-
-**Конфигурация SSE в Unleash SDK (Python):**
-```python
-from openfeature import api
-from openfeature.contrib.provider.unleash import UnleashProvider
-
-api.set_provider(UnleashProvider(
-    url="https://ff-api.internal/api",
-    app_name="checkout-service",
-    # SSE streaming: обновления приходят по событию
-    enable_sse=True,
-    # Fallback на polling если SSE недоступен
-    polling_interval=60,           # 60 секунд
-    # Локальный кеш: оценка без сетевого вызова
-    enable_local_cache=True,
-    cache_ttl=300                  # 5 минут
-))
-```
-
-**Конфигурация gRPC-синхронизации (Go):**
-```go
-// flagd sidecar: оценка через gRPC на localhost
-provider, err := flagd.NewProvider(
-    flagd.WithInProcessResolver("checkout-service", "localhost:8013"),
-    flagd.WithLogger(logger),
-)
-if err != nil {
-    log.Fatalf("Failed to create flagd provider: %v", err)
-}
-openfeature.SetProvider(provider)
-```
-
----
-
-### Стратегии кеширования в SDK
-
-| Стратегия | Описание | TTL | Использование памяти | Рекомендация |
-| :--- | :--- | :--- | :--- | :--- |
-| **In-Memory Cache** | Хранение Ruleset в памяти процесса | Зависит от протокола синхронизации | Низкая (<1MB) | По умолчанию для всех SDK |
-| **Persistent Cache** | Запись Ruleset на диск (SQLite/JSON) | До перезапуска приложения | Средняя | Mobile/offline-приложения |
-| **Bootstrap File** | Локальный JSON-файл с последними известными состояниями | До первого успешного обновления | Низкая | Fail-safe при недоступности сервера |
-| **Redis Cache** | Распределенный кеш через Redis | Настроенный TTL | Средняя | Relay/Proxy, кластерные deployments |
-
-**Настройка Bootstrap File:**
-```python
-api.set_provider(UnleashProvider(
-    url="https://ff-api.internal/api",
-    app_name="checkout-service",
-    # Bootstrap: локальный файл с последними известными флагами
-    bootstrap="/etc/feature-flags/bootstrap.json",
-    bootstrap_override=False  # True = bootstrap перезаписывает Ruleset
-))
-```
-
-**Формат bootstrap.json:**
-```json
-{
-  "features": [
-    {
-      "name": "new-checkout",
-      "enabled": true,
-      "variant": "variant-a"
-    },
-    {
-      "name": "legacy-recommendations",
-      "enabled": false,
-      "variant": null
-    }
-  ]
-}
-```
-
----
-
-## Безопасность и отказоустойчивость
-
-### Защита плоскости управления
-
-*   **RBAC & OIDC**: Доступ к переключению флагов в Production должен быть защищен через корпоративный IdP (Okta/Keycloak) с обязательным MFA.
-*   **Four-eyes principle**: Критические флаги (Kill Switches, Security Toggles) требуют аппрува от второго инженера или SRE.
-*   **Audit Trail**: Каждое изменение флага должно сопровождаться записью в неизменяемом логе (кто, когда, зачем, значение `old` vs `new`).
-
-**Настройка RBAC в Unleash:**
-```bash
-# Создание роли "Release Manager" с правами только на release-флаги
-curl -s -X POST "$UNLEASH_URL/api/admin/roles" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Release Manager",
-    "description": "Управление release-флагами в Production",
-    "type": "custom",
-    "permissions": [
-      {
-        "name": "UPDATE_FEATURE",
-        "environment": "production",
-        "project": "default"
-      }
-    ]
-  }'
-
-# Назначение роли пользователю
-curl -s -X POST "$UNLEASH_URL/api/admin/projects/default/members" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "users": [{"id": 1, "roleId": 3}]
-  }'
-```
-
-**Настройка Audit Trail (включение аудита):**
-```bash
-# Unleash: включение аудита изменений флагов
-curl -s -X PUT "$UNLEASH_URL/api/admin/projects/default/settings" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mode": "open",
-    "changeRequestEnvironmentConfigs": [
-      {
-        "environment": "production",
-        "requiredApprovals": 2,
-        "requiresApproval": true
-      }
-    ]
-  }'
-```
-
-**Экспорт аудита в Loki (webhook):**
-```bash
-# Unleash: настройка webhook для экспорта аудита
-curl -s -X POST "$UNLEASH_URL/api/admin/projects/default/integrations" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "webhook",
-    "provider": "custom",
-    "description": "Audit export to Loki",
-    "url": "http://loki.internal:3100/loki/api/v1/push",
-    "events": ["feature-flag-updated", "feature-flag-created", "feature-flag-deleted"],
-    "template": {
-      "url": "http://loki.internal:3100/loki/api/v1/push",
-      "body": "{\"streams\":[{\"stream\":{\"source\":\"unleash\",\"flag\":\"{{event.data.name}}\"},\"values\":[[\"{{event.createdAt}}\",\"{{event.type}} user={{event.createdBy}} old={{event.data.oldEnabled}} new={{event.data.newEnabled}}\"]]}]}"
-    }
-  }'
-```
-
-### Стратегии Fail-safe
-
-Архитектура должна гарантировать работу приложения при полной недоступности системы флагов:
-
-1.  **Bootstrap File**: При старте SDK может читать локальный JSON-файл с последними известными состояниями флагов.
-2.  **Hardcoded Defaults**: Каждая проверка в коде обязана содержать fallback-значение.
-3.  **Graceful Degradation**: При сбое FFaaS система переходит в режим "все новые фичи выключены, стабильное ядро работает".
-
-**Реализация Fail-safe в коде:**
-```python
-from openfeature import api
-from openfeature.contrib.provider.unleash import UnleashProvider
-import logging
-
-def init_feature_flags():
-    """Инициализация с fail-safe fallback."""
-    try:
-        api.set_provider(UnleashProvider(
-            url="https://ff-api.internal/api",
-            app_name="checkout-service",
-            bootstrap="/etc/feature-flags/bootstrap.json",
-            connect_timeout=5,    # Таймаут подключения: 5 секунд
-            read_timeout=3,       # Таймаут чтения: 3 секунды
-        ))
-        logging.info("Feature flags provider initialized successfully")
-    except Exception as e:
-        logging.warning(f"Failed to init feature flags provider: {e}")
-        logging.warning("Using hardcoded defaults - all new features disabled")
-        # SDK автоматически использует дефолтные значения при невозможности подключения
-```
-
-**Смок-тест Fail-safe:**
-```bash
-#!/bin/bash
-# Проверка работы приложения при недоступности FFaaS
-docker compose stop unleash  # Останавливаем сервер флагов
-sleep 5
-
-# Запрос к приложению — должно работать с fallback-значениями
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/checkout)
-if [ "$HTTP_CODE" = "200" ]; then
-    echo "PASS: Application works without FFaaS"
-else
-    echo "FAIL: Application returned $HTTP_CODE without FFaaS"
-    exit 1
-fi
-
-docker compose start unleash  # Восстанавливаем сервер флагов
-```
-
----
-
-## Наблюдаемость и обратная связь (Observability)
-
-Архитектура 2026 года неразрывно связана с **OpenTelemetry (OTel)**:
-
-1.  **Evaluation Events**: SDK генерирует событие при каждой проверке флага. Это позволяет строить дашборды "Процент пользователей с фичей X".
-2.  **Span Attributes**: Состояние флагов инжектируется в атрибуты спанов OTel. При анализе медленного запроса в Jaeger/Tempo видно, был ли в этот момент активен новый экспериментальный поисковый движок.
-3.  **Metric-Driven Rollback**: Автоматизация (например, Argo Rollouts или кастомный контроллер) отслеживает Error Rate. Если флаг `feature-x` включен на 10% и ошибки выросли, автоматика через API Control Plane выключает флаг.
-
-### Интеграция с OpenTelemetry
-
-**Инъекция состояния флагов в спаны:**
-```python
-from openfeature import api
-from opentelemetry import trace
-
-tracer = trace.get_tracer(__name__)
-
-def process_checkout(user_id: str, cart_total: float):
-    client = api.get_client()
-    context = {"user_id": user_id, "cart_total": cart_total}
-
-    with tracer.start_as_current_span("checkout_process") as span:
-        is_modern_v3 = client.get_boolean_value("checkout-v3-enabled", False, context)
-
-        # Инъекция состояния флага в спан
-        span.set_attribute("feature_flag.checkout_v3", is_modern_v3)
-        span.set_attribute("feature_flag.evaluation_time_ns", 
-                          trace.get_current_span().get_span_context().trace_id)
-
-        if is_modern_v3:
-            return run_modern_workflow(user_id)
-        return run_legacy_workflow(user_id)
-```
-
-### Настройка Prometheus для мониторинга флагов
-
-**Метрики, предоставляемые OpenFeature SDK:**
-```yaml
-# Основные метрики OpenFeature SDK (автоматически экспортруются)
-feature_flag_evaluations_total{flag="checkout-v3",value="true"}     # Счетчик оценок
-feature_flag_evaluations_total{flag="checkout-v3",value="false"}
-feature_flag_evaluation_duration_seconds_bucket{flag="checkout-v3"}  # Латентность оценки
-feature_flag_evaluation_errors_total{flag="checkout-v3"}            # Ошибки оценки
-```
-
-**Правила алертинга:**
-```yaml
-# prometheus/rules/feature-flags.yml
-groups:
-  - name: feature-flags
-    rules:
-      # Высокая частота ошибок оценки флагов
-      - alert: HighFlagEvaluationErrors
-        expr: rate(feature_flag_evaluation_errors_total[5m]) > 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Высокая частота ошибок оценки флагов"
-          description: "Флаг {{ $labels.flag }}: {{ $value }} ошибок/сек"
-
-      # Медленная оценка флагов
-      - alert: SlowFlagEvaluation
-        expr: histogram_quantile(0.99, rate(feature_flag_evaluation_duration_seconds_bucket[5m])) > 0.01
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Медленная оценка флагов"
-          description: "p99 латентность оценки {{ $labels.flag }}: {{ $value }}с"
-
-      # Автоматическое отключение флага при высоком Error Rate
-      - alert: FlagCausingErrors
-        expr: |
-          rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Флаг вызывает ошибки"
-          description: "Error rate >5% — требуется проверка активных флагов"
-          runbook_url: "https://wiki.internal/runbooks/flag-rollback"
-```
-
-### Метрика-управляемый откат (Metric-Driven Rollback)
-
-**Реализация через Argo Rollouts + Alertmanager:**
-```yaml
-# Argo Rollouts: автоматический откат при превышении порога ошибок
-apiVersion: argoproj.io/v1alpha1
-kind: Rollout
-metadata:
-  name: checkout-service
-spec:
-  strategy:
-    canary:
-      steps:
-        - setWeight: 10
-        - pause: {duration: 5m}
-        - setWeight: 50
-        - pause: {duration: 10m}
-        - setWeight: 100
-      analysis:
-        templates:
-          - templateName: flag-health-check
-        args:
-          - name: flag-name
-            value: checkout-v3-enabled
----
-apiVersion: argoproj.io/v1alpha1
-kind: AnalysisTemplate
-metadata:
-  name: flag-health-check
-spec:
-  args:
-    - name: flag-name
-  metrics:
-    - name: flag-error-rate
-      interval: 1m
-      count: 5
-      successCondition: result[0] < 0.05
-      provider:
-        prometheus:
-          address: http://prometheus.internal:9090
-          query: |
-            sum(rate(http_requests_total{service="checkout",status=~"5.."}[1m])) /
-            sum(rate(http_requests_total{service="checkout"}[1m]))
-```
-
-**Автоматическое отключение через Alertmanager webhook:**
-```yaml
-# alertmanager.yml: webhook для автоматического отключения флага
-receivers:
-  - name: flag-rollback
-    webhook_configs:
-      - url: 'http://unleash-api.internal:4242/api/admin/projects/default/features/checkout-v3-enabled/environments/production/off'
-        send_resolved: false
-        http_config:
-          authorization:
-            type: Bearer
-            credentials: $UNLEASH_ADMIN_TOKEN
-
-route:
-  routes:
-    - match:
-        alertname: FlagCausingErrors
-      receiver: flag-rollback
-```
-
----
-
-## Bootstrap File: реализация и сценарии использования
-
-Bootstrap File — это локальный JSON-файл, содержащий последнее известное состояние флагов. SDK читает его при старте до установления соединения с сервером флагов.
-
-### Когда использовать Bootstrap
-
-| Сценарий | Описание | Рекомендация |
-| :--- | :--- | :--- |
-| **Cold Start** | Приложение стартует, сервер флагов еще не доступен | Bootstrap обязателен |
-| **Offline Mode** | Mobile/edge-приложения без сетевого доступа | Bootstrap + persistent cache |
-| **Disaster Recovery** | Сервер флагов полностью недоступен | Bootstrap как последний рубеж обороны |
-| **Development** | Локальная разработка без доступа к общей FFaaS | Bootstrap с dev-конфигурацией |
-
-### Генерация Bootstrap файла (CI/CD)
-
-```bash
-#!/bin/bash
-# Генерация bootstrap.json из текущего состояния FFaaS (часть CI-пайплайна)
-FEATURES=$(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
-  jq '[.features[] | select(.stages[]?.name == "production") | {
-    name: .name,
-    enabled: .stages[]?.enabled,
-    variant: .variants[0].name
-  }]')
-
-echo "$FEATURES" | jq '.' > /etc/feature-flags/bootstrap.json
-# → Файл используется SDK при старте приложения
-```
-
-### Порядок приоритетов при вычислении флага
-
-```text
-1. Hardcoded default (в коде приложения)
-         ▼
-2. Bootstrap File (локальный JSON)
-         ▼
-3. In-Memory Cache (Ruleset из памяти)
-         ▼
-4. Remote Server (FFaaS API / flagd gRPC)
-```
-
-При недоступности сервера флагов SDK последовательно спускается по этому списку, garantируя что всегда есть значение для возврата.
-
----
-
-## Архитектура Relay/Proxy: детали реализации
-
-### Relay vs Proxy: различия
-
-| Характеристика | Relay (LaunchDarkly) | Proxy (собственная реализация) |
-| :--- | :--- | :--- |
-| **Роль** | Промежуточный кеш между SDK и Control Plane | Полноценный evaluation engine |
-| **Вычисление** | Не вычисляет — только кеширует Ruleset | Вычисляет результат локально |
-| **Протокол** | SSE/HTTP streaming от Control Plane | gRPC/HTTP от SDK |
-| **PII Stripping** | Да, на уровне Proxy | Опционально |
-| **Нагрузка на Control Plane** | Снижает (1 соединение на кластер) | Снижает (нет прямых соединений SDK) |
-
-### Развертывание Proxy (Flagd в Kubernetes)
+**Deployment flagd как centralized proxy:**
 
 ```yaml
-# Deployment flagd как centralized proxy для dev-окружения
+# deployment-flagd.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -654,206 +259,619 @@ spec:
       targetPort: 8015
 ```
 
-### PII Stripping в Proxy
+**Применение конфигурации:**
+
+```bash
+# Создание namespace
+kubectl create namespace feature-flags
+
+# Развертывание flagd
+kubectl apply -f deployment-flagd.yaml
+
+# Проверка статуса
+kubectl get pods -n feature-flags
+# → flagd-proxy-<hash>   2/2   Running   0   30s
+
+# Проверка доступности gRPC
+kubectl run -it --rm --image=busybox:1.36 --restart=Never grpc-test -- nslookup flagd-proxy.feature-flags.svc.cluster.local
+# → Address: <cluster-ip>
+```
+
+### Конфигурация FlagSourceConfiguration (Kubernetes Operator)
+
+```yaml
+# flagsource-configuration.yaml
+apiVersion: core.openfeature.dev/v1alpha1
+kind: FlagSourceConfiguration
+metadata:
+  name: checkout-flagsource
+  namespace: billing
+spec:
+  sources:
+    - source: billing/checkout-flags       # namespace/name ConfigMap
+      type: kubernetes
+    - source: http://flags.internal/flags.json
+      type: http
+      interval: 10s                        # Интервал обновления правил
+  defaultSyncProvider: kubernetes
+  port: 8013                               # gRPC-порт flagd
+  logLevel: info
+  metricsPort: 8014                        # Метрики flagd для Prometheus
+```
+
+**Применение:**
+
+```bash
+kubectl apply -f flagsource-configuration.yaml
+
+# Проверка статуса FlagSourceConfiguration
+kubectl get flagsourceconfiguration -n billing
+# → NAME                   AGE   READY   REASON
+# → checkout-flagsource    10s   True    FlagSourceConfigurationReady
+
+# Проверка метрик flagd
+curl -s http://flagd-proxy.feature-flags.svc.cluster.local:8015/metrics | grep feature_flag
+# → feature_flag_evaluations_total{flag="checkout-v3",value="true"} 1523
+```
+
+### Конфигурация SDK: примеры
+
+**OpenFeature SDK (Python) с SSE:**
 
 ```python
-# Пример Proxy, который удаляет PII перед отправкой в FFaaS
-import hashlib
-from fastapi import FastAPI, Request
+from openfeature import api
+from openfeature.contrib.provider.unleash import UnleashProvider
 
-app = FastAPI()
+api.set_provider(UnleashProvider(
+    url="https://ff-api.internal/api",
+    app_name="checkout-service",
+    # SSE streaming: обновления приходят по событию
+    enable_sse=True,
+    # Fallback на polling если SSE недоступен
+    polling_interval=60,           # 60 секунд
+    # Локальный кеш: оценка без сетевого вызова
+    enable_local_cache=True,
+    cache_ttl=300,                 # 5 минут
+    # Bootstrap: локальный файл с последними известными флагами
+    bootstrap="/etc/feature-flags/bootstrap.json",
+    bootstrap_override=False       # True = bootstrap перезаписывает Ruleset
+))
+```
 
-PII_FIELDS = ["email", "phone", "ip_address", "full_name"]
+**OpenFeature SDK (Go) с flagd sidecar:**
 
-def strip_pii(context: dict) -> dict:
-    """Удаление или хеширование PII из контекста пользователя."""
-    cleaned = {}
-    for key, value in context.items():
-        if key in PII_FIELDS:
-            # Хеширование PII вместо удаления (сохраняет консистентность)
-            cleaned[key] = hashlib.sha256(str(value).encode()).hexdigest()[:16]
-        else:
-            cleaned[key] = value
-    return cleaned
+```go
+package main
 
-@app.post("/api/flags/evaluate")
-async def evaluate_flag(request: Request):
-    body = await request.json()
-    cleaned_context = strip_pii(body.get("context", {}))
-    # Отправка очищенного контекста в FFaaS
-    result = await evaluate_in_ffaaS(body["flag_name"], cleaned_context)
-    return {"value": result}
+import (
+    "log"
+    "github.com/open-feature/go-sdk"
+    "github.com/open-feature/go-sdk-contrib/providers/flagd"
+)
+
+func main() {
+    provider, err := flagd.NewProvider(
+        flagd.WithInProcessResolver("checkout-service", "localhost:8013"),
+        flagd.WithLogger(log.New(os.Stderr, "", log.LstdFlags)),
+    )
+    if err != nil {
+        log.Fatalf("Failed to create flagd provider: %v", err)
+    }
+
+    openfeature.SetProvider(provider)
+    log.Println("Feature flags provider initialized successfully")
+}
+```
+
+### Bootstrap File: реализация и сценарии использования
+
+Bootstrap File — локальный JSON-файл с последним известным состоянием флагов. SDK читает его при старте до установления соединения с сервером.
+
+**Формат bootstrap.json:**
+
+```json
+{
+  "features": [
+    {
+      "name": "new-checkout",
+      "enabled": true,
+      "variant": "variant-a"
+    },
+    {
+      "name": "legacy-recommendations",
+      "enabled": false,
+      "variant": null
+    }
+  ]
+}
+```
+
+**Генерация Bootstrap файла в CI/CD:**
+
+```bash
+#!/bin/bash
+# scripts/generate-bootstrap.sh — генерация bootstrap.json из текущего состояния FFaaS
+set -euo pipefail
+
+UNLEASH_URL="${UNLEASH_URL:-http://localhost:4242}"
+UNLEASH_TOKEN="${UNLEASH_TOKEN:-*:*.admin}"
+BOOTSTRAP_PATH="${BOOTSTRAP_PATH:-/etc/feature-flags/bootstrap.json}"
+
+FEATURES=$(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
+  -H "Authorization: $UNLEASH_TOKEN" | \
+  jq '[.features[] | select(.stages[]?.name == "production") | {
+    name: .name,
+    enabled: .stages[]?.enabled,
+    variant: .variants[0].name
+  }]')
+
+echo "$FEATURES" | jq '.' > "$BOOTSTRAP_PATH"
+echo "Bootstrap file generated: $BOOTSTRAP_PATH"
+echo "Features count: $(echo "$FEATURES" | jq 'length')"
+```
+
+**CI/CD интеграция (GitLab CI):**
+
+```yaml
+# .gitlab-ci.yml
+generate-bootstrap:
+  stage: deploy
+  image: curlimages/curl:latest
+  script:
+    - bash scripts/generate-bootstrap.sh
+  artifacts:
+    paths:
+      - /etc/feature-flags/bootstrap.json
+  only:
+    - main
 ```
 
 ---
 
-## Архитектура Edge Workers (WASM)
+## Операции и команды
 
-WASM-модули на CDN-узлах позволяют выполнять логику оценки флагов максимально близко к пользователю, минимизируя задержки и "мерцание" интерфейса.
+### Безопасность и отказоустойчивость
 
-### Принцип работы
+#### Защита плоскости управления
 
-```text
-Пользователь → CDN-узел (Cloudflare/Fastly)
-                      │
-                      ▼
-              WASM Module (Feature Flag Evaluation)
-                      │
-                      ▼
-              Правила флагов (KV Storage / durable objects)
-                      │
-                      ▼
-              HTML/JS с 적용ленными флагами
+**RBAC & OIDC:** Доступ к переключению флагов в Production должен быть защищен через корпоративный IdP (Keycloak) с обязательным MFA.
+
+**Настройка RBAC в Unleash:**
+
+```bash
+# Создание роли "Release Manager" с правами только на release-флаги
+curl -s -X POST "$UNLEASH_URL/api/admin/roles" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Release Manager",
+    "description": "Управление release-флагами в Production",
+    "type": "custom",
+    "permissions": [
+      {
+        "name": "UPDATE_FEATURE",
+        "environment": "production",
+        "project": "default"
+      }
+    ]
+  }'
+# → {"id": 3, "name": "Release Manager", ...}
+
+# Назначение роли пользователю
+curl -s -X POST "$UNLEASH_URL/api/admin/projects/default/members" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "users": [{"id": 1, "roleId": 3}]
+  }'
+# → [{"id": 1, "name": "user@example.com", "role": "Release Manager"}]
 ```
 
-### Пример WASM-модуля для оценки флагов
+**Four-Eyes Principle:** Критические операционные флаги (Kill Switch, Security Toggles) требуют аппрува от второго инженера или SRE через Change Request workflow.
 
-```rust
-// Простой WASM-модуль для оценки percentage-based флагов
-use wasm_bindgen::prelude::*;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+**Настройка Change Request в Unleash:**
 
-#[derive(Deserialize)]
-struct FlagConfig {
-    enabled: bool,
-    percentage: u32,
-    variants: HashMap<String, String>,
-}
-
-#[derive(Serialize)]
-struct EvaluationResult {
-    value: bool,
-    variant: Option<String>,
-}
-
-#[wasm_bindgen]
-pub fn evaluate_flag(config_json: &str, user_id: &str) -> String {
-    let config: FlagConfig = serde_json::from_str(config_json).unwrap();
-    
-    if !config.enabled {
-        return serde_json::to_string(&EvaluationResult {
-            value: false,
-            variant: None,
-        }).unwrap();
-    }
-    
-    // Детерминированное хеширование user_id для percentage-based распределения
-    let hash = simple_hash(user_id);
-    let bucket = hash % 100;
-    
-    let enabled = bucket < config.percentage;
-    let variant = if enabled {
-        Some("enabled".to_string())
-    } else {
-        Some("disabled".to_string())
-    };
-    
-    serde_json::to_string(&EvaluationResult {
-        value: enabled,
-        variant,
-    }).unwrap()
-}
-
-fn simple_hash(input: &str) -> u32 {
-    let mut hash: u32 = 5381;
-    for byte in input.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(byte as u32);
-    }
-    hash
-}
+```bash
+# Включение Change Request для Production
+curl -s -X PUT "$UNLEASH_URL/api/admin/projects/default/settings" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "open",
+    "changeRequestEnvironmentConfigs": [
+      {
+        "environment": "production",
+        "requiredApprovals": 2,
+        "requiresApproval": true
+      }
+    ]
+  }'
+# → {"id": "default", "mode": "open", ...}
 ```
 
-### Интеграция WASM с CDN
+**Audit Trail:** Каждое изменение флага должно сопровождаться записью в неизменяемом логе (кто, когда, зачем, значение `old` vs `new`).
 
-```javascript
-// Cloudflare Worker: использование WASM для оценки флагов
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const userId = getCookie(request, 'user_id') || 'anonymous';
-    
-    // Загрузка WASM-модуля
-    const wasmModule = await env.FF_WASM;
-    
-    // Получение конфигурации флагов из KV Storage
-    const flagsConfig = await env.FLAGS_KV.get('flags', { type: 'json' });
-    
-    // Оценка флагов через WASM
-    const results = {};
-    for (const [flagName, config] of Object.entries(flagsConfig)) {
-      const result = wasmModule.evaluate_flag(
-        JSON.stringify(config), 
-        userId
-      );
-      results[flagName] = JSON.parse(result);
+**Экспорт аудита в Loki:**
+
+```bash
+# Unleash: настройка webhook для экспорта аудита
+curl -s -X POST "$UNLEASH_URL/api/admin/projects/default/integrations" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "webhook",
+    "provider": "custom",
+    "description": "Audit export to Loki",
+    "url": "http://loki.internal:3100/loki/api/v1/push",
+    "events": ["feature-flag-updated", "feature-flag-created", "feature-flag-deleted"],
+    "template": {
+      "url": "http://loki.internal:3100/loki/api/v1/push",
+      "body": "{\"streams\":[{\"stream\":{\"source\":\"unleash\",\"flag\":\"{{event.data.name}}\"},\"values\":[[\"{{event.createdAt}}\",\"{{event.type}} user={{event.createdBy}} old={{event.data.oldEnabled}} new={{event.data.newEnabled}}\"]]}]}"
     }
-    
-    // Вставка результатов в HTML
-    const response = await fetch('https://origin.example.com/index.html');
-    let html = await response.text();
-    html = html.replace('<!-- FEATURE_FLAGS -->', 
-      `<script>window.__FEATURE_FLAGS__ = ${JSON.stringify(results)};</script>`);
-    
-    return new Response(html, {
-      headers: { 'Content-Type': 'text/html' }
-    });
-  }
-};
+  }'
+# → {"id": "audit-loki", "type": "webhook", ...}
+```
+
+#### Стратегии Fail-safe
+
+Архитектура должна гарантировать работу приложения при полной недоступности FFaaS:
+
+```python
+from openfeature import api
+from openfeature.contrib.provider.unleash import UnleashProvider
+import logging
+
+def init_feature_flags():
+    """Инициализация с fail-safe fallback."""
+    try:
+        api.set_provider(UnleashProvider(
+            url="https://ff-api.internal/api",
+            app_name="checkout-service",
+            bootstrap="/etc/feature-flags/bootstrap.json",
+            connect_timeout=5,    # Таймаут подключения: 5 секунд
+            read_timeout=3,       # Таймаут чтения: 3 секунды
+        ))
+        logging.info("Feature flags provider initialized successfully")
+    except Exception as e:
+        logging.warning(f"Failed to init feature flags provider: {e}")
+        logging.warning("Using hardcoded defaults - all new features disabled")
+        # SDK автоматически использует дефолтные значения при невозможности подключения
+```
+
+**Смок-тест Fail-safe:**
+
+```bash
+#!/bin/bash
+# scripts/failover-test.sh — проверка работы при недоступности FFaaS
+set -euo pipefail
+
+UNLEASH_SERVICE="${UNLEASH_SERVICE:-unleash}"
+APP_URL="${APP_URL:-http://localhost:8080}"
+
+echo "Stopping FFaaS..."
+docker compose stop "$UNLEASH_SERVICE"
+sleep 5
+
+echo "Testing application without FFaaS..."
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/checkout")
+if [ "$HTTP_CODE" = "200" ]; then
+    echo "PASS: Application works without FFaaS (HTTP $HTTP_CODE)"
+else
+    echo "FAIL: Application returned HTTP $HTTP_CODE without FFaaS"
+    exit 1
+fi
+
+echo "Restoring FFaaS..."
+docker compose start "$UNLEASH_SERVICE"
+sleep 3
+
+echo "Verifying FFaaS is back..."
+curl -s -o /dev/null -w "%{http_code}" "$UNLEASH_URL/api/admin/user"
+# → 200
+echo "PASS: FFaaS restored successfully"
+```
+
+### Наблюдаемость и мониторинг
+
+#### Интеграция с OpenTelemetry
+
+**Инъекция состояния флагов в спаны:**
+
+```python
+from openfeature import api
+from opentelemetry import trace
+
+tracer = trace.get_tracer(__name__)
+
+def process_checkout(user_id: str, cart_total: float):
+    client = api.get_client()
+    context = {"user_id": user_id, "cart_total": cart_total}
+
+    with tracer.start_as_current_span("checkout_process") as span:
+        is_modern_v3 = client.get_boolean_value("checkout-v3-enabled", False, context)
+
+        # Инъекция состояния флага в спан
+        span.set_attribute("feature_flag.checkout_v3", is_modern_v3)
+        span.set_attribute("feature_flag.evaluation_time_ns",
+                          trace.get_current_span().get_span_context().trace_id)
+
+        if is_modern_v3:
+            return run_modern_workflow(user_id)
+        return run_legacy_workflow(user_id)
+```
+
+#### Настройка Prometheus для мониторинга флагов
+
+**Метрики OpenFeature SDK (автоматически экспортируются):**
+
+```yaml
+# prometheus.yml: scrape config для flagd
+scrape_configs:
+  - job_name: 'flagd'
+    static_configs:
+      - targets: ['flagd-proxy.feature-flags.svc.cluster.local:8015']
+    scrape_interval: 15s
+    metrics_path: /metrics
+```
+
+**Правила алертинга:**
+
+```yaml
+# prometheus/rules/feature-flags.yml
+groups:
+  - name: feature-flags
+    rules:
+      # Высокая частота ошибок оценки флагов
+      - alert: HighFlagEvaluationErrors
+        expr: rate(feature_flag_evaluation_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая частота ошибок оценки флагов"
+          description: "Флаг {{ $labels.flag }}: {{ $value }} ошибок/сек"
+          runbook_url: "https://wiki.internal/runbooks/flag-evaluation-errors"
+
+      # Медленная оценка флагов
+      - alert: SlowFlagEvaluation
+        expr: histogram_quantile(0.99, rate(feature_flag_evaluation_duration_seconds_bucket[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Медленная оценка флагов"
+          description: "p99 латентность оценки {{ $labels.flag }}: {{ $value }}с"
+
+      # Автоматическое отключение флага при высоком Error Rate
+      - alert: FlagCausingErrors
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Флаг вызывает ошибки"
+          description: "Error rate >5% — требуется проверка активных флагов"
+          runbook_url: "https://wiki.internal/runbooks/flag-rollback"
+
+      # Zombie-флаг: флаг не изменялся >30 дней
+      - alert: ZombieFlagDetected
+        expr: |
+          (
+            time() - (
+              vector(flag_last_modified_timestamp_seconds{flag=~".+"}) * 1
+            )
+          ) > 2592000  # 30 дней в секундах
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Zombie-флаг: {{ $labels.flag }}"
+          description: "Флаг не изменялся более 30 дней. Проверьте необходимость его удаления."
+          runbook_url: "https://wiki.internal/runbooks/zombie-flag-cleanup"
+
+      # Коллизия флагов: несколько флагов влияют на один ресурс
+      - alert: FlagCollisionDetected
+        expr: |
+          count by (resource) (
+            group(
+              flag_resource_usage_total{resource=~".+"}
+            ) > 1
+          )
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Коллизия флагов на ресурсе {{ $labels.resource }}"
+          description: "Несколько флагов влияют на один ресурс. Проверьте конфликты."
+          runbook_url: "https://wiki.internal/runbooks/flag-collision"
+```
+
+### Автоматизация и CI/CD интеграция
+
+#### Валидация флагов в CI-пайплайне
+
+Автоматическая проверка naming conventions и состояния флагов должна выполняться на этапе `validate` CI-пайплайна. Подробный скрипт и конфигурация — в [Лучшие практики](./best_practices.md).
+
+#### Автоматический откат через Alertmanager
+
+```yaml
+# alertmanager.yml: webhook для автоматического отключения флага
+receivers:
+  - name: flag-rollback
+    webhook_configs:
+      - url: 'http://unleash-api.internal:4242/api/admin/projects/default/features/checkout-v3-enabled/environments/production/off'
+        send_resolved: false
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: $UNLEASH_ADMIN_TOKEN
+
+route:
+  routes:
+    - match:
+        alertname: FlagCausingErrors
+      receiver: flag-rollback
+```
+
+### Безопасность: сетевые политики
+
+**NetworkPolicy для flagd в Kubernetes:**
+
+```yaml
+# networkpolicy-flagd.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flagd-allow
+  namespace: feature-flags
+spec:
+  podSelector:
+    matchLabels:
+      app: flagd-proxy
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: billing
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: checkout
+      ports:
+        - protocol: TCP
+          port: 8013
+        - protocol: TCP
+          port: 8014
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443  # FFaaS API
+```
+
+**Применение:**
+
+```bash
+kubectl apply -f networkpolicy-flagd.yaml
+kubectl get networkpolicy -n feature-flags
+# → NAME           AGE   POD-SELECTOR
+# → flagd-allow   5s    app=flagd-proxy
 ```
 
 ---
 
-## Типичные ошибки и диагностика (Troubleshooting)
+## Типичные ошибки и диагностика
 
 | Симптом | Вероятная причина | Диагностические действия | Решение |
 | :--- | :--- | :--- | :--- |
-| SDK не подключается к FFaaS | Сетевой firewall, неверный URL | `telnet ff-api.internal 4242` → проверить доступность; `curl -v $UNLEASH_URL/api/client/features` → проверить HTTP-ответ | Убедиться, что порт 4242 открыт между подом приложения и FFaaS; проверить DNS-резолв |
-| Оценка флага возвращает дефолт | SDK не получил Ruleset, bootstrap отсутствует | `docker logs flagd-proxy` → проверить sync; проверить наличие bootstrap.json | Убедиться, что bootstrap файл доступен в контейнере; проверить права доступа к файлу |
+| SDK не подключается к FFaaS | Сетевой firewall, неверный URL | `telnet ff-api.internal 4242` → проверить доступность; `curl -v $UNLEASH_URL/api/client/features` → проверить HTTP-ответ | Убедиться, что порт открыт между подом приложения и FFaaS; проверить DNS-резолв |
+| Оценка флага возвращает дефолт | SDK не получил Ruleset, bootstrap отсутствует | `docker logs flagd-proxy` → проверить sync; `ls -la /etc/feature-flags/` → проверить наличие bootstrap.json | Убедиться, что bootstrap файл доступен; проверить права доступа к файлу |
 | Флаг не обновляется в Runtime | SDK кеширует старый Ruleset | `tcpdump -i any port 8013` → проверить SSE/gRPC-соединение; проверить `cache_ttl` | Увеличить частоту polling или переключиться на SSE; проверить Health Check flagd |
 | Высокий latency оценки флагов | Remote evaluation вместо local | `curl -w "@curl-format.txt" -o /dev/null -s $UNLEASH_URL/api/client/features` → замерить latency | Переключиться на local evaluation (SSE + in-memory cache); добавить flagd sidecar |
 | Флаги различаются между средами | Ручное управление без GitOps | `diff <(curl -s prod-flags) <(curl -s staging-flags)` → найти расхождения | Декларативное управление через GitOps; diff флагов — часть ревью PR |
-| Bootstrap не работает | Неверный формат JSON, отсутствие файла | `python -m json.tool /etc/feature-flags/bootstrap.json` → проверить формат; `ls -la /etc/feature-flags/` → проверить наличие | Использовать валидный JSON; убедиться, что volume mount корректен |
+| Bootstrap не работает | Неверный формат JSON, отсутствие файла | `python -m json.tool /etc/feature-flags/bootstrap.json` → проверить формат | Использовать валидный JSON; убедиться, что volume mount корректен |
 | flagd sidecar не стартует | Неверный образ, проблемы с health check | `kubectl describe pod <pod-name>` → проверить Events; `kubectl logs <pod-name> -c flagd` → проверить логи | Проверить версию образа; убедиться, что port 8013 доступен; проверить readinessProbe |
 | PII утекает в FFaaS | Proxy не настроен на strip PII | `curl $UNLEASH_URL/api/admin/projects/default/features/flag-name` → проверить context в логах | Настроить PII Stripping в Proxy; использовать hashing вместо raw значений |
+| Zombie-флаг мешает релизу | Устаревший флаг блокирует логику | `curl -s $UNLEASH_URL/api/admin/projects/default/features | jq '[.features[] | select(.stale)] | length'` → подсчитать | Удалить или обновить TTL; запустить cleanup-спринт |
+| flagd OOMKill | Недостаточно ресурсов | `kubectl describe pod <pod-name> | grep -A5 "Last State"` → проверить причину завершения | Увеличить limits memory; настроить `cache_ttl` для уменьшения потребления |
+
+### Disaster Recovery
+
+#### Процедура восстановления при полном отказе FFaaS
+
+```bash
+#!/bin/bash
+# scripts/dr-ffaas-restore.sh — Disaster Recovery для FFaaS
+set -euo pipefail
+
+BACKUP_DIR="${BACKUP_DIR:-/backup/feature-flags}"
+RESTORE_DIR="${RESTORE_DIR:-/etc/feature-flags}"
+
+echo "=== Disaster Recovery: Feature Flags ==="
+
+# 1. Остановка приложения
+echo "[1/5] Stopping application..."
+kubectl scale deployment checkout-service --replicas=0 -n billing
+
+# 2. Экспорт текущего состояния флагов (если FFaaS частично доступен)
+echo "[2/5] Exporting current flag state..."
+curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
+  jq '.' > "$BACKUP_DIR/flags-export-$(date +%Y%m%d-%H%M%S).json"
+
+# 3. Генерация Bootstrap File из последнего бэкапа
+echo "[3/5] Generating Bootstrap File..."
+cp "$BACKUP_DIR/bootstrap-latest.json" "$RESTORE_DIR/bootstrap.json"
+
+# 4. Перезапуск приложения с Bootstrap
+echo "[4/5] Restarting application with Bootstrap..."
+kubectl scale deployment checkout-service --replicas=3 -n billing
+kubectl rollout status deployment/checkout-service -n billing --timeout=5m
+
+# 5. Валидация
+echo "[5/5] Validating application health..."
+kubectl get pods -n billing -l app=checkout-service
+# → NAME                                  READY   STATUS    RESTARTS   AGE
+# → checkout-service-<hash>               1/1     Running   0          30s
+
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://checkout-service.billing.svc.cluster.local/health")
+if [ "$HTTP_CODE" = "200" ]; then
+    echo "PASS: Application recovered successfully"
+else
+    echo "FAIL: Application health check returned HTTP $HTTP_CODE"
+    exit 1
+fi
+
+echo "=== Disaster Recovery completed ==="
+```
 
 ---
 
-## Ограничения и особые случаи (Edge Cases)
+## Best Practices
 
-### Когда Feature Toggles НЕ подходят
+### Архитектурные принципы
 
-- **Простые CRUD-приложения** без альтернативных веток логики — Overhead от инфраструктуры флагов не окупается.
-- **Критические пути с нулевой толерантностью к latency** — каждая проверка флага добавляет вычисления (хотя и `O(1)` при локальном вычислении). В high-frequency trading или real-time bidding этот overhead может быть неприемлем.
-- **Замена системы авторизации** — флаги не предназначены для обеспечения безопасности. Злоумышленник может подменить контекст на клиенте.
+1.  **Single Source of Truth:** FFaaS-платформа является единственным источником истины для состояний флагов. Локальный кеш (Bootstrap, In-Memory) — только fallback.
+2.  **Local Evaluation by Default:** Вычисление должно происходить локально (SDK или flagd). Remote evaluation только для чувствительных правил.
+3.  **Fail-Safe Defaults:** Для новых фич по умолчанию `False`. Для Kill Switch — `True` (фича активна, пока мониторинг не скажет обратное).
+4.  **Network Partition Tolerance:** Архитектура должна учитывать разделение сети между приложением и FFaaS. Bootstrap File — обязательный компонент.
+5.  **Observability-First:** Каждый критический флаг должен иметь:
+    - Дашборд в Grafana с ошибками и латентностью
+    - Алерт в Prometheus при превышении порога
+    - Runbook с инструкциями по откату
 
-### Архитектурные ограничения
+### Операционная модель (SRE/DevOps)
 
-- **Комбинаторный взрыв:** 10 независимых бинарных флагов дают 1024 состояния системы. Необходимо ограничивать количество одновременно активных релизных флагов на сервис (типично: 5-10).
-- **Глобальные побочные эффекты:** Если два флага влияют на один глобальный ресурс (переменную окружения, запись в БД) в несовместимых режимах — возникает коллизия. Требуется группировка флагов по доменам и конфликт-тестирование.
-- **Миграции БД:** Флаги не должны управлять структурой таблиц. Попытка изменять схему БД внутри логических условий флага приводит к разрыву между состоянием кода и схемы.
+1.  **Ownership:** У каждого флага должен быть Owner (команда) и TTL (срок жизни).
+2.  **Four-Eyes Principle:** Изменение критических операционных флагов в Production требует подтверждения от второго инженера или SRE.
+3.  **Automated Cleanup:** Ночные джобы CI/CD выполняют автоматический аудит: флаги без изменений >14 дней блокируют мерж новых PR.
+4.  **Capacity Planning:** Мониторинг потребления ресурсов flagd (CPU, Memory). Типичные лимиты: 100m CPU, 128Mi Memory на инстанс.
+5.  **Change Management:** Все изменения флагов в Production фиксируются в Audit Log и проходят через Change Request workflow.
 
-### Edge Cases в Production
+### Безопасность
 
-- **Одновременное включение нескольких экспериментов:** Если два A/B-теста затрагивают один и тот же UI-компонент, результаты могут быть искажены. Необходимо выявлять пересечения и запускать их последовательно или исключать пересекающуюся аудиторию.
-- **Кэширование на CDN/Браузере:** Если флаг определяет видимость элемента UI, а страница кэшируется CDN или браузером, пользователь может видеть устаревшее состояние. Решение: не кэшировать страницы с активными флагами или добавлять `Cache-Control: no-cache` для путей с флагами.
-- **Offline-режим (Mobile):** При отсутствии сети SDK не может получить обновленное значение флага. Используйте bootstrap-файл (последнее известное состояние) или hardcoded fallback.
-- **WASM без KeyValue Storage:** Если CDN не поддерживает KV Storage (например, простой CDN без durable objects), правила флагов необходимо инлайнить в WASM-модуль при сборке — это делает обновление правил невозможным без пересборки модуля.
-- **flagd sidecar restart loop:** При частых рестартах flagd (вследствие OOM или liveness probe failure) приложение теряет доступ к локальному evaluation engine и переключается на удаленный сервер — это увеличивает latency и создает нагрузку на FFaaS. Мониторьте потребление памяти flagd и настраивайте appropriate resource limits.
+1.  **PII Protection:** Контекст пользователя не должен содержать raw PII в FFaaS. Используйте хеширование (SHA-256) или удаление полей.
+2.  **Network Segmentation:** flagd и FFaaS должны быть в отдельных namespace с NetworkPolicy, разрешающей только необходимые порты.
+3.  **mTLS between Services:** flagd ↔ Application и flagd ↔ FFaaS должны использовать взаимное TLS для аутентификации.
+4.  **Secrets Management:** Токены доступа к FFaaS хранятся в Vault или Kubernetes Secrets, не в конфигах или окружении.
 
 ---
 
 ## Дополнительная информация
 
 ### Внутренние ресурсы
-- **[Обзор Feature Toggles](./overview.md)** — парадигма Deploy vs Release.
-- **[Типы Feature Toggles](./types.md)** — классификация по времени жизни.
-- **[Реализация в коде](./implementation.md)** — использование паттерна Wrapper и OpenFeature.
-- **[Лучшие практики](./best_practices.md)** — гигиена и жизненный цикл.
-- **[Feature Flags в GitOps](../../GitOps/Concepts/feature_flags_gitops.md)** — декларативное управление флагами через Git, flagd + open-feature-operator.
+
+- **[Обзор Feature Toggles](./overview.md)** — концептуальная база, Deploy vs Release.
+- **[Лучшие практики](./best_practices.md)** — гигиена, naming conventions, жизненный цикл.
 - **[Антипаттерны](./antipatterns.md)** — типичные ошибки архитектуры флагов.
 
 ### Внешние ресурсы
-- [OpenFeature Specification](https://openfeature.dev/docs/reference/intro) — промышленный стандарт.
+
+- [OpenFeature Specification](https://openfeature.dev/specification/) — промышленный стандарт управления флагами.
 - [flagd Documentation](https://docs.openfeature.dev/docs/understanding-feature-timing/flagd) — демон оценки флагов от OpenFeature.
-- [LaunchDarkly Relay Proxy](https://docs.launchdarkly.com/home/relay-proxy) — архитектура безопасного проксирования.
+- [Trunk Based Development](https://trunkbaseddevelopment.com/feature-flags/) — роль флагов в CI/CD.

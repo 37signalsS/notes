@@ -20,13 +20,39 @@
 
 **VaultStaticSecret** — CR для VSO, синхронизирующий статические секреты из Vault (KV v2) в нативный Kubernetes `Secret` с интервалом `refreshAfter`.
 
-**VaultDynamicSecret** — CR для VSO, синхронизирующий динамические секреты (базы данных, облака: `db`, `aws`, `gcp` и др.) с автоматическим продлением аренды.
+**VaultDynamicSecret** — CR для VSO, синхронизирующий динамические секреты (базы данных, внешние системы: `db` и др.) с автоматическим продлением аренды.
 
 **VaultPKISecret** — CR для VSO, синхронизирующий сертификаты PKI Vault (например, выданные через `pki/issue`) в Kubernetes `Secret` с автоматической заменой перед истечением срока действия (`expiryOffset`, `ttl`).
 
 **Rollout-restart** — функция VSO: при ротации или дрейфе секрета оператор автоматически инициирует `kubectl rollout restart` (через `rolloutRestartTargets`), перезапуская поды приложений без ручного участия.
 
+**`refreshAfter`** — интервал времени (например, `30s`, `5m`), через который VSO повторно синхронизирует статические секреты из Vault в Kubernetes `Secret`. Гарантирует, что изменения в Vault отражаются в кластере с заданной периодичностью.
+
+**`expiryOffset`** — запас времени (например, `10m`), за который `VaultPKISecret` инициирует обновление сертификата до его фактического истечения. Позволяет избежать простоев из-за задержки распространения нового сертификата.
+
+**`rolloutRestartTargets`** — список ресурсов Kubernetes (`Deployment`, `StatefulSet`, `DaemonSet`), которые VSO перезапускает при изменении секрета. Позволяет принудительно перечитать секрет из файлов или переменных окружения без внешних инструментов (например, Reloader).
+
+**`audience`** — поле в роли Kubernetes Auth Method Vault, ограничивающее валидные аудитории JWT-токена. Начиная с Vault 1.21+, поле `audience` обязательно для роли `auth/kubernetes`. Если токен содержит аудиторию, не совпадающую с ролью, аутентификация отклоняется. Это предотвращает переиспользование токенов ServiceAccount за пределами Vault.
+
 ## Основные концепции
+
+### Архитектура Vault в Kubernetes
+
+Развертывание Vault в Kubernetes — распространённый паттерн для централизованного управления секретами кластера. Vault работает как **StatefulSet** в выделенном namespace (например, `vault`), а для хранения данных в HA-режиме используется **Raft** (Integrated Storage) — встроенный бэкенд, не требующий внешних зависимостей.
+
+**Компоненты архитектуры:**
+- **StatefulSet `vault`:** управляет подами сервера Vault (`vault-0`, `vault-1`, `vault-2`). Каждый под имеет стабильное сетевое имя и порядковый индекс.
+- **Raft storage:** данные реплицируются между подами через внутренний порт `8201`. Лидер обрабатывает запись, остальные реплики обслуживают чтение (stale reads при настройке `read_consistency`).
+- **Service `vault`:** ClusterIP-сервис, через который приложения и операторы обращаются к активному лидеру Vault.
+- **Service `vault-internal`:** сервис для взаимодействия реплик между собой (рекомендуется для `retry_join`).
+- **Auto-unseal:** в production необходимо автоматическое распечатывание. Поскольку облачные KMS (AWS KMS, GCP CKMS) относятся к облачным технологиям и исключены из рассмотрения, используется **Transit seal** — Vault сам хранит мастер-ключ и расшифровывает данные через Transit Engine, либо ручное распечатывание (только для dev/test).
+
+**Service discovery:**
+- `service_registration "kubernetes" {}` в конфигурации Vault автоматически регистрирует сервис в Kubernetes API.
+- Рaft-реплики используют `retry_join` для обнаружения лидера через DNS (`vault-0.vault-internal:8200`).
+- При масштабировании или падении пода реплика автоматически присоединяется к кластеру.
+
+**Важно:** в HA-кластере на Raft распечатывание требуется для каждого пода, включая standby-реплики. Ручной процесс допустим только для первичной инициализации; в production используйте Transit seal.
 
 ### Стратегии интеграции
 
@@ -42,7 +68,326 @@
 Vault доверяет Kubernetes API через метод аутентификации `kubernetes`:
 1.  Под использует JWT-токен своего `ServiceAccount`.
 2.  Vault проверяет подпись токена через Kubernetes Token Review API.
-3.  При совпадении параметров (Namespace, ServiceAccount) Vault выдает токен доступа с соответствующей политикой.
+3.  При совпадении параметров (Namespace, ServiceAccount, Audience) Vault выдает токен доступа с соответствующей политикой.
+
+**Параметр `audience`:** начиная с Vault 1.21+, роли Kubernetes Auth Method обязаны содержать `audience`. Это ограничивает валидные аудитории JWT-токена. Если токен содержит аудиторию, не указанную в роли, аутентификация отклоняется. Для совместимости можно задать `audience = "vault"` (значение по умолчанию в Vault).
+
+### Безопасность кластера Vault
+
+#### RBAC для Vault Server
+
+Сам кластер Vault должен быть защищён минимальными привилегиями. ServiceAccount для пода Vault должен иметь только необходимые права:
+
+```yaml
+# vault-server-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault
+  namespace: vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vault-server
+rules:
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["mutatingwebhookconfigurations"]
+  verbs: ["get", "list"]
+  # Для service_registration "kubernetes"
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["create", "get", "list", "update", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-server
+subjects:
+- kind: ServiceAccount
+  name: vault
+  namespace: vault
+roleRef:
+  kind: ClusterRole
+  name: vault-server
+  apiGroup: rbac.authorization.k8s.io
+```
+
+> **Важно:** Helm-чарт HashiCorp Vault создаёт RBAC автоматически при `server.ha.enabled=true`. Явное указание `serviceAccount.create=false` и предсозданный SA требуют ручного создания ClusterRole/ClusterRoleBinding.
+
+#### Network Policies
+
+Ограничьте трафик к Vault только authorised sources. Пример NetworkPolicy для namespace `vault`:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-allow
+  namespace: vault
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: prod
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+    - protocol: TCP
+      port: 8201
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: vault
+    ports:
+    - protocol: TCP
+      port: 8201
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 127.0.0.0/8
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: UDP
+      port: 53
+```
+
+#### Pod Disruption Budget
+
+Обеспечьте доступность Vault при плановых работах на узлах:
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+```
+
+#### Resource Requests и Limits
+
+Для стабильной работы Vault в production задавайте явные запросы и лимиты ресурсов. Рекомендации для HA-кластера из 3 реплик:
+
+| Компонент | CPU Request | CPU Limit | Memory Request | Memory Limit |
+| :--- | :--- | :--- | :--- | :--- |
+| Vault Server | 500m | 2000m | 256Mi | 512Mi |
+| Vault Agent Injector | 100m | 500m | 128Mi | 256Mi |
+| Vault CSI Provider | 50m | 200m | 64Mi | 128Mi |
+
+Пример обновления `values.yaml`:
+
+```yaml
+server:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 256Mi
+    limits:
+      cpu: 2000m
+      memory: 512Mi
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      config: |
+        ui = true
+        listener "tcp" {
+          tls_disable = 1
+          address = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+        storage "raft" {
+          path = "/vault/data"
+        }
+        service_registration "kubernetes" {}
+        seal "transit" {
+          address = "https://vault.vault.svc.cluster.local:8200"
+          token = "<recovery-token>"
+          disable_renewal = false
+        }
+```
+
+> **Примечание:** `tls_disable = 1` приведён только для упрощения демонстрации. В production TLS должен быть включён с валидными сертификатами.
+
+#### Service Account Token Volume Projection
+
+Для более безопасной аутентификации используйте проекцию токенов ServiceAccount с ограниченным TTL:
+
+```yaml
+# vault-server-patch.yaml
+spec:
+  template:
+    spec:
+      serviceAccountName: vault
+      containers:
+      - name: vault
+        volumeMounts:
+        - name: vault-service-account-token
+          mountPath: "/var/run/secrets/kubernetes.io/serviceaccount"
+          readOnly: true
+      volumes:
+      - name: vault-service-account-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3600
+              audience: vault
+```
+
+### Мониторинг и аудит
+
+#### Health Checks
+
+Настройте `livenessProbe` и `readinessProbe` для пода Vault:
+
+```yaml
+server:
+  livenessProbe:
+    httpGet:
+      path: /v1/sys/health
+      port: 8200
+      scheme: HTTP
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
+      port: 8200
+      scheme: HTTP
+    initialDelaySeconds: 30
+    periodSeconds: 10
+```
+
+Эндпоинт `/v1/sys/health` возвращает различные коды HTTP в зависимости от состояния кластера. Используйте `standbyok=true` для standby-реплик и `sealedcode=200` чтобы не помечать sealed-поды как неготовые во время инициализации.
+
+#### Audit Devices
+
+В production включите минимум два audit device для отказоустойчивости логов:
+
+```bash
+# File audit device (локальный диск)
+vault audit enable file file_path=/vault/audit/audit.log log_raw=true
+
+# Syslog audit device (удалённый сервер)
+vault audit enable syslog tag="vault-audit" facility="AUTH"
+```
+
+Audit логи содержат хэшированные значения запросов и ответов, что позволяет отслеживать активность без раскрытия plaintext. В Kubernetes audit device на file монтируется через PersistentVolumeClaim.
+
+#### Prometheus Metrics
+
+Vault exposes метрики на `/v1/sys/metrics` (Prometheus формат). Helm-чарт включает ServiceMonitor при установке Prometheus Operator:
+
+```yaml
+server:
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+```
+
+Ключевые метрики для мониторинга:
+- `vault.core.unsealed` — состояние распечатанности (1 = unsealed).
+- `vault.cache.hit` / `vault.cache.miss` — эффективность кэша запросов.
+- `vault.token.count.by_policy` — количество токенов с привязанной политикой.
+- `vault.seal.in_progress` — процесс распечатывания в кластере.
+
+### Резервное копирование и восстановление
+
+Для HA-кластеров на Raft используйте **Raft snapshots** для создания резервных копий:
+
+```bash
+# Создание снапшота
+kubectl exec -n vault vault-0 -- vault operator raft snapshot save /tmp/vault.snap
+
+# Копирование из пода (snapshoot создаётся на временной файловой системе пода)
+kubectl cp vault/vault-0:/tmp/vault.snap ./vault-backup.snap
+```
+
+Восстановление из снапшота:
+
+```bash
+# Остановка кластера
+kubectl scale statefulset vault -n vault --replicas=0
+
+# Восстановление (выполняется на каждом поде последовательно)
+kubectl exec -i -n vault vault-0 -- vault operator raft snapshot restore /tmp/vault.snap
+
+# Запуск кластера
+kubectl scale statefulset vault -n vault --replicas=3
+```
+
+> **Важно:** снапшот содержит все данные Vault (секреты, политики, конфигурацию). Храните его в защищённом хранилище с контролем доступа.
+
+### Обновление Vault
+
+Обновление Vault в Kubernetes выполняется через Helm-чарт:
+
+```bash
+# 1. Обновление зависимостей
+helm repo update hashicorp
+
+# 2. Просмотр изменений
+helm upgrade --dry-run vault hashicorp/vault -n vault -f values.yaml
+
+# 3. Применение обновления
+helm upgrade vault hashicorp/vault -n vault -f values.yaml
+```
+
+**Порядок обновления для HA-кластера:**
+1. Обновите Helm-чарт.
+2. Podы перезапускаются последовательно (rolling update).
+3. Standby-реплика обновляется, остаётся standby.
+4. Лидер переключается на обновлённую реплику.
+5. Оставшиеся реплики обновляются по очереди.
+
+**Проверка после обновления:**
+
+```bash
+# Проверка версии на каждом поде
+kubectl exec -n vault vault-0 -- vault version
+kubectl exec -n vault vault-1 -- vault version
+kubectl exec -n vault vault-2 -- vault version
+
+# Проверка статуса кластера
+kubectl exec -n vault vault-0 -- vault status
+
+# Проверка работоспособности
+vault login <recovery-token>
+vault read sys/health
+```
 
 ## Практические сценарии
 
@@ -58,6 +403,9 @@ injector:
   enabled: true # Включение инжектора
 
 server:
+  serviceAccount:
+    create: true
+    name: vault
   ha:
     enabled: true
     replicas: 3
@@ -76,20 +424,70 @@ server:
           # retry_join задаётся автоматически благодаря service_registration "kubernetes"
         }
         service_registration "kubernetes" {}
-        seal "awskms" {
-          region     = "us-east-1"
-          kms_key_id = "00000000-0000-0000-0000-000000000000"
+        seal "transit" {
+          address = "https://vault.vault.svc.cluster.local:8200"
+          token = "<recovery-token>"
+          disable_renewal = false
         }
+  resources:
+    requests:
+      cpu: 500m
+      memory: 256Mi
+    limits:
+      cpu: 2000m
+      memory: 512Mi
   dataStorage:
     enabled: true
     size: 10Gi
     storageClass: "standard" # по умолчанию кластера
+  livenessProbe:
+    httpGet:
+      path: /v1/sys/health
+      port: 8200
+      scheme: HTTP
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
+      port: 8200
+      scheme: HTTP
+    initialDelaySeconds: 30
+    periodSeconds: 10
 
 csi:
   enabled: false # CSI провайдер подключается отдельно (см. шаг 5)
+
+# NetworkPolicy (требует enableNetworkPolicies=true или установки отдельно)
+networkPolicy:
+  enabled: true
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault
+      ports:
+        - protocol: TCP
+          port: 8201
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 127.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: UDP
+          port: 53
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  minAvailable: 2
 ```
 
-> **Примечание про auto-unseal:** Для HA-кластера из 3 и более реплик ручное распечатывание каждого pod неприемлемо. Используйте `seal "awskms"`/`gcpckms`/`azurekeyvault` или транзит-шифрование Vault для трансформации (Transit seal). Без внешнего распечатчика новый pod из расширенной реплики не сможет самостоятельно расшифровать данные.
+> **Примечание про auto-unseal:** Для HA-кластера из 3 и более реплик ручное распечатывание каждого pod неприемлемо. Используйте `seal "transit"` (Transit Engine Vault) для автоматического распечатывания. Без внешнего распечатчика новый pod из расширенной реплики не сможет самостоятельно расшифровать данные. Для development-сред допустимо ручное распечатывание.
 
 **Вариант 2 — HA с внешним хранилищем PostgreSQL (легаси-традиция):**
 
@@ -120,6 +518,133 @@ server:
 
 csi:
   enabled: true # Включение CSI провайдера
+```
+
+**Вариант 3 — Оффлайн установка в закрытом контуре (Harbor).** Используется, когда публичные репозитории HashiCorp недоступны. Процесс состоит из трёх фаз: подготовка артефактов на машине с интернетом, загрузка образов и чарта в Harbor, установка из локального репозитория.
+
+#### Подготовка пакетов и образов (внешний контур)
+
+```bash
+git clone https://github.com/hashicorp/vault-helm.git
+cd vault-helm
+
+# Формирование values.yaml для извлечения образов
+helm template vault ./vault -f values.yaml > rendered.yaml
+grep -oE 'image:\s*"?[^"]+' rendered.yaml | sed -E 's/^image:\s*"?//; s/"$//' | sort -u > vault-images.txt
+
+# Скачивание образов
+while read -r img; do
+  docker pull "$img"
+done < vault-images.txt
+
+# Сохранение в единый архив
+docker save -o vault-images.tar $(cat vault-images.txt)
+
+# Упаковка HELM чарта
+helm package ./vault -d .
+```
+
+#### Перенос в закрытый контур
+
+```bash
+# Распаковка артефактов (vault-images.tar, vault-*.tgz)
+tar -xvf vault-0.32.0.tgz
+
+# Загрузка образов в Harbor (внутри создан проект platform)
+docker load -i vault-images.tar
+
+export HARBOR="harbor.domain.local"
+export PROJECT="platform"
+
+while read -r img; do
+  new="${HARBOR}/${PROJECT}/${img}"
+  docker tag "${img}" "$new"
+  docker push "$new"
+done < vault-images.txt
+
+# Очистка временных файлов
+rm vault-*/rendered.yaml
+
+# Публикация чарта в Harbor OCI-репозиторий
+helm package ./vault-* -d .
+helm push vault-*.tgz oci://${HARBOR}/helm
+```
+
+#### Секрет для доступа к Harbor
+
+Если репозиторий приватный, создайте `docker-registry` секрет из робота Harbor:
+
+```bash
+kubectl -n vault create secret docker-registry harbor-secret \
+  --docker-server=harbor.domain.local \
+  --docker-username='robot$auth-robot' \
+  --docker-password='REPLACE_ME' \
+  --docker-email=robot@myemail.com
+```
+
+#### Файл values.yaml для закрытого контура
+
+```yaml
+global:
+  imagePullSecrets:
+    - name: harbor-secret
+  tlsDisable: true
+server:
+  image:
+    repository: harbor.domain.local/platform/hashicorp/vault
+  standalone:
+    enabled: false
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      config: |
+        ui = true
+        listener "tcp" {
+          address         = "0.0.0.0:8200"
+          cluster_address = "0.0.0.0:8201"
+          tls_disable     = 1
+        }
+        storage "raft" {
+          path = "/vault/data"
+          retry_join {
+            leader_api_addr = "http://vault-0.vault-internal:8200"
+          }
+        }
+        service_registration "kubernetes" {}
+  dataStorage:
+    enabled: true
+    storageClass: longhorn
+    size: 7Gi
+  auditStorage:
+    enabled: true
+    storageClass: longhorn
+    size: 5Gi
+  ui:
+    enabled: true
+    serviceType: ClusterIP
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - host: vault.k8s.domain.local
+    tls: []
+injector:
+  enabled: true
+  image:
+    repository: harbor.domain.local/platform/hashicorp/vault-k8s
+  agentImage:
+    repository: harbor.domain.local/platform/hashicorp/vault
+```
+
+#### Установка
+
+```bash
+helm install vault oci://harbor.domain.local/helm/vault \
+  -n vault \
+  --create-namespace \
+  -f vault-values.yaml
 ```
 
 ### Шаг 2: Инициализация и распечатывание (Unseal)
@@ -183,7 +708,91 @@ vault write auth/kubernetes/role/webapp-role \
     bound_service_account_names=webapp-sa \
     bound_service_account_namespaces=prod \
     policies=webapp-policy \
-    ttl=1h
+    ttl=1h \
+    audience=vault
+```
+
+### Проекция токена ServiceAccount (Token Volume Projection)
+
+Для ограничения времени жизни JWT-токена и повышения безопасности используйте token volume projection в ServiceAccount:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webapp-sa
+  namespace: prod
+automountServiceAccountToken: true
+imagePullSecrets:
+- name: harbor-secret
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: webapp-pod
+  namespace: prod
+spec:
+  serviceAccountName: webapp-sa
+  volumes:
+  - name: vault-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          path: token
+          expirationSeconds: 3600
+          audience: vault
+  containers:
+  - name: webapp
+    image: my-app:latest
+    volumeMounts:
+    - name: vault-token
+      mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      readOnly: true
+```
+
+> **Важно:** `expirationSeconds` не может превышать значение `service-account-max-token-expiration` в API Server (по умолчанию 1 год). Для Vault Auth Method это значение используется как верхняя граница TTL токена.
+
+### Сквозная проверка работоспособности (End-to-End Validation)
+
+После настройки интеграции выполните сквозную проверку:
+
+```bash
+# 1. Проверка доступности Vault
+kubectl exec -n vault vault-0 -- vault status
+# → Sealed: false
+# → Cluster Name: vault-cluster
+# → HA Cluster: active (self)
+
+# 2. Проверка политики (логин через Kubernetes Auth)
+kubectl exec -n prod webapp-pod -- \
+  curl --request POST \
+    --data '{"jwt": "'$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)'", "role": "webapp-role"}' \
+    http://vault.vault.svc.cluster.local:8200/v1/auth/kubernetes/login
+# → client_token, policies, lease_duration
+
+# 3. Проверка чтения секрета через политику
+kubectl exec -n prod webapp-pod -- \
+  VAULT_TOKEN=<client_token> \
+  curl --header "X-Vault-Token: $VAULT_TOKEN" \
+    http://vault.vault.svc.cluster.local:8200/v1/secret/data/webapp/config
+# → data.data.password (значение из Vault)
+
+# 4. Проверка CSI-драйвера (если используется)
+kubectl get secretproviderclass -n prod
+kubectl describe pod webapp-pod | grep -A5 "Volumes"
+# → секрет смонтирован в /mnt/secrets
+
+# 5. Проверка VSO (если используется)
+kubectl get vaultstaticsecret -n prod
+kubectl describe vaultstaticsecret webapp-kv-secret -n prod
+# → status.conditions: Ready=True, SecretSynced=True
+
+# 6. Проверка Injector (если используется)
+kubectl get pod webapp-pod -n prod -o jsonpath='{.spec.initContainers[*].name}'
+# → vault-agent-init (если используется init + sidecar)
+kubectl get pod webapp-pod -n prod -o jsonpath='{.spec.containers[*].name}'
+# → vault-agent (если используется sidecar)
+```
 ```
 
 ### Шаг 4: Реализация через Vault Secrets Operator (VSO)
@@ -380,10 +989,20 @@ metadata:
 | **Pending Pod** | Ошибка CSI драйвера. Проверьте `kubectl describe pod` и наличие драйвера на узле. |
 | **Permission Denied (Vault)** | Несоответствие `serviceAccount` или `namespace` в роли Vault. Проверьте настройки `auth/kubernetes/role`. |
 | **TokenReview Failed** | Ошибка в `auth/kubernetes/config`. Проверьте корректность `kubernetes_host` и `ca_cert`. |
+| **Vault: ошибка аутентификации Kubernetes** | Отсутствует или неверный `audience` в роли Vault. Начиная с Vault 1.21+, `audience` обязателен. Добавьте `audience=vault` в команду `vault write auth/kubernetes/role/...` и убедитесь, что ServiceAccount токен проектируется с совпадающей аудиторией. |
+| **Vault: sealed** | Под не распечатан. Выполните `vault operator unseal` на каждом поде или настройте Transit seal. |
+| **Vault: leader election не работает** | Проверьте сетевое подключение между подами (порт 8201), корректность `retry_join` и `service_registration "kubernetes" {}`. |
 | **VSO не обновляет секрет** | Проверьте логи оператора: `kubectl logs -l app.kubernetes.io/name=vault-secrets-operator`. Также проверьте состояние CR: `kubectl get vaultstaticsecrets -n prod` и причина в `status.conditions`. |
 | **VSO: пустой Secret после синхронизации** | Ошибка в `VaultAuth` (неверная роль/ServiceAccount) или недоступная точка подключения `VaultConnection`. Проверьте `vaultConnectionRef` и доступность `address`. |
 | **CSI: Pod создан, но файла секрета нет** | Установлен драйвер, но не установлен Vault provider (`csi.enabled=true`) или у провайдера нет прав на API узла. Проверьте DaemonSet `vault-csi-provider`. |
 | **CSI: секрет монтируется в base64** | В провайдере Vault параметры монтируются как plain‑text через `secretKeyMapping`; если применяется `secretObjects`, проверьте аннотацию `secretProviderClass` на объекте `Secret`. |
+| **Helm upgrade: pods в CrashLoopBackOff** | Несовместимость версии Vault с данными Raft или конфигурацией. Откатитесь через `helm rollback vault -n vault`. Проверьте changelog на breaking changes. |
+| **Helm upgrade: PodDisruptionBudget блокирует rollout** | PDB с `minAvailable: 2` при обновлении 3 реплик не позволяет удалить pod. Временно снизьте `minAvailable` до 1 или отключите PDB на время обновления. |
+| **Vault Agent Injector: вебхук не применяет патчи** | Проверьте `failurePolicy`, `namespaceSelector` и метки namespace пода. Webhook может быть отключён на уровне namespace. |
+| **Vault Agent Injector: CrashLoopBackOff агента** | Ошибка аутентификации (проверьте роль) или недоступность сервера Vault. Проверьте `service` аннотацию и DNS. |
+| **NetworkPolicy блокирует трафик Vault** | Проверьте egress-правила для Vault (порт 8201 для Raft, 443/53 для внешних вызовов) и ingress-правила для namespace'ов приложений. |
+| **Audit device: диск заполнен** | Настройте ротацию логов (`log_rotate_max_files`, `log_rotate_max_size`) или используйте syslog audit device с удалённым сервером. |
+| **Raft snapshot: ошибка доступа** | Убедитесь, что PVC для Vault смонтирован в `/vault/data` и под имеет права на запись. Проверьте `vault operator raft snapshot save /vault/audit/vault.snap` (путь внутри пода). |
 
 ### Сравнение методов интеграции (итог)
 

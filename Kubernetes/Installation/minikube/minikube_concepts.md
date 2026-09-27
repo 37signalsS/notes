@@ -307,3 +307,13 @@ kubectl get nodes
 - **GitHub:** [kubernetes/minikube](https://github.com/kubernetes/minikube)
 - **Практические сценарии:** [minikube_practical_scenarios.md](./minikube_practical_scenarios.md)
 - **Репозиторий образов:** [k8s.gcr.io](https://console.cloud.google.com/gcr/images/k8s-artifacts-prod/GLOBAL)
+
+### Расширенные темы
+
+- **[Тестирование NetworkPolicy](./minikube_networkpolicy_testing.md)** — настройка Calico CNI, Default Deny, Egress-политики.
+- **[Бэкап и восстановление etcd](./minikube_etcd_backup_restore.md)** — снапшоты, восстановление, скрипты.
+- **[Интеграция с CI/CD](./minikube_cicd_integration.md)** — GitLab CI, GitHub Actions, тестирование Helm-чартов.
+- **[HPA на практике](./minikube_hpa_practical.md)** — горизонтальное масштабирование на основе CPU и кастомных метрик.
+- **[RBAC на практике](./minikube_rbac_practical.md)** — Role, ClusterRole, ServiceAccount, проверка доступа.
+- **[PSS/PSA на практике](./minikube_pss_psa.md)** — Pod Security Standards, enforcement, диагностика.
+- **[PDB на практике](./minikube_pdb_practical.md)** — PodDisruptionBudget, drain, взаимодействие с Rolling Update.

@@ -756,3 +756,5 @@ Name=enp3s0
 * [Типы сервисов](./systemd_service_types.md) — детальный разбор директивы `Type=`.
 * [Временные задачи (systemd-run)](./systemd_run.md) — динамические юниты без файлов конфигурации.
 * [Таймеры systemd](./timers.md) — планирование задач и отладка расписаний.
+* [DNS-резолвер (systemd-resolved)](./systemd_resolved.md) — управление DNS и разрешение имен.
+* [Переразметка дисков (systemd-repart)](./systemd_repart.md) — декларативное управление разделами.

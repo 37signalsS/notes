@@ -14,6 +14,58 @@
 - **[nftables: архитектура](./nftables/architecture_and_concepts.md)** — современная замена iptables.
 - **[Интеграция Docker с iptables](../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)** — глубокий разбор цепочек Docker.
 
+## Предварительные требования
+
+### Ядро и модули
+
+iptables требует поддержки Netfilter в ядре. Минимальная версия для production — 3.10+ (современные дистрибутивы используют 5.x/6.x). Проверка:
+
+```bash
+# Версия ядра
+uname -r
+
+# Проверка загруженных модулей Netfilter
+lsmod | grep -E "nf_conntrack|iptable_"
+# → nf_conntrack
+# → nf_conntrack_netlink
+# → iptable_filter
+# → iptable_nat
+# → nf_nat
+# → nf_nat_masquerade
+
+# Если модули не загружены
+sudo modprobe nf_conntrack
+sudo modprobe iptable_filter
+sudo modprobe iptable_nat
+```
+
+### Программное обеспечение
+
+- **`iptables`** — утилита управления правилами.
+- **`ip6tables`** — аналогичная утилита для IPv6.
+- **`conntrack`** — инструмент диагностики подсистемы отслеживания соединений.
+- **`iptables-save` / `iptables-restore`** — сериализация и восстановление правил.
+
+### Конфигурация окружения
+
+```bash
+# Лимит таблицы отслеживания соединений
+sysctl net.netfilter.nf_conntrack_max
+# → 262144 (значение по умолчанию может быть недостаточным под высоконагруженный сервис)
+
+# Текущее количество отслеживаемых соединений
+sysctl net.netfilter.nf_conntrack_count
+```
+
+### Проверка активного бэкенда
+
+```bash
+update-alternatives --display iptables
+# → iptables - auto mode
+# →   link best version is /usr/sbin/iptables-nft
+# →   link currently points to /usr/sbin/iptables-nft
+```
+
 ## Основные концепции
 
 ### Структура: Таблицы и цепочки
@@ -44,6 +96,21 @@ iptables организует правила в **таблицы** (по наз�
 - `LOG`: Записать в системный журнал и продолжить проверку следующими правилами.
 - `MASQUERADE`: Динамический SNAT (для внешних интерфейсов с динамическим IP).
 - `REDIRECT`: Перенаправление пакета на локальный порт (проксирование).
+- `NOTRACK` (raw): Исключить пакет из отслеживания состояний. Используется в таблице `raw`.
+
+### Состояния соединений (Conntrack)
+
+Подсистема отслеживания соединений позволяет применять правила на основе контекста сессии. Основные состояния:
+
+| Состояние | Описание | Где возникает |
+| :--- | :--- | :--- |
+| `NEW` | Первый пакет нового соединения (SYN для TCP, первый запрос для UDP) | Правила с `-m conntrack --ctstate NEW` |
+| `ESTABLISHED` | Соединение активно: был двусторонний обмен пакетами | Правила с `ESTABLISHED,RELATED` |
+| `RELATED` | Пакет относится к уже существующему соединению (например, FTP data connection, ICMP error для TCP) | Часто разрешают вместе с ESTABLISHED |
+| `INVALID` | Пакет не может быть сопоставлен ни с одним известным соединением (битый фрагмент, неверный чексумма) | Лучше явно отбрасывать `DROP` |
+| `UNTRACKED` | Пакет исключен из отслеживания через `NOTRACK` (таблица `raw`) | Используется для производительности |
+
+**Важно:** ICMP-сообщения (кроме ICMP-error, связанных с TCP/UDP) не отслеживаются как stateful. Для разрешения ping внутри `ESTABLISHED,RELATED` недостаточно — требуется отдельное правило `--icmp-type echo-request`.
 
 ## Практические сценарии
 
@@ -107,6 +174,57 @@ sudo iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s --l
 sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1360
 ```
 
+### 6. Базовый файрвол для IPv6
+
+IPv6 требует отдельной таблицы правил. Критично разрешить ICMPv6 (Neighbor Discovery, Packet Too Big), иначе работа IPv6 нарушается.
+
+```bash
+# Разрешить loopback
+sudo ip6tables -A INPUT -i lo -j ACCEPT
+
+# Разрешить установленные соединения
+sudo ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Разрешить критический ICMPv6
+sudo ip6tables -A INPUT -p icmpv6 --icmpv6-type echo-request -j ACCEPT
+sudo ip6tables -A INPUT -p icmpv6 --icmpv6-type packet-too-big -j ACCEPT
+sudo ip6tables -A INPUT -p icmpv6 --icmpv6-type neighbor-solicitation -j ACCEPT
+sudo ip6tables -A INPUT -p icmpv6 --icmpv6-type neighbor-advertisement -j ACCEPT
+
+# Разрешить SSH и HTTPS
+sudo ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
+sudo ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
+
+# Политика по умолчанию
+sudo ip6tables -P INPUT DROP
+sudo ip6tables -P FORWARD DROP
+sudo ip6tables -P OUTPUT ACCEPT
+```
+
+### 7. Логирование с rate-limit
+
+Цель `LOG` записывает пакет в системный журнал (`/var/log/kern.log`, `journalctl -k`). Без `limit` журнал может быть переполнен при атаке.
+
+```bash
+# Логирование отброшенных пакетов, не более 10 в минуту
+sudo iptables -A INPUT -m limit --limit 10/min --limit-burst 20 -j LOG --log-prefix "IPTABLES_DROP: " --log-level 4
+
+# Отбрасываемые пакеты (правило после LOG)
+sudo iptables -A INPUT -j DROP
+```
+
+**Примечание:** Для асинхронного логирования в файл используйте `ulogd` — это снижает нагрузку на ядро при высокоскоростном трафике.
+
+### 8. Ограничение по источнику (hashlimit)
+
+Модуль `hashlimit` ограничивает количество соединений с каждого уникального IP-адреса, в отличие от `limit` (общий лимит на интерфейс).
+
+```bash
+# Не более 10 новых соединений в секунду с одного IP к порту 80
+sudo iptables -A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -m hashlimit \
+  --hashlimit-name http --hashlimit-above 10/sec --hashlimit-mode srcip -j DROP
+```
+
 ## Диагностика и отладка
 
 ```bash
@@ -116,14 +234,111 @@ sudo iptables -nvL --line-numbers
 # Просмотр конкретной таблицы (например, nat)
 sudo iptables -t nat -nvL
 
-# Очистка всех правил в текущей таблице
-sudo iptables -F
+# Сериализация всех правил в файл (бэкап)
+sudo iptables-save > /root/iptables-backup-$(date +%F).rules
 
 # Мониторинг отброшенных пакетов (если включен LOG)
 sudo journalctl -kf | grep "IN="
+
+# Анализ активных соединений через conntrack
+sudo conntrack -L
+# → tcp 6 431999 ESTABLISHED src=192.168.1.10 dst=8.8.8.8 sport=54321 dport=443 ...
+
+# Проверка текущего заполнения таблицы conntrack
+sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max
+# → 45000 262144
+
+# Поиск конкретного соединения
+sudo conntrack -L -d 203.0.113.1
+
+# Удаление конкретного соединения (при необходимости)
+sudo conntrack -D -d 203.0.113.1 --dport 443
+
+# Сопоставление правил с активными сокетами
+sudo ss -tulnp | grep :80
+```
+
+### Валидация перед применением
+
+```bash
+# 1. Сохраните текущие правила
+sudo iptables-save > /root/iptables-previous.rules
+
+# 2. Примените правила через iptables-restore (лучше для атомарности)
+sudo iptables-restore < /tmp/new-rules.rules
+
+# 3. Проверьте результат
+sudo iptables -nvL --line-numbers
+
+# 4. При проблемах — восстановите
+sudo iptables-restore < /root/iptables-previous.rules
 ```
 
 ## Дополнительная информация
+
+### NAT: Production-паттерны
+
+Таблица `nat` используется для трансляции адресов. Три основных типа:
+
+| Тип | Цепочка | Назначение | Пример |
+|:---|:---|:---|:---|
+| **SNAT** | `POSTROUTING` | Замена исходного IP на IP сервера | Выход в интернет из приватной сети |
+| **DNAT** | `PREROUTING` | Замена IP назначения | Проброс порта, балансировка |
+| **MASQUERADE** | `POSTROUTING` | SNAT с динамическим IP | Интернет через PPPoE, VPN |
+
+**Сценарий 1: Проброс порта (DNAT)**
+```bash
+# Внешний трафик на порту 8080 → внутренний сервер 10.0.0.10:80
+sudo iptables -t nat -A PREROUTING -p tcp --dport 8080 -j DNAT --to-destination 10.0.0.10:80
+sudo iptables -A FORWARD -p tcp -d 10.0.0.10 --dport 80 -j ACCEPT
+
+# Проверка
+sudo iptables -t nat -L PREROUTING -n -v
+```
+
+**Сценарий 2: Маскарадинг (MASQUERADE) для выхода в интернет**
+```bash
+# Все из 10.0.0.0/24 выходят через eth0 с IP хоста
+sudo iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE
+
+# Включить forwarding
+sysctl -w net.ipv4.ip_forward=1
+```
+
+**Сценарий 3: Round-robin балансировка через DNAT**
+```bash
+# Трафик на VIP распределяется по 3 бэкендам (маскарадинг скрывает обратный путь)
+sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -m statistic --mode nth --every 3 --packet 0 -j DNAT --to-destination 10.0.0.1:80
+sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -m statistic --mode nth --every 2 --packet 0 -j DNAT --to-destination 10.0.0.2:80
+sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 10.0.0.3:80
+```
+
+**Сценарий 4: Hairpin NAT (loopback DNAT)**
+```bash
+# Доступ к VIP изнутри сети (если DNAT работает только снаружи)
+sudo iptables -t nat -A PREROUTING -d 192.168.1.100 -p tcp --dport 80 -j DNAT --to-destination 10.0.0.10:80
+sudo iptables -t nat -A POSTROUTING -d 10.0.0.10 -p tcp --dport 80 -j MASQUERADE
+```
+
+### Rate Limiting и flood protection
+
+```bash
+# Limit: общий лимит на интерфейс (100 пакетов/сек, burst 200)
+sudo iptables -A INPUT -m limit --limit 100/sec --limit-burst 200 -j ACCEPT
+
+# Hashlimit: лимит с каждого IP (10 новых TCP/сек на порт 80)
+sudo iptables -A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW \
+  -m hashlimit --hashlimit-name http_flood \
+  --hashlimit-above 10/sec --hashlimit-mode srcip \
+  --hashlimit-burst 50 --hashlimit-htable-expire 30000 \
+  -j DROP
+
+# SSH brute-force protection (с модулем recent)
+sudo iptables -A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW \
+  -m recent --set --name SSH
+sudo iptables -A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW \
+  -m recent --update --seconds 60 --hitcount 4 --name SSH -j DROP
+```
 
 ### Пользовательские цепочки (User-defined chains)
 
@@ -138,11 +353,118 @@ sudo iptables -A APP_FILTER -j DROP
 
 ### Взаимодействие с Docker
 
-Docker манипулирует таблицей `nat` и цепочкой `FORWARD`. Правила Docker часто имеют более высокий приоритет, чем пользовательские правила в `INPUT`. Для надежной фильтрации трафика к контейнерам всегда используйте цепочку **`DOCKER-USER`**.
+Docker автоматически создаёт правила в таблицах `nat` и `filter`. Для пользовательской фильтрации трафика контейнеров используйте цепочку **`DOCKER-USER`** — она обрабатывается перед стандартными цепочками `DOCKER`.
 
-### Сохранение правил
+```bash
+# Разрешить только доверенные подсети к опубликованным портам
+sudo iptables -A DOCKER-USER -i eth0 -s 10.0.0.0/8 -j ACCEPT
+sudo iptables -A DOCKER-USER -i eth0 -j DROP
 
-В режиме Legacy правила сбрасываются при перезагрузке. Используйте:
-- **Debian/Ubuntu**: `iptables-persistent` (`netfilter-persistent save`).
-- **RHEL**: `iptables-services` (`service iptables save`).
-- **Ручной метод**: `iptables-save > /etc/iptables.rules` и загрузка через скрипты `up`.
+# Блокировка исходящего трафика из bridge-сети (кроме DNS)
+sudo iptables -I DOCKER-USER -i br-+ -o eth0 -j DROP
+sudo iptables -I DOCKER-USER -i br-+ -o eth0 -p udp --dport 53 -j ACCEPT
+sudo iptables -I DOCKER-USER -i br-+ -o eth0 -p tcp --dport 53 -j ACCEPT
+```
+
+**Важно:** Порядок правил в `DOCKER-USER` имеет значение — первое совпадение применяется. Для детального анализа используйте `iptables-save | grep DOCKER`.
+
+### Персистентность и восстановление
+
+Правила iptables (в режиме legacy) хранятся в памяти и сбрасываются при перезагрузке.
+
+**Debian/Ubuntu:**
+```bash
+sudo apt install iptables-persistent
+# Правила автоматически загружаются из /etc/iptables/rules.v4 и rules.v6
+sudo netfilter-persistent save
+```
+
+**RHEL/Rocky/Alma:**
+```bash
+sudo dnf install iptables-services
+sudo systemctl enable --now iptables
+sudo service iptables save
+# Правила хранятся в /etc/sysconfig/iptables
+```
+
+**Универсальный метод (systemd unit):**
+```ini
+# /etc/systemd/system/iptables-restore.service
+[Unit]
+Description=Restore iptables rules
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iptables-restore /etc/iptables.rules
+ExecReload=/usr/sbin/iptables-restore /etc/iptables.rules
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now iptables-restore
+```
+
+**Внимание:** При использовании `iptables-nft` бэкенда персистентность может работать некорректно. В этом случае рассмотрите переход на `nftables`.
+
+### Пограничные случаи и ограничения
+
+1. **Атомарность скриптов:** iptables применяет каждую команду атомарно, но скрипт с `&&` при сбое в середине частично меняет конфигурацию. Используйте `iptables-restore < <(iptables-save && ...)` или применяйте правила из файла одним вызовом.
+2. **IPv6 и ICMPv6:** Без правил для `icmpv6` работа IPv6 может прекратиться. См. сценарий 6.
+3. **NOTRACK и производительность:** Исключение трафика из conntrack (`-t raw -j NOTRACK`) снижает нагрузку на CPU, но отключает stateful-защиту для этого трафика. Используйте только для хорошо известных потоков (балансировщики).
+4. **DOCKER-USER и порядок:** Правила в `DOCKER-USER` должны быть добавлены до правил Docker. Проверяйте порядок через `iptables-save | grep -A1 DOCKER-USER`.
+5. **Асимметричная маршрутизация:** Если `rp_filter=1` (strict), пакеты с асимметричными маршрутами отбрасываются. Для gateway-хостов используйте `rp_filter=2` (loose) или `0` (off).
+6. **MTU и TCPMSS:** В туннелях (IPsec, WireGuard) всегда корректируйте MSS, иначе TCP-соединения будут зависать на больших пакетах.
+7. **ICMP-error и conntrack:** ICMP-error сообщения автоматически сопоставляются с соединением через conntrack. Блокировка ICMP-error (`icmp destination-unreachable`) может ломать TCP-соединения.
+8. **Совместный iptables и nftables:** При использовании `iptables-nft` правила видны в `nft list ruleset`. Не редактируйте их напрямую через `nft` — это может привести к конфликтам.
+
+### Best practices
+
+1. **Default deny:** Устанавливайте политики `INPUT DROP` и `FORWARD DROP` после настройки правил для SSH.
+2. **Stateful первым:** Разрешайте `ESTABLISHED,RELATED` в самом начале цепочки `INPUT`.
+3. **Однострочные правила:** Избегайте длинных цепочек `&&` в shell — используйте `iptables-restore`.
+4. **Комментируйте:** Используйте `--comment "description"` для каждого правила. Это упрощает аудит.
+5. **Версионирование:** Храните правила в git (`iptables-save > rules.v4`) и применяйте через CI/CD.
+6. **Ограничивайте inbound, разрешайте outbound:** Политика `OUTPUT ACCEPT` уязвима для скомпрометированных сервисов. В high-security средах разрешайте только необходимые порты.
+7. **Тестируйте в staging:** Всегда проверяйте правила на тестовом хосте перед применением в production.
+8. **Не блокируйте ICMP полностью:** ICMP необходим для PMTUD (`fragmentation-needed`), traceroute и диагностики.
+9. **Отключайте неиспользуемые helpers:** ALG-помощники (ftp, sip, h323) могут создавать дыры в conntrack. Отключайте их через `/etc/modprobe.d/`.
+10. **Мониторьте счетчики:** Регулярно проверяйте счетчики правил (`iptables -L -v -n`). Рост `DROP` счетчика указывает на аномалии.
+
+### Очистка и откат
+
+```bash
+# Безопасная очистка: восстановить политики ACCEPT перед flush
+sudo iptables -P INPUT ACCEPT
+sudo iptables -P FORWARD ACCEPT
+sudo iptables -P OUTPUT ACCEPT
+sudo iptables -t nat -F
+sudo iptables -t mangle -F
+sudo iptables -F
+sudo iptables -X
+
+# Для IPv6
+sudo ip6tables -P INPUT ACCEPT
+sudo ip6tables -F
+sudo ip6tables -X
+
+# Удаление пользовательских цепочек
+sudo iptables -X APP_FILTER
+```
+
+**Переключение на iptables-legacy (если требуется):**
+```bash
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+```
+
+### Полезные ссылки
+
+- **[Общие вопросы настройки файрволов](./firewall_common.md):** сохранение правил, выбор DROP против REJECT, conntrack.
+- **[nftables — архитектура и концепции](./nftables/architecture_and_concepts.md):** современный стандарт настройки.
+- **[Политики сетевой фильтрации Docker](../../../../Docker/Docker_network/docker_network_policies.md):** DOCKER-USER и изоляция контейнеров.

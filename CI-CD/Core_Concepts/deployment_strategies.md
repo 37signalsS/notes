@@ -54,19 +54,30 @@
 - **Анализ на основе метрик (Metric-driven verification):** Системы мониторинга (на базе SLO/Error Budget и Analysis Templates) анализируют метрики и логи, выявляя деградацию (аномалии Latency/Error Rate), которую могут пропустить простые пороговые алерты.
 - **Автономный откат:** Если система фиксирует деградацию по SLO, она немедленно инициирует `abort` раскатки и возвращает трафик на стабильную версию (Auto-Rollback).
 
+### Роли и зоны ответственности
+
+| Аспект | DevOps | SRE | Sysadmin |
+| :--- | :--- | :--- | :--- |
+| **Модель доставки** | Push-модель, пайплайны GitLab CI/GitHub Actions, OIDC, автоматизация через Ansible | GitOps (ArgoCD/Flux), SLA/SLO/Error Budget, autonomous delivery | Провижининг железа/VM, управление образами (Packer), артефактори (Nexus/Artifactory) |
+| **Стратегии раскатки** | Canary/Blue-Green через пайплайн, Feature Flags, автоматический откат | Judge/ Analysis Engine, SLO-гейтинг, burn rate, автономный откат | Rolling Update через Ansible/serial, drain в HAProxy/Nginx, symlink-деплой |
+| **Управление трафиком** | Gateway API, Service Mesh (Istio/Cilium), веса в L7-балансировщике | Traffic splitting, circuit breaking, observability трафика | HAProxy/Nginx runtime API, keepalived/VRRP, TCP/UDP балансировка |
+| **Наблюдаемость** | Pipeline Observability, DORA-метрики, OpenTelemetry | Golden Signals, Error Budget, SLO-окна, автоматический Judge | node_exporter, journald, syslog, мониторинг железа/сети/БД |
+| **Базы данных** | Миграции через CI/CD, Expand-Contract, обратная совместимость | Схемная миграция без даунтайма, репликация, откат без потери данных | Бэкапы, восстановление, репликация (PostgreSQL/MySQL), VACUUM/ANALYZE |
+| **Безопасность** | SBOM, подпись артефактов (Cosign), SAST/SCA в пайплайне | Policy-as-Code, гейты безопасности, аудит изменений | Харденинг ОС, firewall, SSH/JIT-доступ, Secure Boot, TPM |
+
 ## Практические сценарии
 
 ### Выбор стратегии для различных типов приложений
 
 1.  **Stateless API (Высокая нагрузка):**
-    *   **Рекомендация:** **Canary Deployment** с использованием **Argo Rollouts**.
-    *   **Почему:** Минимизация «радиуса поражения» (Blast Radius) при ошибках в логике.
+    - **Рекомендация:** **Canary Deployment** с использованием **Argo Rollouts**.
+    - **Почему:** Минимизация «радиуса поражения» (Blast Radius) при ошибках в логике.
 2.  **Приложения с миграциями БД (Breaking Changes):**
-    *   **Рекомендация:** **Blue/Green** совместно с паттерном **Expand and Contract** (двухэтапное изменение схемы БД).
-    *   **Почему:** Позволяет мгновенно вернуться к старой версии приложения, если миграция прошла успешно, но логика v2 работает некорректно.
+    - **Рекомендация:** **Blue/Green** совместно с паттерном **Expand and Contract** (двухэтапное изменение схемы БД).
+    - **Почему:** Позволяет мгновенно вернуться к старой версии приложения, если миграция прошла успешно, но логика v2 работает некорректно.
 3.  **Высоконагруженные системы (Legacy Refactoring):**
-    *   **Рекомендация:** **Shadow Deployment** (Mirroring).
-    *   **Почему:** Проверка производительности нового движка на реальном профиле трафика без риска для пользователей.
+    - **Рекомендация:** **Shadow Deployment** (Mirroring).
+    - **Почему:** Проверка производительности нового движка на реальном профиле трафика без риска для пользователей.
 
 ### Принципы надежного развертывания
 
@@ -81,6 +92,7 @@
 ```bash
 # systemd-юнит или docker compose
 docker compose down && docker compose up -d app
+# → app restarted (новый контейнер поднят, старый остановлен)
 ```
 
 #### Rolling Update (через обратный прокси)
@@ -178,10 +190,221 @@ http:
 - **MTTR:** короткие обратимые деплои и готовый план отката снижают время восстановления.
 - **Связь со стратегией:** Canary сужает радиус поражения и улучшает DORA-метрики (Change Failure Rate, Time to Restore). См. **[Метрики DORA](./dora_metrics.md)**, **[Концепции SRE](../../Concepts/sre_concepts_main.md)**, **[Наблюдаемость пайплайнов](./pipeline_observability.md)**.
 
+## Операции и команды
+
+### Kubernetes — управление стратегией Rolling Update
+
+```bash
+# Просмотр текущей стратегии Deployment
+kubectl get deployment myapp -o jsonpath='{.spec.strategy.type}{.spec.strategy.rollingUpdate}'
+# → RollingUpdate{"maxSurge":"25%","maxUnavailable":"25%"}
+
+# Принудительный откат к предыдущей ревизии (kubectl rollback)
+kubectl rollout undo deployment/myapp
+# → deployment.apps/myapp rolled back
+
+# Пауза раскатки для ручной валидации (Pause)
+kubectl rollout pause deployment/myapp
+# → deployment.apps/myapp paused
+
+# Возобновление после паузы (Resume)
+kubectl rollout resume deployment/myapp
+# → deployment.apps/myapp resumed
+
+# Мониторинг статуса раскатки в реальном времени
+kubectl rollout status deployment/myapp --timeout=10m
+# → deployment "myapp" successfully rolled out
+```
+
+### HAProxy — оперативное управление пулом при Rolling Update
+
+```bash
+# Просмотр состояния серверов
+echo "show stat" | socat /var/run/haproxy.sock stdio | grep app_servers
+# → app1,FRONTEND,...,UP,...
+# → app2,FRONTEND,...,UP,...
+
+# Вывод узла в drain (остановка приема новых соединений)
+echo "set server app_servers/app1 state drain" | socat /var/run/haproxy.sock stdio
+# → (пустой вывод, статус меняется на DRY)
+
+# Проверка, что узел закончил обработку текущих запросов
+echo "show stat" | socat /var/run/haproxy.sock stdio | grep app1
+# → status=DRY (drain mode, graceful shutdown завершен)
+
+# Полное отключение узла (MAINT)
+echo "set server app_servers/app1 state maint" | socat /var/run/haproxy.sock stdio
+# → node выведен из пула полностью
+
+# Возврат узла в пул
+echo "set server app_servers/app1 state ready" | socat /var/run/haproxy.sock stdio
+# → status=UP
+
+# Перезагрузка конфигурации без потери соединений
+systemctl reload haproxy
+# → (служебный вывод systemd)
+```
+
+### Nginx — оперативное управление весами (Blue-Green / Canary)
+
+```bash
+# Проверка конфигурации
+nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+# Применение изменений (перезагрузка без потерь)
+systemctl reload nginx
+# → (служебный вывод systemd)
+
+# Принудительная перезагрузка (разрывает существующие соединения)
+systemctl restart nginx
+
+# Просмотр upstream и активных соединений
+curl http://localhost/status  # (если включен stub_status)
+# → Active connections: 42
+# → server accepts handled requests: 12345 12345 56789
+```
+
+### Ansible — паттерн Rolling Update с автооткатом
+
+```bash
+# Rolling Update с ограничением на 1 узел и автоматическим откатом при ошибке
+ansible-playbook deploy.yml \
+  --limit "tag_env_production:&tag_role_app" \
+  --serial 1 \
+  --forks 2 \
+  --extra-vars "app_version=2.3.1 max_fail_percentage=0"
+# → Если узел падает, playbook останавливается, остальные не трогаются.
+
+# Проверка конфигурации перед применением (dry-run)
+ansible-playbook deploy.yml --check --diff
+# → changed=0, unreachable=0, failed=0 (проверка пройдена)
+```
+
+### systemd — атомарная смена версии и управление ресурсами
+
+```bash
+# Проверка статуса сервиса
+systemctl status myapp
+# → Active: active (running) since ...
+
+# Смена версии через symlink (immutable artifacts)
+ln -sfn /opt/app/2.3.1 /opt/app/current
+systemctl restart myapp
+
+# Живое изменение лимита ресурсов (аналог In-Place Resize)
+systemctl set-property myapp.service MemoryMax=2G CPUQuota=150%
+# → применяется мгновенно, без рестарта
+
+# Просмотр примененных лимитов
+systemctl show myapp.service | grep -E 'MemoryMax|CPUQuota'
+# → MemoryMax=2G
+# → CPUQuota=150%
+
+# Быстрый откат
+ln -sfn /opt/app/2.3.0 /opt/app/current
+systemctl restart myapp
+```
+
+### Управление весами Canary через HAProxy runtime API
+
+```bash
+# Поэтапный сдвиг веса Canary (5% → 10% → 25% → 50% → 100%)
+for w in 5 10 25 50 100; do
+  echo "set server app_servers/stable1 weight $((100-w))" | socat - UNIX-CONNECT:/var/run/haproxy.sock
+  echo "set server app_servers/stable2 weight $((100-w))" | socat - UNIX-CONNECT:/var/run/haproxy.sock
+  echo "set server app_canary/canary1 weight $w"          | socat - UNIX-CONNECT:/var/run/haproxy.sock
+  sleep 60   # окно наблюдения за Golden Signals
+done
+
+# Валидация
+echo "show stat" | socat - UNIX-CONNECT:/var/run/haproxy.sock | grep -E "app_servers|app_canary"
+# → status=UP, колонка weight отражает текущие значения
+```
+
+### Верификация Expand/Contract миграции
+
+```bash
+# Проверка, что обе версии приложения работают с расширенной схемой
+psql -c "SELECT column_name FROM information_schema.columns WHERE table_name='orders' AND column_name='total_net';"
+# → total_net (колонка присутствует, обе версии видят её)
+
+# После отката и Contract: убедиться, что старая колонка удалена
+psql -c "SELECT column_name FROM information_schema.columns WHERE table_name='orders' AND column_name='total';"
+# → (0 rows, старая колонка удалена)
+```
+
+## Типичные ошибки и решения
+
+| Симптом | Причина | Решение | Роль |
+| :--- | :--- | :--- | :--- |
+| **Node OOM во время Rollout** | Слишком большой `maxSurge`. | Уменьшить `maxSurge` или добавить узлы в кластер. | Sysadmin / DevOps |
+| **Canary Analysis Timeout** | Недостаточно трафика для сбора статистики. | Увеличить время анализа или долю Canary. | SRE / DevOps |
+| **Stuck in Pending** | Нехватка ресурсов (CPU/RAM/PVC) для новых подов. | Проверить `kubectl describe pod` и квоты в Namespace. | Sysadmin / DevOps |
+| **Sticky Session Break** | Неверная настройка балансировщика при Canary. | Использовать `Cookie-based affinity` в Gateway API / Service Mesh. | DevOps / SRE |
+| **Shadow Side Effects** | Зеркальный трафик вызвал запись в Prod БД. | Использовать Mock-сервисы или Read-only режим для Shadow. | DevOps / SRE |
+| **VIP не мигрирует (keepalived)** | Firewall блокирует VRRP (протокол 112) или равный priority. | Разрешить `proto 112` между узлами; задать разный `priority`. | Sysadmin |
+| **Nginx upstream «flapping»** | Слишком агрессивные `inter`/`fall` или нестабильный health-эндпоинт. | Увеличить `rise`/`fall` до 2–3; проверить, что `/healthz` не ложноположителен. | Sysadmin / DevOps |
+| **Canary не получает трафик (Nginx)** | `split_clients` привязан к `$remote_addr` за NAT → все на stable. | Использовать `$request_id` для случайной раскатки или ACL по заголовку. | DevOps |
+| **DNS TTL ломает Zero-Downtime** | Клиенты кэшируют старый IP при DNS-switch. | Использовать L7-веса/VRRP вместо DNS; снизить TTL только как крайняя мера. | Sysadmin |
+| **Clock Drift** | Уплывание времени на VM ломает TLS/лидерство. | `chrony` с несколькими stratum-1/PTP источниками; `chronyc tracking`. | Sysadmin |
+| **Config Drift (Bare Metal)** | Сервер «накопил» ручные изменения. | Ежедневный `ansible-playbook --check --diff`; переход на Immutable Images. | Sysadmin / DevOps |
+| **Readiness Probe «проваливается» на холодном старте** | Приложение еще не прогрелось (JIT, подключение к БД), а LB уже слает трафик. | Увеличить `initialDelaySeconds` и `failureThreshold` в readiness probe; добавить прогревочный эндпоинт (`/readyz` отдельно от `/healthz`). | DevOps / SRE |
+| **Rollback оставляет артефакт на диске** | При Recreate/Rolling старая версия не удаляется из `/opt/app/<version>`. | Добавить post-rollback cleanup hook в CI (удаление версий старше N последних). | DevOps |
+| **Canary «съедает» Error Budget за секунды** | Дефект в v2 проявляется сразу, burn rate превышает порог, но раскатка продолжается из-за слишком длинного окна анализа. | Уменьшить окно анализа (5m → 1m) и добавить Fail-Closed: при недоступности метрик — остановка, а не продолжение. | SRE |
+| **Graceful Shutdown не работает** | Приложение не перехватывает `SIGTERM` или ждет слишком долого (`TimeoutStopSec=30` мало). | Добавить явный обработчик сигнала в код; увеличить `TimeoutStopSec` до 60–120 с; проверить `KillSignal=SIGTERM` в systemd-юните. | DevOps / Sysadmin |
+| **Connection Draining зависает** | Некоторые балансировщики (старая версия HAProxy) не ждут завершения long-polling/WebSocket. | Переключиться на HTTP/2 или TCP-drain с увеличенным `timeout`; отключить sticky для drain-периода. | Sysadmin |
+| **Старая версия не удаляется из LB после Rolling** | Узел остался в состоянии `UP`, но должен быть в `drain`/`maint`. | Проверить, что health-check возвращает `503` или статус сменен через `socat`; убедиться, что `httpchk` проверяет реальный эндпоинт приложения. | Sysadmin |
+| **Recreate падает с ошибкой «address already in use»** | Старый процесс не успел освободить порт за `TimeoutStopSec`. | Увеличить `TimeoutStopSec` или использовать `ExecStopPost` с проверкой `ss -tlnp`; перейти на `Type=notify` или `Type=exec` для точного контроля. | Sysadmin / DevOps |
+| **Атомарный symlink не атомарен на NFS** | `ln -sfn` на сетевой файловой системе не является атомарной операцией, возможна гонка. | Перенести артефакты на локальный диск или использовать lock-файл (`flock`) вокруг смены symlink. | Sysadmin |
+
+## Лучшие практики
+
+### Архитектура и проектирование
+
+1. **Одна стратегия на сервис:** Не смешивайте Blue/Green и Canary в одном пайплайне без явной необходимости. Каждая стратегия имеет свою модель риска и стоимость.
+2. **Separation of Concerns:** Разделите три оси — доставку артефакта, управление трафиком и валидацию. Связка `CI → артефактори → реестр` не должна жестко зависеть от `балансировщик → веса`.
+3. **Иммутабельность артефактов:** Никогда не используйте тег `:latest`. Обновление должно инициироваться сменой конкретной версии образа или хеша конфигурации.
+4. **Expand and Contract:** При обновлении работают две версии приложения. База данных должна поддерживать обе схемы одновременно. Подробнее: **[Expand-Contract](../../Databases/Concepts/migrations/expand_contract.md)**.
+5. **Feature Flags отдельно от стратегии:** Canary управляет *трафиком между версиями*, флаг — *видимостью функции внутри одной версии*. Разные оси риска.
+
+### Надёжность и безопасность
+
+6. **Health-эндпоинт проверяет зависимости**, а не только `200 OK`. Иначе балансировщик пустит трафик в «живой, но мертвый» экземпляр.
+7. **Graceful shutdown обязателен** для Rolling/Canary — иначе активные запросы получат 502 при выводе узла из пула.
+8. **Автоматический откат (Auto-Rollback):** Judge должен не только блокировать продвижение, но и инициировать откат при превышении порога ошибок. В on-prem — шаг в Ansible/CI, в K8s — Argo Rollouts/Flagger.
+9. **Fail-Closed:** при недоступности мониторинга или ошибке «судьи» раскатка останавливается, а не продолжается автоматически.
+10. **OIDC-First:** отказ от статических секретов в CI/CD в пользу временных токенов (OIDC, Vault dynamic secrets).
+
+### Производительность и наблюдаемость
+
+11. **Wave-подход (Progressifve Rolling):** Делите узлы на волны (10% → 25% → 50% → 100%) с паузой и проверкой Golden Signals между ними. Это превращает Rolling в Progressive Delivery даже без Kubernetes.
+12. **Golden Signals в окне раскатки:** После каждой волны фиксируются Error Rate, P95 Latency и Saturation. Продолжение раскатки допустимо, только если Error Budget не исчерпан.
+13. **MTTR через короткие обратимые шаги:** Короткие обратимые деплои и готовый план отката (смена симлинка / тег образа / `kubectl rollout undo` / возврат узла в пул) снижают время восстановления.
+14. **Связь с DORA:** Rolling с health-проверками и автооткатом улучшает Change Failure Rate и Time to Restore. См. **[Метрики DORA](./dora_metrics.md)**.
+
+### Организация процессов
+
+15. **Runbook на каждый откат** — оператор должен за ≤5 минут выполнить откат по письменной инструкции, без разбора причин в моменте.
+16. **Postmortem после каждого failed release** — без поиска виноватого, с action-items по предотвращению рецидива.
+17. **Capacity planning:** Blue/Green и Shadow требуют 2x ресурсов; планируйте квоты/серверы заранее. Для Rolling убедитесь в наличии N+1 узла для surge.
+18. **Ежедневный `ansible-playbook --check --diff`** для Bare Metal/VM — предотвращает Config Drift, который делает откат ненадежным.
+19. **Атомарность операций:** L7-веса (HAProxy runtime API), симлинки (`ln -sfn`), VIP (VRRP) — все эти примитивы должны быть атомарными и проверяемыми.
+20. **Синтетический трафик при низкой нагрузке:** ночью/в выходные анализ недостоверен без генератора нагрузки для поддержания Baseline.
+
 ## Дополнительная информация
 
-### См. также
-
-- **[Типичный поток пайплайна](./pipeline_workflow.md)** — стадии конвейера доставки.
+- **[Сравнение стратегий развертывания](../Deployment_Strategies/comparison.md)** — детальная матрица выбора, архитектура трафика, техническое обоснование.
+- **[Rolling Update — поэтапное обновление](../Deployment_Strategies/rolling_update.md)** — параметры, StatefulSet, systemd, Ansible, rsync.
+- **[Канареечное развертывание](../Deployment_Strategies/canary_deployment.md)** — Nginx/HAProxy/Traefik, Argo Rollouts, CI-автоматизация.
+- **[Сине-зеленое развертывание](../Deployment_Strategies/blue_green_deployment.md)** — keepalived/VRRP, Gateway API, Docker Compose.
+- **[Теневое развертывание](../Deployment_Strategies/shadow_deployment.md)** — GoReplay, Envoy, Nginx mirror, eBPF/tc mirred.
+- **[Проверки здоровья и откат](../Deployment_Strategies/deployment_health_checks_and_rollback.md)** — пробы, архитектура отката, артефакты RCA.
+- **[Развертывание в традиционной инфраструктуре](../Deployment_Strategies/traditional_infrastructure.md)** — Bare Metal/VM, ZTP, Packer, Ansible, Immutable Infrastructure.
 - **[Метрики DORA](./dora_metrics.md)** — измерение эффективности процессов поставки.
 - **[Концепции SRE](../../Concepts/sre_concepts_main.md)** — обеспечение надежности эксплуатации.
+- **[Наблюдаемость пайплайнов](./pipeline_observability.md)** — метрики для решений о breaker.
+- **[Оптимизация затрат в CI/CD](./cost-optimization.md)** — управление стоимостью инфраструктуры при раскатке.
+- **[Expand-Contract](../../Databases/Concepts/migrations/expand_contract.md)** — обратно-совместимые миграции баз данных.
+- **[Балансировка нагрузки HTTP](../../Networking/Protocols/HTTP/http_load_balancing.md)** — механика весов, health checks и traffic splitting на Nginx/HAProxy.

@@ -711,6 +711,8 @@ sudo reboot
 | **conntrack: table full** | Сетевые ошибки, трафик не проходит | Лимит conntrack исчерпан | Увеличить `net.netfilter.nf_conntrack_max` до 1048576 |
 | **DNS не работает после init** | CoreDNS CrashLoopBackOff | Неверный `pod-network-cidr` или CNI не установлен | Установите Calico/Cilium: `kubectl apply -f <manifest>` |
 
+Для расширенной диагностики см. [Diagnostics и troubleshooting kubeadm](./kubeadm-troubleshooting.md).
+
 ### См. также
 
 - **[Инициализация кластера](./cluster_initialization.md)** — следующий этап: запуск первого мастера через `kubeadm init`.
@@ -718,3 +720,4 @@ sudo reboot
 - **[Настройка Keepalived и HAProxy](./keepalived_haproxy_setup.md)** — practical настройка балансировщиков для HA.
 - **[Присоединение узлов](../HA_Cluster_Bare_Metal/node_joining.md)** — добавление Worker и Control Plane узлов через `kubeadm join`.
 - **[Установка компонентов (HA)](../HA_Cluster_Bare_Metal/k8s_ha_component_installation.md)** — альтернативное руководство для HA-кластеров с расширенной настройкой containerd.
+- **[Продвинутая конфигурация](./advanced-kubeadm-configuration.md)** — детали YAML-конфигурации, extraArgs, extraVolumes, feature gates.

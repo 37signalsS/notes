@@ -44,6 +44,13 @@
 | **Scheduled Mirroring** | Регулярная автоматическая синхронизация через Bastion-хост или Дата-диод. | `skopeo sync`, `rsync`, `apt-mirror`. | Большие инфраструктуры с высокими требованиями к актуальности. |
 | **Intermediate Registry** | Использование «буферного» реестра, который доступен обоим сегментам по очереди (или через Firewall). | Harbor, Zot. | Корпоративные среды с жесткой сегментацией L3/L4. |
 
+| Функция | DevOps | SRE | Sysadmin |
+| :--- | :--- | :--- | :--- |
+| **Выбор стратегии изоляции** | Определяет требования к пайплайну и toolchain. | Утверждает SLO наuptime реестра/бастиона. | Оценивает сетевую топологию, firewall, VLAN. |
+| **Синхронизация артефактов** | Настраивает CI-переменные и зеркала пакетных менеджеров. | Мониторит freshness зеркал, latency sync. | Управляет прыжковым хостом, cron, rsync/skopeo. |
+| **Валидация и безопасность** | Интегрирует SBOM, подпись (cosign/GPG) в пайплайн. | Настраивает алерты на просроченные CRL/сертификаты. | Ведёт локальный УЦ, ротацию ключей, HSM. |
+| **Восстановление после сбоя** | Поддерживает runbook, DR drill через пайплайн. | Координирует инцидент, калибрует RTO. | Восстанавливает носители, образы, registry. |
+
 ---
 
 ## Практические сценарии
@@ -56,15 +63,24 @@ Skopeo эффективнее Docker, так как работает напря�
     ```bash
     # Скачивание всех архитектур образа (x86_64, arm64) в локальную папку
     skopeo copy --all docker://docker.io/library/nginx:1.25 dir:/tmp/nginx-bundle
+    # → INFO[0000] Copying manifest sha256:abc123...
+    # → INFO[0000] Copying config sha256:def456...
+    # → INFO[0000] Copying layer sha256:ghi789...
+    # → INFO[0000] Storing directory structure in /tmp/nginx-bundle
     # Создание сжатого архива
     tar -czf nginx-bundle.tar.gz -C /tmp nginx-bundle
+    # → (архив создан, проверка: tar -tzf nginx-bundle.tar.gz | head)
     ```
 
 2.  **Внутри контура:**
     ```bash
     tar -xzf nginx-bundle.tar.gz
+    # → (извлечён каталог /tmp/nginx-bundle)
     # Загрузка в локальный реестр
     skopeo copy --all dir:/tmp/nginx-bundle docker://registry.internal/library/nginx:1.25
+    # → INFO[0000] Copying manifest sha256:abc123...
+    # → INFO[0000] Copying config sha256:def456...
+    # → INFO[0000] Storing image manifest as docker://registry.internal/library/nginx:1.25
     ```
 
 ### Сценарий 2: Перенос репозиториев (Git Bundle)
@@ -74,26 +90,55 @@ Skopeo эффективнее Docker, так как работает напря�
 1.  **Экспорт (внешняя сеть):**
     ```bash
     git clone --mirror https://github.com/org/repo.git
+    # → Cloning into bare repository 'repo.git'...
+    # → remote: Enumerating objects: 142, done.
+    # → remote: Total 142 (delta 18), reused 142 (delta 18)
+    # → Receiving objects: 100% (142/142), 1.2 MiB | 2.3 Mi/s, done.
     cd repo.git
     # Упаковка всей истории и веток в один файл
     git bundle create repo.bundle --all
+    # → Counting objects: 142, done.
+    # → Delta compression using up to 8 threads
+    # → Writing objects: 100% (142/142), 1.2 MiB | 2.3 MiB/s, done.
     ```
 
 2.  **Импорт (внутри контура):**
     ```bash
     # Клонирование из бандла как из обычного репозитория
     git clone repo.bundle my-project
+    # → Cloning into 'my-project'...
+    # → Receiving objects: 100% (142/142), 1.2 MiB | 2.3 Mi/s, done.
+    # → Checking connectivity... done.
     cd my-project
     # Настройка удаленного репозитория на внутренний сервер
     git remote set-url origin https://gitlab.internal/org/repo.git
     git push origin --all
+    # → Enumerating objects: 142, done.
+    # → Counting objects: 100% (142/142), 1.2 MiB | 2.3 MiB/s, done.
+    # → Writing objects: 100% (142/142), 1.2 MiB | 2.3 MiB/s, done.
+    # → To https://gitlab.internal/org/repo.git
+    # →  * [new branch]      main -> main
     ```
 
 ### Сценарий 3: Зависимости языков программирования
 
 #### Python (pip)
-1.  **Внешняя сеть:** `pip download -d ./packages -r requirements.txt`
-2.  **Внутренняя сеть:** `pip install --no-index --find-links=./packages -r requirements.txt`
+1.  **Внешняя сеть:**
+    ```bash
+    pip download -d ./packages -r requirements.txt
+    # → Collecting flask==2.3.0
+    # →   Downloading flask-2.3.0-py3-none-any.whl (96 kB)
+    # → Collecting werkzeug==2.3.0
+    # →   Downloading werkzeug-2.3.0-py3-none-any.whl (158 kB)
+    # → Saved 12 packages in ./packages
+    ```
+2.  **Внутренняя сеть:**
+    ```bash
+    pip install --no-index --find-links=./packages -r requirements.txt
+    # → Processing ./packages/flask-2.3.0-py3-none-any.whl
+    # → Processing ./packages/werkzeug-2.3.0-py3-none-any.whl
+    # → Successfully installed flask-2.3.0 werkzeug-2.3.0
+    ```
 
 #### Node.js (npm/yarn)
 - **Вариант А:** Использование `npm pack` для отдельных пакетов.
@@ -133,11 +178,22 @@ Skopeo эффективнее Docker, так как работает напря�
 ```bash
 # Внешняя сеть: выгрузка чарта в тарбол или push в OCI-реестр
 helm pull bitnami/nginx --version 15.0.0 --destination ./charts
+# → Pulled: registry-1.docker.io/bitnamicharts/nginx:15.0.0
+# → (файл ./charts/nginx-15.0.0.tgz создан)
 skopeo copy --all docker://registry-1.docker.io/bitnamicharts/nginx:15.0.0 \
             docker://registry.internal/charts/nginx:15.0.0
+# → INFO[0000] Copying manifest sha256:...
+# → INFO[0000] Copying config sha256:...
+# → INFO[0000] Storing image manifest as docker://registry.internal/charts/nginx:15.0.0
 # Внутри контура: установка из локального источника
 helm install my-nginx ./charts/nginx-15.0.0.tgz --namespace app --create-namespace
+# → NAME: my-nginx
+# → LAST DEPLOYED: ...
+# → STATUS: deployed
 helm install my-nginx oci://registry.internal/charts/nginx --version 15.0.0 -n app
+# → NAME: my-nginx
+# → LAST DEPLOYED: ...
+# → STATUS: deployed
 ```
 
 При работе с локальным УЦ добавьте доверенный корень в системное хранилище и при необходимости `--ca-file` / настройки Insecure Skip для внутренних реестров.
@@ -197,7 +253,51 @@ groups:
 
 - **Логи:** агрегация через **Loki**/ELK внутри контура; метки `trace_id`/`pipeline_id` позволяют связать инцидент раннера с конкретным запуском.
 
-### Runbook: восстановление синхронизации (SysAdmin)
+---
+
+## Операции и команды
+
+| Команда | Описание | Ожидаемый вывод | Роль |
+| :--- | :--- | :--- | :--- |
+| `skopeo copy --all docker://docker.io/library/nginx:1.25 dir:/tmp/nginx-bundle` | Выгрузка образа со всеми архитектурами в локальную директорию | `INFO[0000] Copying blob...` / `INFO[0000] Done` | DevOps / Sysadmin |
+| `tar -czf nginx-bundle.tar.gz -C /tmp nginx-bundle` | Создание сжатого архива бандла | Файл `nginx-bundle.tar.gz` в текущей директории | Sysadmin |
+| `skopeo copy --all dir:/tmp/nginx-bundle docker://registry.internal/library/nginx:1.25` | Загрузка бандла в локальный реестр | `INFO[0000] Copying config sha256:...` / `INFO[0000] Done` | Sysadmin |
+| `git clone --mirror https://github.com/org/repo.git` | Клонирование репозитория с полной историей и всеми ветками | Каталог `repo.git/` с объектами Git | DevOps |
+| `git bundle create repo.bundle --all` | Упаковка всей истории репозитория в один файл | `Counting objects: 142, done.` / `Writing objects: 100%` | DevOps |
+| `git clone repo.bundle my-project` | Клонирование из бандла как из обычного репозитория | Каталог `my-project/` с рабочим деревом | DevOps |
+| `pip download -d ./packages -r requirements.txt` | Загрузка wheel-пакетов для оффлайн-установки | Файлы `.whl` и `.tar.gz` в `./packages/` | DevOps |
+| `pip install --no-index --find-links=./packages -r requirements.txt` | Установка пакетов без доступа к PyPI | `Successfully installed flask-2.3.0 ...` | DevOps |
+| `helm pull bitnami/nginx --version 15.0.0 --destination ./charts` | Скачивание чарта в локальную директорию | Файл `charts/nginx-15.0.0.tgz` | DevOps / SRE |
+| `skopeo copy --all docker://registry-1.docker.io/bitnamicharts/nginx:15.0.0 docker://registry.internal/charts/nginx:15.0.0` | Перенос OCI-артефакта чарта в локальный реестр | `INFO[0000] Copying blob...` / `INFO[0000] Done` | Sysadmin / SRE |
+| `helm install my-nginx ./charts/nginx-15.0.0.tgz --namespace app --create-namespace` | Установка чарта из локального файла | `Release "my-nginx" has been upgraded.` | SRE |
+| `helm install my-nginx oci://registry.internal/charts/nginx --version 15.0.0 -n app` | Установка чарта из локального OCI-реестра | `Release "my-nginx" has been installed.` | SRE |
+
+---
+
+## Типичные ошибки и решения
+
+В изолированной среде отсутствие интернета повышает требования к ручной проверке:
+
+1.  **Контрольные суммы:** Генерация и проверка `sha256sum` для каждого переносимого файла.
+    - `find . -type f -exec sha256sum {} + > manifest.sha256`
+    # → (создан файл manifest.sha256 со списком хешей)
+    - Проверка: `sha256sum -c manifest.sha256`
+    # → nginx-bundle.tar.gz: OK
+2.  **Валидация подписей (Sigstore/Cosign):**
+    - В оффлайн-режиме Cosign требует импорта публичных ключей (`cosign.pub`) и работы с локальными OCI-реестрами.
+    - Проверка: `cosign verify --key cosign.pub registry.internal/image:tag`
+    # → Verification succeeded for registry.internal/image:tag
+3.  **Антивирусное сканирование (Sandboxing):** Все входящие архивы должны проходить проверку (ClamAV, Касперский) на специализированном «шлюзовом» узле перед распаковкой.
+4.  **Проверка SBOM (Software Bill of Materials):** Анализ состава компонентов утилитами типа `syft` или `trivy` на внешней стороне для выявления уязвимостей до импорта. Обновление базы уязвимостей Trivy (`trivy db` / `trivy image --offline`) выполняется тем же sneakernet-методом.
+
+- **Просроченные сертификаты (NTP):** Если в оффлайн-контуре сбилось время, TLS-соединения с внутренними реестрами (Harbor) перестанут работать. Решение: использование локальных серверов точного времени (Chrony/NTP с GPS-приемником).
+- **OCSP/CRL Timeout:** Многие приложения пытаются проверить статус отзыва сертификата в интернете. Это приводит к задержкам в 30-60 секунд. Решение: отключение проверок OCSP или настройка локальных CRL-точек.
+- **Hardcoded Endpoints:** Использование жестко прописанных ссылок на `object-storage.example.com` или `registry.npmjs.org` в коде/скриптах. Решение: использование переменных окружения и локальных прокси-серверов.
+- **Sandbox Image (K8s):** Забытый образ `pause`, который Kubernetes пытается скачать при создании любого пода. Решение: предзагрузить `pause`-образ в локальный реестр и указать его в конфигурации kubelet (`--pod-infra-container-image`).
+- **Устаревшая база сканирования:** Trivy/Clair не находят новые CVE из-за оффлайн-статуса. Решение: периодическая доставка `trivy db` тем же sneakernet-методом и импорт через `trivy image --offline`.
+- **Нехватка места при импорте:** Бандл распаковывается до проверки свободного места. Решение: резервировать ≥2× объёма бандла на целевом томе и проверять `df` в runbook.
+
+### Восстановление синхронизации (Runbook)
 
 Порядок действий при сбое доставки артефактов (sneakernet/бастион/дата-диод):
 
@@ -207,23 +307,7 @@ groups:
 4.  **Ре-экспорт при повреждении носителя:** пересоздать `dir:`-бандл из исходного реестра внешней сети, заново упаковать в `tar -czf` с новым манифестом.
 5.  **Очистка после успеха:** удалить временные архивы с прыжкового хоста и носителя; зафиксировать факт синхронизации (обновить метрику/журнал).
 
----
-
-## Проверка и безопасность (Validation)
-
-В изолированной среде отсутствие интернета повышает требования к ручной проверке:
-
-1.  **Контрольные суммы:** Генерация и проверка `sha256sum` для каждого переносимого файла.
-    - `find . -type f -exec sha256sum {} + > manifest.sha256`
-2.  **Валидация подписей (Sigstore/Cosign):**
-    - В оффлайн-режиме Cosign требует импорта публичных ключей (`cosign.pub`) и работы с локальными OCI-реестрами.
-    - Проверка: `cosign verify --key cosign.pub registry.internal/image:tag`.
-3.  **Антивирусное сканирование (Sandboxing):** Все входящие архивы должны проходить проверку (ClamAV, Касперский) на специализированном «шлюзовом» узле перед распаковкой.
-4.  **Проверка SBOM (Software Bill of Materials):** Анализ состава компонентов утилитами типа `syft` или `trivy` на внешней стороне для выявления уязвимостей до импорта. Обновление базы уязвимостей Trivy (`trivy db` / `trivy image --offline`) выполняется тем же sneakernet-методом.
-
----
-
-## Обслуживание и очистка (Maintenance & Cleanup)
+## Лучшие практики
 
 Работа в изолированной среде требует регулярного ухода за локальными хранилищами для предотвращения переполнения дисков:
 
@@ -235,18 +319,7 @@ groups:
 6.  **Резервное копирование реестра:** Регулярно бэкапируйте метаданные и слои (snapshot тома + экспорт в Immutable Storage), чтобы при повреждении носителя восстановить контур без повторного sneakernet.
 7.  **Автоматизация синхронизации:** Планируйте `skopeo sync`/`rsync` через `cron` на прыжковом хосте с обязательной генерацией `manifest.sha256` и подписью манифеста ключом `cosign`/GPG — это превращает ручной процесс в воспроизводимый и проверяемый.
 
----
-
 ## Дополнительная информация
-
-### Типичные ошибки и Troubleshooting
-
-- **Просроченные сертификаты (NTP):** Если в оффлайн-контуре сбилось время, TLS-соединения с внутренними реестрами (Harbor) перестанут работать. Решение: использование локальных серверов точного времени (Chrony/NTP с GPS-приемником).
-- **OCSP/CRL Timeout:** Многие приложения пытаются проверить статус отзыва сертификата в интернете. Это приводит к задержкам в 30-60 секунд. Решение: отключение проверок OCSP или настройка локальных CRL-точек.
-- **Hardcoded Endpoints:** Использование жестко прописанных ссылок на `object-storage.example.com` или `registry.npmjs.org` в коде/скриптах. Решение: использование переменных окружения и локальных прокси-серверов.
-- **Sandbox Image (K8s):** Забытый образ `pause`, который Kubernetes пытается скачать при создании любого пода. Решение: предзагрузить `pause`-образ в локальный реестр и указать его в конфигурации kubelet (`--pod-infra-container-image`).
-- **Устаревшая база сканирования:** Trivy/Clair не находят новые CVE из-за оффлайн-статуса. Решение: периодическая доставка `trivy db` тем же sneakernet-методом и импорт через `trivy image --offline`.
-- **Нехватка места при импорте:** Бандл распаковывается до проверки свободного места. Решение: резервировать ≥2× объёма бандла на целевом томе и проверять `df` в runbook.
 
 ### См. также
 
@@ -254,4 +327,6 @@ groups:
 -   **[Безопасность цепочки поставок](../../Security/Supply_Chain_Security/overview.md)** — концепции SLSA и SBOM.
 -   **[K8s: Air-gapped Image Pull Errors](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md)** — специфика для кластеров оркестратора.
 
-Смежные практики (инлайн-ссылки): **[Ansible в оффлайн-средах](../../Ansible/Roles/galaxy.md#работа-в-изолированных-средах-offline--air-gapped)** — установка ролей и коллекций без интернета; **[Kubespray: Offline установка](../../Kubernetes/Installation/Kubespray/offline_installation/offline_definitions.md)** — комплексный пример развертывания инфраструктуры.
+### Смежные практики
+
+Смежные практики (инлайн-ссылки): **[Ansible в оффлайн-средах](../../Ansible/Roles/galaxy.md#работа-в-изолированных-средах-offline-air-gapped)** — установка ролей и коллекций без интернета; **[Kubespray: Offline установка](../../Kubernetes/Installation/Kubespray/offline_installation/offline_definitions.md)** — комплексный пример развертывания инфраструктуры.

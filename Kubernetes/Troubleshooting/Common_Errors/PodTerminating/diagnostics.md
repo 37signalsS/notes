@@ -51,6 +51,9 @@ Pod в Terminating
 ├─ Events содержат Unhealthy + контейнер перезапускается?
 │  └─ livenessProbe неуспех в Terminating → Этап 2 (Runtime)
 │
+├─ Под принадлежит DaemonSet?
+│  └─ DaemonSet не использует PDB. См. [DaemonSet и завершение](./daemonset_termination.md)
+│
 └─ Events содержат BackOff / Evicted?
    └─ Проверьте PDB и Eviction → Этап 4 (PDB/Eviction)
 ```
@@ -543,3 +546,4 @@ Pod'ы DaemonSet **не могут** использовать Pod Disruption Bud
 - [Проблемы финализаторов](./finalizer_issues.md) — ручная очистка и CSI-специфика.
 - [Недоступность узла](./node_unavailable_issues.md) — действия при отказе инфраструктуры.
 - [Блокировка через PDB](./pdb_blocking.md) — разрешение блокировок при drain.
+- [DaemonSet и завершение подов](./daemonset_termination.md) — специфика завершения DaemonSet.

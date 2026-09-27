@@ -661,28 +661,8 @@ kubectl annotate deployment <name> secret.reloader.stakater.com/reload- -n <name
 
 ## Дополнительная информация
 
-### Совместимость версий
-
-| Версия Reloader | Kubernetes | Helm | Go | Примечание |
-| :--- | :--- | :--- | :--- | :--- |
-| **v1.4.19** | 1.26 - 1.30+ | 3.12+ | 1.26.2 | Текущая стабильная версия |
-| **v1.3.x** | 1.24 - 1.28 | 3.10+ | 1.21.x | Предыдущий стабильный релиз |
-
-### Параметры безопасности
-
-Reloader спроектирован с учётом принципов **Zero Trust** и **Supply Chain Security**:
-
-- **Signed Images:** Образы подписаны через Cosign (Enterprise).
-- **Non-root:** Запуск от UID 65534.
-- **Minimal RBAC:** Возможность ограничения контроллера конкретными неймспейсами через `--namespaces-to-select`.
-- **User Namespaces:** Изоляция пользователей на уровне ядра Linux для предотвращения container breakout.
-- **Seccomp Profile:** Использование RuntimeDefault для ограничения системных вызовов.
-- **Read-only Root FS:** Возможность включения через SecurityContext.
-
-### Ресурсы
-
-- [Stakater GitHub: Reloader](https://github.com/stakater/Reloader)
-- [ArtifactHub: Chart Reloader](https://artifacthub.io/packages/helm/stakater/reloader)
-- [Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)
-- [Практические сценарии использования](./reloader_usage_scenarios.md)
 - [Обзор Reloader](./reloader_overview.md)
+- [Практические сценарии использования](./reloader_usage_scenarios.md)
+- [Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)
+- [Безопасность Reloader](./reloader_security.md)
+- [Runbooks и реагирование на инциденты](./reloader_runbooks.md)

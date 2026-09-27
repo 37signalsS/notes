@@ -179,7 +179,7 @@ sysctl net.ipv4.conf.all.arp_ignore net.ipv4.conf.all.arp_announce
 # → 2
 ```
 
-> **См. также:** [Proxy ARP](../../Concepts/nat/proxy_arp.md) — детали настройки и кросс-доменные взаимодействия.
+> **См. также:** [Proxy ARP](../Concepts/nat/proxy_arp.md) — детали настройки и кросс-доменные взаимодействия.
 
 ### ARP в контейнерах и виртуализации
 
@@ -347,7 +347,7 @@ arping -I eth1 -c 3 10.0.0.1
 
 ### Разновидности ARP
 
-- **Proxy ARP (RFC 1027):** Маршрутизатор отвечает своим MAC на запросы для узлов в другом сегменте. Используется для объединения сетей без перенастройки хостов или в VPN/туннелях. Подробнее: **[Proxy ARP](../../Concepts/nat/proxy_arp.md)**.
+- **Proxy ARP (RFC 1027):** Маршрутизатор отвечает своим MAC на запросы для узлов в другом сегменте. Используется для объединения сетей без перенастройки хостов или в VPN/туннелях. Подробнее: **[Proxy ARP](../Concepts/nat/proxy_arp.md)**.
 - **Gratuitous ARP (GARP):** Анонс собственного IP/MAC без явного запроса. Устройство отправляет ARP-пакет самостоятельно, не дожидаясь ARP-запроса от соседа. В результате соседние хосты обновляют свой ARP-кэш и перенаправляют трафик на новый MAC-адрес без задержек на повторный резолвинг.
   - **Механизм:** обычно ARP работает по схеме запрос-ответ: Host A отправляетbroadcast-запрос «Who has IP?», и Owner отвечает unicast-сообщением со своим MAC. При Gratuitous ARP владелец IP-адреса отправляет broadcast- или unicast-ответ без предварительного запроса, proactively оповещая сегмент о смене привязки IP → MAC.
   - **Сценарий VIP failover:** виртуальный IP переезжает между узлами:
@@ -385,7 +385,7 @@ arping -I eth1 -c 3 10.0.0.1
       ip neigh show | grep 10.0.0.10
       ```
   - **RFC:** RFC 5227 — IPv4 Address Conflict Detection (использует GARP для проверки уникальности IP).
-  - **См. также:** [ARP в отказоустойчивых системах (HA)](#arp-в-отказоустойчивых-системах-ha), [Proxy ARP](../../Concepts/nat/proxy_arp.md).
+  - **См. также:** [ARP в отказоустойчивых системах (HA)](#arp-в-отказоустойчивых-системах-ha), [Proxy ARP](../Concepts/nat/proxy_arp.md).
 - **Inverse ARP (InARP):** Определение IP по MAC (использовалось в Frame Relay).
 - **Reverse ARP (RARP):** Устаревший протокол получения IP по MAC. Заменён на [DHCP](./DHCP/dhcp_overview.md).
 
@@ -512,7 +512,7 @@ iface eth0 inet static
 | ARP-таблица переполнена | Много хостов в сегменте | Увеличить `gc_thresh3` |
 | MAC-адрес «прыгает» | ARP Flux (multi-homed) | Настроить `arp_ignore` и `arp_announce` |
 | Микро-фризы SSH | ARP Resolve Timeout | Проверить NUD-состояния, статические ARP |
-| Нет связности после миграции | ARP-кэш не обновился | `ip neigh flush dev eth0` или подождать таймаут |
+| Нет связности после миграции | Возможна устаревшая запись IP → MAC | [Диагностический сброс таблицы соседей](../../Linux/Networking/Tools/iproute2/ip_neighbour.md#диагностический-сброс-таблицы-соседей) |
 | ARP Spoofing | Злоумышленник в сегменте | DAI, статические ARP, мониторинг |
 
 ### RFC
@@ -522,7 +522,7 @@ iface eth0 inet static
 - **RFC 2002** — Proxy ARP.
 - **RFC 4861** — Neighbor Discovery for IPv6 (замена ARP).
 
-> **См. также:** [ip neighbour](../../Linux/Networking/Tools/iproute2/ip_neighbour.md), [Proxy ARP](../../Concepts/nat/proxy_arp.md), [DHCP Security](./DHCP/dhcp_security.md), [MAC-адрес](../Concepts/mac_address.md)
+> **См. также:** [ip neighbour](../../Linux/Networking/Tools/iproute2/ip_neighbour.md), [Proxy ARP](../Concepts/nat/proxy_arp.md), [DHCP Security](./DHCP/dhcp_security.md), [MAC-адрес](../Concepts/mac_address.md)
 
 ## Пошаговая диагностика ARP-проблем
 
@@ -638,7 +638,7 @@ tcpdump -i eth0 arp -w /tmp/arp_capture_$(date +%Y%m%d).pcap -c 10000
 ### Связанные документы
 
 - **[ip neighbour](../../Linux/Networking/Tools/iproute2/ip_neighbour.md)** — управление ARP/NDP-таблицами
-- **[Proxy ARP](../../Concepts/nat/proxy_arp.md)** — настройка и диагностика Proxy ARP
+- **[Proxy ARP](../Concepts/nat/proxy_arp.md)** — настройка и диагностика Proxy ARP
 - **[DHCP Security](./DHCP/dhcp_security.md)** — Dynamic ARP Inspection (DAI)
 - **[MAC-адрес](../Concepts/mac_address.md)** — управление MAC-адресами
 - **[Диагностика ping](../../Linux/Diagnostics/Networking/ping.md)** — базовая диагностика связности

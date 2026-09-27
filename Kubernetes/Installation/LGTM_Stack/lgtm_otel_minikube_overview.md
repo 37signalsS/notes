@@ -7,6 +7,11 @@
 > - [Развертывание стека LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)
 > - [Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)
 > - [Тестирование и верификация](./lgtm_otel_minikube_test_app_verification.md)
+> - [Production Hardening](./lgtm_production_hardening.md)
+> - [Backup и восстановление](./lgtm_backup_disaster_recovery.md)
+> - [CI/CD интеграция](./lgtm_cicd_gitops_integration.md)
+> - [Оптимизация производительности](./lgtm_performance_tuning.md)
+> - [Мониторинг стека](./lgtm_monitoring_self_monitoring.md)
 
 ## Целевая аудитория
 
@@ -28,6 +33,7 @@
 | **3. Стек LGTM** | Prometheus (метрики), Grafana (визуализация), Loki (логи), Tempo (трассировки). | Работающие системы хранения и визуализации |
 | **4. OpenTelemetry** | Operator, Collector, автоматическая инструментация приложений. | Пайплайн сбора и обработки телеметрии |
 | **5. Тестирование** | Верификация данных, проверка корреляции, RED-метрики. | Подтвержденная работоспособность всего стека |
+| **6. Production** | Безопасность, backup, CI/CD, оптимизация, мониторинг. | Готовность к production-развертыванию |
 
 **Ожидаемое время выполнения:** 45–90 минут (в зависимости от скорости интернета и ресурсов машины).
 
@@ -349,6 +355,14 @@ kubectl describe nodes | grep -A 10 "Allocated resources"
 - [Обзор наблюдаемости](../../../Concepts/Observability_and_Monitoring/observability_definitions.md) — базовые концепции мониторинга и наблюдаемости.
 - [Grafana Alloy: Современный агент](../../../Grafana/grafana_alloy_overview.md) — альтернатива OTel Collector для production-сред.
 - [OpenTelemetry: Архитектура](../../../OpenTelemetry/architecture_signals.md) — детали устройства OTel Collector и пайплайнов.
+
+### Production и интеграция
+
+- [Production Hardening](./lgtm_production_hardening.md) — безопасность и жёсткая настройка стека LGTM.
+- [Backup и восстановление](./lgtm_backup_disaster_recovery.md) — резервное копирование и восстановление данных.
+- [CI/CD интеграция](./lgtm_cicd_gitops_integration.md) — GitOps и автоматизация деплоя.
+- [Оптимизация производительности](./lgtm_performance_tuning.md) — настройка retention, compaction и ресурсов.
+- [Мониторинг стека](./lgtm_monitoring_self_monitoring.md) — самомониторинг компонентов LGTM.
 
 ---
 

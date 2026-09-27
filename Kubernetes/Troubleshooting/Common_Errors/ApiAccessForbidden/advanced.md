@@ -541,3 +541,5 @@ jq 'select(.responseStatus.code==403)' audit.log | jq '.user.username, .objectRe
 - [Объекты RBAC (Role, Binding)](rbac_objects.md)
 - [Контроллеры допуска (Обзор)](../../Concepts/admission_controllers.md)
 - [Продвинутая авторизация (OPA/Kyverno/VAP)](../../../Security/rbac/limitations_opa.md)
+- [NetworkPolicy и Service Mesh](../../../Networking/Network/NetworkPolicy/service_mesh_interaction.md) — 403 от AuthorizationPolicy Istio вне Kubernetes RBAC
+- [Istio Security Policies](../../../Service_Mesh/istio-security-policies.md) — L7-авторизация через AuthorizationPolicy

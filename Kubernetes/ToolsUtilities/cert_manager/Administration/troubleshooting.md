@@ -326,4 +326,11 @@ kubectl patch deployment cert-manager -n cert-manager --type='json' \
 
 - **[Cert-manager: Администрирование](./index.md)** — HA, ресурсы и ротация ключей.
 - **[Cert-manager: Операции](./operations.md)** — мониторинг, алертинг и резервное копирование.
+- **[Обновление и миграция cert-manager](./upgrades_and_migration.md)** — пошаговый апгрейд, breaking changes, rollback.
+- **[Масштабирование и производительность](./scaling_and_performance.md)** — tuning при 1000+ сертификатах, OOM, workqueue.
+- **[RBAC-примеры](./rbac_examples.md)** — ошибки `Forbidden` и готовые Role/ClusterRole.
+- **[Cert-manager: GitOps интеграция](./gitops_integration.md)** — настройка ArgoCD/Flux с cert-manager.
+- **[Cert-manager: Тестирование в CI/CD](./cicd_testing.md)** — валидация манифестов перед деплоем.
+- **[Cert-manager: Production Playbooks](./production_playbooks.md)** — пошаговые инструкции по типичным инцидентам.
+- **[Cert-manager: Отзыв сертификатов](./certificate_revocation.md)** — CRL, OCSP, короткие TTL.
 - **[Let's Encrypt: Диагностика](../LetsEncrypt/letsencrypt_advanced.md)** — решение специфичных проблем ACME.

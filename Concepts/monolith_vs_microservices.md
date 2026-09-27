@@ -359,6 +359,7 @@ Monolith DB → Debezium (CDC) → Kafka → orders-service → Orders DB
 *   **Contract Testing (Pact):** Проверка контрактов между сервисами без запуска зависимых компонентов.
 
 ### См. также
+*   **[Паттерны отказоустойчивости и масштабируемости микросервисной архитектуры](./microservice_patterns.md)** — Circuit Breaker, Bulkhead, Retry, Timeout, Fallback.
 *   **[Event-Driven Architecture](./event-driven-architecture.md)** — Event Sourcing, CQRS, оркестрация vs хореография.
 *   **[Паттерн Saga](../Databases/Concepts/distributed_transactions.md)** — управление распределенными транзакциями.
 *   **[API Gateway](./api_gateway_overview.md)** — входная точка для микросервисов.

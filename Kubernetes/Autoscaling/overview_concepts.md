@@ -502,6 +502,13 @@ VPA решает проблему «угадывания» правильных 
 ### Связанные темы и документация
 
 *   [Pod Disruption Budget (PDB)](pod_disruption_budget.md) — защита доступности.
+*   [Descheduler](descheduler.md) — автоматическая дефрагментация и ребалансировка кластера.
+*   [HPA + PriorityClass + Preemption](hpa_priority_preemption.md) — взаимодействие при масштабировании.
+*   [Масштабирование StatefulSet](statefulset_autoscaling.md) — HPA, KEDA и паттерны для stateful приложений.
+*   [Cluster Autoscaler vs Karpenter](cluster_autoscaler_vs_karpenter.md) — сравнительный анализ.
+*   [Алертинг и мониторинг autoscaling](alerting_monitoring.md) — Prometheus-алерты дляautoscaling.
+*   [GitOps для autoscaling](gitops_autoscaling.md) — управление HPA/VPA через ArgoCD/Flux.
+*   [Autoscaling в On-Premise](on_premise_autoscaling.md) — масштабирование в bare-metal средах.
 *   [Управление размещением подов (Affinity, TSC)](../Scheduling/affinity.md).
 *   [Metrics Server и мониторинг](../MonitoringLogging/metrics-server.md).
 *   [In-Place Pod Resize: Глубокое погружение](in_place_pod_resize.md).

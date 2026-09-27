@@ -453,6 +453,190 @@ helm rollback reloader <revision> -n reloader-system
 
 ---
 
+## SLI/SLO для Reloader как платформенного сервиса
+
+### Определения
+
+**SLI (Service Level Indicator)** — количественный показатель качества сервиса Reloader. Измеряется через Prometheus метрики.
+
+**SLO (Service Level Objective)** — целевое значение SLI за определённый период. Нарушение SLO приводит к расходованию error budget.
+
+### Ключевые SLI для Reloader
+
+| SLI | Метрика | Формула | Описание |
+| :--- | :--- | :--- | :--- |
+| **Доступность контроллера** | `kube_deployment_status_replicas_available` | ratio of available/replicas | Контроллер должен быть доступен и обрабатывать события |
+| **Успешность перезапусков** | `reloader_success_reload_total`, `reloader_failure_reload_total` | success / (success + failure) | Перезапуски должны завершаться успешно |
+| **Латентность обнаружения** | `reloader_event_processing_duration_seconds` | p99 за окно | Время от изменения до начала обработки |
+| **Латентность перезапуска** | `reloader_reconcile_duration_seconds` | p95 за окно | Время от обнаружения до patch Deployment |
+| **Очередь задач** | `workqueue_depth` | avg за окно | Глубина очереди не должна расти бесконечно |
+
+### Рекомендуемые SLO
+
+| SLO | Целевое значение | Error Budget (30 дней) |
+| :--- | :--- | :--- |
+| Доступность контроллера | >= 99.9% | ~43 мин простоя |
+| Успешность перезапусков | >= 99.5% | ~3.6 ч.failed restarts |
+| Латентность обнаружения (p99) | < 5 сек | — |
+| Латентность согласования (p95) | < 10 сек | — |
+| Глубина очереди | < 50 элементов | — |
+
+### Правила алертинга на SLO (Error Budget Burn Rate)
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: reloader-slo-alerts
+  namespace: reloader-system
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: reloader-slo
+      rules:
+        # Быстрое выгорание (14.4x за 1 час) — критично
+        - alert: ReloaderErrorBudgetBurnFast
+          expr: |
+            (
+              rate(reloader_failure_reload_total[1h]) /
+              rate(reloader_success_reload_total[1h])
+            ) > (14.4 * 0.005)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Reloader: быстрое выгорание error budget"
+            description: "Error budget будет исчерпан за < 2 дня при текущей скорости ошибок"
+
+        # Медленное выгорание (6x за 3 дня) — предупреждение
+        - alert: ReloaderErrorBudgetBurnSlow
+          expr: |
+            (
+              rate(reloader_failure_reload_total[3d]) /
+              rate(reloader_success_reload_total[3d])
+            ) > (6 * 0.005)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Reloader: медленное выгорание error budget"
+            description: "Error budget будет исчерпан за < 30 дней при текущей скорости ошибок"
+```
+
+---
+
+## Observability beyond metrics (logs, traces, audit)
+
+### Структурированное логирование
+
+Reloader поддерживает JSON-формат логов через `--log-level=info`. Для интеграции с ELK/Loki:
+
+```yaml
+# Рекомендуемая конфигурация для production
+args:
+  - --log-level=info
+  # Дляvelopment/debug:
+  # - --log-level=debug
+```
+
+**Формат логов Reloader:**
+
+```json
+{
+  "level": "info",
+  "ts": "2026-09-10T10:30:00Z",
+  "msg": "Triggering rolling upgrade",
+  "resource": "Deployment",
+  "name": "my-app",
+  "namespace": "production",
+  "configmaps": ["app-config"],
+  "secrets": ["app-secrets"],
+  "strategy": "annotations",
+  "reason": "configmap-change"
+}
+```
+
+**Корреляция с внешними системами:**
+
+| Система | Интеграция | Формат |
+| :--- | :--- | :--- |
+| **Loki** | Сбор логов через Promtail/Alloy | JSON labels: `namespace`, `app`, `resource` |
+| **ELK (Elasticsearch)** | Filebeat/Fluentd | Structured log с `trace_id` для корреляции |
+| **Jaeger/Tempo** | Распределённая трассировка | Reloader не генерирует трейсы, но можно добавить через OTel SDK |
+
+### Audit Trail для Compliance
+
+Kubernetes API Server предоставляет аудит-логи для отслеживания всех patch-операций Reloader:
+
+```yaml
+# Audit Policy для фиксации действий Reloader
+apiVersion: audit.k8s.io/v1
+kind: Policy
+rules:
+  # Логирование всех patch-операций к Deployment от Reloader
+  - level: RequestResponse
+    users: ["system:serviceaccount:reloader-system:reloader"]
+    resources:
+      - group: "apps"
+        resources: ["deployments", "daemonsets", "statefulsets"]
+    verbs: ["update", "patch"]
+
+  # Логирование чтения Secret от Reloader
+  - level: Metadata
+    users: ["system:serviceaccount:reloader-system:reloader"]
+    resources:
+      - group: ""
+        resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+```
+
+**Проверка аудит-логов:**
+
+```bash
+# Найти все действия Reloader в аудит-логах
+kubectl get --raw /audit/kubernetes.io/v1/events | \
+  jq '.items[] | select(.user.username == "system:serviceaccount:reloader-system:reloader")' | \
+  jq -r '[.verb, .objectRef.resource, .objectRef.namespace, .objectRef.name, .stageTimestamp] | @tsv'
+```
+
+### Интеграция с OpenTelemetry (Tracing)
+
+Reloader нативно не поддерживает distributed tracing, но его можно интегрировать через:
+
+1. **OTel Collector как sidecar** — сбор метрик Reloader через OTLP
+2. **Custom Exporter** — экспорт событий перезапуска как spans в Jaeger/Tempo
+
+```yaml
+# Пример OTel Collector sidecar для Reloader
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reloader
+  namespace: reloader-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: reloader
+          image: ghcr.io/stakater/reloader:v1.4.19
+          ports:
+            - containerPort: 9090
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:latest
+          args:
+            - --config=/etc/otelcol/config.yaml
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otelcol
+      volumes:
+        - name: otel-config
+          configMap:
+            name: reloader-otel-config
+```
+
+---
+
 ## Диагностические команды
 
 ### Полный набор диагностики
@@ -534,6 +718,5 @@ kubectl get deployment reloader -n reloader-system -o jsonpath='{.spec.template.
 - [Установка и настройка Reloader](./reloader_installation.md)
 - [Практические сценарии использования](./reloader_usage_scenarios.md)
 - [Интеграция с Prometheus и Grafana](./reloader_prometheus_integration.md)
-- [GitHub: Дашборды Grafana для Reloader](https://github.com/stakater/Reloader/tree/master/dashboards)
-- [Prometheus Operator: Концепции](../../Prometheus/kubernetes/operator/concepts.md)
-- [Prometheus Operator: Troubleshooting](../../Prometheus/kubernetes/operator/troubleshooting.md)
+- [Безопасность Reloader](./reloader_security.md)
+- [Runbooks и реагирование на инциденты](./reloader_runbooks.md)

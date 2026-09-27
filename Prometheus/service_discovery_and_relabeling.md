@@ -20,7 +20,7 @@
 2. **Получение метаданных** — источник возвращает список целей со служебными метками `__meta_*`.
 3. **`relabel_configs`** — модификация меток цели **до** начала сбора. Здесь принимается решение о фильтрации (keep/drop) и формируется `__address__`.
     * **Важно (Prometheus 3.0+):** В веб-интерфейсе доступен визуальный отладчик релейблинга (**Relabeling Debugger**), позволяющий отследить трансформацию меток по шагам.
-4. **Scrape** — выполнение HTTP-запроса. 
+4. **Scrape** — выполнение HTTP-запроса.
     * **Примечание:** В v3.0+ Prometheus не добавляет порты по умолчанию (80/443) автоматически — цель опрашивается ровно так, как она обнаружена или указана.
 5. **`metric_relabel_configs`** — модификация меток **после** сбора, но **до** их сохранения в TSDB. Используется для фильтрации конкретных временных рядов и управления [кардинальностью](./concepts/labels_and_cardinality.md).
 
@@ -34,6 +34,21 @@
 | **Объект управления** | Цели (targets) | Метрики (временные ряды) |
 | **Типичные задачи** | Фильтрация целей, формирование `__address__`, копирование полезных `__meta_*` в постоянные метки | Удаление ресурсоемких метрик, фильтрация отдельных временных рядов, управление [кардинальностью](./concepts/labels_and_cardinality.md) |
 | **Влияние на производительность** | Минимальное | Создает дополнительную вычислительную нагрузку на сервер Prometheus |
+
+### Поведение меток экспортёра (`honor_labels`)
+
+При скрейпинге экспортёр может возвращать метки с теми же именами, что и Prometheus присваивает по умолчанию (`job`, `instance`). Параметр `honor_labels` в `scrape_configs` управляет конфликтом:
+
+*   **`honor_labels: false` (по умолчанию)** — Prometheus перезаписывает метки экспортёра своими значениями. `job` и `instance` остаются корректными.
+*   **`honor_labels: true`** — значения от экспортёра имеют приоритет. Используйте для Pushgateway или кастомных экспортёров, где требуется сохранить оригинальные метки.
+
+```yaml
+scrape_configs:
+  - job_name: 'pushgateway'
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+```
 
 ### Механизмы Service Discovery
 
@@ -74,6 +89,38 @@ scrape_configs:
     service: 'backend'
 ```
 
+**Best practices для `file_sd_configs`:**
+*   Используйте `refresh_interval` не меньше `1m` для снижения нагрузки на диск.
+*   Храните файлы в отдельном каталоге с правами `0640` и владельцем `prometheus:prometheus`.
+*   Для автоматической доставки файлов от Ansible/Terraform используйте `rsync` или `scp` с послеоперационным `systemctl reload prometheus` для гарантированного применения.
+*   Формат YAML предпочтительнее JSON для ручного редактирования — он читаемее и поддерживает комментарии.
+*   Группируйте цели по типу: `nodes.yml`, `databases.yml`, `web_servers.yml` — для удобства управления и поиска.
+*   Всегда добавляйте `labels` для идентификации окружения, дата-центра и роли сервера.
+*   Для on-premise сред с数百 серверами详见 [Bare-metal развёртывание](./installation/bare_metal_setup.md).
+
+> **Примечание:** Для автоматической генерации `file_sd` файлов из Ansible Inventory или CMDB используйте шаблоны Jinja2 и `notify: reload prometheus` — это устраняет необходимость ручного обновления и обеспечивает актуальность списка целей.
+
+#### `docker_sd_configs`
+
+Обнаружение контейнеров через Docker Engine API. Для работы требуется доступ к Docker socket.
+
+```yaml
+scrape_configs:
+  - job_name: 'docker-containers'
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        port: 2375
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_prometheus_enable]
+        regex: 'true'
+        action: keep
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+        replacement: '${1}'
+```
+
+> **Внимание:** При использовании TCP-сокета (`tcp://host:2375`) без TLS трафик между Prometheus и Docker Engine передается в открытом виде. В production используйте TLS или Unix socket с правильными правами (`chmod 660 /var/run/docker.sock`, группа `docker`).
+
 #### `consul_sd_configs`
 
 Обнаружение сервисов через API реестра Consul.
@@ -83,6 +130,8 @@ scrape_configs:
   - job_name: 'consul_services'
     consul_sd_configs:
       - server: 'localhost:8500'
+        services: ['node-exporter', 'app-metrics']
+        tags: ['production']
 ```
 
 #### Другие механизмы
@@ -244,6 +293,59 @@ relabel_configs:
 
 *Как это работает:* Каждой цели вычисляется хэш, который затем делится по модулю на количество серверов (в данном случае 4). Каждый экземпляр Prometheus получает конфигурацию с собственным значением `regex` (0, 1, 2 или 3) и забирает только свою "долю" целей.
 
+### Управление кардинальностью и фильтрация метрик (`metric_relabel_configs`)
+
+В отличие от `relabel_configs`, блок `metric_relabel_configs` работает с уже собранными временными рядами и позволяет удалять дорогие метрики до попадания в TSDB.
+
+#### Удаление высококардинальных метрик
+
+Сценарий: экспортёр добавляет уникальный `device` лейбл к каждой mounted filesystem, что взрывает кардинальность.
+
+```yaml
+metric_relabel_configs:
+  - source_labels: [__name__, device]
+    regex: 'node_filesystem_size_bytes.+'
+    action: drop
+```
+
+#### Оставление только нужных метрик
+
+Сценарий: с экспортёра поставляются десятки метрик, нужны только `up`, `node_cpu_seconds_total` и `node_memory_*`.
+
+```yaml
+metric_relabel_configs:
+  - source_labels: [__name__]
+    regex: 'up|node_cpu_seconds_total|node_memory_.*'
+    action: keep
+```
+
+#### Удаление debug-метрик из приложения
+
+Сценарий: приложение экспонирует метрики с префиксом `debug_*`, которые не нужны в production.
+
+```yaml
+metric_relabel_configs:
+  - source_labels: [__name__]
+    regex: 'debug_.*'
+    action: labeldrop
+```
+
+#### Фильтрация перед Remote Write
+
+Для отправки данных в долгосрочное хранилище используется `write_relabel_configs` в блоке `remote_write`:
+
+```yaml
+remote_write:
+  - url: 'http://victoriametrics:8428/api/v1/write'
+    write_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'go_.*|prometheus_.*'
+        action: drop
+      - source_labels: [job]
+        regex: 'temp-job'
+        action: drop
+```
+
 ### Автоматизация мониторинга большого количества ВМ (100+ в день)
 
 При массовом и динамичном создании виртуальных машин ручное обновление `static_configs` становится невозможным. Применяются следующие подходы к автоматизации:
@@ -303,7 +405,90 @@ scrape_configs:
 
 ## Дополнительная информация
 
-### Связанные темы
+### Валидация и отладка Service Discovery
+
+После изменения конфигурации SD или relabeling выполните проверки:
+
+```bash
+# 1. Валидация синтаксиса YAML
+promtool check config /etc/prometheus/prometheus.yml
+# → SUCCESS
+
+# 2. Проверка правил (если есть)
+promtool check rules /etc/prometheus/rules/*.yml
+# → SUCCESS
+
+# 3. Проверка доступности API
+curl -s http://localhost:9090/-/healthy
+# → healthy
+
+# 4. Проверка целей и меток через API
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, instance: .labels.instance, health: .health}'
+# → все health: "up"
+
+# 5. Отладочный вывод Service Discovery в UI
+# Откройте http://<prometheus>:9090/targets и найдите job.
+# В столбце "Labels" видны метки ДО (Discovered Labels) и ПОСЛЕ (Labels) relabeling.
+```
+
+**Отладка конкретного правила relabeling через UI (Prometheus 3.x):**
+1. Перейдите в `Status` → `Service Discovery`.
+2. Найдите нужный pool и раскройте его.
+3. Для каждой цели отображаются `Discovered Labels` (с префиксом `__meta_*`) и итоговые `Labels` после применения `relabel_configs`.
+4. Сравните их, чтобы понять, почему цель была отброшена (`drop`) или почему метка получила неожиданное значение.
+
+**Анализ кардинальности:**
+```bash
+promtool tsdb analyze /var/lib/prometheus/
+# → Memory usage: ...
+# → Series: ...
+# → Top metrics by series: ...
+```
+
+### Производительность и масштабирование
+
+*   **Количество целей:** Prometheus комфортно опрашивает до нескольких тысяч целей на одном инстансе. При превышении 10 000 targets рекомендуется горизонтальное шардирование через `hashmod` или развертывание нескольких экземпляров Prometheus.
+*   **Частота опроса SD:** Уменьшение `refresh_interval` до значений меньше `30s` увеличивает нагрузку на API-серверы (Kubernetes, Consul). Используйте `1m` или `2m` как стартовое значение.
+*   **Режим прокси/сокета:** `docker_sd_configs` с TCP-сокетом добавляет задержку при большом количестве контейнеров. Для высоконагруженных хостов используйте Unix socket.
+*   **Relabeling и CPU:** Сложные регулярные выражения в `relabel_configs` обрабатываются для каждой цели на каждом refresh. Избегайте вложенных regex и используйте префиксы (`__meta_.*`) для быстрого отсечения.
+*   **Кардинальность:** `metric_relabel_configs` выполняется на CPU для каждого собранного временного ряда. При百万ском количестве series убедитесь, что правило `drop` находится в начале конфигурации, чтобы отсечь метрики как можно раньше.
+
+### Устранение неисправностей
+
+| Симптом | Возможная причина | Диагностика и решение |
+| :--- | :--- | :--- |
+| Цель имеет статус `DOWN` | Неверный `__address__` после relabeling | UI → Targets → раскройте цель, проверьте `Discovered Labels` и `Labels`. |
+| Цель отсутствует в списке | Ошибка regex в `keep`/`drop` или SD недоступен | Проверьте `promtool check config`, доступность API SD (Consul/K8s). |
+| `sample limit exceeded` | `metric_relabel_configs` не удаляет лишние метрики | Добавьте `drop` правило для high-cardinality меток или увеличьте `sample_limit`. |
+| Дублирующиеся series | `honor_labels: true` и экспортёр возвращает конфликтующие `job`/`instance` | Установите `honor_labels: false` или нормализуйте метки через `relabel_configs`. |
+| Реликвийные метки `__meta_*` в TSDB | Забытое `labeldrop` в `relabel_configs` | Добавьте `labeldrop` для `__meta_.*` после извлечения нужных данных. |
+| Высокий CPU на SD Manager | Слишком частый `refresh_interval` или большое количество источников | Увеличьте `refresh_interval`, добавьте фильтры на стороне SD (Consul tags, K8s selectors). |
+| `relabel_configs` не применяется | Ошибка в порядке действий или опечатка в `source_labels` | Проверьте `promtool check config`; убедитесь, что `source_labels` существует. |
+| SD Manager не обнаруживает изменения | Проблема кэширования или событийного механизма | Перезагрузите Prometheus (`SIGHUP` или `/-/reload`); проверьте логи на предмет ошибок SD. |
+| Docker socket permission denied | Пользователь Prometheus не в группе `docker` | `sudo usermod -aG docker prometheus` и перелогин. |
+| DNS SD возвращает устаревшие записи | TTL кэша DNS превышает время жизни записи | Уменьшите `refresh_interval` или проверьте `dns_sd_configs` параметры. |
+
+### Резервное копирование и управление конфигурацией
+
+*   **Версионирование:** Храните `prometheus.yml` и файлы SD в Git-репозитории. Это обеспечивает аудит изменений и возможность быстрого отката.
+*   **Экспорт конфигурации SD:** Регулярно экспортируйте состояние SD для audit:
+    ```bash
+    curl -s http://localhost:9090/api/v1/targets > /backups/prometheus-targets-$(date +%Y%m%d).json
+    ```
+*   **Валидация перед применением:** После изменения `prometheus.yml` проверяйте синтаксис и перезапускайте Prometheus:
+    ```bash
+    promtool check config /etc/prometheus/prometheus.yml
+    sudo systemctl reload prometheus
+    ```
+
+### Миграция с конфигурации на Prometheus 2.x на 3.x
+
+*   **Regex точка `.`:** В 3.x `.` совпадает с `\n`. Проверьте все regex в `relabel_configs` и `metric_relabel_configs`, которые работают с мультистрочными значениями.
+*   **Отсутствие портов по умолчанию:** Убедитесь, что все `__address__` содержат явный порт. Добавьте `:9100` к целям, если SD не возвращает порт.
+*   **UTF-8 в метках:** Если старые экспортёры используют escape-последовательности для Unicode, проверьте корректность отображения в Grafana после миграции.
+*   **`honor_labels`:** Поведение по умолчанию не изменилось, но в 3.x стоит явно указывать `honor_labels: false` для совместимости.
+
+## Связанные темы
 
 * [SD в Kubernetes](./kubernetes/service_discovery.md) — специфика обнаружения через `kubernetes_sd_configs` и использование абстракций ServiceMonitor/PodMonitor.
 * [Blackbox Exporter](./Exporters/blackbox/blackbox_exporter_overview.md) — детальный разбор relabeling для probe-мониторинга.

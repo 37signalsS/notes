@@ -1088,6 +1088,151 @@ kubectl get cm cluster-autoscaler-priority-expander -n kube-system -o jsonpath='
 
 ---
 
+## Влияние ResourceQuota и LimitRange на autoscaling
+
+ResourceQuota и LimitRange в Namespace могут блокировать масштабирование, если не настроены с учётом autoscaling.
+
+### Проблема: ResourceQuota блокирует HPA
+
+HPA масштабирует Deployment, но поды не могут быть созданы из-за превышения квоты Namespace:
+
+```bash
+# Проверка квот
+kubectl describe quota -n my-namespace
+# → ResourceQuota: requests.cpu=10, limits.cpu=20
+# → Текущее потребление: requests.cpu=9.5 (95%)
+
+# HPA масштабирует до 5 подов (250m каждый):
+# → 5 × 250m = 1250m > остаток 500m → поды в Pending
+```
+
+**Решение 1:** Увеличьте ResourceQuota с учётом maxReplicas HPA:
+
+```
+ResourceQuota (CPU) >= maxReplicas × requests.cpu + запас
+```
+
+**Решение 2:** Используйте `resourcequotas` с扩大的 quota для критичных Namespace:
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: autoscaling-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "20"       # >= maxReplicas HPA × requests
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "50"
+```
+
+### Проблема: LimitRange ограничивает масштабирование
+
+LimitRange может установить min/max для CPU/memory, что конфликтует с requests Deployment:
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limits
+  namespace: production
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: 1Gi
+      defaultRequest:
+        cpu: 200m
+        memory: 256Mi
+      max:
+        cpu: "4"       # HPA не может создать под с requests > 4 CPU
+        memory: 8Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+```
+
+**Проблема:** Если HPA настроен на масштабирование по CPU с `requests.cpu = 500m`, но LimitRange.max = 4 CPU, то limits не могут быть увеличены для горячих подов.
+
+**Решение:** Убедитесь, что `max` в LimitRange >= HPA limits для контейнеров.
+
+### Сценарий: CA + ResourceQuota + HPA
+
+```yaml
+# ResourceQuota для Namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "30"
+    requests.memory: 60Gi
+    pods: "30"
+---
+# HPA с maxReplicas = 15
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Deployment: requests.cpu = 1000m
+# maxReplicas × requests = 15 × 1000m = 15000m = 15 CPU
+# ResourceQuota.requests.cpu = 30 CPU (достаточно для 30 × 1000m)
+```
+
+**Расчёт:** ResourceQuota.requests.cpu >= maxReplicas × requests.cpu + запас 20%.
+
+### Диагностика
+
+```bash
+# Проверка ResourceQuota
+kubectl describe quota -n production
+# → requests.cpu: 15/30 (50% используется)
+
+# Проверка LimitRange
+kubectl describe limitrange -n production
+# → Container Limits: max=4 CPU, min=50m
+
+# Проверка Pending-подов из-за квоты
+kubectl get events -n production --field-selector reason=FailedCreate | grep quota
+# → Warning  FailedCreate  pods "api-xxxxx" is forbidden: exceeded quota
+
+# Проверка CA логов
+kubectl logs -n kube-system -l app=cluster-autoscaler | grep -i "quota\|limit"
+# → W0115 10:35:00.123456 1 autoscaler.go:456] Failed to increase group size: quota exceeded
+```
+
+### Best Practices
+
+1. **Квота с запасом:** `ResourceQuota.requests.cpu >= maxReplicas × requests.cpu × 1.2`
+2. **LimitRange.max >= HPA.limits:** Убедитесь, что max в LimitRange позволяет HPA создавать поды с нужными limits
+3. **Мониторинг:** Алерты на приближение к лимитам ResourceQuota
+4. **Auto-scaling квот:** Рассмотрите использование чарта `resourcequota-controller` для автоматического масштабирования квот
+5. **PriorityClass + Quota:** Используйте `PriorityClass` для выделения критичных Namespace с бо́льшими квотами
+
+---
+
 ## Лучшие практики 2026 года
 
 1.  **Синхронизация с HPA/VPA:** Убедитесь, что лимиты `requests` настроены корректно (желательно с помощью [VPA в режиме Off](./vpa_detailed.md)). CA масштабирует кластер опираясь на `requests`. Если они завышены, кластер будет раздут (over-provisioning), если занижены — узлов будет не хватать.
@@ -1135,4 +1280,8 @@ kubectl get cm cluster-autoscaler-priority-expander -n kube-system -o jsonpath='
 ### См. также
 * **[Pod Disruption Budget (PDB)](./pod_disruption_budget.md)** — критически важная интеграция при scale-down.
 * **[Karpenter: отличия от Cluster Autoscaler](./Karpenter/overview.md#отличия-от-cluster-autoscaler)** — современная JIT-альтернатива для облачных провайдеров.
+* **[Cluster Autoscaler vs Karpenter](./cluster_autoscaler_vs_karpenter.md)** — подробный сравнительный анализ.
+* **[Descheduler](./descheduler.md)** — дефрагментация кластера после scale-down.
+* **[Autoscaling в On-Premise](./on_premise_autoscaling.md)** — масштабирование в bare-metal средах.
+* **[Алертинг и мониторинг](./alerting_monitoring.md)** — Prometheus-алерты для CA.
 * **[Горизонтальное масштабирование кластеров (sharding)](./sharding.md)** — мульти-CA стратегии для крупных инсталляций.

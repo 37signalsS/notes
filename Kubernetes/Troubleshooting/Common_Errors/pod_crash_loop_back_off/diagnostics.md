@@ -487,11 +487,52 @@ groups:
 | **139** | **Segmentation Fault** | Ошибка сегментации (библиотеки, архитектура). | Проверить `ldd`, соответствие arm/amd64. |
 | **143** | **SIGTERM** | Корректное завершение, но не успело за `terminationGracePeriod`. | Настроить `terminationGracePeriodSeconds`, добавить tini. |
 
+## Post-mortem анализ
+
+После устранения `CrashLoopBackOff` рекомендуется провести анализ для предотвращения повторения.
+
+### Формат post-mortem
+
+1. **Временная шкала:** Когда обнаружен, когда устранен, сколько длился инцидент.
+2. **Корневая причина:** Что именно вызвало проблему (код, конфигурация, инфраструктура).
+3. **Влияние:** Сколько пользователей/сервисов пострадало.
+4. **Что сработало:** Какие алерты/Runbook помогли.
+5. **Что не сработало:** Какие шаги оказались неэффективными.
+6. **Рекомендации:** Как предотвратить повторение.
+
+### Сбор данных для post-mortem
+
+```bash
+# 1. Сбор логов и событий
+kubectl describe pod <pod-name> > pod-describe.txt
+kubectl get events -n <ns> --field-selector involvedObject.name=<pod-name> --sort-by='.lastTimestamp' > events.txt
+kubectl logs <pod-name> --previous > logs-previous.txt
+
+# 2. Сбор метрик потребления ресурсов
+kubectl top pod <pod-name> > pod-top.txt
+
+# 3. Проверка конфигурации
+kubectl get pod <pod-name> -o yaml > pod-manifest.yaml
+
+# 4. Проверка PDB и ResourceQuota
+kubectl get pdb -n <ns> > pdb-status.txt
+kubectl describe resourcequota -n <ns> > resourcequota.txt
+```
+
+### Метрики качества
+
+| Метрика | Описание | Целевое значение |
+|:--------|:---------|:-----------------|
+| **MTTR** | Среднее время восстановления | <30 минут (SEV1) |
+| **Runbook Coverage** | Доля алертов с runbook | 100% (SEV1/SEV2) |
+| **Freshness Score** | % runbook, обновленных за 90 дней | >90% |
+
 ### Ссылки
 
 - **[Определения и концепции CrashLoopBackOff](./definitions_and_concepts.md)** — теория, BackOff, RestartPolicy, коды завершения.
 - **[Распространенные решения](./common_cases_and_solutions.md)** — разбор типовых кейсов (ConfigMap, RBAC, БД).
 - **[Продвинутые темы](./advanced_topics.md)** — автоматизация, eBPF, Cgroup v2, Native Sidecars.
+- **[Runbook: CrashLoopBackOff](./runbook.md)** — шаблон для дежурного инженера.
 - **[Перезапуск Pod в Kubernetes](../../../Base/Pod/pod_restarts.md)** — разница между перезапуском и пересозданием.
 - **[Эфемерные контейнеры](../../../Base/Pod/ephemeral_containers.md)** — глубокая отладка через `kubectl debug`.
 - **[Пробы (Probes) в Kubernetes](../../../Base/probes.md)** — Liveness, Readiness, StartupProbe.

@@ -61,7 +61,7 @@
 **Ключевые возможности (PG 16/17):**
 - **Partition Pruning**: Оптимизатор исключает ненужные партиции. В PG 16 значительно ускорен поиск в LIST-партициях.
 - **Поддержка ограничений (PG 17)**: Поддержка `IDENTITY` колонок и `EXCLUSION` ограничений.
-- **Maintenance**: Быстрое удаление старых данных через `DETACH PARTITION` и `DROP TABLE`.
+- **Maintenance**: Быстрое удаление старых данных через `DETACH PARTITION` и `DROP TABLE`. Для checkpoint, traces и других временных данных важны временной ключ, partition pruning и политика retention; подробнее — **[PostgreSQL для памяти ИИ-агентов](../Operations/agent-memory.md)**.
 
 ```sql
 -- Пример: Партиционирование по дате (Range)

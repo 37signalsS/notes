@@ -14,6 +14,16 @@
 - **Параллельная установка:** Пакеты Angie используют собственные пути (`/etc/angie`, `/var/log/angie`), что позволяет обоим серверам сосуществовать в одной системе.
 - **Низкие риски:** Возможность мгновенного возврата (rollback) к Nginx в случае обнаружения проблем.
 
+### Жизненный цикл миграции
+
+Стандартный процесс миграции состоит из пяти этапов:
+
+1. **Аудит:** сбор информации о текущей конфигурации Nginx (версия, модули, структура файлов, upstream-ы).
+2. **Установка:** развертывание Angie параллельно с Nginx без отключения продакшен-трафика.
+3. **Адаптация:** замена путей по умолчанию и проверка динамических модулей.
+4. **Тестирование:** валидация конфигурации, функциональное тестирование в изоляции.
+5. **Переключение:** остановка Nginx, запуск Angie, мониторинг метрик в реальном времени.
+
 ### Предварительный анализ
 
 Перед началом миграции необходимо собрать информацию о текущем состоянии Nginx:
@@ -221,9 +231,193 @@ location @fallback {
 }
 ```
 
+## Операции и команды
+
+### Предварительная проверка (Pre-flight)
+
+```bash
+# Инвентаризация модулей Nginx (статические + динамические)
+nginx -V 2>&1 | grep -oP '--with-http_\w+'
+nginx -T 2>&1 | grep 'load_module'
+
+# Сравнение структур каталогов
+diff -qr /etc/nginx/ /etc/angie/ | grep -v '^Only in /etc/angie'
+
+# Поиск оставшихся путей Nginx после миграции
+grep -r '/etc/nginx\|/var/log/nginx\|/run/nginx.pid' /etc/angie/
+
+# Проверка занятых портов перед переключением
+sudo ss -tlnp | grep -E ':80 |:443 '
+```
+
+### Верификация конфигурации
+
+```bash
+# Тест конфигурации Angie
+sudo angie -t
+# → angie: the configuration file /etc/angie/angie.conf syntax is ok
+# → angie: configuration file /etc/angie/angie.conf test is successful
+
+# Сравнение директив между Nginx и Angie (diff конфигов)
+diff -u /etc/nginx/nginx.conf /etc/angie/angie.conf
+
+# Проверка загруженных модулей Angie
+angie -V 2>&1 | grep 'module'
+```
+
+### Управление сервисами и откат (Rollback)
+
+```bash
+# Немедленный откат на Nginx
+sudo systemctl stop angie
+sudo systemctl start nginx
+sudo systemctl enable nginx
+sudo systemctl disable angie
+
+# Проверка статуса обоих сервисов
+sudo systemctl status nginx angie
+
+# Просмотр логов Angie после переключения
+sudo journalctl -u angie -f
+```
+
+### Инвентаризация upstream-ов и серверов
+
+```bash
+# Извлечение списка upstream из старой конфигурации Nginx
+grep -rP 'upstream\s+\w+\s*\{' /etc/nginx/
+grep -rP 'server\s+\S+;\s*#' /etc/nginx/ | head -20
+
+# Проверка резолвинга имен upstream
+for ip in $(grep -rP 'server\s+\K[^;]+' /etc/angie/); do
+    echo "$ip -> $(getent hosts "$ip" 2>/dev/null || echo 'N/A')"
+done
+```
+
+## Устранение неисправностей
+
+### Конфликт портов 80/443 после установки Angie
+
+**Симптомы:** `systemctl status angie` показывает ошибку `address already in use`.
+
+```bash
+# Диагностика: какой процесс занимает порт
+sudo ss -tlnp | grep -E ':80 |:443 '
+
+# Варианты решения:
+# 1. Остановить Nginx на время переключения
+sudo systemctl stop nginx && sudo systemctl start angie
+
+# 2. Временно изменить порт Angie для параллельной работы
+sudo sed -i 's/listen 80;/listen 8080;/g' /etc/angie/conf.d/default.conf
+```
+
+### Несовместимость динамических модулей
+
+**Симптомы:** ошибка `unknown directive` или `invalid parameter` для модулей, которые работали в Nginx.
+
+```bash
+# Диагностика: список загруженных модулей
+nginx -T 2>&1 | grep 'load_module'
+angie -T 2>&1 | grep 'load_module'
+
+# Решение: установка аналогов из репозитория Angie
+sudo apt install angie-module-<название>
+# Обновление путей в angie.conf
+sudo sed -i 's|/usr/lib/nginx/modules|/usr/lib64/angie/modules|g' /etc/angie/angie.conf
+```
+
+### Оставшиеся пути Nginx в конфигурации
+
+**Симптомы:** 500 Internal Server Error, пути к логам или PID не найдены.
+
+```bash
+# Поиск жестко заданных путей
+grep -rE '/etc/nginx|/var/log/nginx|/run/nginx.pid' /etc/angie/
+
+# Массовая замена (проверьте diff перед применением)
+sudo find /etc/angie/ -type f -exec sed -i 's|/etc/nginx|/etc/angie|g' {} +
+```
+
+### Сбой переключения с потерей трафика
+
+**Симптомы:** таймауты во время `systemctl stop nginx && systemctl start angie`.
+
+```bash
+# Диагностика: длительность остановки Nginx
+time sudo systemctl stop nginx
+
+# Решение: уменьшение timeout в systemd unit (если применимо)
+sudo systemctl edit nginx
+# [Service]
+# TimeoutStopSec=5
+
+# Или использование graceful shutdown
+sudo nginx -s quit
+sleep 2
+sudo systemctl start angie
+```
+
+### Проблемы с upstream_discovery в Docker
+
+**Симптомы:** контейнеры бэкендов не обнаруживаются, 502 Bad Gateway.
+
+```bash
+# Проверка работы модуля discovery
+sudo angie -T 2>&1 | grep upstream_discovery
+
+# Проверка сети Docker
+docker network inspect web_net
+
+# Решение: явное указание сети в docker-compose.yml
+#   networks:
+#     - web_net
+# Или отключение discovery в пользу статического upstream
+```
+
+## Лучшие практики
+
+### Стратегия миграции с минимальным риском
+
+1. **Canary-тестирование:** используйте параллельную установку для тестирования Angie на production-трафике без отключения Nginx.
+   ```bash
+   # Nginx на стандартных портах, Angie на альтернативных
+   sudo sed -i 's/listen 80;/listen 8080;/g' /etc/angie/conf.d/default.conf
+   sudo systemctl start angie
+   ```
+
+2. **Версионный контроль конфигурации:** храните оба набора конфигов (`nginx.conf`, `angie.conf`) в Git для быстрого сравнения и отката.
+
+3. **Документирование отличий:** создайте changelog всех адаптаций путей и модулей. Это критично для аудита и последующих миграций.
+
+### Безопасность и изоляция
+
+- **Разделение путей:** никогда не перемешивайте файлы `/etc/nginx/` и `/etc/angie/` в одной директории. Это исключает случайный запуск неправильного бинарного файла.
+- **Приватность логов:** настройте ротацию логов Angie (`/var/log/angie/`) отдельно от Nginx, чтобы предотвратить утечку конфиденциальных данных при откате.
+- **Сетевая изоляция:** при параллельной работе ограничьте доступ к порту Angie файрволом, если он используется только для тестирования.
+
+### Валидация перед переключением
+
+- **Семантический diff:** сравнивайте не только файлы, но и вывод `nginx -T` и `angie -T`, чтобы убедиться в идентичности загруженных модулей.
+- **Функциональное тестирование:** используйте `curl` или `httpie` для проверки критических эндпоинтов с обеих конфигураций.
+- **Мониторинг:** перед переключением убедитесь, что среда сбора метрик (Prometheus, Loki) готова к приему данных от Angie.
+
+### Работа с модулями
+
+- **Таблица совместимости:** создайте Mapping-таблицу модулей Nginx → Angie перед миграцией. Отсутствие аналога модуля может потребовать переarchitecting функциональности.
+- **Поэтапная миграция модулей:** не мигрируйте все модули одновременно. Внедряйте их по одному с промежуточным тестированием.
+
 ## Дополнительная информация
 
-### См. также
+### Обратная совместимость директив
+
+Angie сохраняет обратую совместимость с большинством директив Nginx. Исключения:
+- Директивы, привязанные к путям сборки Nginx (например, `--prefix`).
+- Внутренние механизмы, зависящие от PID-файла и `systemd` unit-файлов.
+
+### Ссылки на смежные технологии
+
+Подробнее о смежных технологиях и их интеграции с Angie:
 
 - [Установка Angie](./angie_installation.md) — актуальные репозитории и пакеты.
 - [Настройка TLS в Angie](./angie_tls_setup.md) — конфигурация HTTPS и сертификатов.

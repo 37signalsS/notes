@@ -188,70 +188,9 @@ smoothtime 43200 0.001
 - Включайте **NTS** для защиты от атак
 - Настройте **makestep** для коррекции при расхождении >1 сек
 
-### Конфигурация Chrony (RFC-compliant)
+### Конфигурация Chrony
 
-```conf
-# /etc/chrony/chrony.conf
-
-# Публичные NTP-серверы с NTS
-server time.cloudflare.com nts iburst
-server time.google.com iburst prefer
-server pool.ntp.org iburst
-
-# Локальный stratum 10 (fallback в изолированной сети)
-local stratum 10
-
-# Синхронизация аппаратных часов
-rtcsync
-
-# Файл дрейфа частоты
-driftfile /var/lib/chrony/drift
-
-# Пошаговая коррекция при расхождении >1 сек за 3 обновления
-makestep 1.0 3
-
-# Включить аппаратные метки времени на интерфейсе (PTP)
-# hwtimestamp eth0
-
-# Ограничить скорость подстройки
-maxslewrate 100
-
-# Управление управляющим портом
-cmdport 0
-bindcmdaddress 127.0.0.1
-bindcmdaddress ::1
-```
-
-### Диагностика
-
-| Команда | Описание |
-|---|---|
-| `chronyc sources` | Список источников и их статус |
-| `chronyc sources -v` | Подробный вывод с описанием полей |
-| `chronyc tracking` | Текущий offset, drift, stratum |
-| `chronyc sourcestats` | Статистика по каждому источнику |
-| `chronyc makestep` | Немедленная пошаговая коррекция |
-| `chronyc ntsstatus` | Статус NTS-сессий (chrony 4.0+) |
-| `timedatectl status` | Статус синхронизации через systemd |
-
-### Мониторинг через Prometheus
-
-| Метрика | Описание |
-|---|---|
-| `node_ntp_offset_seconds` | Текущий offset относительно источника |
-| `chrony_stratum` | Текущий stratum |
-| `chrony_source_reachable` | Доступность источника (1 = reachable) |
-| `chrony_source_last_sample_offset` | Последний измеренный offset |
-
-### Типичные проблемы
-
-| Проблема | Причина | Решение |
-|---|---|---|
-| `Clock skew too great` (Kerberos) | Расхождение >5 минут | Настроить NTP/Chrony на всех узлах |
-| TLS-сертификат «просрочен» | Часы в будущем | `chronyc makestep` или `timedatectl set-time` |
-| Логи в будущем | NTP не синхронизирован | Проверить `chronyc tracking`, включить `makestep` |
-| DDoS через NTP (monlist) | Открытый NTP-сервер с отключённой мониторинг-функцией | Отключить `monlist`: `restrict noquery` |
-| Anchoring при старте | Chrony не может достичь синхронизации | Настроить `initstepslew` или `makestep` |
+Подробная конфигурация, дистрибутивы, systemd-юниты, NTS, аппаратное timestamping, миграция с ntpd, мониторинг и устранение неполадок описаны в [Chrony — NTP-сервер](../../Linux/Networking/Services/chrony_ntp.md).
 
 ## Дополнительная информация
 
@@ -259,7 +198,7 @@ bindcmdaddress ::1
 - **RFC 8915** — NTS (Network Time Security)
 - **RFC 5906** — NTP Autokey
 - **RFC 8468** — NTP APIs и метрики
-- **[Chrony: настройка в Linux](../../Linux/Core/systemd/time_synchronization.md)** — практическая конфигурация
+- **[Chrony — NTP-сервер](../../Linux/Networking/Services/chrony_ntp.md)** — практическая конфигурация, NTS, миграция с ntpd
 - **[DHCP: опция NTP](./DHCP/dhcp_overview.md)** — получение NTP-серверов через DHCP
 - **[Docker: время в контейнерах](../../Docker/Concepts/docker_timezone_management.md)** — контейнеры наследуют часы хоста
 - **[Grafana HA: синхронизация времени](../../Grafana/high_availability.md)** — NTP критичен для HA-кластеров

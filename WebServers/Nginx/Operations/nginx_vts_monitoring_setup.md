@@ -12,6 +12,10 @@
 
 **95-й перцентиль (P95)** — статистический показатель, означающий, что 95% запросов были обработаны быстрее или за указанное время. Помогает выявить «хвосты» задержек (**latency**), которые не видны на средних значениях.
 
+**MTTR (Mean Time To Repair)** — среднее время восстановления сервиса после инцидента. В контексте мониторинга Nginx инциденты (падение worker-процессов, неверная конфигурация, нехватка ресурсов) напрямую влияют на MTTR, поэтому наличие runbook'ов и автоматизированных проверок является обязательным для SRE-практик.
+
+**Runbook** — пошаговая инструкция для оператора/SRE по реагированию на типичный инцидент. Runbook включает команды диагностики, критерии escalation и шаги отката конфигурации.
+
 ## Основные концепции
 
 ### Архитектура решения
@@ -71,6 +75,15 @@ func main() {
 }
 ```
 
+**Запуск и проверка:**
+```bash
+go run main.go &
+# → Starting backend on :8090...
+
+curl -s http://localhost:8090/
+# → Backend response (latency: 1234ms)
+```
+
 ### Способы установки Nginx с поддержкой VTS
 
 #### Вариант 1: Сборка из исходного кода (Debian/Ubuntu)
@@ -93,19 +106,49 @@ func main() {
     sudo dpkg -i ../nginx-common_*.deb ../nginx_*.deb
     ```
 
-#### Вариант 2: Использование Docker (быстрый старт)
+#### Вариант 2: Сборка динамического модуля через Docker
 
-Для быстрого развертывания можно использовать готовые образы или собрать свой на базе официального.
+Для изолированной сборки динамического модуля под существующий **Nginx** используется multi-stage сборка. Этот подход гарантирует совпадение версий и флагов компиляции.
 
 **Dockerfile:**
 ```dockerfile
 FROM nginx:1.26 AS builder
-# Установка инструментов сборки и зависимостей модуля
-RUN apt-get update && apt-get install -y git build-essential libpcre3-dev zlib1g-dev
-RUN git clone https://github.com/vozlt/nginx-module-vts.git /usr/src/nginx-module-vts
-# ... (логика сборки динамического модуля)
+
+# Установка инструментов сборки, точно соответствующих версии Nginx
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpcre3-dev \
+    zlib1g-dev \
+    libssl-dev \
+    wget \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Получение исходников той же версии, что и в базовом образе
+ARG NGINX_VERSION=1.26.1
+RUN wget -qO- https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz | tar xz
+
+# Клонирование и сборка VTS как динамического модуля
+RUN git clone https://github.com/vozlt/nginx-module-vts.git \
+ && cd nginx-${NGINX_VERSION} \
+ && ./configure \
+      --with-compat \
+      --add-dynamic-module=../nginx-module-vts \
+ && make modules
+
+# Финальный образ: только готовый модуль и Nginx
+FROM nginx:1.26
+COPY --from=builder /nginx-1.26.1/objs/ngx_http_vhost_traffic_status_module.so /etc/nginx/modules/
+RUN echo 'load_module modules/ngx_http_vhost_traffic_status_module.so;' > /etc/nginx/modules.conf
 ```
-*Примечание: в production рекомендуется использовать проверенные образы, например `bitnami/nginx`, или поддерживать собственную инфраструктуру сборки.*
+
+**Сборка и запуск:**
+```bash
+docker build -t nginx-vts .
+docker run -d -p 80:80 -p 9113:9113 nginx-vts
+```
+
+> **Примечание:** В production рекомендуется использовать проверенные внутренние образы или поддерживать собственную инфраструктуру сборки с контролем целостности артефактов.
 
 ### Конфигурация Nginx
 
@@ -164,6 +207,17 @@ server {
 }
 ```
 
+**Валидация конфигурации и применение:**
+```bash
+# Проверка синтаксиса перед применением
+sudo nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+# Атомарный reload без потери соединений
+sudo systemctl reload nginx
+```
+
 ### Настройка Prometheus
 
 Добавьте задачу в `prometheus.yml`:
@@ -211,6 +265,146 @@ groups:
     -   **2949** — классический дашборд для VTS.
     -   **9614** — современная версия с поддержкой гистограмм.
 
+## Операции и команды
+
+### Управление конфигурацией Nginx
+
+| Команда | Описание | Ожидаемый вывод |
+| :--- | :--- | :--- |
+| `nginx -t` | Проверка синтаксиса конфигурации | `nginx: the configuration file ... syntax is ok` |
+| `nginx -T` | Вывод полной объединенной конфигурации | Длинный вывод с объединенными `include` |
+| `systemctl reload nginx` | Атомарный reload (SIGHUP) | Нет вывода, master перечитывает конфиг |
+| `systemctl restart nginx` | Полный перезапуск | Разрыв соединений, создание новых процессов |
+| `nginx -s reopen` | Переоткрытие логов | Нет вывода |
+
+### Диагностика модуля VTS
+
+| Команда | Описание | Ожидаемый вывод |
+| :--- | :--- | :--- |
+| `curl -s http://localhost/metrics` | Проверка эндпоинта метрик | Текст в формате Prometheus с префиксом `nginx_vts_` |
+| `curl -s http://localhost/status` | Визуальный HTML-дашборд VTS | HTML-страница с таблицами по серверам |
+| `pmap -x $(cat /run/nginx.pid) \| grep vhost_traffic` | Проверка размера разделяемой памяти | Число, соответствующее размеру зоны (например, `33554432` для 32m) |
+| `nginx -V 2\>&1 \| grep vts` | Проверка, что модуль скомпилирован | `--add-module=../nginx-module-vts` или загрузка `.so` |
+
+### Мониторинг через Prometheus
+
+| Команда | Описание | Ожидаемый вывод |
+| :--- | :--- | :--- |
+| `promtool check rules alert_rules.yml` | Валидация правил алертов | `Checking alert_rules.yml` + `SUCCESS` или ошибки |
+| `curl -s http://prometheus:9090/api/v1/targets` | Проверка активных таргетов | JSON со статусом `up` для `nginx-vts` |
+| `promtool query instant http://prometheus:9094 'up{job="nginx-vts"}'` | Проверка доступности таргета | Вектор с меткой `value="1"` |
+
+### Резервное копирование и откат
+
+| Команда | Описание |
+| :--- | :--- |
+| `cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%Y%m%d%H%M%S)` | Бэкап конфигурации перед изменением |
+| `cp -a /etc/nginx/conf.d/ /etc/nginx/conf.d.bak.$(date +%Y%m%d%H%M%S)` | Бэкап виртуальных хостов |
+| `nginx -t && cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.new && mv /etc/nginx/nginx.conf.new /etc/nginx/nginx.conf` | Атомарное обновление: проверка → запись во временный файл → переименование |
+
+> **Важно:** Прямое редактирование `nginx.conf` без предварительного `nginx -t` и атомарного `mv` является антипаттерном. При ошибке конфигурации `reload` не применится, но старый файл останется на месте.
+
+## Устранение неисправностей
+
+### Ошибка `shared memory zone "vhost_traffic_status" is too small`
+
+**Причина:** Недостаточный размер зоны `vhost_traffic_status_zone` для количества виртуальных хостов или сложности фильтров.
+
+**Решение:** Увеличьте размер зоны до 64m или 128m.
+```bash
+# В nginx.conf:
+vhost_traffic_status_zone shared:vhost_traffic_status:64m;
+
+# Проверка и применение:
+nginx -t && systemctl reload nginx
+```
+
+### Метрики не появляются в Prometheus
+
+**Причина:** Ошибки доступа к эндпоинту или отсутствие модуля VTS в конфигурации.
+
+**Диагностика:**
+```bash
+# Проверка доступности извне (с хоста Prometheus)
+curl -s -o /dev/null -w "%{http_code}" http://nginx-host/metrics
+# → 200 (успех) или 403 (блокировка IP)
+
+# Проверка логов Nginx на предмет 403
+sudo journalctl -u nginx --since "5 minutes ago" | grep "access forbidden"
+```
+
+**Решение:**
+- Убедитесь, что IP Prometheus указан в `allow` для `location /metrics`.
+- Проверьте, что модуль VTS загружен: `nginx -V 2>&1 | grep vts`.
+
+### Отсутствие гистограмм
+
+**Причина:** Директива `vhost_traffic_status_histogram_buckets` отсутствует в контексте `http`.
+
+**Решение:**
+```bash
+# В nginx.conf в блоке http:
+vhost_traffic_status_histogram_buckets 0.005 0.01 0.05 0.1 0.5 1 5 10;
+
+# Применение (полный reload требуется при изменении buckets)
+nginx -t && systemctl reload nginx
+```
+
+### High Memory Usage (Shared Memory)
+
+**Причина:** Слишком большой размер зоны `vhost_traffic_status_zone` или утечка в модуле.
+
+**Диагностика:**
+```bash
+# Проверка RSS процесса Nginx
+ps -o pid,rss,cmd -C nginx | grep master
+# →  1234  125680 nginx: master process /usr/sbin/nginx
+
+# Сравнение с размером зоны (32m = 33554432 байт ≈ 32 MiB)
+```
+
+**Решение:**
+- Снизьте размер зоны, если количество хостов небольшое.
+- Проверьте наличие утечек в ошибках `error.log`.
+
+## Рекомендации и лучшие практики
+
+### Безопасность эндпоинта /metrics
+
+-   Никогда не делайте `/metrics` публично доступным без аутентификации.
+-   Используйте `allow/deny` для ограничения доступа только IP систем мониторинга.
+-   В high-security средах используйте взаимный TLS (mTLS) между Prometheus и Nginx.
+
+### Размер разделяемой памяти
+
+-   Начните с `32m` при количестве виртуальных хостов до 1000.
+-   Увеличивайте до `64m` или `128m` при использовании фильтров (`set_key`) или большом количестве хостов.
+-   Мониторьте RSS процесса Nginx: зона VTS выделяется из Shared Memory и учитывается в памяти.
+
+### Частота сбора (Scrape Interval)
+
+-   Рекомендуемый `scrape_interval` для VTS: `15s` — баланс между детализацией и нагрузкой.
+-   Для высоконагруженных систем с жесткими требованиями к latency используйте `5s` или `10s`, но учитывайте рост объема данных в Prometheus.
+-   Избегайте интервалов меньше `5s` без необходимости: это создает избыточную нагрузку на Nginx и Prometheus.
+
+### Атомарность обновлений
+
+-   Всегда используйте `nginx -t` перед `reload`.
+-   Для изменения конфигурации применяйте паттерн: `cp → nginx -t → mv`.
+-   Храните конфигурацию в VCS (Git), деплойте через CI/CD с автоматической валидацией.
+
+### Резервное копирование
+
+-   Бэкапьте `/etc/nginx/` перед каждым изменением.
+-   Храните бэкапы минимум 7 дней или интегрируйте с системой управления конфигурациями.
+-   Тестируйте процедуру отката: `cp backup.conf nginx.conf && systemctl reload nginx`.
+
+### Алертинг и MTTR
+
+-   Настройте алерты на P95 latency, error rate (5xx) и RPS.
+-   Используйте успокоение (`for: 2m`) для подавления flapping.
+-   Ведите runbook для типичных инцидентов VTS: проверка shared memory, валидация конфигурации, restart vs reload.
+
 ## Дополнительная информация
 
 ### Примеры PromQL запросов
@@ -230,12 +424,6 @@ groups:
     histogram_quantile(0.95, sum(rate(nginx_vts_server_response_duration_seconds_bucket[5m])) by (le))
     ```
 
-### Решение проблем (Troubleshooting)
-
-1.  **Ошибка `shared memory zone "vhost_traffic_status" is too small`**: Увеличьте размер зоны в `vhost_traffic_status_zone` до 64m или 128m. Это критично при большом количестве виртуальных хостов или использовании фильтров.
-2.  **Метрики не появляются в Prometheus**: Проверьте `allow/deny` в блоке `location /metrics`. Убедитесь, что Prometheus может достучаться до порта Nginx. Проверьте логи Nginx на наличие ошибок доступа (403).
-3.  **Отсутствие гистограмм**: Проверьте наличие директивы `vhost_traffic_status_histogram_buckets` в контексте `http`. Изменения требуют полного перезапуска или `reload` Nginx.
-
 ### Альтернативы
 
 -   **[Angie](../../Angie/angie_overview.md)**: Нативный экспорт метрик, поддержка `prometheus` модуля «из коробки», активная разработка, поддержка HTTP/3 и расширенной статистики без сторонних зависимостей.
@@ -243,7 +431,5 @@ groups:
 
 ## См. также
 
--   **[Обзор Nginx](../Core/nginx_overview.md)** — архитектура и базовые принципы.
--   **[Мониторинг кэша Nginx](../Performance/Caching/monitoring.md)** — использование VTS для анализа эффективности кэширования.
--   **[Обзор Prometheus](../../../Prometheus/overview.md)** — основы работы с системой мониторинга.
--   **[Обзор Grafana](../../../Grafana/grafana_overview.md)** — принципы визуализации данных.
+-   **[Обзор Nginx](../Core/nginx_overview.md)** — архитектура и базовые принципы работы.
+-   **[Диагностика веб-серверов](../../Concepts/webserver_troubleshooting.md)** — общая методология поиска неисправностей.

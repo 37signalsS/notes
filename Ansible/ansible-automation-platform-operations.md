@@ -10,6 +10,16 @@
 
 **REST API v2** — программный интерфейс AAP/AWX для полного управления платформой (запуск, мониторинг, настройка).
 
+**Platform Gateway** — единая точка входа для всех API-запросов в AAP 2.6+. Маршрутизирует трафик к Automation Controller, Automation Hub и Event-Driven Ansible Controller.
+
+**Receptor Mesh** — распределённая сеть для маршрутизации заданий между Control Plane и Execution Nodes с TLS-шифрованием.
+
+**ansible.platform collection** — unified Configuration as Code (CaC) интерфейс для AAP 2.7+, позволяет управлять платформой через декларативные плейбуки.
+
+**Approval Node** — узел в Workflow, требующий ручного подтверждения перед продолжением выполнения.
+
+**Survey** — интерактивная форма для ввода `extra_vars` перед запуском Job Template.
+
 ## 1. Job Templates: жизненный цикл
 
 Запуск задания в AAP/AWX проходит через несколько стадий:
@@ -63,30 +73,10 @@ Inventory Source позволяет автоматически загружат�
 
 | Источник | Тип | Примеры переменных |
 | :--- | :--- | :--- |
-| **AWS EC2** | Динамический | `instance_id`, `private_ip`, `tags` |
-| **GCP Compute** | Динамический | `name`, `zone`, `machine_type` |
-| **Azure** | Динамический | `vm_name`, `resource_group`, `os_type` |
-| **VMware** | Динамический | `uuid`, `ip_address`, `folder` |
-| **OpenStack** | Динамический | `id`, `flavor`, `image` |
 | **Satellite/Foreman** | Динамический | `id`, `hostgroup`, `environment` |
 | **LDAP** | Динамический | `uid`, `cn`, `memberOf` |
 | **Static YAML/INI** | Статический | Ручное определение хостов |
 | **Script** | Статический | Вывод JSON/YAML из скрипта |
-
-**Пример Inventory Source для AWS:**
-```yaml
-name: AWS EC2 Production
-source: ec2
-credentials:
-  - name: AWS Production
-    credential_type: Amazon Web Services
-source_regions:
-  - us-east-1
-  - us-west-2
-instance_filters: "tag:Environment=production,tag:Team=devops"
-group_by: "tag:Role"
-hostvars: "tag:Name"
-```
 
 **Пример Inventory Source для Satellite:**
 ```yaml
@@ -113,15 +103,15 @@ Workflows позволяют строить сложные сценарии ор
 **Пример Workflow: Deploy → Verify → Notify:**
 ```
 [Deploy App] ──On Success──> [Verify Health] ──On Success──> [Notify Success]
-       │                            │
-       └──On Failure──> [Rollback] ──Always──> [Notify Failure]
+        │                            │
+        └──On Failure──> [Rollback] ──Always──> [Notify Failure]
 ```
 
 **Пример Workflow с Approval:**
 ```
 [Run Tests] ──On Success──> [Approval Node] ──On Success──> [Deploy to Production]
-                                    │
-                                    └──On Rejected──> [Notify Rejection]
+                                     │
+                                     └──On Rejected──> [Notify Rejection]
 ```
 
 **Workflow через API:**
@@ -207,9 +197,8 @@ AAP/AWX поддерживает несколько типов credential:
 | Тип | Назначение | Инжект переменных |
 | :--- | :--- | :--- |
 | **Machine** | SSH-доступ к managed nodes | `ANSIBLE_PRIVATE_KEY_FILE`, `ANSIBLE_USER` |
-| **Vault** | Шифрование переменных | `ANSIBLE_VAULT_PASSWORD_FILE` |
+| **Vault** | Пароль для `ansible-vault` | Флаг `--ask-vault-pass` / `--vault-id <id>@prompt` и ответ на prompt процесса |
 | **SCM** | Git-доступ к проектам | `GIT_TOKEN`, `GIT_SSH_KEY` |
-| **Cloud** (AWS/GCP/Azure) | Доступ к облачным API | `AWS_ACCESS_KEY_ID`, `GCP_AUTH_KIND`, `AZURE_SUBSCRIPTION_ID` |
 | **Network** | Сетевое оборудование | Нет (используется `network_cli`) |
 | **Custom** | Внешние API | Пользовательские переменные через Injector |
 
@@ -227,8 +216,11 @@ file:
   mode: "0600"
 
 # Injector: extra_vars
+# Примечание: credential типа Vault не использует инжекторы extra_vars —
+# его пароль передаётся через --ask-vault-pass. Пример для Custom типа.
 extra_vars:
-  vault_password: "{{ vault_password }}"
+  api_region: "{{ region }}"
+  api_endpoint: "{{ scheme }}://{{ host }}"
 ```
 
 **Пример кастомного Credential Type (API мониторинга):**
@@ -474,7 +466,7 @@ curl -X POST "$AWX_HOST/api/v2/workflow_job_templates/" \
 # Назначение credential на команду
 - name: Grant Credential Access
   ansible.controller.credential:
-    credential: "AWS Production"
+    credential: "Production SSH Key"
     team: "DevOps"
     state: present
 ```
@@ -488,7 +480,7 @@ curl -X POST "$AWX_HOST/api/v2/workflow_job_templates/" \
    - Project: Git-репозиторий с плейбуками
    - Playbook: `playbooks/deploy.yml`
    - Inventory: `Staging`
-   - Credentials: SSH-ключ + Cloud-токен
+   - Credentials: SSH-ключ + Vault-пароль
    - Survey: выбор ветки/версии
 
 2. **Job Template "Deploy to Production":**
@@ -505,10 +497,10 @@ curl -X POST "$AWX_HOST/api/v2/workflow_job_templates/" \
 
 **Бэкап PostgreSQL:**
 ```bash
-# Бэкап БД (AAP 2.x)
+# Бэкап БД (AAP 2.7)
 sudo podman exec -t awx-postgres pg_dumpall -U awx > awx_backup_$(date +%Y%m%d).sql
 
-# Бэкап через AAP CLI (AAP 2.5+)
+# Бэкап через AAP CLI (AAP 2.7+)
 awx-manage export_data > data_export_$(date +%Y%m%d).json
 ```
 
@@ -545,7 +537,7 @@ awx-manage import_data < data_export_20240115.json
 Organization: "Production Org"
 ├── Team: "Platform Engineers"
 │   ├── Role: Admin (всё)
-│   ├── Credentials: Production SSH, Cloud, Vault
+│   ├── Credentials: Production SSH, Vault
 │   └── Inventories: Production, Staging
 │
 ├── Team: "Backend Developers"
@@ -803,7 +795,7 @@ Organization: "Production Org"
         identifier: "deploy-production"
 ```
 
-### Денежный контроль доступа через SCIM/LDAP
+### Синхронизация LDAP-групп с AAP командами
 
 ```yaml
 ---

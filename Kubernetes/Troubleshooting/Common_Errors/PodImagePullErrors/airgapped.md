@@ -981,6 +981,10 @@ dns:
 - [Лучшие практики](./best_practices.md) — рекомендации по imagePullPolicy, imagePullSecrets и безопасной цепочке поставок.
 - [Пошаговая диагностика](./diagnostics.md) — общий алгоритм поиска причин ошибок загрузки (L1-L5).
 - [Сетевые проблемы](./network_issues.md) — отладка DNS, MTU и прокси в Kubernetes.
+- [NetworkPolicy и доступ к реестру](./network_policy_impact.md) — влияние NetworkPolicy и GlobalNetworkPolicy на image pull.
+- [Pod Security Standards и image pull](./pod_security_standards.md) — PSS/PSA и их влияние на загрузку образов.
+- [HPA и автоскейлинг](./hpa_and_scaling.md) — влияние масштабирования на image pull и rate limiting.
+- [Init-контейнеры и image pull](./init_container_image_pulls.md) — проблемы pull в init-контейнерах.
 - [Среды выполнения контейнеров](../../../Concepts/container_runtime.md) — архитектура CRI, containerd и CRI-O.
 - [Harbor: Обзор](../../../../Docker/Docker_registries/Harbor/overview.md) — настройка и эксплуатация корпоративного реестра образов.
 - [Harbor: Сертификаты](../../../../Docker/Docker_registries/Harbor/certificates.md) — настройка TLS и mTLS для Harbor.

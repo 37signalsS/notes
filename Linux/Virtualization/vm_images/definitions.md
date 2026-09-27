@@ -18,6 +18,10 @@
 
 **Золотой образ (Golden Image)** — настроенный эталонный шаблон ОС с предустановленным ПО и примененными политиками безопасности, используемый как база для развертывания множества идентичных виртуальных машин.
 
+**Шаблон ВМ (VM Template)** — замороженный (обычно read-only) образ ВМ, подготовленный для массового клонирования. В отличие от золотого образа, шаблон typically проходит дополнительную очистку (`virt-sysprep`) и содержит минимально необходимый набор ПО.
+
+**Связанный клон (Linked Clone)** — копия диска ВМ, которая хранит только изменения относительно базового образа (backing file), экономя дисковое пространство. В KVM/QEMU создается через `virt-clone` или `qemu-img create -b`.
+
 ### Форматы и переносимость
 
 **OVF (Open Virtualization Format)** — открытый стандарт упаковки и распространения ПО для виртуальных машин, описывающий метаданные ВМ (CPU, RAM, сеть).
@@ -66,58 +70,377 @@
 
 **qemu-nbd** — инструмент для монтирования образов дисков к хостовой системе через сетевое блочное устройство (Network Block Device).
 
+**Дисковый кэш (Drive Cache)** — режим кэширования записи диска ВМ на уровне гипервизора:
+- **`none`** (O_DIRECT): запись напрямую на физический носитель, минуя кэш ядра хоста. Рекомендуется для баз данных и критичных нагрузок.
+- **`writeback`**: данные попадают в кэш хоста и сразу подтверждаются гостю. Высокая скорость, риск потери данных при сбое.
+- **`writethrough`**: подтверждение только после физической записи. Максимальная безопасность, низкая скорость.
+- **`directsync`**: аналог `writeback`, но без кэша страниц ядра хоста. Компромисс для высоконагруженных записей.
+
+**Валидация образа (Image Validation)** — процесс проверки целостности дискового образа. Включает проверку метаданных (`qemu-img check`), сравнение хэш-сумм (SHA256) и анализ формата (`qemu-img info`).
+
 ## Базовые концепции
 
-Краткий обзор ключевых архитектурных решений. Подробности см. в [Основных концепциях](./basic_concepts.md).
+### Типы шин дисков и их влияние
 
-### Сравнение подходов к хранению
+Выбор типа шины диска в конфигурации ВМ определяет производительность и набор поддерживаемых функций:
 
-- **Файловые образы:** Максимальная гибкость и портативность. Поддерживают сложные цепочки снапшотов и сжатие.
-- **Блочные устройства (LVM/ZVOL/Ceph RBD):** Высокая производительность за счет отсутствия оверхеда файловой системы хоста.
+| Шина | Тип устройства | Характеристики | Рекомендации |
+| :--- | :--- | :--- | :--- |
+| **IDE** | `ide` | Устаревший, низкая производительность, мастер/ведомый | Только для совместимости со старыми гостями (legacy OS). |
+| **SATA** | `sata` / `ahci` | Средняя производительность, поддержка NCQ | Универсальный вариант для современных ОС, не требующих паравиртуализации. |
+| **SCSI** | `scsi` | Высокая производительность, поддержка резерваций | Рекомендуется для кластерных файловых систем (OCFS2, GFS2). |
+| **Virtio-blk** | `virtio` | Максимальная производительность, минимальный оверхед | Стандарт для большинства рабочих нагрузок. Каждый диск занимает PCI-слот. |
+| **Virtio-scsi** | `scsi` + `virtio-scsi-pci` | Масштабируемость до тысяч дисков, UNMAP, Reservation | Рекомендуется для сред с большим количеством дисков или требований к TRIM. |
 
-### Жизненный цикл подготовки образа
+### Глубина цепочки образов
 
-1. **Установка:** Чистая инсталляция ОС.
-2. **Настройка:** Установка ПО и `cloud-init`.
-3. **Очистка:** Выполнение `virt-sysprep` для удаления уникальных данных.
-4. **Фиксация:** Преобразование в шаблон (Golden Image) в режиме "только для чтения".
+Цепочки снапшотов (backing chains) удобны для итеративной разработки, но имеют практические ограничения:
+- **Рекомендуемая максимальная глубина:** 4–6 уровней. При большей глубине скорость последовательного чтения снижается из-за накладных расходов на разрешение CoW.
+- **Проблема "orphaned snapshot":** Если базовый файл удаляется, а цепочка не зафиксирована (`block-commit`), все зависимые снапшоты становятся непригодными.
+- **Решение:** Периодически выполняйте `qemu-img commit` или `block-stream` для consolidation данных в текущий активный слой.
+
+### Критерии выбора формата диска
+
+| Сценарий | Формат | Обоснование |
+| :--- | :--- | :--- |
+| **Ежедневное использование, снапшоты** | `qcow2` | Встроенная поддержка CoW, сжатия и снапшотов. |
+| **Максимальная производительность I/O** | `raw` | Отсутствие оверхеда на разметку и метаданные. |
+| **Миграция из VMware** | `vmdk` → `qcow2` | Прямое подключение в KVM возможно, но конвертация исключает зависимость от провайдера. |
+| **Интероперабельность с Hyper-V** | `vhdx` | Единственный формат, natively поддерживаемый Windows Server. |
+| **Архивное хранение** | `raw` + сжатие на уровне ФС (Zstd) | Предсказуемый размер, максимальная скорость чтения. |
 
 ## Практические сценарии
 
-Примеры использования основных инструментов. Детальные инструкции в [Практических сценариях](./practical_scenarios.md).
+### Валидация и проверка целостности образа
 
-### Получение метаданных образа
+Перед использованием шаблона или после миграции проверяйте образ на ошибки и подлинность.
 
-```bash
-qemu-img info --output=json disk.qcow2
-# → {
-# →     "virtual-size": 21474836480,
-# →     "filename": "disk.qcow2",
-# →     "cluster-size": 65536,
-# →     "format": "qcow2",
-# →     "actual-size": 1610612736,
-# →     "format-specific": {
-# →         "type": "qcow2",
-# →         "data": { "compat": "1.1", "lazy-refcounts": false }
-# →     },
-# →     "dirty-flag": false
-# → }
-```
-
-### Подготовка образа к тиражированию
+#### Проверка метаданных
 
 ```bash
-virt-sysprep -a template.qcow2
-# → [   0.0] Examining the guest...
-# → [   5.0] Performing "bash-history" ...
-# → [   5.0] Performing "machine-id" ...
-# → # Очищает системные идентификаторы для безопасности
+# Информация об образе в JSON (удобно для автоматизации и grep)
+qemu-img info --output=json web-server.qcow2
+# → "virtual-size": 42949672960,
+# → "actual-size": 2203648,
+# → "format": "qcow2",
+# → "format-specific": { "type": "qcow2", "data": { "compat": "1.1" } }
 ```
+
+#### Контрольная сумма и подлинность
+
+```bash
+# Расчет SHA256 для верификации источника
+sha256sum web-server.qcow2
+# → e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  web-server.qcow2
+
+# Сравнение с эталонным значением
+echo "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  web-server.qcow2" | sha256sum -c -
+# → web-server.qcow2: OK
+```
+
+#### Проверка на ошибки
+
+```bash
+# Проверка структуры qcow2 (только чтение, без изменений)
+qemu-img check web-server.qcow2
+# → No errors were found on the image.
+
+# При обнаружении ошибок:
+qemu-img check -r all web-server.qcow2
+# → Repairing broken clusters...
+```
+
+### Подготовка шаблона ВМ из запущенной машины
+
+Создание золотого образа из рабочей ВМ требует аккуратной очистки без нарушения работоспособности.
+
+```bash
+# 1. Остановите гостевую ОС или выполните изолированную очистку
+virsh shutdown template-ubuntu
+
+# 2. Удалите снапшоты (если есть), чтобы не оставить зависимости
+virsh snapshot-delete template-ubuntu --metadata
+
+# 3. Полная очистка машины через libguestfs
+virt-sysprep -d template-ubuntu \
+  --operations defaults \
+  --enable customize,ssh-userdir,bash-history \
+  --hostname template \
+  --network
+
+# 4. Обнулите свободное место (опционально, для уменьшения размера)
+virt-sparsify --inplace --compress template-ubuntu.qcow2
+
+# 5. Переименуйте в шаблон и установите атрибуты только для чтения
+mv template-ubuntu.qcow2 /var/lib/libvirt/images/ubuntu-24.04-template.qcow2
+chattr +i /var/lib/libvirt/images/ubuntu-24.04-template.qcow2
+```
+
+### Управление цепочками снапшотов (Backing Chain)
+
+Безопасная работа с внешними снапшотов и консолидация изменений.
+
+```bash
+# Создание внешнего снапшота с обязательным указанием формата базового файла
+qemu-img create -f qcow2 -F qcow2 -b ubuntu-template.qcow2 snapshot-day1.qcow2
+
+# Просмотр текущей цепочки
+qemu-img info --backing-chain snapshot-day1.qcow2
+# → image: snapshot-day1.qcow2
+# → backing file: ubuntu-template.qcow2
+
+# Фиксация изменений обратно в базовый образ (удаляет зависимость)
+qemu-img commit snapshot-day1.qcow2
+# → Image committed. 'snapshot-day1.qcow2' может быть удален.
+
+# Разрыв цепочки (копирование всех данных в текущий файл)
+qemu-img convert -O qcow2 snapshot-day1.qcow2 independent.qcow2
+# → Создается независимый образ без backing file.
+```
+
+### Конвертация между форматами с верификацией
+
+```bash
+# 1. Оценка размера перед конвертацией
+qemu-img measure -f vmdk -O qcow2 source.vmdk
+# → required size: 10737418240
+
+# 2. Конвертация с сжатием ZSTD (QEMU 5.1+)
+qemu-img convert -f vmdk -O qcow2 \
+  -c -o compression_type=zstd \
+  source.vmdk target.qcow2
+
+# 3. Проверка результата
+qemu-img info --output=json target.qcow2 | jq '.format, .virtual-size, .actual-size'
+```
+
+### Создание зашифрованного образа для локального хранения
+
+Хранение чувствительных данных (логи, кэши) внутри образа в зашифрованном виде.
+
+```bash
+# Создание зашифрованного qcow2 (LUKS)
+qemu-img create -f qcow2 \
+  --object secret,id=sec0,data=$(openssl rand -base64 32) \
+  -o encrypt.format=luks,encrypt.key-secret=sec0 \
+  secure-disk.qcow2 20G
+
+# Информация о зашифрованном образе
+qemu-img info --object secret,id=sec0,data=MyPassword123 secure-disk.qcow2
+
+# Монтирование для редактирования (через NBD)
+sudo modprobe nbd max_part=8
+sudo qemu-nbd --connect=/dev/nbd0 secure-disk.qcow2
+# ... работа с /dev/nbd0p1 ...
+sudo qemu-nbd --disconnect /dev/nbd0
+```
+
+### Типичные ошибки и диагностика
+
+#### Ошибка: "backing file not found"
+
+```bash
+# Симптом: ВМ не стартует, в логах libvirt: 'Could not open backing file'
+# Причина: Базовый файл цепочки перемещен или удален.
+
+# Диагностика:
+qemu-img info --backing-chain vm-disk.qcow2
+# → backing file: /path/to/missing-base.qcow2 (не найден)
+
+# Решение 1: Восстановить базовый файл из резервной копии
+# Решение 2: Разорвать цепочку, создав независимый образ
+qemu-img convert -O qcow2 vm-disk.qcow2 vm-disk-independent.qcow2
+```
+
+#### Ошибка: "qcow2: invalid reference count"
+
+```bash
+# Симптом: qemu-img check выдает ошибки ссылочных счетчиков
+# Решение: Восстановление метаданных
+qemu-img check -r all disk.qcow2
+# → [   0.0] Repairing broken clusters...
+```
+
+#### Ошибка: "No space left on device" при создании снапшота
+
+```bash
+# Симптом: Thin Provisioning исчерпан
+# Диагностика:
+df -h /var/lib/libvirt/images/
+# → /dev/mapper/vg0-lv0  100G   98G  2.0G  98% /var/lib/libvirt/images
+
+# Решение:
+# 1. Удалите неиспользуемые снапшоты
+virsh snapshot-list vm-name
+virsh snapshot-delete vm-name old-snapshot
+
+# 2. Выполните consolidation
+qemu-img commit snapshot.qcow2
+```
+
+#### Ошибка: "dirty-flag: true" (образ не был корректно закрыт)
+
+```bash
+# Симптом: ВМ была убита (kill -9) или произошло отключение питания
+# Восстановление:
+qemu-img check disk.qcow2
+qemu-img check -r all disk.qcow2  # при ошибках
+```
+
+### Автоматизированный пайплайн подготовки образа
+
+Пример скрипта для регулярного обновления шаблонов (например, в CI/CD или по cron).
+
+```bash
+#!/bin/bash
+# prepare-template.sh — подготовка шаблона ВМ
+set -euo pipefail
+
+TEMPLATE_NAME="ubuntu-24.04-template"
+SOURCE_IMAGE="/var/lib/libvirt/images/${TEMPLATE_NAME}.qcow2"
+POOL="default"
+SIZE="20G"
+
+# 1. Скачивание свежего cloud-init образа
+wget -q -O "${TEMPLATE_NAME}-base.img" \
+  "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+
+# 2. Конвертация в qcow2 с предварительным выделением метаданных
+qemu-img convert -p -O qcow2 -o preallocation=metadata \
+  "${TEMPLATE_NAME}-base.img" "${SOURCE_IMAGE}"
+
+# 3. Импорт в пул libvirt
+virsh vol-create-as "${POOL}" "${TEMPLATE_NAME}.qcow2" "${SIZE}" \
+  --format qcow2 --backing-vol "${TEMPLATE_NAME}-base.img" --backing-vol-format qcow2
+
+# 4. Создание ВМ и установка агента
+virt-install \
+  --name "${TEMPLATE_NAME}" \
+  --memory 2048 --vcpus 2 \
+  --disk path="${SOURCE_IMAGE}",format=qcow2,cache=none \
+  --os-variant ubuntu24.04 \
+  --cloud-init user-data=./user-data.yaml \
+  --noautoconsole
+
+# 5. Ожидание завершения cloud-init и shutdown
+sleep 60
+virsh shutdown "${TEMPLATE_NAME}"
+sleep 30
+
+# 6. Очистка
+virt-sysprep -d "${TEMPLATE_NAME}" --operations defaults -v
+virt-sysprep -d "${TEMPLATE_NAME}" --enable customize --hostname "${TEMPLATE_NAME}"
+
+# 7. Удаление ВМ, оставляя только диск-шаблон
+virsh undefine "${TEMPLATE_NAME}" --remove-all-storage --snapshots-metadata
+
+echo "Шаблон ${TEMPLATE_NAME} готов к использованию."
+```
+
+### Резервное копирование образов
+
+Стратегии и команды для защиты шаблонов и рабочих дисков.
+
+```bash
+# Резервная копия шаблона (read-only, копирование файла)
+cp --sparse=always /var/lib/libvirt/images/ubuntu-template.qcow2 /backup/templates/
+
+# Проверка резервной копии
+qemu-img info --output=json /backup/templates/ubuntu-template.qcow2 | jq '.format, .dirty-flag'
+
+# Версионирование через hardlink (создание snapshot-подобных копий без дублирования)
+cp -al /backup/templates/ubuntu-template.qcow2 "/backup/templates/ubuntu-template-$(date +%Y%m%d).qcow2"
+
+# Экспорт в другой формат для долгого хранения (сжатие + raw)
+qemu-img convert -c -O raw -o compression_type=zstd \
+  ubuntu-template.qcow2 /backup/templates/ubuntu-template-archive.raw.zst
+```
+
+### Мониторинг использования дискового пространства
+
+```bash
+# Обзор всех образов в пуле libvirt с размерами
+virsh vol-list default
+# → Name               Path                                     Type   Capacity  Allocation
+# → ubuntu-template.qcow2  /var/lib/libvirt/images/ubuntu-template.qcow2  file   20G       1.5G
+
+# Поиск неиспользуемых (orphaned) файлов образов
+find /var/lib/libvirt/images/ -name "*.qcow2" -type f | while read img; do
+  vm_name=$(basename "$img" .qcow2)
+  if ! virsh list --all | grep -q "$vm_name"; then
+    echo "Орфан: $img ($(du -h "$img" | cut -f1))"
+  fi
+done
+
+# Поиск разреженных файлов, которые можно оптимизировать
+find /var/lib/libvirt/images/ -name "*.qcow2" -type f -exec \
+  sh -c 'actual=$(qemu-img info --output=json "$1" | jq -r ".actual-size"); virtual=$(qemu-img info --output=json "$1" | jq -r ".virtual-size"); ratio=$(echo "scale=2; $actual / $virtual * 100" | bc); echo "$1: $ratio%"' _ {} \;
+```
+
+### Восстановление из снапшота
+
+```bash
+# Список снапшотов ВМ
+virsh snapshot-list web-server-01
+# → Name                 Creation Time             State
+# → pre-patch-v1         2026-09-10 14:30:02 +0300  shutoff
+
+# Откат к снапшоту (ВМ должна быть выключена)
+virsh snapshot-revert web-server-01 pre-patch-v1
+
+# Проверка после отката
+virsh start web-server-01
+virsh console web-server-01
+
+# Удаление старого снапшота после успешного отката
+virsh snapshot-delete web-server-01 pre-patch-v1
+```
+
+### Проверка и устранение фрагментации
+
+```bash
+# Проверка фрагментации файла образа (требуется установленный e2fsprogs)
+sudo apt-get install -y e2fsprogs
+sudo e2fsck -T -f /dev/nbd0p1  # после монтирования через qemu-nbd
+
+# Дефрагментация (внутри гостевой ОС)
+# В Linux: sudo e4defrag /
+# В Windows: дефрагментация через утилиту или PowerShell Optimize-Volume -DriveLetter C
+```
+
+## Автоматизация и жизненный цикл
+
+**Packer** — инструмент от HashiCorp для автоматизированного создания воспроизводимых образов ОС. Поддерживает builder `libvirt` для KVM/QEMU, provisioners (shell, ansible) и post-processors для конвертации/публикации.
+
+**Image Pipeline** — CI/CD пайплайн для автоматического обновления образов: сборка (Packer) → тестирование (serverspec/testinfra) → публикация (реестр/хранилище) → версионирование.
+
+**Immutable Infrastructure (Неизменяемая инфраструктура)** — принцип: вместо ручного обновления работающих ВМ пересоздавайте их из нового образа. Снижает конфигурационный дрейф.
+
+**Post-Processor** — этап в Packer, выполняемый после сборки образа: конвертация формата, загрузка в хранилище, публикация в реестр.
+
+**Image Compliance** — проверка образа на соответствие политикам безопасности (CIS Benchmark) до развёртывания в продакшен.
+
+## Развёртывание в продакшен
+
+**Live Migration** — перемещение работающей ВМ между физическими хостами без остановки гостевой ОС. Требует общего хранилища и низкой задержки сети.
+
+**CPU Pinning (vcpupin)** — привязка виртуальных CPU к физическим ядрам хоста для обеспечения предсказуемой производительности.
+
+**NUMA (Non-Uniform Memory Access)** — архитектура, при которой доступ к локальной памяти быстрее, чем к удалённой. Критично для производительности баз данных.
+
+**Memory Ballooning** — механизм динамического перераспределения RAM между ВМ через virtio-balloon.
+
+**Huge Pages** — страницы памяти увеличенного размера (2 МБ или 1 ГБ) для снижения оверхеда TLB.
+
+**KSM (Kernel Samepage Merging)** — механизм ядра для объединения неизменных страниц памяти между ВМ. Экономит RAM.
+
+**Steal Time** — время ожидания vCPU из-за перегрузки хоста. Высокий steal time указывает на необходимость тюнинга.
 
 ## Дополнительная информация
 
 - [Образы ВМ — Основные концепции](./basic_concepts.md) — форматы, стратегии хранения и оптимизация.
 - [Образы ВМ — Практические сценарии](./practical_scenarios.md) — команды `qemu-img`, расширение дисков и восстановление.
-- [KVM — Обзор и архитектура](../kvm/overview.md) — контекст использования образов в гипервизоре KVM.
-- [KVM — Управление ВМ](../kvm/management.md) — использование Cloud-init и жизненный цикл ВМ.
-- [LVM Thin Provisioning](../../FileSystems/LVM/thin-provisioning.md) — реализация тонкого выделения на уровне LVM.
+- [Автоматизация сборки образов](./image_automation.md) — Packer, CI/CD пайплайн, тестирование.
+- [Развёртывание в продакшен](./production_deployment.md) — сеть, CPU/память, HA, мониторинг.
+- [Резервное копирование и восстановление ВМ](../kvm/vm_backup_dr.md) — стратегии бэкапа, DR.
+- [KVM — Управление ВМ](../kvm/management.md) — управление образами через virsh и virt-install.

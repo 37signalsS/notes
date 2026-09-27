@@ -1,162 +1,16 @@
 # Ansible — автоматизация сетевого оборудования
 
-## Определения
-
-**Сетевой модуль (Network Module)** — специализированный модуль Ansible для управления сетевыми устройствами (коммутаторами, маршрутизаторами, FW). Выполняется всегда на **узле управления (Control Node)** через API или CLI, так как на сетевом оборудовании обычно отсутствует среда выполнения Python.
-
-**Сетевая ОС (Network OS)** — операционная система сетевого устройства (Cisco IOS, Juniper JunOS, Arista EOS). В Ansible указывается через переменную `ansible_network_os`.
-
-**Ресурсный модуль (Resource Module)** — современный тип модулей для управления конкретными компонентами сети (интерфейсы, VLAN, L3). Имеют общую структуру данных и единую логику состояний (`state`) для разных вендоров.
-
-**Идемпотентность в сетях** — способность модуля приводить устройство к целевому состоянию без повторного выполнения команд, если конфигурация уже соответствует описанной. Для сетевых модулей это реализуется через сравнение текущего `running-config` с желаемым состоянием.
-
-**SSoT (Single Source of Truth) в сетях** — внешний источник (NetBox, Nautobot, Git), содержащий эталонное состояние инфраструктуры. Автоматизация должна брать данные из SSoT, а не с самих устройств.
-
-**FQCN (Fully Qualified Collection Name)** — полное имя модуля в формате `vendor.collection.module`. Пример: `cisco.ios.ios_vlans`.
-
-**NETCONF (RFC 6241)** — XML-based протокол управления сетевыми устройствами, заменяющий CLI для конфигурирования. Поддерживает транзакционность (commit/rollback) и валидацию конфигурации перед применением.
-
-**eAPI (Arista)** — REST API в Arista EOS, позволяющий отправлять команды в JSON-формате. Более надежен, чем CLI-парсинг, и обеспечивает структурированный возврат данных.
-
-**NX-API (Cisco)** — REST API в Cisco NX-OS (数据中心 коммутаторы). Поддерживает как CLI-команды, так и XML/JSON ответы.
-
-**HTTP API (httpapi)** — плагин Ansible, реализующий взаимодействие через REST/HTTP API вместо SSH. Используется для Arista eAPI, Cisco NX-API, FortiOS, и других платформ с REST API.
+> **SSoT:** основные определения, версионирование, архитектуру и примеры модулей см. в [Ansible: Модули управления сетевым оборудованием](./Modules/ansible_network_device_modules.md).
+> Описание connection plugins (`network_cli`, `httpapi`, `netconf`) и параметров подключения см. в [Ansible: Плагины подключения](./Modules/ansible_connection_plugins.md).
 
 ## Основные концепции
-
-### Предварительные требования
-
-Для автоматизации сетевого оборудования необходимы:
-
-| Компонент | Минимальная версия | Назначение |
-| :--- | :--- | :--- |
-| **ansible-core** | 2.15+ | Ядро Ansible (рекомендуется 2.17+) |
-| **Python** | 3.8+ | Совместимость с ansible-core |
-| **cisco.ios** | latest | Коллекция модулей Cisco IOS |
-| **junipernetworks.junos** | latest | Коллекция модулей Juniper JunOS |
-| **arista.eos** | latest | Коллекция модулей Arista EOS |
-| **ansible.netcommon** | latest | Общие сетевые модули (network_cli, netconf, httpapi) |
-| **ansible.utils** | latest | Утилиты (валидация, парсинг, URL) |
-| **Paramiko** | 2.7+ | SSH-клиент для network_cli (рекомендуется) |
-
-**Установка коллекций:**
-```bash
-# Все коллекции за раз
-ansible-galaxy collection install cisco.ios junipernetworks.junos arista.eos ansible.netcommon ansible.utils
-
-# Или через requirements.yml
-cat > requirements.yml << 'EOF'
-collections:
-  - name: cisco.ios
-  - name: junipernetworks.junos
-  - name: arista.eos
-  - name: ansible.netcommon
-  - name: ansible.utils
-EOF
-
-ansible-galaxy collection install -r requirements.yml
-```
-
-**Проверка окружения:**
-```bash
-ansible --version | head -1
-# → ansible [core 2.17.x]
-
-ansible-galaxy collection list | grep -E "cisco|juniper|arista"
-# → cisco.ios    4.x.x
-# → arista.eos   4.x.x
-```
-
-### Плагины подключения и Network OS
-
-Сетевое оборудование использует специализированные плагины для поддержания постоянных соединений:
-
-*   `ansible.netcommon.network_cli` — основное подключение через SSH к CLI. Оптимизировано для сетевых устройств (обработка приветствий, отключение пагинации).
-*   `ansible.netcommon.netconf` — работа через протокол NETCONF (XML-базированный API). Рекомендуется для Juniper и современных Cisco (IOS-XE/XR).
-*   `ansible.netcommon.httpapi` — работа через REST API (Arista eAPI, Cisco NX-API, FortiOS). Самый производительный метод для современных DC.
-
-Для работы плагина обязательно должна быть задана переменная `ansible_network_os` (например, `cisco.ios.ios`, `junipernetworks.junos.junos`).
-
-### Параметры подключения network_cli
-
-Плагин `network_cli` поддерживает расширенную настройку через `ansible.cfg` или переменные инвентаря:
-
-```ini
-# ansible.cfg
-[persistent_connection]
-connect_timeout = 30          # Таймаут подключения (сек)
-command_timeout = 30          # Таймаут выполнения команды (сек)
-persistent_connect_timeout = 60  # Таймаут persistent-соединения (сек)
-
-[ssh_connection]
-pipelining = true             # Включить pipelining для производительности
-# ssh_args = -o ControlMaster=auto -o ControlPersist=60s
-```
-
-**Переменные инвентаря для network_cli:**
-```yaml
-# inventory.yml
-routers:
-  vars:
-    ansible_connection: ansible.netcommon.network_cli
-    ansible_network_os: cisco.ios.ios
-    ansible_user: admin
-    ansible_password: "{{ vault_enable_password }}"
-    ansible_become: true
-    ansible_become_method: enable
-    ansible_become_password: "{{ vault_enable_password }}"
-    # Параметры network_cli
-    ansible_command_timeout: 30
-    ansible_connect_timeout: 30
-    # Persistent-соединение (переиспользует SSH-сессию)
-    ansible_persistent_connect_timeout: 60
-```
-
-### Параметры подключения NETCONF
-
-NETCONF обеспечивает транзакционность (commit/rollback) и XML-структурированные данные:
-
-```yaml
-# inventory.yml
-junos_routers:
-  vars:
-    ansible_connection: ansible.netcommon.netconf
-    ansible_network_os: junipernetworks.junos.junos
-    ansible_user: admin
-    ansible_password: "{{ vault_junos_password }}"
-    # NETCONF-специфичные параметры
-    ansible_netconf_ssh_args: "-o ControlMaster=auto"
-    # Включить XML-формат ответа (по умолчанию true)
-    # ansible_netconf_xml_mode: true
-```
-
-### Параметры подключения HTTP API (Arista eAPI)
-
-Для Arista EOS используется REST API вместо SSH:
-
-```yaml
-# inventory.yml
-arista_switches:
-  vars:
-    ansible_connection: ansible.netcommon.httpapi
-    ansible_network_os: arista.eos.eos
-    ansible_httpapi_host: "{{ inventory_hostname }}"
-    ansible_httpapi_port: 443
-    ansible_httpapi_use_ssl: true
-    ansible_httpapi_validate_certs: false  # В production: true
-    ansible_user: admin
-    ansible_password: "{{ vault_arista_password }}"
-    # Для NX-API (Cisco DC):
-    # ansible_httpapi_use_ssl: true
-    # ansible_httpapi_port: 443
-```
 
 ### Управление привилегиями
 
 Многие устройства требуют перехода в режим суперпользователя (Enable Mode).
 *   `ansible_become: yes`
 *   `ansible_become_method: enable`
-*   `ansible_become_password: "{{ enable_password }}"` (хранить в [Ansible Vault](../Vault/basics.md)).
+*   `ansible_become_password: "{{ enable_password }}"` (хранить в [Ansible Vault](./Vault/basics.md)).
 
 **Отличие от Linux become:** В сетевых устройствах `enable` — это повышение привилегий на CLI, а не переключение пользователя. Метод `enable` не требует `sudo` или `su`.
 
@@ -778,15 +632,13 @@ interface {{ iface.name }}
 
 ## Устранение типичных ошибок
 
+Общие ошибки подключения (Timeout, Permission denied, MODULE FAILURE) и их решения см. в [Ansible: Плагины подключения](./Modules/ansible_connection_plugins.md). Ниже — специфичные для сетевой автоматизации ошибки:
+
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
 | `No matching group exception` | Устаревшая версия коллекции | `ansible-galaxy collection install --upgrade cisco.ios` |
-| `Timeout waiting for persistent connection` | Таймаут SSH-соединения | Увеличьте `persistent_connect_timeout` в `ansible.cfg` |
 | `Invalid input detected` | Неподдерживаемая версия IOS | Проверьте `ansible_facts.version` и используйте `when:` для условий |
-| `Could not connect to host` | Неверный IP/ hostname или Firewall | Проверьте `ansible_host`, порт 22/830, Firewall |
-| `Permission denied (publickey,password)` | Неверные credentials | Проверьте `ansible_user`, `ansible_password` или SSH-ключ |
 | `Unrecognized argument` | Модуль не поддерживает параметр | Проверьте документацию модуля: `ansible-doc cisco.ios.ios_config` |
-| `MODULE FAILURE` | Python отсутствует на устройстве | Убедитесь, что `ansible_connection` = `network_cli`/`netconf`/`httpapi` |
 | `Unable to enter configuration mode` | `become_method: enable` не работает | Проверьте `ansible_become_password` или отключите `enable` пароль |
 | `netconf` XML parsing error | Неподдерживаемый YANG-модуль | Проверьте `yangdump` на устройстве или используйте `network_cli` |
 | `Commit failed` (Juniper) | Конфликт конфигураций | Используйте `check: true` перед `commit: true` |
@@ -832,7 +684,7 @@ ansible-playbook network.yml --limit core-rtr-01
 
 ### Рекомендации
 
-1.  **Интеграция с SSoT:** Используйте **[Dynamic Inventory (NetBox)](./dynamic_inventory.md)** как единственный источник правды. Плагин `netbox.netbox.nb_inventory` позволяет строить динамический инвентарь на основе актуальных данных DCIM.
+1.  **Интеграция с источником правды:** Используйте **[Dynamic Inventory (NetBox)](./dynamic_inventory.md)** как единственный источник актуальных данных. Плагин `netbox.netbox.nb_inventory` позволяет строить динамический инвентарь на основе данных DCIM.
 2.  **Тестирование и аудит:**
     *   **Check mode (`--check`):** Всегда запускайте плейбуки в этом режиме перед реальными изменениями.
     *   **Batfish / pyATS:** Используйте внешние инструменты для верификации конфигурации до и после деплоя (см. **[Network Verification](../Networking/Concepts/sdn/network_verification.md)**).
@@ -844,4 +696,4 @@ ansible-playbook network.yml --limit core-rtr-01
 ### Смотрите также
 
 *   **[Ansible: Основные концепции](./ansible_core_concepts.md)** — архитектура Ansible, модули и плагины.
-*   **[Динамический инвентарь](./dynamic_inventory.md)** — интеграция с NetBox и другие SSoT-источники.
+*   **[Динамический инвентарь](./dynamic_inventory.md)** — интеграция с NetBox и другие источники правды.

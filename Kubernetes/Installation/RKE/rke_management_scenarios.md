@@ -857,9 +857,66 @@ fi
 *   **Единый файл конфигурации**: Вся конфигурация кластера хранится в одном файле `cluster.yml`. Для управления несколькими кластерами используйте разные директории или разные имена файлов.
 *   **EOL**: RKE1 достиг конца жизненного цикла 31 июля 2025 года. Новые функции не добавляются, выпускаются только критические патчи.
 
+## Дополнительные темы для эксплуатации
+
+Ниже перечислены темы, необходимые для полноценной эксплуатации RKE-кластера в production.
+
+### Мониторинг и алертинг
+
+RKE не включает мониторинг «из коробки». Metrics Server (для HPA) устанавливается автоматически, но для полноценного мониторинга необходим стек Prometheus + Grafana.
+
+* Установка через Helm: [kube-prometheus-stack: Обзор](../../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md)
+* Prometheus Operator (CRDs): [Prometheus Operator: Концепции](../../../Prometheus/kubernetes/operator/concepts.md)
+* Grafana дашборды: [Grafana: Kubernetes Alerting](../../../Grafana/alerting/kubernetes_alerts.md)
+* Alertmanager: [Alertmanager](../../../Prometheus/alertmanager.md)
+* Прометей + Kubernetes: [Prometheus на Kubernetes](../../../Prometheus/kubernetes/overview.md)
+* SLI/SLO: [SLI/SLO в Kubernetes](../../../Kubernetes/Networking/gateway_api/monitoring.md)
+
+### Сбор и агрегация логов
+
+Для централизованного сбора логов с узлов и подов RKE используйте DaemonSet-based решения.
+
+* **Loki + Promtail/Alloy** (рекомендуется): [Loki: Обзор](../../../Loki/loki_overview.md), [Установка Loki](../../../Loki/loki_stack_setup/loki_installation.md), [Alloy с Loki](../../../Loki/loki_stack_setup/alloy_installation.md)
+* **EFK Stack** (Elasticsearch + Fluentd/Fluent Bit): [EFK Setup](../../../Kubernetes/MonitoringLogging/EFK/efk_stack_setup_guide.md)
+* **Fluent Bit** (lightweight): [Fluent Bit Configuration](../../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)
+* Архитектура мониторинга + логов: [K8s Monitoring/Logging Architecture](../../../Kubernetes/MonitoringLogging/kubernetes-monitoring-logging-architecture.md)
+
+### Secrets Management
+
+Kubernetes Secrets хранятся в etcd в открытом виде (без шифрования по умолчанию). Для production используйте внешние менеджеры секретов.
+
+* **HashiCorp Vault + K8s интеграция**: [Vault + Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md)
+* **Vault Agent Injector (sidecar)**: [Vault Agent Injector](../../../Vault/guides/vault_agent/injector.md)
+* **Sealed Secrets** (для GitOps): [Sealed Secrets](../../../Kubernetes/Security/sealed_secrets_overview.md)
+* **External Secrets Operator**: [ESO](../../../Kubernetes/Base/secrets/external_managers.md)
+* **Шифрование etcd**: [Secrets: Шифрование в etcd](../../../Kubernetes/Base/secrets/etcd_storage.md)
+* **helm-secrets + SOPS**: [Helm Secrets](../../../Kubernetes/Base/secrets/helm_secrets.md)
+
+### GitOps (ArgoCD, Flux)
+
+Декларативный деплой через Git — стандарт для production Kubernetes.
+
+* **ArgoCD**: [ArgoCD: Обзор](../../../GitOps/ArgoCD/argocd_overview.md), [Установка](../../../GitOps/ArgoCD/argocd_installation_and_setup.md), [Синхронизация](../../../GitOps/ArgoCD/synchronization.md)
+* **Flux**: [Flux CD](../../../GitOps/flux.md)
+* **Сравнение ArgoCD vs Flux**: [ArgoCD vs Flux](../../../GitOps/argo_vs_flux_manifests.md)
+* **GitOps Pipeline**: [GitOps Pipeline Example](../../../GitOps/gitops_pipeline_example.md)
+* **Secrets в GitOps**: [Secrets Encryption](../../../GitOps/secrets_encryption.md)
+
+### Продвинутый troubleshooting
+
+Для системного подхода к поиску неисправностей:
+
+* Методология: [Troubleshooting: Обзор](../../Troubleshooting/troubleshooting_overview.md)
+* CrashLoopBackOff: [Диагностика](../../Troubleshooting/Common_Errors/pod_crash_loop_back_off/)
+* Pod Pending: [Диагностика](../../Troubleshooting/Common_Errors/pod_pending/)
+* OOMKilled: [Анализ](../../Troubleshooting/Common_Errors/oomkilled_pods.md)
+* CPU Throttling: [CPU Throttling](../../Troubleshooting/Common_Errors/cpu_throttling.md)
+* Node Unavailability: [Node Issues](../../Troubleshooting/Common_Errors/NodeUnavailability/)
+* RBAC ошибки: [Forbidden/Denied](../../Troubleshooting/Common_Errors/ApiAccessForbidden/)
+
 ---
 
 **См. также:**
 * [RKE: Основные концепции](./rke_concepts.md)
+* [RKE: Высокая доступность](./rke_high_availability.md)
 * [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md)
-* [Официальный Troubleshooting Guide Rancher](https://ranchermanager.docs.rancher.com/v2.8/troubleshooting/kubernetes-components/etcd)

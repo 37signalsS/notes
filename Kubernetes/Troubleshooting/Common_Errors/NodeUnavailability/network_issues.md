@@ -769,3 +769,7 @@ groups:
 - **[Диагностика недоступности узла](./diagnostics.md)** — общие шаги проверки (SSH, kubectl debug).
 - **[Taints и выселение](./taints_and_eviction.md)** — автоматическое перенос при сетевой изоляции.
 - **[Определения](./definitions.md)** — базовые термины и состояния узлов.
+- **[Тюнинг ядра](./kernel_tuning.md)** — conntrack, bridge-nf-call-iptables, sysctl для сети.
+- **[Hostname и DNS](./hostname_dns_issues.md)** — DNS-резолв, CoreDNS, /etc/hosts.
+- **[SELinux и AppArmor](./security_profiles.md)** — конфликт MAC с CNI-плагинами.
+- **[SSH-доступ](./bastion_ssh_access.md)** — диагностика сетевых проблем через SSH.

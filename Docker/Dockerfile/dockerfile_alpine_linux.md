@@ -379,7 +379,7 @@ build-alpine:
   stage: build
   image: docker:27
   services:
-    - docker:27-dind
+    - docker:29.8-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   script:

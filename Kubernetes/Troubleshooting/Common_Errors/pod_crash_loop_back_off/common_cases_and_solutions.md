@@ -534,6 +534,359 @@ kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[*].lastState.
 kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[*].lastState.terminated.exitCode}'
 ```
 
+### Сценарий 22: Service Mesh (Istio/Linkerd) — побочные эффекты Sidecar Injection
+
+**Симптомы:**
+- Под падает сразу после добавления аннотации для автоматической инъекции sidecar (Istio: `sidecar.istio.io/inject: true`).
+- Логи показывают, что основной контейнер завершается до готовности envoy-прокси.
+- `kubectl describe pod` показывает `EnvoyCheck` или `istio-proxy` в статусе `Waiting`.
+
+**Решение:**
+1. **StartupProbe для sidecar:** Увеличьте `failureThreshold` в `startupProbe` envoy-прокси, чтобы дать ему время на инициализацию.
+2. **Порядок завершения:** Istio отправляет `SIGTERM` envoy-прокси первым, затем основному контейнеру. Если envoy не успевает завершить соединения, приложение может упасть.
+3. **Ресурсы sidecar:** Envoy потребляет CPU/память из общего лимита Pod. Убедитесь, что `requests` и `limits` достаточны.
+4. **LogLevel:** Установите `istio.io/logLevel: warning` для envoy, чтобы снизить нагрузку на CPU.
+
+```yaml
+# Исправление: увеличение таймаута envoy-прокси
+annotations:
+  sidecar.istio.io/inject: "true"
+  proxyConfig: |
+    proxyMetadata:
+      ISTIO_META_DNS_CAPTURE: "true"
+spec:
+  containers:
+  - name: istio-proxy
+    startupProbe:
+      failureThreshold: 30  # 30 × 10s = 5 минут на запуск
+```
+
+**Верификация:**
+```bash
+# Проверка статуса sidecar
+kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[?(@.name=="istio-proxy")].state}'
+
+# Проверка логов envoy при падении
+kubectl logs <pod-name> -c istio-proxy --previous
+```
+
+**Связанные темы:**
+- **[Service Mesh: Концепции](../../../../Service_Mesh/service_mesh_concepts.md)** — архитектура sidecar, mTLS.
+- **[Native Sidecars в Kubernetes](../../../../Kubernetes/Base/Pod/pod_sidecar_patterns.md)** — K8s 1.29+ нативные сайдкары.
+
+### Сценарий 23: Helm-ошибки при деплое (Template Errors, Values Mismatch)
+
+**Симптомы:**
+- Под не создается или создается с некорректной конфигурацией после `helm upgrade`.
+- Логи показывают ошибки переменных окружения или монтирования.
+- `helm list` показывает статус `failed` или `pending-upgrade`.
+
+**Решение:**
+1. **Проверка шаблонов:** Выполните `helm template` для генерации итоговых манифестов и проверьте их валидность.
+2. **Синтаксис YAML:** Ошибки в `values.yaml` могут приводить к невалидным манифестам. Используйте `yamllint` или `kubeconform`.
+3. **Конфликт значений:** Если `values.yaml` переопределяет значения по умолчанию, убедитесь, что новые значения соответствуют ограничениям LimitRange/ResourceQuota.
+4. **Проблемы с CRD:** Если Helm-чарт устанавливает CRD, убедитесь, что CRD применены до релиза.
+
+```bash
+# Проверка итоговых манифестов
+helm template my-release ./chart --values values.yaml | kubectl apply --dry-run=client -f -
+
+# Валидация YAML
+helm template my-release ./chart | kubeconform -strict
+
+# Просмотр изменений перед обновлением
+helm upgrade my-release ./chart --values values.yaml --dry-run
+```
+
+**Верификация:**
+```bash
+# Проверка статуса релиза
+helm status my-release
+
+# Просмотр последних событий
+helm get events my-release
+
+# Откат при ошибке
+helm rollback my-release <revision>
+```
+
+**Связанные темы:**
+- **[Helm: Безопасность](../../../../Kubernetes/ToolsUtilities/Helm/Advanced/security_best_practices.md)** — best practices для production.
+- **[Helm: Troubleshooting](../../../../Kubernetes/ToolsUtilities/Helm/Advanced/scenarios.md)** — типовые ошибки.
+
+### Сценарий 24: GitOps-конфликты (ArgoCD/Flux) — Desync между Git и кластером
+
+**Симптомы:**
+- ArgoCD показывает статус `OutOfSync`, но поды в `CrashLoopBackOff` из-за некорректных изменений.
+- Flux возвращает ошибку при применении манифестов.
+- Конфликты при автоматическом слиянии (merge conflict) в GitOps-репозитории.
+
+**Решение:**
+1. **Синхронизация:** Принудительная синхронизация через ArgoCD UI или CLI (`argocd app sync`).
+2. **Откат через Git:** Измените коммит в Git на предыдущую версию манифестов. GitOps-контроллер автоматически откатит изменения.
+3. **Health Checks:** Убедитесь, что в ArgoCD настроены правильные `ignoreDifferences` для полей, которые изменяются runtime (например, `status`).
+4. **Конфликты:** При merge conflict в репозитории разрешите его вручную или через CI/CD пайплайн.
+
+```bash
+# ArgoCD: принудительная синхронизация
+argocd app sync <app-name> --force
+
+# ArgoCD: откат на предыдущий коммит
+git revert <commit-hash>
+git push origin main
+
+# Flux: проверка статуса
+flux get kustomizations
+flux trace <resource-name>
+```
+
+**Верификация:**
+```bash
+# ArgoCD: проверка разницы
+argocd app diff <app-name>
+
+# Flux: проверка логов
+flux logs --follow
+```
+
+**Связанные темы:**
+- **[ArgoCD: Установка](../../../../GitOps/ArgoCD/argocd_installation_and_setup.md)** — базовая настройка.
+- **[GitOps: Политики](../../../../GitOps/Concepts/gitops-policy-management.md)** — управление политиками.
+
+### Сценарий 25: NetworkPolicy блокирует трафик (DNS, Backend, Health Checks)
+
+**Симптомы:**
+- Под не может разрешить DNS-имена (`nslookup: can't resolve`).
+- Приложение не может подключиться к зависимостям (БД, API).
+- `kubectl describe pod` показывает `Liveness probe failed` из-за недоступности health-эндпоинта.
+
+**Решение:**
+1. **DNS-политики:** Убедитесь, что `NetworkPolicy` разрешает egress-трафик на порт 53 (TCP/UDP) к CoreDNS.
+2. **Default Deny:** Если в namespace применена политика `default-deny`, явно разрешите трафик к зависимостям.
+3. **Health Checks:** Разрешите ingress-трафик на порт health-эндпоинта (например, 8080) для liveness/readiness проб.
+4. **Имена сервисов:** Используйте полные DNS-имена (`service.namespace.svc.cluster.local`) в политиках.
+
+```yaml
+# Разрешение DNS-трафика
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+```
+
+**Верификация:**
+```bash
+# Проверка DNS изнутри пода
+kubectl exec <pod-name> -- nslookup kubernetes.default.svc.cluster.local
+
+# Проверка NetworkPolicy
+kubectl get networkpolicy -n <namespace>
+
+# Проверка connectivity до зависимости
+kubectl exec <pod-name> -- curl -v http://db-service:5432
+```
+
+**Связанные темы:**
+- **[NetworkPolicy в Kubernetes](../../../../Kubernetes/Networking/Network/NetworkPolicy/definitions.md)** — определения и концепции.
+- **[NetworkPolicy: Практические сценарии](../../../../Kubernetes/Networking/Network/NetworkPolicy/practical_scenarios.md)** — 12 сценариев.
+
+### Сценарий 26: ResourceQuota/LimitRange блокирует запуск подов
+
+**Симптомы:**
+- Под остается в статусе `Pending` с событием `FailedCreate` или `Exceeded quota`.
+- `kubectl describe pod` показывает `insufficient cpu` или `insufficient memory`.
+- Rolling update застревает из-за нехватки квоты.
+
+**Решение:**
+1. **Проверка квот:** Убедитесь, что ResourceQuota позволяет временный всплеск ресурсов при `maxSurge`.
+2. **LimitRange:** Проверьте, что `requests` и `limits` контейнеров соответствуют min/max в LimitRange.
+3. **Разные квоты:** Для разных типов подов (production, staging) используйте отдельные namespace с разными квотами.
+4. **Приоритеты:** Используйте `PriorityClass` для критичных подов, чтобы они перезапускались в первую очередь.
+
+```bash
+# Проверка ResourceQuota
+kubectl describe resourcequota -n <namespace>
+
+# Проверка LimitRange
+kubectl describe limitrange -n <namespace>
+
+# Проверка использования квоты
+kubectl get resourcequota -n <namespace> -o jsonpath='{.items[*].status.used}'
+```
+
+**Верификация:**
+```bash
+# Проверка доступных ресурсов
+kubectl describe node <node-name> | grep -A 5 "Allocated resources"
+
+# Проверка Pending-подов
+kubectl get pods -n <namespace> --field-selector=status.phase=Pending
+```
+
+**Связанные темы:**
+- **[ResourceQuota и LimitRange](../../../../Kubernetes/Scheduling/qos_limit_and_requests.md)** — управление ресурсами.
+- **[HPA: Взаимодействие с ResourceQuota](../../../../Kubernetes/Autoscaling/HPA/hpa_advanced.md)** — блокировка масштабирования.
+
+### Сценарий 27: ImagePullSecrets — проблемы с pull образов из приватных реестров
+
+**Симптомы:**
+- Под в статусе `ImagePullBackOff` или `ErrImagePull`.
+- `kubectl describe pod` показывает `unauthorized: authentication required` или `manifest unknown`.
+- Проблемы с ротацией секретов.
+
+**Решение:**
+1. **Валидация секрета:** Убедитесь, что Secret типа `kubernetes.io/dockerconfigjson` содержит корректные credentials.
+2. **ServiceAccount:** Привяжите `imagePullSecrets` к ServiceAccount для автоматической инъекции во все поды.
+3. **Ротация:** При обновлении credentials создайте новый Secret с другим именем, обновите `imagePullSecrets`, затем удалите старый.
+4. **Docker Hub лимиты:** Используйте `imagePullSecrets` даже для публичных образов (лимит увеличивается со 100 до 200 pull/6h).
+
+```bash
+# Проверка наличия секрета
+kubectl get secret <secret-name> -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d
+
+# Проверка привязки к ServiceAccount
+kubectl get sa default -o jsonpath='{.imagePullSecrets}'
+
+# Привязка секрета к ServiceAccount
+kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "registry-creds"}]}'
+```
+
+**Верификация:**
+```bash
+# Проверка доступа к реестру изнутри пода
+kubectl exec <pod-name> -- curl -v https://registry-1.docker.io/v2/
+
+# Проверка логов kubelet на узле
+journalctl -u kubelet | grep -i "image pull"
+```
+
+**Связанные темы:**
+- **[ImagePullErrors: Определения](../../../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/definitions.md)** — типы ошибок.
+- **[ImagePullErrors: Best Practices](../../../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/best_practices.md)** — безопасная ротация.
+
+### Сценарий 28: Pod Security Standards (PSS/PSA) — блокировка подов на уровне admission
+
+**Симптомы:**
+- Под не создается, `kubectl describe pod` не показывает событий (Pod не дошел до планирования).
+- `kubectl get events` показывает `Forbidden: violates PodSecurity "restricted:latest"`.
+- PSA `enforce` блокирует поды с нарушениями безопасности.
+
+**Решение:**
+1. **Проверка меток:** Убедитесь, что namespace имеет корректные метки PSA (`pod-security.kubernetes.io/enforce`).
+2. **Двухэтапное включение:** Переключайте `enforce` через `warn`/`audit`, чтобы выявить нарушения до блокировки.
+3. **Dry-run:** Используйте `kubectl apply --dry-run=server` для проверки манифестов с учетом PSA.
+4. **Исключения:** Для критичных компонентов (monitoring agents) используйте namespace с менее строгим профилем.
+
+```bash
+# Проверка PSA-меток на namespace
+kubectl get ns <namespace> -o jsonpath='{.metadata.labels}' | grep pod-security
+
+# Проверка манифеста с учетом PSA
+kubectl apply -f pod.yaml --dry-run=server
+
+# Просмотр аудит-логов PSA
+kubectl get events --field-selector reason=FailedCreate --namespace <namespace>
+```
+
+**Верификация:**
+```bash
+# Проверка текущего enforced-уровня PSA
+kubectl get ns -o custom-columns=NAME:.metadata.name,ENFORCE:.metadata.labels.pod-security\.kubernetes\.io/enforce
+
+# Просмотр аудит-событий
+kubectl get events --namespace <namespace> --field-selector reason=Warning --watch
+```
+
+**Связанные темы:**
+- **[Pod Security Standards и Secret](../../../../Kubernetes/Base/secrets/pod_security_and_secrets.md)** — влияние PSA на монтирование секретов.
+- **[Pod Security Context](../../../../Kubernetes/Security/pod_security_context.md)** — полное описание Security Context.
+
+### Сценарий 29: PreStop hooks — зависимость от graceful shutdown
+
+**Симптомы:**
+- Приложение падает во время обновления или drain узла.
+- `kubectl describe pod` показывает `Killing` без предварительного выполнения PreStop hook.
+- Приложение не успевает завершить активные соединения.
+
+**Решение:**
+1. **PreStop hook:** Добавьте `preStop` команду для ожидания завершения активных соединений (например, `sleep 10`).
+2. **terminationGracePeriodSeconds:** Увеличьте время ожидания завершения (по умолчанию 30 секунд).
+3. **SIGTERM handling:** Убедитесь, что приложение корректно обрабатывает сигнал `SIGTERM`.
+4. **Connection Draining:** Настройте балансировщик (Ingress, Service) на отключение пода от ротации перед завершением.
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 60
+  containers:
+  - name: app
+    lifecycle:
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "sleep 10"]
+```
+
+**Верификация:**
+```bash
+# Проверка наличия PreStop hook
+kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].lifecycle.preStop}'
+
+# Просмотр событий завершения
+kubectl get events --field-selector involvedObject.name=<pod-name> --sort-by='.lastTimestamp'
+```
+
+**Связанные темы:**
+- **[Pod Terminating: Определения](../../../../Kubernetes/Troubleshooting/Common_Errors/PodTerminating/definitions.md)** — жизненный цикл завершения.
+- **[Graceful Termination](../../../../Kubernetes/Networking/Network/traffic_path.md)** — настройка drain.
+
+### Сценарий 30: Admission Controllers (Kyverno/OPA Gatekeeper) — блокировка подов
+
+**Симптомы:**
+- Под не создается, `kubectl describe pod` показывает ошибку admission-контроллера.
+- Ошибки вида `admission webhook "kyverno-svc.kyverno.svc" denied the request`.
+- MutatingWebhook не может инжектировать sidecar или добавлять labels.
+
+**Решение:**
+1. **Проверка webhook:** Убедитесь, что ValidatingWebhookConfiguration/MutatingWebhookConfiguration активен.
+2. **failurePolicy:** Если webhook недоступен, `failurePolicy: Fail` блокирует все запросы. Временно установите `Ignore`.
+3. **namespaceSelector:** Проверьте, что политика применяется к нужным namespace (не к `kube-system`).
+4. **Логи admission-контроллера:** Проверьте логи Kyverno/Gatekeeper для понимания причины блокировки.
+
+```bash
+# Проверка webhook-конфигурации
+kubectl get validatingwebhookconfigurations
+kubectl get mutatingwebhookconfigurations
+
+# Просмотр логов Kyverno
+kubectl logs -n kyverno -l app.kubernetes.io/component=admission-controller --tail=100
+
+# Временное отключение политики (Kyverno)
+kubectl label namespace <namespace> pod-security.kubernetes.io/warn=-
+```
+
+**Верификация:**
+```bash
+# Проверка статуса webhook
+kubectl get deployment -n kyverno kyverno-admission-controller
+
+# Просмотр аудит-событий
+kubectl get events --field-selector reason=Warning --namespace <namespace>
+```
+
+**Связанные темы:**
+- **[Admission Controllers](../../../../Kubernetes/Concepts/admission_controllers.md)** — архитектура и типы.
+- **[Kyverno: Troubleshooting](../../../../Kubernetes/Security/kyverno/troubleshooting.md)** — диагностика политик.
+
 ## Решения по стекам технологий
 
 ### Java / JVM
@@ -641,6 +994,14 @@ kubectl drain <node-name> --ignore-daemonsets --delete-local-data --force
 7. **Наблюдаемость:** Включите алерты на `CrashLoopBackOff` и `OOMKilled` в системе мониторинга.
 8. **Сигналы:** Используйте `tini` или `dumb-init` для корректной обработки `SIGTERM`.
 9. **Сторонние образы:** Избегайте образа `latest` в production. Используйте фиксированные теги и `imagePullPolicy: IfNotPresent`.
+10. **NetworkPolicy:** Убедитесь, что политики разрешают DNS-трафик и connectivity к зависимостям перед включением strict-режимов.
+11. **ResourceQuota:** Настройте квоты с запасом для `maxSurge` при rolling update.
+12. **ImagePullSecrets:** Привяжите секреты к ServiceAccount для автоматической инъекции во все поды.
+13. **Pod Security Standards:** Включайте `enforce` через `warn`/`audit` в два этапа.
+14. **Graceful Shutdown:** Добавьте PreStop hooks и увеличьте `terminationGracePeriodSeconds` для критичных сервисов.
+15. **Service Mesh:** Убедитесь, что startupProbe envoy-прокси имеет достаточный `failureThreshold`.
+16. **Helm:** Проверяйте шаблоны через `helm template --dry-run` перед деплоем.
+17. **GitOps:** Настройте `ignoreDifferences` для runtime-полей в ArgoCD/Flux.
 
 ## Дополнительная информация
 
@@ -649,3 +1010,4 @@ kubectl drain <node-name> --ignore-daemonsets --delete-local-data --force
 - **[Диагностика CrashLoopBackOff](./diagnostics.md)** — пошаговый алгоритм поиска неисправностей.
 - **[Определения и концепции](./definitions_and_concepts.md)** — теория, BackOff, RestartPolicy, коды завершения.
 - **[Продвинутые темы](./advanced_topics.md)** — автоматизация, eBPF, Cgroup v2, Native Sidecars.
+- **[Runbook: CrashLoopBackOff](./runbook.md)** — шаблон для дежурного инженера.

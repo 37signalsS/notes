@@ -676,7 +676,93 @@ kubectl describe node <node-name> | grep -A 10 "Allocated resources"
 4. **Local Persistent Volume:** Поды с Local PV не могут быть перемещены на другой узел при drain.
 5. **Static Pods:** Управляются kubelet напрямую, `drain` их игнорирует.
 
-### Смотрите также
+#### 11. Влияние LimitRange на QoS класс подов
+
+LimitRange может неожиданно изменить QoS класс пода через автоматическое назначение `requests` и `limits` по умолчанию.
+
+**Типичная проблема:** Разработчик указывает только `limits.memory: 512Mi`, ожидая Burstable. LimitRange автоматически проставляет `requests.memory = limits.memory` (512Mi), и под становится **Guaranteed** вместо Burstable. Это может привести к тому, что под не будет выселен при MemoryPressure, хотя ресурсы на узле заканчиваются.
+
+**Обратная проблема:** Разработчик не указывает ресурсы вообще. LimitRange ставит `defaultRequest` и `default`, что формирует Burstable под с низкими запросами — такой под будет первым кандидатом на выселение.
+
+```yaml
+# LimitRange с дефолтами для namespace
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limits
+  namespace: production
+spec:
+  limits:
+  - type: Container
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    max:
+      cpu: "4"
+      memory: "8Gi"
+```
+
+**Валидация:**
+```bash
+# Проверка LimitRange в namespace
+kubectl get limitrange -n production -o yaml
+
+# Проверка QoS класса пода
+kubectl get pod <pod-name> -o jsonpath='{.status.qosClass}'
+```
+
+> Подробнее: **[Управление ресурсами: QoS, LimitRange и ResourceQuota](../../../Scheduling/qos_limit_and_requests.md)**, **[Multi-tenancy](../../../Concepts/multi-tenancy.md)**.
+
+### 12. Pod Overhead при использовании изолированных рантаймов
+
+При использовании RuntimeClass с изолированными рантаймами (gVisor, Kata Containers) Kubernetes автоматически резервирует дополнительные ресурсы для среды выполнения. Этот overhead учитывается планировщиком при размещении Pod.
+
+**Как это влияет на eviction:** Если под потребляет `limits.memory: 256Mi`, но overhead рантайма добавляет ещё `128Mi`, общий расход на узле — `384Mi`. Если `kubeReserved` и `systemReserved` не учтены, узел может войти в MemoryPressure раньше ожидаемого.
+
+```yaml
+# Проверка overhead для RuntimeClass
+kubectl get runtimeclass gvisor -o jsonpath='{.overhead}'
+# → {"cpu":"100m","memory":"128Mi"}
+
+# Pod с overhead будет потреблять больше ресурсов на узле
+# CPU: 500m (requests) + 100m (overhead) = 600m
+# Memory: 256Mi (limits) + 128Mi (overhead) = 384Mi
+```
+
+> Подробнее: **[Pod Overhead](../../../Base/Pod/pod_advanced_topics.md#overhead-пода)**.
+
+### 13. Kernel-level тюнинг узлов
+
+Некоторые параметры ядра косвенно влияют на стабильность узлов и предотвращение eviction:
+
+| Параметр | Влияние | Рекомендуемое значение |
+|:---|:---|:---|
+| `vm.max_map_count` | Лимит memory map areas (важно для Elasticsearch, Java). При исчерпании — OOM. | `262144` |
+| `fs.file-max` | Общий лимит файловых дескрипторов. | `2097152` |
+| `fs.inotify.max_user_watches` | Лимит отслеживания файлов (ConfigMap/Secret монтируются через inotify). | `524288` |
+| `fs.inotify.max_user_instances` | Лимит inotify-очередей. | `512` |
+| `kernel.pid_max` | Максимальное количество PID. | `4194304` |
+| `net.core.somaxconn` | Размер очереди входящих соединений. | `65535` |
+
+```bash
+# Пример конфигурации для узла Kubernetes (/etc/sysctl.d/99-k8s-worker.conf)
+vm.max_map_count = 262144
+fs.file-max = 2097152
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 512
+kernel.pid_max = 4194304
+net.core.somaxconn = 65535
+```
+
+> Подробнее: **[sysctl: Параметры ядра](../../../../Linux/Core/kernel/sysctl.md)**, **[Лимиты ресурсов](../../../../Linux/Core/processes/resource_limits_concepts.md)**, **[Подготовка узлов](../../../Installation/kubeadm/kubeadm_installation_guide.md)**.
+
+## Смотрите также
 
 - **[Подробный разбор QoS и выселения](./qos_and_eviction.md)**
 - **[Выселение по памяти (Memory Eviction)](./memory_eviction.md)**

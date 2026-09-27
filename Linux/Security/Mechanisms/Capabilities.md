@@ -10,11 +10,25 @@ Capabilities реализуют **принцип наименьших приви
 
 Механизм служит фундаментом для современных систем изоляции, таких как Docker, Kubernetes и rootless-контейнеры.
 
-### История возникновения
+### История и эволюция
 
 В ранней модели Unix у процесса были только учётные данные (UID, GID): когда процесс обращался к файлу, отправлял сигнал или просил ядро о другой операции, ядро сверяло эти данные. Процессы с UID 0 стояли особняком — они обходили все проверки ядра, тогда как пользовательские процессы проходили их полностью. Проблема: программе часто была нужна ровно одна привилегированная операция (открыть порт < 1024, сменить владельца файла, настроить сетевой интерфейс), но отдельного разрешения на такую операцию в классической модели не существовало — весь процесс приходилось запускать от root. В результате программа с одной привилегированной операцией получала почти все права в системе, а найденная в ней уязвимость отдавала тот же набор атакующему.
 
 Поэтому в 1999 году, начиная с ядра Linux 2.2, монолитные полномочия root разделили на отдельные возможности — capabilities (несколько десятков; полный список — `man 7 capabilities`). Примеры: `CAP_NET_BIND_SERVICE` — слушать привилегированные порты, `CAP_CHOWN` — менять владельца файлов, `CAP_NET_ADMIN` — управлять сетевыми настройками, `CAP_SYS_PTRACE` — операции над другими процессами через ptrace.
+
+### Итерации и современное состояние (1999–2026)
+
+*   **Linux 2.2 (1999):** Введение базового набора capabilities (~27). Файловые возможности ещё не поддерживались.
+*   **Linux 2.4 (2001):** Добавлены `CAP_SETPCAP` и `CAP_AUDIT_WRITE`. Появилась возможность передавать capabilities через `execve()`.
+*   **Linux 2.6.24 (2008):** Добавлен набор `Ambient` (как `AT_SECURE`-совместимый механизм передачи прав). Начало поддержки файловых возможностей в VFS.
+*   **Linux 3.2 (2012):** Стабилизация файловых возможностей V2. Docker начинает использовать capabilities для контейнерной изоляции.
+*   **Linux 4.14 (2017):** Добавлены `CAP_BPF` и `CAP_PERFMON` как альтернативы `CAP_SYS_ADMIN` для eBPF. Ужесточение контроля над `CAP_SYS_ADMIN` в контейнерах.
+*   **Linux 5.1 (2019):** Введение `CAP_CHECKPOINT_RESTORE` для CRIU. Упрощение миграции контейнеров без полного root.
+*   **Linux 5.8 (2020):** Добавлены capabilities для контроля доступа к memory protection keys (`CAP_MPKS`).
+*   **Linux 6.1 (2022):** Доработка взаимодействия с User Namespaces. `CAP_SYS_ADMIN` внутри user namespace уже не даёт доступа к хосту.
+*   **Linux 6.8 (2024):** Расширение набора `Ambient` для нетипичных сценариев (init-системы, язык Go).
+*   **Linux 6.12 (2025):** Оптимизация проверок capabilities в hot-path ядра (снижение накладных расходов при большом количестве потоков).
+*   **Текущий стандарт (2026):** Полный набор — 40+ возможностей. Стандарт де-факто для hardening: `drop ALL` + явный `add` только необходимых.
 
 ## Основные концепции
 
@@ -51,6 +65,48 @@ Capabilities — не отдельная фича Docker или другой use
 Флаг `no_new_privs` (NNP) гарантирует, что процесс никогда не получит новых прав через `execve()`.
 *   При включенном NNP ядро игнорирует SUID-биты и файловые возможности (`fcaps`).
 *   **Исключение:** Набор `Ambient` продолжает работать даже при NNP, что делает его предпочтительным методом передачи прав в защищенных средах.
+
+### Ключевые термины
+
+| Термин | Описание |
+| :--- | :--- |
+| **Capability** | Атомарное право ядра Linux (например, `CAP_NET_BIND_SERVICE`). |
+| **Capability Sets** | Пять наборов, привязанных к процессу: Permitted, Effective, Inheritable, Bounding, Ambient. |
+| **File Capabilities** | Расширенные атрибуты файла (`security.capability`), задающие capabilities, которые ядро добавит при `execve()`. |
+| **no_new_privs (NNP)** | Флаг процесса, запрещающий получение новых прав через `execve()` (SUID, fcaps). |
+| **Ambient** | Набор capabilities, наследуемый дочерними процессами через `execve()` без файловых возможностей. |
+| **Bounding Set** | Жёсткий фильтр максимальных capabilities, доступных процессу. |
+| **cred** | Структура ядра, хранящая UID/GID и capability sets процесса (не в `task_struct` напрямую). |
+| **VFS capability version** | Версия формата атрибута `security.capability` (V2, V3 Namespaced). |
+| **CAP_SYS_ADMIN** | Capability с наибольшим числом прав; часто называется «универсальным ключом». |
+
+### Сравнение с современными механизмами (2026)
+
+| Механизм | Уровень | Что контролирует | Привилегии для настройки | Область применения |
+| :--- | :--- | :--- | :--- | :--- |
+| **DAC (rwx)** | Файлы/процессы | Владелец, группа, остальные | Не требуются | Базовая изоляция |
+| **Capabilities** | Процесс (UID 0) | Гранулярные atomic rights | Не требуются | Замена SUID, контейнеры |
+| **Seccomp** | Syscall | Допустимые вызовы ядру | Не требуются | Снижение поверхности атаки |
+| **AppArmor** | Пути/ресурсы | Доступ по профилям | Не требуются | Мандатный контроль (файлы, сокеты) |
+| **SELinux** | Контексты | Метки и домены | CAP_MAC_ADMIN | Строгий MAC (многоуровневый) |
+| **Landlock** | ФС/сеть | Песочница приложения | Не требуются | Self-sandboxing без root |
+
+### Преимущества и ограничения
+
+**Преимущества:**
+*   **Гранулярность:** Замена полного `root` на отдельные права (например, только `CAP_NET_BIND_SERVICE`).
+*   **Безопасность:** Принцип наименьших привилегий снижает взрывную силу при RCE.
+*   **Прозрачность:** Реализованы в ядре, работают на уровне потоков, не требуют userspace-демонов.
+*   **Совместимость:** Поддерживаются всеми современными runtime (Docker, Podman, systemd, Kubernetes).
+*   **File capabilities:** Позволяют бинарникам получать права без SUID-бита и без запуска всего процесса от root.
+*   **Ambient:** Передача прав скриптам и интерпретаторам, не поддерживающим файловые возможности.
+
+**Ограничения:**
+*   **Порог входа:** Необходимо знать, какие capabilities нужны конкретному приложению (требует аудита).
+*   **Не всё покрывается:** Нет capability для «только чтение /etc/passwd» — для этого нужен LSM (AppArmor/SELinux) или Landlock.
+*   **CAP_SYS_ADMIN:** По-прежнему даёт слишком много прав; его использование в контейнерах эквивалентно практически неограниченному доступу.
+*   **User Namespace нюансы:** Наборы capabilities внутри user namespace могут отличаться от хостовых; требуется понимание контекста.
+*   **Взаимодействие с LSM:** Capabilities не заменяют AppArmor/SELinux — они дополняют друг друга.
 
 ## Практические сценарии
 
@@ -221,7 +277,188 @@ securityContext:
 
 При этом сама по себе capability не является уязвимостью, а `CAP_SYS_ADMIN` не означает автоматический container escape. Но каждая лишняя capability открывает процессу дополнительные привилегированные операции и увеличивает количество вариантов дальнейшей атаки: до взлома этими правами пользуется приложение, после взлома — атакующий. Отсюда базовый подход: сначала выкидывается всё (`drop: ALL`), затем возвращаются только те привилегии, без которых приложение не работает (например, `NET_BIND_SERVICE` для прослушивания привилегированного порта).
 
+### 7. Интеграция с systemd
+
+systemd предоставляет два параметра для управления capabilities в unit-файлах:
+
+*   **`CapabilityBoundingSet=`:** Максимальный набор capabilities, доступных сервису. Остальные capabilities из bounding set хоста не попадут в процесс.
+*   **`AmbientCapabilities=`:** Набор capabilities, которые система добавит в Ambient-набор процесса при старте. Полезно для сервисов, которые не могут использовать файловые возможности (скрипты, интерпретаторы).
+
+```ini
+# /etc/systemd/system/myapp.service
+[Service]
+Type=simple
+User=app
+Group=app
+
+# Ограничиваем bounding set только нужными возможностями
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID
+
+# Передаём нужную capability через Ambient
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Запрещаем повышение привилегий
+NoNewPrivileges=true
+
+ExecStart=/usr/local/bin/myapp --config /etc/myapp/config.yaml
+
+# Проверка конфигурации
+systemctl daemon-reload
+systemctl start myapp
+```
+
+**Проверка:**
+```bash
+# Убедиться, что сервис получил только разрешённые capabilities
+systemctl show myapp --property=CapabilityBoundingSet,AmbientCapabilities
+# → CapabilityBoundingSet=cap_net_bind_service cap_setuid
+# → AmbientCapabilities=cap_net_bind_service
+
+# Проверка через /proc
+grep -E 'Cap(Prm|Eff|Inh|Bnd|Amb)' /proc/$(pgrep myapp)/status
+```
+
+### 8. Управление через libcap (программный метод)
+
+Установка прав через `setcap` подходит для бинарных файлов, но для динамически создаваемых приложений или runtime-сред удобнее использовать библиотеку `libcap`.
+
+```c
+#include <sys/capability.h>
+#include <unistd.h>
+#include <stdio.h>
+
+int main() {
+    cap_t caps = cap_get_proc();
+    if (!caps) {
+        perror("cap_get_proc");
+        return 1;
+    }
+
+    char *text = cap_to_text(caps, NULL);
+    printf("Current capabilities: %s\n", text);
+    cap_free(text);
+
+    cap_t newcaps = cap_init();
+    cap_value_t cap_list[] = {CAP_NET_BIND_SERVICE, CAP_CHOWN};
+
+    cap_set_flag(newcaps, CAP_EFFECTIVE, 2, cap_list, CAP_SET);
+    cap_set_flag(newcaps, CAP_PERMITTED, 2, cap_list, CAP_SET);
+
+    if (cap_set_proc(newcaps) == -1) {
+        perror("cap_set_proc");
+        return 1;
+    }
+
+    cap_free(newcaps);
+    cap_free(caps);
+
+    printf("Capabilities updated successfully\n");
+    return 0;
+}
+```
+
+```bash
+# Сборка
+gcc -o cap_demo cap_demo.c -lcap
+
+# Запуск без root
+./cap_demo
+# → Current capabilities: = cap_net_bind_service+ep
+# → Capabilities updated successfully
+```
+
+**Важно:** Для установки некоторых caps (например, `CAP_SYS_ADMIN`) процесс должен запускаться от root или иметь соответствующую возможность в bounding set.
+
+### 9. Устранение неисправностей
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| `Permission denied` при чтении файла | В `CapEff` нет `CAP_DAC_OVERRIDE` | Проверьте bounding set и permitted set процесса |
+| `Operation not permitted` при `setcap` | Недостаточно прав (не root) | Запустите через `sudo` или от имени пользователя с нужной capability |
+| File capabilities сбросились после копирования | Файловая система не поддерживает xattr | Используйте `cp --preserve=xattr` или проверьте `mount` опции |
+| `capsh --print` показывает пустой Effective | Process был запущен с `no_new_privs` или из deprived container | Проверьте `NoNewPrivs` в `/proc/PID/status` |
+| Container не может привязаться к порту < 1024 | Не добавлена `CAP_NET_BIND_SERVICE` | Добавьте `--cap-add NET_BIND_SERVICE` в Docker |
+| `getcap` показывает `=` вместо `ep` | У файла нет установленных file capabilities | Установите через `sudo setcap 'cap_xxx+ep' /path` |
+| Capabilities не наследуются через `execve()` | Набор `Inheritable` пуст, `Ambient` не настроен | Настройте `Ambient` или file capabilities бинарника |
+
+### 10. Профилирование и аудит
+
+Для SRE-сценариев полезно выявлять процессы с избыточными capabilities и строить минимальные профили.
+
+```bash
+# Полный снимок capabilities всех процессов
+for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+    name=$(cat /proc/$pid/comm 2>/dev/null)
+    caps=$(grep -E '^Cap(Prm|Eff|Inh|Bnd|Amb)' /proc/$pid/status 2>/dev/null | tr '\n' ' ')
+    echo "$pid $name $caps"
+done | column -t
+
+# Поиск процессов с CAP_SYS_ADMIN
+ps -e -o pid,comm,capEff | awk '$3 ~ /ffffffff/ {print $0}'
+
+# Аудит файловых возможностей (исключая системные пути)
+getcap -r /usr/local /opt /home 2>/dev/null
+
+# Проверка, какие capabilities требует приложение (strace + capsh)
+strace -e trace=capabilities ./my-app 2>&1 | grep -i cap | head -20
+```
+
+**Автоматизация через auditd:**
+```bash
+# Правило для логирования всех setcap/setuid операций
+auditctl -a always,exit -F arch=b64 -S setcap -k capability_change
+
+# Чтение логов
+ausearch -k capability_change -i
+```
+
 ## Дополнительная информация
+
+### Инструменты и пакеты
+
+| Пакет / Утилита | Назначение | Пример использования |
+| :--- | :--- | :--- |
+| `libcap` / `libcap-ng` | Программное управление capabilities из C/Go/Python | `cap_set_proc()`, `cap_get_proc()` |
+| `capsh` | Оболочка для отладки capabilities | `capsh --print`, `capsh --decode=2` |
+| `getcap` / `setcap` | Просмотр и установка файловых возможностей | `getcap /usr/bin/ping` |
+| `getpcaps` | Просмотр capabilities процесса по PID | `getpcaps <PID>` |
+| `procps` / `ps` | Стандартный вывод процессов с масками caps | `ps -e -o pid,comm,capEff` |
+| `auditd` / `auditctl` | Аудит изменения capabilities и syscalls | `auditctl -a always,exit -S setcap` |
+| `strace` | Трассировка syscalls и capabilities | `strace -e trace=capabilities ./app` |
+| `libseccomp` | Взаимодействие с seccomp (комплементарно) | `seccomp_rule_add()` |
+| `bpftool` | Инспекция eBPF-программ (контекст LSM/BPF) | `bpftool prog list` |
+
+### Матрица совместимости: Capabilities и Workload
+
+| Workload | Минимальные capabilities | Типичные исключения | Рекомендация |
+| :--- | :--- | :--- | :--- |
+| **Go-сервис** | `NET_BIND_SERVICE` (если порт < 1024) | Нет | Установить file capabilities или Ambient |
+| **nginx / Apache** | `NET_BIND_SERVICE` | Нет | `setcap cap_net_bind_service=+ep /usr/sbin/nginx` |
+| **PostgreSQL / MySQL** | `IPC_LOCK` (для mlock), `SYS_RESOURCE` (для ulimit) | Нет | Использовать `CapabilityBoundingSet=` в systemd |
+| **Node.js / Python** | Нет (по умолчанию) | `SYS_ADMIN`, `NET_ADMIN` | Избегать `--privileged` в Docker |
+| **SSH-сервер** | `SYS_ADMIN` (для `utmp`), `SETUID`/`SETGID` | Ограничить bounding set | `CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID` |
+| **Java-приложение** | Нет (обычно) | `SYS_ADMIN` | Проверить `ulimit -a` и `/proc/PID/limits` |
+| **Системный сервис (systemd)** | Зависит от сервиса | `ALL` → явный allow-list | `CapabilityBoundingSet=` + `AmbientCapabilities=` |
+| **Rootless-контейнер** | `NET_BIND_SERVICE` (опционально) | `SYS_ADMIN` | File capabilities внутри контейнера |
+| **CI/CD раннер** | Нет (по умолчанию) | `ALL` | `no_new_privs`, `cap_drop=ALL` |
+
+### Уровни совместимости
+
+| Обозначение | Описание |
+| :--- | :--- |
+| **[OK]** | Стандартный профиль работает без изменений. |
+| **[!]** | Требуется добавление 1–5 capabilities. |
+| **[BLOCKED]** | Требуется критическая capability (`SYS_ADMIN`, `SYS_MODULE`), которая не может быть безопасно предоставлена. |
+
+### Ограничения и архитектурные нюансы
+
+1.  **Не универсальный контроль доступа:** Capabilities решают задачу «что процесс может делать», но не «куда процесс может лезть». Для контроля над путями файлов, сетевыми портами или контекстом процесса используются LSM (AppArmor, SELinux) или Landlock.
+2.  **CAP_SYS_ADMIN — король возможностей:** Право `CAP_SYS_ADMIN` исторически накапливало всё новые под-полномочия (mount, namespaces, perf, bpf). В 2024–2026 годах ядро активно выносит отдельные capabilities (`CAP_BPF`, `CAP_PERFMON`, `CAP_CHECKPOINT_RESTORE`), но `CAP_SYS_ADMIN` остаётся слишком широким для production.
+3.  **User Namespace и привилегии:** Внутри user namespace процесс может иметь «полный» набор capabilities, но эти права действуют только в пределах namespace. Для хоста такой процесс непривилегирован. Это обеспечивает безопасность Rootless Docker/Podman.
+4.  **no_new_privs и Ambient:** NNP блокирует SUID и файловые возможности, но НЕ трогает Ambient-набор. Это делает Ambient единственным способом передать capability через `execve()` в hardened-среде.
+5.  **Взаимодействие с Seccomp:** Даже если у процесса есть `CAP_NET_ADMIN`, seccomp-профиль может запретить соответствующий syscall. Механизмы работают независимо: сначала Seccomp проверяет, разрешён ли вызов, затем capabilities проверяют, имеет ли процесс право на операцию.
+6.  **Производительность:** Проверка capabilities в hot-path ядра имеет минимальные накладные расходы (проверка битовых масок), но слишком частые вызовы `capget()`/`capset()` из userspace могут влиять на производительность в высоконагруженных системах.
+7.  **VFS capability version:** Контейнеры на новом хосте с V3 атрибутами могут не передавать file capabilities корректно на старые ядра (V2). При миграции образов проверяйте версию VFS.
 
 ### Взаимодействие с User Namespaces
 
@@ -229,7 +466,6 @@ securityContext:
 
 ### См. также
 - [Обзор механизмов безопасности Linux](../Linux_Security_Mechanisms_Overview.md)
-- [Специальные права доступа: SUID, SGID](../Concepts/File_Permissions/special_permissions.md)
 - [Seccomp: фильтрация системных вызовов](./Seccomp.md)
-- [Security Context в Kubernetes](../../../Kubernetes/Security/pod_security_context.md)
-- [Изоляция контейнеров: Namespaces и Cgroups](../../../Docker/Concepts/linux_isolation.md)
+- [Landlock: современная песочница ФС](./Landlock.md)
+- [Безопасность модулей ядра](./kernel_module_security.md) — подпись и контроль загрузки модулей

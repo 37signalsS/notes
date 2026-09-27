@@ -11,14 +11,60 @@
 
 **Журналы событий (Audit Logs)** — первичный, неизменяемый источник доказательств (evidence) для подтверждения фактов аудита и комплаенса.
 
+**Форензик-анализ (Forensic Analysis)** — методологически rigorous процесс сбора, сохранения и анализа аудиторских данных для расследования инцидентов информационной безопасности. В отличие от оперативного мониторинга, форензик требует безупречного сохранения цепочки custody (chain of custody) — от момента фиксации события до представления в суде или перед регулятором.
+
+**Цепочка custody (Chain of Custody)** — документированная последовательность владения и контроля над доказательствами (логами, снапшотами, артефактами), обеспечивающая их допустимость в суде. Каждое изменение состояния доказательства (копирование, передача, анализ) фиксируется в отдельном journal-файле с меткой времени, идентификатором оператора и хэшем исходного объекта.
+
+**Непрерывный комплаенс (Continuous Compliance)** — подход, при котором проверки соответствия интегрированы в CI/CD-пайплайн и выполняются автоматически при каждом изменении инфраструктуры, а не периодически (раз в квартал/год). Позволяет обнаруживать нарушения до попадания их в production.
+
 ## Основные концепции
 
-### Цели аудита и комплаенса
+### Аудит, мониторинг и observability: различия
 
-*   **Безопасность и Forensics:** Выявление аномалий, расследование инцидентов (Root Cause Analysis) и подтверждение эффективности внедренных механизмов контроля.
-*   **Доказательная база:** Подготовка верифицируемых данных для внешних регуляторов (например, для получения аттестатов SOC 2 Type II или прохождения аудита PCI DSS).
-*   **Подотчетность (Accountability):** Реализация принципа неотказуемости (non-repudiation), при котором субъект не может отрицать выполнение конкретного действия в системе.
-*   **Управление изменениями (Change Management):** Обеспечение полной прослеживаемости (traceability) изменений инфраструктуры от Git-коммита до конечного состояния ресурсов в облаке или кластере.
+Три понятия часто путают, но они complement друг друга на разных уровнях:
+
+| Аспект | Аудит | Мониторинг | Observability |
+| :--- | :--- | :--- | :--- |
+| **Цель** | Доказательство фактов, соответствие, расследование | Обнаружение аномалий в реальном времени | Понимание внутреннего состояния системы через метрики/логи/трейсы |
+| **Данные** | Структурированные события с идентификацией субъекта | Метрики (Prometheus), алерты (Alertmanager) | Метрики + логи + трейсы (OpenTelemetry) |
+| **Время хранения** | Долгосрочное (месяцы/годы, по регулятору) | Краткосрочное (часы/дни) | Среднесрочное (недели/месяцы) |
+| **Доступ** | Ограниченный (аудиторы, SRE, ИБ) | Широкий (дежурные, разработчики) | Широкий |
+| **Формат** | JSON-события с схемой, неизменяемые | Временные ряды | Структурированные/полуструктурированные |
+
+**Ключевое отличие:** Аудит фиксирует **кто** сделал **что** и **с каким результатом**. Мониторинг отвечает на вопрос **что сломалось**. Observability позволяет понять **почему** это произошло.
+
+### Внутренний и внешний аудит
+
+*   **Внутренний аудит:** Проводится силами собственного подразделения ИБ или Compliance. Фокус — операционные риски, эффективность внутренних контролей, подготовка к внешнему аудиту. Результаты обычно confidential и используются для улучшения процессов.
+*   **Внешний аудит:** Проводится независимой аудиторской компанией (Big 4, сертифицированные аудиторы). Цель — получение официального аттестата (SOC 2 Type II, PCI DSS ROC, ISO 27001 certificate). Результаты публичны (отчеты SOC 2) или предоставляются регуляторам.
+
+В DevOps-среде внутренний аудит часто automated (через PaC, OPA, CI/CD checks), а внешний — это annual certification, которая leverages automated evidence collection.
+
+### Проектирование политик аудита
+
+Перед внедрением любого инструмента необходимо спроектировать политику аудита — документ, определяющий:
+1.  **Объекты аудита:** Что логируется (системные вызовы, API-запросы, изменения конфигурации).
+2.  **Субъекты:** Кто имеет доступ к логам аудита (принцип least privilege).
+3.  **Сроки хранения:** На основании регуляторных требований и бизнес-потребностей.
+4.  **Уровни детализации:** Какие события логируются на уровне Metadata, какие — на RequestResponse.
+5.  **Политики исключений:** Какие события исключаются из логирования (шумные системные процессы, health checks).
+6.  **Защита логов:** Шифрование в покое, WORM-хранилище, контроль целостности.
+
+### Юридические требования и сроки хранения
+
+Сроки хранения аудиторских журналов определяются регуляторами и являются обязательными:
+
+| Стандарт | Минимальный срок хранения | Особенности |
+| :--- | :--- | :--- |
+| **PCI DSS v4.0.1** | 1 год, из которых 3 месяца доступны немедленно (hot storage) | Требование 10.5.3 — защита от модификации и обеспечение доступности |
+| **GDPR** | Срок, достаточный для демонстрации соответствия (Art. 5 — принцип подотчетности) | Право субъекта на получение копии аудиторского следа обработки его данных |
+| **152-ФЗ** | Не менее 1 года (в зависимости от категории ИСПДн) | Локализация на территории РФ, ФСТЭК-сертифицированные средства |
+| **ISO/IEC 27001:2022** | Определяется политикой организации, рекомендуется 1–3 года | Контроль A.8.15 (Logging) и A.8.16 (Monitoring activities) |
+| **SOC 2** | Определяется периодом тестирования (обычно 1 год) | Логи должны покрывать весь attestation period |
+| **HIPAA** | 6 лет (в США) | Требование к audit controls в Security Rule |
+| **EU CRA** | 1 год после вывода продукта из эксплуатации | Обязательный SBOM и отчеты об уязвимостях |
+
+**Рекомендация:** Для систем, подпадающих под несколько стандартов, применяйте самый строгий срок хранения. Используйте tiered storage: hot (SSD/NVMe) для 3 месяцев, warm (HDD) для 9 месяцев, cold ( tapes / WORM) для остального срока.
 
 ### Ключевые стандарты комплаенса (актуально на 2026 год)
 
@@ -91,14 +137,200 @@
 }
 ```
 
-### Современные методы реализации
+**Пояснение полей:**
+*   `timestamp` и `version` — версионирование схемы событий, необходимое для backward-совместимости анализаторов.
+*   `event_type` — категоризация события (access_control, config_change, data_access, privilege_escalation, network_deny, supply_chain).
+*   `identity` — идентификация субъекта. Поле `auth_method` критично для комплаенса (MFA/WebAuthn). Для машинных идентичностей — `service_account_id` или `workload_id`.
+*   `action` — CRUD-операция или системное событие (login, logout, exec, etc.).
+*   `object` — целевой ресурс с типом и уникальным идентификатором.
+*   `status` — результат операции (success, failure, partial).
+*   `context` — корреляционные идентификаторы (`trace_id` для распределенных трейсов, `request_id` для синхронизации с access-логами), источник, User-Agent.
+*   `integrity` — криптографическое доказательство неизменяемости записи.
 
-*   **Policy as Code (PaC):** Применение инструментов [**OPA Gatekeeper**](../Kubernetes/Security/rbac/limitations_opa.md) или **Kyverno** для превентивной проверки ресурсов на соответствие стандартам (например, CIS Benchmarks) перед их созданием в кластере.
-*   **KSPM / CSPM:** Использование платформ управления безопасностью (Kubernetes/Cloud Security Posture Management) для непрерывного поиска несоответствий в конфигурациях облака и кластеров.
-*   **Аудит системных вызовов:** Внедрение [**`auditd`**](../Linux/SystemAdministration/Logging/auditd.md) для мониторинга низкоуровневых действий на хостах и доступа к критическим файлам конфигурации.
-*   **Runtime Security (eBPF):** Использование **Falco** или **Tetragon** для обнаружения аномального поведения (например, запуск shell в контейнере) в реальном времени без значительных накладных расходов.
-*   **GitOps как аудит:** Использование Git-истории как юридически значимого журнала изменений. Подробнее в разделе [аудит и трассируемость в GitOps](../GitOps/Concepts/audit_logs.md).
-*   **Анализ SBOM и дрейфа:** Регулярная проверка [SBOM и зависимостей](Supply_Chain_Security/dependency_and_sbom_analysis.md) на предмет появления новых уязвимостей и расхождения состава запущенных контейнеров с эталонными сборками.
+### Реализация аудита на уровне хоста (Linux)
+
+Для мониторинга низкоуровневых действий на хостах (системные вызовы, доступ к файлам конфигурации, загрузка модулей ядра) используется подсистема `auditd`. Это единственный механизм, который нельзя обойти из пользовательского пространства без компрометации ядра.
+
+**Краткий план внедрения:**
+
+1.  **Установка и проверка статуса:**
+    ```bash
+    # Debian/Ubuntu
+    sudo apt update && sudo apt install auditd audispd-plugins -y
+    sudo systemctl enable --now auditd
+
+    # RHEL/CentOS/Rocky
+    sudo dnf install audit audit-libs -y
+    sudo systemctl enable --now auditd
+
+    # Проверка
+    sudo systemctl status auditd
+    sudo auditctl -s
+    # → Audit enabled
+    ```
+
+2.  **Базовые правила (пример):**
+    ```bash
+    # Мониторинг критических файлов
+    sudo auditctl -w /etc/shadow -p wa -k shadow_access
+    sudo auditctl -w /etc/passwd -p wa -k user_db_modification
+    sudo auditctl -w /etc/sudoers -p wa -k priv_escalation_config
+    sudo auditctl -w /etc/ssh/sshd_config -p wa -k sshd_config
+
+    # Логирование выполнения команд (execve)
+    sudo auditctl -a exit,always -F arch=b64 -F auid>=1000 -F auid!=4294967295 -S execve -k user_commands
+    ```
+
+3.  **Персистентность правил:**
+    Разместите правила в `/etc/audit/rules.d/` (например, `10-base-config.rules`, `20-netsys.rules`, `99-finalize.rules` с `-e 2` для режима неизменяемости). Загрузите: `sudo augenrules --load`.
+
+4.  **Поиск и анализ:**
+    ```bash
+    # Поиск по ключу
+    sudo ausearch -k shadow_access -i
+
+    # Сводный отчет за сегодня
+    sudo aureport -au --failed
+
+    # Экспорт в JSON (Audit 3.x+)
+    sudo ausearch -k shadow_access --format=json | jq .
+    ```
+
+5.  **Валидация:**
+    ```bash
+    sudo auditctl -l | grep -E "shadow|passwd|sudo"
+    # → должны отображаться все правила
+
+    sudo auditctl -s | grep enabled
+    # → enabled 2 (immutable)
+    ```
+
+Подробное руководство по `auditd`: **[auditd: Аудит событий безопасности](../Linux/SystemAdministration/Logging/auditd.md)**.
+
+### Реализация аудита в Kubernetes
+
+Аудит Kubernetes фиксирует все запросы к API-серверу, включая действия операторов, GitOps-контроллеров и системных сервисов. Является обязательным контролем для PCI DSS, ISO 27001 и SOC 2.
+
+**Краткий план внедрения:**
+
+1.  **Создание политики аудита** (`/etc/kubernetes/audit-policy.yaml`):
+    ```yaml
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    omitStages:
+      - "RequestReceived"
+    rules:
+      - level: None
+        users: ["system:kube-proxy", "system:kube-scheduler", "system:apiserver"]
+        verbs: ["get", "list", "watch"]
+
+      - level: Metadata
+        resources:
+          - group: ""
+            resources: ["secrets", "configmaps", "serviceaccounts"]
+
+      - level: RequestResponse
+        verbs: ["create", "update", "patch", "delete"]
+        resources:
+          - group: ""
+            resources: ["pods", "services", "endpoints"]
+          - group: "rbac.authorization.k8s.io"
+            resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+
+      - level: Metadata
+    ```
+
+2.  **Настройка kube-apiserver** (для kubeadm — в `/etc/kubernetes/manifests/kube-apiserver.yaml`):
+    ```yaml
+    spec:
+      containers:
+      - command:
+        - kube-apiserver
+        - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+        - --audit-log-path=/var/log/kubernetes/audit.log
+        - --audit-log-format=json
+        - --audit-log-maxsize=100
+        - --audit-log-maxbackup=10
+        - --audit-log-maxage=30
+    ```
+
+3.  **Валидация:**
+    ```bash
+    tail -n 1 /var/log/kubernetes/audit.log | jq '{verb, user: .user.username, obj: .objectRef.name, stage: .stage}'
+    # → ожидаемый результат: объект с verb, user, obj и stage
+
+    ps aux | grep kube-apiserver | grep audit
+    # → должны отображаться все --audit-* флаги
+    ```
+
+4.  **Экспорт во внешнее хранилище:**
+    Для долгосрочного хранения (>30 дней) настройте экспорт через Fluent Bit или Vector в локальный SIEM. Пример конфигурации Fluent Bit приведен в **[Аудит в Kubernetes](../Kubernetes/Security/audit.md)**.
+
+Подробное руководство: **[Аудит в Kubernetes](../Kubernetes/Security/audit.md)**.
+
+### Аудит баз данных
+
+Все основные СУБД предоставляют встроенные механизмы аудита. Для MariaDB используется плагин `server_audit`:
+
+```ini
+# my.cnf
+[mariadb]
+plugin_load_add = server_audit
+server_audit = FORCE_PLUS_PERMANENT
+server_audit_logging = ON
+server_audit_events = CONNECT,QUERY,TABLE,QUERY_DDL
+
+# Для снижения шума — исключение технических пользователей
+server_audit_excl_users = 'zabbix,repl_user,maxscale'
+
+# Отправка в SIEM (рекомендуется для неизменяемости)
+server_audit_output_type = SYSLOG
+server_audit_syslog_facility = LOG_LOCAL6
+```
+
+**Верификация:**
+```sql
+SELECT PLUGIN_NAME, PLUGIN_STATUS
+FROM information_schema.PLUGINS
+WHERE PLUGIN_NAME = 'server_audit';
+# → server_audit | ACTIVE
+```
+
+Для PostgreSQL используется расширение `pgAudit`, для MySQL — `audit_log` plugin или `MariaDB server_audit`. Все они поддерживают JSON-формат и отправку в syslog.
+
+Подробное руководство по MariaDB: **[Аудит в MariaDB: server_audit plugin](../../Databases/MariaDB/security/audit.md)**.
+
+### Аудит CI/CD пайплайнов
+
+CI/CD-системы (GitLab CI, Jenkins, GitHub Actions) являются критическими точками комплаенса, так как через них проходят все изменения в инфраструктуру и приложения.
+
+**GitLab CI пример:**
+```yaml
+# .gitlab-ci.yml (фрагмент)
+stages:
+  - .post
+
+audit_log:
+  stage: .post
+  image: alpine:latest
+  script:
+    - |
+      echo "=== CI/CD Audit Log ===" >> audit.log
+      echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> audit.log
+      echo "Pipeline ID: $CI_PIPELINE_ID" >> audit.log
+      echo "Project: $CI_PROJECT_PATH" >> audit.log
+      echo "Branch: $CI_COMMIT_BRANCH" >> audit.log
+      echo "Author: $GITLAB_USER_NAME" >> audit.log
+      echo "Commit SHA: $CI_COMMIT_SHA" >> audit.log
+  artifacts:
+    paths:
+      - audit.log
+    expire_in: 1 year
+```
+
+**Jenkins пример:** Включите Audit Trail Plugin для логирования всех действий в UI и API. Храните логи в WORM-хранилище через Logstash/ELK.
+
+**GitHub Actions:** Включите audit log в организации (Settings → Audit log). Для self-hosted runners добавьте шаг с отправкой событий в SIEM через REST API.
 
 ### Стратегия внедрения харденинга
 
@@ -109,24 +341,223 @@
 4.  **Архитектурный комитет:** Внедрение правила «Drop All» по умолчанию. Любая дополнительная привилегия должна быть обоснована разработчиками перед экспертами ИБ и эксплуатации.
 5.  **Блокировка:** Переход от мониторинга к активной блокировке запрещенных действий.
 
+### Современные методы реализации
+
+*   **Policy as Code (PaC):** Применение инструментов [**OPA Gatekeeper**](../Kubernetes/Security/rbac/limitations_opa.md) или **Kyverno** для превентивной проверки ресурсов на соответствие стандартам (например, CIS Benchmarks) перед их созданием в кластере.
+*   **KSPM / CSPM:** Использование платформ управления безопасностью (Kubernetes/Cloud Security Posture Management) для непрерывного поиска несоответствий в конфигурациях облака и кластеров.
+*   **Аудит системных вызовов:** Внедрение [**`auditd`**](../Linux/SystemAdministration/Logging/auditd.md) для мониторинга низкоуровневых действий на хостах и доступа к критическим файлам конфигурации.
+*   **Runtime Security (eBPF):** Использование **Falco** или **Tetragon** для обнаружения аномального поведения (например, запуск shell в контейнере) в реальном времени без значительных накладных расходов.
+*   **GitOps как аудит:** Использование Git-истории как юридически значимого журнала изменений. Подробнее в разделе [аудит и трассируемость в GitOps](../GitOps/Concepts/audit_logs.md).
+*   **Анализ SBOM и дрейфа:** Регулярная проверка [SBOM и зависимостей](Security/Supply_Chain_Security/dependency_and_sbom_analysis.md) на предмет появления новых уязвимостей и расхождения состава запущенных контейнеров с эталонными сборками.
+
+### Валидация и проверка корректности аудита
+
+Любая система аудита требует регулярной проверки работоспособности:
+
+**Для Linux auditd:**
+```bash
+# Проверка: включен ли auditd
+sudo systemctl is-active auditd
+# → active
+
+# Проверка: настроены ли базовые правила
+sudo auditctl -l | grep -E "shadow|passwd|sudo"
+# → -w /etc/shadow -p wa -k shadow_access
+
+# Проверка: включен ли режим неизменяемости
+sudo auditctl -s | grep enabled
+# → enabled 2 (immutable)
+
+# Тестовое событие
+sudo touch /tmp/audit_test && sudo auditctl -w /tmp/audit_test -p wa -k test_rule
+echo "test" | sudo tee /tmp/audit_test
+sudo ausearch -k test_rule -i
+# → type=SYSCALL msg=audit(...): key="test_rule"
+sudo rm /tmp/audit_test
+sudo auditctl -w /tmp/audit_test -p wa -k test_rule
+```
+
+**Для Kubernetes Audit:**
+```bash
+# Проверка флагов API-сервера
+ps aux | grep kube-apiserver | grep audit
+# → должны отображаться все --audit-* флаги
+
+# Тестовый запрос и поиск по Audit ID
+kubectl get pods -n default --dry-run=server -o yaml | grep -i audit-id
+# Или через curl:
+curl -k -H "Authorization: Bearer $TOKEN" https://k8s-api:6443/api/v1/namespaces/default/pods -v 2>&1 | grep -i "audit-id"
+```
+
+**Для SIEM:**
+```bash
+# Проверка доставки логов в Elasticsearch
+curl -s -k https://elasticsearch:9200/_cat/indices/audit-* | tail -n 5
+# → green open audit-2026.09.18 ...
+
+# Проверка, что логи не теряются
+tail -f /var/log/audit/audit.log | pv -lri30 > /dev/null
+# → 1500 lines/s (должно совпадать с expected throughput)
+
+# Мониторинг потерь в реальном времени
+watch -n1 'sudo auditctl -s | grep lost'
+# → lost 0
+```
+
+### Анализ и расследование инцидентов
+
+Аудит — ключевой инструмент форензики. Стандартный workflow расследования:
+
+1.  **Определение временного окна:** Установите время начала инцидента (по алерту мониторинга или времени деградации сервиса).
+2.  **Сбор логов:** Соберите audit logs с всех хостов и кластеров, затронутых инцидентом. Включая:
+    *   `auditd` логи с критичных хостов
+    *   Kubernetes audit log
+    *   CI/CD audit log
+    *   SIEM алерты за период
+3.  **Корреляция:** Используйте `trace_id` / `request_id` для связывания событий между сервисами. Например:
+    ```bash
+    # Поиск всех событий по trace_id
+    jq 'select(.trace_id == "a1b2c3d4e5f6")' /var/log/kubernetes/audit.log
+    ```
+4.  **Реконструкция цепочки:** Восстановите последовательность действий: какой пользователь/сервис вызвал операцию, какие права использовались, какой был результат.
+5.  **Фиксация доказательств:** Сохраните все найденные события в изолированное хранилище с хэшированием (SHA-256) для последующей проверки целостности.
+6.  **Восстановление:** На основании findings внесите изменения в политики (например, добавьте правило auditd для нового критичного пути или обновите RBAC).
+
+### Troubleshooting
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| Записи в audit.log не появляются | Правило не сработало или аудит отключен | Проверить `sudo auditctl -s`, убедиться что аудит включен (`enabled 1` или `2`); проверить синтаксис правила через `sudo auditctl -l` |
+| Записи пишутся с задержкой или теряются при пиках | Переполнение буфера backlog | Увеличить `-b 16384` в базовых правилах; проверить `sudo auditctl -s | grep lost` |
+| `audit: backlog limit exceeded` | Буфер переполнен | Увеличить `-b` в `/etc/audit/rules.d/10-base-config.rules`, оптимизировать правила, убрать шумные системные вызовы |
+| `auditd: no space left on device` | Диск заполнен | Настроить ротацию (`max_log_file`, `num_logs` в `auditd.conf`); добавить экспорт во внешнее хранилище |
+| Записи о чтении секретов отсутствуют | Правило аудита покрывает только Metadata, а не Request/Response | Пересмотреть порядок правил политики; для Kubernetes audit проверить, что правило для secrets стоит выше правила по умолчанию |
+| Webhook backend не принимает события | TLS-ошибка, недоступность endpoint | Проверить доступность endpoint (`curl -k ...`), логи вебхука, валидность сертификатов в конфиге |
+| Объем логов превышает возможности диска | Слишком высокий уровень детализации | Увеличить `--audit-log-maxage`/`--audit-log-maxsize`, перейти на Metadata для read-only операций, добавить экспорт во внешнее хранилище |
+| Часовые метки не сходятся между источниками | Clock skew на узлах | Проверить синхронизацию NTP/chrony на всех control-plane и worker-нодах |
+| Записи дублируются | Несколько инстансов kube-apiserver пишут в общий том | Убедиться, что каждый инстанс API-сервера пишет в уникальный путь или использует совместно доступный внешний бэкенд |
+| `audit log not writing` (Nomad) | Неверный путь или права | Проверить права на директорию `/var/log/nomad/`; убедиться что `audit` блок включен в server.hcl |
+
+### Лучшие практики и очистка
+
+1.  **Принцип необходимости:** Не пытайтесь логировать абсолютно всё. Это создает шум и нагрузку. Сосредоточьтесь на критических активах.
+2.  **Использование ключей:** Всегда добавляйте `-k` в правила auditd. Это база для любого расследования.
+3.  **Отслеживание `auid`:** При анализе всегда ориентируйтесь на `auid`, так как `uid` может быть подменен через `sudo`.
+4.  **Правила для двух архитектур:** На 64-битных системах всегда добавляйте правила для `arch=b64` и `arch=b32`.
+5.  **Неизменяемость (Immutability):** Используйте `-e 2` в production-средах, чтобы предотвратить отключение аудита злоумышленником.
+6.  **Централизация:** Пересылайте логи в локальный SIEM. Локальные логи на скомпрометированном хосте могут быть удалены.
+7.  **Регулярный аудит:** Сбор данных бесполезен без их периодического анализа через `aureport` или SIEM-дашборды.
+8.  **Тестирование правил:** Всегда тестируйте правила на staging-среде перед production.
+9.  **Ротация логов:** Настройте `max_log_file` и `num_logs` для предотвращения переполнения диска.
+10. **Мониторинг потерь:** Регулярно проверяйте поле `lost` в `auditctl -s`.
+11. **Очистка тестовых правил:** После тестирования правил auditd удаляйте тестовые правила через `auditctl -d` или удаление файла из `/etc/audit/rules.d/` и `augenrules --load`.
+12. **Ретроспективная очистка:** Периодически удаляйте устаревшие политики из Kubernetes Audit Policy, которые логируют resources, уже удаленные из кластера.
+
+### Граничные случаи и ограничения
+
+*   **Прямой доступ к etcd:** Аудит Kubernetes фиксирует только запросы к API-серверу. Прямые обращения к etcd (например, через `etcdctl`) не проходят через аудит. Для их отслеживания используется RBAC на уровне etcd и сетевая изоляция.
+*   **Производительность:** Уровень `RequestResponse` в Kubernetes для часто изменяемых ресурсов (Endpoints, Events) создает значительную нагрузку на память API-сервера. Используйте `Metadata` для read-only операций.
+*   **Потеря событий при переполнении буфера:** auditd и Kubernetes audit backend буферизуют события. При критической нагрузке или недоступности диска события могут теряться. Настройте алертинг на поле `lost` в `auditctl -s` и метрики `apiserver_audit_truncated_total`.
+*   **Шумные системные процессы:** Системные аккаунты (`system:`, `kube-proxy`, `kube-scheduler`) генерируют тысячи событий. Используйте правила `level: None` для исключения шума.
+*   **Конфиденциальность в логах:** Уровень `RequestResponse` для `Secrets` и `ConfigMaps` приведет к утечке конфиденциальных данных в логи. Используйте `Metadata` для секретов.
+*   **Clock Skew:** При корреляции событий между API-сервером, узлами и внешними системами необходимо синхронизировать часы по NTP/PTP. Расхождения больше секунды делают хронологию ненадежной.
+*   **Retention в кластере:** Логи audit log backend ротируются и удаляются с узлов. Для долгосрочного хранения (>30 дней) требуется экспорт во внешнее хранилище.
+
 ## Дополнительная информация
 
 ### Инструменты аудита
 
-*   **[Ansible: OS Hardening](./../Ansible/ansible-os-hardening.md):** Автоматизация приведения систем к стандартам CIS/DevSec через Ansible и OpenSCAP.
+*   **[Ansible: OS Hardening](../Ansible/ansible-os-hardening.md):** Автоматизация приведения систем к стандартам CIS/DevSec через Ansible и OpenSCAP.
 *   **[Lynis](Tools/lynis.md):** Утилита для глубокого аудита безопасности и hardening'а Unix-систем на соответствие CIS.
 *   **[Wazuh](Tools/wazuh.md):** Open-source платформа XDR/SIEM, предоставляющая готовые модули комплаенса для PCI DSS, GDPR и HIPAA.
-*   **Checkov / Terrascan:** Статический анализ IaC-кода (Terraform, CloudFormation) на предмет нарушений политик безопасности.
-*   **CIS Benchmarks:** Отраслевые рекомендации по безопасной настройке ОС, облаков и Kubernetes, используемые как эталон для аудиторских проверок.
+*   **[auditd: Аудит событий безопасности](../Linux/SystemAdministration/Logging/auditd.md):** Подсистема ядра Linux для глубокого мониторинга системных вызовов и доступа к файлам.
+*   **[Аудит в Kubernetes](../Kubernetes/Security/audit.md):** Механизм аудита API-сервера, политики, бэкенды и анализ логов.
+*   **[Аудит в MariaDB: server_audit plugin](../../Databases/MariaDB/security/audit.md):** Аудит SQL-операций для комплаенса с PCI DSS и GDPR.
+*   **[GitOps: Журналы аудита](../GitOps/Concepts/audit_logs.md):** Долгосрочное хранение и корреляция audit log с Git-историей.
+*   **Checkov / Terrascan:** Статический анализ IaC-кода (Terraform) на предмет нарушений политик безопасности.
+*   **CIS Benchmarks:** Отраслевые рекомендации по безопасной настройке ОС, кластеров и приложений, используемые как эталон для аудиторских проверок.
 
-### Политики и управление данными
+### SIEM и централизация логов
 
-*   **Централизация и SIEM:** Аудиторские данные должны передаваться в изолированные хранилища (ELK Stack, Splunk, VictoriaMetrics Logs) с жестко ограниченным доступом по принципу Least Privilege.
+Аудиторские данные должны передаваться в изолированные хранилища с жестко ограниченным доступом:
+
+*   **ELK Stack (Elasticsearch, Logstash, Kibana):** Open-source решение для централизации. Логи auditd и Kubernetes audit парсятся через Filebeat/Vector и индексируются в Elasticsearch. Настройте ILM (Index Lifecycle Management) для автоматической ротации и удаления старых индексов согласно политике хранения.
+*   **VictoriaMetrics Logs:** Высокопроизводительное TSDB для логов, интегрируемое с Prometheus и Grafana. Подходит для сред, где уже используется стек Prometheus.
+*   **Wazuh:** Предоставляет готовые модули комплаенса для PCI DSS, GDPR, HIPAA. Может заменить или дополнять ELK в небольших инфраструктурах.
+*   **Splunk:** Коммерческое решение с мощными возможностями корреляции и машинного обучения. Используется в крупных корпорациях и финансовых организациях.
+
+**Интеграция auditd с ELK:**
+```yaml
+# /etc/filebeat/filebeat.yml (фрагмент)
+- type: log
+  enabled: true
+  paths:
+    - /var/log/audit/audit.log
+  json.keys_under_root: true
+  json.add_error_key: true
+  tags: ["audit", "linux"]
+```
+
+**Интеграция Kubernetes audit с Loki через Fluent Bit:**
+```ini
+# /etc/fluent-bit/parsers.conf
+[PARSER]
+    Name   k8s-audit
+    Format json
+    Time_Key stageTimestamp
+    Time_Format %Y-%m-%dT%H:%M:%S%.NZ
+
+# /etc/fluent-bit/fluent-bit.conf (фрагмент)
+[INPUT]
+    Name   tail
+    Path   /var/log/kubernetes/audit.log
+    Parser k8s-audit
+    Tag    k8s.audit
+    Read_From_Head true
+
+[OUTPUT]
+    Name   loki
+    Match  k8s.audit
+    Host   loki.internal.example.com
+    Port   3100
+    Labels job=k8s-audit,cluster=prod-eu-central
+```
+
+### Политики хранения и управление данными
+
+*   **Централизация:** Аудиторские данные должны передаваться в изолированные хранилища (ELK Stack, Splunk, VictoriaMetrics Logs) с жестко ограниченным доступом по принципу Least Privilege.
 *   **Политики хранения (Retention):** Сроки хранения определяются регуляторами. Например, PCI DSS требует хранить логи не менее 1 года, из которых 3 месяца должны быть доступны немедленно.
 *   **Непрерывный комплаенс (Continuous Compliance):** Переход от периодических (раз в год) проверок к автоматизированному мониторингу соответствия в режиме 24/7 с автоматическим алертингом при выявлении нарушений.
+*   **Шифрование в покое:** На уровне ОС применяйте шифрование диска (dm-crypt/LUKS) к разделу, где хранятся аудит-логи. На уровне кластера — encrypt-at-rest для etcd и внешнего хранилища.
+*   **RBAC на доступ к логам:** Доступ к файлам `/var/log/audit/audit.log`, `/var/log/kubernetes/audit.log` и конфигурации audit policy должен быть ограничен группе `audit-readers` (SSoT-роль для SRE). Доступ по принципу least privilege: только чтение, без права записи или удаления.
+*   **Защита от модификации:**
+    ```bash
+    # Установка атрибута immutable на audit.log (дополнительная защита)
+    sudo chattr +i /var/log/audit/audit.log
+
+    # Настройка прав доступа
+    sudo chown root:root /var/log/audit/audit.log
+    sudo chmod 640 /var/log/audit/audit.log
+    sudo chgrp audit /var/log/audit/
+    sudo chmod 750 /var/log/audit/
+    ```
+*   **Проверка целостности логов:**
+    ```bash
+    # Хэширование логов для проверки целостности
+    sudo sha256sum /var/log/audit/audit.log > /var/log/audit/audit.log.sha256
+
+    # Проверка
+    sudo sha256sum -c /var/log/audit/audit.log.sha256
+    # → /var/log/audit/audit.log: OK
+    ```
 
 ---
+
 **См. также:**
 *   [**`auditd`: Аудит событий безопасности**](../Linux/SystemAdministration/Logging/auditd.md)
-*   [**Безопасность цепочки поставок: SBOM**](Supply_Chain_Security/dependency_and_sbom_analysis.md)
+*   [**Аудит в Kubernetes**](../Kubernetes/Security/audit.md)
+*   [**Аудит в MariaDB: server_audit plugin**](../../Databases/MariaDB/security/audit.md)
+*   [**Безопасность цепочки поставок: SBOM**](Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)
 *   [**GitOps: Журналы аудита**](../GitOps/Concepts/audit_logs.md)
+*   [**Wazuh: Платформа XDR и SIEM**](Tools/wazuh.md)
+*   [**Lynis: Аудит безопасности и харденинг Linux**](Tools/lynis.md)

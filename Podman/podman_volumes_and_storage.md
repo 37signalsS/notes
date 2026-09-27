@@ -76,7 +76,28 @@ podman info --format '{{.Host.DatabaseBackend}}'
 | **Rootless** | `~/.local/share/containers/storage` | `~/.local/share/containers/storage/volumes/<имя>/_data` | `/run/user/$(id -u)/containers` |
 | **Rootful** | `/var/lib/containers/storage` | `/var/lib/containers/storage/volumes/<имя>/_data` | `/var/run/containers/storage` |
 
-Путь к каталогу томов можно переопределить флагом `podman --volumepath <path>` либо параметром `volumes` в `containers.conf` (`[engine]`).
+Путь к каталогу томов можно переопределить:
+- Глобально — параметром `volumes` в `containers.conf` (секция `[engine]`), например `volumes = ["/mnt/diskr/containers/volumes"]`.
+- Устаревший флаг `podman --volumepath <path>` deprecated; используйте конфигурационный файл.
+
+```toml
+[engine]
+volumes = ["/mnt/diskr/containers/volumes"]
+```
+
+### Производительность драйверов и Copy-on-Write
+
+| Драйвер | Особенности | Когда использовать |
+| :--- | :--- | :--- |
+| **overlay** (нативный) | Поддержка слоев, минимальный overhead. Требует ядро 5.11+ для rootless. | Стандарт для большинства workloads. |
+| **overlay** через `fuse-overlayfs` | Работает в userspace; поддерживается на любом ядре, в т.ч. на NFS. Накладные расходы на FUSE (~5-15%). | Rootless на старых ядрах, NFS. |
+| **vfs** | Без слоев: каждый слой — полная копия. Медленный, много места. | Fallback при отсутствии overlay; отладка. |
+| **btrfs / zfs** | Снапшоты на уровне ФС. | Rootful, бэкапы через snapshot. |
+
+**Copy-on-Write overhead:**
+- Маленькие случайные записи в CoW-слой (том) медленнее, чем в bind mount, из-за копирования блоков.
+- Для I/O-интенсивных баз данных используйте **Named Volume** (обходит CoW для данных) или **bind mount на отдельный диск/раздел**.
+- При большой фрагментации overlay (`find /var/lib/containers/storage -type f | wc -l` > 100k) выполняйте `podman system prune -a` или переключитесь на `btrfs`/`zfs`.
 
 ### Драйверы файловых систем
 
@@ -411,6 +432,232 @@ podman system df --verbose
 
 **Предупреждение:** `podman system reset` удаляет **все** данные: образы, контейнеры, поды, сети, тома и хранилище. Не используется для миграции бэкенда БД — только как крайнее средство.
 
+### 12. Диагностика состояния томов и хранилища
+
+```bash
+# Размер томов, слоев и кэша (с детализацией по volumes)
+podman system df -v
+
+# JSON-информация о томе: путь, драйвер, опции, квоты
+podman volume inspect pgdata
+# → [
+#   {
+#     "Name": "pgdata",
+#     "Driver": "local",
+#     "Mountpoint": "/var/lib/containers/storage/volumes/pgdata/_data",
+#     "Options": {
+#       "o": "size=10G,uid=1000"
+#     },
+#     "Labels": {
+#       "app": "web"
+#     }
+#   }
+# ]
+
+# События, связанные с томами (создание, удаление, монтирование)
+podman events --filter event=volume --format '{{.Time}} {{.Action}} {{.Actor}}'
+
+# Проверка точек монтирования контейнера
+podman inspect --format '{{json .Mounts}}' my-postgres | jq .
+
+# Сколько inode используется в graphroot (предотвращение исчерпания inodes)
+df -i /var/lib/containers/storage
+```
+
+### 13. Миграция тома между хостами
+
+```bash
+# На хосте-источнике: экспорт тома
+podman volume export pgdata --output /tmp/pgdata.tar
+
+# Перенос на целевой хост (scp/rsync)
+scp /tmp/pgdata.tar user@target:/tmp/
+
+# На хосте-приемнике: импорт
+podman volume create pgdata-restored
+podman volume import pgdata-restored /tmp/pgdata.tar
+
+# Или через tar + pipe (без промежуточного файла)
+podman volume export pgdata | gzip | ssh user@target 'gunzip | podman volume import pgdata-restored -'
+```
+
+**Важно:** для больших баз данных используйте `pg_dump`/`mysqldump` вместо прямого экспорта тома, чтобы избежать неконсистентности.
+
+### 14. Копирование данных в новый том без контейнера
+
+```bash
+# Создать новый пустой том
+podman volume create newdata
+
+# Скопировать данные через временный контейнер (alpine)
+podman run --rm \
+  -v olddata:/source:ro \
+  -v newdata:/target \
+  alpine \
+  cp -a /source/. /target/
+```
+
+### 15. Совместное использование тома между контейнерами (read-only)
+
+```bash
+# Read-only том для статики (nginx + multiple backends)
+podman volume create shared-static
+
+# Заполнение тома данными через временный контейнер
+podman run --rm \
+  -v shared-static:/data \
+  nginx:alpine \
+  sh -c "echo '<h1>Hello</h1>' > /data/index.html"
+
+# Два контейнера используют один том read-only
+podman run -d --name web1 -v shared-static:/usr/share/nginx/html:ro nginx
+podman run -d --name web2 -v shared-static:/usr/share/nginx/html:ro nginx
+```
+
+### 16. Консистентный бэкап базы данных
+
+Для production баз данных используйте комбинацию логического дампа и экспорта тома:
+
+```bash
+# 1. Остановить контейнер (гарантирует консистентность CoW)
+podman stop my-postgres
+
+# 2. Логический бэкап (быстро, можно делать на лету через pg_dump)
+podman run --rm \
+  -v pgdata:/var/lib/postgresql/data:ro \
+  -v /backups:/backup \
+  postgres:16-alpine \
+  pg_dump -U postgres -d mydb -F c -f /backup/mydb.dump
+
+# 3. Экспорт тома для полного восстановления
+podman volume export pgdata --output /backups/pgdata-$(date +%F).tar
+
+# 4. Запуск контейнера обратно
+podman start my-postgres
+```
+
+**Альтернатива без остановки:** используйте `podman container freeze` (замораживает процессы через cgroup) для snapshot-consistency:
+
+```bash
+podman container freeze my-postgres
+podman volume export pgdata --output /backups/pgdata-$(date +%F).tar
+podman container unfreeze my-postgres
+```
+
+### 17. Очистка хранилища и томов
+
+```bash
+# Удаление ВСЕХ неиспользуемых томов (включая именованные) — Podman 6.0+
+podman volume prune --all
+
+# Удаление неиспользуемых томов с фильтром по метке (сохранить backup-тома)
+podman volume prune --filter label!=backup
+
+# Полная очистка: образы, контейнеры, сети, тома, build cache
+podman system prune -a --volumes
+
+# Оценка места без удаления
+podman system df --verbose
+
+# Удаление неиспользуемых слоев overlay после prune (вручную)
+podman system migrate --migrate-db  # оптимизирует SQLite и убирает висячие ссылки
+```
+
+### 18. Работа с опцией `nocopy`
+
+По умолчанию Podman копирует содержимое пути из образа в новый том при первом подключении. Отключите для ускорения создания пустых томов:
+
+```bash
+# Без копирования (быстро)
+podman volume create --opt nocopy=1 empty-vol
+
+# С копированием (поведение по умолчанию)
+podman volume create --opt nocopy=0 data-vol
+```
+
+### 19. XFS квоты: практическая настройка и проверка
+
+Квоты работают только на XFS с опцией `pquota` в fstab или через `xfs_quota`:
+
+```bash
+# 1. Проверка поддержки pquota
+xfs_info /var/lib/containers/storage | grep -E "ftype|reflink"
+# Ожидается: ftype=1, reflink=1 (для overlay2)
+
+# 2. Включение pquota (если не включено)
+mount -o remount,prjquota /var/lib/containers/storage
+
+# 3. Создание тома с квотой
+podman volume create --opt o=size=10G,uid=1000 pgdata
+
+# 4. Проверка использования
+podman volume inspect pgdata --format '{{.Options.o}}'
+# → size=10G,uid=1000
+
+# 5. Мониторинг через xfs_quota (root)
+xfs_quota -x -c 'report -h' /var/lib/containers/storage
+```
+
+### 20. Производительность: выбор типа монтирования
+
+| Сценарий | Рекомендация | Почему |
+| :--- | :--- | :--- |
+| **База данных (PostgreSQL, MySQL)** | Named Volume | Избегает CoW overhead; Podman управляет правами. |
+| **Код приложения (hot-reload)** | Bind Mount | Изменения на хосте сразу видны в контейнере. |
+| **Конфиги и секреты** | Bind Mount + `:Z`/`:ro` | SELinux-метки, read-only. |
+| **Кэш (node_modules, apt)** | tmpfs | Скорость RAM; не нуждается в персистентности. |
+| **Большие статические данные** | Image Volume + `ro=true` | Версионирование через теги образа; read-only. |
+| **Общие данные между контейнерами** | Named Volume | Персистентность; не зависит от жизненного цикла контейнера. |
+
+**Bind propagation:** для динамических точек монтирования (NFS, LVM, `/proc`) используйте `bind-propagation=rshared`:
+
+```bash
+podman run -d \
+  --mount type=bind,src=/data,dst=/app/data,bind-propagation=rshared \
+  nginx
+```
+
+---
+
+## Устранение неполадок
+
+| Ошибка / Симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `Permission denied` при монтировании bind mount | SELinux не relabeled | `ls -Z /host/path` | Добавьте `:Z` (exclusive) или `:z` (shared) к монтированию. |
+| `Permission denied` на файлы в rootless-томе | UID/GID не совпадают | `podman unshare ls -l /path/to/host/dir` | Используйте `:U`, `:idmap` или `--userns=keep-id`. |
+| `no space left on device` на volume | Исчерпание inodes или дискового места | `df -h /var/lib/containers/storage && df -i /var/lib/containers/storage` | Очистите неиспользуемые образы (`podman system prune -a`) или расширьте ФС. |
+| `stale file handle` (NFS) | NFS-сервер перезапущен; кэш монтирования устарел | `mount | grep nfs` | Перемонтируйте том (`podman volume rm + podman volume create`) или перезагрузите NFS-клиент. |
+| `device is busy` при удалении тома | Том смонтирован в работающий контейнер | `podman ps --filter volume=myvol` | Остановите контейнер (`podman stop`) или используйте `podman volume rm --force`. |
+| `overlay mount fails` в rootless | Ядро < 5.11 без `fuse-overlayfs` | `podman info --format '{{.Host.OCIRuntime}}'` | Установите `fuse-overlayfs` или переключитесь на драйвер `vfs`. |
+| `unknown filesystem type 'overlay'` | Ядро без поддержки overlay | `modprobe overlay` | Включите модуль `overlay` или используйте `fuse-overlayfs`. |
+| Контейнер не запускается: `mount propagation` | Некорректный `bind-propagation` для `/proc` или NFS | `podman inspect --format '{{.HostConfig.BindPropagation}}'` | Используйте `rshared` для динамических точек монтирования. |
+| Данные тома исчезают после перезагрузки | Том смонтирован как tmpfs или используется драйвер `vfs` с неправильным `runroot` | `podman volume inspect` (проверьте `Mountpoint`) | Проверьте `storage.conf`: `graphroot` на постоянном диске. |
+| `podman volume prune` не удаляет именованные тома | В Podman 6.0 по умолчанию удаляет только анонимные тома | `podman volume ls` | Добавьте флаг `--all` (`podman volume prune --all`). |
+
+### Диагностические команды
+
+```bash
+# Список всех смонтированных точек Podman
+mount | grep containers
+
+# Проверка SELinux-контекстов томов
+ls -Zd /var/lib/containers/storage/volumes/*/_data
+
+# Проверка делегирования cgroup (rootless)
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.controllers
+
+# Проверка, какие контейнеры используют том
+podman ps --filter volume=pgdata --format '{{.ID}} {{.Names}}'
+
+# Проверка свободного места и inodes
+podman system df -v
+df -h /var/lib/containers/storage
+df -i /var/lib/containers/storage
+
+# Проверка версии Podman и драйвера хранилища
+podman info --format '{{.Host.StorageDriver}} {{.Host.OCIRuntime}}'
+```
+
 ---
 
 ## Дополнительная информация
@@ -422,16 +669,33 @@ podman system df --verbose
 - **Распространение монтирований**: по умолчанию `private`/`rprivate`; для динамических точек монтирования (например, `/proc`, NFS, LVM) настраивайте `bind-propagation=shared|slave` (рекурсивно с префиксом `r`).
 - **SELinux**: без корректных меток (`:z`/`:Z`) bind mount на RHEL/Fedora завершится `Permission Denied`.
 - **Copy-on-Write**: запись в том обходит CoW и быстрее записи в слой контейнера — критично для БД и I/O-интенсивных нагрузок.
+- **Inodes**: исчерпание inodes (`df -i` → 100%) приводит к ошибкам записи даже при наличии свободного места. Решение: `podman system prune -a` или увеличение количества inodes при форматировании ФС.
+- **fuse-overlayfs**: при проблемах с производительностью проверьте версию `fuse-overlayfs` (>= 1.12 для Podman 6.x) и используйте `--log-level=debug` для диагностики монтирования.
+- **`podman volume rm --force`**: принудительно удаляет том, даже если он смонтирован в работающий контейнер. Контейнер продолжает работать, но точка монтирования становится недоступной (stale mount).
+- **Image Volume `rw=true`**: изменения пишутся в верхний слой overlay и исчезают вместе с контейнером. Для сохранения изменений используйте `podman commit` или экспортируйте том.
 
-### Принудительное использование fuse-overlayfs
+### Глобальный путь к томам
 
-Если возникают ошибки с правами доступа или производительностью OverlayFS в rootless-режиме:
+Вместо устаревшего флага `--volumepath` используйте `containers.conf`:
 
-```bash
-# В файле storage.conf
-[storage.options.overlay]
-mount_program = "/usr/bin/fuse-overlayfs"
+```toml
+[engine]
+volumes = ["/mnt/diskr/containers/volumes"]
 ```
+
+Перезапуск Podman не требуется; новые тома создаются в указанном каталоге.
+
+### Экспорт/импорт и совместимость
+
+- `podman volume export` (Podman 4.4+) создает tar-архив с содержимым тома. Формат совместим с `podman volume import` и `docker volume export`/`import` (после конвертации путей).
+- Для миграции с Docker скопируйте содержимое `/var/lib/docker/volumes/<name>/_data` в том же формате.
+- Для больших (>100GB) томов используйте `tar` + `pigz` (parallel gzip) для ускорения.
+
+### Практические советы по безопасности
+
+- Никогда не монтируйте чувствительные каталоги хоста в контейнер без `:Z`/`:z` на системах с SELinux.
+- Для секретов используйте `tmpfs` или `podman secret create`, а не bind mount с файлом на диске.
+- Избегайте `--privileged`; для доступа к устройствам используйте `--device` или `--group-add`.
 
 ### Связанные разделы
 
@@ -443,4 +707,4 @@ mount_program = "/usr/bin/fuse-overlayfs"
 
 - **[Podman: Volume create](https://docs.podman.io/en/latest/markdown/podman-volume-create.1.html)** (англ.) — драйверы, опции, квоты, примеры.
 - **[Podman: Volume commands](https://docs.podman.io/en/latest/markdown/podman-volume.1.html)** (англ.) — все команды подсистемы томов.
-- **[containers.conf(5)](https://github.com/containers/container-libs/blob/main/common/docs/containers.conf.5.md)** (англ.) — параметры `[engine]` (бэкенд БД, volume plugins).
+- **[containers.conf(5)](https://github.com/containers/container-libs/blob/main/common/docs/containers.conf.5.md)** (англ.) — параметры `[engine]` (бэкенд БД, volume plugins, глобальный путь к томам).

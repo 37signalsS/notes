@@ -422,6 +422,209 @@ helm install my-release ./my-chart \
   -f values-prod.yaml -n prod --atomic
 ```
 
+### Восстановление Helm-релизов без GitOps
+
+В средах без GitOps-инструментов (Argo CD, Flux) или при полной потере кластера/реестра восстановление Helm-релиза выполняется вручную. Ключевое отличие от GitOps: источником правды является **локальный чарт + OCI-репозиторий/Helm repo**, а не Git-репозиторий с манифестами. Это расширяет поверхность ошибок, но при наличии чарта, истории ревизий и значений восстановление возможно.
+
+---
+
+#### Предпосылки для восстановления
+
+| Компонент | Где хранится | Что нужно для восстановления |
+|-----------|--------------|-------------------------------|
+| **Шаблоны чарта** | Файловая система / OCI / HTTP repo | Доступ к исходному чарту той же версии |
+| **Значения релиза** | Secret `sh.helm.release.v1.<name>.v<N>` | `helm get values <release> --revision N` |
+| **Манифесты релиза** | Secret ревизии | `helm get manifest <release> --revision N` |
+| **Версия чарта** | OCI tag / `Chart.yaml` | Точная версия для `helm install --version` |
+| **Секреты приложения** | Kubernetes Secrets, Vault, sealed-secrets | Отдельный бэкап; Helm не управляет ими |
+
+> **Важно:** Helm хранит только манифесты и значения релиза в Secret'е. Секреты приложения (`Secret`, `SealedSecret`, Vault) **не** восстанавливаются через Helm. Их бэкап — отдельная задача.
+
+---
+
+#### Сценарий 1: Релиз удалён, но история сохранена
+
+Если релиз был удалён без `--keep-history`, все Secret'ы ревизий удалены. Если же `--keep-history` использовался, восстановление возможно напрямую.
+
+```bash
+# 1. Проверить, присутствует ли релиз
+helm list -A | grep my-release
+# → нет записи
+
+# 2. Проверить, остались ли Secrets ревизий
+kubectl get secret -n prod | grep sh.helm.release.v1.my-release
+# → sh.helm.release.v1.my-release.v3
+
+# 3. Получить последние значения и манифесты
+helm get values my-release -n prod --revision 3 --all > /tmp/values-restore.yaml
+helm get manifest my-release -n prod --revision 3 > /tmp/manifest-restore.yaml
+
+# 4. Установить релиз заново с сохранением истории
+helm upgrade --install my-release ./my-chart \
+  -n prod \
+  -f /tmp/values-restore.yaml \
+  --version 1.2.3 \
+  --history-max 10 \
+  --atomic --timeout 10m
+```
+
+**Когда используется:** Аварийное удаление релиза (`helm uninstall` без `--keep-history`), но ревизии ещё не вышли за `--history-max`.
+
+---
+
+#### Сценарий 2: Релиз и история удалены, есть только чарт
+
+Самый частый сценарий при потере кластера или `--history-max` слишком мал.
+
+```bash
+# 1. Проверить доступность чарта
+helm repo list
+helm search repo my-chart --version 1.2.3
+
+# 2. Найти подходящий набор значений
+# Вариант A: Если values.yaml хранился в Git/CI/CD артефактах
+# Вариант B: Собрать из текущего production-окружения
+helm show values oci://registry.example.com/charts/my-chart --version 1.2.3 \
+  | sed 's/^#.*//' | sed '/^$/d' > /tmp/values.yaml
+
+# 3. Установить релиз
+helm upgrade --install my-release oci://registry.example.com/charts/my-chart \
+  --version 1.2.3 \
+  -f /tmp/values.yaml \
+  -n prod --create-namespace \
+  --atomic --timeout 15m --wait --wait-for-jobs
+```
+
+**Когда используется:** Полная потеря кластера, миграция на новый кластер, восстановление после катастрофы без GitOps.
+
+---
+
+#### Сценарий 3: Потеря реестра OCI, есть локальный чарт
+
+```bash
+# 1. Упаковать локальный чарт
+helm package ./my-chart --version 1.2.3
+# → my-chart-1.2.3.tgz
+
+# 2. Использовать локальный файл вместо OCI
+helm upgrade --install my-release ./my-chart-1.2.3.tgz \
+  -f values-prod.yaml \
+  -n prod --atomic --timeout 15m
+```
+
+---
+
+#### Сценарий 4: Ручное восстановление из произвольных значений и манифестов
+
+Если ни чарта, ни истории нет, но известны итоговые манифесты (например, экспортированы через `helm get manifest` до инцидента), можно использовать `helm install --dry-run` для валидации, а затем применить манифесты напрямую через `kubectl apply`.
+
+```bash
+# ВАЖНО: Это уже не Helm-управляемый релиз, а "сырые" ресурсы.
+# Helm не будет отслеживать их состояние.
+
+# 1. Применить манифесты напрямую
+kubectl apply -f manifest-restore.yaml -n prod
+
+# 2. Создать label для идентификации ресурсов релиза
+kubectl label deployment my-release app.kubernetes.io/managed-by=Helm -n prod
+
+# 3. (Опционально) Зарегистрировать релиз в Helm-истории вручную
+# Helm не поддерживает импорт истории, но можно создать dummy-secret:
+kubectl create secret generic sh.helm.release.v1.my-release.v1 \
+  --from-literal=release="<base64-json>" \
+  -n prod
+```
+
+**Когда используется:** Экстремальный случай, когда восстановить Helm-релиз невозможно, но необходимо быстро поднять приложение.
+
+---
+
+#### Сценарий 5: Восстановление после потери namespace
+
+```bash
+# Namespace удалён вместе со всеми ресурсами и Secret'ами релиза
+
+# 1. Создать namespace
+kubectl create namespace prod
+
+# 2. Восстановить секреты приложения из отдельного бэкапа (не Helm)
+kubectl apply -f app-secrets-backup.yaml -n prod
+
+# 3. Установить релиз
+helm upgrade --install my-release ./my-chart \
+  -f values-prod.yaml \
+  -n prod --atomic --timeout 15m
+```
+
+---
+
+#### Восстановление приложения после полной потери кластера
+
+```bash
+# Предполагается: есть резервная копия values.yaml и доступ к OCI
+
+# Шаг 1: Восстановление нового кластера (зависит от инфраструктуры)
+# Например, через terraform / cloud provider console / kubeadm
+
+# Шаг 2: Настройка kubectl
+aws eks update-kubeconfig --name prod-cluster --region eu-west-1
+
+# Шаг 3: Восстановление namespace
+kubectl create namespace prod
+
+# Шаг 4: Восстановление CRD (если используются)
+helm show crds ./my-chart | kubectl apply -f -
+
+# Шаг 5: Установка релиза
+helm upgrade --install my-release oci://registry.example.com/charts/my-chart \
+  --version 1.2.3 \
+  -f values-prod.yaml \
+  -n prod \
+  --atomic --timeout 15m --wait --wait-for-jobs \
+  --history-max 10
+```
+
+**RTO/RPO при отсутствии GitOps:**
+| Компонент | RPO | RTO | Метод восстановления |
+|-----------|-----|-----|----------------------|
+| Манифесты | 0 | <5 мин | Helm chart в OCI + `helm upgrade --install` |
+| Значения релиза | До коммита | <5 мин | `helm get values` из истории / Git артефакты |
+| Секреты приложения | Зависит от расписания | <30 мин | Vault / sealed-secrets / отдельный бэкап |
+| CRD | 0 | <5 мин | `helm show crds` + `kubectl apply` |
+
+---
+
+#### Практические рекомендации
+
+1. **`--keep-history` при удалении:** Всегда используйте `helm uninstall --keep-history` при возможном восстановлении. Это сохраняет Secret'ы ревизий.
+2. **Бэкап `values.yaml`:** Храните production-значения отдельно от чарта (Git-репозиторий, S3, Vault).
+3. **Ограничение `--history-max`:** Устанавливайте значение 10–20, чтобы балансировать между сохранением истории и нагрузкой на etcd.
+4. **Immutable OCI:** Публикуйте чарты с тегом, соответствующим SemVer, и разворачивайте по Digest (`@sha256:...`), чтобы избежать drift версий.
+5. **Документирование версии чарта:** В production ведите журнал версий чартов (`Chart.yaml: version`), чтобы при восстановлении точно знать, какая версия использовалась.
+6. **Тестирование восстановления:** Раз в квартал выполняйте drill: удаляйте релиз и восстанавливайте его в тестовом namespace. Это проверит доступность чарта и целостность values.
+
+---
+
+#### Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `Error: release: not found` | Релиз удалён, история очищена | Восстановить через `helm upgrade --install` с нужными значениями |
+| `Error: no available release name found` | `--history-max` слишком мал, нужная ревизия удалена | Установить заново или найти ближайшую доступную ревизию |
+| `Error: rendered manifests contain a resource that already exists` | Часть ресурсов осталась в кластере после неудачного удаления | `kubectl delete` оставшихся ресурсов или `helm upgrade --install --force` |
+| `Error: UPGRADE FAILED: cannot re-use a name that is still in use` | Release name занят в другом namespace | `helm list -A`; удалить/переименовать конфликтующий релиз |
+| Потеря секретов приложения | Helm не управляет `Secret` с учётными данными | Восстанавливать из отдельного бэкапа Vault/sealed-secrets |
+
+---
+
+#### См. также
+
+- [Обзор Helm](./helm_overview.md) — архитектура v4, SSA и kstatus.
+- [Команды и рабочий процесс Helm](./helm_commands_and_workflow.md) — детальный разбор жизненного цикла.
+- [Паттерны и устранение неисправностей Helm](./Advanced/patterns_troubleshooting.md) — восстановление зависших релизов и edge cases.
+- [GitOps: обзор методологии](../GitOps/GitOps_overview.md) — автоматическое восстановление через Argo CD / Flux.
+- [Disaster Recovery (концепции)](../../Concepts/disaster_recovery.md) — общие стратегии аварийного восстановления для Kubernetes.
+
 ---
 
 ## Дополнительная информация
@@ -512,3 +715,4 @@ helm upgrade --install my-app oci://registry.example.com/charts/my-chart@$DIGEST
 - [Команды и рабочий процесс Helm](./helm_commands_and_workflow.md) — детальный разбор жизненного цикла.
 - [Структура Helm-чарта](./helm_chart_structure.md) — изучение `Chart.yaml` и `apiVersion`.
 - [Плагины Helm](./helm_plugins.md) — работа с `helm-diff` и WASM-расширениями.
+- [Мониторинг Helm-релизов](./helm_monitoring_observability.md) — Prometheus, Grafana и алертинг для релизов.

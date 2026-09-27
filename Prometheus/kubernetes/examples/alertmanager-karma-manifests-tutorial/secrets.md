@@ -28,6 +28,20 @@
     -   `stringData`: позволяет писать значения в открытом виде (Kubernetes сам закодирует их при записи в etcd), что удобнее для ручного управления.
 -   **RBAC:** Ограничьте доступ к секретам в namespace `monitoring`, разрешив `get` и `list` только поду Alertmanager и администраторам.
 
+### Потребление секретов Alertmanager
+
+Alertmanager получает значения из Secret двумя способами:
+1.  **Переменные окружения (ENV):** через `env.valueFrom.secretKeyRef`. Используется в манифесте StatefulSet этого туториала.
+2.  **Файлы томов (Volumes):** через `volumes.secret`. Подходит, если Alertmanager читает ключи из файлов (например, для `client_secret_file` в OAuth2-конфигурации — см. [Alertmanager](../../alertmanager.md#настройка-получателей-receivers)).
+
+Для подстановки переменных прямо в `alertmanager.yml` используется флаг `--config.expand-external-variables` (Alertmanager v0.27+), что исключает необходимость инициализационного контейнера с `envsubst`.
+
+### Рекомендации по именованию и организации
+
+-   **Имена секретов:** используйте префикс `<app>-<component>`, например `alertmanager-secret`. В рамках namespace `monitoring` имя должно быть уникальным.
+-   **Ключи внутри Secret:** используйте точечную нотацию (`smtp.user`, `smtp.password`) для группировки связанных данных. Это упрощает аудит и ротацию.
+-   **Отделение сред:** для продакшена, стейджинга и разработки используйте разные namespace или разные имена секретов (`alertmanager-secret-prod`, `alertmanager-secret-staging`).
+
 ---
 
 ## Практические сценарии
@@ -83,12 +97,124 @@ env:
       secretKeyRef:
         name: alertmanager-secret
         key: smtp.password
+  ```
+
+### Валидация секрета
+
+После создания секрета выполните проверку корректности:
+
+```bash
+# Список секретов в namespace monitoring
+kubectl get secrets -n monitoring
+
+# Описание секрета (без значений)
+kubectl describe secret alertmanager-secret -n monitoring
+
+# Проверка конкретного ключа (декодирование base64)
+kubectl get secret alertmanager-secret -n monitoring -o jsonpath='{.data.smtp\.password}' | base64 -d
+# → secure-app-password
+```
+
+> **Примечание:** При использовании `jsonpath` экранируйте точку в имени ключа (`smtp\.password`).
+
+### Обновление и ротация секретов
+
+Для обновления значения ключа:
+
+```bash
+# Если secret НЕ immutable
+kubectl patch secret alertmanager-secret -n monitoring \
+  -p '{"stringData":{"smtp.password":"new-secure-password"}}'
+
+# Если secret immutable — удалите и создайте заново
+kubectl delete secret alertmanager-secret -n monitoring
+kubectl create secret generic alertmanager-secret \
+  --from-literal=smtp.password='new-secure-password' \
+  -n monitoring
+```
+
+После обновления секрета перезапустите StatefulSet, чтобы ENV-переменные обновились:
+
+```bash
+kubectl rollout restart statefulset/alertmanager -n monitoring
+kubectl rollout status statefulset/alertmanager -n monitoring
+```
+
+### RBAC: Ограничение доступа к секретам
+
+Создайте `ServiceAccount` и `Role` с минимальными привилегиями для Alertmanager:
+
+**`alertmanager-rbac.yaml`**
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alertmanager-secret-reader
+  namespace: monitoring
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["alertmanager-secret"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alertmanager-secret-reader-binding
+  namespace: monitoring
+subjects:
+- kind: ServiceAccount
+  name: alertmanager
+  namespace: monitoring
+roleRef:
+  kind: Role
+  name: alertmanager-secret-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Примените манифест:
+
+```bash
+kubectl apply -f alertmanager-rbac.yaml
+```
+
+### Устранение неисправностей
+
+| Симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Alertmanager не отправляет email | Неверный пароль SMTP или недоступный сервер | `kubectl logs -n monitoring alertmanager-0 -c alertmanager \| grep -i smtp` | Проверить `smtp.password` в Secret и доступность SMTP-сервера |
+| Telegram-бот не отвечает | Неверный `bot_token` или `chat_id` | `kubectl exec -n monitoring alertmanager-0 -c alertmanager -- env \| grep TELEGRAM` | Проверить токен через `@BotFather`, убедиться что бот добавлен в чат |
+| Под в CrashLoopBackOff | Секрет не найден или нет прав на чтение | `kubectl describe pod -n monitoring alertmanager-0` — искать `Failed to create pod sandbox` или `forbidden` | Проверить имя Secret, namespace, RBAC-права |
+| Изменения Secret не применяются | Secret immutable или Pod не перезапущен | `kubectl get secret alertmanager-secret -n monitoring -o jsonpath='{.immutable}'` | Снять `immutable` или перезапустить StatefulSet |
+
+### Очистка ресурсов
+
+```bash
+# Удалить Secret
+kubectl delete secret alertmanager-secret -n monitoring
+
+# Удалить RBAC (если создавали)
+kubectl delete rolebinding alertmanager-secret-reader-binding -n monitoring
+kubectl delete role alertmanager-secret-reader -n monitoring
+kubectl delete serviceaccount alertmanager -n monitoring
+
+# Проверить отсутствие секретов
+kubectl get secrets -n monitoring
 ```
 
 ---
 
 ## Дополнительная информация
 
-- **[Конфигурация (ConfigMap)](./alertmanager-config.md)** — использование переменных в основном конфиге.
-- **[Манифест StatefulSet](./alertmanager-statefulset.md)** — полная спецификация подов с монтированием секретов.
-- **[Внешние менеджеры секретов](../../../../Kubernetes/Base/secrets/external_managers.md)** — SSoT по интеграции с HashiCorp Vault и External Secrets Operator.
+-   **[Конфигурация (ConfigMap)](./alertmanager-config.md)** — использование переменных в основном конфиге.
+-   **[Манифест StatefulSet](./alertmanager-statefulset.md)** — полная спецификация подов с монтированием секретов.
+-   **[Внешние менеджеры секретов](../../../../Kubernetes/Base/secrets/external_managers.md)** — SSoT по интеграции с HashiCorp Vault, External Secrets Operator и Secrets Store CSI Driver.
+-   **[Безопасность Secret в Kubernetes](../../../../Kubernetes/Base/secrets/security.md)** — SSoT по шифрованию at rest, immutable-секретам и RBAC.
+-   **[Лучшие практики Prometheus Operator](../../operator/Security/secrets_best_practices.md)** — управление секретами в контексте Operator.

@@ -893,7 +893,7 @@ stages:
 
 validate:skeleton:
   stage: validate
-  image: alpine/helm:3.14.0
+  image: alpine/helm:3.22.0
   script:
     # Линтинг скелета
     - helm lint _template --strict

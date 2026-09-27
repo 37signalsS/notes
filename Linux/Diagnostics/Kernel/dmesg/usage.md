@@ -29,6 +29,23 @@
 *   **`-e` (`--reltime`):** Отображает время в локальном формате с указанием смещения.
 *   **`--caller`:** Добавляет идентификатор вызывающего объекта (Caller ID, например, `[T123]`). Позволяет понять, какой поток (Thread ID) или процессор инициировал запись сообщения. Требует поддержки `CONFIG_PRINTK_CALLER` в ядре.
 
+### Управление уровнями консоли
+
+`dmesg` позволяет динамически управлять минимальным уровнем важности сообщений, которые выводятся на физическую консоль (tty), не изменяя содержимое кольцевого буфера. Это критично для production-серверов, где избыточный вывод на консоль может засорять экран и замедлять работу.
+
+*   **`-n <уровень>` (`--console-level <уровень>`):** Устанавливает порог для вывода на консоль. Принимает либо числовой код (0–7), либо текстовую метку (`emerg`, `alert`, `crit`, `err`, `warn`, `notice`, `info`, `debug`).
+*   **Практика:** На production-хостах рекомендуется устанавливать `warn` (4) или `notice` (5), чтобы видеть только предупреждения и ошибки, исключая информационный шум.
+*   **Проверка текущего значения:** `cat /proc/sys/kernel/printk` (первые 4 цифры: `console_loglevel`, `default_message_loglevel`, `minimum_console_loglevel`, `default_console_loglevel`).
+*   **Постоянное применение:** Добавьте строку `kernel.printk = 4 4 1 7` в `/etc/sysctl.d/99-printk.conf` для применения настроек после каждой перезагрузки.
+
+### Сырой вывод и парсинг
+
+Для автоматизированной обработки `dmesg` в скриптах часто требуется исключить декодирование и получить структурированный вывод.
+
+*   **`-r` (`--raw`):** Выводит сообщения в исходном формате без расшифровки уровней и подсистем. Удобно для последующего парсинга через `awk` или `cut`.
+*   **`-J` (`--json`):** Вывод в формате JSON (доступно в util-linux 2.37+). Идеально для передачи в системы мониторинга (ELK, Loki, Splunk).
+*   **Комбинирование с `jq`:** `dmesg -J | jq -r '.[] | select(.level=="err") | .message'`.
+
 ---
 
 ## Практические сценарии
@@ -80,6 +97,7 @@ dmesg --nopager > kernel_log.txt
 *   **`sudo dmesg -C`:** Полная очистка буфера. Полезно перед воспроизведением бага, чтобы «зачистить» лишний шум.
 *   **`sudo dmesg -c`:** Прочитать содержимое и СРАЗУ очистить его (Read and Clear).
 *   **`-s <размер>` (`--buffer-size`):** Задает размер буфера, который `dmesg` должен запросить у ядра (по умолчанию используется значение из `/proc/sys/kernel/log_buf_len`).
+*   **Предупреждение:** Избегайте `dmesg -C` на production-хостах во время инцидента — вы потеряете историю событий, необходимую для post-mortem. Используйте `dmesg -c` только если уверены, что данные сохранены elsewhere.
 
 ### Анализ критических событий (OOM)
 
@@ -91,6 +109,96 @@ dmesg -T | grep -iE "oom|killed process"
 ```
 > Подробная методология: [**Диагностика OOM Killer**](../../../Core/processes/oom_killer_diagnostics.md)
 
+### Отслеживание USB-устройств
+
+```bash
+# Мониторинг событий USB при подключении/отключении устройств
+dmesg -wHx | grep -iE "usb|sda|sdb|nvme|hid|input"
+
+# Определение момента подключения флешки
+dmesg -w --level=info | grep -i "new usb device"
+# → [ 1234.567890] usb 1-2: new full-speed USB device number 5 using xhci_hcd
+```
+
+Ключевые паттерны:
+*   `new USB device` — устройство подключено и распознано.
+*   `USB disconnect` — устройство отключено.
+*   `device descriptor read/64, error -110` — таймаут инициализации (проблема с кабелем или портом).
+
+### Диагностика графической подсистемы (DRM/GPU)
+
+```bash
+# Мониторинг ошибок Intel i915
+dmesg -wT | grep -iE "i915|drm|gpu|render"
+
+# Анализ ошибок AMD
+dmesg -T | grep -iE "amdgpu|radeon|drm.*error|gpu.*hang"
+```
+
+Типичные сценарии:
+*   `GPU HANG: ecode 9:0:0` — аппаратный или драйверный сбой GPU.
+*   `i915: GPU reset` — попытка драйвера i915 восстановить работу GPU после таймаута.
+*   `Resetting rcs0` — сброс рендер-контекста, часто сопровождает freeze приложения.
+
+### Анализ энергосбережения и suspend/resume
+
+```bash
+# Проверка ошибок при переходе в спящий режим
+dmesg -T | grep -iE "suspend|resume|acpi|wakeup|fail"
+
+# Мониторинг в реальном времени при тестировании
+sudo dmesg -wT | grep -iE "suspend|resume|acpi|error"
+```
+
+Паттерны:
+*   `ACPI: \w* failed` — ошибка таблиц ACPI, требует обновления BIOS/UEFI.
+*   `PM: suspend entry` / `PM: suspend exit` — успешный переход в спящий режим и пробуждение.
+*   `Failed to suspend` — проблемы с драйверами, не поддерживающими power management.
+
+### Автоматизированные проверки работоспособности
+
+```bash
+#!/bin/bash
+# health_check.sh — скрипт для cron или мониторинга
+ERRORS=$(dmesg --level=err,crit --since 1.hour ago 2>/dev/null || dmesg -T | tail -n 200 | grep -iE "error|fail|crit")
+
+if [ -n "$ERRORS" ]; then
+    echo "CRITICAL: dmesg errors detected:"
+    echo "$ERRORS"
+    exit 1
+fi
+
+# Проверка на наличие OOM за последний час
+OOM=$(dmesg -T | grep -i "killed process" | tail -5)
+if [ -n "$OOM" ]; then
+    echo "WARNING: OOM events detected:"
+    echo "$OOM"
+fi
+```
+
+> **Примечание:** Флаг `--since` доступен в util-linux 2.37+. В более старых версиях используйте комбинацию `dmesg -T | tail -n 200 | grep`.
+
+### Захват boot-логов для багрепортов
+
+```bash
+# Захват полного boot-лога в файл
+sudo dmesg -T > /var/log/dmesg_boot_$(date +%Y%m%d).log
+
+# Сжатие и подготовка к отправке
+gzip -9 /var/log/dmesg_boot_$(date +%Y%m%d).log
+```
+
+Для систем без systemd-journald ранний boot может быть недоступен в `journalctl`. В этом случае `dmesg` остается единственным источником.
+
+### Производительность и лучшие практики
+
+*   **Избегайте `grep` где возможно:** Встроенные фильтры `--level` и `--facility` работают быстрее, так как фильтрация происходит внутри ядра/утилиты, а не в userspace.
+*   **Используйте `--nopager` в скриптах:** Отключает автоматический запуск `less`, что предотвращает зависание при запуске из cron или CI/CD.
+*   **Ограничьте объем вывода:** `dmesg | tail -n 100` вместо полного дампа буфера — быстрее и читаемее.
+*   **Не используйте `-C` во время инцидента:** Полная очистка буфера удаляет данные, которые могут потребоваться для корреляции событий. Используйте только при воспроизведении проблемы.
+*   **Комбинируйте с `stdbuf` для real-time пайпов:** `stdbuf -oL dmesg -w | grep --line-buffered "error"` обеспечивает построчный вывод без буферизации.
+*   **Версионирование:** Поведение `dmesg` зависит от версии util-linux. Флаги `-J`, `--since`, `--caller` появились в версиях 2.37+. Проверяйте `dmesg --version` в скриптах.
+
 ---
 
 ## Дополнительная информация
@@ -99,5 +207,13 @@ dmesg -T | grep -iE "oom|killed process"
 
 *   [**Обзор dmesg (SSoT)**](./index.md) — архитектура, уровни важности и механизмы доступа.
 *   [**Поиск и устранение неисправностей (Troubleshooting)**](./troubleshooting.md) — интерпретация Call Trace и аппаратных ошибок.
+*   [**Диагностика Block Layer**](./block-layer.md) — blk_update_request, I/O errors, queue depth.
+*   [**Диагностика сетевого стека**](./network-stack.md) — SYN flood, softirq, conntrack, TCP drops.
+*   [**Диагностика модулей ядра**](./modules-lifecycle.md) — загрузка/выгрузка, taint, Secure Boot.
+*   [**Диагностика виртуализации**](./virtualization.md) — KVM, VMware, Hyper-V, balloon, steal time.
+*   [**Диагностика частоты CPU**](./cpu-frequency.md) — cpufreq, thermal throttling, C-states.
+*   [**Диагностика NUMA**](./numa.md) — NUMA topology, миграция страниц.
+*   [**Диагностика live patching**](./live-patching.md) — kpatch, ftrace-based patching.
+*   [**Production sysctl**](../../../Core/kernel/sysctl_production.md) — kernel tunables для продакшена.
+*   [**Мониторинг dmesg**](../../../SystemAdministration/Logging/dmesg_monitoring.md) — экспорт в Prometheus/Loki/Grafana.
 *   [**Журналирование (journalctl)**](../../journalctl/journalctl_overview.md) — работа с постоянными логами системы.
-*   [**Мониторинг процессов (htop)**](../../Processes/htop.md) — визуализация нагрузки, приводящей к OOM.

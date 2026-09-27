@@ -429,11 +429,71 @@ kubectl get --raw /metrics | grep apiserver_authentication_failed
 | `webhook connection refused` | 401 при использовании webhook | Webhook сервис недоступен | Проверить Endpoints webhook сервиса |
 | `impersonate denied` | 403 при имперсонации | Нет прав RBAC на impersonate | Добавить ClusterRole с verb=impersonate |
 
+### Сценарий 9: Истечение SA токена и сбой ротации в production
+
+**Контекст:** Приложение внутри пода использует ServiceAccount токен для обращения к API-серверу или внешнему сервису. В Kubernetes 1.24+ токены по умолчанию являются Bound Tokens (TTL 1 час) и автоматически ротируются kubelet.
+
+**Симптомы:** Приложение периодически (примерно раз в час) получает 401 Unauthorized, после чего ошибки прекращаются. Или — ошибки не прекращаются (сбой ротации).
+
+**Причины сбоя ротации:**
+1. **Kubelet не может обновить токен** — проблемы с API-сервером, диском на ноде или нехваткой ресурсов
+2. **Projected volume заполнен** — механизм проецированных томов не может записать новый токен
+3. **Clock skew** — время на ноде рассинхронизировано, токен считается невалидным
+4. **Token Cleaner (v1.31+)** — контроллер удалил legacy-токен, а новый не был создан
+
+**Диагностика:**
+```bash
+# Шаг 1: Проверить, что токен смонтирован и валиден
+kubectl exec <pod-name> -- cat /var/run/secrets/kubernetes.io/serviceaccount/token | cut -d. -f2 | base64 -d 2>/dev/null | jq '{exp: (.exp | todate), aud: .aud, sub: .sub}'
+
+# Шаг 2: Проверить, обновляет ли kubelet токен (посмотреть年龄 файла)
+kubectl exec <pod-name> -- ls -la /var/run/secrets/kubernetes.io/serviceaccount/token
+
+# Шаг 3: Проверить, есть ли ошибки в projected volume
+kubectl describe pod <pod-name> | grep -A5 "Conditions\|Events" | grep -i "error\|warn\|fail"
+
+# Шаг 4: Проверить время на ноде (clock skew)
+kubectl exec <pod-name> -- date -u +%Y-%m-%dT%H:%M:%SZ
+kubectl get node <node-name> -o jsonpath='{.status.conditions[-1].lastTransitionTime}'
+
+# Шаг 5: Для принудительной ротации — пересоздать под
+kubectl delete pod <pod-name> -n <ns>
+```
+
+**Профилактика:**
+```bash
+# Включить автоматическую ротацию (по умолчанию в K8s 1.24+)
+# В манифесте пода:
+spec:
+  automountServiceAccountToken: false  # Отключить стандартный токен
+  serviceAccountName: app-sa
+  containers:
+  - name: app
+    volumeMounts:
+    - name: bound-token
+      mountPath: /var/run/secrets/tokens
+  volumes:
+  - name: bound-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: api-server
+          expirationSeconds: 3600  # 1 час
+          path: bound-token
+
+# Настроить алерт на приближение истечения токена
+# Prometheus:(token_expires_in_seconds < 600)
+```
+
+> Подробнее о Bound Tokens и ротации: [../../../Security/authentication.md](../../../Security/authentication.md)
+> Очистка legacy-токенов (v1.31+): [../../../Base/secrets/creating_secrets.md](../../../Base/secrets/creating_secrets.md)
+
 ### Связанные ресурсы
 
 - [Алгоритм пошаговой диагностики (401 и 403)](diagnostics.md)
 - [Определения 401 vs 403](definitions.md)
 - [Субъекты доступа (ServiceAccount, Users, Groups)](../../../Security/rbac/subjects.md)
-- [Kubeconfig и управление подключениями](../../../Operations/kubeconfig_and_connection.md)
+- [Kubeconfig и управление подключениями](../../../Operations/kubeconfig_and_connection.md) — ошибки контекста, KUBECONFIG, OIDC
 - [Описание методов аутентификации](../../../Security/authentication.md)
+- [Лучшие практики](best_practices.md) — Bound Tokens, ротация CA, мониторинг
 - [Официальная документация: Authenticating](https://kubernetes.io/docs/reference/access-authn/authentication/)

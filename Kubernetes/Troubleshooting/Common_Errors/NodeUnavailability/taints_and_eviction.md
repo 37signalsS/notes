@@ -700,3 +700,6 @@ kubectl get pods -A -o json | jq -r '.items[] | select(.spec.tolerations[]? | .k
 - **[Definitions: Taints](./definitions.md)** — базовые определения, включая `out-of-service` taint.
 - **[QoS и выселение](../PodEvicted/qos_and_eviction.md)** — PriorityQueue, oom_score_adj, порядок выселения по QoS.
 - **[Resource Pressure](./resource_pressure.md)** — MemoryPressure, DiskPressure, PIDPressure: диагностика и сценарии.
+- **[Тюнинг ядра](./kernel_tuning.md)** — sysctl параметры, влияющие на conntrack и маршрутизацию.
+- **[Hostname и DNS](./hostname_dns_issues.md)** — имя узла влияет на регистрацию и TLS.
+- **[SSH-доступ](./bastion_ssh_access.md)** — диагностика узлов через bastion.

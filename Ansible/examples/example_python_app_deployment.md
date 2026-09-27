@@ -6,33 +6,33 @@
 
 **WSGI (Web Server Gateway Interface)** — стандартный интерфейс (PEP 3333) взаимодействия между веб-сервером и Python-приложениями. Определяет, как веб-сервер передает HTTP-запросы приложению и как приложение возвращает ответы. Flask и Django являются WSGI-приложениями.
 
-**ASGI (Asynchronous Server Gateway Interface)** — асинхронный аналог WSGI (PEP 6641) для приложений на `asyncio`. Используется в Django 3.1+ для асинхронных маршрутов. Серверы: `uvicorn`, `daphne`. Flask пока не поддерживает ASGI нативно.
+**ASGI (Asynchronous Server Gateway Interface)** — асинхронный интерфейс для приложений на `asyncio`. Используется в Django 3.1+ для асинхронных маршрутов и в FastAPI/Starlette. Серверы: `uvicorn`, `daphne`. Flask не поддерживает ASGI нативно.
 
-**Gunicorn** — WSGI (Web Server Gateway Interface) сервер, выступающий прослойкой между веб-сервером (Nginx) и Python-кодом. Обеспечивает параллельную обработку запросов через модель воркеров (preforking). Ключевые параметры: `--workers` (количество воркеров), `--bind` (адрес и порт/сокет), `--timeout` (таймаут запроса), `--access-logfile`, `--error-logfile`.
+**Gunicorn** — WSGI-сервер, выступающий прослойкой между веб-сервером (Nginx) и Python-кодом. Обеспечивает параллельную обработку запросов через модель воркеров (preforking). Ключевые параметры: `--workers`, `--bind`, `--timeout`, `--access-logfile`, `--error-logfile`, `--max-requests`, `--preload`.
 
-**Flask** — легковесный веб-фреймворк для Python, построенный на WSGI. Минималистичичный, расширяемый через библиотеки (Flask-SQLAlchemy, Flask-Login, Flask-Migrate). Подходит для API и небольших приложений.
+**Flask** — легковесный веб-фреймворк для Python, построенный на WSGI. Минималистичный, расширяемый через библиотеки (Flask-SQLAlchemy, Flask-Login, Flask-Migrate). Подходит для API и небольших приложений.
 
-**Django** — полнотекстовый веб-фреймворк для Python с встроенной ORM, системой миграций, админ-панелью и multisite. Тяжелее Flask, но включает все необходимое «из коробки». Работает через WSGI (`django.core.wsgi.wsgi_application`) или ASGI (`django.core.asgi.get_asgi_application()`).
+**Django** — полнотекстовый веб-фреймворк для Python с встроенной ORM, системой миграций, админ-панелью и multisite. Работает через WSGI (`django.core.wsgi.wsgi_application`) или ASGI (`django.core.asgi.get_asgi_application()`).
 
 **Nginx** — высокопроизводительный веб-сервер, работающий как обратный прокси (reverse proxy) и сервер статических файлов. Принимает внешние HTTP/HTTPS-запросы и перенаправляет их на Gunicorn через Unix-сокет или TCP-порт.
 
-**Reverse Proxy (Обратный прокси)** — роль Nginx, при которой он принимает внешние HTTP-запросы и перенаправляет их на Gunicorn через Unix-сокет или TCP-порт. Обеспечивает: балансировку, кэширование, сжатие, TLS-терминацию, раздачу статики.
+**Reverse Proxy (Обратный прокси)** — роль Nginx, при которой он принимает внешние HTTP-запросы и перенаправляет их на приложение через Unix-сокет или TCP-порт. Обеспечивает балансировку, кэширование, сжатие, TLS-терминацию, раздачу статики.
 
-**proxy_params** — встроенный файл конфигурации Nginx (обычно `/etc/nginx/proxy_params`), содержащий стандартные заголовки `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `Host`. Подключается через `include proxy_params;` для корректной передачи информации о клиенте.
+**proxy_params** — встроенный файл конфигурации Nginx (обычно `/etc/nginx/proxy_params`), содержащий стандартные заголовки `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `Host`.
 
 **Systemd-юнит** — файл конфигурации (`.service`), описывающий правила запуска приложения как системной службы (автозапуск, лимиты ресурсов, логирование). Управляется через `systemctl`.
 
 **Worker (воркер)** — процесс Gunicorn, обрабатывающий HTTP-запросы. Модель preforking: master-процесс forks воркеров при старте. Рекомендуемое количество: `2 * CPU_cores + 1`. Каждый воркер — отдельный процесс с собственным пространством памяти.
 
-**Preload app (`--preload`)** — параметр Gunicorn, загружающий код приложения в master-процесс перед форком воркеров. Экономит память (fork-on-write) и ускоряет старт воркеров. Требует小心ness при использовании с database connections.
+**Preload app (`--preload`)** — параметр Gunicorn, загружающий код приложения в master-процесс перед форком воркеров. Экономит память (copy-on-write) и ускоряет старт воркеров. Требует осторожности при использовании с database connections.
 
-**Демонизация (`--daemon`)** — параметр Gunicorn, переводящий процесс в фоновый режим. В контейнерах и systemd используется `--daemon off` (foreground), чтобы systemd мог управлять жизненным циклом.
+**Демонизация (`--daemon`)** — параметр Gunicorn, переводящий процесс в фоновый режим. В systemd используется `--daemon off` (foreground), чтобы systemd мог управлять жизненным циклом.
 
-**Environment Variables (переменные окружения)** — способ передачи конфигурации приложению (数据库 URL, SECRET_KEY, DEBUG). В Ansible задаются через `environment:` в плейбуке или `Environment=` в systemd-юните.
+**Environment Variables (переменные окружения)** — способ передачи конфигурации приложению (DATABASE_URL, SECRET_KEY, DEBUG). В Ansible задаются через `environment:` в плейбуке или `Environment=` в systemd-юните.
 
 **Health Check (проверка работоспособности)** — HTTP-эндпоинт (обычно `/health`, `/healthz`), возвращающий HTTP 200 при работоспособном приложении. Используется для мониторинга и балансировщиков нагрузки.
 
-**Static Files (статические файлы)** — CSS, JS, изображения, шрифты. Рекомендуется раздавать напрямую через Nginx, не перенаправляя на Gunicorn, для снижения нагрузки.
+**Static Files (статические файлы)** — CSS, JS, изображения, шрифты. Рекомендуется раздавать напрямую через Nginx, не перенаправляя на Gunicorn.
 
 **no_log** — параметр задачи Ansible, предотвращающий запись чувствительных данных (пароли, ключи, токены) в логи и вывод консоли.
 
@@ -50,8 +50,8 @@
 [Internet] → [Nginx :80/443] → [Unix-сокет] → [Gunicorn :8000] → [Flask/Django app]
 ```
 
-1. **Nginx** — принимает внешние запросы, раздает статику, кэширует, обеспечивает TLS.
-2. **Gunicorn** — WSGI-сервер, обрабатывающий динамические запросы.
+1. **Nginx** — принимает внешние запросы, раздает статику, обеспечивает TLS, кэширует.
+2. **Gunicorn** — WSGI-сервер, обрабатывающий динамические запросы через пул воркеров.
 3. **Python-приложение** — бизнес-логика (Flask, Django, FastAPI через uvicorn).
 
 ### WSGI vs ASGI
@@ -97,7 +97,7 @@ Master Process (master)
 | Многомашинная | Невозможна | Возможна |
 | Рекомендация | Один сервер, один app | Кластер, несколько app |
 
-Для одномашинной конфигурации рекомендуются **Unix-сокеты**.
+Для одномашинной конфигурации рекомендуются **Unix-сокеты**. Подробнее о反向-проксировании в Nginx: **[Интеграция Nginx с Gunicorn/uWSGI](../../WebServers/Nginx/Core/Location/integration_examples.md)**.
 
 ### Статические файлы
 
@@ -170,17 +170,18 @@ location = /health {
 1. Изменение `.service` файла: `systemctl daemon-reload` и перезапуск приложения.
 2. Обновление кода/зависимостей: `systemctl restart <app>`.
 3. Изменение конфигурации прокси: `systemctl reload nginx`.
-4. Обновление зависимостей (requirements.txt): пересоздание venv или `pip install -r requirements.txt`.
+4. Обновление зависимостей (`requirements.txt`): пересоздание venv или `pip install -r requirements.txt`.
 
 В Ansible эти действия выносятся в `handlers` для обеспечения строгой идемпотентности.
 
 ### Безопасность при деплое
 
-1. **Изоляция**: Приложение запускается от отдельного пользователя, не от `root`.
+1. **Изоляция**: Приложение запускается от отдельного пользователя, не от `root`. Подробнее: **[Управление пользователями и идентификацией в Ansible](../ansible-identity-management.md)**.
 2. **Права на файлы**: Конфиденциальные файлы (`.env`, `secrets.py`) — `0600`, владелец `app_user`.
 3. **Nginx**: Скрытие версии (`server_tokens off`), защита от DDoS (`limit_req`).
 4. **TLS**: HTTPS обязателен для production. Nginx terminated TLS, Gunicorn получает HTTP.
 5. **no_log**: Секреты не попадают в логи Ansible.
+6. **Общая стратегия**: Подробнее: **[Ansible: Рекомендации по безопасности](../ansible_security_best_practices.md)**.
 
 ---
 
@@ -188,36 +189,49 @@ location = /health {
 
 ### Предусловия и требования
 
-| Компонент | Минимальная версия | Проверка | Примечание |
-|---|---|---|---|
-| Python | 3.10+ | `python3 --version` | На Control Node и Managed Node |
-| `python3-venv` | — | `dpkg -l python3-venv` | Обязателен для PEP 668 |
-| `python3-pip` | — | `dpkg -l python3-pip` | Для установки зависимостей в venv |
-| Nginx | 1.18+ | `nginx -v` | Обратный прокси и статика |
-| Gunicorn | 21.0+ | `venv/bin/gunicorn --version` | Устанавливается через pip в venv |
-| `ansible.builtin.pip` | — | Проверка в плейбуке | Для управления Python-зависимостями |
-| SSH-доступ | — | `ssh user@host echo OK` | Проверка подключения |
-| `ansible_python_interpreter` | — | `ansible all -m setup -a "filter=ansible_python_version"` | Если Python не по умолчанию |
+| Компонент | Минимальная версия | Рекомендуемая | Проверка | Примечание |
+|---|---|---|---|---|
+| Ansible Core | 2.15+ | ≥ 2.20 | `ansible --version` | Управляющий узел |
+| Python (управление) | 3.10+ | ≥ 3.12 | `python3 --version` | Control Node |
+| Python (целевые хосты) | 3.10+ | ≥ 3.12 | `ansible all -m setup -a "filter=ansible_python_version"` | Managed Node |
+| ansible-lint | 26.x+ | ≥ 26.8.0 | `ansible-lint --version` | Линтинг плейбуков |
+| Gunicorn | 21.0+ | 22.0+ | `venv/bin/gunicorn --version` | Устанавливается через pip в venv |
+| Nginx | 1.18+ | 1.24+ | `nginx -v` | Обратный прокси и статика |
+| `ansible.builtin.pip` | — | — | Проверка в плейбуке | Для управления Python-зависимостями |
+| SSH-доступ | — | — | `ssh user@host echo OK` | Проверка подключения |
+| `ansible_python_interpreter` | — | — | `ansible all -m setup -a "filter=ansible_python_version"` | Если Python не по умолчанию |
 
 **Проверка окружения перед запуском:**
 
 ```bash
 # На Control Node
-ansible --version && python3 --version
+ansible --version
+# → ansible [core 2.18.2]
+python3 --version
+# → Python 3.12.4
 
 # На Managed Node (через Ansible)
 ansible web_servers -m shell -a "python3 --version && which nginx"
+# → server1 | CHANGED | rc=0 > Python 3.12.4
+# → server1 | CHANGED | rc=0 > /usr/sbin/nginx
 ansible web_servers -m setup -a "filter=ansible_python_version"
+# → server1 | SUCCESS => {"ansible_python_version": {"version": "3.12.4", ...}}
 ```
 
-### Сценарий: Развертывание Flask + Gunicorn + Nginx
+### Сценарий 1: Развертывание Flask + Gunicorn + Nginx
 
-Комплексный сценарий включает подготовку ОС, настройку изоляции приложения, создание Systemd-юнита и конфигурацию обратного прокси.
+Комплексный сценарий включает подготовку ОС, настройку изоляции приложения, создание systemd-юнита и конфигурацию обратного прокси.
 
-#### 1. Структура проекта
+#### Структура проекта
 
 ```text
 .
+├── ansible.cfg
+├── inventory/
+│   └── production/
+│       ├── hosts.yml
+│       └── group_vars/
+│           └── web_servers.yml
 ├── files/
 │   └── app/
 │       ├── main.py             # Flask-приложение
@@ -228,11 +242,13 @@ ansible web_servers -m setup -a "filter=ansible_python_version"
 └── playbook.yml                # Сценарий деплоя
 ```
 
-#### 2. Шаблоны конфигураций
+Рекомендуемая структура проекта: **[Типовая структура проекта Ansible](example_project_layout.md)**.
 
-**Шаблон Systemd (`templates/app.service.j2`):**
+#### Шаблоны конфигураций
 
-Обратите внимание на `Group=www-data`. Это позволяет веб-серверу Nginx (который обычно работает от имени пользователя `www-data`) читать Unix-сокет, созданный Gunicorn.
+**Шаблон systemd (`templates/app.service.j2`):**
+
+Обратите внимание на `Group=www-data`. Это позволяет веб-серверу Nginx читать Unix-сокет, созданный Gunicorn.
 
 ```jinja2
 [Unit]
@@ -289,7 +305,9 @@ server {
 }
 ```
 
-#### 3. Плейбук развертывания
+Подробнее о конфигурации Nginx как反向-прокси: **[Интеграция Nginx с Gunicorn/uWSGI](../../WebServers/Nginx/Core/Location/integration_examples.md)**.
+
+#### Плейбук развертывания
 
 ```yaml
 ---
@@ -407,26 +425,29 @@ server {
         state: reloaded
 ```
 
-#### 4. Верификация и отладка
+Подробнее о модуле `ansible.builtin.pip` и управлении виртуальными окружениями: **[Управление Python-пакетами в Ansible](../Modules/ansible_package_management_modules.md)**.  
+Подробнее о создании пользователей: **[Управление пользователями и идентификацией в Ansible](../ansible-identity-management.md)**.
+
+#### Верификация и отладка
 
 Проверьте работоспособность приложения после выполнения `ansible-playbook`:
 
 ```bash
 # Просмотр логов в реальном времени
 journalctl -u flaskapp -f
-# → Результат: лог вывода Gunicorn с информацией о старте воркеров
+# → лог вывода Gunicorn с информацией о старте воркеров
 
 # Проверка прав на Unix-сокет
 ls -l /opt/flaskapp/flaskapp.sock
-# → Результат: srwxrwx--- 1 webapp www-data 0 Jul 18 10:00 /opt/flaskapp/flaskapp.sock
+# → srwxrwx--- 1 webapp www-data 0 Jul 18 10:00 /opt/flaskapp/flaskapp.sock
 
 # Проверка ответа через Nginx
 curl -I http://api.my-site.local
-# → Результат: HTTP/1.1 200 OK
+# → HTTP/1.1 200 OK
 
 # Проверка health check
 curl http://api.my-site.local/health
-# → Результат: {"status": "ok"}
+# → {"status": "ok"}
 
 # Проверка статуса сервиса
 systemctl status flaskapp
@@ -441,14 +462,20 @@ curl -I http://api.my-site.local/static/style.css
 # → HTTP/1.1 200 OK, Content-Type: text/css
 ```
 
-### Сценарий: Развертывание Django + PostgreSQL + Nginx
+### Сценарий 2: Развертывание Django + PostgreSQL + Nginx
 
 Дополняет Flask-сценарий интеграцией с PostgreSQL и Django-специфичными шагами (миграции, collectstatic).
 
-#### 1. Структура проекта
+#### Структура проекта
 
 ```text
 .
+├── ansible.cfg
+├── inventory/
+│   └── production/
+│       ├── hosts.yml
+│       └── group_vars/
+│           └── web_servers.yml
 ├── files/
 │   └── app/
 │       ├── manage.py
@@ -459,11 +486,12 @@ curl -I http://api.my-site.local/static/style.css
 │           └── wsgi.py
 ├── templates/
 │   ├── app.service.j2
-│   └── nginx.conf.j2
+│   ├── nginx.conf.j2
+│   └── env.j2
 └── playbook.yml
 ```
 
-#### 2. Плейбук
+#### Плейбук
 
 ```yaml
 ---
@@ -619,7 +647,9 @@ DEBUG=false
 ALLOWED_HOSTS={{ server_domain }}
 ```
 
-### Сценарий: Обновление приложения (Rolling Update)
+Подробнее о настройке PostgreSQL: **[Развертывание и настройка PostgreSQL через Ansible](example_postgresql_setup.md)**.
+
+### Сценарий 3: Обновление приложения (Rolling Update)
 
 Безостановочное обновление кода с проверкой работоспособности:
 
@@ -691,53 +721,264 @@ ALLOWED_HOSTS={{ server_domain }}
 
 ---
 
-## Дополнительная информация
+## Операции и команды
 
-### Управление логами
+### Основные команды управления плейбуками
 
-По умолчанию Gunicorn выводит логи в `stdout/stderr`, которые перехватываются подсистемой `journald`. Для ротации логов и централизованного сбора рекомендуется:
-1. Использовать `ansible.builtin.copy` для настройки `logrotate`, если вы переопределяете вывод в статические файлы (`--access-logfile`, `--error-logfile`).
-2. Настроить `vector` или `fluent-bit` для отправки логов из `journald` напрямую в ELK/OpenSearch.
-3. Структурированные логи (JSON) упрощают парсинг: `--log-config` или кастомный форматтер.
+| Команда | Назначение | Пример |
+|---|---|---|
+| `ansible-playbook playbook.yml --syntax-check` | Проверка синтаксиса YAML | `ansible-playbook playbook.yml --syntax-check` |
+| `ansible-playbook playbook.yml --check --diff` | Dry-run с показом изменений | `ansible-playbook playbook.yml --check --diff` |
+| `ansible-playbook playbook.yml --list-tasks` | Просмотр задач без выполнения | `ansible-playbook playbook.yml --list-tasks` |
+| `ansible-playbook playbook.yml --step` | Пошаговое выполнение | `ansible-playbook playbook.yml --step` |
+| `ansible-playbook playbook.yml --start-at-task` | Запуск с конкретной задачи | `ansible-playbook playbook.yml --start-at-task="Deploy"` |
+| `ansible <host> -m setup` | Сбор фактов | `ansible web1 -m setup -a "filter=ansible_python_version"` |
+| `ansible <host> -m ping` | Проверка доступности | `ansible all -m ping` |
 
-### Лучшие практики
+### Команды для управления системными сервисами
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `systemctl daemon-reload` | Перезагрузка конфигурации systemd | `systemctl daemon-reload` |
+| `systemctl restart <app>` | Перезапуск приложения | `systemctl restart flaskapp` |
+| `systemctl reload nginx` | Горячая перезагрузка Nginx | `systemctl reload nginx` |
+| `systemctl status <app>` | Проверка статуса сервиса | `systemctl status flaskapp` |
+| `systemctl enable <app>` | Включение автозапуска | `systemctl enable flaskapp` |
+| `journalctl -u <app> -f` | Просмотр логов в реальном времени | `journalctl -u flaskapp -f` |
+
+### Команды для работы с виртуальными окружениями
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `python3 -m venv /path/to/venv` | Создание venv | `python3 -m venv /opt/flaskapp/venv` |
+| `source /path/to/venv/bin/activate` | Активация venv | `source /opt/flaskapp/venv/bin/activate` |
+| `pip install -r requirements.txt` | Установка зависимостей | `/opt/flaskapp/venv/bin/pip install -r requirements.txt` |
+| `pip list` | Просмотр установленных пакетов | `/opt/flaskapp/venv/bin/pip list` |
+| `gunicorn --check-config main:app` | Проверка конфигурации Gunicorn | `venv/bin/gunicorn --check-config main:app` |
+
+### Команды для работы с Nginx
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `nginx -t` | Проверка синтаксиса конфигурации | `nginx -t` |
+| `nginx -T` | Просмотр объединенного конфига | `sudo nginx -T \| grep proxy_pass` |
+| `systemctl reload nginx` | Горячая перезагрузка конфигурации | `systemctl reload nginx` |
+
+### Команды для валидации развертывания
+
+| Команда | Назначение | Пример |
+|---|---|---|
+| `curl -I http://domain` | Проверка HTTP-заголовков | `curl -I http://api.my-site.local` |
+| `curl http://domain/health` | Проверка health check | `curl http://api.my-site.local/health` |
+| `ls -la /path/to/app.sock` | Проверка прав на Unix-сокет | `ls -l /opt/flaskapp/flaskapp.sock` |
+| `ps aux \| grep gunicorn` | Проверка запущенных воркеров | `ps aux \| grep gunicorn \| grep -v grep \| wc -l` |
+| `ss -xlnp \| grep sock` | Проверка Unix-сокетов | `ss -xlnp \| grep flaskapp` |
+| `ansible-lint playbooks/` | Линтинг плейбуков | `ansible-lint playbooks/` |
+
+---
+
+## Устранение типичных неполадок
+
+### Проблема: `502 Bad Gateway`
+
+**Симптом:** Nginx возвращает `502 Bad Gateway` при обращении к приложению.
+
+**Причина:** Gunicorn не запущен, Unix-сокет недоступен или права на сокет некорректны.
+
+**Диагностика и решение:**
+
+```bash
+# Проверка статуса сервиса
+systemctl status flaskapp
+# → active (running) или inactive (dead)
+
+# Проверка наличия сокета
+ls -l /opt/flaskapp/flaskapp.sock
+# → srwxrwx--- 1 webapp www-data 0 Jul 18 10:00 /opt/flaskapp/flaskapp.sock
+
+# Проверка прав (Nginx должен читать сокет)
+# Если права 660 — добавьте Nginx в группу www-data
+sudo usermod -aG www-data www-data
+systemctl restart nginx
+
+# Проверка логов Gunicorn
+journalctl -u flaskapp -f
+# → [CRITICAL] WORKER TIMEOUT
+```
+
+### Проблема: `UNREACHABLE! Permission denied (publickey)`
+
+**Симптом:** `fatal: [server1]: UNREACHABLE! msg: Permission denied (publickey,password)`.
+
+**Причина:** SSH-ключ не добавлен на целевой хост или `ansible_user` не указан.
+
+**Диагностика и решение:**
+
+```bash
+# Проверка подключения
+ssh -i ~/.ssh/id_ed25519 ansible-deploy@server1 echo OK
+# → OK
+
+# Проверка ansible_python_interpreter
+ansible web_servers -m setup -a "filter=ansible_python_version"
+# → server1 | SUCCESS => {"ansible_python_version": {"version": "3.12.4", ...}}
+```
+
+### Проблема: `Permission denied` при выполнении задачи
+
+**Симптом:** `fatal: [server1]: FAILED! => {"changed": false, "msg": "Permission denied"}`.
+
+**Причина:** `become: true` не установлен или пользователь не имеет прав sudo.
+
+**Диагностика и решение:**
+
+```bash
+# Проверка прав sudo
+ansible web_servers -m shell -a "sudo -l"
+# → (ALL : ALL) ALL
+
+# Если NOPASSWD не настроен — добавьте:
+echo 'webapp ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/webapp
+# → /etc/sudoers.d/webapp: parsed OK
+```
+
+### Проблема: `sudo: a password is required`
+
+**Симптом:** `fatal: [server1]: FAILED! => {"msg": "sudo: a password is required"}`.
+
+**Причина:** `become: true` без `NOPASSWD` в sudoers.
+
+**Диагностика и решение:**
+
+```bash
+# Проверка прав
+ansible web_servers -m shell -a "sudo -l"
+# → (ALL : ALL) ALL
+
+# Если NOPASSWD не настроен — добавьте:
+echo 'webapp ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/webapp
+# → /etc/sudoers.d/webapp: parsed OK
+```
+
+### Проблема: Зависание после правок (ControlPersist)
+
+**Симптом:** После изменения конфигурации SSH не подключается или подключается к старому сокету.
+
+**Причина:** ControlPersist кэширует соединение.
+
+**Диагностика и решение:**
+
+```bash
+# Проверка активных сокетов
+ps aux | grep ssh | grep ControlMaster
+# → user   12345 ssh -o ControlMaster=auto -o ControlPersist=600s ...
+
+# Сброс сокетов
+rm -f ~/.ssh/ansible-ctrl/ansible-ctrl@server1:22
+
+# В ansible.cfg можно уменьшить время жизни
+# [ssh_connection]
+# ControlPersist = 30s
+```
+
+### Проблема: Обработчик SSH не выполняется
+
+**Симптом:** `notify: Restart application` не срабатывает.
+
+**Причина:** `notify` находится не на том уровне с задачей.
+
+**Диагностика и решение:**
+
+```bash
+# Убедитесь, что notify находится на одном уровне с задачей
+# Проверка обработчиков
+ansible-playbook playbook.yml --list-handlers
+```
+
+### Проблема: SELinux блокирует SSH-ключ
+
+**Симптом:** `Permission denied (publickey)` при корректном ключе.
+
+**Причина:** Неправильные контексты SELinux на `.ssh` и `authorized_keys`.
+
+**Диагностика и решение:**
+
+```bash
+# Проверка контекстов
+ls -laZ /home/ansible-deploy/.ssh/
+# → unconfined_u:object_r:user_home_t:s0 authorized_keys
+
+# Восстановление контекстов
+restorecon -Rv /home/ansible-deploy/.ssh
+
+# Проверка логов SELinux
+ausearch -m avc -ts recent
+# → type=AVC msg=audit(...): avc:  denied  { read } for  pid=1234 comm="sshd" name="authorized_keys" dev="dm-0" ino=12345 scontext=system_u:system_r:sshd_t:s0 tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file
+```
+
+### Проблема: Частичный деплой при миграции
+
+**Симптом:** Обновление прерывается midway, часть серверов обновлена, часть нет.
+
+**Причина:** Отсутствие `serial` или `max_fail_percentage` в плейбуке.
+
+**Диагностика и решение:**
+
+```bash
+# Используйте serial для последовательного обновления
+# serial: 1
+# max_fail_percentage: 0
+
+# Проверка статуса после сбоя
+ansible web_servers -m shell -a "systemctl status flaskapp"
+```
+
+---
+
+## Рекомендации
+
+### Best Practices
 
 1. **Идемпотентность**: Плейбук должен быть безопасным для повторного запуска. Используйте `state: present` вместо `state: latest` для системных пакетов.
 2. **Принцип минимальных привилегий**: Приложение запускается от отдельного пользователя, не от `root`. Права на файлы — минимально необходимые.
 3. **Изоляция секретов**: Используйте Ansible Vault для хранения паролей, ключей API. Передавайте через переменные окружения, не хардкодьте в конфигах.
-4. **Проверка перед перезапуском**: Всегда проверяйте конфигурацию перед перезапуском сервисов (nginx -t, systemctl daemon-reload).
+4. **Проверка перед перезапуском**: Всегда проверяйте конфигурацию перед перезапуском сервисов (`nginx -t`, `systemctl daemon-reload`).
 5. **Health check**: Обязательно наличие эндпоинта `/health` для мониторинга и балансировщиков.
-6. **Ротация логов**: Настройте `logrotate` для статических файлов логов или используйте journald с MaxRetentionSec.
+6. **Ротация логов**: Настройте `logrotate` для статических файлов логов или используйте journald с `MaxRetentionSec`.
 7. **Резервное копирование**: Базы данных — регулярные дампы. Конфигурация — в Git. Секреты — в Vault.
 8. **Версионирование**: Используйте теги Git для отслеживания версий деплоя. Добавляйте метаданные версии в переменные окружения.
 9. **Тестирование на staging**: Все изменения сначала на staging-сервере, затем в production.
 10. **Rolling update**: Используйте `serial: 1` для обновления по одному серверу без простоя.
+11. **no_log для секретов**: Все задачи с секретами должны иметь `no_log: true`.
+12. **FQCN модулей**: Используйте полные имена модулей (`ansible.builtin.template` вместо `template`).
+
+### Безопасность
+
+- **Управление секретами**: Для защиты конфиденциальных данных (пароли, TLS-ключи, `SECRET_KEY`) всегда используйте шифрование. Подробнее: **[Основы Ansible Vault](../Vault/basics.md)**.
+- **Минимизация привилегий**: Используйте отдельного пользователя `app_user` для запуска приложения. Не выполняйте приложение от `root`.
+- **Права на файлы**: Конфиденциальные файлы (`.env`, `secrets.py`) — `0600`, владелец `app_user`.
+- **Nginx hardening**: Скрытие версии (`server_tokens off`), защита от DDoS (`limit_req`).
+- **TLS**: HTTPS обязателен для production. Nginx terminated TLS, Gunicorn получает HTTP.
+- **no_log**: Секреты не попадают в логи Ansible. Подробнее: **[Ansible: Рекомендации по безопасности](../ansible_security_best_practices.md)**.
+
+### Производительность и стабильность
+
+- **Connection Pooling**: Для высоконагруженных сред используйте **PgBouncer** или **Pgpool-II** для управления пулом подключений к PostgreSQL.
+- **Тюнинг воркеров**: Настройте `workers = 2 * CPU + 1` через переменные. Для shared hosting ограничьте 4-8 воркерами.
+- **Лимиты ресурсов**: Настройте `LimitNOFILE` в systemd-юните для увеличения лимита открытых файлов.
+- **Мониторинг**: Включите health check `/health` и `/metrics` (если используется Prometheus) для отслеживания состояния.
+- **Check Mode**: Модули `ansible.builtin.package`, `ansible.builtin.service`, `ansible.builtin.file` поддерживают `check_mode`. Используйте `--check` для предварительной проверки.
 
 ### Граничные случаи и ограничения
 
-1. **Минимальные образы (Docker, Alpine)**: Пакеты `python3-venv`, `nginx` могут отсутствовать. Добавьте их установку в bootstrap-плейбук.
+1. **Минимальные образы**: Пакеты `python3-venv`, `nginx` могут отсутствовать. Добавьте их установку в bootstrap-плейбук.
 2. **PEP 668 (Ubuntu 24.04+, Debian 12+)**: Прямая установка через `pip` в системный интерпретатор заблокирована. Обязательно используйте `venv`.
-3. **Windows-хосты**: Gunicorn не работает на Windows. Используйте `waitress` или Docker.
+3. **Windows-хосты**: Gunicorn не работает на Windows. Используйте `waitress` или WSL2.
 4. **FreeBSD/OpenBSD**: Отличаются пути конфигурации Nginx (`/usr/local/etc/nginx/`). Используйте conditionals в шаблонах.
 5. **Высокая нагрузка**: При >1000 одновременных запросах рассмотрите `gevent` worker class или кластер с балансировщиком.
 6. **Long-running tasks**: Задачи >30 сек вызывают timeout Gunicorn. Выносите в фоновые задачи (Celery, RQ).
-7. **Static files + CDN**: В production статика раздается через CDN, не через Nginx напрямую.
-8. **WebSocket**: Требует ASGI (Uvicorn, Daphne), Gunicorn не поддерживает WebSocket.
-
-### Типичные ошибки и устранение неполадок
-
-| Проблема | Вероятная причина | Диагностика | Решение |
-|---|---|---|---|
-| `502 Bad Gateway` | Gunicorn не запущен или сокет недоступен | `ls -la /opt/app/app.sock`, `systemctl status app` | Проверьте логи: `journalctl -u app -f` |
-| `Permission denied` (Unix-сокет) | Nginx не может прочитать сокет | `ls -la /opt/app/app.sock` | `chmod 660 app.sock`, добавьте Nginx в группу `www-data` |
-| `Worker timeout` | Запрос выполняется дольше `--timeout` | `journalctl -u app \| grep timeout` | Увеличьте `--timeout` или оптимизируйте код |
-| `ModuleNotFoundError` | Зависимости не установлены в venv | `venv/bin/pip list` | `pip install -r requirements.txt` в venv |
-| `Address already in use` | Предыдущий процесс не завершился | `ss -tlnp \| grep :8000` | `kill` старый процесс или измените порт |
-| `500 Internal Server Error` | Ошибка в коде приложения | `journalctl -u app -f`, логи приложения | Проверьте `DEBUG=true` временно, исправьте код |
-| `STATIC_ROOT not set` | Django: `collectstatic` не настроен | `python manage.py collectstatic --noinput` | Добавьте `STATIC_ROOT` в `settings.py` |
-| `Bad Request (400)` | Django: `ALLOWED_HOSTS` не включает домен | Проверьте `settings.py` | Добавьте домен в `ALLOWED_HOSTS` |
-| `Connection refused` (Nginx) | Nginx не запущен или конфиг сломан | `nginx -t`, `systemctl status nginx` | Исправьте конфиг, перезапустите Nginx |
-| `上游超时` (upstream timeout) | Gunicorn обрабатывает медленно | `tail -f /var/log/nginx/error.log` | Увеличьте `proxy_read_timeout` в Nginx |
+7. **WebSocket**: Требует ASGI (Uvicorn, Daphne), Gunicorn не поддерживает WebSocket.
+8. **Многопоточность**: Gunicorn с `gthread` worker class подходит для I/O-bound задач. Увеличьте `--threads` до 4-8.
 
 ### Тестирование конфигурации перед production
 
@@ -747,9 +988,11 @@ ALLOWED_HOSTS={{ server_domain }}
 4. **Verbose Mode**: `ansible-playbook playbook.yml -vvv` для детальной отладки
 5. **Валидация конфигов**:
    ```bash
-   nginx -t                    # → nginx: configuration file /etc/nginx/nginx.conf syntax is ok
-   systemctl daemon-reload     # → перезагрузка systemd
-   venv/bin/gunicorn --check-config main:app  # проверка конфига Gunicorn
+   nginx -t
+   # → nginx: configuration file /etc/nginx/nginx.conf syntax is ok
+   systemctl daemon-reload
+   venv/bin/gunicorn --check-config main:app
+   # → [INFO] Loaded config from /path/to/gunicorn.conf.py
    ```
 6. **Проверка health check**:
    ```bash
@@ -764,8 +1007,237 @@ ALLOWED_HOSTS={{ server_domain }}
 
 ---
 
-## Смотрите также
+## Дополнительная информация
 
-- [Интеграция Nginx с Gunicorn/uWSGI](../../WebServers/Nginx/Core/Location/integration_examples.md)
-- [Шаблонизация конфигураций в Ansible](../ansible_jinja_templating.md)
-- [Типовая структура проекта Ansible](example_project_layout.md)
+### Управление логами
+
+По умолчанию Gunicorn выводит логи в `stdout/stderr`, которые перехватываются подсистемой `journald`. Для ротации логов и централизованного сбора рекомендуется:
+1. Использовать `ansible.builtin.copy` для настройки `logrotate`, если вы переопределяете вывод в статические файлы (`--access-logfile`, `--error-logfile`).
+2. Настроить `vector` или `fluent-bit` для отправки логов из `journald` в централизованное хранилище.
+3. Структурированные логи (JSON) упрощают парсинг: `--log-config` или кастомный форматтер.
+
+### Смотрите также
+
+- **[Интеграция Nginx с Gunicorn/uWSGI](../../WebServers/Nginx/Core/Location/integration_examples.md)** — конфигурация `proxy_pass`, `uwsgi_pass`, раздача статики.
+- **[Управление Python-пакетами в Ansible](../Modules/ansible_package_management_modules.md)** — модуль `ansible.builtin.pip`, виртуальные окружения, PEP 668.
+- **[Ansible: Рекомендации по безопасности](../ansible_security_best_practices.md)** — общая стратегия защиты, настройка выделенного пользователя, Vault, аудит.
+- **[Ansible: Настройка производительности](../ansible_performance_tuning.md)** — тюнинг Gunicorn, Nginx, кеширование, CDN.
+
+### Дополнительный сценарий: Настройка производительности и мониторинга
+
+Для production-окружения рекомендуется настроить базовый мониторинг и оптимизировать конфигурацию Gunicorn и Nginx.
+
+```yaml
+---
+- name: Настройка производительности Python-приложения
+  hosts: web_servers
+  become: true
+  vars:
+    app_name: "flaskapp"
+    app_user: "webapp"
+    cpu_cores: "{{ ansible_processor_cores }}"
+    gunicorn_workers: "{{ [2 * ansible_processor_cores | int + 1, 8] | min }}"
+    gunicorn_threads: 4
+    gunicorn_timeout: 30
+    gunicorn_max_requests: 1000
+    nginx_worker_processes: "{{ ansible_processor_cores }}"
+    nginx_worker_connections: 1024
+
+  tasks:
+    - name: Настройка systemd-юнита с оптимизированными параметрами
+      ansible.builtin.template:
+        src: templates/app.service.j2
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+      notify:
+        - Reload systemd
+        - Restart application
+
+    - name: Настройка Nginx с оптимизацией производительности
+      ansible.builtin.template:
+        src: templates/nginx.conf.j2
+        dest: "/etc/nginx/sites-available/{{ app_name }}.conf"
+      notify: Reload Nginx
+
+    - name: Включение кеширования статики
+      ansible.builtin.template:
+        src: templates/nginx-cache.conf.j2
+        dest: "/etc/nginx/conf.d/cache.conf"
+      notify: Reload Nginx
+
+    - name: Настройка лимитов systemd
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          LimitNOFILE=65536
+          LimitNPROC=65536
+          TasksMax=infinity
+        dest: "/etc/systemd/system/{{ app_name }}.service.d/limits.conf"
+      notify: Reload systemd
+
+    - name: Установка Prometheus exporter для Gunicorn
+      ansible.builtin.pip:
+        requirements: "/opt/{{ app_name }}/requirements-monitoring.txt"
+        virtualenv: "/opt/{{ app_name }}/venv"
+        virtualenv_command: "{{ python_version }} -m venv"
+
+    - name: Добавление health check эндпоинта
+      ansible.builtin.copy:
+        content: |
+          from flask import Flask, jsonify
+          app = Flask(__name__)
+
+          @app.route('/health')
+          def health():
+              return jsonify({'status': 'ok'}), 200
+
+          @app.route('/metrics')
+          def metrics():
+              # Здесь можно добавить кастомные метрики
+              return jsonify({
+                  'workers': {{ gunicorn_workers }},
+                  'threads': {{ gunicorn_threads }}
+              }), 200
+        dest: "/opt/{{ app_name }}/health.py"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+      notify: Restart application
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Restart application
+      ansible.builtin.service:
+        name: "{{ app_name }}"
+        state: restarted
+
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+```
+
+**Шаблон Nginx с кешированием (`templates/nginx.conf.j2`):**
+
+```jinja2
+worker_processes {{ nginx_worker_processes }};
+events {
+    worker_connections {{ nginx_worker_connections }};
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    # Кеширование статики
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=api_cache:10m inactive=60m;
+
+    # Сжатие
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
+
+    server {
+        listen 80;
+        server_name {{ server_domain }};
+
+        # Кеширование API ответов
+        location / {
+            proxy_cache api_cache;
+            proxy_cache_valid 200 5m;
+            proxy_cache_key "$scheme$request_method$host$request_uri";
+            include proxy_params;
+            proxy_pass http://unix:/opt/{{ app_name }}/{{ app_name }}.sock;
+        }
+
+        # Статика с долгим кешированием
+        location /static/ {
+            alias /opt/{{ app_name }}/static/;
+            expires 30d;
+            add_header Cache-Control "public, immutable";
+            add_header X-Content-Type-Options "nosniff";
+        }
+
+        # Health check
+        location = /health {
+            access_log off;
+            proxy_pass http://unix:/opt/{{ app_name }}/{{ app_name }}.sock;
+        }
+
+        # Metrics endpoint (защищенный)
+        location = /metrics {
+            allow 10.0.0.0/8;
+            deny all;
+            proxy_pass http://unix:/opt/{{ app_name }}/{{ app_name }}.sock;
+        }
+    }
+}
+```
+
+**Шаблон systemd-юнита с оптимизациями (`templates/app.service.j2`):**
+
+```jinja2
+[Unit]
+Description=Gunicorn service for {{ app_name }}
+After=network.target
+
+[Service]
+User={{ app_user }}
+Group=www-data
+WorkingDirectory=/opt/{{ app_name }}
+Environment="PATH=/opt/{{ app_name }}/venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/opt/{{ app_name }}/venv/bin/gunicorn \
+    --workers {{ gunicorn_workers }} \
+    --threads {{ gunicorn_threads }} \
+    --bind unix:/opt/{{ app_name }}/{{ app_name }}.sock \
+    --timeout {{ gunicorn_timeout }} \
+    --max-requests {{ gunicorn_max_requests }} \
+    --max-requests-jitter 50 \
+    --preload \
+    --access-logfile /var/log/{{ app_name }}/access.log \
+    --error-logfile /var/log/{{ app_name }}/error.log \
+    -m 007 \
+    main:app
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Валидация производительности:**
+
+```bash
+# Проверка количества воркеров
+systemctl status flaskapp | grep "Main PID"
+# → показывает PID master процесса
+
+ps aux | grep gunicorn | grep -v grep | wc -l
+# → количество процессов (1 master + N workers)
+
+# Проверка health check
+curl -s http://localhost/health | jq .
+# → {"status": "ok"}
+
+# Проверка метрик
+curl -s http://localhost/metrics | jq .
+# → {"workers": 3, "threads": 4}
+
+# Проверка кеширования Nginx
+curl -I http://localhost/
+# → X-Cache-Status: MISS (первый запрос)
+# → X-Cache-Status: HIT (второй запрос)
+
+# Проверка сжатия
+curl -s -H "Accept-Encoding: gzip" http://localhost/ | wc -c
+# → сжатый размер меньше, чем оригинал
+
+# Проверка лимитов
+systemctl show flaskapp | grep LimitNOFILE
+# → LimitNOFILE=65536
+```

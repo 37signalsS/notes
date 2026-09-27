@@ -54,7 +54,7 @@
 - **Блочные устройства (Block Devices):** Передают данные фиксированными блоками. Поддерживают произвольный доступ (диски). Используют **Buffer Cache** ядра. В `ls -l` помечаются буквой `b`.
 - **Символьные устройства (Character Devices):** Передают данные последовательно (терминалы, клавиатуры, ленты). В `ls -l` помечаются буквой `c`.
 
-### Низкоуровневая структура: Секторы и Блоки
+### Низкоуровневая структура: Сектора и Блоки
 - **Сектор (Sector):** Физическая единица хранения на диске. Диск считывает и записывает данные только целиком секторами.
 - **Блок (Block):** Логическая единица, которой оперирует ядро и ФС.
   - **Зачем нужны блоки:** Чтение по 1 байту или даже по 512 байт неэффективно для современных CPU. ОС объединяет секторы в блоки (обычно 4 КБ) для минимизации количества операций ввода-вывода.
@@ -76,13 +76,38 @@
 - **LBA (Logical Block Addressing):** Современный метод, где каждый сектор имеет уникальный порядковый номер. Контроллер диска сам маппит LBA-адрес на физическую ячейку или сектор.
 
 ### Современные размеры секторов
-- **512n (Native):** Логический и физический секторы по 512 байт.
+- **512n (Native):** Логический и физический сектора по 512 байт.
 - **512e (Emulation):** Физический сектор 4 КБ, но логически диск представляется как 512 Б (Advanced Format).
-- **4Kn (4K Native):** Логический и физический секторы по 4 КБ.
+- **4Kn (4K Native):** Логический и физический сектора по 4 КБ.
 
 ### Фрагментация
 - **HDD:** Файл в несмежных блоках заставляет головку диска постоянно перемещаться, что катастрофически снижает IOPS.
 - **SSD:** Фрагментация на уровне ОС почти не влияет на скорость чтения, но может привести к росту **Write Amplification** (WA) — избыточной перезаписи данных контроллером.
+
+### Архитектура NVMe: очереди и параллелизм
+В отличие от SATA, где есть одна очередь на 32 запроса, NVMe использует архитектуру **blk-mq** с множеством **Queue Pairs (QP)**. Каждая пара (submit/completion) привязана к ядру CPU, что позволяет обрабатывать тысячи параллельных операций с минимальной задержкой. Это критично для баз данных и высоконагруженных хранилищ.
+
+### Write Amplification (WA)
+**Усиление записи** — отношение объема физических записей на NAND к объему логических записей от хоста. Факторы роста WA:
+- **Garbage Collection (GC):** Перемещение валидных страниц при очистке блока.
+- **SLC-кэш:** При переходе из SLC в TLC/QLC происходит миграция данных.
+- **Фрагментация:** CoW-файловые системы (Btrfs, ZFS) увеличивают WA из-за копирования блоков при изменении.
+
+Для SRE важно: WA напрямую сокращает ресурс SSD (TBW) и может вызывать всплески задержки.
+
+### SLC-кэш (SLC Cache)
+Consumer SSD эмулируют режим SLC (1 бит на ячейку) для части NAND-области, что дает кратковременный Burst I/O (в 3–10 раз выше Steady State). После заполнения кэша производительность резко падает до реальных возможностей TLC/QLC. SRE должен измерять latency в steady state, а не по первым 30 секундам теста.
+
+### Over-Provisioning
+Резерв дискового пространства, невидимый для хоста. Обычно 7–20%. Используется контроллером для:
+- **Garbage Collection:** Место для перемещения валидных блоков.
+- **Устранения Write Amplification:** Снижение количества перезаписей.
+- **Выравнивания износа:** Равномерное распределение P/E-циклов.
+
+Настройка: создание разделов меньшего размера, чем физическая емкость диска, или использование утилиты `nvme set-feature`.
+
+### Power Loss Protection (PLP)
+Enterprise SSD содержат конденсаторы или индуктивности для завершения всех записей из DRAM-кэша при отключении питания. При отсутствии PLP существует риск потери последних записей (Write-back кэш). Проверяется через `smartctl -A` (атрибут `Cache_Flush_Policy` или специфичные для вендора поля).
 
 ## Практические сценарии
 
@@ -97,10 +122,145 @@
 ### 3. Проверка типа SSD (SLC/TLC/QLC) и ресурса
 SRE должен следить за параметром **Percentage Used** в NVMe или **Media_Wearout_Indicator** в SATA SSD через `smartctl`, чтобы предотвратить внезапный выход из строя по исчерпанию ресурса записи.
 
+### 4. Идентификация дисков, разделов и файловых систем
+Для SRE критически важно быстро получить топологию хранилища перед изменением конфигурации.
+
+```bash
+# Дерево устройств с размерами, типами и точками монтирования
+lsblk -f
+# → NAME   FSTYPE FSVER LABEL UUID                                 FSAVAIL FSUSE% MOUNTPOINTS
+# → sda
+# → ├─sda1 ext4   1.0         xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx     45G    15% /
+# → └─sda2 swap   1           xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx                [SWAP]
+# → nvme0n1
+# → └─nvme0n1p1 xfs         data xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx    200G    60% /var/lib
+
+# UUID и тип ФС конкретного раздела
+sudo blkid /dev/sda1
+# → /dev/sda1: UUID="xxxx..." TYPE="ext4"
+
+# Иерархия монтирования
+findmnt -t ext4,xfs
+# → TARGET    SOURCE    FSTYPE OPTIONS
+# → /         /dev/sda1 ext4   rw,relatime
+# → /var/lib  /dev/nvme0n1p1 xfs rw,noatime
+```
+
+**Важно:** `lsblk -f` показывает только подключенные устройства. Для обнаружения нового диска выполните `lsblk` до и после `echo 1 > /sys/block/<device>/device/rescan` или просто проверьте `dmesg | tail` после подключения.
+
+### 5. Проверка физического и логического размера сектора
+Несоответствие физического (4K) и логического (512e) секторов влияет на производительность и выравнивание.
+
+```bash
+# Логический размер сектора (операционная система)
+sudo blockdev --getss /dev/sda
+# → 512
+
+# Физический размер сектора (диск)
+sudo blockdev --getpbsz /dev/sda
+# → 4096
+
+# Полная информация через fdisk
+sudo fdisk -l /dev/sda
+# → Disk /dev/sda: 1 TiB, 1099511627776 bytes, 2147483648 sectors
+# → Disk model: Samsung SSD 870
+# → Units: sectors of 1 * 512 = 512 bytes
+# → Sector size (logical/physical): 512 bytes / 4096 bytes
+```
+
+**SRE note:** Если `getpbsz` > `getss` и раздел начинается не с 1 МиБ, возможен performance penalty. Проверьте выравнивание через `parted /dev/sda align-check opt 1`.
+
+### 6. Определение типа SSD и ресурса записи
+Для прогнозирования сбоев необходимо знать тип ячеек и процент износа.
+
+```bash
+# SATA SSD
+sudo smartctl -a /dev/sdb | grep -E 'Device Model|Rotation Rate|Percentage Used|Media_Wearout_Indicator'
+# → Device Model:     Samsung SSD 870 EVO
+# → Rotation Rate:    Solid State Device
+# → Percentage Used:  45
+# → Media_Wearout_Indicator: 45
+
+# NVMe SSD
+sudo nvme smart-log /dev/nvme0n1 | grep -E 'critical_warning|percentage_used|available_spare|data_units_read|data_units_written'
+# → critical_warning                        : 0
+# → percentage_used                         : 45
+# → available_spare                         : 100
+# → data_units_read                         : 1,234,567
+# → data_units_written                      : 567,890
+```
+
+**Интерпретация:**
+- `Percentage Used > 80%` — планируйте замену.
+- `Available Spare < 10%` — критический износ, замена требуется немедленно.
+- `data_units_written` переводится в TBW: `data_units_written * 51200 / 1000 ≈ TB`.
+
+### 7. Выбор и применение I/O планировщика
+Планировщик I/O управляет очередью запросов к блочному устройству. Выбор зависит от типа диска и нагрузки.
+
+| Тип диска | Рекомендуемый планировщик | Обоснование |
+| :--- | :--- | :--- |
+| NVMe | `none` (noop) | Аппаратная многопоточность, минимизация задержек ядра |
+| SATA SSD / SAS SSD | `mq-deadline` | Баланс между latency и throughput |
+| HDD (интерактивная) | `bfq` | Справедливое распределение между процессами |
+| HDD (сервер / bulk) | `mq-deadline` | Предсказуемость и группировка запросов |
+
+```bash
+# Проверка текущего планировщика
+cat /sys/block/nvme0n1/queue/scheduler
+# → [none] mq-deadline kyber bfq
+
+# Временная установка (до перезагрузки)
+echo "mq-deadline" | sudo tee /sys/block/sda/queue/scheduler >/dev/null
+
+# Постоянная настройка через udev (/etc/udev/rules.d/60-ioschedulers.rules)
+# ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none"
+# ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"
+# ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
+```
+
+### 8. Подготовка SSD: over-provisioning и TRIM
+Over-provisioning снижает Write Amplification и продлевает жизнь накопителя.
+
+```bash
+# Проверка текущего размера и доступного пространства
+sudo nvme get-feature /dev/nvme0n1 -f 0x0c -H 2>/dev/null || echo "Н/Д для SATA"
+
+# Резервирование 10% через уменьшение раздела (самый простой способ)
+# Или через утилиту vendor-specific (например, Samsung Magician для SATA)
+
+# Включение автоматического TRIM через systemd timer
+sudo systemctl enable --now fstrim.timer
+# → Created symlink .../timers.target.wants/fstrim.timer
+# → Weekly TRIM schedule active
+```
+
+## Сравнительная таблица: HDD / SSD / NVMe
+
+| Критерий | HDD (CMR) | SATA SSD | NVMe SSD |
+| :--- | :--- | :--- | :--- |
+| **Скорость чтения** | 80–160 MB/s | 500–560 MB/s | 3,500–7,500 MB/s |
+| **Случайное чтение 4K (IOPS)** | 80–120 | 50k–100k | 200k–700k |
+| **Задержка (latency)** | 5–10 мс | 50–100 мкс | 10–50 мкс |
+| **Ресурс (P/E-циклы)** | N/A (механический) | 1k–10k (TLC) | 1k–10k (TLC) |
+| **Максимальный TBW (1 ТБ)** | N/A | 600–3,000 TBW | 600–5,000 TBW |
+| **Чувствительность к вибрации** | Высокая | Средняя | Низкая |
+| **Потребление энергии** | 6–9 Вт (работа) | 2–4 Вт | 5–10 Вт (пик) |
+| **Стоимость за 1 ГБ** | Низкая | Средняя | Высокая |
+| **Рекомендуемое применение** | Архивы, логи, cold storage | Базы данных, виртуализация | Высоконагруженные БД, кэши, аналитика |
+
+## Лучшие практики
+
+1. **Выравнивание:** Всегда создавайте разделы с 1 МиБ выравнивания. Проверяйте `parted align-check`.
+2. **Sector size:** На серверах предпочитайте 4Kn диски. На 512e проверяйте выравнивание.
+3. **SSD:** Включайте `fstrim.timer`, используйте `noatime` в `/etc/fstab`, избегайте SMR в RAID.
+4. **NVMe:** Используйте планировщик `none`, выделяйте отдельный namespace для WAL/БД.
+5. **Мониторинг:** Настройте алерты на `Percentage Used > 80%`, рост `Reallocated_Sector_Ct`, `Temperature > 70°C`.
+6. **RAID:** Для SSD используйте RAID с поддержкой TRIM (mdraid 4.0+, hardware RAID с passthrough).
+7. **SMR:** Не используйте в RAID-массивах и системах с высокой нагрузкой записи.
+
 ## Дополнительная информация
 
-- **[Типы устройств: блочные и символьные](./device_types.md)** — детальный разбор.
-- **[Управление хранилищами: Обзор](./storage_overview.md)** — уровни абстракции и Device Mapper.
-- **[Разделы и файловые системы](./partitions_and_filesystems.md)** — создание и разметка.
-- **[Диагностика здоровья дисков (SMART)](../Diagnostics/Hardware/smartctl/index.md)**.
-- **[fstrim: обслуживание SSD](./fstrim_ssd_maintenance.md)**.
+- **[fstrim: обслуживание SSD и NVMe](./../SystemAdministration/fstrim_ssd_maintenance.md)** — механизм TRIM, настройка автоматической очистки.
+- **[Проверка здоровья дисков (SMART)](../Diagnostics/Hardware/smartctl/disk_health_check.md)** — интерпретация атрибутов, стратегия мониторинга парка оборудования.
+- **[Диагностика дискового ввода-вывода (I/O)](../Diagnostics/Performance/DiskIO/troubleshooting_scenarios.md)** — сценарии анализа производительности и bottlenecks.

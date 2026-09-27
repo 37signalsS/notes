@@ -15,7 +15,7 @@
 - **Лицензирование:** Доступны версии Open Source Software (OSS) и Enterprise (с поддержкой подписанных образов и SBOM).
 - **Надёжность:** Высокая, подтверждена E2E-тестами на базе фреймворка **Ginkgo**.
 
-**Связанные файлы:** [Установка и настройка](./reloader_installation.md) · [Практические сценарии](./reloader_usage_scenarios.md) · [Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)
+**Связанные файлы:** [Установка и настройка](./reloader_installation.md) · [Практические сценарии](./reloader_usage_scenarios.md) · [Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md) · [Безопасность](./reloader_security.md) · [Runbooks](./reloader_runbooks.md)
 
 ---
 
@@ -290,6 +290,42 @@ Reloader предоставляет HTTP-эндпоинты для провер�
 2. Постепенно переносите аннотации на Reloader.
 3. Убедитесь в корректной работе в staging-окружении.
 4. Отключите старое решение после полной миграции.
+
+---
+
+## Когда НЕ стоит использовать Reloader
+
+Reloader не является универсальным решением. Существуют сценарии, где использование контроллера избыточно, рискованно или менее эффективно альтернатив.
+
+### Сценарии, где Reloader не нужен
+
+| Сценарий | Почему не нужен | Альтернатива |
+| :--- | :--- | :--- |
+| **Приложение поддерживает hot reload** | Приложение само перечитывает конфигурацию без перезапуска (Nginx с `reload`, Envoy, Prometheus) | Ничего — приложение само реагирует на изменения |
+| **GitOps с Helm checksum** | `helm upgrade` уже триггерит перезапуск через checksum аннотацию | Helm checksum (`checksum/config`) |
+| **Kustomize с configMapGenerator** | Kustomize хеширует имя ConfigMap, что заставляет Kubernetes выполнить Rolling Update | Kustomize `configMapGenerator` |
+| **Используется ArgoCD с Resource Hooks** | ArgoCD может выполнить `PreSync`/`PostSync` хуки для restart | ArgoCD Resource Hooks |
+| **Infrequent changes (раз в месяц/год)** | Контроллер — лишний overhead для редких изменений | Ручной `kubectl rollout restart` |
+| **Стоимость контроля выше стоимости проблемы** | Для dev/staging сред, где перезапуск не критичен | Manual intervention |
+
+### Сравнение с альтернативами
+
+| Подход | Механизм | Hot Reload | GitOps | Сложность | Overhead |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Reloader** | Controller watch | Да | Да (annotations) | Средняя | Контроллер + ресурсы |
+| **Helm Checksum** | Template hash | Нет | Да | Низкая | Нет |
+| **Kustomize Hash** | Name suffix | Нет | Да | Низкая | Нет |
+| **ArgoCD Hooks** | PreSync/PostSync | Нет | Да | Средняя | Нет |
+| **Custom Controller** | Свой reconciler | Да | Да | Высокая | Свой контроллер |
+| **ConfigMap/Secret immutable** | Новая версия объекта | Нет | Да | Низкая | Нет |
+
+### Когда Reloader предпочтителен
+
+1. **Приложения не поддерживают hot reload** — большинство legacy и stateless-приложений
+2. **Изменения происходят вне deploy** — ротация секретов, обновление через внешние системы (Vault, CSI Driver)
+3. **Нужна реакция в реальном времени** — не только при `helm upgrade` или `kubectl apply`
+4. **Множество зависимостей** — приложение зависит от 5+ ConfigMap/Secret, ручное управление аннотациями громоздко
+5. **Argo Rollouts** — интеграция с Canary/Blue-Green стратегиями
 
 ---
 

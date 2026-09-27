@@ -439,3 +439,5 @@ kube_poddisruptionbudget_status_current_healthy / kube_poddisruptionbudget_statu
 - **[PriorityClass и вытеснение](../../../Concepts/priorityclass.md)** — различия между Preemption и Eviction.
 - **[Cluster Autoscaler](../../../Autoscaling/cluster_autoscaler_detailed.md)** — взаимодействие с PDB при scale-down.
 - **[Descheduler](../../../Autoscaling/descheduler.md)** — автоматическое перераспределение подов.
+- **[HPA: Продвинутые конфликты с PDB](../../../Autoscaling/HPA/hpa_advanced.md#взаимодействие-hpa-с-resourcequota-и-limitrange)** — HPA scale-down vs PDB, deadlock-сценарии.
+- **[HPA Troubleshooting: Сценарий 6](../hpa_troubleshooting.md#сценарий-6-конфликт-hpa-и-poddisruptionbudget-pdb)** — практический разбор конфликта HPA и PDB.

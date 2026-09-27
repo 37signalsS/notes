@@ -16,6 +16,16 @@
 
 **End-to-End (E2E) тесты (Сквозные)** — имитация реальных сценариев пользователя через все слои системы (UI → API → DB).
 
+**Smoke-тесты (Дымовые)** — минимальный набор проверок, подтверждающий, что развёрнутое приложение запускается и основные функции работают. Выполняются после деплоя или сборки артефакта.
+
+**Sanity-тесты (Проверка работоспособности)** — узкий набор проверок после внесения небольших изменений (bug fix, минорный релиз), подтверждающий, что конкретный функционал не сломан.
+
+**Regression-тесты (Регрессионные)** — повторный прогон тестов после изменений для подтверждения, что существующая функциональность не затронута. Включают Unit, Integration и подмножество E2E.
+
+**Test Fixture** — подготовка окружения и данных, необходимых для выполнения теста (временная БД, конфиг, фикстуры).
+
+**Mock / Stub / Spy** — дублёры зависимостей: Mock заменяет объект и проверяет взаимодействия; Stub возвращает фиксированные ответы; Spy оборачивает реальный объект для регистрации вызовов.
+
 ## 2. Основные концепции
 
 ### Сравнение моделей: Пирамида vs Трофей
@@ -44,10 +54,28 @@
 | Критерий | Unit | Integration | E2E | Contract | Visual |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Объект** | Функция / Класс | Группа модулей | Бизнес-сценарий | API Интерфейс | UI Layout |
-| **Зависимости** | Дублёры (Mocks) | Реальные (Docker) | Полный стек | Спецификации | Браузер / AI |
+| **Зависимости** | Дублёры (Mocks) | Реальные (Docker) | Полный стек | Спецификации | Браузер / эталоны |
 | **Скорость** | Миллисекунды | Секунды | Минуты | Секунды | Секунды |
 | **Надёжность** | Детерминированная | Высокая | Flaky (высокий) | Высокая | Средняя (диффы) |
 | **Инструменты** | pytest, Jest | Testcontainers | Playwright | Pact, PactFlow | Applitools, Percy |
+
+### Стратегия тестовых окружений
+
+Для DevOps/SRE критично, чтобы тесты выполнялись в окружении, максимально приближённом к production:
+
+*   **Паритет сред (Environment Parity):** Конфигурация ОС, версии зависимостей (БД, брокеры) и параметры запуска в CI должны совпадать с staging/production. Для контейнеров это означает фиксированные теги образов (`postgres:16.3`, а не `:latest`).
+*   **Эфемерные окружения (Ephemeral Environments):** Вместо разделения одного стейджинга создаётся изолированное окружение на каждый Merge Request или ветку. После закрытия MR окружение автоматически уничтожается. Это исключает "оно работало на стейджинге, потому что там грязные данные от другого теста".
+*   **Изоляция данных:** Каждый тестовый прогон работает с уникальной базой или схемой. Для PostgreSQL используется отдельная база на тест (`CREATE DATABASE test_${CI_PIPELINE_ID}`); для Kubernetes — отдельный namespace (`test-${CI_COMMIT_REF_SLUG}`).
+*   **Очистка ресурсов:** Тестовые контейнеры, ВМ и записи в БД должны удаляться независимо от исхода теста (`finally`, `after_all`, `when: always`). Неочищенные ресурсы приводят к утечкам и ложным ошибкам следующего прогона.
+
+### Управление тестовыми данными
+
+Надёжность тестов зависит от качества и изоляции данных:
+
+*   **Фабрики (Factories):** Вместо хардкода создавайте объекты через фабрики с вариативными полями (Faker, FactoryBot). Это исключает хрупкие тесты, зависящие от конкретных ID или значений.
+*   **Симуляция времени (Time Mocking):** Для детерминированных тестов фиксируйте время через `freezegun` (Python), `@Clock` (Java) или `sinon.useFakeTimers` (JS). Зависимость от `Date.now()` делает тест flaky.
+*   **Очистка между тестами:** Используйте `@Transactional` с `rollback` (Java) или `session.rollback()` (pytest) для отката изменений БД после каждого теста. Для интеграционных тестов без транзакций — удаление схемы или базы в `teardown`.
+*   **Внешние зависимости:** Если тест обращается к внешнему API, используйте WireMock или Mock Server. Реальные внешние вызовы в CI делают тест зависимым от доступности стороннего сервиса.
 
 ## 3. Практические сценарии
 
@@ -112,6 +140,190 @@ pactflow publish-provider-contract openapi.yaml \
   --verifier schemathesis
 ```
 
+### Unit-тесты в CI: практический пайплайн
+
+Unit-тесты должны выполняться на каждом коммите. Для ускорения прогона применяется параллелизм и кэширование зависимостей.
+
+**Python + pytest + GitHub Actions:**
+
+```yaml
+name: Unit Tests
+on: [pull_request, push]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit/ \
+            --junitxml=reports/junit.xml \
+            --cov=src --cov-report=xml \
+            -n auto  # pytest-xdist: параллелизм по ядрам CPU
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-junit
+          path: reports/junit.xml
+          retention-days: 14
+```
+
+**JavaScript + Jest:**
+
+```yaml
+- name: Run Jest unit tests
+  run: npx jest --coverage --maxWorkers=2 --reporters=jest-junit
+  env:
+    JEST_JUNIT_OUTPUT: reports/junit.xml
+```
+
+**Go:**
+
+```bash
+go test ./... -coverprofile=coverage.out -json | gotestsum --junitfile reports/junit.xml -
+```
+
+### Интеграционные тесты: Docker Compose и Testcontainers
+
+Интеграционные тесты требуют реальных зависимостей. Два подхода:
+
+**Подход 1: Docker Compose (статичный стек)**
+
+Для стабильных зависимостей (БД + кэш) удобен `docker-compose.yml`:
+
+```yaml
+# docker-compose.test.yml
+services:
+  postgres:
+    image: postgres:16.3
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+```
+
+```bash
+# Запуск зависимостей
+docker compose -f docker-compose.test.yml up -d --wait
+
+# Выполнение тестов
+pytest tests/integration/ --junitxml=reports/junit.xml
+
+# Очистка
+docker compose -f docker-compose.test.yml down -v
+```
+
+**Подход 2: Testcontainers (программный)**
+
+Для динамических сценариев (несколько изолированных баз в одном прогоне) — Testcontainers. Детали: **[Testcontainers: обзор](./testcontainers_overview.md)**.
+
+### E2E-тесты: Playwright в CI
+
+Сквозные тесты имитируют пользователя через все слои. Для стабильности требуется:
+
+*   **Фиксированные версии браузеров:** Используйте Docker-образ `mcr.microsoft.com/playwright:v1.49.0-noble` с предустановленными Chromium/Firefox/WebKit.
+*   **Шардирование (Sharding):** Разделите тесты по нескольким джобам для ускорения прогона.
+*   **Артефакты:** Сохраняйте видео, скриншоты и трассировки при падениях.
+
+```yaml
+name: E2E Tests
+on: [pull_request]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Playwright shard 1/2
+        run: npx playwright test --shard=1/2 --reporter=junit --output=reports
+        env:
+          BASE_URL: https://staging.example.com
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-shard-1
+          path: |
+            reports/*.xml
+            playwright-report/
+            test-results/
+```
+
+**Важно:** E2E-тесты должны запускаться против окружения, максимально похожего на production (staging с production-данными или production-подобными). Запуск против `localhost` с локальной БД даёт ложное чувство безопасности.
+
+### Инфраструктурное тестирование (Sysadmin/SRE перспектива)
+
+Помимо тестирования кода, SRE/сисадмин проверяет корректность развёртывания и конфигурации инфраструктуры:
+
+**Тестирование systemd-сервисов:**
+
+```bash
+# Проверка: сервис стартует, listen на порту, отвечает healthcheck
+systemctl start myapp.service
+systemctl is-active --quiet myapp.service && echo "OK" || echo "FAIL"
+
+# Проверка health endpoint
+curl -sf http://localhost:8080/healthz || systemctl status myapp.service
+
+# Очистка
+systemctl stop myapp.service
+```
+
+**Тестирование idempotency (Ansible/Molecule концепция):**
+
+Конфигурация должна применима многократно без изменения результата. Проверка:
+
+```bash
+# Первый прогон
+ansible-playbook playbook.yml
+
+# Второй прогон — idempotency check
+ansible-playbook playbook.yml --diff | grep -q "changed" && echo "NOT IDEMPOTENT" || echo "IDEMPOTENT"
+```
+
+**Тестирование в изолированных сетевых пространствах (network namespaces):**
+
+```bash
+# Создание изолированного namespace для теста
+ip netns add test-ns
+ip netns exec test-ns ip link set lo up
+
+# Запуск приложения в namespace и проверка связности
+ip netns exec test-ns curl -sf http://internal-service:8080/health || echo "FAIL"
+
+# Удаление namespace
+ip netns del test-ns
+```
+
+### Тестирование в air-gapped средах
+
+В инфраструктурах с ограниченным доступом к интернету (банк, госсектор, оборонные контуры) тестовые окружения не могут скачивать образы или зависимости во время прогона:
+
+*   **Pre-staging артефактов:** Все Docker-образы, пакеты и зависимости скачиваются на внутренний registry (Nexus, Artifactory, Harbor) заранее.
+*   **Offline-режимы инструментов:** Playwright собирается с `--with-deps` на машине с доступом в сеть, затем копируется на изолированный раннер. `pytest` и плагины упаковываются в wheelhouse.
+*   **Верификация доступности:** Перед прогоном проверяйте `curl -sf http://registry.local/v2/` — если registry недоступен, пайплайн должен завершиться с понятной ошибкой, а не зависнуть на `docker pull`.
+
 ### Визуальное регрессионное тестирование (Visual Regression)
 
 Для обеспечения визуальной целостности интерфейса и предотвращения поломок верстки, которые не обнаруживаются функциональными тестами, используется визуальное регрессионное тестирование.
@@ -120,14 +332,17 @@ pactflow publish-provider-contract openapi.yaml \
 
 ## 4. Дополнительная информация
 
-### AI-Augmented Testing (2026)
+### Управление состоянием и изоляция тестов
 
-Современные инструменты тестирования активно используют AI для снижения стоимости поддержки:
-*   **Self-healing (Самолечение):** Тесты автоматически обновляют CSS/XPath локаторы при изменении верстки, если функциональная суть элемента не изменилась.
-*   **Agentic QA:** Использование ИИ-агентов для исследования "неисследованных путей" (exploratory testing) и автоматической генерации тестовых сценариев на основе User Stories.
-*   **Intelligent Reruns:** Автоматический анализ падений (RCA) и классификация: реальный баг или нестабильность (flaky).
+Неизолированные тесты — основная причина flaky-результатов и невоспроизводимых багов:
 
-### Принципы надежности (FIRST)
+*   **Изоляция на уровне БД:** Для интеграционных тестов используйте отдельную схему или базу на каждый тестовый класс/метод. В pytest — фикстура с `scope="function"` и `DROP SCHEMA` в `teardown`. В JUnit — `@Transactional` с автоматическим rollback.
+*   **Изоляция на уровне файловой системы:** Пишите во временные директории (`tmp_path` в pytest, `java.nio.file.Files.createTempDirectory`), never в рабочий каталог проекта.
+*   **Изоляция на уровне сети:** Используйте динамические порты (Testcontainers делает это автоматически). Для ручной настройки — `socket.getFreePort()` или аналоги.
+*   **Параллелизм без конфликтов:** При запуске в нескольких процессах (pytest-xdist, Jest workers) убедитесь, что тесты не делят файлы, порты или записи БД. Если тест не может быть параллельным — пометьте его `@serial` или вынесите в отдельную джобу.
+*   **Очистка ресурсов:** Используйте контекстные менеджеры (`with`, `try/finally`, `@Container`) для гарантированного удаления контейнеров, ВМ и временных файлов даже при падении теста.
+
+### Принципы надёжности (FIRST)
 
 Каждый качественный тест должен соответствовать принципам **FIRST**. Подробное описание и примеры см. в разделе **[Принципы качественных тестов](../CI-CD/Testing/tdd_bdd_overview.md#принципы-качественных-тестов)**.
 
@@ -135,9 +350,6 @@ pactflow publish-provider-contract openapi.yaml \
 
 ### См. также
 
-*   **[TDD, BDD и ATDD: Методологии разработки](../CI-CD/Testing/tdd_bdd_overview.md)** — разработка через тестирование, поведение и приемочные тесты.
 *   **[Интеграция тестов в CI/CD](./testing_cicd_integration.md)** — ворота качества, TIA, эфемерные окружения.
-*   **[Метрики тестового покрытия](./testing_coverage_metrics.md)** — оценка полноты проверок.
 *   **[Testcontainers: обзор](./testcontainers_overview.md)** — стандарт интеграционного тестирования.
 *   **[Pact Foundation Documentation](https://docs.pact.io/)** — детальное руководство по контрактному тестированию.
-*   **[Applitools: Visual AI](https://applitools.com/)** — платформа для визуального AI-тестирования.

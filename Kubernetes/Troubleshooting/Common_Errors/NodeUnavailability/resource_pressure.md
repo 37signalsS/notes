@@ -701,3 +701,5 @@ evictionHard:
 - **[Настройка Kubelet](../../../Concepts/kubelet.md)** — детальный разбор YAML-конфигурации.
 - **[Taints и выселение](./taints_and_eviction.md)** — taint-based eviction, автоматическое наложение taints.
 - **[PSI: статистика давления](../../../Linux/Core/kernel/psi.md)** — детали PSI, конфигурация, пороги.
+- **[Тюнинг ядра](./kernel_tuning.md)** — sysctl параметры, влияющие на ресурсы (vm.max_map_count, pid_max).
+- **[SELinux и AppArmor](./security_profiles.md)** — MAC-политики могут блокировать диагностику ресурсов.

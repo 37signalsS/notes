@@ -550,6 +550,7 @@ kubectl get --raw /api/v1/namespaces/default/secrets | jq '.items[0].type'
 - [Профилактика CreateContainerConfigError](./prevention.md)
 - [Проблемы с ConfigMap](./configmap_issues.md)
 - [Проблемы с RBAC](./rbac_issues.md)
+- [CRI и containerd](./cri_and_runtime.md) — Container Runtime Interface, взаимодействие kubelet с рантаймом
 - [Безопасность секретов (Encryption at Rest)](../../../Base/secrets/security.md)
 - [Создание Secret](../../../Base/secrets/creating_secrets.md)
 - [Хранение в etcd](../../../Base/secrets/etcd_storage.md)

@@ -2,35 +2,35 @@
 
 ## Определения
 
-**Переменные (Variables)** — именованные значения, используемые для параметризации плейбуков и ролей. Позволяют адаптировать код под разные окружения (dev/prod) без изменения самой логики задач. Могут содержать строки, числа, логические значения, списки и словари.
+**Переменные (Variables)** — именованные значения, используемые для параметризации плейбуков и ролей. Позволяют адаптировать код под разные окружения (dev/staging/prod) и типы систем без изменения логики задач. Могут содержать строки, числа, логические значения, списки и словари.
 
-**Факты (Facts)** — системные данные об управляемом хосте (ОС, IP-адреса, диски, память), которые Ansible автоматически собирает перед выполнением задач. Доступны через глобальный словарь `ansible_facts`.
+**Факты (Facts)** — системные данные об управляемом хосте (ОС, IP-адреса, диски, память, пакетный менеджер), которые Ansible автоматически собирает перед выполнением задач через модуль `ansible.builtin.setup`. Доступны через глобальный словарь `ansible_facts`.
 
-**Магические переменные (Magic Variables)** — зарезервированные внутренние переменные Ansible (например, `inventory_hostname`, `hostvars`), значения которых вычисляются автоматически движком и не могут быть напрямую переопределены пользователем.
+**Магические переменные (Magic Variables)** — зарезервированные внутренние переменные Ansible (например, `inventory_hostname`, `hostvars`, `groups`), значения которых вычисляются автоматически движком и не могут быть напрямую переопределены пользователем.
 
 **Область видимости (Scope)** — уровень доступности переменной в рамках жизненного цикла выполнения. Различают глобальную область (global), область плея (play), хоста (host) и локальные области (role, task, block).
 
 **Кеширование фактов (Fact Caching)** — механизм сохранения собранных данных о хостах во внешнее хранилище (Redis, memcached, jsonfile) для ускорения последующих запусков и межхостового взаимодействия без повторного сбора.
 
-**Переменные регистрации (Registered Variables)** — переменные, создаваемые модулем `register` для сохранения результата выполнения задачи. Содержат полную структуру результата: `stdout`, `stderr`, `rc`, `changed`, `failed` и др. Позволяют реализовывать условную логику и обработку ошибок.
+**Переменные регистрации (Registered Variables)** — переменные, создаваемые директивой `register` для сохранения результата выполнения задачи. Содержат полную структуру результата: `stdout`, `stderr`, `rc`, `changed`, `failed` и др.
 
 **Динамические переменные (set_fact)** — переменные, создаваемые или переопределяемые во время выполнения плейбука через модуль `ansible.builtin.set_fact`. Сохраняются на уровне хоста и доступны во всех последующих задачах текущего плея.
 
-**Безопасное логирование (no_log)** — директива, предотвращающая запись секретных данных в лог Ansible. Устанавливается на уровне задачи или блока. При `no_log: true` ни stdout, ни stderr задачи не попадают в вывод.
+**Безопасное логирование (no_log)** — директива, предотвращающая запись секретных данных в лог Ansible. Устанавливается на уровне задачи или блока.
 
-**Делегирование фактов (delegate_facts)** — механизм, позволяющий собранные факты хоста сохранить у делегированного хоста (обычно балансировщика или сервера мониторинга) вместо целевого. Используется совместно с `delegate_to`.
+**Делегирование фактов (delegate_facts)** — механизм, позволяющий собранные факты хоста сохранить у делегированного хоста (обычно балансировщика или сервера мониторинга) вместо целевого.
 
 **Директива vars_files** — указание YAML-файлов с переменными для подключения в начале плея. Поддерживает глобальную видимость и динамические пути через Jinja2-шаблоны.
 
-**Директива vars_prompt** — интерактивный ввод переменных при запуске плейбука. Поддерживает скрытие ввода (`private: yes`), валидацию через `encrypt` и значения по умолчанию.
+**Директива vars_prompt** — интерактивный ввод переменных при запуске плейбука. Поддерживает скрытие ввода (`private: yes`), валидацию и значения по умолчанию.
 
 ## Базовые концепции
 
 ### Иерархия приоритетов (Variable Precedence)
 
-Ansible использует сложную систему приоритетов (официально 22 уровня) для разрешения конфликтов имен. Знание этой иерархии критично для управления конфигурациями и отладки.
+Ansible использует систему приоритетов для разрешения конфликтов имен переменных. Знание этой иерархии критично для управления конфигурациями в крупных инфраструктурах.
 
-*Полная иерархия приоритетов (от низшего к высшему):*
+**Полная иерархия приоритетов (от низшего к высшему):**
 
 | # | Уровень | Источник | Пример |
 | :--- | :--- | :--- | :--- |
@@ -45,14 +45,14 @@ Ansible использует сложную систему приоритето�
 | 9 | Include params | `include_role`, `include_tasks` | `include_role: { name: x }` |
 | 10 | Extra vars | `-e "var=value"` CLI | `ansible-playbook site.yml -e env=prod` |
 
-> **Примечание:** Переменные окружения (`ansible_*`), `set_fact` и `registered vars` имеют одинаковый приоритет (уровень 7). `extra_vars` (уровень 10) имеют **абсолютный приоритет** и переопределяют всё остальное.
+> **Примечание:** `extra_vars` (уровень 10) имеют **абсолютный приоритет** и переопределяют всё остальное. `set_fact` и `registered vars` находятся на одном уровне (7).
 
-**Практические правила приоритетов:**
+**Практические правила приоритетов для SRE:**
 
-- Используйте `defaults/main.yml` для безопасных значений по умолчанию, которые легко переопределять.
-- Избегайте `vars/main.yml` роли для переопределяемых настроек — они имеют высокий приоритет.
-- `extra_vars` идеальны для временных переопределений, но опасны для долгосрочных настроек.
-- `set_fact` и `register` имеют одинаковый приоритет — последняя определенная побеждает.
+- Используйте `defaults/main.yml` для безопасных значений по умолчанию, которые легко переопределять через inventory.
+- Избегайте `vars/main.yml` роли для переопределяемых настроек — они имеют высокий приоритет и конфликтуют с inventory.
+- `extra_vars` идеальны для временных переопределений в аварийных ситуациях, но опасны для долгосрочных настроек.
+- При аудите конфигураций проверяйте `group_vars/` и `host_vars/` первыми — это наиболее частые источники неожиданных переопределений.
 
 ### Опции переопределения в CLI
 
@@ -61,24 +61,25 @@ Ansible использует сложную систему приоритето�
 ansible-playbook site.yml -e "app_version=v2.3.1"
 ansible-playbook site.yml -e @vars/override.yml
 
-# Установка переменной окружения
-export ANSIBLE_EXTRA_VARS="env=prod"
-ansible-playbook site.yml
-
 # Переопределение через --extra-vars с stdin
 echo '{"app_debug": false}' | ansible-playbook site.yml -e @-
+
+# Список итоговых переменных для хоста
+ansible-playbook site.yml --list-variables -l webserver1
+# → {
+#     "app_version": "v2.3.1",
+#     "app_port": 8080,
+#     "ansible_facts": { ... }
+#   }
 ```
 
 ### Работа с фактами (ansible_facts)
 
 По умолчанию сбор фактов происходит в начале каждого плея (`gather_facts: true`) с использованием модуля `ansible.builtin.setup`.
-*   **Современный синтаксис**: Всегда используйте словарь `ansible_facts['os_family']` вместо устаревшего плоского формата `ansible_os_family`.
-*   **Оптимизация**: Для экономии времени на больших инвентарях сбор можно отключать (`gather_facts: false`), собирая факты только там, где необходимо, через модуль `setup`.
-*   **Кастомные факты (`ansible_local`)**: Текстовые (INI/JSON) или исполняемые файлы в `/etc/ansible/facts.d/*.fact`. Их вывод доступен через `ansible_facts.ansible_local`.
+
+**Современный синтаксис:** Всегда используйте словарь `ansible_facts['os_family']` вместо устаревшего плоского формата `ansible_os_family`. Начиная с ansible-core 2.24, плоский формат будет отключен по умолчанию.
 
 **Селективный сбор фактов:**
-
-Сбор только нужных подмножеств фактов значительно ускоряет выполнение на больших инвентарях.
 
 ```yaml
 - name: Сбор только сетевых фактов
@@ -98,7 +99,7 @@ echo '{"app_debug": false}' | ansible-playbook site.yml -e @-
 
 **Подключаемые факты (Connected Facts):**
 
-Факты, собираемые модулями `setup` автоматически, включают информацию о сетевых интерфейсах, дисках, процессорах и ОС. Доступны через `ansible_facts`:
+Факты, собираемые модулем `setup` автоматически, включают информацию о сетевых интерфейсах, дисках, процессорах и ОС. Доступны через `ansible_facts`:
 
 ```yaml
 # ОС и семейство
@@ -134,69 +135,80 @@ echo '{"app_debug": false}' | ansible-playbook site.yml -e @-
       environment: "production"
 ```
 
+### Жизненный цикл переменной
+
+**Глобальная область (Global):**
+Переменные, определенные через `-e` или в `group_vars/all.yml`, доступны во всех плеях плейбука.
+
+**Область плея (Play):**
+Переменные, определенные в `vars:` или `vars_files:` внутри плея, доступны всем задачам этого плея.
+
+**Область хоста (Host):**
+`set_fact` и `register` сохраняются на уровне хоста и доступны во всех последующих задачах текущего плея. При `cacheable: yes` факт сохраняется в кеш и доступен в последующих запусках.
+
+**Локальная область (Local):**
+Переменные внутри `block`, `include_tasks` или `include_role` имеют ограниченную область видимости.
+
+**Время жизни Registered Variables:**
+
+```yaml
+- name: Пример времени жизни register
+  ansible.builtin.command: uname -a
+  register: os_info
+
+- name: Переменная доступна в последующих задачах
+  ansible.builtin.debug:
+    var: os_info.stdout
+```
+
+### Магические переменные
+
+| Переменная | Описание | Пример использования |
+| :--- | :--- | :--- |
+| `inventory_hostname` | Имя хоста в инвентаре | `{{ inventory_hostname }}` |
+| `hostvars` | Переменные и факты других хостов | `{{ hostvars['db']['ansible_facts']['eth0']['ipv4']['address'] }}` |
+| `groups` | Список групп и хостов | `{{ groups['web_servers'] }}` |
+| `group_names` | Группы текущего хоста | `{{ group_names }}` |
+| `ansible_check_mode` | Режим проверки `--check` | `when: not ansible_check_mode` |
+| `ansible_diff_mode` | Режим дифференциального вывода `--diff` | `when: ansible_diff_mode` |
+| `ansible_play_hosts_all` | Все хосты текущего плея | `{{ ansible_play_hosts_all }}` |
+| `ansible_version` | Версия Ansible | `{{ ansible_version.full }}` |
+| `omit` | Игнорирование параметра модуля | `param: "{{ my_var | default(omit) }}"` |
+
+### Типизация и фильтры Jinja2
+
+Для полного списка фильтров Jinja2 в Ansible см. [Шаблонизация Jinja2](../ansible_jinja_templating.md).
+
+**Базовые фильтры для повседневной работы:**
+
+| Фильтр | Назначение | Пример |
+| :--- | :--- | :--- |
+| `default(value)` | Значение по умолчанию | `{{ port | default(8080) }}` |
+| `default(omit)` | Игнорирование параметра | `param: "{{ var | default(omit) }}"` |
+| `combine(dict, recursive=True)` | Слияние словарей | `{{ a | combine(b, recursive=True) }}` |
+| `dict2items` / `items2dict` | Преобразование словаря ↔ список | `{{ services | dict2items }}` |
+| `selectattr` / `rejectattr` | Фильтрация списков | `{{ list \| selectattr('active', 'equalto', true) \| list }}` |
+| `map(attribute)` | Извлечение атрибута | `{{ hosts \| map(attribute='ip') \| list }}` |
+| `regex_replace` | Замена по regex | `{{ name \| regex_replace('^old', 'new') }}` |
+| `json_query` | JMESPath-запросы | `{{ data \| json_query('[?port > `8080`].name') }}` |
+| `type_debug` | Отладка типа данных | `{{ var \| type_debug }}` |
+
 ### Кеширование фактов (Fact Caching)
 
-Настройка кеша в `ansible.cfg` позволяет избежать повторного сбора фактов при каждом запуске:
+Настройка кеша в `ansible.cfg` позволяет избежать повторного сбора фактов. Детальные конфигурации для Redis, Memcached и jsonfile описаны в [Оптимизация производительности](../ansible_performance_tuning.md).
+
 ```ini
 [defaults]
 fact_caching = jsonfile
 fact_caching_connection = /tmp/ansible_cache
-fact_caching_timeout = 86400 # 24 часа
+fact_caching_timeout = 86400
 ```
-**Безопасность**: Будьте осторожны с секретами, сохраняемыми через `set_fact` — при включенном кешировании они могут быть записаны на диск в открытом виде.
+
+> **Примечание:** При включенном кешировании секреты, сохраненные через `set_fact`, могут быть записаны на диск в открытом виде. Используйте `no_log: true` для задач с секретами.
 
 ### Валидация через argument_specs
 
-Начиная с Ansible 2.11, рекомендуется описывать интерфейс роли в `meta/argument_specs.yml`. Это обеспечивает автоматическую проверку типов, обязательности и разрешенных значений переменных до выполнения первой задачи. В 2.17+ поддерживается поле `context` для расширенной метаинформации.
-
-### Полезные магические переменные
-
-*   `inventory_hostname`: Имя хоста в инвентаре (может отличаться от системного `hostname`).
-*   `hostvars`: Доступ к переменным и фактам *других* хостов. Пример: `hostvars['db']['ansible_facts']['eth0']['ipv4']['address']`.
-*   `groups`: Список всех групп и хостов в них. Полезно для генерации конфигов балансировщиков.
-*   `group_names`: Список групп, в которые входит текущий хост.
-*   `ansible_check_mode`: `true` если плейбук выполняется в режиме проверки (`--check`). Используется для пропуска задач, которые не поддерживают дри_RUN.
-*   `ansible_diff_mode`: `true` если включен режим дифференциального вывода (`--diff`).
-*   `groups_all`: Список всех хостов во всех группах. Отличается от `groups['all']` тем, что включает даже игнорируемые хосты.
-*   `play_hosts`: Список хостов, попавших в текущий play (deprecated: используйте `ansible_play_hosts_all`).
-*   `ansible_play_hosts_all`: Список всех хостов текущего play.
-*   `ansible_version`: Словарь с версией Ansible (`ansible_version.full`, `ansible_version.major`, `ansible_version.minor`).
-*   `omit`: Специальная переменная,指示 модулю полностью игнорировать параметр (используется с `default(omit)`).
-
-### Типизация и фильтры Jinja2
-
-Используйте фильтры для безопасной и гибкой обработки данных:
-*   `default(value)`: Значение по умолчанию, если переменная не определена.
-*   `default(omit)`: Полное игнорирование параметра модуля, если переменная отсутствует.
-*   `combine`: Слияние словарей (особенно полезно для глубокого слияния настроек).
-*   `type_debug`: Отладка типа данных.
-*   `to_json` / `from_yaml`: Преобразование форматов данных.
-*   `dict2items` / `items2dict`: Преобразование словарей в список и обратно (для циклической обработки ключей).
-*   `selectattr` / `rejectattr`: Фильтрация списков словарей по атрибуту.
-*   `map` / `map(attribute)`: Извлечение или трансформация значений из списка словарей.
-*   `regex_replace`: Замена по регулярному выражению.
-*   `regex_search` / `regex_match`: Поиск по регулярному выражению.
-*   `json_query`: Запросы к JSON-данным с помощью JMESPath (требуется `community.general`).
-
-**Примеры использования фильтров:**
-
-```yaml
-# Извлечение списка IP-адресов из hostvars
-- name: Получить все IP веб-серверов
-  ansible.builtin.debug:
-    msg: "{{ groups['web_servers'] | map('extract', hostvars, ['ansible_facts', 'default_ipv4', 'address']) | list }}"
-
-# Фильтрация списка хостов по атрибуту
-- name: Только живые серверы
-  ansible.builtin.debug:
-    msg: "{{ groups['all'] | map('extract', hostvars) | selectattr('ansible_facts.distribution', 'equalto', 'Ubuntu') | map(attribute='inventory_hostname') | list }}"
-
-# Преобразование словаря в список для loop
-- name: Вывести каждый сервис
-  ansible.builtin.debug:
-    msg: "Сервис: {{ item.key }} -> {{ item.value }}"
-  loop: "{{ services | dict2items }}"
-```
+Начиная с Ansible 2.11, рекомендуется описывать интерфейс роли в `meta/argument_specs.yml`. Это обеспечивает автоматическую проверку типов, обязательности и разрешенных значений переменных до выполнения первой задачи.
 
 ## Практические сценарии
 
@@ -213,7 +225,7 @@ fact_caching_timeout = 86400 # 24 часа
     name: os_specific_vars
 ```
 
-**Расширенный вариант с first_found и значениями по умолчанию:**
+**Расширенный вариант с first_found:**
 
 ```yaml
 - name: Загрузка переменных из нескольких источников
@@ -229,18 +241,7 @@ fact_caching_timeout = 86400 # 24 часа
       paths:
         - "../vars"
         - "vars"
-        skip: true  # Не падать, если файл не найден
-```
-
-**Загрузка из словаря (dict):**
-
-```yaml
-- name: Загрузка переменных из встроенного словаря
-  ansible.builtin.include_vars:
-    content: |
-      app_port: 8080
-      app_debug: false
-    name: inline_config
+      skip: true
 ```
 
 **Валидация переменных после загрузки:**
@@ -265,7 +266,7 @@ fact_caching_timeout = 86400 # 24 часа
 
 ### Сценарий 2: Использование данных другого хоста (hostvars)
 
-Оркестрация межхостового взаимодействия (например, получение IP-адреса БД).
+Оркестрация межхостового взаимодействия (например, получение IP-адреса БД из inventory).
 
 ```yaml
 - name: Настройка строки подключения к БД
@@ -310,12 +311,11 @@ fact_caching_timeout = 86400 # 24 часа
 **Кеширование фактов между плейбуками:**
 
 ```yaml
-# Сохранение факта для использования в других плейбуках
 - name: Сохранить версию приложения
   ansible.builtin.set_fact:
     app_installed_version: "v2.3.1"
-    cacheable: yes  # Сохраняется в fact cache
-    cache_timeout: 3600  # Время жизни в секундах (только для jsonfile)
+    cacheable: yes
+    cache_timeout: 3600
 ```
 
 **Создание сложных структур данных:**
@@ -334,14 +334,9 @@ fact_caching_timeout = 86400 # 24 часа
       logging:
         level: "{{ log_level | default('INFO') }}"
         file: "/var/log/{{ app_name }}/app.log"
-
-- name: Использование словаря в шаблоне
-  ansible.builtin.template:
-    src: app.conf.j2
-    dest: /etc/app/config.yml
 ```
 
-**set_fact для условной логики (uso de `when`):**
+**set_fact для условной логики:**
 
 ```yaml
 - name: Определение типа ОС
@@ -389,7 +384,7 @@ fact_caching_timeout = 86400 # 24 часа
 
 **Результат:** `features: { debug: true, auth: true }` — рекурсивное слияние сохраняет ключи из обоих словарей.
 
-**Множественное слияние с списком словарей:**
+**Множественное слияние:**
 
 ```yaml
 - name: Слияние нескольких источников конфигурации
@@ -400,17 +395,9 @@ fact_caching_timeout = 86400 # 24 часа
       listen: "0.0.0.0:8080"
       workers: 4
     config_env:
-      workers: 8  # Переопределение для продакшена
+      workers: 8
     config_local:
-      listen: "127.0.0.1:8080"  # Локальная разработка
-```
-
-**Слияние с удалением ключей:**
-
-```yaml
-- name: Удаление ключа из словаря
-  ansible.builtin.set_fact:
-    app_config: "{{ app_config | combine({'debug': omit}, recursive=True) }}"
+      listen: "127.0.0.1:8080"
 ```
 
 ### Сценарий 7: vars_files и vars_prompt
@@ -442,7 +429,7 @@ fact_caching_timeout = 86400 # 24 часа
   vars_prompt:
     - name: deploy_version
       prompt: "Введите версию для деплоя (например, v2.3.1)"
-      private: false  # Показывать ввод
+      private: false
       default: "latest"
 
     - name: deploy_env
@@ -456,33 +443,13 @@ fact_caching_timeout = 86400 # 24 часа
 
     - name: deploy_password
       prompt: "Пароль для SSH ключа"
-      private: true  # Скрывать ввод
-      encrypt: "sha512_crypt"  # Хеширование
+      private: true
+      encrypt: "sha512_crypt"
 
   tasks:
     - name: Деплой указанной версии
       ansible.builtin.debug:
         msg: "Деплой {{ deploy_version }} в {{ deploy_env }}"
-```
-
-**Комбинация vars_prompt и vars_files:**
-
-```yaml
----
-- name: Гибкая конфигурация
-  hosts: all
-  vars_prompt:
-    - name: config_profile
-      prompt: "Профиль конфигурации"
-      private: false
-      default: "standard"
-      choices: ["minimal", "standard", "full"]
-  vars_files:
-    - "vars/profiles/{{ config_profile }}.yml"
-  tasks:
-    - name: Применение профиля
-      ansible.builtin.debug:
-        msg: "Профиль: {{ config_profile }}, Рабочие процессы: {{ nginx_workers }}"
 ```
 
 ### Сценарий 8: Registered переменные и сложная условная логика
@@ -504,14 +471,14 @@ fact_caching_timeout = 86400 # 24 часа
   when: nginx_status.rc != 0
 ```
 
-**Использование `changed_when` и `failed_when`:**
+**Использование changed_when и failed_when:**
 
 ```yaml
 - name: Проверка версии пакета
   ansible.builtin.command: dpkg-query -W -f='${Version}' nginx
   register: nginx_version
-  changed_when: false  # Команда только читает, не меняет состояние
-  failed_when: false   # Не падать, если пакет не установлен
+  changed_when: false
+  failed_when: false
 
 - name: Установка обновления, если версия старая
   ansible.builtin.apt:
@@ -572,7 +539,7 @@ fact_caching_timeout = 86400 # 24 часа
     host: "{{ inventory_hostname }}"
     backend: app_backend
   delegate_to: "{{ groups['load_balancers'][0] }}"
-  delegate_facts: true  # Сохранить факты у делегата
+  delegate_facts: true
 ```
 
 **Сбор фактов и делегирование на сервер мониторинга:**
@@ -653,7 +620,7 @@ fact_caching_timeout = 86400 # 24 часа
     name: "{{ db_user }}"
     password: "{{ db_password | password_hash('sha512') }}"
     state: present
-  no_log: true  # Скрыть пароль из логов
+  no_log: true
 ```
 
 **no_log на уровне блока:**
@@ -672,7 +639,7 @@ fact_caching_timeout = 86400 # 24 часа
         src: "{{ ssl_cert_path }}"
         dest: "/etc/ssl/private/{{ app_name }}.pem"
         mode: '0600'
-  no_log: true  # Весь блок скрыт из логов
+  no_log: true
 ```
 
 **Безопасная работа с vault-переменными:**
@@ -686,16 +653,9 @@ fact_caching_timeout = 86400 # 24 часа
   no_log: true
   become: true
   become_user: postgres
-
-- name: Создание базы данных
-  community.postgresql.postgresql_db:
-    name: "{{ db_name }}"
-    owner: "{{ vault_db_user }}"
-  become: true
-  become_user: postgres
 ```
 
-> **Примечание:** `no_log: true` скрывает.stdout и.stderr задачи, но **не скрывает** саму задачу и её имя. Если секрет передается через `register`, он будет скрыт только если `no_log: true` установлен на задаче, создавшей переменную.
+> **Примечание:** `no_log: true` скрывает stdout и stderr задачи, но **не скрывает** саму задачу и её имя. Если секрет передается через `register`, он будет скрыт только если `no_log: true` установлен на задаче, создавшей переменную.
 
 ### Сценарий 12: Сложное слияние и преобразование данных
 
@@ -773,87 +733,207 @@ fact_caching_timeout = 86400 # 24 часа
       {{ servers | group_by('environment') | dict2items }}
 ```
 
-## Валидация и отладка переменных
+### Сценарий 13: Управление переменными в гетерогенном парке (SRE)
 
-### Просмотр переменных в плейбуке
+Работа с переменными при управлении большим числом разнородных систем (Linux, Windows, BSD) из одного inventory.
+
+**Динамический inventory с переменными:**
+
+```yaml
+# inventory/aws_ec2.yml (пример динамического inventory)
+plugin: aws_ec2
+regions:
+  - us-east-1
+  - eu-west-1
+keyed_groups:
+  - key: tags.Environment
+    prefix: env
+  - key: tags.Role
+    prefix: role
+  - key: ansible_facts['os_family']
+    prefix: os
+hostnames:
+  - tag:Name
+  - ip-address
+```
+
+**Использование переменных из динамического inventory:**
+
+```yaml
+- name: Конфигурация серверов по тегам
+  ansible.builtin.debug:
+    msg: "Сервер {{ inventory_hostname }}: окружение {{ env }}, роль {{ role }}"
+  when: "'webserver' in role"
+```
+
+**Снижение дублирования через group_vars в гетерогенном парке:**
+
+```text
+inventory/
+├── group_vars/
+│   ├── all.yml           # Общие переменные
+│   ├── web_servers.yml   # Веб-серверы
+│   ├── db_servers.yml    # Базы данных
+│   └── windows_servers.yml # Windows-специфичные
+├── host_vars/
+│   ├── web01.yml         # Переопределения для конкретного хоста
+│   └── db01.yml
+└── hosts.yml
+```
+
+### Сценарий 14: Аудит и snapshot переменных (SRE)
+
+Фиксация состояния переменных и фактов для аудита изменений конфигурации.
+
+**Создание snapshot переменных:**
+
+```yaml
+- name: Сбор всех переменных хоста
+  ansible.builtin.setup:
+  register: full_facts
+
+- name: Сохранение snapshot в файл
+  ansible.builtin.copy:
+    content: "{{ full_facts.ansible_facts | to_nice_json }}"
+    dest: "/var/tmp/audit/{{ inventory_hostname }}_facts_{{ ansible_date_time.date }}.json"
+  delegate_to: localhost
+  run_once: true
+```
+
+**Сравнение текущих переменных с эталоном:**
+
+```yaml
+- name: Загрузка эталонных переменных
+  ansible.builtin.include_vars:
+    file: "baseline_{{ env }}.yml"
+    name: baseline
+
+- name: Сравнение с эталоном
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == baseline.expected_distribution
+      - ansible_facts['distribution_major_version'] | int == baseline.expected_version
+    fail_msg: "Дрейф конфигурации: ожидается {{ baseline.expected_distribution }} {{ baseline.expected_version }}, найдено {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_major_version'] }}"
+```
+
+## Операции и команды
+
+### Просмотр переменных и фактов
 
 ```bash
 # Просмотр переменных конкретного хоста
 ansible-inventory --host webserver1
+# → ansible_facts={
+#     "ansible_facts": {
+#       "os_family": "Debian",
+#       "distribution": "Ubuntu",
+#       ...
+#     },
+#     "app_port": 8080
+#   }
 
-# Просмотр переменных из CLI
-ansible-playbook site.yml --list-variables
+# Просмотр всех переменных плейбука для хоста
+ansible-playbook site.yml --list-variables -l webserver1
+# → {
+#     "app_version": "v2.3.1",
+#     "app_port": 8080,
+#     "ansible_facts": { ... }
+#   }
 
-# Просмотр переменных группы
+# Просмотр инвентаря в JSON
 ansible-inventory --list | python3 -c "import sys, json; d=json.load(sys.stdin); print(json.dumps(d['_meta']['hostvars'], indent=2))"
+# → {
+#     "webserver1": {
+#       "ansible_host": "10.0.0.1",
+#       "ansible_facts": { ... }
+#     }
+#   }
 
-# Просмотр всех групп
+# Визуализация групп инвентаря
 ansible-inventory --graph
+# → @all:
+#   ├── @ungrouped:
+#   └── web_servers:
+#       ├── web01
+#       └── web02
 ```
 
-### Отладка переменных в задачах
-
-```yaml
-# Вывод конкретной переменной
-- name: Отладка переменной
-  ansible.builtin.debug:
-    var: my_variable
-
-# Вывод сообщения с интерполяцией
-- name: Отладка сообщения
-  ansible.builtin.debug:
-    msg: "Значение: {{ my_variable }}"
-
-# Вывод всех фактов хоста
-- name: Все факты
-  ansible.builtin.debug:
-    var: hostvars[inventory_hostname]
-
-# Вывод только одной переменной из hostvars
-- name: Конкретный факт
-  ansible.builtin.debug:
-    var: hostvars[inventory_hostname]['ansible_facts']['default_ipv4']
-```
-
-### Проверка типов и значений
-
-```yaml
-# Проверка типа переменной
-- name: Проверка типа
-  ansible.builtin.assert:
-    that:
-      - my_variable is defined
-      - my_variable is string
-      - my_variable | length > 0
-    fail_msg: "my_variable не определена или пуста"
-
-# Проверка версии
-- name: Проверка версии
-  ansible.builtin.assert:
-    that:
-      - app_version is version('2.0.0', '>=')
-      - app_version is version('3.0.0', '<')
-    fail_msg: "app_version должна быть >= 2.0.0 и < 3.0.0"
-
-# Проверка по regex
-- name: Проверка формата
-  ansible.builtin.assert:
-    that:
-      - ip_address is match('^(\\d{1,3}\\.){3}\\d{1,3}$')
-    fail_msg: "ip_address должен быть в формате IPv4"
-```
-
-### Диагностика конфликтов приоритетов
+### Проверка фактов и debug
 
 ```bash
-# Просмотр итоговых переменных для конкретного хоста
-ansible-playbook site.yml --list-variables -l webserver1
+# Сбор фактов локального хоста
+ansible localhost -m ansible.builtin.setup -a "filter=ansible_os_family*"
+# → "ansible_facts": { "os_family": "Debian" }
 
-# Вывод переменных с highest precedence
+# Проверка типа переменной
+ansible localhost -m ansible.builtin.debug -a "msg={{ '{{ app_port | type_debug }}' }}"
+# → "msg": "int"
+
+# Анализ конфликтов переменных
 ansible-playbook site.yml -e "debug_vars=true" -l webserver1
+# → TASK [debug] ****************************************************************
+#   ok: [webserver1] => {
+#     "app_port": "Переопределено в group_vars/web_servers.yml"
+#   }
+```
 
-# Проверка, откуда берется переменная
+### Отладка выполнения
+
+```bash
+# Запуск с началом на конкретной задаче
 ansible-playbook site.yml --start-at-task="Debug переменной" -l webserver1
+# → PLAY [web_servers] *********************************************************
+#   TASK [Debug переменной] ****************************************************
+#   ok: [webserver1] => {
+#     "my_variable": "ожидаемое значение"
+#   }
+
+# Проверка подключения и сбора фактов
+ansible web_servers -m ansible.builtin.ping
+# → web01 | SUCCESS => {
+#     "changed": false,
+#     "ping": "pong"
+#   }
+
+# Выполнение с ограничением по группе
+ansible-playbook site.yml -l web_servers
+# → PLAY [web_servers] *********************************************************
+#   TASK [Gathering Facts] *****************************************************
+#   ok: [web01]
+```
+
+### Валидация синтаксиса
+
+```bash
+# Проверка синтаксиса плейбука
+ansible-playbook site.yml --syntax-check
+# → syntax check: ok!
+
+# Проверка конкретного inventory
+ansible-playbook site.yml -i inventory/prod --syntax-check
+# → syntax check: ok!
+```
+
+### Проверка переменных из CLI
+
+```bash
+# Переопределение переменной для однократного запуска
+ansible-playbook site.yml -e "app_version=v2.3.1"
+# → PLAY [web_servers] *********************************************************
+#   TASK [Установка приложения] ************************************************
+#   changed: [web01]
+
+# Загрузка переменных из файла
+ansible-playbook site.yml -e @vars/override.yml
+# → PLAY [web_servers] *********************************************************
+#   TASK [Загрузка конфигурации] ***********************************************
+#   ok: [web01]
+
+# Комбинация нескольких источников
+ansible-playbook site.yml -e "@vars/override.yml" -e "debug=true"
+# → PLAY [web_servers] *********************************************************
+#   TASK [Применение конфигурации] *********************************************
+#   changed: [web01]
 ```
 
 ## Типичные ошибки и troubleshooting
@@ -865,10 +945,12 @@ ansible-playbook site.yml --start-at-task="Debug переменной" -l webser
 **Решение:**
 ```bash
 # Проверить наличие переменной
-ansible-inventory --host webserver1 | grep variable_name
+ansible-inventory --host webserver1 | grep -i variable_name
+# → app_port: 8080
 
 # Проверить файлы переменных
 grep -r "variable_name:" group_vars/ host_vars/ vars/
+# → group_vars/web_servers.yml:variable_name: значение
 ```
 
 ### Ошибка: "Variable has no attribute" / "is not a dictionary"
@@ -891,6 +973,10 @@ grep -r "variable_name:" group_vars/ host_vars/ vars/
 ```bash
 # Просмотр всех источников переменной
 ansible-inventory --host webserver1 | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin), indent=2))"
+# → {
+#     "app_port": 8080,
+#     "_ansible_facts": { ... }
+#   }
 
 # Проверка group_vars
 cat group_vars/all.yml group_vars/web_servers.yml
@@ -920,13 +1006,26 @@ cat group_vars/all.yml group_vars/web_servers.yml
 - name: Получение секрета
   ansible.builtin.set_fact:
     db_password: "{{ vault_db_password }}"
-  no_log: true  # Обязательно
+  no_log: true
 
 - name: Использование секрета
   ansible.builtin.template:
     src: db.conf.j2
     dest: /etc/app/db.conf
-  no_log: true  # И здесь тоже
+  no_log: true
+```
+
+### Ошибка: Дрейф переменных в динамическом inventory
+
+**Причина:** Динамический inventory возвращает разные переменные при каждом запуске из-за изменений в инфраструктуре.
+
+**Решение:**
+```yaml
+- name: Фиксация переменных inventory
+  ansible.builtin.set_fact:
+    static_inventory_hostname: "{{ inventory_hostname }}"
+    static_inventory_ip: "{{ ansible_host | default(inventory_hostname) }}"
+  cacheable: yes
 ```
 
 ## Лучшие практики
@@ -952,17 +1051,29 @@ cat group_vars/all.yml group_vars/web_servers.yml
 11. **Используйте `ansible_facts`** вместо устаревшего `ansible_*` (плоский формат).
 12. **Кешируйте факты** через `set_fact: cacheable: yes` для межхостового взаимодействия.
 
+### Управление переменными в крупных инфраструктурах (SRE)
+
+13. **Единый источник правды:** Для переменных окружения используйте `group_vars/all.yml` + `host_vars/`. Избегайте хаотичного распределения переменных по ролям.
+14. **Версионируйте переменные:** Храните `group_vars/` и `host_vars/` в Git. Изменения должны проходить код-ревью.
+15. **Динамические inventory:** При использовании динамических источников (CMDB, мониторинг) кешируйте факты, чтобы снизить нагрузку на источники данных.
+16. **Аудит переменных:** Периодически сравнивайте актуальные переменные с эталоном (snapshot) для обнаружения дрейфа.
+17. **Изоляция секретов:** Храните секреты в Ansible Vault или внешних системах (HashiCorp Vault, CyberArk). Никогда не коммитьте открытые секреты в репозиторий.
+18. **Documentation через `argument_specs`:** Для каждой роли описывайте интерфейс в `meta/argument_specs.yml`. Это упрощает аудит и переиспользование.
+
 ### Диагностика и отладка
 
-13. **`debug: var=variable`** для быстрого вывода значения переменной.
-14. **`ansible-inventory --host`** для проверки итоговых переменных хоста.
-15. **`--list-variables`** для просмотра всех переменных плейбука.
-16. **`changed_when` / `failed_when`** для корректной отчетности о статусе задач.
+19. **`debug: var=variable`** для быстрого вывода значения переменной.
+20. **`ansible-inventory --host`** для проверки итоговых переменных хоста.
+21. **`--list-variables`** для просмотра всех переменных плейбука.
+22. **`changed_when` / `failed_when`** для корректной отчетности о статусе задач.
 
 ## Дополнительная информация
 
 * [Основы структуры плейбуков](basics.md) — базовые директивы и место переменных в иерархии.
 * [Управление ходом выполнения](flow_control.md) — использование переменных в `loop` и `when`.
 * [Продвинутые возможности плейбуков](advanced.md) — делегирование и асинхронные задачи.
-* [Антипаттерны Ansible](../ansible_bad_practices.md) — типичные ошибки в именовании и структурах данных.
+* [Валидация и тестирование структуры плейбуков](testing_and_validation.md) — статический анализ, dry-run и идемпотентность.
 * [Шаблонизация Jinja2](../ansible_jinja_templating.md) — продвинутая обработка данных (JMESPath, сложные фильтры и lookups).
+* [Оптимизация производительности](../ansible_performance_tuning.md) — `gather_facts`, `fact_caching`, `strategy`, `forks`.
+* [Антипаттерны Ansible](../ansible_bad_practices.md) — типичные ошибки в именовании и структурах данных.
+* [Кроссплатформенные концепции](../CrossPlatform/concepts.md) — работа с `ansible_facts` в гетерогенных парках Linux/Windows/BSD.

@@ -133,6 +133,7 @@ securityContext:
 | :--- | :--- | :--- |
 | KASLR | Ядро (адреса) | **[KASLR](./Mechanisms/KASLR.md)** |
 | Lockdown | Ядро (целостность) | **[Харденинг ядра](./Mechanisms/Kernel/hardening.md)** |
+| Module Signing | Ядро (модули) | **[Безопасность модулей ядра](./Mechanisms/kernel_module_security.md)** |
 | ASLR | Пользовательское пространство | — |
 | Hardened Usercopy | Память (копирование) | **[Харденинг ядра](./Mechanisms/Kernel/hardening.md)** |
 
@@ -143,11 +144,14 @@ securityContext:
 | auditd | Низкоуровневый аудит syscall | **[auditd](../SystemAdministration/Logging/auditd.md)** |
 | Tetragon | Real-time eBPF мониторинг | — |
 | AIDE / debsums | Проверка целостности файлов | **[Проверка целостности](./Concepts/file-integrity-checking.md)** |
+| tcpdump / tshark | Перехват и анализ сетевого трафика | **[Инструменты сетевого мониторинга](./Tools/network_monitoring_tools.md)** |
+| ss / netstat | Мониторинг соединений и сокетов | **[Инструменты сетевого мониторинга](./Tools/network_monitoring_tools.md)** |
 
 **Сценарий расследования инцидента:**
 1. **auditd** — поиск событий по времени/процессу (`ausearch`, `aureport`).
 2. **AIDE** — обнаружение измененных бинарных файлов (триггеры на `mtime`, `hash`).
 3. **Tetragon** — анализ графа выполнения процесса для поиска аномальных сетевых соединений.
+4. **tcpdump/tshark** — перехват подозрительного трафика для анализа.
 
 ### 5. Управление доступом и идентификацией
 
@@ -168,3 +172,20 @@ securityContext:
 - Целостность: AIDE, проверка подписей пакетов и исполняемых файлов (IMA/EVM).
 
 Подробности: **[Обзор требований ФСТЭК](./Fstec/overview.md)**.
+
+### Связанные темы
+
+| Тема | Файл |
+| :--- | :--- |
+| Аудит событий безопасности | **[auditd](../SystemAdministration/Logging/auditd.md)** |
+| Централизованное логирование | **[rsyslog](../SystemAdministration/Logging/rsyslog.md)**, **[journald](../SystemAdministration/Logging/journald.md)** |
+| Управление секретами | **[HashiCorp Vault](../../Vault/overview.md)**, **[Ansible Vault](../../Ansible/Vault/basics.md)**, **[SOPS](../../Security/Tools/sops_overview.md)** |
+| Шифрование и сертификаты | **[Encryption basics](./Concepts/encryption_basics.md)**, **[TLS](../../Networking/Protocols/tls.md)**, **[OpenSSL CA](../../Security/Tools/openssl_ca/)** |
+| Межсетевые экраны | **[Firewall concepts](../../Networking/Concepts/firewall_concepts.md)**, **[iptables](../../Linux/Networking/Settings/tools/iptables_basics.md)**, **[nftables](../../Linux/Networking/Settings/tools/nftables/)** |
+| VPN и туннели | **[WireGuard](../../Vpn/wireguard.md)**, **[IPsec](../../Networking/Tunnels/ipsec/ipsec.md)** |
+| Резервное копирование | **[Backup & Recovery](../SystemAdministration/backup_and_recovery.md)**, **[Disaster Recovery](../../Concepts/disaster_recovery.md)** |
+| Compliance | **[Ansible OS Hardening](../../Ansible/ansible-os-hardening.md)**, **[kube-bench](../../Kubernetes/Security/kube-bench.md)**, **[Lynis](../../Security/Tools/lynis.md)** |
+| Сканеры уязвимостей | **[Trivy](../../Docker/Docker_security/vulnerability_scanning.md)**, **[OpenVAS](../../Security/Tools/openvas_installation_and_usage.md)** |
+| SIEM | **[Wazuh](../../Security/Tools/wazuh.md)**, **[ELK Stack](../../ELK_Stack/elk_stack_overview.md)** |
+| Инструменты сетевого мониторинга | **[tcpdump, tshark, ss](./Tools/network_monitoring_tools.md)** |
+| Безопасность модулей ядра | **[Module Signing, LOCKDOWN](./Mechanisms/kernel_module_security.md)** |

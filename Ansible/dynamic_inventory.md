@@ -2,10 +2,15 @@
 
 ## Определения
 
-- **Динамический инвентарь** — это механизм Ansible, который формирует список управляемых узлов (хостов) и их переменные «на лету», обращаясь к внешнему источнику правды (Single Source of Truth, SSoT). В отличие от статического файла, он всегда отражает актуальное состояние инфраструктуры, что критично для облачных и эфемерных сред.
+- **Динамический инвентарь** — механизм Ansible, который формирует список управляемых узлов и их переменные «на лету», обращаясь к внешнему источнику правды. В отличие от статического файла, он всегда отражает актуальное состояние инфраструктуры в условиях постоянно меняющегося парка серверов, виртуальных машин и сетевых устройств.
 - **Плагин инвентаря (Inventory Plugin)** — современный, нативный и рекомендуемый способ реализации (Ansible 2.4+), использующий YAML-конфигурации и поддерживающий кэширование. Файл конфигурации плагина должен заканчиваться на `.yml` или `.yaml`.
 - **Исполняемый скрипт (Executable Script)** — legacy-способ: исполняемый файл (Python, Bash, Go), который при вызове с флагами `--list` или `--host <hostname>` возвращает JSON. Уступает место плагинам, но используется для кастомных систем.
 - **Directory Inventory (Комбинированный инвентарь)** — директория, содержащая несколько источников инвентаря (статические `hosts.yml` + динамические плагины `.yml`), которые Ansible объединяет в один логический инвентарь. Сканируется рекурсивно, по алфавиту.
+- **CMDB-based Inventory** — инвентарь, источником правды для которого служит система управления конфигурацией и изменениями (Configuration Management Database), например NetBox, Foreman.
+- **Service Discovery Inventory** — инвентарь, построенный на системах обнаружения сервисов, например Consul, которые автоматически регистрируют активные узлы и их метаданные.
+- **Keyed Groups** — механизм автоматического создания групп Ansible на основе значений атрибутов хоста с использованием префиксов и разделителей.
+- **Compose** — механизм создания или переопределения переменных хоста через Jinja2-выражения.
+- **Hostnames** — механизм определения имени хоста в инвентаре (`inventory_hostname`) с приоритетом шаблонов.
 
 ---
 
@@ -13,34 +18,25 @@
 
 ### Установка коллекций
 
-Для работы с облачными провайдерами необходимы соответствующие коллекции:
+Для работы с локальными и self-hosted системами необходимы соответствующие коллекции:
 
 ```bash
-# AWS EC2
-ansible-galaxy collection install amazon.aws
-
-# Yandex Cloud
-ansible-galaxy collection install yandex.cloud
-
-# Google Cloud
-ansible-galaxy collection install google.cloud
-
-# Azure
-ansible-galaxy collection install azure.azcollection
-
-# VMware (новый плагин)
-ansible-galaxy collection install vmware.vmware
-
-# OpenStack
-ansible-galaxy collection install openstack.cloud
-
-# Kubernetes
-ansible-galaxy collection install kubernetes.core
-
-# NetBox
+# NetBox (CMDB)
 ansible-galaxy collection install netbox.netbox
 
-# Consul / Etcd
+# Consul (Service Discovery)
+ansible-galaxy collection install community.general
+
+# Etcd (KV-хранилище)
+ansible-galaxy collection install community.general
+
+# Foreman (CMDB)
+ansible-galaxy collection install theforeman.foreman
+
+# Proxmox VE
+ansible-galaxy collection install community.proxmox
+
+# Общие утилиты
 ansible-galaxy collection install community.general
 ```
 
@@ -51,28 +47,33 @@ ansible-galaxy collection install community.general
 ansible-doc -t inventory -l
 
 # Документация конкретного плагина
-ansible-doc -t inventory amazon.aws.aws_ec2
-ansible-doc -t inventory yandex.cloud.yandex_cloud
-ansible-doc -t inventory google.cloud.gcp_compute
+ansible-doc -t inventory netbox.netbox.nb_inventory
+ansible-doc -t inventory community.general.consul
+ansible-doc -t inventory theforeman.foreman.foreman
+ansible-doc -t inventory community.proxmox.proxmox
+ansible-doc -t inventory community.general.etcd3
 ```
 
 ### Python-зависимости
 
 ```bash
-# AWS
-pip install boto3 botocore
+# NetBox
+pip install pynetbox requests
 
-# Google Cloud
-pip install google-auth requests
+# Consul
+pip install python-consul requests
 
-# Azure
-pip install azure-identity azure-mgmt-compute
+# Etcd
+pip install etcd3 requests
 
-# OpenStack
-pip install openstacksdk
+# Foreman
+pip install requests
 
-# VMware
-pip install pyvmomi requests
+# Proxmox
+pip install requests proxmoxer
+
+# Общее
+pip install requests
 ```
 
 ---
@@ -81,25 +82,27 @@ pip install pyvmomi requests
 
 ### Когда это необходимо
 
-- **Эфемерные среды и автоскейлинг**: Облачные экземпляры создаются и удаляются автоматически, статический список моментально устаревает.
-- **Мультиоблако и мультиаккаунты**: Необходимо объединять ресурсы из нескольких провайдеров (AWS, GCP, Azure) и учетных записей.
-- **Теги и метки как источник групп**: Возможность формировать группы по метаданным (`Role`, `Environment`, `Stage`, `Owner`) без ручной правки инвентаря.
-- **Контейнерные платформы**: Получение актуального списка узлов и сервисов через API кластеров (Kubernetes, Nomad).
-- **Синхронизация с CMDB**: Автоматическое получение данных из корпоративных систем учета (NetBox, iTop).
+- **Гетерогенная инфраструктура**: Парк включает серверы разных платформ (bare metal, виртуальные машины Proxmox, VMware ESXi), сетевые устройства и специализированное оборудование, размещенное в собственных датацентрах или филиалах.
+- **Мультиаккаунтность и мультитенантность**: Необходимо объединять ресурсы из нескольких локальных систем учета (NetBox, Foreman) и сред (development, staging, production) в единый инвентарь.
+- **Теги и метки как источник групп**: Возможность формировать группы по бизнес-метаданным (Role, Environment, Stage, Owner, Site, Rack) без ручной правки инвентаря.
+- **Синхронизация с CMDB**: Автоматическое получение актуальных данных из корпоративных систем учета (NetBox, Foreman, iTop) для исключения рассогласований между документацией и реальным парком.
+- **Служебные и эфемерные среды**: Автоматическое обновление инвентаря при добавлении/удалении виртуальных машин, контейнеров или сервисов внутри self-hosted платформ (Proxmox, Kubernetes на bare metal).
+- **Network Automation**: Получение актуального списка сетевых устройств и их ролей из DCIM для выполнения автоматизированных изменений конфигурации.
 
 ### Способы реализации
 
-1. **Плагины инвентаря (Inventory plugins)**: Предпочтительный, нативный способ. Ansible предоставляет плагины для большинства облаков и сервисов (например, `yandex.cloud.yandex_cloud`, `amazon.aws.aws_ec2`, `vmware.vmware.vms_inventory`, `kubernetes.core.k8s`, `google.cloud.gcp_compute`, `azure.azcollection.azure_rm`). Конфигурируются через YAML-файлы.
-2. **Исполняемые скрипты**: Любой исполняемый файл (на Python, Bash и др.), который при запуске с флагом `--list` возвращает **JSON** в специальном формате. Этот способ считается legacy и уступает место плагинам, но все еще используется для специфических самописных систем.
-3. **Комбинированный подход (Directory Inventory)**: Директория `inventories/` может содержать несколько источников (статические файлы `hosts.ini` и динамические конфигурации `.yml`), которые Ansible объединяет в один логический инвентарь.
+1. **Плагины инвентаря (Inventory plugins)**: Предпочтительный, нативный способ. Ansible предоставляет плагины для большинства локальных систем (например, `netbox.netbox.nb_inventory`, `community.general.consul`, `theforeman.foreman.foreman`, `community.proxmox.proxmox`). Конфигурируются через YAML-файлы.
+2. **Встроенные плагины**: Нативные плагины, поставляемые с Ansible: `yaml`, `ini`, `script`, `host_list`, `advanced_host_list`, `regex`, `constructed`, `templar`, `file`. Не требуют установки дополнительных коллекций.
+3. **Исполняемые скрипты**: Любой исполняемый файл (на Python, Bash и др.), который при запуске с флагом `--list` возвращает **JSON** в специальном формате. Этот способ считается legacy и уступает место плагинам, но все еще используется для специфических самописных систем.
+4. **Комбинированный подход (Directory Inventory)**: Директория `inventories/` может содержать несколько источников (статические файлы `hosts.yml` и динамические конфигурации `.yml`), которые Ansible объединяет в один логический инвентарь.
 
 ### Производительность и кэширование
 
-Обращения к внешним API могут значительно замедлять генерацию инвентаря, особенно в крупных инфраструктурах. Для решения этой проблемы рекомендуется:
+Обращения к локальным API (NetBox, Consul, Foreman) могут замедлять генерацию инвентаря при частом выполнении. Для решения этой проблемы рекомендуется:
 
 - **Включать кэширование** на уровне инвентарного плагина или глобально в `ansible.cfg`.
-- **Использовать фильтры** в конфигурации плагина, чтобы ограничивать область поиска на стороне API (например, только `running` инстансы).
-- **Использовать `compose`** для формирования хостовых переменных (**hostvars**) только из необходимых данных.
+- **Использовать фильтры** в конфигурации плагина, чтобы ограничивать область поиска на стороне API (например, только активные устройства или определенные организации).
+- **Использовать `compose`** для формирования переменных хоста только из необходимых данных, снижая объем передаваемых JSON.
 - **«Прогревать» кэш** в пайплайнах **CI/CD**, запуская `ansible-inventory` перед основным плейбуком.
 
 **Пример настройки кэширования в `ansible.cfg`:**
@@ -107,25 +110,41 @@ pip install pyvmomi requests
 ```ini
 [inventory]
 # Включение нужных плагинов (порядок имеет значение)
-enable_plugins = amazon.aws.aws_ec2, yandex.cloud.yandex_cloud, vmware.vmware.vms_inventory, google.cloud.gcp_compute, yaml, ini, script
+enable_plugins = host_list, script, yaml, ini, netbox.netbox.nb_inventory, community.general.consul, theforeman.foreman.foreman, community.proxmox.proxmox, constructed, advanced_host_list
 cache = True
 cache_plugin = jsonfile
 cache_timeout = 3600
 cache_connection = ~/.ansible/cache/inventory
 ```
 
-**Кэширование на уровне плагина:**
+**Кэширование на уровне плагина (NetBox):**
 
 ```yaml
-# demo.aws_ec2.yml
-plugin: amazon.aws.aws_ec2
-regions:
-  - us-east-1
+# inventories/netbox.yml
+plugin: netbox.netbox.nb_inventory
+api_endpoint: https://netbox.internal
+token: "{{ vault_netbox_token }}"
+validate_certs: true
+
 cache: true
 cache_plugin: ansible.builtin.jsonfile
-cache_timeout: 7200
-cache_connection: /tmp/aws_inventory
-cache_prefix: aws_ec2
+cache_timeout: 3600
+cache_connection: /tmp/netbox_inventory_cache
+```
+
+**Кэширование на уровне плагина (Consul):**
+
+```yaml
+# inventories/consul.yml
+plugin: community.general.consul
+consul_url: http://consul.internal:8500
+token: "{{ vault_consul_token }}"
+filter: "Service.Status == 'passing'"
+
+cache: true
+cache_plugin: ansible.builtin.jsonfile
+cache_timeout: 600
+cache_connection: /tmp/consul_inventory_cache
 ```
 
 ---
@@ -136,15 +155,15 @@ cache_prefix: aws_ec2
 
 ### hostnames
 
-Определяет имя хоста в инвентаре (inventory_hostname). Принимает список шаблонов — Ansible использует первый успешный результат.
+Определяет имя хоста в инвентаре (`inventory_hostname`). Принимает список шаблонов — Ansible использует первый успешный результат.
 
 ```yaml
 hostnames:
-  - "{{ labels.role }}-{{ name }}"        # Yandex Cloud: "web-myvm"
-  - public_ip_address                      # AWS: публичный IP
-  - private_ip_address                     # AWS: приватный IP
-  - config.name + "_" + config.uuid       # VMware
-  - "public_ip", "private_ip", "name"     # GCP: приоритет
+  - "{{ primary_ip4.address | regex_replace('/.*$', '') }}"  # NetBox: IP из CMDB или имя
+  - "{{ labels.role }}-{{ name }}"                           # Proxmox: "web-vm01"
+  - private_ip_address                                        # Локальный IP
+  - config.name + "_" + config.uuid                           # VMware/Proxmox
+  - "public_ip", "private_ip", "name"                         # Приоритет
 ```
 
 ### keyed_groups
@@ -153,40 +172,41 @@ hostnames:
 
 | Параметр | Описание | Пример |
 | :--- | :--- | :--- |
-| **key** | Jinja2-выражение для получения значения | `tags.Role`, `labels.env` |
-| **prefix** | Префикс имени группы | `role`, `env` |
+| **key** | Jinja2-выражение для получения значения | `device_roles.name`, `labels.env`, `site.name` |
+| **prefix** | Префикс имени группы | `role`, `env`, `site` |
 | **separator** | Разделитель между префиксом и значением | `_`, `` (пустая строка) |
-| **parent_group** | Родительская группа | `webservers` |
+| **parent_group** | Родительская группа | `production` |
 | **default_value** | Значение по умолчанию, если key = None | `unknown` |
 | **trailing_separator** | Добавлять ли разделитель после значения | `true`/`false` |
-| **leading_separator** | Добавлять ли разделитель перед префиксом | `true`/`false` |
+| **leading_separator** | Добавлять ли разделитель перед префиксом | `true`/``false` |
 
 ```yaml
 keyed_groups:
-  # По тегу Role: группа "role_webserver"
-  - key: tags.Role
+  # По роли устройства в NetBox: группа "role_web-server"
+  - key: device_roles.name
     prefix: role
-
-  # По Availability Zone: группа "az_eu-central-1"
-  - key: placement.availability_zone
-    prefix: az
-
-  # По статусу питания: группа "power_on" / "power_off"
-  - key: summary.runtime.powerState
-    prefix: power
     separator: "_"
 
-  # По labels Kubernetes: группа "label_app_nginx"
-  - key: metadata.labels
-    prefix: label
+  # По сайту: группа "site_office"
+  - key: site.name
+    prefix: site
+    separator: "_"
+
+  # По платформе ОС: группа "os_centos"
+  - key: platforms.name
+    prefix: os
+
+  # По статусу в Foreman: группа "active"
+  - key: foreman_status
+    prefix: status
 
   # С parent_group: все подгруппы внутри "production"
-  - key: labels.env
-    prefix: env
+  - key: site.name
+    prefix: site
     parent_group: production
 
-  # С default_value: если labels.role не задан, используется "unknown"
-  - key: labels.role
+  # С default_value: если роль не задана, используется "unknown"
+  - key: device_roles.name
     prefix: role
     default_value: "unknown"
 ```
@@ -197,20 +217,26 @@ keyed_groups:
 
 ```yaml
 compose:
-  # Использовать публичный IP, если нет приватного
-  ansible_host: public_ip_address | default(private_ip_address)
-
-  # VMware: IP для подключения
-  ansible_host: guest.ipAddress
-
-  # GCP: NAT IP из networkInterfaces
-  ansible_host: networkInterfaces[0].accessConfigs[0].natIP
-
   # NetBox: первичный IP без CIDR-маски
   ansible_host: primary_ip4.address | regex_replace('/.*$', '')
 
+  # Foreman: IP-адрес для управления
+  ansible_host: foreman_ip
+
+  # Proxmox: IP для подключения к ВМ
+  ansible_host: proxmox_net0_ip | default(proxmox_ip)
+
+  # Consul: адрес сервиса
+  ansible_host: Address
+  consul_node_name: Node
+  consul_service_meta: ServiceMeta
+
+  # Etcd: произвольные метаданные хоста
+  dc: datacenter
+  rack: rack
+
   # Произвольные переменные
-  is_production: "'prod' in (labels | default({}))"
+  is_production: "'prod' in (site.name | default(''))"
   cpu_count: config.hardware.numCPU
 ```
 
@@ -220,50 +246,73 @@ compose:
 
 ```yaml
 groups:
-  # Если тег Environment содержит "devel"
-  development: "'devel' in (tags | list)"
+  # Если сайт содержит "office"
+  branch_office: "'office' in (site.name | default(''))"
 
   # Если нет публичного IP
-  private_only: "public_ip_address is not defined"
+  private_only: "ansible_host is not defined"
 
   # Если статус = Active И платформа = Linux
-  active_linux: "status == 'Active' and platform.name == 'Linux'"
+  active_linux: "status == 'Active' and platforms.name is search('linux')"
 
-  # Если имя хоста начинается с "web"
-  webservers: "inventory_hostname.startswith('web')"
+  # Если роль устройства = сервер
+  servers: "device_roles.name == 'server'"
+
+  # Если Foreman environment = production
+  production: "foreman_environment == 'production'"
+
+  # Если Proxmox status = running
+  running: "proxmox_status == 'running'"
 ```
 
-### Полный пример: комбинация всех механизмов
+### Полный пример: комбинация всех механизмов (NetBox)
 
 ```yaml
-# aws_ec2_full.yml
-plugin: amazon.aws.aws_ec2
-regions:
-  - eu-central-1
-  - us-east-1
+# inventories/production/netbox.yml
+plugin: netbox.netbox.nb_inventory
+api_endpoint: https://netbox.internal
+token: "{{ vault_netbox_token }}"
+validate_certs: true
 
+# Приоритет именования хостов
 hostnames:
-  - "tag:Name"
-  - private-ip-address
+  - "{{ primary_ip4.address | regex_replace('/.*$', '') }}"
+  - name
 
+# Автоматическая группировка по ролям, сайтам и платформам
 keyed_groups:
-  - key: tags.Role
+  - key: device_roles.name
     prefix: role
-  - key: tags.Environment
-    prefix: env
-  - key: placement.availability_zone
-    prefix: az
-  - key: instance_type
-    prefix: type
+    separator: "_"
+  - key: site.name
+    prefix: site
+    separator: "_"
+  - key: platforms.name
+    prefix: platform
+    separator: "_"
+  - key: status
+    prefix: status
 
+# Сложные условия группировки
 groups:
-  webservers: "'web' in (tags.Role | default(''))"
-  databases: "'db' in (tags.Role | default(''))"
-  production: "tags.Environment == 'production'"
+  branch_office: "'office' in (site.name | default(''))"
+  servers: "device_roles.name == 'server'"
+  production: "status == 'Active'"
 
+# Сопоставление переменных хоста
 compose:
-  ansible_host: private_ip_address
-  ansible_user: "'ubuntu' if tags.Role == 'web' else 'admin'"
+  ansible_host: primary_ip4.address | regex_replace('/.*$', '')
+  ansible_network_os: platforms.name | default('linux')
+  netbox_id: id
+  netbox_url: url
+  rack: rack.name | default('N/A')
+  tenant: tenant.name | default('N/A')
+
+# Кэширование
+cache: true
+cache_plugin: ansible.builtin.jsonfile
+cache_timeout: 3600
+cache_connection: /tmp/netbox_inventory_cache
 ```
 
 ---
@@ -274,38 +323,265 @@ compose:
 
 | Критерий | Статический инвентарь | Динамический инвентарь |
 | :--- | :--- | :--- |
-| **Актуальность** | Требует ручного обновления | Вытягивается из источника правды |
+| **Актуальность** | Требует ручного обновления | Вытягивается из CMDB/Service Discovery |
 | **Масштабируемость** | Ограничена размером файла | Горизонтально масштабируется |
-| **Человеческий фактор**| Высокий риск ошибок | Снижается за счет автоматизации |
-| **Группировка** | Ручные группы | Автоматически, по тегам/фильтрам |
-| **Производительность**| Быстро локально | Требует кэширования для API |
+| **Человеческий фактор** | Высокий риск ошибок | Снижается за счет автоматизации |
+| **Группировка** | Ручные группы | Автоматически, по метаданным/фильтрам |
+| **Производительность** | Быстро локально | Требует кэширования для API |
 | **Зависимости** | Нет | Требует коллекции, Python-пакетов |
 | **Отладка** | Просмотр файла | `ansible-inventory --graph/--list` |
 
-### Инвентарь на основе состояния Terraform
+### Инвентарь на основе CMDB (NetBox)
 
-Распространенным паттерном является использование данных Terraform как источника правды.
+NetBox выступает единым источником правды для всей инфраструктуры. Плагин `nb_inventory` из коллекции `netbox.netbox`.
 
-#### 1. Использование плагинов для Terraform State (Современный метод)
-Использование специализированных плагинов (например, из коллекции `cloud.terraform`), которые читают файл состояния (`terraform.tfstate`) напрямую.
+См. также: [Автоматизация заполнения NetBox через API](../Networking/NetBox/netbox-automation-python.md).
 
 ```yaml
+# inventories/netbox.yml
+plugin: netbox.netbox.nb_inventory
+api_endpoint: https://netbox.internal
+token: "{{ vault_netbox_token }}"
+validate_certs: true
+
+# Фильтрация устройств
+query_filters:
+  - status: active
+  - role__in: ["web-server", "app-server", "db-server"]
+
+# Группировка по ролям и сайтам
+group_by:
+  - device_roles
+  - sites
+  - platforms
+
+# Ключевые группы
+keyed_groups:
+  - key: device_roles.name
+    prefix: role
+    separator: "_"
+  - key: site.name
+    prefix: site
+    separator: "_"
+  - key: platforms.name
+    prefix: platform
+    separator: "_"
+  - key: status
+    prefix: status
+
+# Хостовые переменные
+compose:
+  ansible_host: primary_ip4.address | regex_replace('/.*$', '')
+  ansible_network_os: platforms.name | default('linux')
+  netbox_id: id
+  netbox_url: url
+  rack: rack.name | default('N/A')
+  tenant: tenant.name | default('N/A')
+
+# Кэширование
+cache: true
+cache_plugin: ansible.builtin.jsonfile
+cache_timeout: 3600
+cache_connection: /tmp/netbox_inventory_cache
+```
+
+### Инвентарь на основе Service Discovery (Consul)
+
+Consul используется как источник инвентаря для динамических сред вне Kubernetes (классические ВМ с установленным Consul Agent). Плагин `consul` из коллекции `community.general` позволяет автоматически получать список хостов на основе зарегистрированных сервисов и их тегов.
+
+```yaml
+plugin: community.general.consul
+consul_url: http://consul.internal:8500
+# Авторизация (рекомендуется использовать ACL токены)
+token: "{{ vault_consul_token }}"
+
+# Фильтрация хостов: только те, что прошли Health Checks
+filter: "Service.Status == 'passing'"
+
+# Группировка хостов
+keyed_groups:
+  - key: Service
+    prefix: svc
+  - key: Tags
+    prefix: tag
+  - key: Datacenter
+    prefix: dc
+
+# Сопоставление переменных хоста
+compose:
+  ansible_host: Address
+  consul_node_name: Node
+  consul_service_meta: ServiceMeta
+
+# Кэширование
+cache: true
+cache_plugin: ansible.builtin.jsonfile
+cache_timeout: 600
+cache_connection: /tmp/consul_inventory_cache
+```
+
+**Особенности:**
+- **Health-aware**: Исключаются хосты, помеченные как `critical` или `warning`.
+- **Гибкость**: Позволяет использовать метаданные сервисов (`ServiceMeta`) для формирования переменных Ansible.
+
+### Инвентарь на основе KV-хранилищ (Etcd)
+
+Etcd (версии 3) может использоваться как низкоуровневое хранилище данных об инвентаре для кастомных систем оркестрации, где список хостов и их параметры хранятся в виде иерархии ключей. Плагин `etcd3` из коллекции `community.general`.
+
+```yaml
+plugin: community.general.etcd3
+host: "etcd-cluster.internal"
+port: 2379
+user: "ansible"
+password: "{{ vault_etcd_password }}"
+
+# Префикс ключей, под которыми хранится инвентарь
+key_prefix: "/ansible/inventory/hosts/"
+
+# Использование сертификатов (рекомендуется)
+cert_file: "/path/to/cert.pem"
+key_file: "/path/to/key.pem"
+ca_cert: "/path/to/ca.pem"
+
+# Кэширование
+cache: true
+cache_plugin: ansible.builtin.jsonfile
+cache_timeout: 1800
+cache_connection: /tmp/etcd_inventory_cache
+```
+
+**Особенности:**
+- **Структура ключей**: Плагин ожидает, что данные в etcd хранятся в формате JSON или YAML.
+- **Производительность**: Хорошо подходит для очень больших, но стабильных списков хостов, где Consul может быть избыточен.
+
+### Инвентарь на основе Foreman
+
+Foreman — локальная CMDB для управления bare metal и виртуальными машинами. Плагин `foreman` из коллекции `theforeman.foreman`.
+
+```yaml
+# inventories/foreman.yml
+plugin: theforeman.foreman.foreman
+url: "https://foreman.internal"
+user: "automation"
+password: "{{ vault_foreman_password }}"
+validate_certs: true
+want_facts: true
+want_hostgroups: true
+plain_host_names: true
+
+# Группировка по ОС, организации и местоположению
+keyed_groups:
+  - key: foreman_operatingsystem_name
+    prefix: os
+  - key: foreman_organization_name
+    prefix: org
+  - key: foreman_location_name
+    prefix: location
+
+# Условия группировки
+groups:
+  production: "foreman_environment == 'production'"
+  development: "foreman_environment == 'development'"
+  vm_hosts: "'virtual' in (foreman_is_virtual | default('false'))"
+
+# Сопоставление переменных хоста
+compose:
+  ansible_host: foreman_ip
+  foreman_params: foreman_params
+  foreman_facts: foreman_facts
+
+# Кэширование
+cache: true
+cache_plugin: ansible.builtin.jsonfile
+cache_timeout: 1800
+cache_connection: /tmp/foreman_inventory_cache
+```
+
+**Запуск:**
+```bash
+ansible-playbook -i inventories/foreman.yml playbooks/site.yml --limit "os_centos"
+```
+
+### Инвентарь на основе Proxmox VE
+
+Proxmox VE — self-hosted платформа виртуализации. Плагин `proxmox` из коллекции `community.proxmox` автоматически получает список всех VM, LXC и узлов.
+
+```yaml
+# inventories/proxmox.yml
+plugin: community.proxmox.proxmox
+url: https://pve1.internal:8006
+user: "automation@pam!ansible"
+password: "{{ vault_proxmox_password }}"
+want_proxmox_nodes_enabled: true
+want_proxmox_nodes_availabe_only: true
+validate_certs: false
+
+# Сопоставление IP для подключения
+compose:
+  ansible_host: proxmox_net0_ip | default(proxmox_ip)
+  proxmox_status: proxmox_status
+  proxmox_node: proxmox_node
+  proxmox_tags: proxmox_tags
+  proxmox_vmid: proxmox_vmid
+
+# Группировка по статусу, узлу и тегам
+keyed_groups:
+  - key: proxmox_status
+    prefix: status
+  - key: proxmox_node
+    prefix: node
+  - key: proxmox_tags
+    separator: "_"
+  - key: proxmox_type
+    prefix: type
+
+# Условия группировки
+groups:
+  running: "proxmox_status == 'running'"
+  stopped: "proxmox_status == 'stopped'"
+  lxc_containers: "proxmox_type == 'lxc'"
+  virtual_machines: "proxmox_type == 'qemu'"
+  nodes: "proxmox_type == 'node'"
+
+# Кэширование
+cache: true
+cache_plugin: ansible.builtin.jsonfile
+cache_timeout: 300
+cache_connection: /tmp/proxmox_inventory_cache
+```
+
+**Запуск:**
+```bash
+ansible-playbook -i inventories/proxmox.yml playbooks/site.yml \
+  --limit "node_pve1"
+```
+
+### Инвентарь на основе Terraform State
+
+Распространенный паттерн — использование данных Terraform как источника правды для инфраструктуры, описанной кодом (IaC).
+
+#### 1. Использование плагинов для Terraform State
+
+Использование специализированных плагинов, которые читают файл состояния (`terraform.tfstate`) напрямую.
+
+```yaml
+# inventories/terraform.yml
 plugin: cloud.terraform.terraform_provider
 project_path: /path/to/terraform/project
 # Плагин автоматически найдет ресурсы и создаст хосты на основе state-файла
 ```
 
-#### 2. Генерация через `terraform output` (Универсальный метод)
+#### 2. Генерация через `terraform output`
 
 Подход с ручной генерацией на основе вывода `terraform output`, полезен при отсутствии подходящего плагина:
 
-1. Terraform описывает данные (**IP-адреса**, имена хостов) в блоках `output`.
+1. Terraform описывает данные (IP-адреса, имена хостов) в блоках `output`.
 
     ```hcl
     output "instance_ips" {
       value = {
-        for vm in yandex_compute_instance.my_vms:
-        vm.name => vm.network_interface.0.nat_ip_address
+        for vm in proxmox_vm_qemu.my_vms:
+        vm.name => vm.default_ipv4_address
       }
     }
     ```
@@ -389,429 +665,62 @@ if __name__ == "__main__":
             json.dump(inventory, f, indent=2)
 ```
 
-### Настройка динамического инвентаря AWS (EC2)
+### Инвентарь на основе Git
 
-Для работы с AWS используется плагин `aws_ec2` из коллекции `amazon.aws`. Файл инвентаря должен заканчиваться на `aws_ec2.yml` или `aws_ec2.yaml`.
+Git может выступать источником правды для списка хостов, особенно в комбинации с CMDB. Подход — хранить статичные `hosts.yml` и `host_vars` в Git, а динамические изменения подмешивать через Directory Inventory.
 
 ```yaml
-plugin: amazon.aws.aws_ec2
-regions:
-  - eu-central-1
-  - us-east-1
-# Использование профиля AWS CLI для авторизации
-profile: production_admin
-# Фильтрация только запущенных инстансов с определенным тегом
-filters:
-  instance-state-name: running
-  "tag:Environment": production
-# Группировка хостов по тегам и зонам доступности
-keyed_groups:
-  - key: tags.Role
-    prefix: role
-  - key: placement.availability_zone
-    prefix: az
-# Динамическое определение IP для подключения
-compose:
-  ansible_host: public_ip_address | default(private_ip_address)
+# inventories/production/host_vars/web01.yml
+ansible_host: 10.0.0.10
+ansible_port: 22
+ansible_user: deploy
+environment: production
+role: web-server
+site: office
+
+# inventories/production/group_vars/webservers.yml
+ansible_port: 22
+ntp_servers:
+  - 10.0.0.1
+  - 10.0.0.2
 ```
 
-**Продвинутый пример с группами и фильтрами:**
+**Комбинирование статического Git-инвентаря с динамическим CMDB:**
+
+```bash
+# Использование нескольких источников (порядок имеет значение)
+ansible-playbook playbooks/site.yml \
+  -i inventories/production/hosts.yml \
+  -i inventories/production/netbox.yml
+```
+
+### Инвентарь с использованием constructed plugin
+
+Встроенный плагин `constructed` позволяет создавать и изменять переменные инвентаря, а также формировать группы на основе Jinja2-выражений. Особенно полезен для модификации статического инвентаря без изменения исходных файлов.
 
 ```yaml
-# aws_ec2_advanced.yml
-plugin: amazon.aws.aws_ec2
-regions:
-  - eu-central-1
-  - us-west-2
-
-# Авторизация через IAM-роль (рекомендуется для EC2)
-# Или через профиль:
-# profile: production
-
-# Фильтрация на стороне API (серверная)
-filters:
-  instance-state-name: running
-  "tag:Team": platform
-  instance-type: ["t3.medium", "t3.large", "t3.xlarge"]
-
-# Приоритет именования хостов
-hostnames:
-  - "tag:Name"
-  - private-ip-address
-
-# Группировка
-keyed_groups:
-  - key: tags.Role
-    prefix: role
-    separator: "_"
-  - key: tags.Environment
-    prefix: env
-  - key: placement.availability_zone
-    prefix: az
-  - key: instance_type
-    prefix: type
-
-# Сложные группы
+# inventories/constructed.yml
+plugin: constructed
+strict: false
+compose:
+  # Сопоставление local_ip из переменных хоста
+  ansible_host: hostvars[inventory_hostname].get('local_ip', hostvars[inventory_hostname].get('ansible_host'))
+  dc: hostvars[inventory_hostname].get('dc', 'unknown')
 groups:
-  webservers: "'web' in (tags.Role | default(''))"
-  databases: "'db' in (tags.Role | default(''))"
-  production: "tags.Environment == 'production'"
-  large_instances: "instance_type in ['t3.xlarge', 'm5.large']"
-
-compose:
-  ansible_host: private_ip_address
-  ansible_user: "'ec2-user' if tags.OS == 'amazon' else 'ubuntu'"
-  instance_id: instance_id
+  # Группировка по префиксу имени хоста
+  production: inventory_hostname.startswith('prod')
+  web: "'web' in inventory_hostname"
+  db: "'db' in inventory_hostname"
+  branch_office: "'office' in (hostvars[inventory_hostname].get('site', '') | default(''))"
 ```
 
-**Авторизация в AWS:**
+**Запуск с комбинированием статического и constructed инвентаря:**
 
 ```bash
-# 1. Профиль AWS CLI (~/.aws/credentials)
-export AWS_PROFILE=production
-
-# 2. Переменные окружения
-export AWS_ACCESS_KEY_ID=AKIA...
-export AWS_SECRET_ACCESS_KEY=...
-export AWS_DEFAULT_REGION=eu-central-1
-
-# 3. IAM-роль (на EC2-инстансах — самый безопасный способ)
-# Роль привязывается к инстансу, ключи не нужны
-
-# 4. Assume Role (для мультиаккаунтов)
-export AWS_PROFILE=assume-role
-# В ~/.aws/config:
-# [profile assume-role]
-# role_arn = arn:aws:iam::123456789012:role/CrossAccountRole
-# source_profile = production
+ansible-playbook playbooks/site.yml \
+  -i inventories/production/hosts.yml \
+  -i inventories/constructed.yml
 ```
-
-### Настройка динамического инвентаря Yandex Cloud
-
-Необходимо установить коллекцию: `ansible-galaxy collection install yandex.cloud`. Файл инвентаря с расширением `.yc.yml`.
-
-```yaml
-plugin: yandex.cloud.yandex_cloud
-folder_id: "b1g..." # ID каталога в Yandex Cloud
-service_account_key_file: "./key.json" # Путь к JSON-ключу сервисного аккаунта
-# Настройка имен хостов в инвентаре
-hostnames:
-  - "{{ labels.role }}-{{ name }}"
-# Группировка хостов по метке 'role'
-keyed_groups:
-  - key: labels.role
-    prefix: role
-# Настройка IP-адреса для подключения
-compose:
-  ansible_host: network_interfaces[0].primary_v4_address.one_to_one_nat.address
-```
-
-**Сервисный аккаунт (IAM):**
-
-```bash
-# Создание сервисного аккаунта
-yc iam service-account create --name ansible-inventory
-
-# Назначение роли (Viewer для чтения,compute.admin для управления)
-yc resource-manager folder add-access-binding <folder_id> \
-  --role viewer \
-  --subject service-account:<sa_id>
-
-# Создание ключа
-yc iam service-account key create --service-account-id <sa_id> \
-  --output key.json --format authorized_key
-```
-
-### Настройка динамического инвентаря Google Cloud (GCP)
-
-Плагин `gcp_compute` из коллекции `google.cloud`. Файл с расширением `gcp_compute.yml` или `gcp.yml`.
-
-```yaml
-# gcp_compute.yml
-plugin: google.cloud.gcp_compute
-zones:
-  - europe-west1-b
-  - europe-west1-c
-projects:
-  - my-gcp-project-id
-filters:
-  - status = RUNNING
-  - scheduling.automaticRestart = true AND status = RUNNING
-service_account_file: /path/to/service_account.json
-auth_kind: serviceaccount
-scopes:
-  - 'https://www.googleapis.com/auth/compute'
-  - 'https://www.googleapis.com/auth/compute.readonly'
-hostnames:
-  - name
-  - public_ip
-  - private_ip
-keyed_groups:
-  - key: labels
-    prefix: label
-  - key: zone
-    prefix: zone
-compose:
-  ansible_host: networkInterfaces[0].accessConfigs[0].natIP
-```
-
-**Сервисный аккаунт GCP:**
-
-```bash
-# Создание сервисного аккаунта
-gcloud iam service-accounts create ansible-inventory \
-  --display-name="Ansible Dynamic Inventory"
-
-# Назначение роли
-gcloud projects add-iam-policy-binding my-project \
-  --member="serviceAccount:ansible-inventory@my-project.iam.gserviceaccount.com" \
-  --role="roles/compute.viewer"
-
-# Экспорт ключа
-gcloud iam service-accounts keys create key.json \
-  --iam-account=ansible-inventory@my-project.iam.gserviceaccount.com
-```
-
-### Настройка динамического инвентаря Azure
-
-Плагин `azure_rm` из коллекции `azure.azcollection`. Файл с расширением `azure_rm.yml`.
-
-```yaml
-# azure_rm.yml
-plugin: azure.azcollection.azure_rm
-
-# Авторизация через Service Principal
-subscription_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-client_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-secret: "{{ lookup('env', 'AZURE_CLIENT_SECRET') }}"
-tenant: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-# Фильтрация
-resource_groups:
-  - production-rg
-  - staging-rg
-tags:
-  Environment: production
-
-# Группировка
-keyed_groups:
-  - key: tags.Role
-    prefix: role
-  - key: location
-    prefix: location
-  - key: resource_group
-    prefix: rg
-  - key: properties.hardwareProfile.vmSize
-    prefix: vm_size
-
-# Именование хостов
-hostnames:
-  - name
-  - public_ip
-
-compose:
-  ansible_host: public_ip_address | default(private_ip_address)
-```
-
-**Авторизация в Azure:**
-
-```bash
-# 1. Service Principal
-export AZURE_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-export AZURE_CLIENT_SECRET=your_secret
-export AZURE_TENANT=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-export AZURE_SUBSCRIPTION_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-# 2. Managed Identity (на Azure VM)
-# Не требует ключей — Managed Identity предоставляет токен автоматически
-
-# 3. Azure CLI (для разработки)
-az login
-```
-
-### Настройка динамического инвентаря VMware vSphere
-
-Плагин `vmware.vmware.vms_inventory` из коллекции `vmware.vmware` (новый, рекомендуемый). Файл с расширением `vmware.yml`.
-
-```yaml
-# vmware_inventory.yml
-plugin: vmware.vmware.vms_inventory
-
-hostname: vcenter.example.com
-username: administrator@vsphere.local
-password: "{{ lookup('env', 'VMWARE_PASSWORD') }}"
-validate_certs: false
-
-# Фильтрация VM
-resources:
-  - resource_type: VirtualMachine
-    properties:
-      - name
-      - config.hardware.numCPU
-      - config.hardware.memoryMB
-      - guest.ipAddress
-      - summary.runtime.powerState
-      - config.guestId
-    filters:
-      - name: '{{ config.name }}'
-        value: '{{ "web-" in config.name }}'
-
-# Группировка
-keyed_groups:
-  - key: summary.runtime.powerState
-    prefix: power
-  - key: config.guestId
-    prefix: guest
-  - key: config.hardware.numCPU
-    prefix: cpu
-
-# Именование хостов
-hostnames:
-  - config.name
-
-compose:
-  ansible_host: guest.ipAddress
-  ansible_user: "'administrator' if 'windows' in config.guestId else 'root'"
-```
-
-**Авторизация в VMware:**
-
-```bash
-# Переменные окружения (рекомендуется)
-export VMWARE_HOST=vcenter.example.com
-export VMWARE_USERNAME=administrator@vsphere.local
-export VMWARE_PASSWORD=your_password
-export VMWARE_VALIDATE_CERTS=false
-```
-
-### Настройка динамического инвентаря OpenStack
-
-Плагин `openstack.cloud.openstack` из коллекции `openstack.cloud`. Файл с расширением `openstack.yml` или `clouds.yml`.
-
-```yaml
-# openstack_inventory.yml
-plugin: openstack.cloud.openstack
-
-clouds:
-  - mycloud
-
-# Фильтрация
-filters:
-  status: "ACTIVE"
-  "OS-EXT-STS:vm_state": "active"
-
-# Группировка
-keyed_groups:
-  - key: metadata.role
-    prefix: role
-  - key: availability_zone
-    prefix: az
-  - key: "OS-EXT-AZ:availability_zone"
-    prefix: zone
-
-# Группы на основе условий
-groups:
-  webservers: "'web' in (metadata.role | default(''))"
-  databases: "'db' in (metadata.role | default(''))"
-
-compose:
-  ansible_host: public_v4_address | default(private_v4_address)
-```
-
-**Файл `clouds.yaml`:**
-
-```yaml
-clouds:
-  mycloud:
-    auth:
-      auth_url: https://cloud.example.com:5000/v3
-      username: ansible
-      password: your_password
-      project_name: myproject
-      project_domain_name: Default
-      user_domain_name: Default
-    region_name: RegionOne
-```
-
-### Интеграция с CMDB (NetBox)
-
-NetBox часто выступает единым источником правды (SSoT) для всей инфраструктуры. Плагин `nb_inventory` из коллекции `netbox.netbox`.
-
-См. также: [Автоматизация заполнения NetBox через API](../Networking/NetBox/netbox-automation-python.md).
-
-```yaml
-plugin: netbox.netbox.nb_inventory
-api_endpoint: https://netbox.example.com
-token: "YOUR_NETBOX_API_TOKEN" # Рекомендуется через env: {{ lookup('env', 'NETBOX_TOKEN') }}
-validate_certs: true
-# Фильтрация по статусу устройства
-status:
-  - Active
-# Группировка устройств по ролям, сайтам и платформам
-group_by:
-  - device_roles
-  - sites
-  - platforms
-# Формирование ansible_host из первичного IP-адреса в NetBox
-compose:
-  ansible_host: primary_ip4.address | regex_replace('/.*$', '')
-```
-
-### Интеграция с Service Discovery (Consul)
-
-Использование Consul как источника инвентаря идеально подходит для динамических сред вне Kubernetes (например, классические ВМ с установленным Consul Agent). Плагин `consul` из коллекции `community.general` позволяет автоматически получать список хостов на основе зарегистрированных сервисов и их тегов.
-
-```yaml
-plugin: community.general.consul
-consul_url: http://consul.example.com:8500
-# Авторизация (рекомендуется использовать ACL токены)
-token: "{{ lookup('env', 'CONSUL_HTTP_TOKEN') }}"
-
-# Фильтрация хостов: только те, что прошли Health Checks
-filter: "Service.Status == 'passing'"
-
-# Группировка хостов
-keyed_groups:
-  - key: Service
-    prefix: svc
-  - key: Tags
-    prefix: tag
-  - key: Datacenter
-    prefix: dc
-
-# Сопоставление переменных хоста
-compose:
-  ansible_host: Address
-  consul_node_name: Node
-```
-
-**Особенности:**
-- **Health-aware**: Можно исключать хосты, которые помечены как `critical` или `warning` в Consul.
-- **Гибкость**: Позволяет использовать метаданные сервисов (`ServiceMeta`) для формирования переменных Ansible.
-
-### Интеграция с KV-хранилищами (Etcd)
-
-Etcd (версии 3) может использоваться как низкоуровневое хранилище данных об инвентаре. Это полезно для кастомных систем оркестрации, где список хостов и их параметры хранятся в виде иерархии ключей. Используется плагин `etcd3` из коллекции `community.general`.
-
-```yaml
-plugin: community.general.etcd3
-host: "etcd-cluster.example.com"
-port: 2379
-user: "ansible"
-password: "password"
-
-# Префикс ключей, под которыми хранится инвентарь
-key_prefix: "/ansible/inventory/hosts/"
-
-# Использование сертификатов (рекомендуется)
-cert_file: "/path/to/cert.pem"
-key_file: "/path/to/key.pem"
-ca_cert: "/path/to/ca.pem"
-```
-
-**Особенности:**
-- **Структура ключей**: Плагин ожидает, что данные в etcd хранятся в формате JSON или YAML.
-- **Производительность**: Хорошо подходит для очень больших, но стабильных списков хостов, где Consul может быть избыточен.
 
 ### Исполняемые скрипты (Legacy)
 
@@ -831,7 +740,7 @@ import requests
 
 def get_inventory():
     """Получение инвентаря из внешнего источника."""
-    api_url = os.environ.get("INVENTORY_API_URL", "https://api.example.com/hosts")
+    api_url = os.environ.get("INVENTORY_API_URL", "http://cmdb.internal/api/hosts")
     token = os.environ.get("INVENTORY_API_TOKEN")
 
     headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -865,7 +774,7 @@ def get_inventory():
 
 def get_host_vars(hostname):
     """Получение переменных для конкретного хоста."""
-    api_url = os.environ.get("INVENTORY_API_URL", "https://api.example.com/hosts")
+    api_url = os.environ.get("INVENTORY_API_URL", "http://cmdb.internal/api/hosts")
     token = os.environ.get("INVENTORY_API_TOKEN")
 
     headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -965,7 +874,7 @@ ansible-playbook site.yml -i scripts/dynamic_inventory.sh
 inventories/
 ├── production/
 │   ├── hosts.yml                  # Статический инвентарь
-│   ├── aws_ec2.yml                # Динамический: AWS
+│   ├── netbox.yml                 # Динамический: CMDB
 │   ├── group_vars/
 │   │   ├── all.yml
 │   │   ├── webservers.yml
@@ -977,9 +886,9 @@ inventories/
 │   └── group_vars/
 │       └── all.yml
 └── dynamic/
-    ├── netbox.yml                 # CMDB-инвентарь
     ├── consul.yml                 # Service Discovery
-    └── vmware.yml                 # vSphere
+    ├── proxmox.yml                # Виртуализация
+    └── foreman.yml                # CMDB
 ```
 
 ```bash
@@ -987,232 +896,26 @@ inventories/
 ansible-playbook site.yml -i inventories/production/
 
 # Или несколько источников (с сохранением порядка)
-ansible-playbook site.yml -i inventories/production/hosts.yml -i inventories/production/aws_ec2.yml
+ansible-playbook site.yml -i inventories/production/hosts.yml -i inventories/production/netbox.yml
 ```
 
-**Важно:** Порядок файлов определяется алфавитом. Если вам нужен определённый порядок обработки, используйте несколько `-i` или группируйте файлы с префиксами (например, `01_hosts.yml`, `02_aws.yml`).
+**Важно:** Порядок файлов определяется алфавитом. Если вам нужен определённый порядок обработки, используйте несколько `-i` или группируйте файлы с префиксами (например, `01_hosts.yml`, `02_netbox.yml`).
 
----
+### Сценарий: CMDB/NetBox как Dynamic Inventory (полный цикл)
 
-## Безопасность и управление секретами
-
-### Токены и ключи доступа
-
-Конфигурации динамического инвентаря содержат токены и ключи доступа. **Никогда не коммитьте их в Git в открытом виде.**
-
-1. **Переменные окружения**: Плагины по умолчанию поддерживают переменные типа `AWS_ACCESS_KEY_ID`, `YC_TOKEN`, `GCP_SERVICE_ACCOUNT_FILE`, `VMWARE_PASSWORD`, `AZURE_CLIENT_SECRET`. Это наиболее безопасный способ для CI/CD.
-
-    ```bash
-    # AWS
-    export AWS_ACCESS_KEY_ID=AKIA...
-    export AWS_SECRET_ACCESS_KEY=...
-
-    # Yandex Cloud
-    export YC_TOKEN=$(yc iam create-token)
-
-    # GCP
-    export GCP_SERVICE_ACCOUNT_FILE=/path/to/key.json
-
-    # VMware
-    export VMWARE_PASSWORD=your_password
-
-    # Azure
-    export AZURE_CLIENT_SECRET=your_secret
-    ```
-
-2. **Ansible Vault**: Если ключи хранятся в `.yml` файле инвентаря, его необходимо зашифровать:
-   ```bash
-   ansible-vault encrypt inventories/prod.aws_ec2.yml
-   ansible-playbook site.yml -i inventories/prod.aws_ec2.yml --ask-vault-pass
-   ```
-
-3. **Сторонние хранилища секретов**: Интеграция с HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager:
-   ```yaml
-   # Чтение токена из HashiCorp Vault
-   token: "{{ lookup('hashi_vault', 'secret=secret/ansible/aws:token') }}"
-   ```
-
-4. **No Log**: При написании кастомных скриптов убедитесь, что они не выводят чувствительные данные в `stderr` или логи:
-   ```yaml
-   - name: Сбор инвентаря
-     command: ./dynamic_inventory.py --list
-     no_log: true
-   ```
-
-### Шифрование файлов инвентаря
-
-```bash
-# Шифрование
-ansible-vault encrypt inventories/production/aws_ec2.yml
-
-# Редактирование
-ansible-vault edit inventories/production/aws_ec2.yml
-
-# Дешифрование (для проверки)
-ansible-vault view inventories/production/aws_ec2.yml
-
-# Запуск с Vault-паролем
-ansible-playbook site.yml -i inventories/production/ --ask-vault-pass
-
-# Или через файл пароля
-ansible-playbook site.yml -i inventories/production/ --vault-password-file=~/.vault_pass
-```
-
----
-
-## Проверка и отладка динамического инвентаря
-
-### Базовые команды
-
-```bash
-# 1. Вывести инвентарь в виде дерева групп (быстрая проверка структуры)
-ansible-inventory -i <файл_инвентаря> --graph
-
-# 2. Вывести полный JSON-объект со всеми хост-переменными (проверка hostvars)
-ansible-inventory -i <файл_инвентаря> --list
-
-# 3. Отладка конкретного хоста
-ansible-inventory -i <файл_инвентаря> --host <имя_хоста>
-
-# 4. Проверка с очисткой кэша
-ansible-inventory -i <файл_инвентаря> --list --flush-cache
-
-# 5. Режим отладки (показывает ошибки подключения к API)
-ansible-inventory -i <файл_инвентаря> --list -vvvv
-```
-
-### Практические примеры отладки
-
-```bash
-# Проверка AWS инвентаря
-ansible-inventory -i aws_ec2.yml --graph
-ansible-inventory -i aws_ec2.yml --list | jq '.all.children'
-
-# Проверка Yandex Cloud
-ansible-inventory -i yandex_cloud.yml --graph
-
-# Проверка NetBox
-ansible-inventory -i netbox.yml --graph
-ansible-inventory -i netbox.yml --host webserver-01
-
-# Проверка Kubernetes
-ansible-inventory -i k8s.yml --graph
-ansible-inventory -i k8s.yml --list | jq '._meta.hostvars'
-
-# Проверка VMware
-ansible-inventory -i vmware.yml --graph
-ansible-inventory -i vmware.yml --list | jq '.all.children'
-```
-
-### Устранение типичных ошибок
-
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| `No module named 'boto3'` | Нет Python-пакета для AWS | `pip install boto3 botocore` |
-| `No module named 'google.auth'` | Нет Python-пакета для GCP | `pip install google-auth requests` |
-| `No module named 'azure'` | Нет Python-пакета для Azure | `pip install azure-identity azure-mgmt-compute` |
-| `Authentication failed` | Неверныеcredentials | Проверьте переменные окружения, профили |
-| `Unable to parse inventory` | Синтаксическая ошибка в YAML/INI | Проверьте формат файла, используйте `yaml` линтер |
-| `Plugin not found` | Коллекция не установлена | `ansible-galaxy collection install <collection>` |
-| `KeyError: 'ansible_host'` | Не задан `compose: ansible_host` | Добавьте `compose: ansible_host: <ip_expression>` |
-| `Cache is stale` | Устаревший кэш инвентаря | `ansible-inventory -i file.yml --list --flush-cache` |
-| `Permission denied` | Нет прав на чтение ключа | Проверьте права доступа к файлу ключа |
-| `Connection timeout` | API недоступен | Проверьте сеть, firewall, endpoint URL |
-
-### Валидация конфигурации плагина
-
-```bash
-# Проверка синтаксиса YAML
-python3 -c "import yaml; yaml.safe_load(open('aws_ec2.yml'))"
-
-# Проверка плагина через ansible-doc
-ansible-doc -t inventory amazon.aws.aws_ec2
-
-# Проверка доступных опций плагина
-ansible-doc -t inventory -s amazon.aws.aws_ec2
-```
-
----
-
-## Интеграция с CI/CD
-
-### GitHub Actions
-
-```yaml
-# .github/workflows/ansible-inventory.yml
----
-name: Validate Ansible Inventory
-on: [push, pull_request]
-
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install ansible
-          ansible-galaxy collection install amazon.aws yandex.cloud
-
-      - name: Validate inventory
-        run: |
-          ansible-inventory -i inventories/production/ --graph
-          ansible-inventory -i inventories/production/ --list | python3 -m json.tool > /dev/null
-```
-
-### GitLab CI
-
-```yaml
-# .gitlab-ci.yml
----
-stages:
-  - inventory
-  - deploy
-
-validate_inventory:
-  stage: inventory
-  image: python:3.11
-  before_script:
-    - pip install ansible
-    - ansible-galaxy collection install amazon.aws
-  script:
-    - ansible-inventory -i inventories/production/aws_ec2.yml --graph
-    - ansible-inventory -i inventories/production/aws_ec2.yml --list > /dev/null
-  only:
-    - changes:
-        - inventories/**/*
-
-deploy:
-  stage: deploy
-  script:
-    - ansible-playbook playbooks/site.yml -i inventories/production/
-  only:
-    - main
-```
-
----
-
-## Сценарий: CMDB/NetBox как Dynamic Inventory (полный цикл)
-
-### Архитектура: CMDB → Dynamic Inventory → Ansible → CMDB обратная связь
+#### Архитектура: CMDB → Dynamic Inventory → Ansible → CMDB обратная связь
 
 ```
 ┌─────────────┐     Pull      ┌─────────────────┐     Apply     ┌─────────────────┐
 │   NetBox    │◄──────────────│  Ansible        │──────────────►│  Managed Hosts  │
-│  (SSoT)     │  Inventory    │  Control Node   │  Playbooks    │  (500+ servers) │
+│  (source)   │  Inventory    │  Control Node   │  Playbooks    │  (500+ servers) │
 └──────┬──────┘               └─────────────────┘               └─────────────────┘
-       │                             │
-       │  Push facts back            │  Update CMDB
-       └─────────────────────────────┘
+        │                             │
+        │  Push facts back            │  Update CMDB
+        └─────────────────────────────┘
 ```
 
-### NetBox Dynamic Inventory Plugin
+#### NetBox Dynamic Inventory Plugin
 
 ```yaml
 # inventories/netbox.yml
@@ -1234,13 +937,13 @@ group_by:
 
 # Ключевые группы
 keyed_groups:
-  - key: device_role.name
+  - key: device_roles.name
     prefix: role
     separator: "_"
   - key: site.name
     prefix: site
     separator: "_"
-  - key: platform.name
+  - key: platforms.name
     prefix: platform
     separator: "_"
   - key: status
@@ -1249,7 +952,7 @@ keyed_groups:
 # Хостовые переменные
 compose:
   ansible_host: primary_ip4.address | regex_replace('/.*$', '')
-  ansible_network_os: platform.name | default('linux')
+  ansible_network_os: platforms.name | default('linux')
   netbox_id: id
   netbox_url: url
   rack: rack.name | default('N/A')
@@ -1262,7 +965,7 @@ cache_timeout: 3600
 cache_connection: /tmp/netbox_inventory_cache
 ```
 
-### NetBox как SSoT: полный цикл обратной связи
+#### NetBox как источник правды: полный цикл обратной связи
 
 ```yaml
 ---
@@ -1314,7 +1017,7 @@ cache_connection: /tmp/netbox_inventory_cache
         state: present
 ```
 
-### Автоматическая синхронизация через Scheduled Job
+#### Автоматическая синхронизация через Scheduled Job
 
 ```yaml
 ---
@@ -1357,19 +1060,221 @@ cache_connection: /tmp/netbox_inventory_cache
         mode: "0644"
 ```
 
+### Интеграция с CI/CD
+
+#### GitHub Actions
+
+```yaml
+# .github/workflows/ansible-inventory.yml
+---
+name: Validate Ansible Inventory
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ansible
+          ansible-galaxy collection install netbox.netbox community.general theforeman.foreman community.proxmox
+
+      - name: Validate inventory
+        run: |
+          ansible-inventory -i inventories/production/ --graph
+          ansible-inventory -i inventories/production/ --list | python3 -m json.tool > /dev/null
+```
+
+#### GitLab CI
+
+```yaml
+# .gitlab-ci.yml
+---
+stages:
+  - inventory
+  - deploy
+
+validate_inventory:
+  stage: inventory
+  image: python:3.11
+  before_script:
+    - pip install ansible
+    - ansible-galaxy collection install netbox.netbox
+  script:
+    - ansible-inventory -i inventories/production/netbox.yml --graph
+    - ansible-inventory -i inventories/production/netbox.yml --list > /dev/null
+  only:
+    - changes:
+        - inventories/**
+
+deploy:
+  stage: deploy
+  script:
+    - ansible-playbook playbooks/site.yml -i inventories/production/
+  only:
+    - main
+```
+
+---
+
+## Безопасность и управление секретами
+
+### Токены и ключи доступа
+
+Конфигурации динамического инвентаря содержат токены и ключи доступа. **Никогда не коммитьте их в Git в открытом виде.**
+
+1. **Переменные окружения**: Плагины по умолчанию поддерживают переменные типа `NETBOX_TOKEN`, `CONSUL_HTTP_TOKEN`, `FOREMAN_PASSWORD`, `PROXMOX_PASSWORD`, `ETCD_PASSWORD`. Это наиболее безопасный способ для CI/CD.
+
+    ```bash
+    # NetBox
+    export NETBOX_TOKEN=$(vault read -field=token secret/netbox)
+
+    # Consul
+    export CONSUL_HTTP_TOKEN=$(vault read -field=token secret/consul)
+
+    # Foreman
+    export FOREMAN_PASSWORD=$(vault read -field=password secret/foreman)
+
+    # Proxmox
+    export PROXMOX_PASSWORD=$(vault read -field=password secret/proxmox)
+
+    # Etcd
+    export ETCD_PASSWORD=$(vault read -field=password secret/etcd)
+    ```
+
+2. **Ansible Vault**: Если ключи хранятся в `.yml` файле инвентаря, его необходимо зашифровать:
+    ```bash
+    ansible-vault encrypt inventories/prod.netbox.yml
+    ansible-playbook site.yml -i inventories/prod.netbox.yml --ask-vault-pass
+    ```
+
+3.  **Сторонние хранилища секретов**: Интеграция с HashiCorp Vault, Git-crypt:
+    ```yaml
+    # Чтение токена из HashiCorp Vault
+    token: "{{ lookup('community.hashi_vault.hashi_vault', 'secret=secret/ansible/netbox:token') }}"
+    ```
+
+4. **No Log**: При написании кастомных скриптов убедитесь, что они не выводят чувствительные данные в `stderr` или логи:
+    ```yaml
+    - name: Сбор инвентаря
+      command: ./dynamic_inventory.py --list
+      no_log: true
+    ```
+
+### Шифрование файлов инвентаря
+
+```bash
+# Шифрование
+ansible-vault encrypt inventories/production/netbox.yml
+
+# Редактирование
+ansible-vault edit inventories/production/netbox.yml
+
+# Дешифрование (для проверки)
+ansible-vault view inventories/production/netbox.yml
+
+# Запуск с Vault-паролем
+ansible-playbook site.yml -i inventories/production/ --ask-vault-pass
+
+# Или через файл пароля
+ansible-playbook site.yml -i inventories/production/ --vault-password-file=~/.vault_pass
+```
+
+---
+
+## Проверка и отладка динамического инвентаря
+
+### Базовые команды
+
+```bash
+# 1. Вывести инвентарь в виде дерева групп (быстрая проверка структуры)
+ansible-inventory -i <файл_инвентаря> --graph
+
+# 2. Вывести полный JSON-объект со всеми хостовыми переменными (проверка hostvars)
+ansible-inventory -i <файл_инвентаря> --list
+
+# 3. Отладка конкретного хоста
+ansible-inventory -i <файл_инвентаря> --host <имя_хоста>
+
+# 4. Проверка с очисткой кэша
+ansible-inventory -i <файл_инвентаря> --list --flush-cache
+
+# 5. Режим отладки (показывает ошибки подключения к API)
+ansible-inventory -i <файл_инвентаря> --list -vvvv
+```
+
+### Практические примеры отладки
+
+```bash
+# Проверка NetBox инвентаря
+ansible-inventory -i netbox.yml --graph
+ansible-inventory -i netbox.yml --list | jq '._meta.hostvars'
+
+# Проверка Foreman
+ansible-inventory -i foreman.yml --graph
+ansible-inventory -i foreman.yml --host web-server-01
+
+# Проверка Consul
+ansible-inventory -i consul.yml --graph
+ansible-inventory -i consul.yml --list | jq '.all.children'
+
+# Проверка Proxmox
+ansible-inventory -i proxmox.yml --graph
+ansible-inventory -i proxmox.yml --list | jq '.all.children'
+
+# Проверка Etcd
+ansible-inventory -i etcd.yml --graph
+ansible-inventory -i etcd.yml --host etcd-node-01
+```
+
+### Устранение типичных ошибок
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `No module named 'pynetbox'` | Нет Python-пакета для NetBox | `pip install pynetbox requests` |
+| `No module named 'consul'` | Нет Python-пакета для Consul | `pip install python-consul requests` |
+| `No module named 'etcd3'` | Нет Python-пакета для Etcd | `pip install etcd3 requests` |
+| `Authentication failed` | Неверные учетные данные | Проверьте переменные окружения, Vault |
+| `Unable to parse inventory` | Синтаксическая ошибка в YAML/INI | Проверьте формат файла, используйте `yaml` линтер |
+| `Plugin not found` | Коллекция не установлена | `ansible-galaxy collection install <collection>` |
+| `KeyError: 'ansible_host'` | Не задан `compose: ansible_host` | Добавьте `compose: ansible_host: <ip_expression>` |
+| `Cache is stale` | Устаревший кэш инвентаря | `ansible-inventory -i file.yml --list --flush-cache` |
+| `Permission denied` | Нет прав на чтение ключа | Проверьте права доступа к файлу ключа |
+| `Connection timeout` | API недоступен | Проверьте сеть, firewall, endpoint URL |
+
+### Валидация конфигурации плагина
+
+```bash
+# Проверка синтаксиса YAML
+python3 -c "import yaml; yaml.safe_load(open('netbox.yml'))"
+
+# Проверка плагина через ansible-doc
+ansible-doc -t inventory netbox.netbox.nb_inventory
+
+# Проверка доступных опций плагина
+ansible-doc -t inventory -s netbox.netbox.nb_inventory
+```
+
 ---
 
 ## Лучшие практики
 
-1. **Храните конфигурации плагинов в Git** —-versioning обеспечивает воспроизводимость.
+1. **Храните конфигурации плагинов в Git** — versioning обеспечивает воспроизводимость.
 2. **Используйте переменные окружения** для токенов — не храните их в файлах.
-3. **Включайте кэширование** — особенно в CI/CD, чтобы не нагружать API.
-4. **Фильтруйте на стороне API** — ограничивайте область поиска (только нужные регионы/проекты/теги).
+3. **Включайте кэширование** — особенно в CI/CD, чтобы не нагружать локальные API.
+4. **Фильтруйте на стороне API** — ограничивайте область поиска (только нужные организации/статусы/теги).
 5. **Используйте `keyed_groups`** для автоматической группировки — вместо ручного создания групп.
 6. **Используйте `compose`** для `ansible_host` — плагин не всегда может определить IP автоматически.
 7. **Проверяйте инвентарь перед запуском** — `ansible-inventory --graph` перед `ansible-playbook`.
 8. **Шифруйте файлы с секретами** — `ansible-vault encrypt` для любых токенов/паролей.
-9. **Комбинируйте источники** — Directory Inventory для мультиоблака и мультиаккаунта.
+9. **Комбинируйте источники** — Directory Inventory для мультиаккаунта и мультисредности.
 10. **Настройте `no_log`** для скриптов, работающих с секретами.
 
 ---
@@ -1378,15 +1283,11 @@ cache_connection: /tmp/netbox_inventory_cache
 
 - [Установка и настройка Ansible](ansible_setup_and_config.md) — базовые концепции инвентаря.
 - [Официальная документация по плагинам инвентаря](https://docs.ansible.com/ansible/latest/plugins/inventory.html)
-- [Официальная документация: Amazon AWS EC2](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html)
-- [Официальная документация: Yandex Cloud](https://docs.ansible.com/ansible/latest/collections/yandex/cloud/yandex_cloud_inventory.html)
-- [Официальная документация: Google Cloud GCP](https://docs.ansible.com/ansible/latest/collections/google/cloud/gcp_compute_inventory.html)
-- [Официальная документация: VMware vSphere](https://docs.ansible.com/ansible/latest/collections/vmware/vmware/vms_inventory_inventory.html)
-- [Официальная документация: Azure](https://docs.ansible.com/ansible/latest/collections/azure/azcollection/azure_rm_inventory.html)
 - [Официальная документация: NetBox](https://docs.ansible.com/ansible/latest/collections/netbox/netbox/nb_inventory_inventory.html)
-- [Официальная документация: Kubernetes](https://docs.ansible.com/ansible/latest/collections/kubernetes/core/k8s_inventory.html)
+- [Официальная документация: Consul](https://docs.ansible.com/ansible/latest/collections/community/general/consul_inventory.html)
+- [Официальная документация: Foreman](https://docs.ansible.com/ansible/latest/collections/theforeman/foreman/foreman_inventory.html)
+- [Официальная документация: Proxmox](https://docs.ansible.com/ansible/latest/collections/community/proxmox/proxmox_inventory.html)
 - [Структура проекта](examples/example_project_layout.md) — организация файлов и каталогов.
 - [Ansible Vault: Лучшие практики](Vault/best_practices.md) — шифрование конфигураций инвентаря.
 - [Оптимизация производительности](ansible_performance_tuning.md) — тюнинг SSH и кэширования.
 - [Динамический инвентарь для сетевого оборудования](ansible_network_automation.md) — NetBox + Network Automation.
-- [Автоматизация Kubernetes](./ansible-kubernetes-automation.md) — инвентарь подов и сервисов.

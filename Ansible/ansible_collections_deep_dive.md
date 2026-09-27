@@ -56,8 +56,8 @@ dependencies:
 collections:
   - name: community.docker
     version: ">=3.0.0"
-  - name: community.mysql
-    version: "2.0.0"
+  - name: ansible.mysql
+    version: "5.0.0"
 ```
 
 ### Версионирование

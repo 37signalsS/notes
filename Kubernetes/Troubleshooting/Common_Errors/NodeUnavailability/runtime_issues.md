@@ -813,3 +813,5 @@ groups:
 - **[Диагностика узла](./diagnostics.md)** — общий алгоритм поиска неисправностей, CRI-сокет, ssh.
 - **[Taints и выселение](./taints_and_eviction.md)** — автоматическое выселение при `NotReady`.
 - **[Сетевые проблемы](./network_issues.md)** — network issues container networking (netns, veth, bridge).
+- **[SELinux и AppArmor](./security_profiles.md)** — блокировка exec, монтирования, сетевых операций.
+- **[Тюнинг ядра](./kernel_tuning.md)** — sysctl параметры для containerd (file-max, inotify).

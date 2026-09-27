@@ -62,7 +62,7 @@ include:
 include:
   - component: '$CI_SERVER_FQDN/group/ci-components/docker-build@1.5.0'
     inputs:
-      image: docker:27.0
+      image: docker:29.8
       push_registry: true
 ```
 

@@ -638,6 +638,9 @@ kubectl logs -n cert-manager -l app=cert-manager --tail=50 | grep $DOMAIN
 
 - **[Углублённые концепции ACME](./letsencrypt_concepts.md)** — архитектура ARI, CT-логи и безопасность.
 - **[Диагностика и Troubleshooting](./letsencrypt_advanced.md)** — решение проблем с прохождением проверок.
+- **[Реагирование на инциденты (Incident Response)](./letsencrypt_incident_response.md)** — процедуры при просроченных сертификатах и компрометации ключей.
+- **[Terraform: Управление сертификатами](./letsencrypt_terraform.md)** — ACME provider для не-Kubernetes серверов.
+- **[Сетевая безопасность (Network Security)](./letsencrypt_network_security.md)** — firewall, egress и NetworkPolicy для ACME проверок.
 - **[Cert-manager: Определения](../../definitions.md)** — базовая структура ресурсов контроллера.
 - **[Cert-manager: Администрирование](../Administration/index.md)** — HA, ресурсы и ротация ключей.
 

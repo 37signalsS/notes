@@ -677,3 +677,4 @@ rm -rf ~/.cache/helm
 **Навигация по руководству:**
 
 - **[Развертывание вспомогательных компонентов →](./lgtm_otel_minikube_auxiliary_components.md)**
+- **[Обзор стека](./lgtm_otel_minikube_overview.md)** (содержание)

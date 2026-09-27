@@ -6,6 +6,12 @@
 
 В 2026 году основным способом управления трафиком стал **Kubernetes Gateway API**. Его подпроект **GAMMA** (Gateway API for Mesh Management and Administration) определяет использование стандартных ресурсов (`HTTPRoute`, `GRPCRoute`) для мессервисного (East-West) трафика, привязывая роуты напрямую к `Service` вместо `Gateway`. Поддержка mesh-сценариев включена в Standard Channel Gateway API с версии v1.1.0; актуальная версия спецификации на середину 2026 года — **v1.6.x** (TCPRoute и UDPRoute переведены в Standard в v1.6.0, июнь 2026). Gateway API охватывает как входящий (North-South), так и мессервисный трафик единой объектной моделью.
 
+**VirtualService** — устаревший Istio CRD для декларативного управления маршрутизацией, таймаутами, ретраями и зеркалированием. В 2026 году для новых проектов рекомендуется Gateway API, но VirtualService сохраняет поддержку для обратной совместимости.
+
+**DestinationRule** — Istio CRD, определяющий политики трафика для конкретного хоста: подмножества (subsets), балансировку, circuit breaking, TLS-режим. С 2026 года многие параметры DestinationRule дублируются в Gateway API через `BackendPolicy` и политики Policy Attachment.
+
+**Gateway** — ресурс Gateway API, описывающий точку входа ( ingress/egress ) в кластер. В Ambient Mesh Gateway может представлять Waypoint-прокси.
+
 ---
 
 ## Основные концепции
@@ -16,8 +22,7 @@
 | :--- | :--- | :--- |
 | **Динамическая маршрутизация** | Веса (weights), фильтры по заголовкам/путям. | Canary-релизы, A/B-тестирование, Blue-Green. |
 | **Отказоустойчивость** | Таймауты, ретраи (retries), разрыв цепи (circuit breaking). | Защита от каскадных сбоев и нестабильных эндпоинтов. |
-| **Интеллектуальная балансировка** | HAZL (BEL), Topology Aware Routing (Linkerd), Locality-aware (Istio). | Снижение затрат на облачный трафик и Latency. |
-| **AI-управление** | LLM-фильтры, Rate Limiting по токенам. | Управление трафиком к моделям ИИ и защита провайдеров. |
+| **Интеллектуальная балансировка** | Locality-aware (Istio), Topology Aware Routing (Linkerd). | Снижение задержек и оптимизация распределения трафика. |
 | **Эксперименты** | Зеркалирование (mirroring), внедрение ошибок (fault injection). | Тестирование в продакшене без риска для пользователей. |
 
 ### Сравнение примитивов управления
@@ -29,7 +34,7 @@
 | **Зеркалирование** | `HTTPRoute` (mirrors) | `HTTPRoute` (mirrors) | Специфичные аннотации |
 | **Надежность (L7)** | Фильтры `HTTPRoute` / `RetryPolicy` (Gateway API) / `DestinationRule` | Фильтры `HTTPRoute` / `ServiceProfile` | ServiceProfile / Annotation |
 | **Circuit Breaking** | `DestinationRule` (outlierDetection) / `BackendPolicy` | Автоматически на уровне прокси, произвольный (arbitrary) разрыв цепи | — |
-| **Балансировка** | Locality Load Balancing (Topology Hints / `LocalityLoadBalancerSetting`) | Topology Aware Routing (K8s hints) или **HAZL** (BEL, zone-aware + 429-aware) | Topology Aware Hints (K8s) |
+| **Балансировка** | Locality Load Balancing (Topology Hints / `LocalityLoadBalancerSetting`) | Topology Aware Routing (K8s hints) | Topology Aware Hints (K8s) |
 
 ---
 
@@ -93,38 +98,22 @@ spec:
 
 Ретраи и таймауты также могут задаваться на уровне Backend через политику `RetryPolicy` (Istio/Gateway API), прикрепляемую через `targetRef` к `HTTPRoute` или `Service`.
 
-### Сценарий 3: AI Gateway — управление трафиком LLM (Envoy AI Gateway)
+### Сценарий 4: Зональная балансировка (Topology Aware Routing)
 
-Управление трафиком к LLM-моделям в 2026 году реализуется через выделенный **Envoy AI Gateway** (GA с июня 2026) — проект поверх Envoy Gateway от CNCF. Токен-ориентированные политики (`TokenRateLimitPolicy`, `BackendTrafficPolicy` с Global Rate Limit) позволяют ограничивать потребление токенов по пользователям и моделям, а не количеством запросов. Токены извлекаются из ответов LLM в формат OpenAI и аккумулируются в Redis-backed rate limit service.
+**Topology Aware Routing (TAR)** — встроенный механизм Kubernetes для распределения трафика между эндпоинтами с учетом топологии кластера (зоны, регионы). TAR использует `Topology Aware Hints`, генерируемые kube-proxy, чтобы предпочитать эндпоинты в той же зоне, что и клиент. В open-source Linkerd и Istio эта функция поддерживается нативно, но без динамического вывода эндпоинтов при перегрузке.
 
-```yaml
-apiVersion: gateway.envoyproxy.io/v1alpha1
-kind: TokenRateLimitPolicy
-metadata:
-  name: llm-token-limit
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: ai-route
-  limit:
-    tokensPerMinute: 10000
-    burstSize: 2000
-```
-
-В Istio аналогичная функциональность достигается через WASM-расширения/Envoy-фильтры поверх Gateway API, но начиная с 2026 года LLM-специфичные фильтры (rate limit по токенам, балансировка промптов между провайдерами, failover) вынесены именно в отдельный проект Envoy AI Gateway.
-
-### Сценарий 4: HAZL — зональная балансировка (Buoyant Enterprise for Linkerd 2.20+)
-
-**HAZL** (High Availability Zonal Load balancing) — проприетарная функция **Buoyant Enterprise for Linkerd** (BEL), а не составная часть open-source Linkerd. Она **выключена по умолчанию** и включается флагом destination controller (`-ext-endpoint-zone-weights`). Прокси автоматически удерживает трафик в зоне `europe-west1-a`, но переключит его на `europe-west1-b`, если задержки вырастут или эндпоинты начнут возвращать `429`. С 2.20 HAZL учитывает rate-limit-ответы и через `BUOYANT_BALANCER_READINESS_SCALING=true` временно выводит перегруженные эндпоинты из пула.
-
-В open-source Linkerd зональность обеспечивается стандартным **Topology Aware Routing** на базе Kubernetes Topology Aware Hints (`service.kubernetes.io/topology-aware-hints=auto`), но без rate-limit-aware поведения и динамического вывода эндпоинтов.
+Важные ограничения TAR:
+- Требует минимум 3 эндпоинтов на зону для корректной работы.
+- Не работает при `internalTrafficPolicy: Local` на Service.
+- При невозможности удовлетворить запрос локальными эндпоинтами происходит fallback на межзонную маршрутизацию.
 
 ```bash
-# Проверка эффективности зональной маршрутизации (экономия трафика)
-linkerd viz stat deploy -n app --expected-zone-traffic
-# → NAME    LOCAL_TRAFFIC    CROSS_ZONE_TRAFFIC    SAVINGS
-# → app     98.5%            1.5%                  $450/mo
+# Проверка статуса Topology Aware Hints
+kubectl get endpoints <service-name> -n <namespace> -o yaml | grep topology
+# → hints:
+#     topologyKeys:
+#     - topology.kubernetes.io/zone
+#     - ""
 ```
 
 ### Сценарий 5: Разрыв цепи (Istio Outlier Detection)
@@ -146,7 +135,137 @@ spec:
       maxEjectionPercent: 100
 ```
 
----
+### Сценарий 6: Ограничения пула соединений (Connection Pool)
+
+Контроль максимального количества соединений предотвращает истощение ресурсов на бэкенде. В Istio параметры задаются в `DestinationRule.trafficPolicy.connectionPool`, в Gateway API — через `BackendTrafficPolicy`.
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api-connection-pool
+spec:
+  host: api-service.prod.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 200ms
+      http:
+        http2MaxRequests: 1000
+        h2UpgradePolicy: DEFAULT
+```
+
+### Сценарий 7: Session Affinity через Consistent Hash
+
+Для сохранения привязки сессии к конкретному эндпоинту (sticky sessions) используйте согласованный хеш на основе заголовка или источника IP. В Istio параметр задается в `DestinationRule.loadBalancer.consistentHash`.
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api-sticky
+spec:
+  host: api-service.prod.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: x-user-id
+```
+
+### Сценарий 8: Зеркалирование трафика (Traffic Mirror)
+
+Зеркалирование отправляет копию запроса на тестовый бэкенд без влияния на ответ пользователю. Используется для тестирования новой версии в продакшне.
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-mirror
+spec:
+  host: api-service
+  http:
+  - route:
+    - destination:
+        host: api-service
+        subset: v1
+    mirror:
+      host: api-service
+      subset: v2-canary
+    mirrorPercentage:
+      value: 10.0
+```
+
+### Сценарий 9: Внедрение ошибок (Fault Injection)
+
+Искусственная инъекция задержек и abort-ошибок для проверки отказоустойчивости клиентов в продакшне.
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-fault
+spec:
+  host: api-service
+  http:
+  - fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 2s
+      abort:
+        percentage:
+          value: 0.05
+        httpStatus: 503
+    route:
+    - destination:
+        host: api-service
+        subset: v1
+```
+
+### Сценарий 10: Маршрутизация по заголовкам
+
+Роутинг на основе произвольных заголовков позволяет направлять трафик определенных групп пользователей на выделенные бэкенды.
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-header-route
+spec:
+  host: api-service
+  http:
+  - match:
+    - headers:
+        x-tenant:
+          value: premium
+    route:
+    - destination:
+        host: api-service
+        subset: premium
+  - route:
+    - destination:
+        host: api-service
+        subset: standard
+```
+
+### Сценарий 11: Валидация и диагностика политик трафика
+
+После применения политик выполните проверку актуального состояния роутов и outlier detection.
+
+```bash
+# Проверка статуса синхронизации конфигурации (istioctl)
+istioctl proxy-status
+
+# Анализ конфликтов в маршрутизации
+istioctl analyze ns prod
+
+# Проверка активных эндпоинтов и outlierDetection
+kubectl get endpoints api-service -n prod -o yaml
+
+# Сбор логов прокси для диагностики маршрутизации
+istioctl proxy-config routes deploy/<pod> --name http.8000 -o json
+```
 
 ## Дополнительная информация
 
@@ -169,20 +288,36 @@ spec:
 2.  **Идемпотентность:** настраивайте `retries` только для методов, не изменяющих состояние (GET, HEAD, OPTIONS).
 3.  **Мониторинг задержек:** используйте «золотые метрики» (RPS, Error Rate, P99 Latency) для автоматического отката канареечных релизов. Для реализации автоматизации в Push-модели (CI -> Cluster) см. **[Практические сценарии автоматизации трафика](../CI-CD/Deployment_Strategies/canary_deployment.md#автоматизация-трафика-в-ci-пайплайнах-push-метод)**.
 4.  **Сжатие трафика:** используйте фильтры сжатия (gzip/brotli) на уровне прокси для экономии пропускной способности.
-5.  **Локальность трафика:** в мультизональных кластерах используйте зональную балансировку — Topology Aware Routing (open-source Linkerd), HAZL (Buoyant Enterprise) или Locality Load Balancing (Istio) — для минимизации задержек и межзонных затрат. Учитывайте ограничения hints (TAR не работает при <3 эндпоинтов на зону и при `internalTrafficPolicy: Local`). Подробнее о диагностике: **[Cross-zone traffic и задержки](../Networking/Troubleshooting/cross-zone-latency.md)**.
-6.  **AI-трафик:** для LLM-нагрузок применяйте Envoy AI Gateway с токен-ориентированными лимитами (`TokenRateLimitPolicy`) — они лимитируют по фактическому потреблению токенов, а не по количеству запросов.
+5.  **Локальность трафика:** в мультизональных кластерах используйте зональную балансировку — Topology Aware Routing (Kubernetes Hints) или Locality Load Balancing (Istio) — для минимизации задержек и межзонных затрат. Учитывайте ограничения hints (TAR не работает при <3 эндпоинтов на зону и при `internalTrafficPolicy: Local`). Подробнее о диагностике: **[Cross-zone traffic и задержки](../Networking/Troubleshooting/cross-zone-latency.md)**.
+6.  **Мониторинг эндпоинтов:** отслеживайте метрики 5xx ошибок и latency P99 для раннего обнаружения деградации бэкендов.
+7.  **Гранулярность таймаутов:** устанавливайте таймауты на каждом уровне (Gateway, Route, Destination), начиная с более коротких на внешних роутах и увеличивая их на внутренних. Избегайте единого глобального таймаута.
+8.  **Избегайте конфликтов весов:** сумма весов в `backendRefs` или `route` должна быть валидна; Gateway API отклоняет роуты с нулевыми или отрицательными весами.
+9.  **Приоритет маршрутизации:** в Gateway API порядок правил (`rules`) определяет приоритет; более специфичные `matches` размещайте выше.
+10.  **Circuit breaking при масштабировании:** настройте `outlierDetection` и `connectionPool` до набора нагрузки; параметры по умолчанию часто слишком либеральны для продакшна.
+11.  **Валидация после каждого изменения:** используйте `istioctl analyze` или `kubectl apply --dry-run` для проверки ресурсов перед применением в кластер.
+
+### Типичные ошибки и устранение неполадок
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **HTTP 503** на Gateway | Отсутствуют готовые эндпоинты (все эндпоинты исключены outlier detection) | Проверьте статусы подов (`kubectl get pods`), убедитесь что readiness probe проходит, проверьте `maxEjectionPercent` |
+| **HTTP 504** Gateway timeout | Превышен `request timeout` в `HTTPRoute` или `DestinationRule` | Увеличьте таймаут или оптимизируйте бэкенд; проверьте задержки на уровне TCP |
+| **Веса трафика не применяются** | Неправильное имя `Service` в `parentRefs` (GAMMA) | Убедитесь что `parentRefs` указывает на существующий `Service` и порт совпадает |
+| **Трафик игнорирует роут** | Правила `HTTPRoute` перекрываются или отсутствует ReferenceGrant | Проверьте порядок `rules`, наличие `ReferenceGrant` для соседних неймспейсов |
+| **TAR не работает** | Менее 3 эндпоинтов на зону или `internalTrafficPolicy: Local` | Добавьте реплики или отключите `internalTrafficPolicy: Local` |
+| **Reroutes циклично перезапускаются** | Ретраи без backoff или таймаут меньше времени обработки | Добавьте exponential backoff, увеличьте `http1MaxPendingRequests` |
 
 ### Актуальность и ссылки
 
 - **Istio 1.30+:** полная поддержка Gateway API (включая policy-ресурсы) и Ambient Mesh (GA с 1.24).
-- **Linkerd 2.20+:** нативная поддержка `HTTPRoute`, системные политики и Topology Aware Routing; **HAZL** доступен только в Buoyant Enterprise for Linkerd.
+- **Linkerd 2.20+:** нативная поддержка `HTTPRoute`, системные политики и Topology Aware Routing.
 - **Gateway API v1.6.x:** TCPRoute/UDPRoute переведены в Standard; GAMMA-поддержка зафиксирована в Standard Channel с v1.1.0.
-- **Envoy AI Gateway 1.0:** GA с июня 2026, токен-ориентированные лимиты для LLM-трафика.
 
 **См. также:**
 - [Архитектура Istio и режим Ambient](./istio_architecture.md)
 - [Конфигурация Sidecar в Istio](./istio-sidecar-configuration.md)
 - [Сравнение Istio и Linkerd](./istio_vs_linkerd.md)
 - [Gateway API: Глубокое погружение](../Kubernetes/Networking/gateway_api/definitions.md)
+- [Ограничение скорости (Rate Limiting) в Istio](./istio_rate_limiting.md)
 
 Документация: [Istio Traffic Management](https://istio.io/latest/docs/tasks/traffic-management/), [Linkerd Traffic Management](https://linkerd.io/docs/features/gateway-api/).

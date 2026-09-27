@@ -2,48 +2,15 @@
 
 ## Определения
 
-**Антипаттерн Feature Toggle** — это распространенный, но неэффективный, опасный или трудноподдерживаемый способ использования механизмов динамического управления функциональностью. Антипаттерны приводят к накоплению технического долга, усложнению кодовой базы («спагетти-логика»), деградации производительности и возникновению критических инцидентов в Production, которые трудно диагностировать из-за вариативности состояний системы.
+**Антипаттерн Feature Toggle** — распространенный, но неэффективный, опасный или трудноподдерживаемый способ использования механизмов динамического управления функциональностью. Антипаттерны приводят к накоплению технического долга, усложнению кодовой базы («спагетти-логика»), деградации производительности и возникновению критических инцидентов в Production, которые трудно диагностировать из-за вариативности состояний системы.
 
 **Зомби-флаг (Zombie Flag)** — «мертвый» или забытый флаг, код которого остается в системе после завершения его жизненного цикла, создавая риск случайного включения устаревшей и непротестированной логики.
 
----
+**Коллизия флагов (Toggle Collision)** — ситуация, когда два или более независимых флага влияют на один и тот же ресурс (переменная окружения, запись в БД, HTTP-ответ) в несовместимых режимах, приводя к непредсказуемому поведению системы.
 
-## Предварительные требования
+**Combinatorial Explosion** — экспоненциальный рост количества возможных состояний системы при увеличении количества независимых бинарных флагов, что делает полное тестирование невозможным.
 
-Для освоения и применения практик обнаружения и устранения антипаттернов необходимы следующие инструменты и окружение.
-
-### Инструментарий
-
-| Компонент | Назначение | Минимальная версия |
-| :--- | :--- | :--- |
-| **FFaaS платформа** | Хранение и управление флагами (Unleash, Flipt, Flagsmith) | Unleash v5+ / Flipt v1.35+ |
-| **OpenFeature SDK** | Унифицированный API для проверки флагов в коде | v0.4+ (Python/Go/Java) |
-| **Linter / Static Analyzer** | Обнаружение неиспользуемых и дублирующих флагов в коде | RuboCop (Ruby), ESLint (JS), Ruff (Python) |
-| **Uber Piranha** | Автоматическое обнаружение и удаление «мёртвых» флагов | v0.25+ |
-| **Prometheus + Grafana** | Мониторинг использования флагов и их влияния на метрики | Prometheus v2.50+, Grafana v10+ |
-| **OpenTelemetry Collector** | Сбор и передача телеметрии по состоянию флагов | v0.95+ |
-| **CI/CD пайплайн** | Автоматический прогон тестов при изменении флагов | GitHub Actions / GitLab CI / Jenkins |
-
-### Окружение для тестирования антипаттернов
-
-Для безопасной проверки антипаттернов и их влияния рекомендуется выделить тестовое окружение, изолированное от Production:
-
-```bash
-# Локальный Unleash через Docker (для тестирования)
-docker compose -f docker-compose.unleash.yml up -d
-# → Unleash доступен на http://localhost:4242
-
-# Проверка доступности
-curl -s http://localhost:4242/api/admin/user | jq
-# → {"user":{"permissions":["admin"]},...}
-```
-
-### Базовые знания
-
-Перед изучением антипаттернов рекомендуется ознакомиться с:
-- Общими принципами Feature Toggles ([Обзор](./overview.md))
-- Классификацией флагов по типам ([Типы](./types.md))
-- Архитектурой систем управления флагами ([Архитектура](./architecture.md))
+**Silent Failure** — сбой работы FFaaS или SDK, который не приводит к явной ошибке в приложении, но заставляет систему деградировать в опасное состояние из-за неверно выбранных значений по умолчанию.
 
 ---
 
@@ -51,26 +18,47 @@ curl -s http://localhost:4242/api/admin/user | jq
 
 ### Категории антипаттернов
 
-В 2026 году классификация антипаттернов расширена за счет FinOps и SecOps аспектов.
+Классификация по типу последствий и зоне ответственности:
 
-| Категория | Описание | Основной риск |
-| :--- | :--- | :--- |
-| **Кодовые** | Нарушение чистоты кода и абстракций. | Рост сложности поддержки, ошибки при рефакторинге. |
-| **Эксплуатационные** | Ошибки мониторинга и управления рантаймом. | Непредсказуемое поведение при отказе FFaaS, "мертвые" флаги. |
-| **Архитектурные** | Ошибки проектирования системных взаимодействий. | Нарушение безопасности, деградация БД, коллизии логики. |
-| **Процессные** | Отсутствие владения и регламентов удаления. | Бесконечный рост технического долга. |
+| Категория | Описание | Основной риск | Владелец |
+| :--- | :--- | :--- | :--- |
+| **Кодовые** | Нарушение чистоты кода и абстракций. | Рост сложности поддержки, ошибки при рефакторинге. | Разработка |
+| **Эксплуатационные** | Ошибки мониторинга и управления рантаймом. | Непредсказуемое поведение при отказе FFaaS, «мертвые» флаги. | SRE / DevOps |
+| **Архитектурные** | Ошибки проектирования системных взаимодействий. | Нарушение безопасности, деградация БД, коллизии логики. | Архитектура / Backend |
+| **Процессные** | Отсутствие владения и регламентов удаления. | Бесконечный рост технического долга, drift сред. | Tech Lead / SRE Lead |
+
+### ПринципFail-safe и почему его нарушение — антипаттерн
+
+Каждый вызов `get_boolean_value()` или `get_string_value()` должен содержать явный `default` аргумент. Отсутствие fallback-значения превращает флаг в точку отказа: при недоступности FFaaS приложение либо падает с исключением, либо деградирует в опасное состояние.
+
+Правило простое:
+- **Release / Experiment / Permission:** `default=False` (новая фича выключена при сбое).
+- **Ops (Kill Switch):** `default=True` (защита активна при сбое).
+
+Нарушение этого правила — один из самых частых антипаттернов в Production, ведущий к инцидентам, когда FFaaS перегружена или недоступна.
 
 ### Метрики для обнаружения антипаттернов
 
 Для систематического выявления проблем с флагами используются следующие показатели:
 
-| Метрика | Формула / Метод | Пороговое значение (типичное) |
+| Метрика | Формула / Метод | Пороговое значение |
 | :--- | :--- | :--- |
 | **Flag Count** | `count(flags WHERE state='enabled')` на сервис | >10 release-флагов на сервис |
 | **Flag Age** | `now() - created_at` для каждого флага | >30 дней без изменения состояния |
 | **Evaluation Latency** | `p99(feature_flag_evaluation_duration_seconds)` | >10ms на одну оценку |
 | **Dead Flag Ratio** | `flags_stuck_at_100% / total_flags` | >20% флагов в одном состоянии >90 дней |
 | **Collision Potential** | Количество флагов, влияющих на один ресурс | >2 флага на один ресурс |
+| **Polling Rate** | `rate(http_requests_total{job="unleash-api"}[1m])` | >100 запросов/мин на сервис |
+
+### SRE-контекст: Антипаттерны как инциденты
+
+В современной эксплуатации каждый антипаттерн должен иметь:
+1. **Индикатор в мониторинге** (Prometheus rule).
+2. **Алерт с severity** (warning/critical).
+3. **Runbook** с пошаговым восстановлением.
+4. **Follow-up** (cleanup-PR, рефакторинг, документирование).
+
+Это превращает антипаттерны из абстрактных плохих практик в управляемые операционные риски.
 
 ---
 
@@ -78,73 +66,41 @@ curl -s http://localhost:4242/api/admin/user | jq
 
 ### 1. Избыточная сложность и вложенность (Combinatorial Explosion)
 
-**Проблема:** Создание условий, зависящих от комбинации нескольких независимых флагов или использование глубокой вложенности (`if inside if`). Это приводит к экспоненциальному росту количества состояний системы, которые невозможно полностью протестировать.
+**Проблема:** Создание условий, зависящих от комбинации нескольких независимых флагов, или использование глубокой вложенности (`if inside if`). Это приводит к экспоненциальному росту состояний системы, которые невозможно полностью протестировать.
 
 **Почему это антипаттерн:** 10 независимых бинарных флагов дают 1024 состояния системы. Полное тестирование всех комбинаций невозможно, что приводит к необнаруженным ошибкам в Production.
 
 **Пример (Bad Practice):**
 ```python
-# Попытка охватить все варианты ведет к ошибкам
 if ff.is_enabled('new-ui') and not ff.is_enabled('legacy-backend'):
     if ff.is_enabled('experiment-alpha'):
         render_complex_view()
 ```
 
-**Пример с конфигурацией (Bad Practice):**
+**Пример конфигурации (Bad Practice):**
 ```yaml
-# Unleash: неправильная настройка — зависимые флаги без контроля
+# Unleash: зависимые флаги без guard-условий
 flags:
   new-ui:
     enabled: true
   legacy-backend:
-    enabled: true  # Конфликтует с new-ui, но нет guard-условия
+    enabled: true  # Конфликтует с new-ui, но нет зависимостей
   experiment-alpha:
-    enabled: true  # Зависит от new-ui, но не имеет.dependencies
+    enabled: true  # Зависит от new-ui, но не настроен
 ```
 
 **Решение:**
-- Стремитесь к плоской структуре.
-- Используйте **Dependency Toggling**: настраивайте зависимости флагов на уровне панели управления (например, в Unleash флаг B активен только если флаг A включен).
+- Стремитесь к плоской структуре флагов.
+- Используйте **Dependency Toggling**: настраивайте зависимости на уровне FFaaS-платформы (в Unleash флаг B активен только если флаг A включен).
 - Выносите сложную логику принятия решений в стратегии (Strategy Pattern).
 
-**Реализация Dependency Toggling в Unleash:**
-```bash
-# Создание зависимого флага через Unleash API
-curl -s -X POST "$UNLEASH_URL/api/admin/projects/default/features" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "experiment-alpha",
-    "type": "experiment",
-    "description": "A/B-тест нового алгоритма, зависит от new-ui"
-  }'
-
-# Настройка constraints: флаг активен ТОЛЬКО если new-ui включен
-curl -s -X POST "$UNLEASH_URL/api/admin/projects/default/features/experiment-alpha/environments/production/variants" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "constraints": [
-      {
-        "contextName": "environment",
-        "operator": "IN",
-        "values": ["production"],
-        "invert": false
-      }
-    ]
-  }'
-```
-
-**Код с правильной архитектурой:**
+**Правильная архитектура:**
 ```python
-# Плоская структура: одна точка принятия решения
 def render_view(ff_client, user_context):
-    """Единая точка выбора стратегии рендеринга."""
     strategies = {
         "new-ui": render_modern_view,
         "legacy-ui": render_legacy_view,
     }
-    
     strategy_name = ff_client.get_string_value(
         "ui-strategy", 
         default="legacy-ui",
@@ -153,9 +109,8 @@ def render_view(ff_client, user_context):
     return strategies[strategy_name](user_context)
 ```
 
-**Валидация:** Количество одновременно активных release-флагов на сервис не должно превышать 5-10. Проверка:
+**SRE-валидация:** Количество одновременно активных release-флагов на сервис не должно превышать 5–10.
 ```bash
-# Подсчет активных флагов через Unleash API
 curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
   -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
   jq '[.features[] | select(.stages[]?.name == "production" and .enabled == true)] | length'
@@ -166,80 +121,55 @@ curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
 
 ### 2. Утечка бизнес-логики (Logic Leakage)
 
-**Проблема:** Проверка флага разбросана по всему коду приложения вместо того, чтобы быть инкапсулированной в абстракцию. В коде появляются десятки `if/else` с проверкой одного и того же флага, что усложняет рефакторинг и тестирование.
+**Проблема:** Проверка флага разбросана по всему коду приложения вместо того, чтобы быть инкапсулированной в абстракцию. В коде появляются десятки `if/else` с проверкой одного и того же флага.
 
-**Почему это антипаттерн:** При изменении логики флага (например, при его удалении) необходимо найти и изменить десятки файлов, что приводит к ошибкам и неполным удалениям.
+**Почему это антипаттерн:** При изменении логики флага (или его удалении) необходимо найти и изменить десятки файлов, что приводит к ошибкам и неполным удалениям.
 
 **Пример (Bad Practice):**
 ```python
-# Флаг проверяется в 10+ местах — невозможно гарантировать согласованность
 def render_header():
-    if ff.is_enabled('new-nav'):
-        return new_nav_html()
+    if ff.is_enabled('new-nav'): return new_nav_html()
     return legacy_nav_html()
 
 def render_sidebar():
-    if ff.is_enabled('new-nav'):
-        return new_sidebar_html()
+    if ff.is_enabled('new-nav'): return new_sidebar_html()
     return legacy_sidebar_html()
 
 def render_footer():
-    if ff.is_enabled('new-nav'):
-        return new_footer_html()
+    if ff.is_enabled('new-nav'): return new_footer_html()
     return legacy_footer_html()
-
 # ... и ещё 7 мест с проверкой того же флага
 ```
 
-**Решение:** Используйте паттерн «Обертка» или внедрение зависимостей (DI). Код не должен спрашивать «Включена ли фича X?», он должен вызывать метод интерфейса, реализация которого определяется состоянием флага. См. **[Реализация в коде](./implementation.md)**.
+**Решение:** Используйте паттерн Strategy или Dependency Injection. Код не должен спрашивать «Включена ли фича X?», он должен вызывать метод интерфейса, реализация которого определяется состоянием флага.
 
-**Реализация через Strategy Pattern:**
 ```python
-from abc import ABC, abstractmethod
-
 class NavigationRenderer(ABC):
     @abstractmethod
     def render_header(self) -> str: pass
-    
     @abstractmethod
     def render_sidebar(self) -> str: pass
-    
     @abstractmethod
     def render_footer(self) -> str: pass
 
-class LegacyNavigation(NavigationRenderer):
-    def render_header(self) -> str:
-        return render_legacy_header()
-    def render_sidebar(self) -> str:
-        return render_legacy_sidebar()
-    def render_footer(self) -> str:
-        return render_legacy_footer()
+class ModernNavigation(NavigationRenderer): ...
+class LegacyNavigation(NavigationRenderer): ...
 
-class ModernNavigation(NavigationRenderer):
-    def render_header(self) -> str:
-        return render_new_header()
-    def render_sidebar(self) -> str:
-        return render_new_sidebar()
-    def render_footer(self) -> str:
-        return render_new_footer()
-
-# Одна точка переключения — вся навигация меняется атомарно
 def get_navigation(ff_client, user_context) -> NavigationRenderer:
     if ff_client.get_boolean_value("new-nav", False, context=user_context):
         return ModernNavigation()
     return LegacyNavigation()
 ```
 
-**Валидация:** Проверка, что флаг проверяется не более чем в 2-3 местах кода:
+**Валидация:** Флаг должен проверяться не более чем в 2–3 местах кода:
 ```bash
-# Поиск всех проверок конкретного флага в кодовой базе
 rg "is_enabled\(['\"]new-nav['\"]\)" --type py | wc -l
-# → Ожидаемое значение: ≤3 (в сервисе и в DI-контейнере)
+# → Ожидаемое значение: ≤3
 ```
 
 ---
 
-### 3. "Зомби-флаги" и отсутствие владения
+### 3. «Зомби-флаги» и отсутствие владения
 
 **Проблема:** Флаги без назначенного владельца (Owner) и даты удаления. Код превращается в кладбище условий, которые никто не решается удалить.
 
@@ -247,68 +177,15 @@ rg "is_enabled\(['\"]new-nav['\"]\)" --type py | wc -l
 
 **Пример (Bad Practice):**
 ```python
-# Флаг создан 2 года назад, owner уволился, код не менялся
 if ff.is_enabled('old-recommendation-engine'):
-    # Логика, которая больше не нужна — но её никто не удаляет
     return old_recommender.get_recommendations(user_id)
 return new_recommender.get_recommendations(user_id)
 ```
 
 **Решение:**
 - Каждому флагу — **Owner** (команда или конкретный инженер).
-- **TTL (Time to Live)**: Автоматические алерты, если флаг не менял состояние более 30 дней.
-- **Cleanup-спринты**: Регулярное удаление кода завершенных релизов.
-- Использование инструментов типа **Uber Piranha** для автоматизации удаления кода.
-
-**Настройка мониторинга зомби-флагов:**
-
-```yaml
-# Prometheus: алерт на флаги без изменений >30 дней
-groups:
-  - name: flag-hygiene
-    rules:
-      - alert: ZombieFlagDetected
-        expr: |
-          (time() - flag_last_change_timestamp) > (30 * 24 * 3600)
-        for: 1h
-        labels:
-          severity: warning
-        annotations:
-          summary: "Флаг {{ $labels.flag_name }} не менялся более 30 дней"
-          description: "Owner: {{ $labels.owner }}. Требуется проверка и возможное удаление."
-          runbook_url: "https://wiki.internal/runbooks/zombie-flag-cleanup"
-```
-
-**Автоматический cleanup через Uber Piranha:**
-```bash
-# Сканирование кодовой базы на «мёртвые» флаги
-# Piranha ищет флаги, которые включены на 100% времени
-piranha \
-  --project-dir ./src \
-  --language java \
-  --flag dead-feature-flag \
-  --url "" \
-  --statesFile ""
-# → Генерирует diff с предложениями удаления if/else блоков
-```
-
-**Процесс удаления зомби-флагов:**
-1. Обнаружение через алерт Prometheus или Piranha.
-2. Проверка метрик: если флаг включен на 100% >14 дней без инцидентов — кандидат на удаление.
-3. Создание cleanup-PR с удалением кода флага и самого флага из FFaaS.
-4. Ревью и мерж — cleanup-PR обязателен в Definition of Done.
-
-**Валидация:** Количество флагов с TTL >30 дней без изменений:
-```bash
-# Проверка через API Unleash (все флаги с lastSeen >30 дней)
-curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
-  jq '[.features[] | select(
-    (.stages[]? | select(.name == "production" and .enabled == true)) and
-    ((now - (.createdAt | fromdateiso8601)) > (30 * 86400))
-  )] | length'
-# → Ожидаемое значение: 0 (все старые флаги удалены)
-```
+- **TTL (Time to Live):** Автоматические алерты, если флаг не менял состояние более 30 дней.
+- **Cleanup-спринты:** Регулярное удаление кода завершенных релизов. Подробный процесс, включая Prometheus правила, Piranha и CI/CD интеграцию, — в [Лучшие практики](./best_practices.md).
 
 ---
 
@@ -321,35 +198,27 @@ curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
 **Пример (Bad Practice):**
 ```python
 # Опасно: флаг проверяется ТОЛЬКО на клиенте
-# Злоумышленник может отправить запрос с user_id администратора
 def get_admin_panel(user_id, is_admin):
     if ff.is_enabled('admin-panel', context={"is_admin": is_admin}):
         return render_admin_panel()
     return render_user_panel()
 ```
 
-**Решение:** Флаги управляют *наличием* функции, а IAM/RBAC — *правом* на её использование. Секреты и доступы должны проверяться через **[Vault](../../Vault/overview.md)**.
+**Решение:** Флаги управляют *наличием* функции, а IAM/RBAC — *правом* на её использование. Авторизация объектов и действий остается в зоне ответственности IAM.
 
-**Правильная реализация:**
 ```python
-# Безопасно: RBAC проверяется через IAM, флаг управляет только наличием функции
 def get_admin_panel(user_id):
-    # 1. Проверка авторизации через IAM (обязательно)
     if not iam_client.verify_permission(user_id, "admin:access"):
         raise ForbiddenError("Access denied")
-    
-    # 2. Проверка наличия функции через флаг (опционально)
     if not ff_client.is_enabled('admin-panel'):
-        return render_user_panel()  # Функция не deployed
-    
+        return render_user_panel()
     return render_admin_panel()
 ```
 
-**Валидация:** Проверка, что флаги разрешений не используются как единственный механизм доступа:
+**Валидация:**
 ```bash
-# Поиск кода с проверкой флагов разрешений без IAM
 rg "is_enabled\(['\"]admin" --type py -A5 | grep -v "iam_client\|rbac\|verify_permission"
-# → Не должно быть результатов (все проверки флагов разрешений должны сопровождаться IAM)
+# → Не должно быть результатов
 ```
 
 ---
@@ -362,127 +231,67 @@ rg "is_enabled\(['\"]admin" --type py -A5 | grep -v "iam_client\|rbac\|verify_pe
 
 **Пример (Bad Practice):**
 ```python
-# Критическая ошибка: fail-safe значение отключает защиту
 def check_request(request):
-    # Если FFaaS упала — флаг вернет False → файервол ОТКЛЮЧЕН
     if ff.is_enabled("enable-waf-protection"):
         validate_request(request)
     return process(request)  # Без валидации!
 ```
 
-**Решение:** Тщательно выбирайте **Default Value**. Для Kill Switch значение по умолчанию должно соответствовать самому безопасному состоянию системы.
+**Решение:** Для Kill Switch значение по умолчанию должно соответствовать самому безопасному состоянию системы.
 
-**Правильная реализация с Fail-safe:**
 ```python
-def check_request(request):
-    # Fail-safe: по умолчанию защита ВКЛЮЧЕНА (True)
-    # Только явное отключение флага отключает проверку
-    protection_enabled = ff_client.get_boolean_value(
-        "enable-waf-protection", 
-        default=True  # ← Критически важно: True = защита активна при сбое FFaaS
-    )
-    
-    if protection_enabled:
-        validate_request(request)
-    return process(request)
+protection_enabled = ff_client.get_boolean_value(
+    "enable-waf-protection", 
+    default=True  # ← Защита активна при сбое FFaaS
+)
 ```
 
-**Конфигурация флага в Unleash с правильным дефолтом:**
-```bash
-# Kill Switch флаг: defaultVariant должен быть "enabled" (защита активна)
-curl -s -X PUT "$UNLEASH_URL/api/admin/projects/default/features/enable-waf-protection" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "ops",
-    "description": "Kill Switch для WAF-защиты. По умолчанию: ВКЛЮЧЕНА",
-    "variants": [
-      {"name": "enabled", "weight": 100},
-      {"name": "disabled", "weight": 0}
-    ],
-    "defaultVariant": "enabled"
-  }'
-```
-
-**Валидация:** Проверка fail-safe значений для критических флагов:
-```bash
-# Проверка значений по умолчанию для Kill Switch флагов
-curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
-  jq '[.features[] | select(.type == "ops") | {
-    name: .name,
-    defaultVariant: .variants[0].name,
-    enabled: .stages[]?.enabled
-  }]'
-# → Kill Switch флаги должны иметь defaultVariant = "enabled" (защита активна)
-```
+**Валидация fail-safe значений:** См. [Лучшие практики](./best_practices.md) — раздел "Safe Defaults".
 
 ---
 
 ### 6. Коллизии флагов (Toggle Collision)
 
-**Проблема:** Два независимых флага влияют на один и тот же глобальный ресурс (например, переменную окружения или запись в БД) в несовместимых режимах.
+**Проблема:** Два независимых флага влияют на один и тот же глобальный ресурс в несовместимых режимах.
 
 **Пример (Bad Practice):**
 ```python
-# Два флага модифицируют одну переменную — результат непредсказуем
 def process_payment(amount):
     if ff.is_enabled("apply-discount"):
-        amount = amount * 0.9  # -10%
-    
+        amount = amount * 0.9
     if ff.is_enabled("apply-surchage"):
-        amount = amount * 1.05  # +5%
-    
-    # Если оба флага активны: amount = amount * 0.9 * 1.05 = amount * 0.945
-    # Разработчик预期 только одну модификацию, но получает комбинированную
+        amount = amount * 1.05
+    # Оба флага активны: amount = amount * 0.9 * 1.05 = amount * 0.945
     return charge(amount)
 ```
 
 **Решение:**
 - Группировка флагов по доменам.
 - Конфликт-тестирование: проверка работы системы при всех комбинациях активных флагов в данном домене.
+- Централизованный контроль через абстракцию (PricingFlags и т.п.).
 
 **Реализация контроля коллизий:**
 ```python
-# Группировка флагов по доменам с явным приоритетом
 class PricingFlags:
-    """Централизованный контроль всех флагов, влияющих на цену."""
-    
-    def __init__(self, ff_client):
-        self.ff = ff_client
-    
     def get_price_modifier(self, user_context) -> float:
-        """Возвращает итоговый множитель цены (только один флаг за раз)."""
         modifiers = []
-        
         if self.ff.get_boolean_value("discount-10-percent", False, user_context):
             modifiers.append(("discount", 0.9))
-        
         if self.ff.get_boolean_value("surcharge-5-percent", False, user_context):
             modifiers.append(("surcharge", 1.05))
-        
-        # Контроль: только одна модификация за раз
         if len(modifiers) > 1:
-            logger.warning(
-                f"Price collision detected: {modifiers}. "
-                f"Using first applicable modifier only."
-            )
+            logger.warning(f"Price collision detected: {modifiers}. Using first only.")
             modifiers = [modifiers[0]]
-        
-        if modifiers:
-            return modifiers[0][1]
-        return 1.0  # Без модификаций
+        return modifiers[0][1] if modifiers else 1.0
 ```
 
-**Валидация:** Тестирование всех комбинаций активных флагов в домене:
+**Валидация:**
 ```bash
-# Конфликт-тест: проверка что два флага цены не активны одновременно
 curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
   -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
   jq '[.features[] | select(.stages[]?.name == "production" and .enabled == true) | .name] | 
     map(select(test("discount|surcharge|pricing"))) | 
-    if length > 1 then "COLLISION RISK: \(length) pricing flags active" else "OK: \(length) pricing flags" end'
-# → Ожидаемое: "OK: 0-1 pricing flags"
+    if length > 1 then "COLLISION RISK: \(length) pricing flags active" else "OK" end'
 ```
 
 ---
@@ -491,99 +300,10 @@ curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
 
 **Проблема:** Ручное управление флагами приводит к тому, что в `Dev`, `Staging` и `Prod` включены разные наборы экспериментальных флагов, что делает невозможным воспроизведение багов.
 
-**Пример (Bad Practice):**
-```bash
-# В Dev: флаг A включен, флаг B выключен
-# В Staging: флаг A выключен, флаг B включен
-# В Prod: оба флага выключены
-# → Баг, который возникает только при комбинации A+B, невозможно воспроизвести в staging
-```
-
 **Решение:**
 - Декларативное управление через GitOps.
 - Синхронизация состояний флагов между окружениями для отладки конкретных инцидентов.
-
-**Реализация через GitOps (ConfigMap в Kubernetes):**
-```yaml
-# production-flags.yaml — единый источник для Production
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: feature-flags-production
-  namespace: billing
-data:
-  flags.json: |
-    {
-      "flags": {
-        "new-checkout": {
-          "enabled": true,
-          "defaultVariant": "on"
-        },
-        "legacy-recommendations": {
-          "enabled": false,
-          "defaultVariant": "off"
-        }
-      }
-    }
-```
-
-```yaml
-# staging-flags.yaml — staging ДОЛЖЕН повторять production для отладки
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: feature-flags-staging
-  namespace: billing
-data:
-  flags.json: |
-    {
-      "flags": {
-        "new-checkout": {
-          "enabled": true,         # ← Идентично production
-          "defaultVariant": "on"
-        },
-        "legacy-recommendations": {
-          "enabled": false,        # ← Идентично production
-          "defaultVariant": "off"
-        }
-      }
-    }
-```
-
-**Автоматическая синхронизация через CI:**
-```bash
-# Сравнение флагов между средами ( часть CI-пайплайна)
-#!/bin/bash
-PROD_FLAGS=$(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN" | jq -r '.features[].name | sort')
-STAGING_FLAGS=$(curl -s "$UNLEASH_STAGING_URL/api/admin/projects/default/features" \
-  -H "Authorization: $UNLEASH_STAGING_TOKEN" | jq -r '.features[].name | sort')
-
-DIFF=$(diff <(echo "$PROD_FLAGS") <(echo "$STAGING_FLAGS"))
-if [ -n "$DIFF" ]; then
-    echo "WARNING: Environment drift detected!"
-    echo "$DIFF"
-    exit 1
-fi
-```
-
-**Валидация:** Ежедневная проверка соответствия флагов между средами:
-```bash
-# Prometheus: алерт на расхождение флагов между средами
-groups:
-  - name: environment-sync
-    rules:
-      - alert: EnvironmentDriftDetected
-        expr: |
-          count by (flag_name) (
-            feature_flag_state{environment="production"} != feature_flag_state{environment="staging"}
-          ) > 0
-        for: 1h
-        labels:
-          severity: warning
-        annotations:
-          summary: "Флаг {{ $labels.flag_name }} различается между Prod и Staging"
-```
+- Ежедневный diff флагов между staging и production как часть CI/CD. См. [Лучшие практики](./best_practices.md) — раздел "Окружение-паритет".
 
 ---
 
@@ -595,35 +315,23 @@ groups:
 
 **Пример (Bad Practice):**
 ```python
-# Опасно: миграция схемы внутри if/else
 def migrate_data():
     if ff.is_enabled("new-schema"):
-        # Эта миграция выполняется ТОЛЬКО при включенном флаге
         db.execute("ALTER TABLE users ADD COLUMN preferences_v2 JSONB")
         db.execute("UPDATE users SET preferences_v2 = preferences::jsonb")
-    else:
-        # Старая логика
-        pass
 ```
 
-**Решение:** Применяйте паттерн **[Expand-Contract](../../Databases/Concepts/migrations/expand_contract.md)**. Флаг управляет только логикой *чтения/записи* данных, но не самой структурой таблиц.
+**Решение:** Применяйте паттерн **Expand-Contract**. Флаг управляет только логикой *чтения/записи* данных, но не самой структурой таблиц.
 
-**Правильная реализация:**
 ```python
-# Миграция вынесена в отдельный процесс (flyway/liquibase)
-# Флаг управляет ТОЛЬКО логикой чтения/записи
 def get_user_preferences(user_id):
     if ff_client.is_enabled("use-new-preferences-schema"):
-        # Чтение из новой колонки (миграция уже выполнена)
         return db.query("SELECT preferences_v2 FROM users WHERE id = %s", user_id)
-    else:
-        # Чтение из старой колонки
-        return db.query("SELECT preferences FROM users WHERE id = %s", user_id)
+    return db.query("SELECT preferences FROM users WHERE id = %s", user_id)
 ```
 
-**Валидация:** Проверка, что флаги не содержат DDL-команд:
+**Валидация:**
 ```bash
-# Поиск DDL-команд в контексте флагов
 rg "ALTER|CREATE TABLE|DROP COLUMN|ADD COLUMN" --type py -B5 -A5 | grep -i "is_enabled\|get_boolean"
 # → Не должно быть результатов
 ```
@@ -632,44 +340,34 @@ rg "ALTER|CREATE TABLE|DROP COLUMN|ADD COLUMN" --type py -B5 -A5 | grep -i "is_e
 
 ### 9. Избыточная частота опроса (Polling Overload)
 
-**Проблема:** SDK настроен на слишком частый опрос FFaaS сервера, создавая избыточную нагрузку на сеть и платформу флагов. При Thousands инстансов приложения каждый опрос генерирует десятки тысяч HTTP-запросов в минуту.
-
-**Почему это антипаттерн:** Избыточный трафик деградирует FFaaS, увеличивает latency оценки флагов и может привести к rate-limiting.
+**Проблема:** SDK настроен на слишком частый опрос FFaaS сервера, создавая избыточную нагрузку на сеть и платформу флагов. При 500 инстансах приложения каждый опрос генерирует десятки тысяч HTTP-запросов в минуту.
 
 **Пример (Bad Practice):**
 ```python
-# SDK опрашивает сервер каждую секунду — катастрофа при 500 инстансах
 api.set_provider(UnleashProvider(
     url="https://ff-api.internal/api",
     app_name="checkout-service",
-    polling_interval=1,  # ← 1 секунда = 500 * 60 = 30,000 запросов в минуту
-    refresh_interval=1
+    polling_interval=1,  # ← 1 секунда = 500 * 60 = 30,000 запросов/мин
 ))
 ```
 
-**Решение:** Используйте SSE (Server-Sent Events) или gRPC streaming вместо polling. Если polling необходим — увеличьте интервал до 30-60 секунд и используйте локальный кеш.
+**Решение:** Используйте SSE (Server-Sent Events) или gRPC streaming вместо polling. Если polling необходим — увеличьте интервал до 30–60 секунд и используйте локальный кеш.
 
-**Правильная конфигурация:**
 ```python
-# SSE: мгновенные обновления без опроса
 api.set_provider(UnleashProvider(
     url="https://ff-api.internal/api",
     app_name="checkout-service",
-    # SSE streaming: обновления приходят по событию, без опроса
     enable_sse=True,
-    # Fallback на polling если SSE недоступен
-    polling_interval=60,  # 1 минута как запасной вариант
-    # Локальный кеш: оценка без сетевого вызова
+    polling_interval=60,
     enable_local_cache=True,
-    cache_ttl=300  # 5 минут
+    cache_ttl=300
 ))
 ```
 
-**Валидация:** Мониторинг частоты запросов к FFaaS:
+**Валидация:**
 ```bash
-# Prometheus: количество запросов к FFaaS в минуту
 sum(rate(http_requests_total{job="unleash-api"}[1m]))
-# → Ожидаемое: <100 запросов/мин (при 500 инстансах с polling 60s = ~8 запросов/мин)
+# → Ожидаемое: <100 запросов/мин
 ```
 
 ---
@@ -682,7 +380,6 @@ sum(rate(http_requests_total{job="unleash-api"}[1m]))
 
 **Пример (Bad Practice):**
 ```python
-# Флаг включен, но никто не следит за его влиянием
 def render_checkout(user):
     if ff.is_enabled("new-checkout-flow"):
         return render_new_checkout(user)
@@ -690,9 +387,8 @@ def render_checkout(user):
 # Нет телеметрии, нет дашборда, нет алертов
 ```
 
-**Решение:** Каждое включение флага должно сопровождаться настройкой дашборда и алертов. Используйте **[OpenTelemetry](./implementation.md)** для инъекции состояния флагов в спаны.
+**Решение:** Каждое включение флага должно сопровождаться настройкой дашборда и алертов. Используйте OpenTelemetry для инъекции состояния флагов в спаны.
 
-**Реализация наблюдаемости:**
 ```python
 from opentelemetry import trace
 
@@ -704,157 +400,94 @@ def render_checkout(user):
             "new-checkout-flow", False, 
             context={"user_id": user.id}
         )
-        
-        # Инъекция состояния флага в спан
         span.set_attribute("feature_flag.new_checkout_flow", is_new_flow)
-        
         if is_new_flow:
             result = render_new_checkout(user)
             span.set_attribute("checkout.variant", "new")
         else:
             result = render_legacy_checkout(user)
             span.set_attribute("checkout.variant", "legacy")
-        
         return result
 ```
 
-**Настройка дашборда Grafana:**
-```json
-{
-  "panels": [
-    {
-      "title": "Checkout Error Rate by Flag State",
-      "targets": [
-        {
-          "expr": "sum(rate(http_requests_total{service=\"checkout\",status=~\"5..\"}[5m])) by (feature_flag) / sum(rate(http_requests_total{service=\"checkout\"}[5m])) by (feature_flag)",
-          "legendFormat": "{{feature_flag}}"
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Валидация:** Проверка наличия телеметрии по каждому флагу:
+**Валидация:**
 ```bash
-# Проверка наличия атрибутов флагов в спанах (через Tempo/Jaeger)
 curl -s "http://localhost:3200/api/traces?query=feature_flag.new_checkout_flow&limit=1" | \
   jq '.traces[0].spans[] | select(.attributes | map(select(.key == "feature_flag.new_checkout_flow")) | length > 0) | .traceID'
-# → Должен вернуть traceID (означает что атрибут присутствует)
+# → Должен вернуть traceID
 ```
 
 ---
 
-## Валидация и проверка решений
+## Операции и команды
 
-### Чек-лист обнаружения антипаттернов
+### Обнаружение антипаттернов
 
-| Проверка | Метод | Ожидаемый результат |
-| :--- | :--- | :--- |
-| Количество активных флагов на сервис | API-запрос к FFaaS + jq | ≤10 release-флагов |
-| Флаги с TTL >30 дней без изменений | Prometheus: `time() - flag_last_change_timestamp > 30d` | 0 флагов |
-| Количество проверок одного флага в коде | `rg "is_enabled('flag-name')" \| wc -l` | ≤3 проверки |
-| Fail-safe значения для Kill Switch | Проверка `defaultVariant` в FFaaS | Kill Switch: `defaultVariant = "enabled"` |
-| Конфликт-тест для доменных флагов | Автоматизированный тест комбинаций | Нет двух активных флагов на один ресурс |
-| Наличие телеметрии по флагу | Проверка атрибутов спанов OTel | Атрибут `feature_flag.*` присутствует |
-| Соответствие флагов между средами | CI-пайплайн сравнения FFaaS | Prod = Staging (для отладки) |
-| DDL-команды в контексте флагов | `rg "ALTER\|CREATE TABLE" -B5 -A5 \| grep is_enabled` | 0 результатов |
+```bash
+# Подсчет активных флагов на сервис
+curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
+  jq '[.features[] | select(.stages[]?.name == "production" and .enabled == true)] | length'
+# → Ожидаемое значение: ≤10
 
-### Автоматизация проверок (CI/CD)
+# Поиск проверок одного флага в коде (Logic Leakage)
+rg "is_enabled\(['\"]flag-name['\"]\)" --type py | wc -l
+# → Ожидаемое значение: ≤3
 
-```yaml
-# .github/workflows/flag-hygiene.yml
-name: Feature Flag Hygiene
-on:
-  schedule:
-    - cron: '0 9 * * 1'  # Каждый понедельник в 9:00
+# Проверка fail-safe значений для Kill Switch
+curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
+  jq '[.features[] | select(.type == "ops") | {
+    name: .name,
+    defaultVariant: .variants[0].name,
+    enabled: .stages[]?.enabled
+  }]'
+# → defaultVariant должен быть "enabled"
 
-jobs:
-  flag-audit:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check flag count
-        run: |
-          FLAGS=$(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
-            -H "Authorization: $UNLEASH_ADMIN_TOKEN" | jq '.features | length')
-          if [ "$FLAGS" -gt 10 ]; then
-            echo "ERROR: Too many active flags ($FLAGS > 10)"
-            exit 1
-          fi
+# Проверка DDL-команд в контексте флагов
+rg "ALTER|CREATE TABLE|DROP COLUMN|ADD COLUMN" --type py -B5 -A5 | grep -i "is_enabled\|get_boolean"
+# → Не должно быть результатов
 
-      - name: Check zombie flags
-        run: |
-          ZOMBIES=$(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
-            -H "Authorization: $UNLEASH_ADMIN_TOKEN" | \
-            jq '[.features[] | select(
-              (.stages[]? | select(.enabled == true)) and
-              ((now - (.createdAt | fromdateiso8601)) > (30 * 86400))
-            )] | length')
-          if [ "$ZOMBIES" -gt 0 ]; then
-            echo "WARNING: $ZOMBIES zombie flags detected"
-            exit 1
-          fi
-
-      - name: Check environment drift
-        run: |
-          # Сравнение флагов между prod и staging
-          DIFF=$(diff <(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
-            -H "Authorization: $UNLEASH_ADMIN_TOKEN" | jq -r '.features[].name | sort') \
-            <(curl -s "$UNLEASH_STAGING_URL/api/admin/projects/default/features" \
-            -H "Authorization: $UNLEASH_STAGING_TOKEN" | jq -r '.features[].name | sort'))
-          if [ -n "$DIFF" ]; then
-            echo "ERROR: Environment drift detected"
-            echo "$DIFF"
-            exit 1
-          fi
+# Проверка консистентности staging vs production
+diff <(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
+        -H "Authorization: $UNLEASH_ADMIN_TOKEN" | jq -r '.features[].name | sort') \
+     <(curl -s "$UNLEASH_STAGING_URL/api/admin/projects/default/features" \
+        -H "Authorization: $UNLEASH_STAGING_TOKEN" | jq -r '.features[].name | sort')
+# → (пусто) если среды синхронизированы
 ```
+
+### Операции и команды
+
+Подробные операции и команды для управления флагами, включая аудит, approval workflow, CI/CD интеграцию, cleanup и мониторинг, описаны в **[Лучшие практики](./best_practices.md)**.
 
 ---
 
-## Типичные ошибки и диагностика (Troubleshooting)
+## Типичные ошибки и диагностика
 
-| Симптом | Вероятная причина | Диагностические действия | Решение |
+| Симптом | Причина | Диагностика | Решение |
 | :--- | :--- | :--- | :--- |
-| Флаг не переключается через UI | SDK кеширует старое значение | `curl $UNLEASH_URL/api/client/features` → проверить актуальность; `tcpdump -i any port 4242` → проверить соединение SDK | Убедиться, что SDK настроен на SSE/polling с корректным `maxAge`; проверить `refreshInterval` в конфигурации провайдера |
-| Приложение падает при недоступности FFaaS | Отсутствие fail-safe значений по умолчанию | Остановить FFaaS сервер → попробовать запросить приложение; `grep "is_enabled" src/` → найти все проверки без default | Каждая проверка флага обязана содержать fallback-значение: `get_boolean_value("flag", False)` |
-| Флаги живут годами, код оброс ветвлениями | Нет процесса удаления | `rg "is_enabled" --type py \| wc -l` → подсчет проверок; проверить возраст флагов через API | Expiration-даты, cleanup-PR обязательным пунктом Definition of Done, лимит активных флагов на сервис |
-| Тесты взрываются от числа комбинаций | Все фLAGи тестируются во всех сочетаниях | `time pytest tests/` → проверить время тестирования; посмотреть CI-логи | CI гоняет дефолтную конфигурацию; комбинации — точечные e2e только для активных раскаток |
-| Оценка флага добавляет latency | Ход в удаленную платформу на каждый вызов | `curl -w "@curl-format.txt" -o /dev/null -s $UNLEASH_URL/api/client/features` → замерить latency | Локальный flagd/sidecar, кеширование провайдера; платформа — источник истины, не hot path |
-| Прод ведет себя не как staging | Разные значения флагов в средах | `diff <(prod-flags) <(staging-flags)` → найти расхождения; `curl` к обоим API | Декларативное управление через GitOps; diff флагов между средами — часть ревью PR |
-| Утечка экспериментального функционала | Флаг доступен всем пользователям без сегментации | `curl $UNLEASH_URL/api/admin/projects/default/features/flag-name` → проверить targeting rules | Настроить targeting rules: флаг доступен только определенным сегментам (staff, beta, определенный регион) |
-| Неконсистентность данных при Dual Write | Флаг переключил запись до завершения Backfill | Проверить метрики расхождений: `SELECT count(*) FROM old_table WHERE id NOT IN (SELECT id FROM new_table)` | Расширенный паттерн Expand-Contract: флаг управляет только логикой чтения/записи, но не структурой таблиц |
-| Включили фLAG — а миграции БД нет | Функциональность завязана на схему | Проверить доступность колонки: `psql -c "\d users"` →是否存在 preferences_v2 | Expand-contract: схема совместима с обоими путями кода; контракт-фаза удаляется после стабилизации |
-| Secret попал в конфиг флага | Флаговый конфиг используют как конфиг приложения | `rg "password\|secret\|token" $UNLEASH_URL/api/admin/projects/default/features/flag-name` | Запретить политикой (conftest/Kyverno); секреты — только через ESO/SOPS |
+| Флаг не переключается через UI | SDK кеширует старое значение | `curl $UNLEASH_URL/api/client/features` → проверить актуальность; `tcpdump -i any port 8013` → проверить SSE/polling | Убедиться, что SDK настроен на SSE с корректным `maxAge` |
+| Приложение падает при недоступности FFaaS | Отсутствие fail-safe значений по умолчанию | Остановить FFaaS → попробовать запросить приложение; `grep "is_enabled" src/` → найти проверки без default | Каждая проверка флага обязана содержать fallback-значение |
+| Флаги живут месяцами, код оброс ветвлениями | Нет TTL и процесса cleanup | `rg "is_enabled" src/ | wc -l` → подсчет проверок; проверить возраст флагов через API | Cleanup-PR в Definition of Done; алерт на возраст >14 дней |
+| Прод ведет себя не как staging | Разные значения флагов в средах | `diff <(prod-flags) <(staging-flags)` → найти расхождения | Декларативное управление через Git; diff флагов — часть ревью PR |
+| Оценка флага добавляет latency | Ход в удаленную платформу на каждый вызов | `curl -w "@curl-format.txt" -o /dev/null -s $UNLEASH_URL/api/client/features` → замерить latency | Локальный flagd/sidecar, кеширование; платформа — источник истины, не hot path |
+| Утечка экспериментального функционала | Отсутствие targeting rules | `curl $UNLEASH_URL/api/admin/projects/default/features/flag-name` → проверить constraints | Настроить сегментацию: `is_staff`, `beta_group`, регион |
+| Неконсистентность данных при Dual Write | Флаг переключил запись до завершения Backfill | Сравнить записи в старой и новой БД | Expand-Contract: флаг управляет только чтением/записью, не структурой |
+| Включили флаг — а миграции БД нет | Функциональность завязана на схему | `psql -c "\d users"` → проверить наличие колонки | Expand-Contract: схема совместима с обоими путями кода |
+| Secret попал в конфиг флага | Флаговый конфиг используют как конфиг приложения | `rg "password\|secret\|token" $UNLEASH_URL/api/admin/projects/default/features/flag-name` | Запретить политикой; секреты — только через ESO/SOPS |
+| Тесты взрываются от числа комбинаций | Все флаги тестируются во всех сочетаниях | `time pytest tests/` → проверить время; посмотреть CI-логи | CI гоняет дефолтную конфигурацию; комбинации — точечные e2e |
+| Коллизия: два флага меняют одну цену | Отсутствие группировки по доменам | Проверить логику модификации цены | Централизованный PricingFlags с явным приоритетом |
+| Dark Launch растет CPU | Shadow-ветка блокирует воркеры | `top`/`htop` в момент dark launch | Выполнять shadow-вызовы асинхронно; добавить timeout |
 
 ---
 
-## Ограничения и особые случаи (Edge Cases)
+## Best Practices
 
-### Когда Feature Toggles НЕ подходят
-
-- **Простые CRUD-приложения** без альтернативных веток логики — Overhead от инфраструктуры флагов не окупается.
-- **Критические пути с нулевой容忍 к latency** — каждая проверка флага добавляет вычисления (хотя и `O(1)` при локальном вычислении). В high-frequency trading или real-time bidding этот overhead может быть неприемлем.
-- **Замена системы авторизации** — флаги не предназначены для обеспечения безопасности. Злоумышленник может подменить контекст на клиенте.
-
-### Ограничения по архитектуре
-
-- **Комбинаторный взрыв:** 10 независимых бинарных флагов дают 1024 состояния системы. Необходимо ограничивать количество одновременно активных релизных флагов на сервис (типично: 5-10).
-- **Глобальные побочные эффекты:** Если два флага влияют на один глобальный ресурс (переменную окружения, запись в БД) в несовместимых режимах — возникает коллизия. Требуется группировка флагов по доменам и конфликт-тестирование.
-- **Миграции БД:** Флаги не должны управлять структурой таблиц. Попытка изменять схему БД внутри логических условий флага приводит к разрыву между состоянием кода и схемы.
-
-### Edge Cases в Production
-
-- **Одновременное включение нескольких экспериментов:** Если два A/B-теста затрагивают один и тот же UI-компонент, результаты могут быть искажены. Необходимо выявлять пересечения и запускать их последовательно или исключать пересекающуюся аудиторию.
-- **Кэширование на CDN/Браузере:** Если флаг определяет видимость элемента UI, а страница кэшируется CDN или браузером, пользователь может видеть устаревшее состояние. Решение: не кэшировать страницы с активными флагами или добавлять `Cache-Control: no-cache` для путей с флагами.
-- **Offline-режим (Mobile):** При отсутствии сети SDK не может получить обновленное значение флага. Используйте bootstrap-файл (последнее известное состояние) или hardcoded fallback.
+Детальные best practices, включая naming conventions, TTL, Four-Eyes Principle, cleanup, CI/CD интеграцию и SRE/DevOps контекст, описаны в **[Лучшие практики](./best_practices.md)**.
 
 ---
 
 ## Дополнительная информация
-
-### Техническая гигиена
-
-В 2026 году обязательным является использование **OpenFeature SDK**, что позволяет избежать привязки к вендору и снижает риск возникновения антипаттернов, специфичных для конкретных реализаций.
 
 ### Интеграция с Observability для обнаружения антипаттернов
 
@@ -868,11 +501,34 @@ jobs:
 | **Silent Failure** | `feature_flag_evaluations_total{value="false"}` для Kill Switch | `KillSwitchDefaultRisk` |
 | **Monitoring Gap** | Отсутствие `feature_flag.*` атрибутов в спанах | `FlagTelemetryMissing` |
 
+### Ограничения и особые случаи (Edge Cases)
+
+#### Когда Feature Toggles НЕ подходят
+
+- **Простые CRUD-приложения** без альтернативных веток логики — overhead от инфраструктуры флагов не окупается.
+- **Критические пути с нулевой толерантностью к latency** — каждая проверка флага добавляет вычисления (хотя и `O(1)` при локальном вычислении). В high-frequency trading или real-time bidding этот overhead может быть неприемлем.
+- **Замена системы авторизации** — флаги не предназначены для обеспечения безопасности. Злоумышленник может подменить контекст на клиенте.
+
+#### Ограничения по архитектуре
+
+- **Комбинаторный взрыв:** 10 независимых бинарных флагов дают 1024 состояния системы. Необходимо ограничивать количество одновременно активных релизных флагов на сервис (типично: 5–10).
+- **Глобальные побочные эффекты:** Если два флага влияют на один глобальный ресурс (переменную окружения, запись в БД) в несовместимых режимах — возникает коллизия. Требуется группировка флагов по доменам и конфликт-тестирование.
+- **Миграции БД:** Флаги не должны управлять структурой таблиц. Попытка изменять схему БД внутри логических условий флага приводит к разрыву между состоянием кода и схемы.
+
+#### Edge Cases в Production
+
+- **Одновременное включение нескольких экспериментов:** Если два A/B-теста затрагивают один и тот же UI-компонент, результаты могут быть искажены. Необходимо выявлять пересечения и запускать их последовательно или исключать пересекающуюся аудиторию.
+- **Кэширование на CDN/Браузере:** Если флаг определяет видимость элемента UI, а страница кэшируется CDN или браузером, пользователь может видеть устаревшее состояние. Решение: не кэшировать страницы с активными флагами или добавлять `Cache-Control: no-cache` для путей с флагами.
+- **Offline-режим (Mobile):** При отсутствии сети SDK не может получить обновленное значение флага. Используйте bootstrap-файл (последнее известное состояние) или hardcoded fallback.
+
 ### См. также
-- **[Обзор Feature Toggles](./overview.md)** — концептуальная база.
-- **[Типы Feature Toggles](./types.md)** — классификация по времени жизни и динамичности.
-- **[Лучшие практики](./best_practices.md)** — золотой стандарт управления флагами.
+
+- **[Лучшие практики](./best_practices.md)** — naming conventions, TTL, Four-Eyes Principle, cleanup, CI/CD интеграция, SRE/DevOps контекст.
+- **[Обзор Feature Toggles](./overview.md)** — концептуальная база, Deploy vs Release, SRE-контекст.
 - **[Сценарии использования](./scenarios.md)** — правильные паттерны для подражания.
-- **[Реализация в коде](./implementation.md)** — паттерны программирования и OpenFeature.
-- **[Антипаттерны управления секретами](../../Vault/common_antipatterns.md)** — смежные риски безопасности.
-- **[Feature Flags в GitOps](../../GitOps/Concepts/feature_flags_gitops.md)** — декларативное управление и предотвращение Environment Drift.
+
+### Внешние ресурсы
+
+- [Feature Toggles (Martin Fowler)](https://martinfowler.com/articles/feature-toggles.html) — фундаментальное описание моделей.
+- [OpenFeature Specification](https://openfeature.dev/specification/) — стандарт управления флагами.
+- [Trunk Based Development](https://trunkbaseddevelopment.com/feature-flags/) — роль флагов в CI/CD.

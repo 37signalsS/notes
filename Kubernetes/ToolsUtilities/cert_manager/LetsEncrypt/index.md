@@ -281,6 +281,12 @@ curl -s "https://crt.sh/?q=example.com&output=json" | jq '.[] | {name: .name_val
 - **[Углублённые концепции ACME](./letsencrypt_concepts.md)** — ACME Account, CT-логи, JWS и архитектура заказа
 - **[Практические сценарии Let's Encrypt](./letsencrypt_scenarios.md)** — полные YAML-манифесты для HTTP-01 и DNS-01
 - **[Диагностика и Troubleshooting](./letsencrypt_advanced.md)** — решение проблем с ACME-заказами и ошибками
+- **[Реагирование на инциденты (Incident Response)](./letsencrypt_incident_response.md)** — процедуры при просроченных сертификатах и компрометации ключей
+- **[Disaster Recovery и Backup](./letsencrypt_disaster_recovery.md)** — восстановление после потери кластера и DNS API токенов
+- **[Terraform: Управление сертификатами](./letsencrypt_terraform.md)** — ACME provider для не-Kubernetes серверов
+- **[Сетевая безопасность (Network Security)](./letsencrypt_network_security.md)** — firewall, egress, NetworkPolicy для ACME проверок
+- **[Производительность при масштабе](./letsencrypt_performance.md)** — TLS-handshake, rate limits, оптимизация
+- **[Соответствие требованиям (Compliance)](./letsencrypt_compliance.md)** — SOC 2, PCI DSS, NIST для сертификатов
 - **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов (Certificate, Issuer)
 - **[Cert-manager: Администрирование](../Administration/index.md)** — эксплуатация, HA и обновление контроллера
 - **[Ingress: Интеграция](../ingress/overview.md)** — автоматизация через аннотации Ingress

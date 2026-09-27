@@ -12,9 +12,13 @@
 
 **Прокси-переменные** — набор переменных окружения (`http_proxy`, `https_proxy`, `ftp_proxy`, `no_proxy` и их варианты в верхнем регистре), которые Podman по умолчанию пробрасывает из окружения процесса в контейнер (поведение `--http-proxy=true`).
 
----
+**Переменные по умолчанию хоста** — Podman автоматически добавляет переменные, если они не заданы иначе:
 
-## Основные концепции
+| Переменная | Источник | Значение |
+| :--- | :--- | :--- |
+| `PATH` | встроенная по умолчанию | `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` |
+| `container` | встроенная | `podman` |
+| `TERM` | добавляется при `-t`/`--tty` | из окружения хоста либо `xterm` |
 
 ### Способы передачи переменных
 
@@ -33,16 +37,6 @@ Podman предоставляет гибкие методы управления
 | **Динамическое (5.5+)** | `podman update --env / --unsetenv` | Изменение переменных у **созданного** контейнера без пересоздания. |
 | **Удаление при запуске** | `--unsetenv` / `--unsetenv-all` | Убрать переменные до старта контейнера. |
 | **Конфигурация engine** | `containers.conf` → `[containers] env=` | Базовые переменные для всех контейнеров. |
-
-### Переменные по умолчанию
-
-Podman добавляет к окружению контейнера несколько переменных, если они не заданы иначе:
-
-| Переменная | Источник | Значение |
-| :--- | :--- | :--- |
-| `PATH` | встроенная по умолчанию | `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` |
-| `container` | встроенная | `podman` |
-| `TERM` | добавляется при `-t`/`--tty` | из окружения хоста либо `xterm` |
 
 Базовый слой задается в `containers.conf` (секция `[containers]`):
 
@@ -108,7 +102,27 @@ podman run -d --name web-server --env-file web.env nginx:alpine
 - `KEY*` — импорт всех переменных хоста с данным префиксом.
 - Несколько файлов указываются повтором флага: `--env-file a.env --env-file b.env` — файл `b.env` перекрывает `a.env` при совпадении имен.
 
-### 2. Проброс переменных окружения хоста
+**Edge cases и практические нюансы `.env`:**
+- Пустые значения: `KEY=` задаст пустую строку, а не пропустит переменную.
+- Значения с пробелами: требуется quoting в shell, но внутри `.env` пробелы сохраняются как часть значения: `API_URL=http://api.internal:8080`.
+- Спецсимволы `$`, `` ` ``, `\`: Podman **не** выполняет shell-подстановку внутри `.env`-файла; символы обрабатываются буквально. Для подстановки используйте `${VAR}` только в shell-командах.
+- Многострочные значения: не поддерживаются; используйте `\n` или отдельные переменные.
+- Комментарии только в начале строки: ` # comment` (с пробелом перед `#`) не является комментарием и будет обработан как часть ключа/значения.
+- Порядок загрузки в CI/CD: для `podman-compose` файл `.env` загружается автоматически; для чистого `podman run` требуется явный `--env-file`.
+
+**Паттерн `.env.local` для разделения сред:**
+```text
+# .env (общий)
+APP_PORT=8080
+
+# .env.local (переопределения хоста, в .gitignore)
+APP_PORT=3000
+DEBUG=true
+```
+```bash
+# Загрузка базового + локального переопределения
+podman run --env-file .env --env-file .env.local my-app
+```
 
 **Одиночная переменная** (без знака `=` значение берется из оболочки):
 ```bash
@@ -138,6 +152,23 @@ podman run --rm --env-host alpine env
 # По умолчанию прокси хоста уже пробрасываются; отключить:
 podman run --http-proxy=false alpine env | grep -i proxy
 ```
+
+**Прокси с аутентификацией:**
+```bash
+export http_proxy="http://user:pass@proxy.corp:8080"
+export https_proxy="http://user:pass@proxy.corp:8080"
+podman run --rm alpine curl -s https://example.com
+# Прокси-переменные проброшены автоматически (--http-proxy=true по умолчанию)
+```
+
+**Исключения через `no_proxy`:**
+```bash
+# CIDR, домены, wildcards (зависит от реализации приложения)
+export no_proxy="localhost,127.0.0.1,.internal.corp,10.0.0.0/8"
+```
+- Переменные чувствительны к регистру: `http_proxy` / `HTTP_PROXY` / `Http_Proxy` — Podman пробрасывает все варианты.
+- `--http-proxy=false` отключает автоматический проброс **всех** прокси-переменных.
+- Для постоянной конфигурации добавьте `http_proxy` в `containers.conf` → `[containers] env=`.
 
 ### 3. Динамическое обновление (Podman 5.5+)
 
@@ -204,6 +235,69 @@ Restart=on-failure
 - Для путей, начинающихся с `%`, Quadlet не разрешает относительные пути автоматически: чтобы указать путь относительно юнита, добавьте `./`, например `EnvironmentFile=./%n/env`.
 - Quadlet добавляет в сгенерированный сервис `Environment=PODMAN_SYSTEMD_UNIT=%n` — эта переменная доступна внутри контейнера и используется механизмом `podman auto-update` для перезапуска нужного юнита.
 
+### 4.1. `--env-merge`: практика и ограничения
+
+Флаг `--env-merge` позволяет подставить значение из образа в шаблон при запуске, не дублируя его в CLI. Используется для компоновки значений (например, префикс + уникальный идентификатор среды).
+
+```bash
+# Образ задал APP_PREFIX=/service
+podman run --env-merge 'APP_NAME=${APP_PREFIX}-prod' my-image env | grep APP_NAME
+# → APP_NAME=/service-prod
+```
+
+**Ограничения:**
+- Подстановка работает только для переменных, уже заданных в образе (`ENV` в Containerfile). Если переменная не задана в образе, шаблон `${VAR}` останется нераскрытым.
+- `--env-merge` неприменим к удаленному клиенту Podman.
+- Приоритет: шаблон раскрывается **до** применения `--env-file` и `--env`; явные переопределения CLI имеют более высокий приоритет, чем результат слияния.
+
+**Сценарий DevOps:** единый образ с префиксом сервиса, уникальное имя среды задается на уровне оркестратора (Quadlet / CI runner):
+```ini
+# Quadlet
+[Container]
+Image=registry.corp/monolith:latest
+Environment=ENVIRONMENT=staging
+EnvironmentMerge=APP_FQDN=${APP_PREFIX}-${ENVIRONMENT}.corp.example.com
+```
+
+### 4.2. Переменные в `containers.conf`: примеры и приоритет
+
+Для задания базового окружения на уровне engine используйте `~/.config/containers/containers.conf` (rootless) или `/etc/containers/containers.conf` (rootful):
+
+```ini
+[containers]
+# Базовый слой: применяется ко всем контейнерам
+env = [
+  "TZ=Europe/Moscow",
+  "LANG=ru_RU.UTF-8",
+  "LOG_LEVEL=info"
+]
+# Импорт всего окружения хоста (эквивалент --env-host)
+env_host = true
+```
+
+**Правила взаимодействия с CLI:**
+- `env` из `containers.conf` является **самым нижним слоем**. Любое значение из `--env-file`, `--env` или образа его перекроет.
+- `env_host = true` пробрасывает окружение хоста, но переменные из `--env` имеют более высокий приоритет.
+- Изменения в `containers.conf` вступают в силу **только для новых** контейнеров (`run`/`create`). Для работающего контейнера используйте `podman update --env` (Podman 5.5+).
+
+### 4.3. Rootless: особенности окружения хоста
+
+В rootless-режиме Podman наследует окружение systemd --user. Критические переменные:
+
+| Переменная | Назначение | Риск при отсутствии |
+| :--- | :--- | :--- |
+| `XDG_RUNTIME_DIR` | Директория сокета Podman (`/run/user/<uid>`) | Под отличным от `<uid>` значением Podman не запустится |
+| `DBUS_SESSION_BUS_ADDRESS` | D-Bus для systemd --user | Невозможность активации сокета `podman.socket` |
+| `HOME` | Корень storage для rootless | Данные попадут в `/` вместо `$HOME/.local/share/containers` |
+
+**Проверка:**
+```bash
+systemctl --user show podman.socket | grep Environment
+# → Environment=XDG_RUNTIME_DIR=/run/user/1000 ...
+```
+
+**Важно:** при запуске Podman через `sudo` или `su` переменные `XDG_RUNTIME_DIR` и `DBUS_SESSION_BUS_ADDRESS` сбрасываются. В таких случаях используйте `podman unshare` или явно экспортируйте переменные.
+
 ### 5. Безопасность: секреты vs переменные окружения
 
 **Критическое правило:** Никогда не передавайте пароли, API-ключи или сертификаты через переменные окружения.
@@ -260,6 +354,163 @@ podman image inspect nginx --format '{{range .Config.Env}}{{println .}}{{end}}'
 podman exec -e NODE_ENV=test -e APP_LOG_LEVEL=debug my-app ./run-tests.sh
 ```
 
+### 7. Environment в подах Podman
+
+Переменные, заданные при создании пода, наследуются всеми контейнерами внутри него. Это удобно для общих настроек (версия окружения, домен, конфигурация логирования).
+
+```bash
+# Переменные на уровне пода
+podman pod create --name web-app \
+  -e APP_ENV=production \
+  -e LOG_LEVEL=warn \
+  -p 8080:80
+
+# Контейнеры внутри пода наследуют окружение
+podman run -d --pod web-app --name nginx nginx:alpine
+podman run -d --pod web-app --name sidecar alpine sh -c "while true; do env; sleep 3600; done"
+```
+
+**Важно:**
+- Переменные пода применяются при создании контейнера. `podman exec` в контейнер пода использует окружение контейнера, а не пода.
+- Явные `-e` / `--env-file` у контейнера **перекрывают** переменные пода с тем же именем.
+- `podman pod inspect` не выводит переменные пода — проверяйте через `podman inspect <container> --format '{{.Config.Env}}'`.
+
+### 8. `podman create` + `podman start` vs `podman run`
+
+Переменные окружения, заданные через `--env`, `--env-file` или `--env-host` при `podman create`, сохраняются в конфигурации контейнера и применяются при каждом последующем `podman start`.
+
+```bash
+# Создание с окружением (не запускает контейнер)
+podman create --name my-app \
+  -e APP_ENV=staging \
+  -e DB_HOST=postgres \
+  postgres:16
+
+# Проверка сохраненных переменных
+podman inspect my-app --format '{{range .Config.Env}}{{println .}}{{end}}'
+
+# Запуск (переменные уже в конфигурации)
+podman start my-app
+```
+
+**Практический сценарий для CI/CD:**
+- `podman create` выполняется на этапе сборки артефакта развертывания (фиксирует окружение).
+- `podman start` выполняется на хосте целевой среды (без передачи секретов в CLI сборки).
+- Для изменения окружения без пересоздания используйте `podman update --env` (Podman 5.5+).
+
+### 9. Устранение неполадок
+
+#### Типичные ошибки
+
+| Симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Переменная не видна в контейнере | Опечатка в ключе; переменная из образа перекрыла CLI | `podman inspect ctr --format '{{range .Config.Env}}{{println .}}{{end}}'` | Проверьте регистр и точное имя; явный `--env` имеет высший приоритет |
+| `podman update --env` не вступил в силу | Приложение не перечитывает env; процесс не перезапущен | `podman exec ctr env | grep VAR` (покажет старое) | Перезапустите контейнер; используйте SIGHUP или перезапуск приложения |
+| Glob `PREFIX*` не работает | Переменная передана со значением (`-e 'PREFIX*=x'`) | `podman inspect ctr --format '{{.Config.Env}}' | grep PREFIX` | Передавайте glob без значения: `-e 'PREFIX*'` |
+| `--env-host` не работает с удаленным клиентом | Поведение Podman по умолчанию | `podman --remote info` | Используйте `podman unshare` на хосте или явно передавайте переменные через `-e` |
+| Пустая переменная вместо ожидаемого значения | В `.env` стоит `KEY=` (пустое значение) | `podman inspect ctr --format '{{.Config.Env}}'` | Удалите `=` в `.env` для проброса из хоста; явно задайте значение если нужно пустое |
+| Секрет в env виден в `inspect` | Используется `type=env`; до Podman 5.2 маскирование отсутствует | `podman inspect ctr | jq '.[0].Config.Env'` | Обновите Podman до 5.2+; предпочитайте `type=mount` |
+| `no_proxy` игнорируется | Приложение не читает `no_proxy`; опечатка в домене | `podman exec ctr env | grep no_proxy` | Проверьте документацию приложения; некоторые уважают только `NO_PROXY` |
+| `TERM` не устанавливается | Запуск без `-t`/`--tty` | `podman exec ctr env | grep TERM` | Добавьте `-t` в `run`; для неинтерактивных сценариев задавайте `TERM` через `-e` |
+
+#### Диагностические команды
+
+```bash
+# Полный дамп окружения контейнера (включая HostConfig)
+podman inspect my-app --format '{{json .Config.Env}}' | jq .
+
+# Поиск конкретной переменной во всех контейнерах
+podman ps -q | xargs -I{} podman inspect {} --format '{{.Name}} {{range .Config.Env}}{{println .}}{{end}}' | grep DB_HOST
+
+# Проверка, какие переменные были переопределены (образ vs CLI)
+podman image inspect nginx --format '{{range .Config.Env}}{{println .}}{{end}}' > /tmp/image_env.txt
+podman inspect my-app --format '{{range .Config.Env}}{{println .}}{{end}}' > /tmp/ctr_env.txt
+diff /tmp/image_env.txt /tmp/ctr_env.txt
+
+# Проверка прокси-переменных
+podman exec my-app env | grep -i proxy
+
+# События создания и старта контейнера (отладка передачи env)
+podman events --filter event=create --filter event=start --filter container=my-app
+```
+
+### 10. Best practices для DevOps/SRE
+
+#### 12-factor app и переменные окружения
+
+- **Храните конфигурацию в env**, а не в конфигурационных файлах внутри образа. Это позволяет использовать один образ для всех сред (dev/staging/prod).
+- **Не коммитьте `.env` с секретами** в репозиторий. Добавьте `.env`, `.env.prod`, `.env.local` в `.gitignore`.
+- **Используйте префиксы** для группировки переменных по ответственному сервису: `APP_`, `DB_`, `CACHE_`. Это упрощает фильтрацию в `inspect` и `exec`.
+- **Валидируйте на старте:** приложение должно проверять наличие обязательных переменных при старте и падать с понятной ошибкой, если они отсутствуют.
+
+```bash
+# Паттерн: обязательные переменные с дефолтами
+APP_HOST=${APP_HOST:-0.0.0.0}
+APP_PORT=${APP_PORT:-8080}
+# Обязательная без дефолта — падает если не задана
+: "${DB_URL:?DB_URL is required}"
+```
+
+#### CI/CD on-prem (Jenkins, GitLab CI, GitLab Runner)
+
+**Jenkins (скриптовый пайплайн):**
+```groovy
+pipeline {
+  agent any
+  environment {
+    IMAGE_TAG = "registry.corp/app:${BUILD_NUMBER}"
+    DEPLOY_ENV = "staging"
+  }
+  stages {
+    stage('Deploy') {
+      steps {
+        sh '''
+          podman run -d --name app \
+            -e APP_ENV=${DEPLOY_ENV} \
+            -e BUILD_ID=${BUILD_NUMBER} \
+            --env-file ./secrets/${DEPLOY_ENV}.env \
+            ${IMAGE_TAG}
+        '''
+      }
+    }
+  }
+}
+```
+
+**GitLab CI (.gitlab-ci.yml):**
+```yaml
+deploy:staging:
+  stage: deploy
+  image: docker.io/podman:latest
+  variables:
+    PODMAN_HOST: "unix:///var/run/podman/podman.sock"
+  script:
+    - podman run -d --name app \
+        -e APP_ENV=staging \
+        -e CI_PIPELINE_ID=$CI_PIPELINE_ID \
+        --env-file ./envs/staging.env \
+        registry.corp/app:$CI_COMMIT_SHORT_SHA
+```
+
+#### Аудит переменных окружения
+
+```bash
+# Дамп всех переменных всех контейнеров (для аудита)
+podman ps -q | while read ctr; do
+  echo "=== $ctr ==="
+  podman inspect "$ctr" --format '{{range .Config.Env}}{{println .}}{{end}}'
+done > /tmp/all_envs.txt
+
+# Поиск чувствительных ключей в дампе
+grep -iE 'password|secret|token|key|api_key' /tmp/all_envs.txt
+```
+
+#### Чистка и ротация
+
+- **Не оставляйте временные переменные в образах:** используйте `ARG` для build-time и `ENV` только для runtime-конфигурации.
+- **Ротация `containers.conf`:** при изменении `env` в `containers.conf` старые контейнеры сохраняют старое окружение. Для массового применения используйте `podman update --env` (5.5+) или пересоздание.
+- **Очистка неиспользуемых конфигураций:** `podman rm` удаляет контейнер вместе с его окружением; секреты в хранилище остаются — очищайте их через `podman secret rm`.
+
 ---
 
 ## Дополнительная информация
@@ -270,7 +521,17 @@ podman exec -e NODE_ENV=test -e APP_LOG_LEVEL=debug my-app ./run-tests.sh
 - `--env-host` и `--env-merge` неприменимы к удаленному клиенту Podman (`--env-host` явно задокументирован как недоступный).
 - Переменные `PATH` и `container` задаются Podman только если не переопределены образом или флагами.
 - `TERM` появляется в окружении только при запуске с `-t`/`--tty` (Docker задает `TERM` независимо от tty — отличие в поведении).
-- Для миграции с Docker см. **[Миграция с Docker](./migration-from-docker.md)** — таблица соответствия `environment:`/`env_file:` → `Environment=`/`EnvironmentFile=`.
+- Для миграции с Docker см. **[Миграция с Docker](./migration-from-docker.md)** — таблица соответствия `environment:`/`env_file:`` → `Environment=`/`EnvironmentFile=`.
+- **`HOSTNAME`**: Podman автоматически задает `HOSTNAME` в окружение контейнера. Значение берется из имени контейнера или пода. Не переопределяйте `HOSTNAME` через `--env` без необходимости — это может сломать внутреннюю резолвинг имен в некоторых образах.
+- **`.Env` vs `.HostConfig.Env`**: `podman inspect` возвращает два слоя окружения:
+  - `.Config.Env` — переменные, заданные при создании (`ENV` в образе, `--env`, `--env-file`, `containers.conf`).
+  - `.HostConfig.Env` — переменные, добавленные через `podman update --env` после создания.
+  Для проверки финального окружения используйте `.Config.Env` (статические) + `.HostConfig.Env` (динамические).
+- **Пустые значения**: `-e KEY=` задает пустую строку. `-e KEY` без `=` пробрасывает переменную из окружения хоста (или пропускает, если отсутствует).
+- **Файлы `.env`**: должны быть в кодировке UTF-8 без BOM. BOM в начале файла приведет к тому, что первая переменная получит невидимый префикс и не будет распознана.
+- **Производительность**: количество переменных окружения влияет на скорость `podman inspect` (JSON-сериализация). В контейнерах с >500 переменными это может заметно замедлить отладку. Для production рекомендуется держать число переменных в разумных пределах (<100).
+- **Генерация systemd-юнитов**: `podman generate systemd` сохраняет переменные окружения в сгенерированном юните в секции `[Service]` (`Environment=`). При последующем редактировании юнита переменные остаются синхронизированы с конфигурацией контейнера только до первого изменения контейнера.
+- **Аудит на хосте**: значения переменных видны в `/proc/<pid>/environ` для любых процессов на хосте, включая контейнеры. Для rootless-режима доступ к `/proc/<pid>/environ` других пользователей ограничен, но root всегда может читать эти файлы.
 
 ### Связанные разделы
 - **[Секреты Podman](./podman_secrets.md)** — безопасное управление чувствительными данными.

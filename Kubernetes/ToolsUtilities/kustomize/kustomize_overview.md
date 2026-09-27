@@ -485,5 +485,15 @@ kubectl rollout history deployment/prod-web-server -n production
 ### См. также
 
 - [Официальный сайт и документация Kustomize](https://kustomize.io/)
+- [Структура проекта и синтаксис](./kustomize_structure_and_syntax.md) — правила организации файлов
 - [Наложения и патчи](./kustomize_overlays_and_patches.md) — механизмы модификации
-- [Продвинутые возможности](./kustomize_advanced_features.md) — генераторы и Helm-интеграция
+- [Продвинутые возможности](./kustomize_advanced_features.md) — генераторы, компоненты и Helm-интеграция
+- [Debugging Kustomize](./kustomize_debugging.md) — troubleshooting и диагностика
+- [Kustomize vs Helm](./kustomize_vs_helm_decision.md) — рамки принятия решений
+- [Multi-cluster паттерны](./kustomize_multi_cluster.md) — multi-cluster и multi-tenancy
+- [Security Hardening](./kustomize_security_hardening.md) — PSS, NetworkPolicy, OPA через Kustomize
+- [Тестирование и валидация](./kustomize_testing_validation.md) — conftest, snapshot, lint
+- [Git-автоматизация](./kustomize_git_automation.md) — Renovate, image promotion, pre-commit
+- [Работа с CRD](./kustomize_crd_patterns.md) — CRD и OpenAPI через Kustomize
+- [Локальная разработка](./kustomize_local_development.md) — Makefile, workflow, инструменты
+- [Интеграция в CD](./kustomize_cd_integration.md) — Jenkins, GitHub Actions, ArgoCD, Flux

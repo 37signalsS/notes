@@ -45,9 +45,25 @@ Prometheus v3.0+ нативно поддерживает протокол OTLP, 
 
 Благодаря поддержке **UTF-8** в именах метрик и меток (v3.x), Prometheus сохраняет исходную структуру OTel (например, `http.server.request.duration`), устраняя необходимость в трансформации имен.
 
+### Кардинальность и потребление ресурсов
+
+При выборе типа метрики учитывайте влияние на TSDB и оперативную память Prometheus:
+
+| Тип метрики | Временные ряды на метрику | Влияние на RAM | Влияние на диск |
+|:---|:---|:---|:---|
+| **Counter** | 1 | Минимальное | Минимальное |
+| **Gauge** | 1 | Минимальное | Минимальное |
+| **Histogram (Classic)** | `N_buckets + 2` (le + _sum + _count) | Среднее | Среднее (корзины) |
+| **Native Histogram** | 1 | Минимальное | Минимальное (сжатие) |
+| **Summary** | `N_quantiles + 2` | Высокое (стейты CKMS в RAM приложения) | Низкое |
+
+**Рекомендация:** Избегайте использования Summary при высокой кардинальности лейблов (например, `{user_id="..."}`). Каждая уникальная комбинация лейблов создает отдельный экземпляр стейта CKMS в памяти приложения, что может привести к OOM.
+
 ## Практические сценарии
 
 ### Сценарий 1: Инструментация типичных операций
+
+Подробные паттерны инструментации для разных классов сервисов (HTTP, БД, очереди, контейнеры) см. в [Паттерны инструментации](./instrumentation_patterns.md).
 
 | Бизнес-кейс | Тип метрики | Имя (Naming) |
 |:---|:---|:---|
@@ -63,6 +79,8 @@ Prometheus v3.0+ нативно поддерживает протокол OTLP, 
 *   **Counter (Правильно):** `sum by (job) (rate(requests_total[5m]))` — сначала вычисляем скорость с учетом рестартов, затем суммируем.
 *   **Gauge (Правильно):** `avg by (instance) (node_load1)` — прямое усреднение текущих значений.
 *   **Histogram (Правильно):** `histogram_quantile(0.95, sum by (le) (rate(latency_bucket[5m])))` — агрегация корзин перед расчетом квантиля.
+*   **Summary (Правильно):** `avg by (job) (http_request_duration_seconds{quantile="0.99"})` — усреднение квантилей дает приблизительное значение, но не агрегирует распределение.
+*   **Native Histogram (Правильно):** `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))` — Prometheus v3.x автоматически определяет тип и применяет нативную логику.
 
 ### Сценарий 3: Переход на метаданные и единицы измерения (v3.x)
 
@@ -70,9 +88,104 @@ Prometheus v3.0+ нативно поддерживает протокол OTLP, 
 *   **Действие:** При объявлении метрики в коде (например, на Go или Python) всегда указывайте `Unit` (например, `seconds`).
 *   **Результат:** Grafana и другие визуализаторы смогут автоматически подставлять `s`, `ms`, `GiB` на оси графиков, основываясь на метаданных из Prometheus.
 
+### Сценарий 4: Валидация инструментации
+
+Перед развёртыванием в production проверьте, что метрика экспортируется корректно.
+
+```bash
+# 1. Проверка типа метрики в экспозиции
+curl -s http://localhost:9090/metrics | grep '^# TYPE http_requests_total'
+# → # TYPE http_requests_total counter
+
+# 2. Проверка корректности сброса (Counter)
+# Запустите приложение, запишите значение, перезапустите, снова проверьте
+curl -s http://localhost:9090/metrics | grep '^http_requests_total'
+# Значение должно начать расти с 0 или с точки последнего сброса
+
+# 3. Проверка структуры гистограммы
+curl -s http://localhost:9090/metrics | grep '^# TYPE http_request_duration_seconds'
+# → # TYPE http_request_duration_seconds histogram
+curl -s http://localhost:9090/metrics | grep '^http_request_duration_seconds_bucket'
+# Должны присутствовать строки с le="0.1", le="0.5", le="+Inf" и т.д.
+
+# 4. Проверка нативной гистограммы (Prometheus 3.x)
+curl -s http://localhost:9090/metrics | grep '^http_request_duration_seconds'
+# Должен присутствовать один ряд без лейбла le, с вложенной структурой schema/count/sum
+```
+
+### Сценарий 5: Диагностика через promtool
+
+```bash
+# Валидация формата экспозиции
+promtool check metrics app_metrics.prom
+
+# Проверка консистентности _sum и _count для гистограмм
+# _count не должен быть 0 при ненулевом _sum
+
+# Проверка PromQL-выражений (включая алерты)
+promtool check rules recording_rules.yaml
+promtool check rules alerting_rules.yaml
+```
+
+### Сценарий 6: Recording Rules для снижения нагрузки
+
+Для снижения нагрузки на Prometheus при частых запросах сложных выражений создайте recording rules:
+
+```yaml
+groups:
+- name: api.rules
+  interval: 30s
+  rules:
+  # Предрасчет rate для Counter
+  - record: job:http_requests_total:rate5m
+    expr: sum(rate(http_requests_total[5m])) by (job, method)
+
+  # Предрасчет p99 для классической гистограммы
+  - record: job:http_request_duration_seconds:quantile_99
+    expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+```
+
+**Преимущества:**
+*   Убирает дублирование PromQL в дашбордах и алертах.
+*   Снижает потребление CPU Prometheus (выражение вычисляется один раз в 30s).
+*   Дает стабильные значения с фиксированным интервалом пересчёта.
+
+### Сценарий 7: Миграция с Classic Histogram на Native Histogram (v3.x)
+
+Переход на нативные гистограммы требует изменения как кода приложения, так и запросов PromQL.
+
+```yaml
+# 1. Включите нативные гистограммы в Prometheus
+# prometheus.yml
+scrape_configs:
+  - job_name: 'api-service'
+    scrape_native_histograms: true  # Включение сбора экспоненциальных бакетов
+    static_configs:
+      - targets: ['api:8080']
+
+# 2. В коде приложения (Go) используйте нативный тип
+var nativeHistogram = promauto.NewHistogram(prometheus.HistogramOpts{
+    Name:    "http_request_duration_seconds",
+    Help:    "Duration of HTTP requests.",
+    Buckets: prometheus.DefBuckets,  # Игнорируется для Native, но требуется для совместимости
+})
+
+# 3. В PromQL используйте те же функции, Prometheus v3.x определит тип автоматически
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+```
+
+**Валидация миграции:**
+```bash
+# Проверьте, что в UI Prometheus отображается один ряд, а не десятки le-лейблов
+# Проверьте, что запрос histogram_quantile возвращает результаты без ошибок
+promtool check metrics app_metrics.prom
+```
+
 ## Дополнительная информация
 
 ### Соглашения по именованию
+
+Подробное руководство по именованию метрик, суффиксам, базовым единицам и лейблам см. в [Соглашения по именованию](./naming_conventions.md). Краткие правила:
 
 1.  **Суффикс `_total`:** Обязателен для всех счетчиков (`Counter`).
 2.  **Базовые единицы:** Используйте `seconds`, `bytes`, `meters`, `celsius`. Избегайте производных единиц (`ms`, `kb`) в именах метрик.
@@ -85,11 +198,36 @@ Prometheus v3.0+ нативно поддерживает протокол OTLP, 
 | **Counter** | `rate()`, `increase()`, `resets()` | `delta()`, `deriv()`, `predict_linear()` |
 | **Gauge** | `delta()`, `deriv()`, `predict_linear()` | `rate()`, `increase()` |
 | **Histogram** | `histogram_quantile()`, `histogram_fraction()` | `rate()` напрямую (только для `_bucket`) |
+| **Native Histogram** | `histogram_quantile()`, `histogram_fraction()`, `histogram_count()` | `rate()` напрямую (только для `_bucket`) |
+| **Summary** | Прямое сравнение `{quantile="<φ>"}` | `avg()`, `sum()` над квантилями |
+
+### Типовые ошибки и устранение неполадок
+
+| Ошибка | Причина | Решение |
+|:---|:---|:---|
+| `rate()` возвращает 0 или пустые значения | Окно `[range]` меньше 4x `scrape_interval` | Увеличьте окно или уменьшите интервал скрейпинга |
+| Гистограмма показывает p99 = 0 | Неправильный порядок: `rate(sum(...))` вместо `sum(rate(...))` | Примените `rate()` к каждому ряду перед агрегацией |
+| Алерт срабатывает на устаревшие данные | `for` < `MaxAge` у Summary | Увеличьте `for` или уменьшите `MaxAge` |
+| Отсутствие данных после рестарта | Stale markers не настроены | Настройте `stale NaN` в экспортере или проверяйте `absent_over_time()` |
+| Высокое потребление RAM приложением | Summary с высокой кардинальностью | Переход на Native Histogram или уменьшение количества лейблов |
+| Искажение перцентилей | Слишком мало наблюдений (<1000) | Увеличьте `MaxAge` или добавьте шум (jitter) при нагрузочном тестировании |
+
+### Рекомендации по настройке параметров
+
+| Параметр | Рекомендация | Обоснование |
+|:---|:---|:---|
+| `scrape_interval` | 15–30 секунд | Баланс между актуальностью и нагрузкой. |
+| `scrape_timeout` | 10 секунд (по умолчанию) | Должен быть меньше `scrape_interval`. |
+| Окно `rate()` | ≥ 4x `scrape_interval` | Минимум для корректной экстраполяции. |
+| `MaxAge` (Summary) | 5–10 минут | Баланс между актуальностью и стабильностью квантилей. |
+| `AgeBuckets` (Summary) | 5–10 | Большее значение снижает дрейф, но увеличивает RAM. |
+| `Objectives` (Summary) | p50, p95, p99 | Добавление слишком многих квантилей линейно увеличивает RAM. |
 
 ### См. также
 
-- [Примеры алертов](./alerts.md) — типичные правила оповещений для разных типов.
+- [Соглашения по именованию](./naming_conventions.md) — правила присвоения имён, суффиксы и базовые единицы.
+- [Паттерны инструментации](./instrumentation_patterns.md) — что измерять для HTTP, БД, очередей и инфраструктуры.
+- [Примеры алертов](./alerts.md) — типичные правила оповещений.
 - [Формат экспозиции](./exposition_format.md) — технические детали передачи данных по HTTP.
 - [Перцентили и квантили](./percentiles.md) — глубокое погружение в математику распределений.
-- [Metadata API](../../prometheus_api.md) — работа с метаданными в Prometheus v3.x.
 - [Remote Write 2.0](../../scaling/remote_read_write.md) — эффективная передача типов и метаданных.

@@ -2,40 +2,100 @@
 
 ## Определения
 
-**Лучшие практики (Best Practices)** — это набор апробированных архитектурных, эксплуатационных и процессных стандартов, направленных на минимизацию технического долга, обеспечение предсказуемости системы в рантайме и эффективное управление «радиусом поражения» (Blast Radius) при внедрении изменений.
+**Best Practices (Лучшие практики)** — апробированные архитектурные, эксплуатационные и процессные стандарты управления флагами, направленные на минимизацию технического долга, предсказуемость рантайма и контроль «радиуса поражения» (Blast Radius) при внедрении изменений.
 
-**Жизненный цикл флага (Flag Lifecycle)** — процесс, охватывающий этапы от создания идеи и написания кода до полной раскатки и автоматизированного удаления (Cleanup) логики из кодовой базы.
+**Flag Lifecycle (Жизненный цикл флага)** — процесс от создания идеи до автоматизированного удаления (Cleanup) логики из кодовой базы. Включает этапы: proposal → implementation → validation → rollout → stabilization → cleanup.
+
+**Cleanup (Очистка)** — процесс удаления кода флага и его записи из FFaaS после завершения эксперимента или раскатки фичи. Cleanup-PR является частью Definition of Done.
+
+**TTL (Time to Live)** — явно заданный срок жизни флага. По истечении TTL флаг либо удаляется автоматически, либо попадает в очередь на ревью.
+
+**Four-Eyes Principle (Принцип «четырех глаз»)** — требование подтверждения (Approval) изменения критических операционных флагов в Production вторым инженером или SRE.
+
+**Safe Defaults (Безопасные значения по умолчанию)** — гарантия, что при сбое FFaaS или недоступности удаленного источника флагов приложение переходит в предсказуемое безопасное состояние.
+
+**Kill Switch** — операционный флаг (`default=True`), позволяющий мгновенно отключить критическую зависимость (внешний API, БД, тяжелые вычисления) без деплоя.
+
+**Zombie Flag (Зомби-флаг)** — флаг, который остается в коде и FFaaS после завершения эксперимента или раскатки фичи, создавая технический долг.
+
+**Piranha** — инструмент автоматического обнаружения и удаления мертвых флагов из кодовой базы (Uber Piranha или аналоги).
 
 ---
 
-## Предварительные требования
+## Основные концепции
 
-### Инструментарий
+### Фундаментальные принципы 2026+
 
-| Компонент | Назначение | Минимальная версия |
+Для поддержания чистоты системы необходимо соблюдать следующие стандарты:
+
+1.  **Семантическое именование (Naming Conventions)**:
+    - Имя отражает бизнес-ценность, а не технический путь.
+    - **Шаблон:** `[domain].[subdomain].[action].[identifier]`
+    - *Примеры:* `checkout.payment.applepay.enabled`, `search.rank.algorithm.v2.active`.
+    - *Запрещено:* `test-flag`, `fix-123`, `new-logic-flag`.
+
+2.  **Безопасные значения по умолчанию (Safe Defaults)**:
+    - При сбое FFaaS приложение ОБЯЗАНО переходить в наиболее стабильное состояние.
+    - Для Release/Experiment/Permission флагов: `default=False`.
+    - Для Kill Switch: `default=True` (фича активна, пока мониторинг не скажет обратное).
+
+3.  **Принцип «Четырех глаз» (Four-Eyes Principle)**:
+    - Изменение критических операционных флагов в Production требует подтверждения от второго инженера или SRE.
+
+4.  **Владение и метаданные (Ownership & Metadata)**:
+    - У каждого флага должен быть **Owner** (команда).
+    - Обязательная привязка к тикету (Jira/Linear).
+    - **TTL:** Явно заданный срок жизни флага.
+
+5.  **Жизненный цикл и Cleanup**:
+    - Cleanup-PR обязателен в Definition of Done.
+    - Автоматические алерты на флаги без изменений >14 дней.
+    - Лимит: ≤50 активных флагов на сервис.
+
+### Архитектура управления флагами
+
+Управление флагами в production требует многоуровневого подхода:
+
+1.  **FFaaS (Feature Flag as a Service)** — централизованное хранилище (Unleash, Flipt). Рекомендуется self-hosted вариант без облачных зависимостей.
+2.  **flagd** — локальный прокси для оценки флагов, снижающий зависимость от сетевых задержек и сбоев FFaaS.
+3.  **SDK (OpenFeature)** — клиентская библиотека с кешированием и fallback-значениями.
+4.  **Bootstrap File** — файл с последним известным состоянием флагов для resilient старта приложения при недоступности FFaaS.
+5.  **Observability Layer** — метрики Prometheus, трейсы OpenTelemetry, алерты Alertmanager.
+
+### Ключевые компоненты
+
+| Компонент | Назначение | Рекомендуемая версия |
 | :--- | :--- | :--- |
-| **FFaaS платформа** | Хранение и управление флагами (Unleash, Flipt, Flagsmith) | Unleash v5+ / Flipt v1.35+ |
+| **FFaaS платформа** | Хранение и управление флагами (Unleash, Flipt) | Unleash v5+ / Flipt v1.35+ |
 | **OpenFeature SDK** | Унифицированный API для проверки флагов в коде | v0.4+ (Python/Go/Java/Node) |
-| **pre-commit** | Автоматизация проверок перед коммитом | v3.4+ |
-| **Uber Piranha** | Автоматическое обнаружение и удаление мертвых флагов | v0.5+ |
-| **OpenTelemetry Collector** | Сбор и передача телеметрии по флагам | v0.95+ |
+| **flagd** | Локальный прокси для оценки флагов | v1.4+ |
 | **Prometheus + Grafana** | Мониторинг использования и влияния флагов | Prometheus v2.50+, Grafana v10+ |
+| **OpenTelemetry Collector** | Сбор и передача телеметрии по флагам | v0.95+ |
+| **Uber Piranha** | Автоматическое обнаружение и удаление мертвых флагов | v0.5+ |
+| **pre-commit** | Автоматизация проверок перед коммитом | v3.4+ |
 
-### Локальное окружение для тестирования
+---
+
+## Практические сценарии
+
+### Предварительные требования
+
+#### Локальное окружение для тестирования
 
 ```bash
-# Развертывание FFaaS + Redis для проверки best practices
+# Развертывание Unleash + Redis для проверки best practices
 git clone https://github.com/Unleash/unleash-docker.git
 cd unleash-docker
 docker compose up -d
 # → Unleash: http://localhost:4242 (admin/unleash4all)
+# → Redis: localhost:6379
 
 # Проверка доступности API
 curl -s http://localhost:4242/api/admin/user | jq '.user.permissions'
 # → ["admin"]
 ```
 
-### Базовые знания
+#### Базовые знания
 
 Перед изучением рекомендуется ознакомиться с:
 - Общими принципами Feature Toggles ([Обзор](./overview.md))
@@ -44,37 +104,12 @@ curl -s http://localhost:4242/api/admin/user | jq '.user.permissions'
 
 ---
 
-## Основные концепции
-
-### Фундаментальные правила и стандарты
-
-Для поддержания чистоты системы в 2026 году необходимо придерживаться строгой гигиены управления флагами.
-
-1.  **Семантическое именование (Naming Conventions)**:
-    - Имя должно отражать **суть** (бизнес-ценность), а не технический путь.
-    - **Шаблон:** `[domain].[subdomain].[action].[identifier]`
-    - *Примеры:* `checkout.payment.applepay.enabled`, `search.rank.algorithm.v2.active`.
-    - *Запрещено:* `test-flag`, `fix-123`, `new-logic-flag`.
-2.  **Безопасные значения по умолчанию (Safe Defaults / Fail-safe)**:
-    - При сбое FFaaS (система управления флагами) приложение ОБЯЗАНО переходить в наиболее стабильное и безопасное состояние.
-    - Для новых фич по умолчанию всегда `False`.
-    - Для Kill Switch — по умолчанию `True` (фича включена, пока мониторинг не скажет обратное).
-3.  **Принцип «Четырех глаз» (Four-eyes principle)**:
-    - Изменение критических операционных флагов в Production требует подтверждения (Approval) от второго инженера или SRE через панель управления.
-4.  **Владение и метаданные**:
-    - У каждого флага должен быть **Owner** (команда).
-    - Обязательная привязка к тикету (Jira/Linear).
-    - **TTL (Time to Live)**: Явно заданный срок жизни флага.
-
----
-
-## Практические реализации
-
 ### Именование: автоматическое enforcement через CI
 
 Ручное соблюдение naming conventions ненадежно. Используйте CI-пайплайн для автоматической проверки.
 
 **Проверка именования флагов в CI:**
+
 ```bash
 #!/bin/bash
 # scripts/check-flag-naming.sh — проверка naming conventions
@@ -84,7 +119,6 @@ REQUIRED_PATTERN="^[a-z]+\.[a-z]+\.[a-z]+\.[a-z]+(\.[a-z]+)*$"
 UNLEASH_URL="${UNLEASH_URL:-http://localhost:4242}"
 UNLEASH_TOKEN="${UNLEASH_TOKEN:-*:*.admin}"
 
-# Получение списка всех флагов
 FLAGS=$(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
   -H "Authorization: $UNLEASH_TOKEN" | \
   jq -r '.features[].name')
@@ -102,10 +136,11 @@ if [ "$ERRORS" -gt 0 ]; then
   exit 1
 fi
 
-echo "PASS: All $ERRORS flags follow naming conventions"
+echo "PASS: All flags follow naming conventions"
 ```
 
 **GitLab CI integration:**
+
 ```yaml
 # .gitlab-ci.yml
 flag-naming-check:
@@ -116,9 +151,12 @@ flag-naming-check:
     - if: $CI_PIPELINE_SOURCE == "merge_request_api"
 ```
 
+---
+
 ### TTL: автоматическое управление временем жизни
 
 **Настройка TTL через API Unleash:**
+
 ```python
 import requests
 from datetime import datetime, timedelta
@@ -130,7 +168,6 @@ def set_flag_ttl(flag_name: str, days: int, environment: str = "production"):
     """Установка TTL для флага — автоматическое напоминание об удалении."""
     expiry_date = (datetime.utcnow() + timedelta(days=days)).isoformat() + "Z"
     
-    # Обновление метаданных флага с датой истечения
     response = requests.put(
         f"{UNLEASH_URL}/api/admin/projects/default/features/{flag_name}",
         headers={
@@ -152,6 +189,7 @@ set_flag_ttl("search.algorithm.v2.active", days=14)
 ```
 
 **Автоматическое уведомление об истечении TTL:**
+
 ```yaml
 # Prometheus: алерт на флаги с истекающим TTL
 groups:
@@ -180,9 +218,12 @@ groups:
           runbook_url: "https://wiki.internal/runbooks/flag-expired"
 ```
 
-### Four-eyes principle: реализация approval workflow
+---
+
+### Four-Eyes Principle: реализация approval workflow
 
 **Настройка Change Request в Unleash:**
+
 ```bash
 # Включение approval для production-окружения
 curl -s -X PUT "$UNLEASH_URL/api/admin/projects/default/settings" \
@@ -206,6 +247,7 @@ curl -s -X PUT "$UNLEASH_URL/api/admin/projects/default/settings" \
 ```
 
 **Проверка approval status:**
+
 ```bash
 # Проверка pending change requests
 curl -s "$UNLEASH_URL/api/admin/projects/default/change-requests?environment=production" \
@@ -214,9 +256,12 @@ curl -s "$UNLEASH_URL/api/admin/projects/default/change-requests?environment=pro
 # → Количество ожидающих аппрува изменений
 ```
 
+---
+
 ### Safe Defaults: fail-safe implementation
 
 **Каждая проверка флага ОБЯЗАНА содержать fallback:**
+
 ```python
 from openfeature import api
 
@@ -225,23 +270,17 @@ def get_checkout_config():
     client = api.get_client()
     context = {"user_id": current_user.id}
     
-    # Правильно: fallback-значение всегда указано
     is_new_checkout = client.get_boolean_value(
         "checkout.payment.applepay.enabled",
         False,  # ← Safe default: новая фича выключена
         context
     )
     
-    # НЕПРАВИЛЬНО: fallback не указан
-    # is_new_checkout = client.get_boolean_value("checkout.payment.applepay.enabled")
-    # → При сбое FFaaS SDK вернет None, что может вызвать TypeError
-    
     return is_new_checkout
 
 def get_kill_switch_state():
     """Kill Switch: значение по умолчанию — фича ВКЛЮЧЕНА."""
     client = api.get_client()
-    # Kill Switch: default=True (фича работает, пока не отключат)
     return client.get_boolean_value("killswitch.payment-timeout", True)
 ```
 
@@ -250,6 +289,7 @@ def get_kill_switch_state():
 ### Pre-commit hooks: гигиена флагов перед коммитом
 
 **Установка pre-commit hook:**
+
 ```yaml
 # .pre-commit-config.yaml
 repos:
@@ -271,6 +311,7 @@ repos:
 ```
 
 **Скрипт проверки TTL перед коммитом:**
+
 ```bash
 #!/bin/bash
 # scripts/check-flag-expiry.sh
@@ -289,13 +330,16 @@ if [ -n "$EXPIRING" ]; then
   echo "WARNING: The following flags are expiring soon or are stale:"
   echo "$EXPIRING"
   echo ""
-  echo "Decide: extend TTL or plan removal. See: https://wiki.internal/runbooks/flag-lifecycle"
+  echo "Decide: extend TTL or plan removal."
 fi
 ```
+
+---
 
 ### CI/CD pipeline: автоматический аудит флагов
 
 **GitLab CI pipeline для проверки флагов:**
+
 ```yaml
 # .gitlab-ci.yml
 stages:
@@ -326,7 +370,6 @@ flag-coverage:
   script:
     - echo "=== Checking flag usage in code ==="
     - |
-      # Подсчет использований флагов в коде
       for flag in $(curl -s "$UNLEASH_URL/api/admin/projects/default/features" \
         -H "Authorization: $UNLEASH_TOKEN" | jq -r '.features[].name'); do
         USAGE_COUNT=$(rg -c "$flag" --type py --type go --type java --type js 2>/dev/null || echo "0")
@@ -338,9 +381,12 @@ flag-coverage:
     - if: $CI_PIPELINE_SOURCE == "merge_request_api"
 ```
 
+---
+
 ### Автоматический cleanup: обнаружение и удаление мертвых флагов
 
 **Обнаружение zombie-флагов через Prometheus:**
+
 ```yaml
 # prometheus/rules/flag-hygiene.yml
 groups:
@@ -368,11 +414,12 @@ groups:
           severity: info
         annotations:
           summary: "Флаг {{ $labels.flag_name }} стабилен на 100% более 14 дней"
-          description: "Кандидат на автоматическое удаление через Uber Piranha."
+          description: "Кандидат на автоматическое удаление через Piranha."
           runbook_url: "https://wiki.internal/runbooks/flag-cleanup"
 ```
 
 **Автоматический cleanup через Uber Piranha:**
+
 ```bash
 # Сканирование кодовой базы на мертвые флаги
 piranha \
@@ -396,15 +443,18 @@ piranha \
 
 Недостаточно просто включить флаг — необходимо видеть его влияние в реальном времени.
 
-*   **Exposure Tracking**: SDK отправляет событие (Event) в аналитику в момент ПЕРВОЙ проверки флага для конкретного пользователя. Это критично для корректного расчета A/B метрик.
-*   **OTel Attributes**: Состояние флагов должно инжектироваться в атрибуты спанов **OpenTelemetry**.
-    ```python
-    # Пример инъекции в OTel Span
-    span.set_attribute("feature_flags.checkout_v2", "variant-a")
-    ```
-*   **Health-checks по флагам**: Сравнение Error Rate и Latency между группами пользователей с активным и неактивным флагом.
+- **Exposure Tracking:** SDK отправляет событие в аналитику в момент ПЕРВОЙ проверки флага для конкретного пользователя. Критично для корректного расчета A/B метрик.
+- **OTel Attributes:** Состояние флагов инжектируется в атрибуты спанов OpenTelemetry.
+- **Health-checks по флагам:** Сравнение Error Rate и Latency между группами пользователей с активным и неактивным флагом.
+
+**Пример инъекции в OTel Span:**
+
+```python
+span.set_attribute("feature_flags.checkout_v2", "variant-a")
+```
 
 **Настройка Health Check дашборда в Grafana:**
+
 ```json
 {
   "panels": [
@@ -428,55 +478,12 @@ piranha \
 }
 ```
 
-### Validation Checklist
-
-| Проверка | Метод | Ожидаемый результат |
-| :--- | :--- | :--- |
-| Naming convention | `bash scripts/check-flag-naming.sh` | Все флаги в формате `[domain].[subdomain].[action].[identifier]` |
-| TTL установлен | `curl $UNLEASH_URL/api/admin/features \| jq '.features[].staleData'` | У каждого non-permanent флага есть TTL |
-| Safe defaults | Грейпкод проверки флагов: `rg "get_boolean_value" \| wc -l` = `rg "get_boolean_value.*False" \| wc -l` | Каждая проверка содержит fallback-значение |
-| Four-eyes approval | `curl $UNLEASH_URL/api/admin/projects/default/settings` | Production требует ≥2 аппрува |
-| Cleanup candidates | `curl $UNLEASH_URL/api/admin/features \| jq '.features[] \| select(.staleData.potentiallyStale)'` | Список кандидатов на удаление пуст или обработан |
-| Количество активных флагов | `curl $UNLEASH_URL/api/admin/features \| jq '.features \| length'` | ≤50 на сервис |
-
 ---
-
-### FinOps и контроль затрат
-
-Управление дорогостоящими ресурсами через динамические флаги.
-
-*   **Quota Toggling**: Автоматическое переключение на менее ресурсоемкий алгоритм при достижении лимита бюджета для конкретного клиента или организации.
-*   **Feature Tiering**: Отключение ресурсоемких функций для пользователей с низким уровнем подписки при росте общей нагрузки.
-
-**Реализация Quota Toggling:**
-```python
-from openfeature import api
-import redis
-
-r = redis.Redis(host='redis.internal', port=6379, db=0)
-
-def get_processing_mode(user_id: str) -> str:
-    """Выбор режима обработки в зависимости от квоты."""
-    client = api.get_client()
-    context = {"user_id": user_id}
-    
-    # Проверка квоты в Redis
-    quota_used = int(r.get(f"quota:{user_id}:processed") or 0)
-    quota_limit = int(r.get(f"quota:{user_id}:limit") or 1000)
-    
-    if quota_used >= quota_limit:
-        # Квота исчерпана → дешевый алгоритм
-        return "basic"
-    
-    # Квота не исчерпана → проверка флага для полного функционала
-    if client.get_boolean_value("processing.advanced.enabled", False, context):
-        return "advanced"
-    return "standard"
-```
 
 ### Окружение-паритет: валидация консистентности флагов
 
 **Diff-проверка флагов между staging и production:**
+
 ```bash
 #!/bin/bash
 # scripts/check-env-parity.sh — проверка консистентности флагов между средами
@@ -505,6 +512,7 @@ echo "PASS: Staging and production flags are consistent"
 ```
 
 **Запуск в CI/CD:**
+
 ```yaml
 # .gitlab-ci.yml
 env-parity-check:
@@ -517,19 +525,164 @@ env-parity-check:
 
 ---
 
+### Безопасность и отказоустойчивость FFaaS
+
+**RBAC (Role-Based Access Control) в Unleash:**
+
+```bash
+# Создание роли "Release Manager" с правами только на release-флаги
+curl -s -X POST "$UNLEASH_URL/api/admin/projects/default/roles" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Release Manager",
+    "description": "Can manage release flags only",
+    "permissions": [
+      {"permission": "READ_FEATURE", "environment": "production"},
+      {"permission": "WRITE_FEATURE", "environment": "production"}
+    ],
+    "type": "custom"
+  }'
+# → {"id": 3, "name": "Release Manager", ...}
+
+# Назначение роли пользователю
+curl -s -X POST "$UNLEASH_URL/api/admin/users/1/roles" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"roleId": 3}'
+# → [{"id": 1, "name": "user@example.com", "role": "Release Manager"}]
+```
+
+**NetworkPolicy для FFaaS в Kubernetes:**
+
+```yaml
+# networkpolicy-ffaas.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ffaas-ingress
+  namespace: feature-flags
+spec:
+  podSelector:
+    matchLabels:
+      app: unleash
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: apps
+      ports:
+        - protocol: TCP
+          port: 4242
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+      - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 6379  # Redis
+        - protocol: TCP
+          port: 5432  # PostgreSQL
+```
+
+**mTLS между сервисами:**
+
+```bash
+# Проверка mTLS соединения между flagd и FFaaS
+openssl s_client -connect flagd-proxy.feature-flags.svc.cluster.local:8015 \
+  -CAfile /etc/ssl/certs/ca-certificates.crt
+# → Verify return code: 0 (ok)
+```
+
+---
+
+### Disaster Recovery
+
+**Backup и восстановление состояния FFaaS:**
+
+```bash
+#!/bin/bash
+# scripts/dr-ffaas-restore.sh — Disaster Recovery для FFaaS
+set -euo pipefail
+
+BACKUP_DIR="/backups/unleash"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
+echo "=== Step 1: Остановка приложения ==="
+kubectl scale deployment checkout-service --replicas=0 -n apps
+
+echo "=== Step 2: Экспорт текущего состояния флагов ==="
+curl -s "$UNLEASH_URL/api/admin/features" \
+  -H "Authorization: $UNLEASH_TOKEN" | \
+  jq '.features' > "$BACKUP_DIR/features-$TIMESTAMP.json"
+
+echo "=== Step 3: Восстановление из последнего бэкапа ==="
+LATEST_BACKUP=$(ls -t "$BACKUP_DIR/features-"*.json | head -1)
+curl -s -X POST "$UNLEASH_URL/api/admin/features/import" \
+  -H "Authorization: $UNLEASH_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "@$LATEST_BACKUP"
+
+echo "=== Step 4: Перезапуск приложения ==="
+kubectl scale deployment checkout-service --replicas=3 -n apps
+
+echo "=== Step 5: Валидация ==="
+kubectl rollout status deployment/checkout-service -n apps
+# → deployment "checkout-service" successfully rolled out
+```
+
+**Failover тест:**
+
+```bash
+#!/bin/bash
+# scripts/failover-test.sh — проверка работы при недоступности FFaaS
+set -euo pipefail
+
+# Остановка Unleash
+docker compose -f unleash-docker/docker-compose.yml down
+
+# Проверка, что приложение работает с fallback
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://checkout-service/api/health)
+# → 200
+
+echo "PASS: Application is resilient to FFaaS outage"
+```
+
+---
+
+### Validation Checklist
+
+| Проверка | Метод | Ожидаемый результат |
+| :--- | :--- | :--- |
+| Naming convention | `bash scripts/check-flag-naming.sh` | Все флаги в формате `[domain].[subdomain].[action].[identifier]` |
+| TTL установлен | `curl $UNLEASH_URL/api/admin/features \| jq '.features[].staleData'` | У каждого non-permanent флага есть TTL |
+| Safe defaults | Грейпкод проверки флагов: `rg "get_boolean_value" \| wc -l` = `rg "get_boolean_value.*False" \| wc -l` | Каждая проверка содержит fallback-значение |
+| Four-eyes approval | `curl $UNLEASH_URL/api/admin/projects/default/settings` | Production требует ≥2 аппрува |
+| Cleanup candidates | `curl $UNLEASH_URL/api/admin/features \| jq '.features[] \| select(.staleData.potentiallyStale)'` | Список кандидатов на удаление пуст или обработан |
+| Количество активных флагов | `curl $UNLEASH_URL/api/admin/features \| jq '.features \| length'` | ≤50 на сервис |
+| Environment parity | `bash scripts/check-env-parity.sh` | Staging и production синхронизированы |
+| Audit logging | `curl $UNLEASH_URL/api/admin/events` | Все изменения флагов имеют audit record |
+
+---
+
 ## Типичные ошибки и диагностика (Troubleshooting)
 
 | Симптом | Вероятная причина | Диагностические действия | Решение |
 | :--- | :--- | :--- | :--- |
-| Нейминг флагов нарушается в CI | Разработчик обходит pre-commit hook | `git log --oneline -5` → проверить коммиты; `bash scripts/check-flag-naming.sh` → воспроизвести ошибку | Настроить pre-commit hook + CI gate (merge blocked при нарушении); образование команды |
-| TTL не работает | FFaaS не поддерживает TTL нативно | `curl $UNLEASH_URL/api/admin/features \| jq '.features[].staleData'` → проверить метаданные | Использовать кастомный Prometheus alert вместо native TTL; напоминание через Slack webhook |
+| Нейминг флагов нарушается в CI | Разработчик обходит pre-commit hook | `git log --oneline -5` → проверить коммиты; `bash scripts/check-flag-naming.sh` | Настроить pre-commit hook + CI gate (merge blocked при нарушении) |
+| TTL не работает | FFaaS не поддерживает TTL нативно | `curl $UNLEASH_URL/api/admin/features \| jq '.features[].staleData'` | Использовать кастомный Prometheus alert; напоминание через Slack webhook |
 | Cleanup PR не создается | Uber Piranha не настроен или нет доступа к API | `piranha --help` → проверить установку; проверить токен доступа к Git | Настроить GitHub/GitLab API токен для автоматических PR; добавить в cron |
-| Approval workflow обходится | Admin-роль позволяет менять флаги без аппрува | `curl $UNLEASH_URL/api/admin/roles` → проверить роли | Ограничить admin-роль; для production-окружения — только через Change Request |
-| Отличия флагов между staging и production | Ручное управление без GitOps | `bash scripts/check-env-parity.sh` → найти расхождения | Декларативное управление через GitOps (см. [Feature Flags в GitOps](../../GitOps/Concepts/feature_flags_gitops.md)) |
-| Много僵尸 флагов (>50 активных) | Нет процесса удаления | `curl $UNLEASH_URL/api/admin/features \| jq '.features \| length'` → подсчитать | Автоматический cleanup через Piranha + Prometheus alert; лимит 50 флагов на сервис |
-| Флаги конфликтуют друг с другом | Два флага влияют на один ресурс | `rg "is_enabled" --type py` → найти пересечения; проверить логику ветвления | Группировка флагов по доменам; конфликт-тестирование перед включением |
+| Approval workflow обходится | Admin-роль позволяет менять флаги без аппрува | `curl $UNLEASH_URL/api/admin/roles` → проверить роли | Ограничить admin-роль; для production — только через Change Request |
+| Отличия флагов между staging и production | Ручное управление без GitOps | `bash scripts/check-env-parity.sh` → найти расхождения | Декларативное управление через GitOps |
+| Много zombie-флагов (>50 активных) | Нет процесса удаления | `curl $UNLEASH_URL/api/admin/features \| jq '.features \| length'` | Автоматический cleanup через Piranha + Prometheus alert; лимит 50 флагов на сервис |
+| Флаги конфликтуют друг с другом | Два флага влияют на один ресурс | `rg "is_enabled" --type py` → найти пересечения | Группировка флагов по доменам; конфликт-тестирование перед включением |
 | Секреты в конфиге флага | Флаговый конфиг используют как конфиг приложения | `rg "password\|secret\|token" --type yaml` в конфигах флагов | Запретить политикой (conftest/Kyverno); секреты — только через Vault/ESO |
 | Клиентские флаги отличаются от серверных | SDK кеширует старое значение | `tcpdump -i any port 8013` → проверить SSE/gRPC; проверить `cache_ttl` | Увеличить частоту polling; переключиться на SSE; проверить flagd sidecar |
+| Приложение падает при отказе FFaaS | Отсутствие fallback | Остановить платформу → проверить приложение | Каждый `get_boolean_value` требует `default` аргумент |
 
 ---
 
@@ -537,7 +690,7 @@ env-parity-check:
 
 ### Комбинаторный взрыв
 
-10 независимых бинарных флагов дают 1024 состояния системы. Ограничивайте количество одновременно активных релизных флагов на сервис (типично: 5-10). Каждое新增ление флага требует проверки пересечений с существующими.
+10 независимых бинарных флагов дают 1024 состояния системы. Ограничивайте количество одновременно активных релизных флагов на сервис (типично: 5-10). Каждое добавление флага требует проверки пересечений с существующими.
 
 ### Глобальные побочные эффекты
 
@@ -559,28 +712,43 @@ env-parity-check:
 
 Если два эксперимента затрагивают один и тот же UI-компонент, результаты могут быть искажены. Необходимо выявлять пересечения и запускать их последовательно или исключать пересекающуюся аудиторию.
 
-### FinOps: LLM/внешние API
+---
 
-При управлении дорогостоящими ресурсами через флаги необходимо учитывать задержку переключения. Если флаг отключает LLM-запрос, пользователь может заметить degraded体验 до полного переключения. Решение: кеширование результатов LLM + graceful degradation.
+## Best Practices
+
+### Архитектурные принципы
+
+1. **Self-hosted FFaaS:** Используйте self-hosted вариант (Unleash, Flipt) без облачных зависимостей. Это обеспечивает контроль над данными, предсказуемую задержку и отказоустойчивость.
+2. **Fail-safe by design:** Каждый вызов SDK содержит fallback. При недоступности FFaaS приложение работает в безопасном режиме.
+3. **Flagd sidecar:** Развертывайте flagd как sidecar или локальный прокей для снижения латентности и обеспечения работы при отказе FFaaS.
+4. **Observability first:** Инструментируйте каждый флаг метриками Prometheus и трейсами OpenTelemetry с первого дня.
+
+### Операционная модель (SRE/DevOps)
+
+1. **Four-Eyes Principle:** Изменение критических операционных флагов в Production требует подтверждения от второго инженера или SRE.
+2. **Automated Cleanup:** Ночные джобы CI/CD выполняют автоматический аудит: флаги без изменений >14 дней блокируют мерж новых PR.
+3. **Capacity Planning:** Мониторинг потребления ресурсов flagd (CPU, Memory). Типичные лимиты: 100m CPU, 128Mi Memory на инстанс.
+4. **Change Management:** Все изменения флагов в Production фиксируются в Audit Log и проходят через Change Request workflow.
+
+### Безопасность
+
+1. **PII Protection:** Контекст пользователя не должен содержать raw PII в FFaaS. Используйте хеширование (SHA-256) или удаление полей.
+2. **Network Segmentation:** FFaaS должна быть в отдельном namespace с NetworkPolicy, разрешающей только необходимые порты.
+3. **mTLS between Services:** flagd ↔ Application и flagd ↔ FFaaS должны использовать взаимное TLS для аутентификации.
+4. **Secrets Management:** Токены доступа к FFaaS хранятся в Vault или Kubernetes Secrets, не в конфигах или окружении.
 
 ---
 
 ## Дополнительная информация
 
-### Техническая гигиена (OpenFeature)
+### Внутренние ресурсы
 
-Использование стандарта **OpenFeature** позволяет абстрагироваться от конкретного вендора (Unleash, LaunchDarkly, ConfigCat) и применять общие хуки (Hooks) для логирования и валидации данных во всех микросервисах.
-
-### См. также
-- **[Обзор Feature Toggles](./overview.md)** — парадигма Deploy vs Release.
+- **[Обзор Feature Toggles](./overview.md)** — концептуальная база, Deploy vs Release.
 - **[Типы Feature Toggles](./types.md)** — классификация по назначению и сроку жизни.
-- **[Архитектура систем](./architecture.md)** — Relay, Proxy и Edge-вычисления, Bootstrap File, flagd.
 - **[Антипаттерны](./antipatterns.md)** — типичные ошибки, которых следует избегать.
-- **[Сценарии использования](./scenarios.md)** — подробный разбор практических кейсов.
-- **[Реализация в коде](./implementation.md)** — паттерны программирования и использование OpenFeature.
-- **[Feature Flags в GitOps](../../GitOps/Concepts/feature_flags_gitops.md)** — декларативное управление через Git.
 
 ### Внешние ресурсы
-- [Feature Toggles (Martin Fowler)](https://martinfowler.com/articles/feature-toggles.html) — классика.
-- [OpenFeature Standard](https://openfeature.dev/) — унифицированный API.
-- [Uber Piranha Documentation](https://github.com/uber/piranha) — автоматизация удаления кода.
+
+- [Feature Toggles (Martin Fowler)](https://martinfowler.com/articles/feature-toggles.html) — классика управления флагами.
+- [OpenFeature Specification](https://openfeature.dev/specification/) — промышленный стандарт управления флагами.
+- [Trunk Based Development](https://trunkbaseddevelopment.com/feature-flags/) — роль флагов в CI/CD.

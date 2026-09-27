@@ -2,35 +2,41 @@
 
 ## Определения
 
-**Структура проекта Ansible** — логическая организация файлов и каталогов, обеспечивающая масштабируемость, переиспользование кода, изоляцию секретов и удобную командную разработку.
+**Структура проекта Ansible** — логическая организация файлов и каталогов, обеспечивающая масштабируемость, переиспользование кода, изоляцию секретов и удобную командную разработку для команд DevOps/SRE.
 
 **Иерархия переменных** — порядок, в котором Ansible ищет значения переменных. Правильная структура каталогов (`group_vars`, `host_vars`) позволяет эффективно управлять настройками для разных окружений (Staging, Production) и предотвращать конфликты имен.
 
-**Контрольный узел (Control Node)** — машина, на которой хранится код проекта, установлены зависимости (Ansible, Python-библиотеки) и запускаются команды управления инфраструктурой.
+**Control Node** — машина, на которой хранится код проекта, установлены зависимости (Ansible, Python-библиотеки) и запускаются команды управления инфраструктурой. Требует Unix-подобную ОС: Linux, macOS или WSL2.
+
+**Managed Node** — целевой хост, на который Ansible подключается по SSH и применяет конфигурацию. Может быть физическим сервером, виртуальной машиной или контейнером.
+
+**Ansible Vault** — механизм шифрования чувствительных данных (пароли, ключи, токены) в репозитории. Файлы `vault.yml` расшифровываются в памяти во время выполнения плейбука.
 
 ## Предварительные требования
 
 | Компонент | Минимальная версия | Рекомендуемая | Проверка |
 |---|---|---|---|
-| Ansible Core | 2.15+ | ≥ 10.x | `ansible --version` |
+| Ansible Core | 2.15+ | ≥ 2.20 | `ansible --version` |
 | Python (управление) | 3.10+ | ≥ 3.12 | `python3 --version` |
 | Python (целевые хосты) | 3.10+ | ≥ 3.12 | `ansible all -m setup -a "filter=ansible_python_version"` |
-| ansible-lint | 24.x+ | ≥ 24.7 | `ansible-lint --version` |
+| ansible-lint | 26.x+ | ≥ 26.8.0 | `ansible-lint --version` |
 | yamllint | 1.35+ | ≥ 1.35 | `yamllint --version` |
 | Git | 2.30+ | ≥ 2.40 | `git --version` |
-| Целевые ОС | Ubuntu 22.04+ / Debian 12+ | Ubuntu 24.04 | `lsb_release -a` |
+| Целевые ОС | Ubuntu 22.04+ / Debian 12+ / RHEL 9+ | Ubuntu 24.04 / RHEL 9 | `lsb_release -a` или `cat /etc/os-release` |
 
 ### Необходимые коллекции
 
 ```bash
-# Основные коллекции (если используются в ролях/плейбуках)
+# Основные коллекции
 ansible.builtin
 ansible.posix
 community.general
-community.mysql  # если работаете с MySQL/MariaDB
-community.docker  # если работаете с Docker
 
-# Установка всех необходимых коллекций
+# Специализированные коллекции (опционально)
+ansible.mysql    # для работы с MySQL/MariaDB
+community.crypto # для управления сертификатами
+
+# Установка всех зависимостей
 ansible-galaxy collection install -r requirements.yml
 # → Starting galaxy collection install process
 # → Process install dependency map
@@ -41,28 +47,50 @@ ansible-galaxy collection install -r requirements.yml
 - SSH-доступ к управляемым хостам (порт 22 по умолчанию).
 - Параметр `become: true` для выполнения задач с привилегиями root.
 - Доступ к интернету для загрузки пакетов и репозиториев.
+- Разрешение исходящих подключений на порт 443 для Galaxy/HTTPS-репозиториев.
 
 ---
 
 ## Базовые концепции
 
-### Ключевые компоненты проекта
+### Принципы организации проекта
 
-| Компонент | Назначение | Ссылка на основной раздел |
+Правильная структура проекта решает три ключевые задачи для DevOps/SRE:
+1. **Масштабируемость** — возможность добавления новых сервисов без переписывания всего кода.
+2. **Безопасность** — изоляция секретов от кода, минимальные привилегии, аудит изменений.
+3. **Воспроизводимость** — идентичные результаты на разных окружениях (Dev/Stage/Prod).
+
+### Жизненный цикл проекта Ansible
+
+```
+Создание → Разработка → Тестирование → Code Review → Merge → Deploy → Валидация
+   ↑         ↑            ↑            ↑           ↑        ↑         ↑
+ Git       Molecule     ansible-lint   PR/MR      CI/CD   Runbook   Мониторинг
+```
+
+### Компоненты проекта и их назначение
+
+| Компонент | Назначение | Примечание для SRE |
 |---|---|---|
-| `ansible.cfg` | Конфигурация проекта (пути к ролям, настройки SSH, плагины). | [Настройка Ansible](../ansible_setup_and_config.md) |
-| `inventory/` или `environments/` | Список хостов и групп (статический или динамический) с разделением по средам. | [Управление инвентарем](../ansible_setup_and_config.md) |
-| `group_vars/` | Переменные для групп хостов (например, `all.yml`). | [Переменные](../PlaybookStructure/variables.md) |
-| `host_vars/` | Индивидуальные параметры конкретных серверов (использовать с осторожностью). | [Переменные](../PlaybookStructure/variables.md) |
-| `roles/` | Каталог для локальных ролей проекта. | [Роли в Ansible](../ansible_roles.md) |
-| `collections/` | Директория для внешних коллекций, установленных локально. | [Управление коллекциями](../Roles/galaxy.md) |
-| `playbooks/` | Точки входа (сценарии автоматизации). | [Основы плейбуков](../PlaybookStructure/basics.md) |
-| `library/` | Пользовательские модули на Python для специфичных задач. | [Собственные модули](../ansible_custom_modules.md) |
-| `filter_plugins/` | Собственные Jinja2-фильтры для сложной обработки данных. | — |
-| `module_utils/` | Вспомогательные Python-библиотеки для пользовательских модулей. | — |
-| `requirements.yml` | Список внешних зависимостей (ролей и коллекций) для загрузки через `ansible-galaxy`. | [Ansible Galaxy](../Roles/galaxy.md) |
+| `ansible.cfg` | Глобальная конфигурация: пути, SSH, плагины | Должен быть в репозитории; секреты — через env vars |
+| `inventory/` | Список хостов и групп | Разделение по средам minimizes blast radius |
+| `group_vars/` | Переменные для групп хостов | Избегайте хранения секретов здесь |
+| `host_vars/` | Индивидуальные параметры хостов | Используйте только для уникальных настроек |
+| `roles/` | Локальные роли проекта | См. [Структура роли](../Roles/structure.md) |
+| `playbooks/` | Entry points, оркестрация | Должны быть тонкими; логика — в ролях |
+| `library/` | Пользовательские модули Python | Для специфичных задач без готовых модулей |
+| `filter_plugins/` | Jinja2-фильтры | Для сложной трансформации данных |
+| `requirements.yml` | Зависимости из Galaxy | Фиксируйте версии для воспроизводимости |
 
-**Безопасность:** Секреты (пароли, SSH ключи, токены) должны храниться в зашифрованном виде. Рекомендуется использовать файлы с суффиксом `.vault.yml` или `vault_` префиксом и инструмент **[Ansible Vault](../Vault/basics.md)**.
+### Безопасность: изоляция секретов
+
+Секреты (пароли, SSH ключи, токены) должны храниться в зашифрованном виде. Рекомендуется использовать файлы с суффиксом `.vault.yml` или префиксом `vault_` и инструмент **[Ansible Vault](../Vault/basics.md)**.
+
+**Принципы:**
+- Никогда не коммитьте секреты в открытом виде.
+- Используйте `no_log: true` для задач с чувствительными данными.
+- Права на vault-файлы: `chmod 600 vars/vault.yml`.
+- Пароль Vault храните вне репозитория (файл `.vault_pass` с правами `600` или менеджер секретов).
 
 ### Порядок приоритетов поиска ресурсов
 
@@ -78,7 +106,7 @@ collections_path = ./collections:~/.ansible/collections:/usr/share/ansible/colle
 
 ### Разделение ответственности
 
-| Файл/Директория | Ответственность | Не应当 содержать |
+| Файл/Директория | Ответственность | Не должна содержать |
 |---|---|---|
 | `inventory/` | Адреса хостов, группы, SSH-параметры | Пароли, переменные окружения |
 | `group_vars/` | Конфигурация сервисов для групп | Адреса серверов, SSH ключи |
@@ -191,7 +219,7 @@ enterprise-ansible-project/
 ├── scripts/                 # Вспомогательные скрипты (например, для Vault)
 ├── collections/             # Локально загруженные коллекции
 ├── roles/                   # Локальные роли проекта (бизнес-логика)
-│   └── common/              # См. подробности в ../Roles/structure.md
+│   └── common/              # См. подробности в [Структура роли](../Roles/structure.md)
 └── playbooks/               # Каталог со сценариями (Entry points)
     ├── site.yml             # Главный оркеструющий плейбук
     ├── deploy_app.yml       # Сценарий деплоя приложения
@@ -440,22 +468,163 @@ venv/
 Thumbs.db
 ```
 
+### Сценарий 4: Управление обновлениями (Patch Management) в структуре проекта
+
+В production-проектах важно разделить задачи обновления ОС и приложений. Рекомендуется вынести их в отдельные плейбуки и запускать через CI/CD с `serial` для zero-downtime обновления.
+
+```yaml
+---
+# playbooks/patch_management.yml
+- name: Обновление ОС (rolling)
+  hosts: all
+  serial: "25%"
+  max_fail_percentage: 10
+  any_errors_fatal: true
+  become: true
+  tasks:
+    - name: Обновление кэша пакетов
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Обновление пакетов
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      register: apt_upgrade
+      notify: Reboot if needed
+      when: ansible_os_family == "Debian"
+
+    - name: Проверка необходимости перезагрузки
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Отчет об обновлении
+      ansible.builtin.debug:
+        msg: "Packages upgraded: {{ apt_upgrade.stdout | default('none') }}"
+
+  handlers:
+    - name: Reboot if needed
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: reboot_required.stat.exists
+
+---
+# playbooks/rolling_deploy.yml
+- name: Rolling deploy приложения
+  hosts: web_servers
+  serial: 1
+  max_fail_percentage: 0
+  become: true
+  tasks:
+    - name: Вывод из балансировщика
+      ansible.builtin.lineinfile:
+        path: /etc/nginx/upstream.conf
+        regexp: "server.*{{ inventory_hostname }}"
+        line: "# server {{ inventory_hostname }}:8000; # disabled"
+      delegate_to: "{{ groups['load_balancer'][0] }}"
+      notify: Reload Nginx
+
+    - name: Ожидание завершения соединений
+      ansible.builtin.wait_for:
+        timeout: 10
+
+    - name: Деплой нового кода
+      ansible.builtin.unarchive:
+        src: "https://releases.example.com/app-{{ app_version }}.tar.gz"
+        dest: /opt/app
+        remote_src: yes
+
+    - name: Перезапуск приложения
+      ansible.builtin.service:
+        name: app
+        state: restarted
+
+    - name: Проверка health check
+      ansible.builtin.uri:
+        url: http://{{ inventory_hostname }}/health
+        status_code: 200
+        timeout: 10
+      register: health_check
+      until: health_check.status == 200
+      retries: 30
+      delay: 2
+
+    - name: Возврат в балансировщик
+      ansible.builtin.lineinfile:
+        path: /etc/nginx/upstream.conf
+        regexp: "# server {{ inventory_hostname }}:8000; # disabled"
+        line: "server {{ inventory_hostname }}:8000;"
+      delegate_to: "{{ groups['load_balancer'][0] }}"
+      notify: Reload Nginx
+
+  handlers:
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+```
+
+**Запуск через CI/CD:**
+
+```bash
+# Обновление ОС на всех хостах (rolling)
+ansible-playbook playbooks/patch_management.yml -i environments/prod/hosts.yml --ask-vault-pass
+
+# Rolling deploy приложения
+ansible-playbook playbooks/rolling_deploy.yml -i environments/prod/hosts.yml --ask-vault-pass
+```
+
+**Валидация:**
+
+```bash
+# Проверка статуса обновления
+ansible all -m shell -a "apt list --upgradable" --become
+# → показывает доступные обновления
+
+# Проверка необходимости перезагрузки
+ansible all -m shell -a "ls -la /var/run/reboot-required" --become
+# → файл существует, если требуется перезагрузка
+
+# Проверка rolling deploy
+ansible-playbook playbooks/rolling_deploy.yml --list-tasks
+# → показывает последовательность задач
+
+# Dry-run
+ansible-playbook playbooks/rolling_deploy.yml --check --diff
+# → показывает изменения без применения
+```
+
+
 ---
 
-## Чек-лист валидации после создания проекта
+## Операции и команды
 
-| Проверка | Команда | Ожидаемый результат |
+### Основные команды для управления проектом
+
+| Команда | Назначение | Пример |
 |---|---|---|
-| Синтаксис плейбука | `ansible-playbook site.yml --syntax-check` | `playbook: site.yml` |
-| Dry Run | `ansible-playbook site.yml --check --diff` | Нет ошибок |
-| Доступность хостов | `ansible all -m ping` | `SUCCESS => { "ping": "pong" }` |
-| Инвентарь | `ansible-inventory --list` | JSON со списком хостов |
-| Инвентарь (граф) | `ansible-inventory --graph` | Дерево групп |
-| Роли найдены | `ansible-playbook site.yml --list-tasks` | Список задач |
-| Синтаксис YAML | `yamllint .` | Нет ошибок |
-| Ansible Lint | `ansible-lint` | Нет ошибок |
-| Vault работает | `ansible-vault encrypt test.yml && ansible-vault decrypt test.yml` | Файл зашифрован/расшифрован |
-| Коллекции установлены | `ansible-galaxy collection list` | Список коллекций |
+| `ansible-playbook site.yml --syntax-check` | Проверка синтаксиса YAML | `ansible-playbook playbooks/site.yml --syntax-check` |
+| `ansible-playbook site.yml --check --diff` | Dry-run с показом изменений | `ansible-playbook playbooks/site.yml --check --diff` |
+| `ansible-playbook site.yml --list-tasks` | Просмотр задач без выполнения | `ansible-playbook playbooks/site.yml --list-tasks` |
+| `ansible-playbook site.yml --list-tags` | Просмотр тегов | `ansible-playbook playbooks/site.yml --list-tags` |
+| `ansible-playbook site.yml --list-hosts` | Просмотр хостов | `ansible-playbook playbooks/site.yml --list-hosts` |
+| `ansible-playbook site.yml --step` | Пошаговое выполнение | `ansible-playbook playbooks/site.yml --step` |
+| `ansible-playbook site.yml --start-at-task` | Запуск с конкретной задачи | `ansible-playbook playbooks/site.yml --start-at-task="Deploy"` |
+| `ansible-inventory --graph` | Визуализация инвентаря | `ansible-inventory -i environments/prod/hosts.yml --graph` |
+| `ansible-inventory --host` | Переменные хоста | `ansible-inventory -i environments/prod/hosts.yml --host web1` |
+| `ansible <host> -m setup` | Сбор фактов | `ansible web1 -m setup -a "filter=ansible_os_family*"` |
+| `ansible <host> -m debug` | Просмотр переменной | `ansible web1 -m debug -a "var=my_var"` |
+| `ansible <host> -m ping` | Проверка доступности | `ansible all -m ping` |
+| `ansible-vault create` | Создание зашифрованного файла | `ansible-vault create vars/vault.yml` |
+| `ansible-vault edit` | Редактирование зашифрованного файла | `ansible-vault edit vars/vault.yml` |
+| `ansible-galaxy collection install` | Установка коллекций | `ansible-galaxy collection install -r requirements.yml` |
+| `ansible-galaxy role install` | Установка роли | `ansible-galaxy role install geerlingguy.nginx` |
+| `ansible-lint` | Проверка качества кода | `ansible-lint playbooks/` |
+| `yamllint` | Проверка синтаксиса YAML | `yamllint .` |
 
 ---
 
@@ -500,7 +669,7 @@ ansible web1 -m debug -a "var=ansible_distribution" -i inventory.ini
 
 ### Проблема: Vault не расшифровывает переменные
 
-**Симпptom:** `ERROR! A Vault password is required`.
+**Симптом:** `ERROR! A Vault password is required`.
 
 **Решение:**
 ```bash
@@ -548,7 +717,7 @@ ansible-playbook site.yml --check --diff
 # Использование регистров для условий
 # В плейбуке:
 # - name: Установка пакета
-#   apt:
+#   ansible.builtin.apt:
 #     name: nginx
 #     state: present
 #   register: nginx_install
@@ -567,7 +736,7 @@ ansible-playbook site.yml -vvv | grep "changed="
 # Проверка, что notify привязан к задаче
 # В плейбуке:
 # - name: Копирование конфигурации
-#   template:
+#   ansible.builtin.template:
 #     src: nginx.conf.j2
 #     dest: /etc/nginx/nginx.conf
 #   notify: Reload Nginx   # ← Должно быть на одном уровне с задачей
@@ -581,26 +750,44 @@ ansible-playbook site.yml --handlers-first
 
 ---
 
+## Рекомендации
+
+### Best Practices
+
+1. **Храните секреты в Vault**: Никогда не коммитьте пароли в открытом виде. Используйте `ansible-vault` с защищенным хранилищем паролей (например, `~/.vault_pass` с правами `600`).
+2. **Используйте FQCN**: Всегда указывайте полные имена модулей (`ansible.builtin.apt` вместо `apt`) для совместимости между версиями Ansible и коллекций.
+3. **Настраивайте `no_log: true`** для задач с секретами. Это предотвращает утечку данных в логи CI/CD.
+4. **Проверяйте идемпотентность**: Второй запуск плейбука не должен вносить изменения (`changed=0`). Это подтверждает корректность декларативного подхода.
+5. **Используйте `block/rescue/always`** вместо `ignore_errors: true` для осмысленной обработки ошибок.
+6. **Документируйте переменные** в `README.md` проекта или в `defaults/main.yml` роли с комментариями.
+7. **Выносите логику в роли**: Для повторного использования настройка сервисов должна быть оформлена как роль. Подробнее: **[Структура роли Ansible](../Roles/structure.md)**.
+8. **Настраивайте `ansible.cfg`** с разумными таймаутами и `ControlPersist` для ускорения повторных подключений.
+9. **Используйте `--check --diff`** перед первым запуском в production. Это позволяет увидеть точные изменения без риска.
+10. **Валидируйте конфигурацию**: Всегда проверяйте синтаксис YAML и плейбуков через `ansible-playbook --syntax-check` и `ansible-lint`.
+
+### Чек-лист безопасности
+
+| Проверка | Команда | Ожидаемый результат |
+|---|---|---|
+| Vault зашифрован | `ansible-vault view vars/vault.yml` | Содержимое отображается только после ввода пароля |
+| No_log включен | `grep no_log playbooks/*.yml` | Задачи с секретами имеют `no_log: true` |
+| Права на vault-файл | `ls -la vars/vault.yml` | `-rw-------` |
+| SSH-ключи | `ssh -o BatchMode=yes deploy@web1` | Подключение без пароля |
+| Sudo без пароля | `ansible web_servers -m command -a "whoami" --become` | `root` |
+| Линтер | `ansible-lint playbooks/` | Нет ошибок |
+| Синтаксис YAML | `yamllint .` | Нет ошибок |
+
+---
+
 ## Дополнительная информация
 
-### Иерархия переменных: Playbook-relative vs Inventory-relative
+### Смотрите также
 
-Ansible ищет каталоги `group_vars` и `host_vars` в двух основных местах:
-1.  **Playbook-relative**: Рядом с файлом плейбука. Эти переменные применяются ко всем запускам этого плейбука.
-2.  **Inventory-relative**: Рядом с файлом инвентаря (как показано в Сценарии 2). Это позволяет изолировать настройки `prod` от `stage`.
-
-**Рекомендация:** Используйте инвентарно-зависимые переменные (`environments/prod/group_vars/`) для параметров, специфичных для среды (IP-адреса, ключи доступа).
-
-### Динамическое масштабирование и плагины
-
-При работе с облачными провайдерами (AWS, Yandex Cloud, GCP) статические файлы `hosts.yml` заменяются или дополняются конфигурациями плагинов динамического инвентаря (например, `yandex_cloud_compute.yml`). Рекомендуется хранить такие конфигурации также внутри директории соответствующего окружения. Подробнее: **[Динамический инвентарь](../dynamic_inventory.md)**.
-
-### Интеграция с CI/CD и стандарты качества
-
-В Enterprise-проектах рекомендуется:
-- Хранить секреты не только в Vault, но и использовать внешние менеджеры (HashiCorp Vault, AWS Secrets Manager).
-- Использовать **ansible-lint** для соблюдения стандартов кодирования.
-- Автоматизировать запуск через пайплайны (GitLab CI, GitHub Actions), передавая пароли Vault через переменные окружения. Подробнее см. **[Безопасный CI/CD пайплайн](example_real_world_ci_cd.md)**.
+- [Структура роли (tasks, templates, handlers)](../Roles/structure.md)
+- [Установка и базовая настройка Ansible](../ansible_setup_and_config.md)
+- [Работа с Ansible Galaxy (роли и коллекции)](../Roles/galaxy.md)
+- [Антипаттерны Ansible](../ansible_bad_practices.md)
+- [Создание и использование ролей](../Roles/usage.md)
 
 ### Именование и нумерация
 
@@ -618,11 +805,9 @@ Ansible ищет каталоги `group_vars` и `host_vars` в двух осн
 | Большие инвентари | Медленная загрузка | Используйте динамический инвентарь или `yaml` вместо `ini` формата |
 | Vault и CI/CD | Пароль Vault недоступен | Передавайте через `ANSIBLE_VAULT_PASSWORD_FILE` env var |
 
----
+### Интеграция с CI/CD
 
-## Смотрите также
-
-- [Структура роли (tasks, templates, handlers)](../Roles/structure.md)
-- [Установка и базовая настройка Ansible](../ansible_setup_and_config.md)
-- [Работа с Ansible Galaxy (роли и коллекции)](../Roles/galaxy.md)
-- [Антипаттерны Ansible](../ansible_bad_practices.md)
+В Enterprise-проектах для автоматизации пайплайнов рекомендуется:
+- Использовать **ansible-lint** для соблюдения стандартов кодирования.
+- Автоматизировать запуск через пайплайны (GitLab CI, GitHub Actions, Jenkins), передавая пароли Vault через переменные окружения. Подробнее см. **[Безопасный CI/CD пайплайн](example_real_world_ci_cd.md)**.
+- Хранить секреты во внешнем менеджере секретов (HashiCorp Vault) вместо файлов на диск.

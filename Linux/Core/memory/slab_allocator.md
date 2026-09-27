@@ -348,6 +348,7 @@ watch -n5 "grep SUnreclaim /proc/meminfo"
 * **[Механизмы кэширования и освобождения памяти](./caching_and_reclaiming.md)** — взаимодействие Page Cache, shrinkers и slab.
 * **[Управление Swap и Page Faults](./swap_diagnostics.md)** — когда slab не может помочь и включается своп.
 * **[Оптимизация памяти](./performance_tuning.md)** — sysctl-параметры, watermarks, MGLRU.
+* **[Справочник sysctl-параметров памяти](./sysctl_memory_reference.md)** — единый reference по vm.vfs_cache_pressure, min_free_kbytes и др.
 * **[Механизм OOM Killer](../processes/oom_killer_mechanism.md)** — последний рубеж защиты при нехватке памяти.
 * **[/proc/meminfo — статистика памяти ядра](../../Diagnostics/Memory/proc_meminfo.md)** — первичный источник данных для Slab/SReclaimable/SUnreclaim.
 * **[vmstat — статистика виртуальной памяти](../../Diagnostics/Memory/vmstat.md)** — быстрый просмотр slab через `vmstat -m`.

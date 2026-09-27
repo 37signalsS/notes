@@ -1012,4 +1012,8 @@ groups:
 - [Image Promotion (CI/CD)](../../../../Docker/Docker_fs/images/promotion_cicd.md) — глубокое погружение в стратегии Build Once, продвижение по digest, ArgoCD Image Updater.
 - [Внешние менеджеры секретов](../../../Base/secrets/external_managers.md) — настройка Vault, External Secrets Operator, AppRole и Kubernetes auth.
 - [Распространённые ошибки Image Pull](./common_errors.md) — разбор кодов 401, 403, 429, TLS, race conditions и pull-through cache.
+- [NetworkPolicy и доступ к реестру](./network_policy_impact.md) — влияние NetworkPolicy и GlobalNetworkPolicy на image pull.
+- [Pod Security Standards и image pull](./pod_security_standards.md) — PSS/PSA и их влияние на загрузку образов.
+- [HPA и автоскейлинг](./hpa_and_scaling.md) — влияние масштабирования на image pull и rate limiting.
+- [Init-контейнеры и image pull](./init_container_image_pulls.md) — проблемы pull в init-контейнерах.
 

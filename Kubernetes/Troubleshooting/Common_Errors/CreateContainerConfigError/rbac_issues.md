@@ -625,6 +625,7 @@ kubectl get rolebindings,clusterrolebindings -A -o json | \
 - [Профилактика CreateContainerConfigError](./prevention.md)
 - [Проблемы с Secret](./secret_issues.md)
 - [Проблемы с ConfigMap](./configmap_issues.md)
+- [CRI и containerd](./cri_and_runtime.md) — Container Runtime Interface, взаимодействие kubelet с рантаймом
 - [Безопасность ServiceAccount и токенов](../../../Base/secrets/security.md)
 - [Концепции RBAC: Роли и привязки](../../../Security/rbac/rbac_overview.md)
 - [Субъекты доступа](../../../Security/rbac/subjects.md)

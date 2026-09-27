@@ -654,3 +654,4 @@ kubectl port-forward -n tempo svc/tempo 3200:3200 &
 
 - **[Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)** (назад)
 - **[Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)** (вперед)
+- **[Обзор стека](./lgtm_otel_minikube_overview.md)** (содержание)

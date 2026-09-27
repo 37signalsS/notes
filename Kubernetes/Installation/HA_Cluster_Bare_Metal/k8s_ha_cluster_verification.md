@@ -353,6 +353,13 @@ sudo tcpdump -i eth0 -n arp
 - [ ] Тестовое приложение успешно проходит все проверки доступности.
 - [ ] Failover-тесты пройдены успешно (VIP мигрирует, поды пересоздаются).
 
+**Day-2 (подробности в [Day-2 Operations](./k8s_ha_bare_metal_day2_operations.md)):**
+- [ ] MetalLB + Ingress-контроллер установлены и работают.
+- [ ] Prometheus/Grafana установлены, ключевые алерты настроены.
+- [ ] Бэкапы etcd работают по расписанию.
+- [ ] ResourceQuota/LimitRange установлены для production namespace.
+- [ ] Pod Security Admission включен.
+
 ### Troubleshooting (Поиск и устранение неисправностей)
 
 #### Проблема: Поды CoreDNS в статусе CrashLoopBackOff
@@ -414,3 +421,4 @@ kubectl top nodes
 - Настройка Keepalived/HAProxy: **[HA API-сервера с Keepalived и HAProxy](../kubeadm/ha_concepts.md)**
 - Диагностика сети: **[Порядок диагностики сети](../../../Linux/Networking/network_troubleshooting_order.md)**
 - Резервное копирование etcd: **[Стратегии резервного копирования](../../Operations/backup-strategies.md)**
+- Day-2 эксплуатация: **[Внешний доступ, мониторинг, обновления](./k8s_ha_bare_metal_day2_operations.md)**

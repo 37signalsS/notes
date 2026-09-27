@@ -269,9 +269,9 @@ build-app:
 # shared/ci-templates/docker-build.yml
 .docker-build-base:
   stage: build
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   variables:
     DOCKER_DRIVER: overlay2
   script:
@@ -345,9 +345,9 @@ stages:
 ```yaml
 # shared/ci-templates/docker-build.yml (ДО)
 .docker-build-base:
-  image: docker:27.0
+  image: docker:29.8
   services:
-    - docker:27.0-dind
+    - docker:29.8-dind
   script:
     - docker build -t $IMAGE .
 

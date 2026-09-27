@@ -18,6 +18,72 @@
 
 ---
 
+## Предварительные требования
+
+### Требования к окружению
+
+- **Podman >= 6.0** — для полной поддержки динамического обновления через `podman update`, стабильной работы `HealthOnFailure` и корректной обработки cgroups v2.
+- **systemd >= 245** (рекомендуется >= 247) — требуется для Quadlet, таймеров автообновления и работы `sd_notify`. На дистрибутивах без systemd healthcheck и Quadlet работают только через CLI.
+- **Cgroups v2** — обязателен для Podman 6.0; поддержка cgroups v1 удалена. Проверка: `stat -fc %T /sys/fs/cgroup` → должно быть `cgroup2fs`.
+- **Kernel 5.11+** — для нативного overlay и поддержки idmapped mounts в rootless.
+- **OCI Runtime**: по умолчанию используется `crun`; поддерживаются также `runc`, `runj`, `kata`, `runsc`.
+- **Rootless-режим**: требуется `loginctl enable-linger $USER` для работы пользовательских юнитов systemd после выхода из сессии.
+- **Skopeo** (опционально) — для копирования образов между реестрами без локального хранения.
+
+### Инициализация окружения
+
+```bash
+# Проверка версии Podman
+podman --version
+# → podman version 6.0.2
+
+# Проверка cgroups v2
+stat -fc %T /sys/fs/cgroup
+# → cgroup2fs
+
+# Проверка systemd
+systemctl --version
+# → systemd 255 (255.4-1.el9_4.6)
+
+# Проверка linger (для rootless)
+loginctl show-user $USER -p Linger
+# → Linger=yes
+
+# Проверка UID/GID диапазонов
+grep $USER /etc/subuid
+# → user:100000:65536
+grep $USER /etc/subgid
+# → user:100000:65536
+```
+
+### Предмиграционная проверка (Pre-flight)
+
+Перед началом миграции выполните аудит существующей инфраструктуры Docker:
+
+```bash
+# Список запущенных контейнеров
+docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+
+# Список volumes
+docker volume ls
+
+# Список сетей
+docker network ls
+
+# Список secrets (Swarm)
+docker secret ls
+
+# Проверка использования docker-compose
+find /opt -name "docker-compose*.yaml" -o -name "compose.yaml" 2>/dev/null
+
+# Проверка Docker socket consumers
+lsof /var/run/docker.sock | grep -v dockerd
+```
+
+Сохраните вывод команд для последующего сравнения после миграции.
+
+---
+
 ## Основные концепции
 
 ### Мотивация миграции
@@ -67,6 +133,7 @@
 Для полноценной работы без прав root необходимо настроить маппинг идентификаторов и системные лимиты. Полное описание механизмов — в разделе [Безрутовый (Rootless) режим](./podman_rootless.md).
 
 #### Настройка UID/GID (subuid/subgid)
+
 Убедитесь, что для пользователя выделен диапазон дополнительных ID (обычно 65536 на пользователя):
 ```bash
 grep $USER /etc/subuid
@@ -77,6 +144,7 @@ grep $USER /etc/subuid
 ```
 
 #### Разрешение низких портов и Linger
+
 Чтобы разрешить запуск сервисов на портах < 1024 и гарантировать работу контейнеров после выхода из SSH:
 ```bash
 # Разрешаем порты от 80
@@ -88,6 +156,7 @@ sudo loginctl enable-linger $USER
 ```
 
 #### Проверка готовности
+
 ```bash
 podman info --format '{{.Host.Security.Rootless}}'
 # → true
@@ -137,6 +206,7 @@ podman build -t myapp:latest .
 Podman поддерживает спецификацию Compose (Compose Spec), поэтому большинство файлов работают «как есть». Подробности о различиях и ограничениях — в разделе [Podman Compose](./podman-compose.md).
 
 #### Вариант А: Прямой запуск (Docker Compose V2 в качестве провайдера)
+
 Установите пакет `podman-docker`, включите сокет и используйте привычный CLI:
 ```bash
 # Подготовка сокета Podman (rootless)
@@ -151,6 +221,7 @@ podman compose up -d
 ```
 
 #### Вариант Б: Нативный podman-compose
+
 Python-утилита, исполняющая команды `podman` напрямую (без демона и сокета):
 ```bash
 # Debian/Ubuntu
@@ -166,6 +237,7 @@ podman-compose up -d
 `podman-compose` по умолчанию объединяет сервисы проекта в общий под (`pod_<проект>`), но с `--share=` (без общего network namespace), поэтому межсервисная связь работает по именам сервисов через DNS, а не через `localhost`.
 
 #### Вариант В: Конвертация в Quadlet (Рекомендуется)
+
 Для Production рекомендуется сгенерировать systemd-юниты из Compose-файла с помощью утилиты `podlet` (установка: `brew install podlet`, `cargo install podlet` или бинарник из [репозитория](https://github.com/containers/podlet)):
 
 ```bash
@@ -186,6 +258,8 @@ systemctl --user status my-app.service
 ```
 
 Альтернатива stdout: флаг `-f .` записывает файлы в текущий каталог, флаг `-u` — сразу в каталог юнитов. Сгенерированные файлы **обязательно проверять перед запуском**: podlet не является полным конвертером и возвращает ошибку при неподдерживаемых опциях (например, `build:`, `deploy.resources`, сложные `ipam:` блоки).
+
+Подробное описание форматов Quadlet и возможностей Podlet см. в [Quadlet и Podlet](./podman-quadlet-vs-podlet.md).
 
 **Маппинг Compose → Quadlet:**
 
@@ -389,6 +463,103 @@ docker info | grep "Runtime"
 
 ---
 
+## Устранение неполадок
+
+### Типичные ошибки миграции
+
+| Ошибка / симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `overlay mount fails` | Драйвер overlay недоступен в rootless | `podman info` | Установите `fuse-overlayfs` или используйте `vfs` драйвер. |
+| `no such file or directory` при copy | Неверный путь в контексте сборки | `ls -la <path>` | Проверьте `.dockerignore` и пути в Dockerfile. |
+| `permission denied` на volume | UID mismatch между хостом и контейнером | `podman unshare ls -l /data` | Используйте флаг `:U` или `--userns=keep-id`. |
+| `short name resolution` | Реестр не настроен в `registries.conf` | `podman pull nginx` | Используйте FQIN или добавьте `unqualified-search-registries`. |
+| `service_healthy condition unreliable` | `podman-compose` не реализует `condition: service_healthy` корректно | `docker compose config` | Используйте внешнего провайдера для `podman compose` или перейдите на Quadlet. |
+| `podman auto-update не обновляет` | Контейнер не управляется systemd или отсутствует FQIN | `podman auto-update --dry-run` | Убедитесь, что контейнер запущен через Quadlet с `AutoUpdate=registry` и полным именем образа. |
+| `iptables: No such file or directory` | Podman 6 использует nftables, iptables-модуль ядра отсутствует | `iptables -L` | Установите `iptables-nft` или настройте firewall через nftables. |
+| `cgroup v1 not supported` | Хост работает на cgroups v1 | `stat -fc %T /sys/fs/cgroup` | Обновите ядро и переключите на cgroups v2. |
+| `Error: no memory events supported` | cgroup контроллеры не делегированы в user slice | `systemctl show --user --property=Delegate` | Добавьте `Delegate=yes` в `user@.service.d/delegate.conf`. |
+| `podlet: unsupported option` | Compose-файл использует опции, не поддерживаемые podlet | `podlet ... 2>&1` | Удалите `build:`, `deploy.resources`, сложные `ipam:` из compose.yaml перед конвертацией. |
+
+---
+
+## Best Practices и откат
+
+### Рекомендации по миграции
+
+- **Rootless-first:** на Linux используйте rootless-режим для минимизации поверхности атаки. UID 0 внутри контейнера мапируется на обычный UID хоста.
+- **Quadlet вместо Compose:** в production используйте `systemd`-юниты для управления жизненным циклом, зависимостей и автоматического перезапуска.
+- **FQIN:** всегда указывайте полные имена образов в новых конфигурациях — это избавит от зависимости от `registries.conf` и обеспечит детерминированность в CI/CD.
+- **Проверка podlet-юнитов:** никогда не запускайте сгенерированные Quadlet-файлы без ручного ревью — podlet не обрабатывает `build:`, `deploy.resources` и сложные `ipam:` блоки.
+- **Бэкап хранилища:** перед обновлением Podman между мажорными версиями создайте резервную копию `~/.local/share/containers/storage` — миграция БД (BoltDB → SQLite) необратима.
+- **Мониторинг через journald:** настройте централизованный сбор логов через `journalctl --user -u <service>` или `journalctl --user -u podman-auto-update.service`.
+
+### Откат (Rollback)
+
+Если миграция завершилась частично или требуется вернуться к Docker:
+
+```bash
+# 1. Остановка всех Podman-контейнеров
+podman ps -q | xargs podman stop
+
+# 2. Восстановление Docker демона
+sudo systemctl enable --now docker
+
+# 3. Восстановление данных (если тома были скопированы)
+# Данные остаются в Podman storage; при необходимости скопируйте обратно
+podman run --rm -v podman_volume:/data -v "$PWD":/backup alpine \
+  tar czf /backup/restore_docker.tar.gz -C /data .
+
+# На стороне Docker
+docker run --rm -v docker_volume:/data -v "$PWD":/backup alpine \
+  tar xzf /backup/restore_docker.tar.gz -C /data
+
+# 4. Откат алиасов
+# Удалите alias docker=podman из ~/.bashrc/.zshrc
+# Или удалите пакет podman-docker
+sudo dnf remove podman-docker  # Fedora/RHEL
+sudo apt remove podman-docker  # Debian/Ubuntu
+```
+
+### Очистка окружения
+
+```bash
+# Удаление неиспользуемых образов, контейнеров, томов и сетей
+podman system prune -a
+
+# Удаление неиспользуемых образов (включая промежуточные слои)
+podman image prune -a
+
+# Удаление неиспользуемых томов (с подтверждением)
+podman volume prune
+
+# Удаление неиспользуемых сетей
+podman network prune
+```
+
+---
+
+## Версионирование
+
+| Версия Podman | Версия Docker | Особенности миграции |
+| :--- | :--- | :--- |
+| **4.x** → **5.0** | Docker Engine 24.x–25.x | `pasta` по умолчанию для rootless; добавлен Startup Healthcheck (Gate). Проверьте скрипты, зависящие от `slirp4netns`. |
+| **5.0** → **6.0** | Docker Engine 28.x–29.x | Удален `slirp4netns`; cgroups v1 не поддерживается; `iptables` удален из бэкенда firewall; BoltDB → SQLite. Требуется перезагрузка ядра на старых хостах. |
+| **6.x** (текущий) | Docker Engine 29.x | Полная замена Docker API через `podman.socket`; `podman update` для динамического обновления параметров; улучшена обработка отката автообновления. |
+
+---
+
+## Сравнение с Docker
+
+Детальное архитектурное сравнение, совместимость CLI, производительность и поддержка платформ см. в разделе [Сравнение Podman и Docker](./podman_vs_docker.md). Краткий обзор ключевых различий, влияющих на миграцию:
+
+- **Демон vs Daemonless:** Docker требует постоянно работающего `dockerd`; Podman запускает контейнеры как обычные процессы через `conmon`.
+- **Rootless:** в Docker rootless-режим реализован через отдельный `rootlesskit`; в Podman — нативно через User Namespaces.
+- **Сеть:** Docker использует `bridge` (172.17.0.0/16) + `iptables`; Podman — Netavark + Aardvark (10.88.0.0/16) + `nftables`.
+- **Автообновление:** Docker требует Watchtower (отдельный контейнер-монитор); Podman использует встроенный механизм через systemd-таймеры.
+- **Сборка:** Docker BuildKit требует демона; Podman Buildah работает без демона и без root.
+
+---
+
 ## Нюансы и ограничения
 
 - **Явные реестры (Fully Qualified Image Names)**: Podman (в отличие от Docker) по соображениям безопасности требует указывать полный путь к образу: `docker.io/library/nginx` вместо просто `nginx`, либо настраивать `unqualified-search-registries` в `registries.conf` (при этом короткое имя может разрешиться в образ не с Docker Hub, а из вендорского реестра).
@@ -399,6 +570,10 @@ docker info | grep "Runtime"
 - **Firewall**: Podman настраивает правила только через **nftables** (с Podman 6 бэкенд `iptables` удален); при наличии внешних правил iptables возможны конфликты.
 - **Rootless-сеть pasta**: контейнеры изолированы друг от друга по умолчанию — прямой связи между ними нет; для взаимодействия нужен проброс портов хоста, общий под или rootless bridge (Netavark).
 - **Healthcheck**: директива `HEALTHCHECK` из Dockerfile работает в Podman; для Quadlet используется маппинг `HealthCmd=`/`HealthInterval=` и т.д. Подробнее — в разделе [Проверки состояния (Healthcheck) в Podman](./podman_healthchecks.md).
+- **Сборка образов**: Docker BuildKit поддерживает продвинутые функции кэширования и параллельной сборки; Buildah обеспечивает совместимость, но сложные сценарии могут требовать адаптации Dockerfile.
+- **Автообновление**: работает только для контейнеров, управляемых systemd (Quadlet или `podman generate systemd --new`). Простые `podman run` контейнеры игнорируются, даже если помечены меткой `io.containers.autoupdate`.
+- **Registry authentication**: `podman login` хранит учетные данные в `~/.config/containers/auth.json`; при переносе скопируйте этот файл или используйте `--authfile`.
+- **Storage driver**: Docker использует `overlay2`; Podman поддерживает `overlay`, `vfs`, `devicemapper`, `btrfs`, `zfs`. В rootless по умолчанию `overlay` (требует `fuse-overlayfs` или kernel 5.11+ с idmapped mounts).
 
 ---
 
@@ -408,6 +583,10 @@ docker info | grep "Runtime"
 - **[Безрутовый (Rootless) режим](./podman_rootless.md)** — механизмы маппинга UID/GID и подготовка системы.
 - **[Podman Compose](./podman-compose.md)** — особенности запуска Compose-файлов и совместимые режимы.
 - **[Бездемонная архитектура и Quadlet](./podman_daemonless_architecture.md)** — целевая модель управления через systemd.
+- **[Сравнение Podman и Docker](./podman_vs_docker.md)** — архитектурные различия, производительность и поддержка платформ.
+- **[Автообновление и откат в Podman](./podman_auto_update.md)** — замена Watchtower и настройка `AutoUpdate=registry`.
+- **[Управление зависимостями и готовностью](./podman-dependencies.md)** — `Notify=healthy`, `sd_notify` и старт сервисов.
+- **[Проверки состояния (Healthcheck) в Podman](./podman_healthchecks.md)** — маппинг `HEALTHCHECK` в Quadlet.
 
 ### Ссылки
 - **[Migrating from Docker to Podman (официальный блог)](https://podman.io/blogs/2019/11/05/docker2podman)** — обзор процесса миграции (англ.).

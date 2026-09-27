@@ -83,6 +83,47 @@ limits.cpu = P99 потребления × 1.5 (запас 50%)
 limits.memory = P99 потребления × 1.5
 ```
 
+#### Шаг 4: Валидация через VPA и Goldilocks
+
+1. Установите VPA в режиме `Off` для сбора рекомендаций
+2. Дождитесь накопления данных (7+ дней)
+3. Сравните рекомендации VPA с вашими расчётами
+4. Если расхождение > 30% — скорректируйте requests
+
+#### Шаг 5: Проверка влияния на HPA
+
+```bash
+# Проверка утилизации после правки requests
+kubectl top pods -l app=my-app --containers
+
+# Проверка HPA: должен масштабировать при пике
+kubectl get hpa my-app-hpa -w
+
+# PromQL: утилизация CPU vs target
+# utilization = (current_usage / requests) × 100%
+# HPA масштабирует, когда utilization > target (например, 70%)
+```
+
+#### Шаг 6: Проверка влияния на CA
+
+```bash
+# Проверка: CA создает узлы из-за завышенных requests?
+kubectl get nodes -o custom-columns=NAME:.metadata.name,cpu-alloc:.status.allocatable.cpu,memory-alloc:.status.allocatable.memory
+
+# Проверка: сколько подов помещается на узел?
+# Поды с requests.cpu=200m на узле с 4 CPU: 4000m / 200m = 20 подов
+# Поды с requests.cpu=1000m на узле с 4 CPU: 4000m / 1000m = 4 пода
+```
+
+#### Шаг 7: Итеративная оптимизация
+
+| Параметр | Целевое значение | Как проверить |
+|----------|------------------|---------------|
+| CPU requests | P95 + 20% | `kubectl top pods`, VPA recommendations |
+| Memory requests | P99 + 30% | `kubectl top pods`, VPA recommendations |
+| HPA target utilization | 60-80% | `kubectl get hpa`, PromQL |
+| CA over-provisioning | < 20% | Сравнение requests vs allocatable на узлах |
+
 ---
 
 ## Практический блок

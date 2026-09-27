@@ -2,98 +2,50 @@
 
 ## Определения
 
-**Тестирование контейнеров** — проверка корректности сборки, функционирования и безопасности Docker-образов и запущенных контейнеров. Включает валидацию Dockerfile, проверку образа на уязвимости, тестирование функциональности приложения внутри контейнера и compliance.
+**Тестирование контейнеров** — проверка корректности сборки, функционирования и безопасности Docker-образов и запущенных контейнеров на всех этапах CI/CD. Включает статический анализ Dockerfile, сканирование образа на уязвимости, функциональное тестирование приложения внутри контейнера и проверку на соответствие стандартам.
 
-**Container Scanning** — автоматический анализ Docker-образа на известные уязвимости (CVE) в зависимостях, OS-пакетах и application dependencies.
+**Container Scanning** — автоматический анализ Docker-образа на известные уязвимости (CVE) в зависимостях, OS-пакетах и application dependencies. Подробнее: **[Сканирование Docker-образов на уязвимости](../../Docker/Docker_security/vulnerability_scanning.md)**.
 
-**Image Linting** — статический анализ Dockerfile на соответствие best practices (многоэтапная сборка, минимальные образы, отсутствие секретов).
+**Image Linting** — статический анализ Dockerfile на соответствие best practices (многоэтапная сборка, минимальные образы, отсутствие секретов). Подробнее: **[Инструменты оптимизации Dockerfile](../../Docker/Dockerfile/dockerfile_optimization_tools.md)**.
 
-**Compliance Check** — проверка контейнера на соответствие корпоративным и отраслевым стандартам (CIS Docker Benchmark, NIST, PCI-DSS).
+**SBOM (Software Bill of Materials)** — формализованный перечень всех компонентов и зависимостей образа. Подробнее: **[Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**.
 
-## Основные концепции
+**Testcontainers** — библиотека для запуска эфемерных зависимостей (базы данных, брокеры сообщений) в Docker-контейнерах во время тестов. Подробнее: **[Testcontainers Overview](../../Testing/testcontainers_overview.md)**.
+
+**Quality Gate** — критерий прохождения этапа pipeline (например, отсутствие CRITICAL уязвимостей, прохождение всех smoke-тестов).
+
+## Основные концепции и архитектура
 
 ### Уровни тестирования контейнеров
 
-| Уровень | Что проверяется | Инструменты |
-| :--- | :--- | :--- |
-| **Dockerfile Lint** | Best practices, безопасность, оптимизация | Hadolint, Dockle, Dockerfilelint |
-| **Image Scan (CVE)** | Уязвимости в ОС-пакетах и зависимостях | Trivy, Grype, Snyk Container |
-| **Functional Test** | Приложение работает корректно внутри контейнера | Testcontainers, docker-compose + pytest |
-| **SBOM (Software Bill of Materials)** | Полный состав образа | Syft, Trivy SBOM, Docker SBOM |
-| **Compliance** | CIS Benchmark, разрешенные образы | Trivy misconfiguration, Dockle |
-| **Runtime Security** | Поведение контейнера в production | Falco, Sysdig, Aqua |
+| Уровень | Что проверяется | Инструменты | Характеристики |
+| :--- | :--- | :--- | :--- |
+| **Dockerfile Lint** | Best practices, безопасность, оптимизация | Hadolint, Dockle, BuildKit Checks | Быстрый, статический, без сборки образа |
+| **Image Scan (CVE)** | Уязвимости в ОС-пакетах и зависимостях | Trivy, Grype, Docker Scout | Средняя скорость, требует собранного образа |
+| **SBOM Generation** | Полный состав образа | Syft, Trivy SBOM, Docker SBOM | Быстрый, используется для аудита и подписания |
+| **Functional Test** | Приложение работает корректно внутри контейнера | Testcontainers, docker-compose + pytest | Медленный, проверяет runtime-поведение |
+| **Compliance** | CIS Benchmark, отраслевые стандарты | Trivy misconfiguration, Dockle | Проверка конфигурации и permissions |
+| **Runtime Security** | Поведение контейнера в production | Falco, Sysdig, Aqua | Мониторинг работающего контейнера |
 
-### Hadolint: линтинг Dockerfile
+### Жизненный цикл тестирования контейнера в CI/CD
 
-```bash
-# Установка
-brew install hadolint  # macOS
-# или
-docker run --rm -i hadolint/hadolint < Dockerfile
+1. **Trigger:** push, merge request, schedule, manual
+2. **Lint:** статический анализ Dockerfile (Hadolint, BuildKit Checks)
+3. **Build:** сборка образа с фиксацией тега (commit SHA, SemVer)
+4. **Scan:** сканирование образа на CVE (Trivy, Grype) и misconfigurations
+5. **SBOM:** генерация перечня компонентов (Syft, Trivy SBOM)
+6. **Functional Test:** запуск контейнера и выполнение smoke-тестов (pytest, curl, Testcontainers)
+7. **Quality Gate:** проверка pass rate, порог уязвимостей, compliance
+8. **Sign & Push:** подписание артефакта (Cosign/GPG) и публикация в registry
+9. **Cleanup:** остановка контейнеров, удаление временных артефактов
 
-# Проверка Dockerfile
-hadolint Dockerfile
+### Интеграция с DevSecOps
 
-# Проверка с игнорированием определенных правил
-hadolint --ignore DL3008 --ignore DL3013 Dockerfile
+Контейнерное тестирование является частью Shift-Left Security. Подробнее о методологии: **[DevSecOps Overview](../../CI-CD/DevSecOps/devsecops_overview.md)**.
 
-# Проверка в CI
-hadolint Dockerfile --format json > results/hadolint.json
-```
+## Практические сценарии
 
-### Trivy: сканирование образов на уязвимости
-
-```bash
-# Сканирование локального образа
-trivy image myapp:latest
-
-# Сканирование с фильтрацией по severity
-trivy image --severity HIGH,CRITICAL myapp:latest
-
-# Сканирование с выводом в JSON
-trivy image -f json -o results/trivy.json myapp:latest
-
-# Сканирование Dockerfile на misconfigurations
-trivy config --misconfig-scanners dockerfile Dockerfile
-
-# SBOM генерация
-trivy image --format spdx-json -o results/sbom.json myapp:latest
-
-# Порог для CI (fail при CRITICAL)
-trivy image --exit-code 1 --severity CRITICAL myapp:latest
-```
-
-### Grype: альтернатива Trivy
-
-```bash
-# Сканирование образа
-grype myapp:latest
-
-# Сканирование с порогом
-grype myapp:latest --fail-on critical
-
-# Сравнение двух образов
-grype myapp:v1 vs myapp:v2
-```
-
-### Dockle: CIS Benchmark проверка
-
-```bash
-# Установка
-brew install dockle
-
-# Проверка образа на соответствие CIS
-dockle myapp:latest
-
-# Проверка с игнорированием
-dockle --exit-code 1 --exit-level warn myapp:latest
-```
-
----
-
-## Практические реализации
-
-### Функциональное тестирование контейнера
+### Функциональное тестирование контейнера (Python + Docker SDK)
 
 ```python
 import docker
@@ -103,7 +55,7 @@ import pytest
 
 @pytest.fixture(scope="module")
 def container():
-    """Запуск контейнера для тестирования."""
+    """Запуск контейнера для функционального тестирования."""
     client = docker.from_env()
     
     container = client.containers.run(
@@ -113,7 +65,7 @@ def container():
         environment={"DATABASE_URL": "sqlite:///test.db"}
     )
     
-    time.sleep(5)  # Ожидание запуска
+    time.sleep(5)  # Ожидание запуска приложения
     
     yield container
     
@@ -185,40 +137,7 @@ docker compose -f docker-compose.test.yml down
 exit $EXIT_CODE
 ```
 
-### Trivy в CI/CD Pipeline
-
-```yaml
-# GitLab CI
-container_scan:
-  stage: test
-  image:
-    name: aquasec/trivy:latest
-    entrypoint: [""]
-  script:
-    # Сканирование на уязвимости
-    - trivy image --exit-code 1 --severity HIGH,CRITICAL ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}
-    # Сканирование Dockerfile на misconfigurations
-    - trivy config --exit-code 1 --misconfig-scanners dockerfile Dockerfile
-    # Генерация SBOM
-    - trivy image --format spdx-json -o sbom.json ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}
-  artifacts:
-    paths:
-      - sbom.json
-```
-
-```yaml
-# GitHub Actions
-- name: Run Trivy vulnerability scanner
-  uses: aquasecurity/trivy-action@master
-  with:
-    image-ref: '${{ github.repository }}:${{ github.sha }}'
-    format: 'sarif'
-    output: 'trivy-results.sarif'
-    severity: 'CRITICAL,HIGH'
-    exit-code: '1'
-```
-
-### Testcontainers: тестирование приложения в контейнере
+### Testcontainers: тестирование приложения с зависимостями
 
 ```java
 @Testcontainers
@@ -250,7 +169,76 @@ class ApplicationIntegrationTest {
 }
 ```
 
----
+Подробнее о конфигурации, стратегиях ожидания и безопасности Testcontainers: **[Testcontainers Overview](../../Testing/testcontainers_overview.md)**.
+
+### Trivy в CI/CD Pipeline
+
+```yaml
+# GitLab CI
+container_scan:
+  stage: test
+  image:
+    name: aquasec/trivy:0.74.0
+    entrypoint: [""]
+  script:
+    # Сканирование на уязвимости
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}
+    # Сканирование Dockerfile на misconfigurations
+    - trivy config --exit-code 1 --misconfig-scanners dockerfile Dockerfile
+    # Генерация SBOM
+    - trivy image --format spdx-json -o sbom.json ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}
+  artifacts:
+    paths:
+      - sbom.json
+```
+
+```yaml
+# GitHub Actions
+- name: Run Trivy vulnerability scanner
+  uses: aquasecurity/trivy-action@master
+  with:
+    image-ref: '${{ github.repository }}:${{ github.sha }}'
+    format: 'sarif'
+    output: 'trivy-results.sarif'
+    severity: 'CRITICAL,HIGH'
+    exit-code: '1'
+```
+
+## Операции и команды
+
+### CLI-инструменты для тестирования контейнеров
+
+| Инструмент | Назначение | Основные команды |
+| :--- | :--- | :--- |
+| **hadolint** | Линтинг Dockerfile | `hadolint Dockerfile --ignore DL3008` |
+| **trivy** | Сканирование CVE, secrets, misconfigurations | `trivy image --severity HIGH,CRITICAL myapp:latest` |
+| **grype** | Сканирование уязвимостей | `grype myapp:latest --fail-on critical` |
+| **dockle** | CIS Docker Benchmark проверка | `dockle --exit-code 1 myapp:latest` |
+| **syft** | Генерация SBOM | `syft myapp:latest -o spdx-json > sbom.json` |
+| **dive** | Анализ слоев образа | `dive myapp:latest` |
+| **docker scout** | Рекомендации по base image | `docker scout recommendations myapp:latest` |
+| **Testcontainers** | Эфемерные контейнеры для тестов | Программный API (Java, Python, Go) |
+| **docker compose** | Управление multi-service тестовыми стеками | `docker compose -f docker-compose.test.yml up -d` |
+
+### Основные параметры Trivy
+
+| Параметр | Описание | Пример |
+| :--- | :--- | :--- |
+| `--severity` | Фильтр по критичности | `--severity HIGH,CRITICAL` |
+| `--exit-code` | Exit code при обнаружении уязвимостей | `--exit-code 1` |
+| `--ignore-unfixed` | Только уязвимости с доступным исправлением | `--ignore-unfixed` |
+| `--format` | Формат вывода | `--format json` |
+| `--misconfig-scanners` | Сканеры misconfigurations | `--misconfig-scanners dockerfile` |
+| `-o, --output` | Файл отчета | `-o results/trivy.json` |
+| `--show-epss` | Показ EPSS-метрик | `--show-epss` |
+
+### Основные параметры Hadolint
+
+| Параметр | Описание | Пример |
+| :--- | :--- | :--- |
+| `--ignore` | Игнорировать правила | `--ignore DL3008 --ignore DL3013` |
+| `--format` | Формат вывода | `--format json` |
+| `-t, --threshold` | Порог для warning/error | `-t warning` |
 
 ## GitLab CI: полный pipeline тестирования контейнера
 
@@ -295,7 +283,7 @@ build_image:
 
 container_scan:
   stage: scan
-  image: aquasec/trivy:latest
+  image: aquasec/trivy:0.74.0
   script:
     - trivy image --exit-code 1 --severity HIGH,CRITICAL --input image.tar
     - trivy image --format spdx-json -o sbom.json --input image.tar
@@ -319,32 +307,89 @@ functional_test:
       junit: results.xml
 ```
 
----
-
 ## Типичные ошибки и диагностика
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
 | Hadolint: `DL3007` — using latest tag | Dockerfile использует `FROM image:latest` | Зафиксировать версию: `FROM image:1.2.3` |
+| Hadolint: `DL3002` — running as root | Контейнер запущен от root | Добавить `USER nonroot` в Dockerfile |
 | Trivy: `CRITICAL` vulnerabilities | Устаревшие зависимости в образе | Обновить base image и dependencies, пересобрать |
 | Контейнер падает при запуске в CI | Нет health check / insufficient memory | Добавить `healthcheck` в Dockerfile, увеличить `--memory` |
 | `permission denied` при запуске от non-root | Файлы принадлежат root | Добавить `USER` и `COPY --chown` в Dockerfile |
 | Dockle: `CIS-DI-0002` — secrets in image | API-ключи захардкожены в образе | Использовать Docker secrets, multi-stage build, `.dockerignore` |
 | SBOM не генерируется | Неподдерживаемый формат образа | Убедиться, что образ — OCI/Docker manifest v2 |
+| Testcontainers: `Cannot connect to Docker` | Docker socket не проброшен в CI | Добавить сервис `docker:dind` или пробросить `/var/run/docker.sock` |
+| Ryuk: container cleanup failed | Привилегированный режим запрещен | Отключить Ryuk: `TESTCONTAINERS_RYUK_DISABLED=true` |
+| `no space left on device` в CI | Накопление образов и контейнеров | Настроить prune политику: `docker system prune -f` |
 
----
+### Диагностика в air-gapped средах
+
+При отсутствии доступа к внешним репозиториям:
+
+```bash
+# Проверка наличия образов локально
+docker images | grep myapp
+
+# Проверка статуса контейнера
+docker ps -a --filter "name=myapp"
+
+# Просмотр логов контейнера
+docker logs --tail 100 myapp-container
+
+# Проверка занятого места
+docker system df
+
+# Проверка health check
+docker inspect --format='{{.State.Health.Status}}' myapp-container
+
+# Ручной запуск healthcheck
+docker exec myapp-container curl -f http://localhost:8080/health
+```
+
+## Best Practices
+
+### Проектирование Dockerfile
+
+- **Минимальные образы:** используйте `distroless` или `alpine`. Чем меньше пакетов в ОС, тем меньше поверхность атаки и количество CVE.
+- **Фиксированные версии:** никогда не используйте `:latest` в CI/CD; фиксируйте версии base image и пакетов.
+- **Multi-stage сборки:** удаляйте компиляторы, менеджеры пакетов и SSH-ключи из финального образа.
+- **Non-root пользователи:** запускайте контейнер от непривилегированного пользователя.
+- **Health check:** добавляйте `HEALTHCHECK` в Dockerfile для отслеживания состояния контейнера.
+- **`.dockerignore`:** исключайте файлы с секретами, `.git`, `node_modules` из контекста сборки.
+
+### Pipeline
+
+- **Quality Gates:** fail-fast на lint-уровне, progressive testing (сначала быстрые проверки, потом медленное сканирование).
+- **Параллелизм:** запуск lint и scan параллельно при отсутствии зависимости.
+- **Кэширование:** кэширование слоев Docker (`--cache-from`) между стадиями для ускорения сборки.
+- **Artifacts:** сохранение SBOM, отчетов Trivy/Hadolint на каждой стадии для аудита.
+- **Image Tag Pinning:** использование commit SHA или SemVer вместо `latest`.
+
+### Security
+
+- **Секреты:** never hardcode secrets in Dockerfile; используйте build-time secrets (`docker build --secret`) или runtime secrets.
+- **Сканирование на всех этапах:** lint → build → scan → runtime.
+- **SBOM:** генерация и подпись SBOM для каждого артефакта.
+- **Supply Chain:** верификация подписи образа перед запуском в production (Cosign + Kyverno admission control).
+
+### Air-gapped среды
+
+- **Offline registry:** размещение registry внутри периметра с зеркалированием нужных образов.
+- **Local cache:** кэширование сканеров (Trivy, Grype) и баз данных CVE.
+- **Pre-staging:** предварительная загрузка образов зависимостей на CI-раннеры.
 
 ## Дополнительная информация
 
 ### См. также
-- **[Безопасность контейнеров](../../Docker/Docker_security/vulnerability_scanning.md)** — SSoT для Trivy, Grype, сканирования.
-- **[Dockerfile: оптимизация](../../Docker/Dockerfile/dockerfile_optimization_tools.md)** — инструменты оптимизации.
-- **[SBOM и Supply Chain](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)** — SBOM, SLSA, Sigstore.
-- **[DevSecOps Overview](../../CI-CD/DevSecOps/devsecops_overview.md)** — Shift-Left Security.
-- **[Testcontainers](../../Testing/testcontainers_overview.md)** — изолированные контейнеры для тестов.
+
+* **[Сканирование Docker-образов на уязвимости](../../Docker/Docker_security/vulnerability_scanning.md)** — Trivy, Grype, Copacetic, VEX.
+* **[Инструменты оптимизации Dockerfile](../../Docker/Dockerfile/dockerfile_optimization_tools.md)** — Hadolint, Dive, Docker Scout.
+* **[Testcontainers Overview](../../Testing/testcontainers_overview.md)** — изолированные контейнеры для интеграционных тестов.
 
 ### Внешние ресурсы
-- [Hadolint](https://github.com/hadolint/hadolint) — Dockerfile linter.
-- [Trivy](https://trivy.dev/) — scanner для контейнеров, IaC, SBOM.
-- [Grype](https://github.com/anchore/grype) — scanner уязвимостей образов.
-- [Dockle](https://github.com/goodwithtech/dockle) — CIS Docker Benchmark checker.
+
+* [Hadolint](https://github.com/hadolint/hadolint) — Dockerfile linter.
+* [Trivy](https://trivy.dev/) — scanner для контейнеров, IaC, SBOM.
+* [Grype](https://github.com/anchore/grype) — scanner уязвимостей образов.
+* [Dockle](https://github.com/goodwithtech/dockle) — CIS Docker Benchmark checker.
+* [Testcontainers](https://testcontainers.com/) — библиотека для интеграционных тестов с контейнерами.

@@ -14,7 +14,7 @@
 
 | Стратегия | Описание | Применение |
 |-----------|----------|------------|
-| **Централизованное хранилище** | Единое защищённое место (Vault, AWS Secrets Manager) | Крупные проекты, production |
+| **Централизованное хранилище** | Единое защищённое место (Vault, HashiCorp Boundary) | Крупные проекты, production |
 | **Шифрование в Git (GitOps)** | Секреты шифруются, хранятся в Git рядом с кодом | GitOps-пайплайны |
 | **Нативные решения платформы** | Встроенные средства (Kubernetes Secrets, Docker Secrets) | Среды с ограниченными требованиями |
 | **Переменные окружения CI/CD** | Секреты управляются CI/CD-системой | Small projects, CI/CD-стадии |
@@ -27,6 +27,15 @@
 - **Аудит:** логирование всех операций чтения/записи/удаления
 - **Никогда в логах:** секрет не должен попадать в stdout/stderr, логи, метрики
 
+### Типы секретов
+
+| Тип | Примеры | Особенности управления |
+|-----|---------|----------------------|
+| **Учётные данные** | Пароли БД, API-ключи, токены | Краткосрочные, подлежат ротации |
+| **Криптографические ключи** | SSH-ключи, TLS-сертификаты, JWT-ключи | Долгосрочные, требуют защиты от утечки |
+| **Сервисные идентификаторы** | ServiceAccount, AppRole, machine identities | Создаются автоматически, имеют ограниченный TTL |
+| **Секреты сборки** | Токены реестра, GPG-ключи подписи | Существуют только во время пайплайна |
+
 ### Сравнение подходов
 
 | Критерий | CI/CD Variables | SOPS | HashiCorp Vault | K8s Secrets (с шифрованием) |
@@ -38,11 +47,59 @@
 | **Динамические секреты** | Нет | Нет | Да | Нет |
 | **Аудит** | Ограниченный | Через Git | Детальный | Через K8s audit / Git |
 
+### Модель угроз (Threat Model)
+
+| Вектор | Как секрет попадает наружу | Контрмера |
+| :--- | :--- | :--- |
+| **Переменные окружения** | видны в `ps auxe`, `/proc/<pid>/environ`, дампах при падении | JIT/OIDC, инъекция в память, маскирование |
+| **Логи CI/build** | печать переменной, трассировки, архивы логов job'а | маскирование, запрет `set -x` для секретных шагов |
+| **Слои образа** | `ENV`/`COPY` ключей остаются в истории слоёв | BuildKit `--secret`, multi-stage без ключей |
+| **Кэш CI / shared runners** | секрет попадает в кэш зависимостей или workspace другого джоба | эфемерные раннеры, изолированный кэш |
+| **Swap / pagefile / core dump** | секрет из памяти сбрасывается на диск | `swap off`/`encrypted swap`, `ulimit -c 0`, `IPC_LOCK` |
+| **Process listing / IPC** | `ps`, `/proc`, shared memory | наименьшие привилегии, read-only rootfs |
+| **История Git** | случайный коммит | pre-commit сканирование, push protection, `git filter-repo` |
+| **Физический доступ к носителям** | несанкционированное чтение бэкапов, дисков | шифрование дисков, защищённые хранилища |
+| **Утечка через каналы связи** | перехват трафика при передаче | TLS/mTLS, изоляция сетей |
+
+### Локальные инструменты для работы с секретами
+
+Для системных администраторов и SRE ключевыми инструментами являются:
+
+- **age** — современный инструмент для шифрования файлов (альтернатива GPG). Простой в управлении, быстрый. Рекомендуется для локальной разработки и командной работы.
+- **GnuPG (GPG)** — классическая реализация OpenPGP. Подходит для подписей Git-коммитов, шифрования почты и файлов. Подробнее — [GPG и OpenPGP](../../Linux/Security/Tools/gpg_and_openpgp.md).
+- **OpenSSL** — универсальная криптографическая библиотека и CLI. Используется для генерации ключей, сертификатов, шифрования файлов и отладочных целей.
+- **systemd-creds** — встроенный механизм systemd (v247+) для шифрования секретов с привязкой к конкретной машине. Секреты шифруются ключом TPM или machine-id, что исключает их чтение на другом хосте.
+- **ssh-agent / keychain** — безопасное хранение SSH-ключей в памяти с кэшированием фразы-пароля. `keychain` добавляет персистентность между сессиями.
+
+### Жизненный цикл секрета (Secret Lifecycle)
+
+Секрет проходит через несколько стадий, и безопасность определяется тем, насколько коротко и контролируемо он существует на каждой из них:
+
+1.  **Генерация (Generation):** высокоэнтропийные значения (CSPRNG, `openssl rand`, встроенные генераторы хранилища), без ручного ввода.
+2.  **Хранение (Storage):** шифрование при хранении (encryption at rest), доступ строго по политике, разделение на окружения.
+3.  **Доставка (Distribution):** только в память процесса или временный `tmpfs`/файл, поверх TLS; никогда — в `ENV` навсегда или в образ.
+4.  **Использование (Usage):** минимальное время жизни, маскирование в логах.
+5.  **Ротация (Rotation):** плановая или по событию (см. ниже).
+6.  **Отзыв (Revocation):** немедленный отзыв при компрометации.
+7.  **Уничтожение (Destruction):** безопасное удаление из памяти/диска и из истории Git.
+8.  **Аудит (Audit):** логирование каждого обращения.
+
+Общий принцип: секрет должен существовать *ровно столько и только там*, где он нужен.
+
+### Сканирование и обнаружение секретов
+
+Первая линия обороны — не допустить попадания секретов в систему контроля версий:
+
+- **Shift Left (Pre-commit хуки):** `gitleaks`, `trufflehog`, `detect-secrets` локально у разработчиков.
+- **Push Protection:** встроенные механизмы GitLab/GitHub, блокирующие коммиты с обнаруженными ключами.
+- **История коммитов:** сканирование всей истории (не только текущего состояния) для обнаружения старых утечек.
+- **Непрерывное сканирование:** регулярный запуск сканеров в CI-пайплайнах и регламентный аудит артефактов.
+
 ## Practical Scenarios
 
 ### HashiCorp Vault — централизованное управление
 
-SSoT: [Vault overview](../../Vault/overview.md)
+Авторитетный источник: [Vault overview](../../Vault/overview.md)
 
 Для масштабных и зрелых проектов. Обеспечивает хранениеение, аудит, динамическую генерацию и ротацию секретов.
 
@@ -57,11 +114,11 @@ vault kv get secret/db
 vault write database/creds/readonly
 ```
 
-Интеграции: [Vault + Docker](../../Vault/guides/vault_docker_integration.md), [Vault + ArgoCD](../../GitOps/ArgoCD/argocd_vault_integration.md), [Vault + Nomad](../../Nomad/practical_scenarios.md#секреты-через-vault).
+Интеграции: [Vault + Docker](../../Vault/guides/vault_docker_integration.md), [Vault + ArgoCD](../../GitOps/ArgoCD/argocd_vault_integration.md).
 
 ### Kubernetes Secrets — нативный подход
 
-SSoT: [Kubernetes Secrets](../../Kubernetes/Base/secrets/secrets_basics.md)
+Авторитетный источник: [Kubernetes Secrets](../../Kubernetes/Base/secrets/secrets_basics.md)
 
 Ресурс `Secret` хранит данные в base64 в etcd — **по умолчанию не шифруется**. Требуется включение [EncryptionConfiguration](../../Kubernetes/Base/secrets/security.md) или внешнее шифрование.
 
@@ -69,13 +126,13 @@ SSoT: [Kubernetes Secrets](../../Kubernetes/Base/secrets/secrets_basics.md)
 
 - **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)** — шифрует так, что расшифровать может только контроллер в кластере
 - **[SOPS](../Tools/sops_overview.md)** — шифрование файлов через KMS, PGP, age
-- **[External Secrets Operator](../../Kubernetes/Base/secrets/external_managers.md)** — синхронизация из Vault, AWS Secrets Manager, GCP Secret Manager
+- **[External Secrets Operator](../../Kubernetes/Base/secrets/external_managers.md)** — синхронизация из Vault, локальных KMS
 
 ### SOPS + GitOps
 
-SSoT: [SOPS overview](../Tools/sops_overview.md), [GitOps Secrets](../../GitOps/secrets_encryption.md)
+Авторитетный источник: [SOPS overview](../Tools/sops_overview.md), [GitOps Secrets](../../GitOps/secrets_encryption.md)
 
-Шифрование значений (не ключей) в YAML/JSON/ENV-файлах. Ключи шифрования — в KMS, PGP, age, HCVault. Файлы коммитятся в Git в зашифрованном виде.
+Шифрование значений (не ключей) в YAML/JSON/ENV-файлах. Ключи шифрования — в KMS, PGP, age, Vault. Файлы коммитятся в Git в зашифрованном виде.
 
 ```bash
 # Шифрование файла
@@ -87,7 +144,7 @@ sops --decrypt secret.enc.yaml
 
 ### Переменные окружения в CI/CD
 
-SSoT: [CI/CD Secrets Management](../../CI-CD/DevSecOps/secrets_management.md)
+Авторитетный источник: [CI/CD Secrets Management](../../CI-CD/DevSecOps/secrets_management.md)
 
 Секреты хранятся в настройках CI/CD (GitLab CI Variables, GitHub Secrets), передаются в пайплайн как env vars. Подходит для токенов деплоя, credentials registry, SSH-ключей.
 
@@ -95,27 +152,68 @@ SSoT: [CI/CD Secrets Management](../../CI-CD/DevSecOps/secrets_management.md)
 
 ### Docker Secrets
 
-SSoT: [Docker Secrets Management](../../Docker/Docker_security/secrets_management.md)
+Авторитетный источник: [Docker Secrets Management](../../Docker/Docker_security/secrets_management.md)
 
 Для Docker Swarm и Docker Compose. Секреты монтируются в `/run/secrets/` внутри контейнера, не хранятся в image.
 
 ### Паттерн доставки секретов в K8s-приложения
 
-SSoT: [Application Secrets Management](../../Kubernetes/Security/application_secrets_management.md)
+Авторитетный источник: [Application Secrets Management](../../Kubernetes/Security/application_secrets_management.md)
 
 InitContainer читает секреты из внешнего хранилища → записывает в shared emptyDir volume → приложение читает из volume (tmpfs).
+
+### systemd-creds — секреты для systemd-сервисов
+
+Для сервисов, запускаемых через systemd, используется встроенный механизм `systemd-creds`, который шифрует секреты ключом, привязанным к machine-id или TPM:
+
+```bash
+# Зашифровать секрет для текущей машины
+echo "SuperSecret123" | systemd-creds encrypt db_password.cred -
+
+# Использование в unit-файле
+[Service]
+LoadCredential=db_password:db_password.cred
+ExecStart=/usr/bin/myapp --password-from-credential db_password
+```
+
+Секреты расшифровываются только на той машине, где они были зашифрованы. При копировании на другой хост расшифровка завершится ошибкой. Подходит для хранения паролей БД, токенов и ключей, необходимых локальным сервисам.
+
+### SSH-ключи как секреты
+
+Авторитетный источник: [SSH Key Management at Scale](../../Linux/Security/ssh/server/ssh_key_management_at_scale.md)
+
+SSH-ключи требуют того же подхода к жизненному циклу, что и любые другие секреты:
+
+- **Генерация:** использование алгоритмов Ed25519 (предпочтительно) или RSA 4096. Фраза-пароль (passphrase) обязательна для всех интерактивных ключей.
+- **Хранение:** приватные ключи только на работающих станциях с шифрованным диском. Никогда — в Git или общих сетевых ресурсах.
+- **Доставка:** `ssh-agent` + `keychain` для кэширования; AuthorizedKeysCommand для централизованного управления.
+- **Ротация:** плановая (90/180 дней) и по событию (увольнение, подозрение на компрометацию).
+- **Отзыв:** KRL (Key Revocation List) для централизованного отзыва без обхода по серверам.
+
+### Управление TLS-сертификатами
+
+Сертификаты являются секретами с ограниченным сроком действия. Для внутренней инфраструктуры целесообразно развёртывание локального CA:
+
+- **Генерация:** Intermediate CA с ограниченным сроком жизни (1–2 года), корневой CA хранится офлайн.
+- **Выдача:** automation через cert-manager (Kubernetes) или скрипты на базе OpenSSL для физических/виртуальных серверов.
+- **Ротация:** автоматическая через ACME-клиенты (certbot) или cert-manager с напоминанием за 30 дней до истечения.
+- **Отзыв:** CRL (Certificate Revocation List) или OCSP-responder для проверки статуса в реальном времени.
 
 ## Additional Information
 
 ### Динамические секреты (Vault)
 
-Vault генерирует временные credentials по запросу (БД, AWS, RabbitMQ и др.). После истечения TTL — автоматический отзыв. Преимущества:
+Vault генерирует временные credentials по запросу (БД, RabbitMQ и др.). После истечения TTL — автоматический отзыв. Преимущества:
 
 - Уникальные credentials на каждый запрос
 - Автоматическая ротация и отзыв
 - Минимизация blast radius при компрометации
 
-Примеры: [динамические секреты PostgreSQL](../../Vault/concepts.md#движки-секретов-secret-engines), [AWS IAM credentials](../../Vault/concepts.md).
+Примеры: [динамические секреты PostgreSQL](../../Vault/concepts.md), [динамические секреты RabbitMQ](../../Vault/concepts.md).
+
+### Антипаттерны
+
+Подробный разбор распространённых ошибок: [Антипаттерны управления секретами](../../Vault/common_antipatterns.md).
 
 ### Рекомендации по выбору инструмента
 
@@ -125,7 +223,63 @@ Vault генерирует временные credentials по запросу (�
 | **GitOps-команда** | SOPS + age/PGP, хранение в Git |
 | **Kubernetes-кластер (без внешнего хранилища)** | Sealed Secrets или SOPS + EncryptionConfiguration |
 | **Enterprise / production** | HashiCorp Vault + динамические секреты + аудит |
-| **Multi-cloud** | Vault или External Secrets Operator (синхронизация из нескольких облачных KMS) |
+| **Локальная инфраструктура (on-prem)** | Vault + SSH CA + systemd-creds |
+
+### Аудит и соответствие
+
+- **Логирование доступа:** каждое чтение секрета фиксируется (Vault Audit Devices, аудит CI-системы, системные логи). Без аудита невозможно расследовать инцидент.
+- **Инвентаризация:** что является секретом, где используется, кто владелец, когда ротировался, используется ли он вообще (stale secrets = риск).
+- **Соответствие:** PCI DSS (требует ротации и ограничения доступа к ключам), российские регуляторные требования (152-ФЗ для персональных данных, ФСТЭК/ФСБ для ключей).
+- **Регулярный review:** пересмотр политик доступа и вывод из эксплуатации неиспользуемых секретов.
+
+### Команды аудита (Sysadmin)
+
+```bash
+# Последние входы и использование sudo
+lastlog
+sudo sudoreplay -l
+
+# Аудит доступа к файлам секретов
+ausearch -k secrets -ts recent
+auditctl -w /run/secrets/ -p rwxa -k secret_access
+
+# Поиск секретов в истории Git
+trufflehog git file:///path/to/repo --json
+gitleaks detect --source /path/to/repo --verbose
+
+# Проверка устаревших секретов Vault
+vault list -format=json kv/metadata/production/ | jq '.[] | select(.data.ttl < 720h)'
+```
+
+### Резервное копирование и аварийное восстановление
+
+- **Ключевой принцип:** секреты должны восстанавливаться быстрее, чем истекают их TTL.
+- **Vault:** снапшоты Raft-хранилища + внешнее хранилище ключей (KEK). Восстановление — развёртывание нового кластера из снапшота и ввод unseal-ключей.
+- **SSH CA:** резервная копия корневого ключа в зашифрованном виде (offline HSM или зашифрованный носитель). При компрометации — перевыпуск всех сертификатов.
+- **Локальные секреты:** systemd-creds привязаны к machine-id; при восстановлении системы на новый хост требуется повторное шифрование. Для переноса используйте мастер-ключ и инструмент `systemd-creds decrypt`.
+
+### Процедуры аварийного доступа (Break-glass)
+
+При отказе основных механизмов доставки секретов:
+
+1.  **Официальный канал:** письменный запрос в команду безопасности/DevOps с указанием причины, времени и объёма требуемого доступа.
+2.  **Временный доступ:** выдача секрета через защищённый канал (Signal/Keybase, личная встреча, encrypted email) с фиксацией в журнале инцидентов.
+3.  **Автоматическое оповещение:** триггер в SIEM/мониторинг на факт аварийного доступа.
+4.  **Ограничение по времени:** доступ выдаётся на минимальный срок (1–4 часа) с автоматическим отзывом.
+5.  **Пост-анализ:** после восстановления штатного режима — полная ротация всех секретов, к которым был получен доступ, и аудит действий.
+
+### Типичные ошибки и устранение неполадок
+
+| Симптом | Причина | Решение |
+|---------|---------|---------|
+| `vault: permission denied` | Политика запрещает путь или метод аутентификации | `vault policy read <policy>`; проверить `path` и `capabilities` |
+| `sops: no key found` | Отсутствует master key (KMS, age, PGP) в окружении | Указать `SOPS_AGE_KEY_FILE` или `--age` флаг |
+| `kubectl get secret` возвращает base64 | Это ожидаемое поведение; секрет не расшифрован | Использовать `kubectl get secret <name> -o jsonpath='{.data.<key>}' \| base64 -d` |
+| Secret не обновляется в Pod | Используется `subPath` или immutable Secret | Удалить Pod или отключить `immutable` |
+| `podman secret inspect` пустой | Секрет создан из env-переменной, но переменная пуста | Проверить переменную окружения при создании |
+| Динамический секрет не отзывается | Истёк TTL, но приложение кэширует connection | Перезапустить приложение или настроить connection refresh |
+| Утечка в Git-истории | Секрет был закоммичен ранее | `git filter-repo` + принудительная ротация секрета |
+| `sshd: refused connect from ...` | Отсутствует соответствующий ключ в authorized_keys или KRL | Проверить `~/.ssh/authorized_keys`, `/etc/ssh/sshd_config`, `krl.pub` |
 
 ### Связанные концепции
 
@@ -133,6 +287,9 @@ Vault генерирует временные credentials по запросу (�
 - [CI/CD Secrets Management](../../CI-CD/DevSecOps/secrets_management.md) — секреты в пайплайнах
 - [Docker Secrets Management](../../Docker/Docker_security/secrets_management.md) — секреты в контейнерах
 - [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md) — SOPS, Sealed Secrets, Vault, External Secrets
+- **[Key Escrow Policy](./key_escrow_policy.md)** — политика хранения копий ключей, Shamir's Secret Sharing.
 - [Kubernetes Secrets](../../Kubernetes/Base/secrets/secrets_basics.md) — создание, хранение, безопасность
 - [Vault overview](../../Vault/overview.md) — централизованное управление секретами
 - [Zero Trust к управлению секретами](../../Vault/zero_trust.md) — подход Zero Trust
+- [GPG и OpenPGP](../../Linux/Security/Tools/gpg_and_openpgp.md) — криптография и подписи
+- [Управление SSH-ключами](../../Linux/Security/ssh/server/ssh_key_management_at_scale.md) — жизненный цикл SSH-ключей

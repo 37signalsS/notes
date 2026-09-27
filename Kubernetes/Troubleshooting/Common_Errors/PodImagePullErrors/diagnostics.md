@@ -637,4 +637,8 @@ sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max > conntra
 - [Лучшие практики](./best_practices.md) — предотвращение ошибок: imagePullPolicy, secrets, ImageGC, мониторинг.
 - [Air-gapped кластеры](./airgapped.md) — диагностика и конфигурация в изолированных средах.
 - [Интеграция с CI/CD](./ci_cd_integration.md) — race conditions, secret rotation, Wait-for-image.
+- [NetworkPolicy и доступ к реестру](./network_policy_impact.md) — влияние NetworkPolicy и GlobalNetworkPolicy на image pull.
+- [Pod Security Standards и image pull](./pod_security_standards.md) — PSS/PSA и их влияние на загрузку образов.
+- [HPA и автоскейлинг](./hpa_and_scaling.md) — влияние масштабирования на image pull и rate limiting.
+- [Init-контейнеры и image pull](./init_container_image_pulls.md) — проблемы pull в init-контейнерах.
 - [Среды выполнения контейнеров](../../../Concepts/container_runtime.md) — архитектура CRI, containerd и низкоуровневая отладка.

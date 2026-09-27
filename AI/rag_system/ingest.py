@@ -190,6 +190,8 @@ def get_changed_files(
 
     return changed, deleted, manifest, engine_state
 
+    return changed, deleted, manifest, engine_state
+
 
 
 
@@ -271,13 +273,13 @@ def _update_manifest(
                         old_ids.append(cid)
             fresh_files[rel_path] = {"mtime": mtime, "chunk_ids": ids}
 
-        _delete_chunk_ids(client, collection_name, old_ids)
-
         engine_meta: dict[str, Any] = {"files": fresh_files}
         if cfg_hash:
             engine_meta["config_hash"] = cfg_hash
         fresh_manifest[engine_name] = engine_meta
         save_manifest(fresh_manifest)
+
+        _delete_chunk_ids(client, collection_name, old_ids)
 
 
 def build_text_splitters(cfg: dict) -> tuple[MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter]:
@@ -385,31 +387,30 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
                     deleted.append(rel_path)
                     log.info("  Excluded from index: %s", rel_path)
 
-        if repair:
-            counts = _get_source_counts(client, collection_name)
-            stale_sources = [src for src in counts if src != "<none>" and src not in files_meta]
-            removed_stale = 0
-            for src in stale_sources:
-                removed_stale += _delete_source_points(client, collection_name, src)
-            none_count = counts.get("<none>", 0)
-            if none_count:
-                removed_stale += _delete_source_points(client, collection_name, "<none>", null_source=True)
-            if removed_stale:
-                log.info("  Repair: removed %d stale point(s) from %d unknown source(s)", removed_stale, len(stale_sources) + (1 if none_count else 0))
-            changed_rel = {rel for _, rel in changed}
-            repaired: list[tuple[str, str]] = []
-            for rel_path, entry in files_meta.items():
-                expected = len(entry.get("chunk_ids", []))
-                actual = counts.get(rel_path, 0)
-                if expected and actual != expected and rel_path not in changed_rel:
-                    file_path = os.path.join(rag_utils.NOTES_DIR, rel_path)
-                    if os.path.isfile(file_path):
-                        manifest_ids = set(entry.get("chunk_ids", []))
-                        _delete_stray_points(client, collection_name, rel_path, manifest_ids)
-                        repaired.append((file_path, rel_path))
-            if repaired:
-                log.info("  Repair: %d files with mismatched vectors, re-indexing", len(repaired))
-                changed.extend(repaired)
+        counts = _get_source_counts(client, collection_name)
+        stale_sources = [src for src in counts if src != "<none>" and src not in files_meta]
+        removed_stale = 0
+        for src in stale_sources:
+            removed_stale += _delete_source_points(client, collection_name, src)
+        none_count = counts.get("<none>", 0)
+        if none_count:
+            removed_stale += _delete_source_points(client, collection_name, "<none>", null_source=True)
+        if removed_stale:
+            log.info("  Repair: removed %d stale point(s) from %d unknown source(s)", removed_stale, len(stale_sources) + (1 if none_count else 0))
+        changed_rel = {rel for _, rel in changed}
+        repaired: list[tuple[str, str]] = []
+        for rel_path, entry in files_meta.items():
+            expected = len(entry.get("chunk_ids", []))
+            actual = counts.get(rel_path, 0)
+            if expected and actual != expected and rel_path not in changed_rel:
+                file_path = os.path.join(rag_utils.NOTES_DIR, rel_path)
+                if os.path.isfile(file_path):
+                    manifest_ids = set(entry.get("chunk_ids", []))
+                    _delete_stray_points(client, collection_name, rel_path, manifest_ids)
+                    repaired.append((file_path, rel_path))
+        if repaired:
+            log.info("  Repair: %d files with mismatched vectors, re-indexing", len(repaired))
+            changed.extend(repaired)
 
         if not changed and not deleted:
             log.info("  Index is up to date. Skipping.")

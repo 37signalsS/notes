@@ -142,7 +142,7 @@ build_image:
 # 3. Сканирование на уязвимости и SBOM
 vulnerability_scan:
   stage: scan
-  image: aquasec/trivy:latest
+  image: aquasec/trivy:0.74.0
   script:
     - trivy image --format json --output report.json $IMAGE_NAME
     - trivy image --format cyclonedx --output sbom.json $IMAGE_NAME
@@ -166,7 +166,7 @@ database_migrate:
 # 5. Деплой через SSH
 deploy_ssh:
   stage: deploy
-  image: docker:27.0
+  image: docker:29.8
   variables:
     DOCKER_HOST: "ssh://${SERVER_USER}@${SERVER_HOST}"
   before_script:

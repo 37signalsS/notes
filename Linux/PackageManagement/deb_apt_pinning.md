@@ -14,6 +14,10 @@
 
 **Поле Explanation** — необязательное, но рекомендуемое поле в Pin-записи для документирования причин установки приоритета.
 
+**Not-Automatic флаг** — метка в метаданных репозитория (`Release` файл), указывающая APT, что пакеты из этого источника не должны автоматически обновляться без явного указания администратора.
+
+**But-Automatic-Upgrades флаг** — дополнение к `Not-Automatic`, разрешающее автоматическое обновление уже установленных пакетов из такого репозитория.
+
 ---
 
 ## Основные концепции
@@ -23,6 +27,8 @@
 Правила Pinning могут быть заданы в двух местах:
 1.  **/etc/apt/preferences** — основной файл (устаревший подход, не рекомендуется для автоматизации).
 2.  **/etc/apt/preferences.d/** — директория для модульных конфигураций. Файлы в ней обрабатываются в алфавитно-цифровом порядке. Рекомендуется использовать префиксы (например, `10-local-repo.pref`, `99-block-snap.pref`).
+
+> **Важно:** APT читает файлы из `preferences.d/` после загрузки индексов из `sources.list` и `sources.list.d/`. Изменения в `preferences.d/` не требуют повторного выполнения `apt update` для применения к уже загруженным индексам, но требуют его для применения к новым источникам.
 
 ### Критерии выбора (Pin-Type)
 
@@ -38,6 +44,14 @@
 - `c` (Component) — секция репозитория (`main`, `universe`).
 - `l` (Label) — метка репозитория (например, `Debian`, `Docker`).
 - `o` (Origin) — организация-издатель.
+- `version` — номер версии дистрибутива (например, `12`, `24.04`).
+
+#### Синтаксис origin
+Поле `origin` сопоставляется с полем `Origin` из файла `Release` репозитория. Это значение часто совпадает с доменным именем, но не всегда. Для определения точного значения используйте команду:
+```bash
+# Показать Origin для конкретного репозитория
+apt-cache policy | grep -A1 "http"
+```
 
 ### Расширенная шкала приоритетов
 
@@ -50,15 +64,50 @@
 | **0 < P < 100** | **Только ручная установка:** Пакет не будет установлен автоматически, если он еще не присутствует в системе. |
 | **P < 0** | **Блокировка (Blacklist):** Запрет на установку пакета или использование источника. |
 
+> **Ключевой нюанс:** Приоритет применяется к **версии пакета**, а не к источнику в целом. Если один и тот же пакет доступен из нескольких источников, каждому варианту присваивается приоритет independently.
+
 ### Репозитории Not-Automatic
 
 Репозитории с флагом `Not-Automatic: yes` (например, `backports`) автоматически получают приоритет **1**. Если установлен флаг `But-Automatic-Upgrades: yes`, то пакеты будут автоматически обновляться, только если они уже установлены в системе.
+
+Проверить флаги репозитория можно командой:
+```bash
+apt-cache policy | grep -A5 "backports"
+```
+
+### Взаимодействие с apt-mark hold
+
+Команда `apt-mark hold <package>` изменяет поле `Selection` в базе данных dpkg (`/var/lib/dpkg/status`), запрещая автоматическое обновление пакета. Это **не то же самое**, что Pinning:
+- `apt-mark hold` работает на уровне dpkg и предотвращает любые обновления через `apt upgrade`
+- Pinning работает на уровне APT и может разрешать обновления, если новый кандидат имеет более высокий приоритет
+
+Для комплексной защиты критически важного ПО рекомендуется использовать оба механизма одновременно.
 
 ### Логика обработки и конфликты
 
 1.  **Специфичность:** Правила для конкретных пакетов (`Package: nginx`) имеют приоритет над общими правилами (`Package: *`).
 2.  **Первое совпадение:** Если для одного пакета определено несколько Pin-записей, APT использует первую найденную запись в файле (или в первом файле по алфавиту в `preferences.d/`).
 3.  **Равенство приоритетов:** При одинаковом `Pin-Priority` выбирается версия с наибольшим номером версии.
+
+### Внутренний алгоритм разрешения зависимостей
+
+При выборе версии APT выполняет следующие шаги:
+1.  Собирает все доступные версии пакета из всех подключенных источников
+2.  Для каждой версии определяет Pin-Priority согласно правилам в `preferences.d/`
+3.  Выбирает версию с наивысшим P-value как кандидата
+4.  Если несколько версий имеют одинаковый P-value, выбирается версия с наибольшим номером
+5.  Проверяет зависимости кандидата; если они не могут быть удовлетворены, APT пытается найти альтернативную версию
+
+### Отладка процесса принятия решений
+
+APT предоставляет детальный вывод процесса выбора версий через отладочные флаги:
+```bash
+# Показать, как APT выбирает версии для зависимостей
+apt-get install -s -o Debug::pkgProblemResolver=1 <package>
+
+# Показать все применяемые настройки APT (включая preferences)
+apt-config dump | grep -A5 "APT::"
+```
 
 ---
 
@@ -69,12 +118,18 @@
 Перед применением правил всегда проверяйте текущее состояние:
 
 ```bash
-# Показать общие приоритеты всех подключенных репозиториев
+# Показать общие приоритеты всех подключеных репозиториев
 apt-cache policy
 
 # Показать приоритеты для конкретного пакета
 apt policy nginx
 # → result: список версий, их источников и назначенных P-значений
+
+# Показать только версии с их приоритетами (удобно для скриптов)
+apt-cache policy nginx | grep -E "^\s+\d+\.\d+" | awk '{print $1, $2}'
+
+# Проверить, какие пакеты заблокированы hold
+apt-mark showhold
 ```
 
 ### Сценарий 1: Фиксация конкретной версии (Version Locking)
@@ -87,6 +142,17 @@ Explanation: Lock PostgreSQL to minor version 16.3
 Package: postgresql-16
 Pin: version 16.3*
 Pin-Priority: 1001
+```
+
+**Валидация:**
+```bash
+# Проверить, что версия зафиксирована
+apt-cache policy postgresql-16
+# → 16.3* должна иметь приоритет 1001
+
+# Проверить, что обновление не предложится
+apt upgrade --dry-run | grep postgresql
+# → вывод должен отсутствовать
 ```
 
 *Альтернатива:* Для простой блокировки обновления без использования Pinning можно использовать команду `sudo apt-mark hold <package>`.
@@ -103,6 +169,16 @@ Pin: release a=bookworm-backports
 Pin-Priority: 900
 ```
 
+**Валидация:**
+```bash
+# Проверить приоритет backports для neovim
+apt-cache policy neovim
+# → версия из backports должна иметь 900
+
+# Установить конкретную версию из backports
+apt install -t bookworm-backports neovim
+```
+
 ### Сценарий 3: Блокировка пакета (Anti-Snap)
 
 Полный запрет на установку пакета `snapd` и связанных с ним компонентов.
@@ -113,6 +189,17 @@ Explanation: Disable snapd installation
 Package: snapd*
 Pin: release *
 Pin-Priority: -1
+```
+
+**Валидация:**
+```bash
+# Попытка установки должна завершиться ошибкой
+apt install snapd
+# → ERROR: snapd не может быть установлен
+
+# Проверить приоритет
+apt-cache policy snapd
+# → все версии имеют приоритет -1
 ```
 
 ### Сценарий 4: Приоритет внутреннего репозитория
@@ -127,6 +214,186 @@ Pin: release l="Internal Repo Label"
 Pin-Priority: 1001
 ```
 
+**Валидация:**
+```bash
+# Проверить источник пакета
+apt-cache policy curl
+# → версия из внутреннего репозитория должна иметь 1001
+```
+
+### Сценарий 5: Приоритизация security-обновлений
+
+Гарантия, что security-обновления всегда устанавливаются даже при наличии более новых версий в standard-репозитории.
+
+```bash
+# /etc/apt/preferences.d/security.pref
+Explanation: Always prefer security updates
+Package: *
+Pin: release o=Debian,a=stable-security
+Pin-Priority: 1001
+```
+
+**Валидация:**
+```bash
+# Проверить приоритет security-репозитория
+apt-cache policy | grep -A2 "stable-security"
+# → все пакеты из security должны иметь 1001
+```
+
+### Сценарий 6: Разделение приоритетов по окружениям (Dev/Staging/Prod)
+
+На одном физическом сервере или в конфигурационном менеджменте можно задавать разные приоритеты для пакетов в зависимости от окружения.
+
+```bash
+# /etc/apt/preferences.d/00-environment.pref
+Explanation: Production environment - prefer stable only
+Package: *
+Pin: release n=bookworm
+Pin-Priority: 990
+
+# Разрешить конкретные пакеты из backports только для staging
+# (создается отдельно на staging-серверах)
+Explanation: Staging - allow specific backports
+Package: neovim
+Pin: release a=bookworm-backports
+Pin-Priority: 900
+```
+
+### Сценарий 7: Приоритет кастомно-собранных пакетов
+
+Гарантия, что пакеты, собранные вручную или через CI/CD pipeline, всегда имеют приоритет над официальными версиями.
+
+```bash
+# /etc/apt/preferences.d/custom.pref
+Explanation: Prefer custom-built packages
+Package: *
+Pin: origin "repo.internal.company.com"
+Pin-Priority: 1001
+```
+
+**Валидация:**
+```bash
+# Определить origin репозитория
+grep -r "^deb " /etc/apt/sources.list.d/ | grep internal
+# → deb [origin=repo.internal.company.com] ...
+
+apt-cache policy <package>
+# → версия из внутреннего репозитория должна иметь 1001
+```
+
+### Сценарий 8: Блокировка пакета с комментарием причины
+
+Создание временной или постоянной блокировки с документированием причины.
+
+```bash
+# /etc/apt/preferences.d/99-block-legacy.pref
+Explanation: Block legacy PHP 7.4 - CVE-2024-XXXX, migrate to 8.2
+Package: php7.4*
+Pin: release *
+Pin-Priority: -1
+```
+
+**Валидация:**
+```bash
+# Проверить, что пакет заблокирован
+apt-cache policy php7.4-fpm
+# → все версии имеют приоритет -1
+
+# Поиск заблокированных пакетов
+grep -r "Pin-Priority: -" /etc/apt/preferences.d/
+```
+
+### Сценарий 9: Управление переходами пакетов (Transitions)
+
+При замене пакета на новый (например, `python2` → `python3` или переход на новый формат конфигурации), можно управлять приоритетами, чтобы контролировать процесс миграции.
+
+```bash
+# /etc/apt/preferences.d/transitions.pref
+Explanation: Force migration to new OpenSSL package
+Package: libssl1.1
+Pin: release *
+Pin-Priority: -1
+
+Explanation: Allow new OpenSSL 3.0
+Package: libssl3
+Pin: release *
+Pin-Priority: 1001
+```
+
+**Валидация:**
+```bash
+# Проверить, что старая версия заблокирована, новая разрешена
+apt-cache policy libssl1.1 libssl3
+```
+
+### Сценарий 10: Автоматизация через Ansible
+
+Пример автоматического управления Pinning через Ansible. Используется для соблюдения соглашений об обновлениях в масштабах кластера.
+
+```yaml
+# tasks/apt_pinning.yml
+- name: Ensure preferences directory exists
+  file:
+    path: /etc/apt/preferences.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy security pinning rule
+  copy:
+    dest: /etc/apt/preferences.d/99-security.pref
+    content: |
+      Explanation: Prefer security updates (managed by Ansible)
+      Package: *
+      Pin: release o=Debian,a={{ debian_codename }}-security
+      Pin-Priority: 1001
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Update apt cache
+
+- name: Deploy backports pinning rule
+  copy:
+    dest: /etc/apt/preferences.d/50-backports.pref
+    content: |
+      Explanation: Allow specific backports (managed by Ansible)
+      Package: "{{ allowed_backport_packages | join(' ') }}"
+      Pin: release a={{ debian_codename }}-backports
+      Pin-Priority: 900
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Update apt cache
+  vars:
+    allowed_backport_packages:
+      - neovim
+      - wireguard
+```
+
+### Сценарий 11: Воспроизводимые сборки в CI/CD
+
+Настройка изолированной среды для сборки пакетов с предсказуемыми версиями зависимостей.
+
+```bash
+# /etc/apt/preferences.d/reproducible-builds.pref
+Explanation: Pin to specific snapshot for reproducible builds
+Package: *
+Pin: origin "snapshot.debian.org"
+Pin-Priority: 1001
+
+# Использование snapshot.debian.org для фиксации даты
+# В sources.list:
+deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20240101T000000Z bookworm main
+```
+
+**Валидация:**
+```bash
+# Проверить, что все пакеты идут из snapshot
+apt-cache policy | grep snapshot
+# → все пакеты должны иметь приоритет 1001
+```
+
 ---
 
 ## Дополнительная информация
@@ -138,7 +405,24 @@ Pin-Priority: 1001
 ```bash
 # Эмуляция установки с выводом процесса принятия решений
 apt-get install -s -o Debug::pkgProblemResolver=1 <package>
+
+# Показать все переменные конфигурации APT
+apt-config dump
+
+# Проверить файлы preferences.d на синтаксические ошибки
+apt-cache policy 2>&1 | grep -i "error\|warning"
 ```
+
+### Типичные проблемы и решения
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Не применяется правило Pinning** | Файл имеет неправильное имя/расширение или синтаксическую ошибку | Проверьте `apt-cache policy`; убедитесь, что файл имеет расширение `.pref` и корректный синтаксис |
+| **Устанавливается не та версия** | Приоритет слишком низкий или другое правило имеет более высокий приоритет | Увеличьте `Pin-Priority`; проверьте специфичность правил |
+| **APT игнорирует backports** | Файл `Release` в backports-репозитории имеет флаг `Not-Automatic: yes` | Установите `Pin-Priority` >= 100 или используйте `-t` |
+| **Конфликт между несколькими rules** | Несколько Pin-записей для одного пакета с пересекающимися критериями | APT использует первое совпадение; проверьте порядок файлов в `preferences.d/` |
+| **Pinning не работает после обновления** | Версия пакета изменила номер, и правило `Pin: version` больше не подходит | Используйте `Pin: release` вместо `Pin: version` для стабильности |
+| **apt-mark hold конфликтует с Pinning** | `hold` предотвращает обновление, но Pinning может разрешить его через более высокий приоритет | Используйте оба механизма или выберите один в зависимости от требований |
 
 ### Рекомендации (Best Practices)
 
@@ -146,6 +430,60 @@ apt-get install -s -o Debug::pkgProblemResolver=1 <package>
 2.  **Кавычки в атрибутах:** Если значения в `release` или `origin` содержат пробелы, обязательно заключайте их в двойные кавычки.
 3.  **Использование Glob-паттернов:** Поле `Package` поддерживает маски (например, `libmysql*`), что позволяет группировать правила.
 4.  **Валидация:** После любого изменения в `preferences.d/` обязательно запускайте `apt update` и `apt policy <package>`, чтобы убедиться, что правила применились корректно.
+5.  **Версионирование конфигурации:** Храните файлы `preferences.d/` в системе контроля версий (Git) для отслеживания изменений и быстрого восстановления.
+6.  **Нумерация файлов:** Используйте двузначные префиксы (05-, 10-, 50-, 99-) для явного указания порядка применения правил.
+7.  **Изоляция окружений:** Для staging- и production-серверов используйте разные наборы правил Pinning, чтобы предотвратить случайное распространение experimental-пакетов.
+8.  **Документирование:** Всегда добавляйте поле `Explanation` с описанием причины установки приоритета, автора и даты изменения.
+
+### Взаимодействие с другими инструментами
+
+#### apt-get install -t
+Флаг `-t` (target release) позволяет установить пакет из конкретного дистрибутива без настройки постоянного Pinning:
+```bash
+# Установить neovim из backports без изменения preferences
+apt install -t bookworm-backports neovim
+```
+Это полезно для разовых операций, но не заменяет постоянные правила в `preferences.d/`.
+
+#### dpkg и Selection
+База данных dpkg (`/var/lib/dpkg/status`) хранит поле `Selection` для каждого пакета. Значение `hold` предотвращает любые изменения пакета через `apt upgrade`. Pinning работает на уровне APT и не изменяет `Selection`.
+
+#### aptitude
+Менеджер `aptitude` имеет собственный механизм разрешения зависимостей и может интерпретировать Pinning-правила иначе, чем `apt`. Для единообразия в скриптах и автоматизации используйте `apt`.
+
+### Безопасность
+
+1.  **Целостность правил:** Файлы `preferences.d/` должны быть защищены от несанкционированного изменения. Настройте `auditd` или `audit` для мониторинга:
+    ```bash
+    # Мониторинг изменений в preferences.d
+    auditctl -w /etc/apt/preferences.d/ -p wa -k apt_pinning_changes
+    ```
+2.  **Защита от downgrade-атак:** Приоритет >= 1000 может быть использован для принудительной установки устаревших ( potentially уязвимых) версий. Используйте такие приоритеты только для проверенных источников.
+3.  **Валидация источников:** Всегда проверяйте подлинность репозитория (GPG-подпись) перед настройкой Pinning, особенно для внутренних репозиториев.
+
+### Производительность
+
+- Избыточное количество правил Pinning (сотни записей) может замедлить работу APT при разрешении зависимостей. Используйте группировку через маски (`Package: libmysql*`) вместо отдельных правил для каждого пакета.
+- APT кэширует политику, но при каждом изменении `preferences.d/` кэш инвалидируется. На системах с частыми изменениями это может влиять на производительность.
+
+### Миграция с других систем
+
+#### С RPM (dnf versionlock)
+При миграции с RPM-систем на DEB, аналоги `dnf versionlock` реализуются через Pinning:
+```bash
+# RPM (dnf)
+dnf versionlock add kernel-6.1.20
+
+# DEB (apt) - эквивалент
+echo -e "Explanation: Lock kernel version\nPackage: linux-image-6.1.20\nPin: version 6.1.20*\nPin-Priority: 1001" > /etc/apt/preferences.d/99-kernel-lock.pref
+```
+
+### Ограничения и известные проблемы
+
+1.  **Pinning и recommends:** APT учитывает Pinning при установке Recommended-пакетов, но не всегда корректно. Если пакет A рекомендует B, и B имеет низкий приоритет, A может быть установлен без B, даже если B доступен.
+2.  **Символические замены (Provides):** Пиннинг по имени пакета не распространяется на пакеты, предоставляющие тот же virtual package через `Provides`. Используйте явные правила для каждого реального пакета.
+3.  **Multi-arch:** На системах с multiarch (amd64 + arm64) Pinning применяется independently для каждой архитектуры. Убедитесь, что правила не блокируют необходимые архитектурные варианты.
+4.  **Атомарность:** Изменения в `preferences.d/` применяются немедленно, без перезагрузки системы или повторного выполнения `apt update` (для уже загруженных индексов). Однако для новых источников `apt update` обязателен.
 
 ### Связанные документы
 
@@ -153,3 +491,4 @@ apt-get install -s -o Debug::pkgProblemResolver=1 <package>
 - **[Зеркалирование APT](./apt_mirror/practical_scenarios.md)** — работа с локальными копиями репозиториев.
 - **[Создание приватного репозитория](./deb_private_apt_repository_reprepro/definitions_and_concepts.md)** — настройка `Origin` и `Label` для Pinning.
 - **[Обзор управления пакетами](./linux_package_management_overview.md)** — архитектурные принципы.
+- **[База данных пакетов](./package_database.md)** — внутреннее устройство dpkg и формат status-файла.

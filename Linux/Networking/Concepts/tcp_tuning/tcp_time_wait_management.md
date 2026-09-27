@@ -30,6 +30,41 @@
 
 Механизм `tcp_tw_reuse` опирается на RFC 1323. Ядро разрешает переиспользование порта, если временная метка нового пакета SYN строго больше, чем метка последнего пакета, полученного в рамках закрытого соединения. Это гарантирует защиту от старых пакетов без ожидания полных 60 секунд.
 
+### Связь с nf_conntrack (NAT, контейнеры)
+
+При работе за NAT (VPN, Docker, Kubernetes) TIME_WAIT удерживает запись в таблице conntrack на протяжении `nf_conntrack_tcp_timeout_time_wait` (по умолчанию 120 секунд). Это удваивает время жизни порта: 60 секунд в ядре TCP + 120 секунд в conntrack.
+
+**Расчет:** При 30 000 доступных портах за NAT-шлюзом и `tcp_timeout_time_wait = 120` реальная пропускная способность снижается:
+```
+Максимальный RPS < 30000 / (60 + 120) = 166 соединений/сек
+```
+Снижение `tcp_timeout_time_wait` до 30 позволяет достичь ~545 RPS.
+
+**Важно:** На хостах с Docker/Kubernetes проверяйте также `nf_conntrack_tcp_timeout_fin_wait`, `nf_conntrack_tcp_timeout_close_wait` и общий лимит `nf_conntrack_max`.
+
+### Симптомы исчерпания TIME_WAIT
+
+| Симптом | Команда диагностики | Что происходит |
+| :--- | :--- | :--- |
+| `EADDRNOTAVAIL` | `dmesg \| grep addr` | ОС не может выделить эфемерный порт — пул исчерпан |
+| `Cannot assign requested address` | `ss -s` | TIME_WAIT сокеты занимают все порты в диапазоне |
+| Рост `TcpExtTCPListenOverflows` | `nstat -az \| grep Listen` | Очередь прослушивания переполнена из-за нехватки портов |
+| `conntrack: table full` | `dmesg \| grep conntrack` | Таблица conntrack заполнена TIME_WAIT записями |
+
+### Параметры sysctl для управления TIME_WAIT
+
+| Параметр | Дефолт | Описание | Рекомендация |
+| :--- | :--- | :--- | :--- |
+| `net.ipv4.tcp_tw_reuse` | 0 | Переиспользование TIME_WAIT для исходящих SYN | `1` на прокси/клиентах |
+| `net.ipv4.tcp_timestamps` | 1 | Временные метки (RFC 1323) | `1` — обязателен для `tw_reuse` |
+| `net.ipv4.ip_local_port_range` | 32768 60999 | Диапазон эфемерных портов | `1024 65535` для расширения |
+| `net.ipv4.tcp_max_tw_buckets` | 180000 (64-bit) | Лимит TIME_WAIT сокетов в памяти | Не уменьшать; при превышении — RST |
+| `net.ipv4.tcp_fin_timeout` | 60 | Тайм-аут FIN-WAIT-2 (сек) | `15` для ускорения освобождения |
+| `net.ipv4.tcp_tw_recycle` | Удалён (4.12+) | Агрессивный reuse (ломал NAT) | **Никогда не использовать** |
+| `net.netfilter.nf_conntrack_tcp_timeout_time_wait` | 120 | Время жизни TIME_WAIT в conntrack | `30` за NAT-шлюзами |
+
+> **Важно:** `tcp_tw_reuse` работает **только для исходящих соединений** (клиентская сторона). Для TIME_WAIT на слушающем порту (сервер) рекомендуется настройка Keep-Alive на стороне приложения.
+
 ## Практические сценарии
 
 ### 1. Диагностика и мониторинг
@@ -38,11 +73,32 @@
 # Подсчет общего количества сокетов в TIME_WAIT
 ss -tan state time-wait | wc -l
 
+# Детальный вывод с локальными/удаленными адресами
+ss -tan state time-wait | head -20
+# → State   Recv-Q Send-Q  Local Address:Port   Peer Address:Port
+# → TIME-WAIT 0      0      192.168.1.10:443     93.184.216.34:54321
+# → TIME-WAIT 0      0      192.168.1.10:443     93.184.216.34:54322
+
+# Группировка по удаленному IP (поиск «пожирателей» портов)
+ss -tan state time-wait | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -rn | head -10
+# → 5421 93.184.216.34
+# → 1203 104.16.132.229
+
+# Группировка по локальному порту (поиск горячих портов)
+ss -tan state time-wait | awk '{print $5}' | rev | cut -d: -f1 | rev | sort -n | uniq -c | sort -rn | head -10
+
 # Просмотр статистики из SNMP-счетчиков
-nstat -az | grep -E 'TcpExtTW|TcpExtTCPTimeWaitOverflow'
+nstat -az | grep -E 'TcpExtTW|TcpExtTCPTimeWait'
+# → TcpExtTW                    12345    0.0
+# → TcpExtTWRecycle             0        0.0
+# → TcpExtTCPTimeWaitOverflow   0        0.0
 
 # TcpExtTW — количество переиспользованных сокетов через tw_reuse
 # TcpExtTCPTimeWaitOverflow — количество сброшенных сокетов из-за нехватки tw_buckets
+
+# Мониторинг в реальном времени (обновление каждую секунду)
+watch -n 1 'ss -s | grep -i time'
+# → TCP:   1523 (estab 500, closed 1020, orphaned 12, timewait 1020)
 ```
 
 ### 2. Настройка системы для Highload
@@ -81,6 +137,52 @@ net.ipv4.tcp_fin_timeout = 15
 
 ## Дополнительная информация
 
+### Валидация настроек после применения
+
+```bash
+# 1. Проверка примененных параметров
+sysctl net.ipv4.tcp_tw_reuse net.ipv4.tcp_timestamps \
+       net.ipv4.ip_local_port_range net.ipv4.tcp_max_tw_buckets \
+       net.ipv4.tcp_fin_timeout
+# → net.ipv4.tcp_tw_reuse = 1
+# → net.ipv4.tcp_timestamps = 1
+# → net.ipv4.ip_local_port_range = 1024 65535
+# → net.ipv4.tcp_max_tw_buckets = 262144
+# → net.ipv4.tcp_fin_timeout = 15
+
+# 2. Проверка текущего количества TIME_WAIT
+ss -s | grep timewait
+# → timewait 245 (ожидаемо < 1000 при tw_reuse)
+
+# 3. Нагрузочный тест и контроль
+# Терминал 1: генерация коротких соединений
+ab -n 10000 -c 100 http://localhost:8080/
+
+# Терминал 2: мониторинг
+watch -n 0.5 'ss -tan state time-wait | wc -l'
+# → Число не должно приближаться к 64000 (лимит эфемерных портов)
+```
+
+### Персистентность настроек
+
+Sysctl-параметры **не сохраняются после перезагрузки**. Механизмы persistent:
+
+**Рекомендуемый вариант: systemd-sysctl**
+```bash
+# /etc/sysctl.d/99-time-wait-tuning.conf
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_max_tw_buckets = 262144
+net.ipv4.tcp_fin_timeout = 15
+
+# Применение
+sudo sysctl --system
+# → Загрузит все файлы из /etc/sysctl.d/ и /usr/lib/sysctl.d/
+```
+
+> **Примечание:** `systemd-networkd` и `netplan` **не управляют** sysctl-параметрами напрямую. Для conntrack-таймаутов (`nf_conntrack_tcp_timeout_*`) и параметров TCP-стека используйте только `/etc/sysctl.d/`.
+
 ### Миф о tcp_tw_recycle
 
 В старых руководствах часто советовали `net.ipv4.tcp_tw_recycle = 1`. 
@@ -92,8 +194,33 @@ net.ipv4.tcp_fin_timeout = 15
 *   **Причина:** Отсутствие HTTP Keep-Alive или некорректные настройки приложения.
 *   **Решение:** Настройте Keep-Alive так, чтобы соединение закрывал клиент. Это перенесет состояние `TIME_WAIT` на клиентские машины, разгрузив сервер.
 
+### TIME_WAIT за NAT-шлюзом (Docker, Kubernetes, VPN)
+
+На узлах с контейнерами или за NAT-шлюзом TIME_WAIT взаимодействует с таблицей conntrack. Записи conntrack удерживаются дольше, чем TCP TIME_WAIT, что может привести к «скрытому» исчерпанию портов.
+
+```bash
+# Проверка conntrack таймаутов
+sysctl net.netfilter.nf_conntrack_tcp_timeout_time_wait
+# → 120 (по умолчанию — слишком долго для высоконагруженных прокси)
+
+# Снижение для Docker-хостов
+sudo sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=30
+
+# Проверка использования conntrack
+conntrack -C
+# → 12345 (текущее количество записей)
+sysctl net.netfilter.nf_conntrack_max
+# → 262144 (максимум)
+
+# Если conntrack заполнен — дескрипторы не могут быть созданы
+dmesg | grep conntrack
+# → nf_conntrack: table full, dropping packet
+```
+
+> **Рекомендация для Docker-хостов:** Снижайте `nf_conntrack_tcp_timeout_time_wait` до 30 и увеличивайте `nf_conntrack_max` до 1048576 в `/etc/sysctl.d/`.
+
 ### См. также
 * **[Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)** — общие принципы настройки стека.
 * **[Диагностика сокетов TCP](./tcp_socket_diagnostics.md)** — использование `ss` и `nstat`.
-* **[Завершение TCP-соединения](../../../../Networking/Protocols/TCP/connection/tcp_connection_termination.md)** — глубокий разбор FIN-пакетов.
+* **[Завершение TCP-соединения](../../../../Networking/Protocols/TCP/connection/tcp_connection_termination.md)** — глубокий разбор FIN-пакетов и `tcp_max_tw_buckets`.
 * **[Состояния TCP](../../../../Networking/Protocols/TCP/connection/tcp_connection_states.md)** — описание жизненного цикла сокета.

@@ -400,3 +400,4 @@ kubectl delete crd -l app.kubernetes.io/part-of=cert-manager
 
 - **[Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)** (назад)
 - **[Развертывание стека LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)** (вперед)
+- **[Обзор стека](./lgtm_otel_minikube_overview.md)** (содержание)

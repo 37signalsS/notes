@@ -278,6 +278,255 @@ router ospf 1
 *   `ip mtu 1400` + `ip tcp adjust-mss 1360` — предотвращают фрагментацию и «зависание» TCP.
 *   `mode transport` в `transform-set` — экономит 20 байт оверхеда.
 
+### MikroTik RouterOS (GRE over IPsec)
+
+MikroTik RouterOS 7.x поддерживает построение защищённых GRE-туннелей через комбинацию IPsec и GRE-интерфейса. Данная схема превращает Policy-based IPsec в Route-based VPN, что позволяет запускать OSPF/BGP поверх защищённого канала.
+
+**Когда использовать GRE over IPsec на MikroTik:**
+*   Необходимость передачи мультикаста или broadcast-трафика между офисами.
+*   Запуск динамической маршрутизации (OSPF, BGP) поверх VPN.
+*   Прозрачное построение туннеля поверх IP-сети без изменения underlying infrastructure.
+
+#### Transport Mode (рекомендуется)
+
+На MikroTik IPsec терминируется на тех же узлах, что и GRE-туннель, поэтому применяется Transport Mode:
+
+Структура пакета: `[Внешний IP][ESP Header][GRE Header][Внутренний IP][Данные]`
+
+#### Полная конфигурация (Site-to-Site)
+
+Сценарий: защищённый канал между головным офисом (gw-moscow) и филиалом (gw-spb).
+
+| Узел | Внешний IP | Локальная сеть | GRE-адрес |
+|------|-----------|---------------|-----------|
+| gw-moscow | 172.16.150.10 | 192.168.21.0/24 | 10.10.1.1/30 |
+| gw-spb | 172.16.150.2 | 192.168.50.0/24 | 10.10.1.2/30 |
+
+**gw-moscow:**
+
+```routeros
+# === Moscow (gw-moscow) ===
+
+# IPsec Profile (IKE SA)
+/ip ipsec profile
+add name=gre-ipsec-profile \
+    hash-algorithm=sha256 \
+    enc-algorithm=aes-256-gcm \
+    dh-group=modp2048 \
+    lifetime=86400 \
+    nat-traversal=yes \
+    dpd-interval=30s \
+    dpd-maximum-failures=5
+
+# IPsec Proposal (CHILD SA)
+/ip ipsec proposal
+add name=gre-ipsec-proposal \
+    auth-algorithms=sha256 \
+    enc-algorithms=aes-256-gcm \
+    lifetime=3600 \
+    pfs-group=modp2048
+
+# IPsec Peer
+/ip ipsec peer
+add name=gw-spb \
+    address=172.16.150.2 \
+    profile=gre-ipsec-profile
+
+# IPsec Identity (PSK + ID)
+/ip ipsec identity
+add peer=gw-spb \
+    auth-method=pre-shared-key \
+    secret="V3ryStr0ngP4ssw0rd" \
+    id=moscow-id
+
+# IPsec Policy
+/ip ipsec policy
+add src-address=192.168.21.0/24 \
+    dst-address=192.168.50.0/24 \
+    sa-src-address=172.16.150.10 \
+    sa-dst-address=172.16.150.2 \
+    proposal=gre-ipsec-proposal \
+    action=encrypt \
+    level=require
+
+# GRE-туннель
+/interface gre
+add name=gre-to-spb \
+    local-address=172.16.150.10 \
+    remote-address=172.16.150.2 \
+    mtu=1400 \
+    dscp=inherit
+
+# Адресация
+/ip address
+add address=10.10.1.1/30 interface=gre-to-spb
+
+# Маршрут до филиала
+/ip route
+add dst-address=192.168.50.0/24 gateway=10.10.1.2
+
+# Файрвол
+/ip firewall filter
+add chain=input protocol=gre src-address=172.16.150.2 action=accept \
+    comment="Allow GRE from SPb"
+add chain=input protocol=esp src-address=172.16.150.2 action=accept \
+    comment="Allow ESP from SPb"
+add chain=input protocol=udp src-address=172.16.150.2 dst-port=500 action=accept \
+    comment="Allow IKE from SPb"
+add chain=input protocol=udp src-address=172.16.150.2 dst-port=4500 action=accept \
+    comment="Allow NAT-T from SPb"
+```
+
+**gw-spb:**
+
+```routeros
+# === SPb (gw-spb) ===
+
+# IPsec Profile
+/ip ipsec profile
+add name=gre-ipsec-profile \
+    hash-algorithm=sha256 \
+    enc-algorithm=aes-256-gcm \
+    dh-group=modp2048 \
+    lifetime=86400 \
+    nat-traversal=yes \
+    dpd-interval=30s \
+    dpd-maximum-failures=5
+
+# IPsec Proposal
+/ip ipsec proposal
+add name=gre-ipsec-proposal \
+    auth-algorithms=sha256 \
+    enc-algorithms=aes-256-gcm \
+    lifetime=3600 \
+    pfs-group=modp2048
+
+# IPsec Peer
+/ip ipsec peer
+add name=gw-moscow \
+    address=172.16.150.10 \
+    profile=gre-ipsec-profile
+
+# IPsec Identity
+/ip ipsec identity
+add peer=gw-moscow \
+    auth-method=pre-shared-key \
+    secret="V3ryStr0ngP4ssw0rd" \
+    id=spb-id
+
+# IPsec Policy
+/ip ipsec policy
+add src-address=192.168.50.0/24 \
+    dst-address=192.168.21.0/24 \
+    sa-src-address=172.16.150.2 \
+    sa-dst-address=172.16.150.10 \
+    proposal=gre-ipsec-proposal \
+    action=encrypt \
+    level=require
+
+# GRE-туннель
+/interface gre
+add name=gre-to-moscow \
+    local-address=172.16.150.2 \
+    remote-address=172.16.150.10 \
+    mtu=1400 \
+    dscp=inherit
+
+# Адресация
+/ip address
+add address=10.10.1.2/30 interface=gre-to-moscow
+
+# Маршрут до головного офиса
+/ip route
+add dst-address=192.168.21.0/24 gateway=10.10.1.1
+
+# Файрвол
+/ip firewall filter
+add chain=input protocol=gre src-address=172.16.150.10 action=accept \
+    comment="Allow GRE from Moscow"
+add chain=input protocol=esp src-address=172.16.150.10 action=accept \
+    comment="Allow ESP from Moscow"
+add chain=input protocol=udp src-address=172.16.150.10 dst-port=500 action=accept \
+    comment="Allow IKE from Moscow"
+add chain=input protocol=udp src-address=172.16.150.10 dst-port=4500 action=accept \
+    comment="Allow NAT-T from Moscow"
+```
+
+#### Двусторонняя статическая маршрутизация
+
+Типичная ошибка — настройка маршрута только с одной стороны. Без ответного маршрута пакет доходит до удалённого офиса, но ответный трафик возвращается через underlay или не уходит вовсе.
+
+Правило: если на gw-moscow настроен маршрут `192.168.50.0/24 → gre-to-spb`, то на gw-spb должен быть маршрут `192.168.21.0/24 → gre-to-moscow`.
+
+#### Проверка работоспособности
+
+```routeros
+# Статус IPsec
+/ip ipsec active-peers print
+/ip ipsec installed-sa print
+
+# Статус GRE
+/interface gre print detail
+
+# Маршруты
+/ip route print where gateway~"10.10.1"
+
+# Пинг
+/tool ping 10.10.1.2
+/tool ping 192.168.50.1
+```
+
+#### Устранение неисправностей
+
+**Ошибка: пинги до удалённой подсети идут, а ответный трафик не возвращается**
+
+Причина: отсутствует ответный статический маршрут или указан неверный шлюз.
+
+Диагностика:
+```routeros
+/ip route print where dst-address~"192.168"
+```
+
+Решение: убедиться, что маршрут на удалённом узле указывает на GRE-интерфейс, а не на внешний IP.
+
+**Ошибка: IPsec SA поднята, GRE интерфейс UP, но трафик не идёт**
+
+Причина: несовпадение Traffic Selectors или отсутствие маршрута.
+
+Диагностика:
+```routeros
+/ip ipsec policy print
+/ip ipsec active-peers print
+```
+
+Решение: проверить, что `src-address`/`dst-address` в политике совпадают с реальными подсетями.
+
+**Ошибка: выбран неверный шлюз для маршрута**
+
+Причина: в MikroTik при настройке маршрута в выпадающем списке интерфейсов может отображаться не GRE-интерфейс, а IPsec-интерфейс.
+
+Решение: явно указать GRE-интерфейс в качестве шлюза для маршрута до удалённой подсети.
+
+**Ошибка: GRE туннель поднимается, но пинги между офисами не проходят**
+
+Причина: IPsec не защищает трафик из-за несовпадения proposals или отсутствия DPD.
+
+Диагностика:
+```routeros
+/ip ipsec active-peers print
+/ip firewall connection print
+```
+
+Решение: синхронизировать proposals на обеих сторонах, включить DPD.
+
+#### Лучшие практики
+
+*   **Transport Mode:** предпочтителен для минимизации оверхеда (20 байт против Tunnel Mode).
+*   **MTU:** на GRE-интерфейсе выставлять `mtu=1400` для компенсации оверхеда ESP.
+*   **Аутентификация:** использовать PSK с явным указанием `id` на обеих сторонах.
+*   **Статическая маршрутизация:** настраивать двусторонние маршруты до локальных подсетей через GRE-интерфейс.
+*   **DPD:** включить `dpd-interval` для быстрого обнаружения разрыва туннеля.
+
 ### VTI (Virtual Tunnel Interface) — Полная настройка
 
 VTI позволяет создать виртуальный интерфейс, связанный с политикой IPsec, без явного GRE-заголовка.

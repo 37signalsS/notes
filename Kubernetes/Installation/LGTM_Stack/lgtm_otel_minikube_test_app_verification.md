@@ -523,4 +523,5 @@ kubectl get instrumentation -n default
 
 - **[Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)** (назад)
 - **[Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)** (назад)
+- **[Production Hardening](./lgtm_production_hardening.md)** (вперед)
 

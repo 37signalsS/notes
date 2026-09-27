@@ -66,18 +66,7 @@ Linux оперирует двумя типами часов:
 
 ### Сравнение: systemd-timesyncd vs Chrony vs ntpd
 
-| Характеристика | systemd-timesyncd | Chrony (v4.5+) | ntpd |
-| :--- | :--- | :--- | :--- |
-| Тип | SNTP-клиент | Полный NTP-клиент/сервер | Полный NTP-клиент/сервер |
-| Серверный режим | Нет | Да | Да |
-| Точность | Средняя (секунды) | **Сверхвысокая** (мкс/нс) | Высокая (миллисекунды) |
-| Работа без сети | Нет | Да (`local stratum`) | Частично |
-| Быстрая синхронизация | Нет | Да (`iburst`) | Нет |
-| Коррекция дрейфа | Нет | Да (файл drift) | Да (файл drift) |
-| Безопасность (NTS) | Нет | Да (v4.0+) | Нет |
-| Аппаратное ускорение | Нет | Да (HW Timestamping) | Да |
-| Zero-downtime | Нет | Да (Socket Activation) | Нет |
-| Рекомендуемое применение | Рабочие станции, простые серверы | Все серверы, виртуальные машины, высокоточные сети | Устаревший, не рекомендуется |
+Сравнение доступно в [Chrony — NTP-сервер](../../../Linux/Networking/Services/chrony_ntp.md#%D1%81%D1%80%D0%B0%D0%B2%D0%BD%D0%B5%D0%BD%D0%B8%D0%B5-chrony-vs-systemd-timesyncd-vs-ntpd).
 
 > `systemd-timesyncd` идеален для систем, где требуется только получение точного времени из интернета без дополнительных зависимостей. Chrony предпочтительнее для production-серверов, кластеров и сред с высокими требованиями к безопасности.
 
@@ -449,3 +438,4 @@ journalctl -u systemd-timesyncd -p warning --since "5 minutes ago"
 * [systemd-analyze: Анализ производительности](./performance.md) — диагностика времени загрузки и critical-chain.
 * [Журналирование через journald](../../../Linux/SystemAdministration/Logging/journald.md) — анализ ошибок подключения к серверам времени.
 * [systemd-networkd](../../../Linux/Networking/Settings/Persistent_Network/systemd_networkd.md) — автоматизация получения NTP через DHCP.
+* [DNS-резолвер (systemd-resolved)](./systemd_resolved.md) — зависимость DNS от синхронизации времени.

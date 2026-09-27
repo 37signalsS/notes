@@ -391,6 +391,7 @@ startupProbe:
 ## Дополнительная информация
 
 ### См. также
+*   **[Паттерны микросервисной архитектуры](./microservice_patterns.md)** — отказоустойчивость и масштабируемость.
 *   **[Идемпотентность в API](./idempotency.md)** — как строить надежные stateless-системы.
 *   **[Высокая доступность (High Availability)](./High_Availability/ha_overview.md)** — архитектурные паттерны отказоустойчивости.
 *   **[Event-Driven Architecture](./event-driven-architecture.md)** — Event Sourcing, CDC, Saga и паттерны распределенного состояния.

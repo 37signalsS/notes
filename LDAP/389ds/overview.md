@@ -382,3 +382,8 @@ grep "etime=1" /var/log/dirsrv/slapd-localhost/access | \
 -   [Управление доступом (ACI)](./aci.md) — детальное руководство по правам.
 -   [Плагины](./plugins.md) — обзор модульной архитектуры.
 -   [389DS в Kubernetes](./k8s_deploy/k8s-administration.md) — эксплуатация в оркестрированных окружениях.
+-   [LDAP: основы протокола](../ldap_fundamentals.md) — терминология и структура DIT.
+-   [LDAP Troubleshooting](../ldap_troubleshooting.md) — диагностика проблем.
+-   [LDAP Security Hardening](../ldap_security.md) — настройка безопасности.
+-   [LDAP мониторинг](../ldap_monitoring.md) — метрики и алерты.
+-   [LDAP backup/restore](../ldap_backup_restore.md) — стратегии бэкапов.

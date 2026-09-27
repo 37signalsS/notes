@@ -221,6 +221,97 @@ numactl --cpunodebind=0 --membind=0 my_application
 numactl --interleave=all my_application
 ```
 
+#### Глубокий анализ NUMA: zone_reclaim_mode и interleave
+
+**`vm.zone_reclaim_mode`** — управляет поведением ядра при нехватке памяти на конкретном NUMA-узле:
+
+| Значение | Поведение | Рекомендация |
+| :--- | :--- | :--- |
+| `0` (default) | Ядро может выделять память с любого узла (fallback через QPI/UPI). | Рекомендуется для большинства серверов. |
+| `1` | Локальный reclaim: ядро пытается освободить память на том же узле, где происходит аллокация. | Только для систем с очень высокой межузловой задержностью и предсказуемой локальностью. |
+
+**Почему `zone_reclaim_mode=1` опасен:** Если на узле N мало свободной памяти, ядро будет агрессивно выгружать страницы в swap на локальном диске узла, даже если на узле N+1 есть достаточно свободной RAM. Это приводит к неоправданному свопингу.
+
+```bash
+# Проверка текущего значения
+cat /proc/sys/vm/zone_reclaim_mode
+
+# Отключение локального reclaim (рекомендуется)
+sudo sysctl -w vm.zone_reclaim_mode=0
+```
+
+**`numactl --interleave=all`** — ключевой параметр для large in-memory приложений:
+
+```bash
+# Для PostgreSQL / ClickHouse / Redis на NUMA-системе
+numactl --interleave=all pg_ctl start
+
+# Эффект: память распределяется round-robin по узлам.
+# Средняя латентность доступа: (10 + 21) / 2 = 15.5 нс
+# Вместо: 100% доступ к локальному узлу (10 нс) или 100% к удаленному (21 нс)
+# Преимущество: отсутствие "hot spot" на одном узле и предсказуемость.
+```
+
+**Автоматический NUMA daemon (`numad`):**
+
+```bash
+# Проверка наличия
+which numad
+
+# Запуск (мониторит и перераспределяет страницы автоматически)
+sudo numad
+
+# Статус
+sudo numad -s
+```
+
+`numad` —фоновый демон, который:
+- Мониторит распределение памяти по узлам.
+- Автоматически перемещает страницы ближе к использующим их ядрам.
+- Рекомендуется для динамических нагрузок, где `numactl --membind` слишком жестко.
+
+**Диагностика NUMA-дисбаланса:**
+
+```bash
+# Проверка распределения памяти по узлам
+numastat
+# → node0: numa_hit = 12345678, numa_miss = 0
+# → node1: numa_hit = 9876543, numa_miss = 2345678
+# → high numa_miss = процессы на node0 часто обращаются к памяти на node1
+
+# Детализация для конкретного процесса
+numastat -p <PID>
+# → PID      Node 0     Node 1     Total
+# → 1234   512.34 MB   128.00 MB   640.34 MB
+# → Если основная память на Node 1, а CPU на Node 0 — дисбаланс
+
+# Проверка расстояний между узлами
+numactl --hardware | grep -A 5 "node distances"
+# → node distances:
+# → node   0   1
+# →   0:  10  21   ← 21 = remote access через QPI/UPI (latency 2-5× выше)
+# →   1:  21  10
+```
+
+**NUMA и контейнеры (Kubernetes Topology Manager):**
+
+В Kubernetes `Topology Manager` координирует CPU, Memory и Device Manager для NUMA-изолированного размещения:
+
+```yaml
+# kubelet config
+topologyManagerPolicy: "single-numa-node"
+topologyManagerScope: "pod"
+```
+
+- `single-numa-node`: Под размещается только на одном NUMA-узле (CPU, память и устройства).
+- `restricted`: Ресурсы должны быть на пересечении допустимых узлов.
+- `best-effort`: Пытается обеспечить NUMA-изоляцию, но не блокирует размещение.
+
+```bash
+# Проверка статуса Topology Manager
+curl -sk https://localhost:10250/metrics | grep topology_manager
+```
+
 ### Тюнинг Kernel Samepage Merging (KSM)
 
 Для систем виртуализации (KVM) KSM позволяет значительно повысить плотность размещения ВМ.
@@ -410,3 +501,5 @@ sudo bpftrace -e 'software:page-faults:1 { @start[tid] = nsecs; }
 * **[Slab Allocator](./slab_allocator.md)** — память ядра, не учитываемая в RSS процессов.
 * **[Настройка writeback](../../Diagnostics/Performance/DiskIO/writeback_tuning.md)** — профили tuning для NVMe и СУБД.
 * **[Pressure Stall Information (PSI)](../kernel/psi.md)** — мониторинг давления на память, I/O и CPU.
+* **[Справочник sysctl-параметров памяти](./sysctl_memory_reference.md)** — единый reference по всем параметрам vm.swappiness, dirty_ratio, overcommit и др.
+* **[Фактическое потребление vs Reporting](./memory_reporting_vs_reality.md)** — разница между free, top, smem; почему free всегда показывает мало.

@@ -520,3 +520,19 @@ kubectl delete ns logging
 *   [Практическое руководство по Kibana](./kibana_guide.md) — как искать логи и строить дашборды.
 *   [Устранение неполадок EFK](./efk_stack_troubleshooting.md) — типичные ошибки при подключении и запуске стека.
 *   [Elastic Cloud on Kubernetes (ECK)](../../../ELK_Stack/elastic_cloud_on_k8s.md) — подробное руководство по архитектуре ECK.
+
+### Мониторинг и безопасность
+
+*   [Интеграция с Prometheus/Grafana](./efk_monitoring_integration.md) — настройка мониторинга компонентов EFK.
+*   [RBAC и безопасность](./efk_rbac_security.md) — настройка Role-Based Access Control и security policies.
+*   [Бэкап и восстановление](./efk_backup_restore.md) — стратегии бэкапа Elasticsearch и procedures восстановления.
+
+### Высокая доступность и масштабирование
+
+*   [Высокая доступность](./efk_high_availability.md) — настройка HA для всех компонентов EFK.
+*   [Масштабирование Fluent Bit](./efk_fluentbit_scaling.md) — оптимизация производительности и масштабирование агента.
+*   [Multi-cluster логирование](./efk_multi_cluster.md) — архитектура и настройка multi-cluster сценариев.
+
+### Управление конфигурацией
+
+*   [GitOps для EFK](./efk_gitops.md) — управление конфигурацией через Git с ArgoCD/Flux.

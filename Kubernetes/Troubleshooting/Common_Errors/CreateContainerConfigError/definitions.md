@@ -253,5 +253,6 @@ Kubernetes использует экспоненциальную задержк�
 *   [Проблемы с PVC](./pvc_issues.md)
 *   [Проблемы с томами](./volume_issues.md)
 *   [Проблемы с RBAC](./rbac_issues.md)
+*   [CRI и containerd](./cri_and_runtime.md) — Container Runtime Interface, взаимодействие kubelet с рантаймом
 *   [Профилактика и мониторинг](./prevention.md)
 *   [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md)

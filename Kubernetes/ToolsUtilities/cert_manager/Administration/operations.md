@@ -348,6 +348,189 @@ cmctl check api --wait=2m
 
 ---
 
+## Стратегии автоматизации продления
+
+### Механизм продления cert-manager
+
+cert-manager отслеживает срок действия сертификата и инициирует продление за `renewBefore` (или по рекомендации ARI). Процесс полностью автоматизирован:
+
+1. **Мониторинг:** Фоновый процесс проверяет `status.notAfter` каждого Certificate.
+2. **Инициация:** При достижении порога `renewBefore` (или ARI `suggestedWindow`) создается новый `CertificateRequest`.
+3. **Выпуск:** Новый сертификат подписывается CA и сохраняется в Secret.
+4. **Обновление:** Ingress-контроллер подхватывает новый Secret (при поддержке hot-reload).
+
+### Стратегия 1: ARI-first (рекомендуется для 2026+)
+
+При использовании cert-manager v1.21+ ARI включен по умолчанию. Контроллер сам определяет оптимальное время продления.
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: my-app-tls
+spec:
+  secretName: my-app-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - my-app.example.com
+  privateKey:
+    rotationPolicy: Always
+  # Не указывайте renewBefore — ARI определит оптимальное время
+  duration: 2160h  # 90 дней
+```
+
+**Преимущества:**
+- CA определяет оптимальное время (учитывая нагрузку, работы)
+- Минимизация rate limits
+- Автоматическая обработка массовых отзывов сертификатов
+
+### Стратегия 2: Статическое окно (legacy)
+
+Для совместимости со старыми версиями или конкретных требований:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: my-app-tls
+spec:
+  secretName: my-app-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - my-app.example.com
+  privateKey:
+    rotationPolicy: Always
+  duration: 2160h     # 90 дней
+  renewBefore: 360h   # 15 дней до истечения
+```
+
+**Рекомендации по renewBefore:**
+- **Минимум 7 дней** — для покрытия проблем с DNS, rate limits
+- **Рекомендуется 14-30 дней** — для production с высокими требованиями uptime
+- **Не более 50% от duration** — чтобы избежать преждевременного продления
+
+### Стратегия 3: Короткоживущие сертификаты (mTLS)
+
+Для внутренних mTLS-соединений используются короткоживущие сертификаты:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: internal-mtls
+spec:
+  secretName: internal-mtls
+  issuerRef:
+    name: vault-issuer
+    kind: Issuer
+  dnsNames:
+  - my-service.production.svc.cluster.local
+  privateKey:
+    algorithm: Ed25519
+    rotationPolicy: Always
+  duration: 216h    # 9 дней
+  renewBefore: 72h  # 3 дня
+  usages:
+  - server auth
+  - client auth
+```
+
+### Обработка ошибок продления
+
+#### Сценарий: Сертификат не продляется (stuck in Pending)
+
+```bash
+# 1. Проверка статуса
+cmctl status certificate <name> -n <namespace>
+
+# 2. Проверка CertificateRequest
+kubectl get certificaterequest -n <namespace>
+kubectl describe certificaterequest <name> -n <namespace>
+
+# 3. Проверка Order (для ACME)
+kubectl get order -n <namespace>
+kubectl describe order <name> -n <namespace>
+
+# 4. Проверка Challenge
+kubectl get challenge -n <namespace>
+kubectl describe challenge <name> -n <namespace>
+
+# 5. Принудительное продление
+cmctl renew <name> -n <namespace> --force
+```
+
+#### Сценарий: Rate Limit при продлении
+
+```bash
+# Проверка текущих лимитов
+curl -s "https://acme-v02.api.letsencrypt.org/directory" | jq '.meta'
+
+# Мониторинг rate limit через CT-логи
+curl -s "https://crt.sh/?q=example.com&output=json" | \
+  jq '.[] | .not_after' | sort | uniq -c
+
+# Решение: использование Staging для массового перевыпуска
+# 1. Создайте Staging ClusterIssuer
+# 2. Переключите Certificate на Staging
+# 3. После сброса лимитов верните на Production
+```
+
+#### Сценарий: Ошибка ARI (malformed request)
+
+```bash
+# Проверка ARI статуса
+kubectl get certificate <name> -o jsonpath='{.status.acme.ari}'
+
+# Отключение ARI (временно)
+kubectl patch certificate <name> -p '{"spec":{"renewBefore":"360h"}}'
+
+# Проверка логов cert-manager
+kubectl logs -n cert-manager -l app=cert-manager | grep -i "ari\|renewal"
+```
+
+### Массовое продление (Drain)
+
+При плановом обновлении Issuer или миграции CA:
+
+```bash
+# 1. Проверка всех сертификатов
+cmctl status certificate --all -A
+
+# 2. Последовательное продление (по 10 штук)
+cmctl renew --all -A --concurrency=10
+
+# 3. Мониторинг прогресса
+watch -n 5 'cmctl status certificate --all -A | grep -v True'
+
+# 4. Верификация после завершения
+kubectl get certificate -A | grep False
+```
+
+### Проверка после продления
+
+```bash
+# 1. Проверка Secret
+kubectl get secret <secret-name> -n <namespace> -o yaml
+
+# 2. Проверка сертификата
+kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.tls\.crt}' | \
+  base64 -d | openssl x509 -text -noout | grep -A2 "Validity"
+
+# 3. Проверка SAN
+kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.tls\.crt}' | \
+  base64 -d | openssl x509 -noout -ext subjectAltName
+
+# 4. Проверка цепочки
+kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.tls\.crt}' | \
+  base64 -d | openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt
+```
+
+---
+
 ## Дополнительная информация
 
 ### Лучшие практики эксплуатации
@@ -370,4 +553,10 @@ cmctl check api --wait=2m
 
 - **[Cert-manager: Администрирование](./index.md)** — HA, RBAC и Garbage Collection.
 - **[Cert-manager: Диагностика](./troubleshooting.md)** — глубокий анализ ошибок и логирования.
+- **[Обновление и миграция cert-manager](./upgrades_and_migration.md)** — пошаговый апгрейд версий, breaking changes, rollback.
+- **[Масштабирование и производительность](./scaling_and_performance.md)** — tuning при 1000+ сертификатах, HPA, capacity planning.
+- **[Cert-manager: GitOps интеграция](./gitops_integration.md)** — настройка ArgoCD/Flux с cert-manager.
+- **[Cert-manager: Тестирование в CI/CD](./cicd_testing.md)** — валидация манифестов перед деплоем.
+- **[Cert-manager: Production Playbooks](./production_playbooks.md)** — пошаговые инструкции по типичным инцидентам.
+- **[Cert-manager: DNS-провайдеры](./dns_providers.md)** — настройка Cloudflare, Route53, Google Cloud DNS.
 - **[Предотвращение истечения SSL-сертификатов](../../../Operations/ssl_expiration_prevention.md)** — общие стратегии мониторинга TLS.

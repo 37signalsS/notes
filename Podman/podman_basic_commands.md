@@ -23,6 +23,8 @@
 | Версия | `podman --version` | Краткая информация о версии бинарного файла |
 | Детальное инфо | `podman info` | Данные о хосте, хранилище, сетевом стеке и драйверах |
 | Использование диска | `podman system df` | Объём, занимаемый образами, контейнерами, томами и кэшем сборки |
+| Перенумерация хранилища | `podman system renumber` | Перенумерация слоёв хранилища (после удаления промежуточных слоёв) |
+| Сброс хранилища | `podman system reset` | Полный сброс хранилища (удаляет все образы, контейнеры, тома) — необратимо |
 | Аутентификация | `podman login <registry>` | Вход в реестр образов; `podman logout <registry>` — выход |
 | Поиск образов | `podman search <term>` | Поиск в настроенных реестрах (управляются `registries.conf`) |
 | События системы | `podman events` | Поток событий (create, start, stop, died и т.д.) в реальном времени |
@@ -68,6 +70,10 @@
 | Процессы | `podman top <name>` | Список процессов внутри контейнера |
 | Статистика | `podman stats [-a]` | Живой поток использования CPU/памяти/сети всеми контейнерами |
 | Ожидание | `podman wait <name>` | Ожидание завершения контейнера, возврат кода выхода |
+| Проброс портов | `podman port <name> [<порт>]` | Список или конкретный проброс портов контейнера |
+| Экспорт ФС | `podman export -o <file>.tar <name>` | Экспорт файловой системы контейнера в tar-архив |
+| Импорт ФС | `podman import <file>.tar [образ]` | Импорт tar-архива как нового образа |
+| Копирование между контейнерами | `podman scp <src>:<dest>` | Копирование файлов между контейнерами (аналог `podman cp` для контейнер-контейнер) |
 | Переименование | `podman rename <старое> <новое>` | Переименование контейнера |
 
 ### Управление подами (Pods)
@@ -283,6 +289,176 @@ podman system df
 
 > **Осторожно:** `podman system reset` полностью сбрасывает хранилище Podman (все образы, контейнеры, тома) — необратимая операция, применять только осознанно.
 
+### 8. Безопасный запуск контейнеров (hardening)
+Минимальный набор привилегий снижает риск взлома и ограничивает последствия компрометации приложения. В Production применяйте эти флаги по умолчанию.
+
+```bash
+# Запуск с отказом от всех capabilities и явным добавлением только необходимых
+podman run -d \
+  --name web-server \
+  --cap-drop=ALL \
+  --cap-add=NET_BIND_SERVICE \
+  --security-opt=no-new-privileges \
+  --read-only \
+  --tmpfs /run --tmpfs /tmp \
+  -v /srv/data:/data:Z \
+  nginx:alpine
+
+# Проверка: контейнер запущен, корневая ФС только для чтения
+podman exec web-server touch /test 2>&1 || true
+# → Read-only file system
+```
+
+**Пояснение флагов:**
+- `--cap-drop=ALL`: отключает все Linux-привилегии по умолчанию.
+- `--cap-add=NET_BIND_SERVICE`: разрешает bind на порты < 1024 (если настроен `sysctl`).
+- `--security-opt=no-new-privileges`: запрещает повышение привилегий через setuid/setgid.
+- `--read-only`: монтирует корневую ФС в режиме только для чтения.
+- `--tmpfs /run --tmpfs /tmp`: временные директории в RAM, не записываются на диск.
+- Подробнее об изоляции и наборе capabilities: [Изоляция Podman](./linux_isolation.md).
+
+### 9. Управление логами и ротация
+Podman хранит логи в JSON-файлах по умолчанию. В Production используйте `journald` для централизованного сбора и автоматической ротации.
+
+```bash
+# Просмотр логов с фильтрацией по времени
+podman logs --since "2026-09-16T08:00:00" --until "2026-09-16T09:00:00" web-server
+
+# Просмотр последних 100 строк
+podman logs --tail 100 web-server
+
+# Только логи с ошибкой
+podman logs --tail 50 web-server | grep -i error
+
+# Логи в реальном времени (Ctrl+C для выхода)
+podman logs -f web-server
+```
+
+**Ротация через journald (rootful):**
+```bash
+# Настройка лимита journald (по умолчанию 10% от размера раздела)
+sudo mkdir -p /etc/systemd/journald.conf.d
+echo -e "[Journal]\nSystemMaxUse=500M" | sudo tee /etc/systemd/journald.conf.d/size.conf
+sudo systemctl restart systemd-journald
+```
+
+**Ротация для JSON-логов (rootless / если journald не используется):**
+```bash
+# Настройка в containers.conf
+mkdir -p ~/.config/containers
+cat > ~/.config/containers/containers.conf << 'EOF'
+[engine]
+cgroup_manager = "systemd"
+runtime = "crun"
+
+[containers]
+# Ограничение размера JSON-логов
+# Примечание: log-opt настраивается через podman run, а глобальные лимиты — через journald
+EOF
+```
+
+**Важно:** В rootless-режиме логи хранятся в `~/.local/share/containers/storage/containers/`. Для ротации используйте `logrotate` или монтируйте журнал в `tmpfs`.
+
+### 10. Резервное копирование и восстановление состояния
+Для миграции или бэкапа используйте комбинацию экспорта ФС контейнера и резервного копирования томов.
+
+```bash
+# 1. Остановить контейнер (для консистентности данных)
+podman stop web-server
+
+# 2. Экспорт файловой системы контейнера в tar
+podman export -o /backups/web-server-$(date +%F).tar web-server
+
+# 3. Резервное копирование тома (если используется)
+podman volume export app-data --output /backups/app-data-$(date +%F).tar
+
+# 4. На целевом хосте — импорт
+podman import /backups/web-server-2026-09-16.tar web-server:restored
+podman volume import app-data-restored /backups/app-data-2026-09-16.tar
+
+# 5. Валидация: запуск восстановленного контейнера
+podman run -d --name web-server-restored -v app-data-restored:/data web-server:restored
+podman logs --tail 20 web-server-restored
+```
+
+Для автоматизации бэкапов томов см. [Тома и хранилище](./podman_volumes_and_storage.md).
+
+### 11. Локальный CI/CD раннер (GitLab CI)
+Podman может выступать executor'ом для GitLab Runner на локальных хостах без облачных зависимостей.
+
+```bash
+# 1. Установка GitLab Runner
+sudo apt install gitlab-runner  # Debian/Ubuntu
+# или
+sudo dnf install gitlab-runner  # RHEL/Fedora
+
+# 2. Регистрация раннера с executor'ом podman
+sudo gitlab-runner register \
+  --url https://gitlab.example.com/ \
+  --token $RUNNER_TOKEN \
+  --executor podman \
+  --podman-image docker.io/library/alpine:latest \
+  --podman-privileged=false \
+  --podman-pull-policy if-not-present
+
+# 3. Настройка глобального контейнера для задач
+sudo gitlab-runner exec podman --pre-clone-image docker.io/library/alpine:latest
+```
+
+**Важные ограничения:**
+- `--podman-privileged=false` по умолчанию; для задач, требующих `--privileged`, установите `privileged = true` в `config.toml`.
+- Для доступа к private registry укажите `pull_policy` и `authfile` в `config.toml`.
+- Реннер работает как rootful-сервис; для rootless запускайте его в user session systemd.
+
+**Альтернатива: Jenkins Agent в Podman**
+```bash
+# Запуск Jenkins agent как контейнера
+podman run -d --name jenkins-agent \
+  --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  jenkins/inbound-agent:latest \
+  -url http://jenkins.example.com/ \
+  $AGENT_SECRET $AGENT_NAME
+```
+
+---
+
+## Устранение неполадок
+
+### Типичные ошибки CLI
+
+| Симптом / команда | Причина | Решение |
+| :--- | :--- | :--- |
+| `Error: unable to find image` | Образ не найден локально или недоступен в реестре | Проверьте FQIN: `podman pull docker.io/library/nginx:alpine`; настройте `registries.conf` |
+| `permission denied` (rootless) | Нет делегирования cgroups или UID/GID mapping | Проверьте `cat /sys/fs/cgroup/user.slice/.../cgroup.controllers`; настройте `uidmap` |
+| `cgroup: cannot set cgroup` | cgroups v1 или нет делегирования | Переведите на cgroups v2; добавьте `Delegate=` в `user@.service.d` |
+| `short name resolution` | Короткое имя не разрешено | Используйте FQIN или настройте `unqualified-search-registries` в `registries.conf` |
+| `port is already allocated` | Порт занят другим процессом | `sudo ss -tlnp \| grep :80`; остановите конфликтующий сервис или измените проброс |
+| `no space left on device` | Переполнение хранилища | `podman system df`; `podman system prune -a --volumes` |
+| `container exec failed` | Контейнер остановлен или нет процесса | `podman ps -a --filter id=<id>`; проверьте `podman logs <name>` |
+| `authentication required` | Нет или неверный authfile | `podman login registry.example.com --authfile ~/.config/containers/auth.json` |
+| `operation not permitted` | Seccomp или Capability заблокирована | Для отладки: `--security-opt seccomp=unconfined`; для production — добавьте нужную `--cap-add` |
+| `dial tcp ...: connection refused` | Зависимый сервис не готов | Используйте `--health-cmd` + `Notify=healthy` в Quadlet или wait-скрипт |
+
+### Диагностические команды
+
+```bash
+# События системы в реальном времени
+podman events --filter event=health_status --format '{{.Time}} {{.Actor}} {{.Status}}'
+
+# Проверка cgroup-лимитов
+cat /sys/fs/cgroup/system.slice/podman-<id>.scope/memory.max
+
+# Проверка делегированных контроллеров (rootless)
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers
+
+# Живые метрики потребления ресурсов
+podman stats -a --no-stream
+
+# Проверка SELinux-контекста файлов тома
+ls -laZ ~/.local/share/containers/storage/volumes/<имя>/_data
+```
+
 ---
 
 ## Дополнительная информация
@@ -297,6 +473,19 @@ podman system df
 - `--restart <policy>`: Политика перезапуска (`no`, `on-failure[:N]`, `always`, `unless-stopped`).
 - `--health-cmd "..."`: Проверка здоровья контейнера (подробнее — [Healthchecks](./podman_healthchecks.md)).
 - `--secret <имя>`: Проброс секрета в контейнер (подробнее — [Секреты](./podman_secrets.md)).
+- `--cap-drop=ALL --cap-add <cap>`: Минимальный набор Linux-привилегий (подробнее — [Изоляция Podman](./linux_isolation.md)).
+- `--security-opt no-new-privileges`: Запрет на повышение привилегий через setuid/setgid.
+- `--read-only`: Запуск с неизменяемой корневой ФС; используйте `--tmpfs` для writable директорий.
+- `--tmpfs <path>`: Монтирование временной ФС в RAM (например, `/tmp`, `/run`).
+- `--log-driver <driver>`: Драйвер логов (`journald`, `json-file`, `none`). По умолчанию rootful — `journald`, rootless — `k8s-file`.
+- `--log-opt <key>=<value>`: Опции драйвера логов (`max-size`, `max-file` для json-file).
+- `--pids-limit <N>`: Лимит PID (защита от fork-бомб).
+- `--ulimit <type>=<soft>:<hard>`: Ограничения ресурсов процесса (`nofile`, `nproc` и др.).
+
+### Глобальная конфигурация (`containers.conf` и `registries.conf`)
+- **`containers.conf`**: глобальные флаги engine (`/etc/containers/containers.conf` или `~/.config/containers/containers.conf`). Влияет на `cgroup_manager`, `runtime` (`crun`/`runc`), `userns` и др.
+- **`registries.conf`**: управляет разрешением коротких имен и зеркалами (`/etc/containers/registries.conf` или `~/.config/containers/registries.conf`). Для продакшена используйте FQIN или задайте `unqualified-search-registries = ["docker.io"]` явно.
+- **`storage.conf`**: драйвер хранилища (`overlay`, `vfs`, `fuse-overlayfs`) и параметры монтирования (`/etc/containers/storage.conf` или `~/.config/containers/storage.conf`).
 
 ### Rootless-специфика
 - Команда `podman unshare` открывает shell внутри пользовательского namespace Podman — полезно для отладки прав на файлы томов и поддиапазонов UID/GID.
@@ -308,6 +497,7 @@ podman system df
 ### Связанные разделы
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — роль `conmon`, Quadlet и интеграция с systemd.
 - **[Rootless режим](./podman_rootless.md)** — особенности прав доступа и сети без root.
+- **[Изоляция Podman](./linux_isolation.md)** — capabilities, seccomp, `--privileged`, cgroups v2.
 - **[Миграция с Docker](./migration-from-docker.md)** — алиасы, Docker-совместимый сокет и перенос рабочих нагрузок.
 
 ### Ссылки

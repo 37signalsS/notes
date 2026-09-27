@@ -596,6 +596,7 @@ Pod Scheduled → Node Assigned
 - [Проблемы с Secret](./secret_issues.md)
 - [Проблемы с RBAC и ServiceAccount](./rbac_issues.md)
 - [Проблемы с томами](./volume_issues.md)
+- [CRI и containerd](./cri_and_runtime.md) — Container Runtime Interface, взаимодействие kubelet с рантаймом
 - [Создание ConfigMap](../../../Base/ConfigMap/creation.md)
 - [Использование ConfigMap в подах](../../../Base/ConfigMap/pod_usage.md)
 - [Лучшие практики ConfigMap](../../../Base/ConfigMap/best_practices.md)

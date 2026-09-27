@@ -1,4 +1,4 @@
-# Наблюдаемость в Istio: Kiali, телеметрия и федерация идентификации
+# Наблюдаемость в Istio: Kiali, телеметрия и федерация идентичности
 
 ## Определения
 
@@ -7,6 +7,8 @@
 **Kiali** — центральная консоль управления и визуализации для Istio. Она предоставляет графическое представление графа зависимостей сервисов, отслеживает "золотые сигналы" (RPS, ошибки, задержки) и валидирует корректность конфигураций.
 
 **Dex / Keycloak** — провайдеры идентификации (Identity Providers), использующие протокол **OIDC (OpenID Connect)** для организации безопасного ролевого доступа (RBAC) к инструментам мониторинга. Полноценный IAM-сервер на базе Keycloak рассмотрен отдельно: [Keycloak](../Security/Tools/keycloak_overview.md).
+
+**Grafana Alloy** — универсальный коллектор телеметрии, заменяющий специализированные агенты (Promtail, Grafana Agent, tempo-query). В связке с Istio скрапит метрики Envoy с порта `15090/stats/prometheus` и метрики Istio-агента с порта `15020`.
 
 ---
 
@@ -19,9 +21,9 @@
 | Компонент | Роль | Примечание |
 | :--- | :--- | :--- |
 | **Prometheus / Mimir** | Сбор и хранение метрик. | Используется Kiali для отображения состояния здоровья (Health) сервисов. |
-| **Grafana Tempo** | Распределенная трассировка (Tracing). | Заменяет Jaeger в большинстве современных инсталляций. Хранит данные в S3. |
+| **Grafana Tempo** | Распределенная трассировка (Tracing). | Заменяет Jaeger в большинстве современных инсталляций. Хранит данные в объектном хранилище. |
 | **Grafana Loki** | Централизованный сбор логов. | Позволяет Kiali отображать логи Envoy напрямую в интерфейсе. |
-| **Grafana Alloy** | Единый коллектор телеметрии. | Заменяет специализированные агенты. Скрапит метрики Envoy с порта `15090/stats/prometheus` (через `istio-proxy`). В Sidecar-модели дополнительно читает объединённые метрики Istio-агента с порта `15020`. |
+| **Grafana Alloy** | Единый коллектор телеметрии. | Заменяет специализированные агенты. Скрапит метрики Envoy с порта `15090/stats/prometheus` (через `istio-proxy`). В Sidecar-модели дополнительно читает объединённые метрики Istio-агента с порту `15020`. |
 | **Kiali (v2.28+)** | Визуализация и управление. | Поддерживает Ambient Mesh (Ztunnel/Waypoint), Gateway API, а также вкладку графического графа трафика. Актуальная ветка — 2.28 (июнь 2026). |
 
 ### Telemetry API (telemetry.istio.io)
@@ -56,6 +58,50 @@ spec:
 ```
 
 Провайдеры (`otel`, `prometheus` и др.) регистрируются в `istiod` через `meshConfig.extensionProviders` — там задаются endpoint и транспорт (gRPC `4317` / HTTP `4318`). Подробности протокола: [OTLP](../OpenTelemetry/otlp_protocol.md).
+
+### Золотые сигналы SRE в Istio
+
+Наблюдаемость в меше строится вокруг четырёх золотых сигналов (Golden Signals), каждый из которых имеет конкретные реализации в Istio:
+
+| Сигнал | Istio-метрика | Источник | Порог (рекомендуемый) |
+| :--- | :--- | :--- | :--- |
+| **Traffic (Трафик)** | `istio_requests_total` | Envoy/Prometheus | Мониторинг RPS per service |
+| **Errors (Ошибки)** | `istio_requests_total{response_code=~"5.."}` | Envoy/Prometheus | >1% доля 5xx → инцидент |
+| **Latency (Задержка)** | `envoy_cluster_upstream_rq_time` | Envoy Admin API | P99 > 1s → алерт |
+| **Saturation (Насыщение)** | `envoy_cluster_upstream_cx_active` | Envoy Admin API | >80% от `max_connections` |
+
+В режиме Ambient Mesh:
+- L4-сигналы собираются **Ztunnel** (метрики `istio_tcp_connections_opened_total`, `istio_tcp_sent_bytes_total`).
+- L7-сигналы собираются **Waypoint Proxy** (стандартные Envoy-метрики).
+
+### Envoy Admin Stats
+
+Каждый прокси (sidecar, waypoint) exposes admin-интерфейс на порту `15000`. Статистика разделена на иерархические счётчики:
+
+```bash
+# Общая статистика по слушателям
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s 127.0.0.1:15000/stats | grep listener
+
+# Статистика по конкретному кластеру (upstream-сервису)
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s 127.0.0.1:15000/stats | grep "cluster.outbound|8080||my-service"
+
+# Пул соединений
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s 127.0.0.1:15000/stats | grep "cx_"
+# → upstream_cx_total: 500
+# → upstream_cx_active: 5
+# → upstream_cx_connect_timeout: 3
+
+# Гистограммы задержек (если включены в bootstrap)
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s "127.0.0.1:15000/stats?format=histogram" | grep "outbound|8080"
+# → outbound|8080||my-service.prod.svc.cluster.local: P50=2ms,P99=15ms,P999=50ms
+```
+
+Ключевые счётчики:
+- `upstream_rq_total` — общее количество запросов к upstream.
+- `upstream_rq_5xx` — количество ответов 5xx.
+- `upstream_cx_active` — активные соединения к upstream.
+- `upstream_cx_connect_timeout` — количество таймаутов соединений.
+- `downstream_cx_total` — входящие соединения.
 
 ### Визуализация трафика в Kiali
 
@@ -151,13 +197,290 @@ staticClients:
 2.  **Waypoint Proxies:** через какие инстансы проходит L7-маршрутизация.
 3.  **Cross-cluster traffic:** отображение потоков между разными кластерами в федеративной сетке.
 
+### Сценарий 1: Поиск и анализ медленных запросов через Envoy Stats
+
+Используйте admin-интерфейс Envoy для поиска upstream-сервисов с задержкой выше порога:
+
+```bash
+# Получение гистограмм задержек для всех outbound-кластеров
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s "127.0.0.1:15000/stats?format=histogram" | grep "outbound" | grep -E "P99|P999"
+
+# Фильтр по порогу (например, P99 > 50ms)
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s "127.0.0.1:15000/stats?format=histogram" | grep "outbound" | awk -F'[,:]' '{for(i=1;i<=NF;i++) if($i~/P99/) print}' | sort -t= -k2 -nr | head -10
+```
+
+### Сценарий 2: Настройка ServiceMonitor для Ztunnel
+
+Ztunnel экспортирует метрики на порту `15020`. Для сбора метрик в Prometheus создайте `ServiceMonitor`:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ztunnel-metrics
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      app: ztunnel
+  endpoints:
+  - port: http-envoy-prometheus
+    path: /metrics
+    interval: 30s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+```
+
+### Сценарий 3: Настройка ServiceMonitor для Waypoint Proxy
+
+Waypoint Proxy использует стандартный Envoy admin-порт `15000`. Для его мониторинга:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: waypoint-metrics
+  namespace: my-app
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: namespace-waypoint
+  endpoints:
+  - port: http-envoy-prometheus
+    path: /stats/prometheus
+    interval: 30s
+```
+
+### Сценарий 4: Создание базовых Prometheus Alerting Rules
+
+Настройте алерты на основе golden signals:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: istio-golden-signals
+  namespace: istio-system
+spec:
+  groups:
+  - name: istio.alerts
+    rules:
+    - alert: IstioHighErrorRate
+      expr: sum(rate(istio_requests_total{response_code=~"5.."}[5m])) / sum(rate(istio_requests_total[5m])) > 0.01
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Доля 5xx ошибок > 1% в {{ $labels.namespace }}/{{ $labels.destination_service_name }}"
+    - alert: IstioHighLatency
+      expr: histogram_quantile(0.99, sum(rate(envoy_cluster_upstream_rq_time_bucket[5m])) by (le, destination_service_name)) > 1000
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "P99 задержка > 1s для {{ $labels.destination_service_name }}"
+    - alert: IstioNoHealthyUpstream
+      expr: sum(rate(istio_requests_total{response_code="503"}[5m])) by (destination_service_name) > 0
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "503 ошибки для {{ $labels.destination_service_name }} — нет здоровых эндпоинтов"
+    - alert: ZtunnelHighCPU
+      expr: sum(rate(container_cpu_usage_seconds_total{pod=~"ztunnel-.*"}[5m])) by (node) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Высокий CPU Ztunnel на ноде {{ $labels.node }}"
+    - alert: IstiodDown
+      expr: up{job="istiod"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Istiod недоступен"
+```
+
+### Сценарий 5: Диагностика пропущенных трейсов (W3C Trace Context)
+
+Если трейсы не появляются в Grafana Tempo:
+
+```bash
+# 1. Проверьте, что приложение пробрасывает заголовок traceparent
+kubectl exec -n <ns> <pod> -c app -- curl -s -H "traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" http://localhost:8080/api
+
+# 2. Проверьте, что Telemetry ресурс включает tracing
+kubectl get telemetry -n <ns> -o yaml | grep -A5 "tracing:"
+
+# 3. Проверьте endpoint OTLP в istiod
+kubectl get cm istio -n istio-system -o jsonpath='{.data.mesh}' | jq '.defaultConfig.extensionProviders'
+
+# 4. Проверьте логи Envoy на предмет rejected spans
+kubectl logs <pod> -c istio-proxy -n <ns> | grep -i "trace\|span\|otel"
+```
+
+### Сценарий 6: Проверка доставки OTLP endpoint'ов через istioctl
+
+Убедитесь, что прокси знает о OTLP endpoint:
+
+```bash
+# Просмотр всех кластеров (включая OTLP)
+istioctl proxy-config clusters deploy/<app> -n <ns> | grep -i otel
+# → cluster.outbound|4317||otel-collector.monitoring.svc.cluster.local
+
+# Проверка конфигурации tracing
+istioctl proxy-config tracing deploy/<app> -n <ns>
+# → Должен отображать провайдера otel с endpoint
+
+# Проверка, что трейсы уходят
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s 127.0.0.1:15000/logging?level=trace | grep -i "trace"
+```
+
+### Сценарий 7: Оптимизация кардинальности метрик Istio
+
+Высокая кардинальность (множество уникальных комбинаций labels) приводит к "explosion" метрик в Prometheus и падению производительности.
+
+```bash
+# 1. Проверьте топ метрик по cardinality
+kubectl exec -n <ns> <pod> -c istio-proxy -- curl -s "127.0.0.1:15000/stats" | wc -l
+# → Если > 10000 строк — кардинальность высокая
+
+# 2. Отфильтруйте ненужные labels через Telemetry API
+cat <<EOF | kubectl apply -f -
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: reduce-cardinality
+  namespace: my-app
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+      tags:
+        source_cluster: REMOVE
+        destination_cluster: REMOVE
+EOF
+
+# 3. Отключите health cache в Kiali для высоконагруженных кластеров
+kubectl edit cm kiali -n istio-system
+# → health_cache: false
+```
+
+### Сценарий 8: Мониторинг состояния istiod через ServiceMonitor
+
+istiod экспортирует метрики на порту `15014`. Для мониторинга Control Plane:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istiod-metrics
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      app: istiod
+  endpoints:
+  - port: http-monitoring
+    path: /metrics
+    interval: 30s
+```
+
+### Сценарий 9: Проверка работы W3C Trace Context
+
+Убедитесь, что заголовки `traceparent` и `tracestate` пробрасываются между сервисами:
+
+```bash
+# Отправка запроса с явным traceparent
+TRACE_ID="0af7651916cd43dd8448eb211c80319c"
+PARENT_ID="b7ad6b7169203331"
+curl -v -H "traceparent: 00-$TRACE_ID-$PARENT_ID-01" http://my-app.prod/api
+
+# Проверка, что Envoy принял и распространил trace
+kubectl logs <pod> -c istio-proxy -n prod | grep -i "traceparent\|tracestate"
+```
+
+---
+
+## Диагностика и устранение неполадок
+
+### Команды проверки
+
+| Команда | Назначение |
+| :--- | :--- |
+| **`istioctl proxy-status`** | Проверка синхронизации xDS (CDS/LDS/EDS/RDS) между istiod и прокси. |
+| **`istioctl proxy-config clusters deploy/<name> -n <ns>`** | Просмотр upstream-кластеров (включая OTLP, внешние сервисы). |
+| **`istioctl proxy-config listeners deploy/<name> -n <ns>`** | Просмотр слушателей и filter chains. |
+| **`istioctl proxy-config routes deploy/<name> -n <ns>`** | Проверка активных маршрутов и таймаутов. |
+| **`istioctl proxy-config secret deploy/<name> -n <ns>`** | Просмотр сертификатов mTLS и их срока действия. |
+| **`kubectl logs <pod> -c istio-proxy`** | Логи Envoy (access-логи, ошибки фильтров). |
+| **`istioctl analyze -A`** | Автоматический анализ конфликтов в конфигурации меша. |
+| **`kubectl top pods -n istio-system -l app=ztunnel`** | Использование ресурсов Ztunnel по нодам. |
+
+### Интерпретация логов Envoy
+
+Access-лог Envoy содержит следующие поля:
+
+| Поле | Значение |
+| :--- | :--- |
+| `method` | HTTP-метод (GET, POST) |
+| `path` | URI запроса |
+| `upstream_cluster` | Имя кластера (сервиса назначения) |
+| `upstream_host` | Эндпоинт (IP:port), к которому был направлен запрос |
+| `response_code` | HTTP-код ответа (200, 503, 502 и т.д.) |
+| `duration` | Время обработки в миллисекундах |
+| `x_forwarded_for` | Исходный IP клиента (если прошёл через ingress) |
+
+Типовые паттерны в логах:
+- `upstream_reset_overflow` — исчерпан лимит соединений (`max_requests_per_connection`).
+- `upstream_rq_retry` — ретрай запроса к upstream.
+- `access_logs` — отсутствие записи означает, что `Telemetry` ресурс не настроен или `accessLogging` отключен.
+
+### Типичные ошибки и устранение неполадок
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **Метрики Envoy не появляются в Prometheus** | PodMonitor/Servicemonitor отсутствует или порт/путь указаны неверно | Проверьте, что PodMonitor выбирает поды по метке `istio-injection=enabled`; порт `15090`, путь `/stats/prometheus`. |
+| **Access-логи не пишутся** | Telemetry API не настроен или `accessLogging` отключен | Примените ресурс `Telemetry` с `accessLogging`; проверьте `kubectl logs -c istio-proxy`. |
+| **Трейсы не доставляются в Tempo** | OTLP endpoint неверен или `randomSamplingPercentage` = 0 | Проверьте `meshConfig.extensionProviders`; убедитесь, что `Telemetry.tracing` настроен с ненулевым семплированием. |
+| **Граф Kiali пустой или устаревший** | Health cache отключен или Kiali не может достучаться до istiod | Проверьте ServiceAccount Kiali; убедитесь, что `kiali_health_status` включен (opt-in с 2.24). |
+| **Высокая кардинальность метрик** | Слишком много labels в метриках Envoy | Используйте `Telemetry.metrics.overrides.tags` для удаления лишних тегов (`source_cluster`, `destination_cluster`). |
+| **OTLP endpoint недоступен** | Сетевая разрыв между прокси и коллектором | Проверьте `istioctl proxy-config clusters`; убедитесь, что Service/Endpoints OTLP коллектора существует. |
+| **Ztunnel метрики не собираются** | ServiceMonitor отсутствует или порт неправильный | Ztunnel экспортирует на порту `15020`; убедитесь, что ServiceMonitor указывает правильный порт и путь `/metrics`. |
+| **Waypoint метрики отсутствуют** | Waypoint не развёрнут или ServiceMonitor не настроен | `istioctl waypoint list -n <ns>`; создайте ServiceMonitor для label `gateway.networking.k8s.io/gateway-name`. |
+| **Health cache Kiali не обновляется** | Нет прав на чтение метрик или кэш отключен | Проверьте RBAC Kiali; для высококардинальных кластеров оставьте кэш отключенным. |
+| **Сертификат истёк, алерты не сработали** | Blackbox exporter или alerting rule не настроен | Добавьте правило `IstioCertificateExpiry` с порогом 7 дней до истечения. |
+
+---
+
+## Лучшие практики эксплуатации
+
+1.  **Scraping метрик:** используйте **PodMonitor** (Prometheus Operator) с портом `15090` и путём `/stats/prometheus` для Envoy-метрик; для метрик Istio-агента — порт `15020`. В моделях без sidecar (Ambient) метрики собираются напрямую с Ztunnel (`istio_tcp_*`).
+2.  **Ресурсные лимиты:** для мешей с количеством сервисов > 500 выделите Kiali не менее 2 CPU и 2GB RAM для эффективной обработки графа топологии. Начиная с Kiali 2.22+ включите health cache (`kiali_health_status`) — для инсталляций с высокой кардинальностью метрик оставляйте его отключённым (opt-in с 2.24).
+3.  **Health Validation:** регулярно проверяйте вкладку **Istio Config** в Kiali — она подсвечивает ошибки в Gateway API (например, конфликтующие `HTTPRoute`).
+4.  **Распределенная трассировка:** убедитесь, что ваше приложение пробрасывает заголовок `traceparent` (стандарт **W3C Trace Context**, используется по умолчанию) — `b3` (Zipkin) применяется только в legacy-инсталляциях. Иначе меш не сможет связать спаны в единый трейс.
+5.  **Ambient-наблюдаемость:** в Ambient используйте L4-метрики Ztunnel (`istio_tcp_connections_opened_total`, `istio_tcp_sent_bytes_total`) для базового мониторинга соединений и телеграммы L7 через Waypoint — HTTP-метрики генерируются только там.
+6.  **PodMonitor для всех компонентов:** настраивайте ServiceMonitor/PodMonitor не только для Envoy, но и для istiod (`15014`), Ztunnel (`15020`) и Waypoint (`15000`).
+7.  **Health cache Kiali:** для кластеров с < 500 сервисов включите `kiali_health_status` для снижения нагрузки на Prometheus. Для высококардинальных кластеров оставьте отключенным.
+8.  **Sampling трейсов:** настройте `randomSamplingPercentage` в `Telemetry` ресурсе. Для продакшена рекомендуется 0.1–1%; для staging можно оставить 100%.
+9.  **Алерты на golden signals:** создайте PrometheusRule на основе SRE golden signals (Traffic, Errors, Latency, Saturation) для каждого ключевого сервиса.
+10. **Ограничение кардинальности:** используйте `Telemetry.metrics.overrides.tags` для удаления избыточных labels (`source_cluster`, `destination_cluster`, `reporter`).
+11. **Хранение логов:** настройте Loki с retention policy (например, 30 дней для продакшена) и лимитами на объём стека.
+12. **Безопасность observability stack:** ограничьте доступ к Kiali через `AuthorizationPolicy` и `NetworkPolicy`; Grafana и Tempo должны находиться в отдельном неймспейсе `monitoring`.
+
 ---
 
 ## Дополнительная информация
 
 ### Интеграция с Grafana Tempo и TraceQL
 
-В 2026 году Kiali поддерживает глубокую интеграцию с Tempo (включая актуальную ветку **Tempo 3.0** с архитектурой Decoupled Read/Write Path на базе Kafka и хранилищем в S3). При просмотре графа трафика можно кликнуть на ребро и мгновенно перейти к списку трейсов, отфильтрованных по **TraceQL** (например, запросы с задержкой > 500мс).
+В 2026 году Kiali поддерживает глубокую интеграцию с Tempo (включая актуальную ветку **Tempo 3.0** с архитектурой Decoupled Read/Write Path). При просмотре графа трафика можно кликнуть на ребро и мгновенно перейти к списку трейсов, отфильтрованных по **TraceQL** (например, запросы с задержкой > 500мс).
 
 ```bash
 # Пример запроса TraceQL, генерируемого Kiali
@@ -172,23 +495,26 @@ staticClients:
 
 Подробнее об архитектуре Tempo: [Grafana Tempo: распределённая трассировка](../Tempo/index.md).
 
-### Лучшие практики эксплуатации
+### Операционные аспекты (2026)
 
-1.  **Scraping метрик:** используйте **PodMonitor** (Prometheus Operator) с портом `15090` и путём `/stats/prometheus` для Envoy-метрик; для метрик Istio-агента — порт `15020`. В моделях без sidecar (Ambient) метрики собираются напрямую с Ztunnel (`istio_tcp_*`).
-2.  **Ресурсные лимиты:** для мешей с количеством сервисов > 500 выделите Kiali не менее 2 CPU и 2GB RAM для эффективной обработки графа топологии. Начиная с Kiali 2.22+ включите health cache (`kiali_health_status`) — для инсталляций с высокой кардинальностью метрик оставляйте его отключённым (opt-in с 2.24).
-3.  **Health Validation:** регулярно проверяйте вкладку **Istio Config** в Kiali — она подсвечивает ошибки в Gateway API (например, конфликтующие `HTTPRoute`).
-4.  **Распределенная трассировка:** убедитесь, что ваше приложение пробрасывает заголовок `traceparent` (стандарт **W3C Trace Context**, используется по умолчанию) — `b3` (Zipkin) применяется только в legacy-инсталляциях. Иначе меш не сможет связать спаны в единый трейс.
-5.  **Ambient-наблюдаемость:** в Ambient используйте L4-метрики Ztunnel (`istio_tcp_connections_opened_total`, `istio_tcp_sent_bytes_total`) для базового мониторинга соединений и телеграммы L7 через Waypoint — HTTP-метрики генерируются только там.
+1.  **Sidecar Tax (Налог на сайдкар):** даже с оптимизациями добавление прокси увеличивает задержку. В 2026 году это решается через переход на **Ambient Mesh** (Ztunnel + Waypoint) или использование **eBPF-акселерации** (SOCKMAP-обход TCP/IP-стека ядра, снижение задержек на 15–20%).
+2.  **Ресурсное планирование:** прокси потребляют память и CPU. В Sidecar-модели это может составлять до 10–15% ресурсов кластера. Ambient Mesh снижает этот показатель до 1–3%.
+3.  **Управление сертификатами:** ротация сертификатов mTLS происходит автоматически (обычно раз в 24 часа), что исключает риски простоя из-за истечения срока действия.
+4.  **Планирование емкости провайдеров (Capacity Planning):** в мультикластерных конфигурациях важно учитывать overhead Control Plane (например, Istiod) и резервировать ресурсы для распределенной трассировки.
+5.  **Совместимость с существующими сервисами:** при интеграции mesh с устаревшими системами (VM, внешние базы данных) настройте исключения из mTLS/проксирования через `ServiceEntry` (Istio) или явные политики, чтобы не потерять связность.
 
 ### Актуальность и ссылки
 
 - **Istio 1.30+:** стандарт для современного Service Mesh (Kubernetes 1.32–1.36); телеметрия настраивается через Telemetry API.
 - **Kiali 2.28:** основной инструмент визуализации; полная поддержка Ambient Mesh, Gateway API, OIDC PKCE и Trace overlay (2.26+).
-- **Открытый стандарт OpenTelemetry:** OTLP — единый протокол для метрик, логов и трейсов; Grafana Alloy — рекомендуемый коллектор в стеке LGTM.
+- **OpenTelemetry:** OTLP — единый протокол для метрик, логов и трейсов; Grafana Alloy — рекомендуемый коллектор в стеке LGTM.
 
 **См. также:**
 - [Основные концепции Service Mesh](./service_mesh_concepts.md)
 - [Архитектура Istio и режим Ambient](./istio_architecture.md)
+- [Прокси Sidecar: реализации и сценарии](./proxy_sidecar.md)
+- [Политики безопасности Istio](./istio-security-policies.md)
+- [Ограничение скорости (Rate Limiting) в Istio](./istio_rate_limiting.md)
 - [Grafana Tempo: распределённая трассировка](../Tempo/index.md)
 
 Документация: [Kiali Official Documentation](https://kiali.io/docs/), [Istio Observability Guide](https://istio.io/latest/docs/tasks/observability/).

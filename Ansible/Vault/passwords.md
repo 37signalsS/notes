@@ -4,16 +4,19 @@
 
 - **Источник пароля (Password Source)**: Метод, с помощью которого Ansible получает ключ для расшифровки данных. Выбор метода зависит от требований к автоматизации и уровня безопасности.
 - **Идентификатор хранилища (Vault ID)**: Метка (например, `dev`, `prod`), позволяющая связать зашифрованный файл с конкретным паролем или источником при использовании нескольких хранилищ (Multi-Vault).
-- **Клиентский скрипт (Client Script)**: Исполняемый файл (Python, Bash), который Ansible запускает для динамического получения пароля из внешних систем управления секретами (HashiCorp Vault, AWS Secrets Manager, KeepassXC).
+- **Клиентский скрипт (Client Script)**: Исполняемый файл (Python, Bash), который Ansible запускает для динамического получения пароля из внешних систем управления секретами (HashiCorp Vault, KeePassXC, `pass`).
 - **GPG-шифрование (GNU Privacy Guard)**: Протокол шифрования, используемый для защиты самих файлов паролей Vault. Позволяет хранить пароли в репозитории в зашифрованном виде, расшифровывая их «на лету» через скрипт.
-- **OIDC (OpenID Connect)**: Современный стандарт аутентификации, позволяющий CI/CD-пайплайнам получать временные токены доступа к менеджерам секретов без использования статических паролей.
+- **pass (Password Store)**: Unix-утилита для хранения паролей в зашифрованном виде в файловой системе с использованием GPG.
+- **KeePassXC**: Менеджер паролей с CLI-интерфейсом (`keepassxc-cli`), позволяющий извлекать секреты программно.
 - **STDOUT (Standard Output)**: Стандартный поток вывода, куда клиентский скрипт должен выводить пароль для его считывания инструментом Ansible.
 
-## Предварительные требования
+## Основные концепции
+
+### Предварительные требования
 
 Перед работой с источниками паролей Vault убедитесь в наличии следующих компонентов:
 
-- **Ansible**: версия 2.4+ (для поддержки Vault ID), рекомендуется 2.12+ (ansible-core).
+- **Ansible (ansible-core)**: версия 2.4+ (для поддержки Vault ID), рекомендуется 2.20+.
 - **Права доступа**: файлы паролей должны быть доступны только владельцу:
   ```bash
   chmod 600 .vault_pass
@@ -21,9 +24,8 @@
   # → -rw------- 1 user user ... .vault_pass
   ```
 - **Отсутствие прав OTHERS**: файлы с правами `644` или `777` вызовут ошибку `InsecureWorldReadablePermissions`.
-- **PYTHONPATH**: для работы скриптов убедитесь, что Python доступен в PATH и установлены необходимые модули (`requests` для интеграции с внешними API).
-
-## Основные концепции
+- **Python**: 3.8+ (совместимость с ansible-core 2.20+).
+- **PYTHONPATH**: для работы скриптов убедитесь, что Python доступен в PATH и установлены необходимые модули (`requests` для интеграции с внешними API, `jq` для обработки JSON).
 
 ### Иерархия и приоритеты поиска
 
@@ -39,10 +41,29 @@ Ansible ищет пароль в определенном порядке. Пер
 | :--- | :--- | :--- | :--- |
 | **Интерактивный ввод** (`--ask-vault-pass`) | Низкое | Максимальная | Для ручного запуска на критических узлах. Секрет живет только в RAM. |
 | **Локальный файл** (`.vault_pass`) | Высокое | Низкая | Только для локальной разработки. Риск случайного коммита в Git. |
-| **Клиентский скрипт** | Среднее | Высокая | **Standard 2024+**. Интеграция с внешними SSoT (HashiCorp, AWS). |
+| **Клиентский скрипт** | Среднее | Высокая | Стандарт для автоматизации. Интеграция с on-prem SSoT (HashiCorp Vault, KeePassXC). |
 | **GPG-скрипт** | Среднее | Высокая | Для командной работы без внешних менеджеров секретов. |
+| **pass** | Среднее | Высокая | Для индивидуальной работы с секретами в Git-репозитории. |
 
 **Важное ограничение:** Ansible **не поддерживает** прямую передачу пароля через переменную окружения (например, `export ANSIBLE_VAULT_PASSWORD=...`) из соображений безопасности. Это предотвращает утечку пароля через список процессов (`ps aux`) или логи окружения CI. Переменная может указывать только на путь к источнику.
+
+### Контракт STDOUT для скриптов
+
+Клиентский скрипт должен удовлетворять строгим требованиям к выводу:
+
+- **Только пароль**: скрипт выводит в STDOUT ровно одну строку — пароль, без пробелов, кавычек, логов или приглашений.
+- **Нет интерактива**: скрипт не должен запрашивать ввод пользователя; используйте заранее настроенные переменные окружения или параметры.
+- **Выходной код**: при ошибке скрипт возвращает ненулевой код (`exit 1`), чтобы Ansible прервал выполнение.
+- **Аргументы**: при использовании `--vault-id <label>` Ansible передает идентификатор как аргумент скрипту.
+
+```bash
+#!/bin/bash
+# Пример минимального скрипта-источника
+set -euo pipefail
+echo "${VAULT_PASS:?Переменная VAULT_PASS не задана}"
+```
+
+**Для Sysadmin:** Проверяйте вывод скрипта перед использованием: `./vault-pass.sh | cat -A` — лишние символы (например, `^M` или пробелы) сломают расшифровку.
 
 ## Практические сценарии
 
@@ -56,175 +77,74 @@ ansible-playbook site.yml --vault-id prod@prompt
 # → Vault password (prod): (ввод пароля)
 ```
 
-### Сценарий 2: Использование клиентских скриптов (Best Practice 2024-2025)
+**Для Sysadmin:** Используйте `--vault-id prod@prompt` вместо `--ask-vault-pass`, чтобы явно указать метку. Это предотвращает случайное использование неправильного пароля при наличии нескольких Vault ID.
 
-Это стандарт для профессиональной автоматизации. Скрипт может интегрироваться с любым менеджером секретов (HashiCorp Vault, AWS Secrets Manager, 1Password).
+### Сценарий 2: Локальный файл пароля
+
+Самый простой способ для локальной разработки.
+
+1. **Создание файла**:
+    ```bash
+    echo "MySecureVaultPass2024!" > .vault_pass
+    chmod 600 .vault_pass
+    ```
+
+2. **Добавление в `.gitignore`**:
+    ```bash
+    echo ".vault_pass*" >> .gitignore
+    ```
+
+3. **Запуск**:
+    ```bash
+    ansible-playbook site.yml --vault-password-file .vault_pass
+    ```
+
+**Для DevOps:** Никогда не коммитьте `.vault_pass`. Добавьте проверку в pre-commit hook: `git diff --cached --name-only | grep -E '\.vault_pass' && exit 1`.
+
+### Сценарий 3: Универсальный клиентский скрипт
+
+Это стандарт для профессиональной автоматизации. Скрипт может получать пароль из любой on-prem системы (HashiCorp Vault, KeePassXC, сетевой хранилище).
 
 **Требования к скрипту:**
 - Права на выполнение: `chmod +x script.sh`.
-- Вывод в STDOUT: Только чистый пароль без лишних пробелов и логов.
-- Обработка аргументов: При использовании `--vault-id`, Ansible передает этот идентификатор в скрипт как аргумент.
+- Вывод в STDOUT: только чистый пароль.
+- Обработка аргументов: при использовании `--vault-id` Ansible передает идентификатор как аргумент.
 
-**Пример скрипта на Bash для AWS Secrets Manager (`vault-client.sh`):**
+**Пример скрипта для HashiCorp Vault (`fetch_vault_pass.py`)**:
+```python
+#!/usr/bin/env python3
+import os, sys, requests
+
+ROLE_ID = os.getenv("VAULT_ROLE_ID")
+SECRET_ID = os.getenv("VAULT_SECRET_ID")
+VAULT_ADDR = os.getenv("VAULT_ADDR", "https://vault.example.com:8200")
+
+def get_token():
+    r = requests.post(f"{VAULT_ADDR}/v1/auth/approle/login",
+                      json={"role_id": ROLE_ID, "secret_id": SECRET_ID})
+    r.raise_for_status()
+    return r.json()["auth"]["client_token"]
+
+def get_password(token, vault_id):
+    r = requests.get(f"{VAULT_ADDR}/v1/secret/data/ansible/{vault_id}",
+                     headers={"X-Vault-Token": token})
+    r.raise_for_status()
+    return r.json()["data"]["data"]["password"]
+
+if __name__ == "__main__":
+    vault_id = sys.argv[2] if len(sys.argv) > 2 else "default"
+    print(get_password(get_token(), vault_id))
+```
+
+**Запуск**:
 ```bash
-#!/bin/bash
-# Ansible вызывает: script.sh --vault-id <label>
-VAULT_ID=$2
-
-if [ "$VAULT_ID" == "prod" ]; then
-    # Получение из AWS с использованием IAM (Identity and Access Management) роли
-    aws secretsmanager get-secret-value --secret-id "ansible/prod-pass" --query "SecretString" --output text
-elif [ "$VAULT_ID" == "dev" ]; then
-    echo "local_development_password"
-fi
+chmod +x fetch_vault_pass.py
+ansible-playbook site.yml --vault-password-file ./fetch_vault_pass.py --vault-id prod
 ```
 
-### Сценарий 3: Настройка в ansible.cfg для нескольких окружений
+**Для SRE:** Храните `ROLE_ID` и `SECRET_ID` в защищенном хранилище Control Node (например, в зашифрованном файле, доступном только root). Используйте AppRole с минимально необходимыми правами (`read` только к путям Ansible).
 
-Вы можете задать список идентификаторов и соответствующих им источников (файлов или скриптов) глобально.
-
-```ini
-# ansible.cfg
-[defaults]
-# Формат: метка@путь_к_источнику
-vault_identity_list = dev@.vault_pass_dev, prod@scripts/vault-client.sh
-```
-
-### Сценарий 4: Интеграция в CI/CD (GitLab/GitHub)
-
-В автоматизированных пайплайнах (CI/CD — Continuous Integration / Continuous Delivery) пароль передается через временный файл или скрипт-прослойку, использующий защищенные переменные.
-
-**Рекомендуемый метод (Variable Type: File):**
-1. В GitLab CI создайте переменную `VAULT_PASS_FILE` типа **File**.
-2. Используйте путь к ней напрямую:
-```yaml
-deploy:
-  script:
-    - chmod 600 "$VAULT_PASS_FILE"
-    - ansible-playbook deploy.yml --vault-password-file "$VAULT_PASS_FILE"
-```
-
-### Сценарий 5: Интеграция с HashiCorp Vault через AppRole
-
-AppRole — это основной метод аутентификации для машин и скриптов в HashiCorp Vault. Он позволяет безопасно получать пароли без использования личных токенов.
-
-1. **Скрипт-обертка (`fetch_vault_pass.py`)**:
-    ```python
-    #!/usr/bin/env python3
-    import os
-    import requests
-    import sys
-
-    # Данные для аутентификации передаются через переменные окружения
-    ROLE_ID = os.getenv("VAULT_ROLE_ID")
-    SECRET_ID = os.getenv("VAULT_SECRET_ID")
-    VAULT_ADDR = os.getenv("VAULT_ADDR", "https://vault.example.com:8200")
-
-    def get_token():
-        url = f"{VAULT_ADDR}/v1/auth/approle/login"
-        payload = {"role_id": ROLE_ID, "secret_id": SECRET_ID}
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        return response.json()["auth"]["client_token"]
-
-    def get_ansible_password(token, vault_id):
-        # Путь к секрету зависит от метки (Vault ID)
-        url = f"{VAULT_ADDR}/v1/secret/data/ansible/{vault_id}"
-        headers = {"X-Vault-Token": token}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()["data"]["data"]["password"]
-
-    if __name__ == "__main__":
-        try:
-            vault_id = sys.argv[2] if len(sys.argv) > 2 else "default"
-            token = get_token()
-            print(get_ansible_password(token, vault_id))
-        except Exception as e:
-            sys.exit(f"Error fetching password: {e}")
-    ```
-
-2. **Запуск в CI**:
-    ```bash
-    export VAULT_ROLE_ID="my-app-role-id"
-    export VAULT_SECRET_ID="my-app-secret-id"
-    ansible-playbook site.yml --vault-password-file ./fetch_vault_pass.py --vault-id prod
-    ```
-
-### Сценарий 6: Беспарольный доступ через OIDC (GitLab CI 17.0+)
-
-Использование **ID Tokens** исключает хранение статических `ROLE_ID` и `SECRET_ID`. Раннер аутентифицируется в Vault по JWT-токену, выданному GitLab.
-
-1. **Конфигурация `.gitlab-ci.yml`**:
-    ```yaml
-    deploy:
-      id_tokens:
-        VAULT_ID_TOKEN:
-          aud: https://vault.example.com
-      variables:
-        VAULT_ADDR: "https://vault.example.com:8200"
-      script:
-        # Скрипт использует VAULT_ID_TOKEN для логина в Vault через jwt-метод
-        - export ANSIBLE_VAULT_PASSWORD=$(./scripts/get_pass_via_oidc.sh)
-        - ansible-playbook site.yml --vault-password-file <(echo "$ANSIBLE_VAULT_PASSWORD")
-    ```
-
-### Сценарий 7: Ротация секретов в Enterprise-средах
-
-Для соблюдения политик комплаенса пароли мастер-ключей должны меняться регулярно.
-
-1. **Автоматизированная перешифровка**:
-    При смене пароля в HashiCorp Vault необходимо обновить все зашифрованные файлы в репозитории.
-    ```bash
-    # Смена пароля с использованием старого и нового ключа из разных источников
-    ansible-vault rekey --vault-id prod@old_script.py --new-vault-id prod@new_script.py group_vars/prod/vault.yml
-    ```
-
-### Сценарий 8: Интеграция с GitHub Actions (OIDC)
-
-Беспарольная аутентификация через OIDC (OpenID Connect) — рекомендуемый метод для GitHub Actions.
-
-1. **Настройка Vault**:
-    ```bash
-    # Включение JWT-метода
-    vault auth enable jwt
-
-    # Настройка GitHub OIDC
-    vault write auth/jwt/config \
-      oidc_discovery_url="https://token.actions.githubusercontent.com" \
-      bound_issuer="https://github.com/your-org"
-
-    # Создание роли для GitHub Actions
-    vault write auth/jwt/role/github-actions \
-      role_providers="github" \
-      bound_audiences="https://vault.example.com" \
-      bound_subject="repo:your-org/your-repo:ref:refs/heads/main" \
-      token_policies="ansible-read"
-    ```
-
-2. **Конфигурация `.github/workflows/deploy.yml`**:
-    ```yaml
-    jobs:
-      deploy:
-        permissions:
-          id-token: write   # Для OIDC
-          contents: read
-        steps:
-          - uses: actions/checkout@v4
-          - name: Get Vault token via OIDC
-            run: |
-              OIDC_TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-                "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://vault.example.com" | jq -r '.value')
-              VAULT_TOKEN=$(curl -s -X POST \
-                -H "X-Vault-JWT-Signature: $OIDC_TOKEN" \
-                "$VAULT_ADDR/v1/auth/jwt/login" | jq -r '.auth.client_token')
-              echo "VAULT_TOKEN=$VAULT_TOKEN" >> $GITHUB_ENV
-          - name: Run Playbook
-            run: |
-              ansible-playbook site.yml --vault-password-file <(echo "$VAULT_TOKEN")
-    ```
-
-### Сценарий 9: GPG-шифрование файла пароля
+### Сценарий 4: GPG-шифрование файла пароля
 
 Позволяет хранить зашифрованный файл пароля в Git, расшифровывая его «на лету».
 
@@ -241,7 +161,7 @@ AppRole — это основной метод аутентификации дл
     rm .vault_pass.txt  # Удалите открытый файл!
     ```
 
-3. **Скрипт расшифровки (`vault-pass.sh`)**:
+3. **Скрипт расшифровки (`fetch_vault_pass.sh`)**:
     ```bash
     #!/bin/bash
     gpg --quiet --decrypt .vault_pass.txt.gpg 2>/dev/null
@@ -249,58 +169,17 @@ AppRole — это основной метод аутентификации дл
 
 4. **Использование**:
     ```bash
-    chmod +x vault-pass.sh
-    ansible-playbook site.yml --vault-password-file ./vault-pass.sh
+    chmod +x fetch_vault_pass.sh
+    ansible-playbook site.yml --vault-password-file ./fetch_vault_pass.sh
     ```
 
-5. **Преимущества**:
-    - Открытый файл пароля никогда не хранится на диске.
-    - `.vault_pass.txt.gpg` безопасен для коммита в Git.
-    - Пароль доступен только пользователям, имеющим GPG-ключ.
+**Для Sysadmin:** `.vault_pass.txt.gpg` безопасно для коммита в Git. Расшифровывается только на машинах с приватным GPG-ключом. Документируйте fingerprint ключа для recovery.
 
-### Сценарий 10: Интеграция с Docker Compose
+### Сценарий 5: pass (Password Store)
 
-Безопасная передача паролей Vault в контейнеризированные среды.
+Использование Unix-утилиты `pass` как источника паролей.
 
-1. **Dockerfile** (для образа с Ansible):
-    ```dockerfile
-    FROM python:3.11-slim
-    RUN pip install ansible-core requests
-    WORKDIR /app
-    COPY . /app
-    CMD ["ansible-playbook", "site.yml"]
-    ```
-
-2. **docker-compose.yml** (с монтированием пароля через tmpfs):
-    ```yaml
-    services:
-      ansible:
-        build: .
-        cap_add:
-          - IPC_LOCK  # Предотвращает сброс в swap
-        volumes:
-          - type: tmpfs
-            target: /run/secrets
-            tmpfs:
-              size: 1M
-              noexec: true
-        environment:
-          ANSIBLE_VAULT_PASSWORD_FILE: /run/secrets/vault_pass
-        secrets:
-          - vault_pass
-
-    secrets:
-      vault_pass:
-        file: ./.vault_pass  # Только для разработки!
-    ```
-
-3. **В Production**: используйте Docker Secrets или HashiCorp Vault напрямую, а не файлы.
-
-### Сценарий 11: Встроенный lookup `pass` (Password Store)
-
-Использование Unix-утилиты `pass` (https://www.passwordstore.org/) как источника паролей.
-
-1. **Установка pass**:
+1. **Установка**:
     ```bash
     # macOS
     brew install pass
@@ -328,44 +207,9 @@ AppRole — это основной метод аутентификации дл
     ansible-playbook site.yml --vault-password-file ./vault-pass.sh
     ```
 
-### Сценарий 12: Интеграция с HashiCorp Vault через AppRole
+**Для SRE:** `pass` хранит секреты в зашифрованном виде в Git-репозитории. Используйте `pass git push` для синхронизации между Control Node. Настройте `GPG_TTY` и `GPG_AGENT_INFO` для безпарольной работы в CI.
 
-Для Enterprise-сред с централизованным управлением секретами.
-
-1. **Настройка Vault (однократно)**:
-    ```bash
-    vault auth enable approle
-    vault write auth/approle/role/ansible \
-      token_policies="ansible-read" \
-      token_ttl=3600 \
-      token_max_ttl=86400
-
-    vault read auth/approle/role/ansible/role-id
-    vault write -f auth/approle/role/ansible/secret-id
-    ```
-
-2. **Скрипт-обертка (`vault-pass.sh`)**:
-    ```bash
-    #!/bin/bash
-    ROLE_ID="${VAULT_ROLE_ID:?VAULT_ROLE_ID not set}"
-    SECRET_ID="${VAULT_SECRET_ID:?VAULT_SECRET_ID not set}"
-    VAULT_ADDR="${VAULT_ADDR:-https://vault.example.com:8200}"
-
-    TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/approle/login" \
-      -d "{\"role_id\":\"$ROLE_ID\",\"secret_id\":\"$SECRET_ID\"}" | jq -r '.auth.client_token')
-
-    curl -s -H "X-Vault-Token: $TOKEN" \
-      "$VAULT_ADDR/v1/secret/data/ansible/vault-password" | jq -r '.data.data.password'
-    ```
-
-3. **Использование**:
-    ```bash
-    export VAULT_ROLE_ID="your-role-id"
-    export VAULT_SECRET_ID="your-secret-id"
-    ansible-playbook site.yml --vault-password-file ./vault-pass.sh
-    ```
-
-### Сценарий 13: Скрипт для KeePassXC
+### Сценарий 6: KeePassXC
 
 Автоматическое извлечение пароля из локального хранилища KeePassXC.
 
@@ -376,7 +220,7 @@ AppRole — это основной метод аутентификации дл
 2. **Скрипт (`vault-pass-keepass.sh`)**:
     ```bash
     #!/bin/bash
-    KEEPASS_DB="${KEEPASS_DB:-~/ Keeys.kdbx}"
+    KEEPASS_DB="${KEEPASS_DB:-~/Keys.kdbx}"
     KEEPASS_ENTRY="${KEEPASS_ENTRY:-Ansible/Vault/Prod}"
     KEEPASS_PASS="${KEEPASS_PASS:-}"
 
@@ -391,15 +235,17 @@ AppRole — это основной метод аутентификации дл
 3. **Использование**:
     ```bash
     chmod +x vault-pass-keepass.sh
-    # Спаролем
+    # С паролем через переменную окружения
     KEEPASS_PASS="master" ansible-playbook site.yml --vault-password-file ./vault-pass-keepass.sh
     # Интерактивно
     ansible-playbook site.yml --vault-password-file ./vault-pass-keepass.sh
     ```
 
-### Сценарий 14: Переменная окружения с дочерним процессом
+**Для Sysadmin:** Храните `.kdbx` файл в зашифрованном домашнем каталоге. Резервное копирование KeePassXC-базы — часть disaster recovery. Никогда не передавайте мастер-пароль KeePassXC через CI-переменные.
 
-Передача пароля через process substitution для отсутствия на диске.
+### Сценарий 7: Process substitution (без следа на диске)
+
+Передача пароля через дескриптор файлов для отсутствия открытого файла на диске.
 
 ```bash
 # Вместо:
@@ -409,28 +255,79 @@ ansible-playbook site.yml --vault-password-file .vault_pass
 ansible-playbook site.yml --vault-password-file <(echo "$VAULT_PASSWORD")
 ```
 
-**Примечание**:尽管如此, пароль всё равно попадает в список процессов на время выполнения. Для максимальной безопасности используйте скрипты.
+**Примечание:** Пароль виден в `/proc/*/fd/` на время выполнения. Для максимальной безопасности на shared серверах используйте скрипты с правами `700`.
 
-## Гигиена и безопасность в Production
+**Для Sysadmin:** На shared Control Node контролируйте права доступа к `/proc`. Убедитесь, что только authorized пользователи имеют доступ к процессам Ansible.
 
-- **Минимизация записи на диск**: В Production всегда предпочитайте передачу пароля через дескрипторы файлов (`<(echo $PASS)`) или клиентские скрипты, чтобы избежать появления расшифрованного пароля в файловой системе.
-- **Маскирование в логах**: Убедитесь, что ваш CI-сервер маскирует переменные, которые используются для получения паролей Vault.
-- **Принцип минимальных привилегий**: AppRole в HashiCorp Vault должен иметь доступ `read` только к тем путям, которые необходимы для конкретного плейбука.
-- **Аудит**: Логируйте обращения к мастер-паролям в системе управления секретами для отслеживания несанкционированных запусков плейбуков.
+## Операции и команды
+
+### Основные команды
+
+| Команда | Описание | Пример |
+| :--- | :--- | :--- |
+| `ansible-vault create <file>` | Создание нового зашифрованного файла | `ansible-vault create group_vars/all/vault.yml` |
+| `ansible-vault create --vault-id <label>@<source> <file>` | Создание с указанием Vault ID | `ansible-vault create --vault-id prod@.vault_pass group_vars/prod/vault.yml` |
+| `ansible-vault edit <file>` | Редактирование зашифрованного файла | `ansible-vault edit group_vars/all/vault.yml` |
+| `ansible-vault encrypt <file>` | Шифрование существующего файла | `ansible-vault encrypt group_vars/all/vault.yml` |
+| `ansible-vault decrypt <file>` | Расшифровка файла (внимание: открытый текст на диске) | `ansible-vault decrypt group_vars/all/vault.yml` |
+| `ansible-vault view <file>` | Просмотр содержимого без редактирования | `ansible-vault view group_vars/all/vault.yml --vault-password-file .vault_pass` |
+| `ansible-vault rekey <file>` | Смена пароля файла | `ansible-vault rekey group_vars/all/vault.yml` |
+| `ansible-vault rekey --vault-id <old>@<old_src> --new-vault-id <new>@<new_src> <file>` | Смена пароля или Vault ID | `ansible-vault rekey --vault-id prod@old.sh --new-vault-id prod@new.sh secrets.yml` |
+| `ansible-vault encrypt_string '<value>' --name '<var>'` | Шифрование строки для инлайнового использования | `ansible-vault encrypt_string 'MySecret' --name 'db_password'` |
+
+### Переменные окружения
+
+| Переменная | Описание | Пример |
+| :--- | :--- | :--- |
+| `ANSIBLE_VAULT_PASSWORD_FILE` | Путь к файлу или скрипту с паролем | `export ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass` |
+| `ANSIBLE_VAULT_IDENTITY_LIST` | Список Vault ID через запятую | `export ANSIBLE_VAULT_IDENTITY_LIST="dev@~/.vault_dev,prod@~/.vault_prod"` |
+| `EDITOR` | Системный редактор для `ansible-vault edit` | `export EDITOR=nano` |
+| `TMPDIR` | Директория для временных файлов | `TMPDIR=~/.tmp` |
+
+**Приоритет аргументов командной строки**: `--vault-password-file` > `ANSIBLE_VAULT_PASSWORD_FILE` > `vault_password_file` в `ansible.cfg`.
 
 ## Устранение неполадок
 
-### Ошибка: `InsecureWorldReadablePermissions`
+### Ошибка: скрипт не возвращает пароль
 
-**Причина**: файл пароля доступен для чтения группой или другими пользователями.
+**Причина**: скрипт выводит лишний текст (промпты, логи) в STDOUT или возвращает неверный exit code.
 
 ```bash
-# Проверка прав
-ls -la .vault_pass
-# → -rw-r--r-- 1 user user ... .vault_pass  (НЕПРАВИЛЬНО)
+# Проверка вывода скрипта
+./vault-pass.sh
+# → Должен вывести ТОЛЬКО пароль без лишних символов
 
-# Исправление
-chmod 600 .vault_pass
+# Отладка
+bash -x ./vault-pass.sh  # Показать выполнение скрипта
+```
+
+**Решение**: Уберите `echo` с логами, `read -p` и интерактивные промпты из скрипта. Используйте переменные окружения для передачи конфиденциальных данных.
+
+### Ошибка: `Permission denied` при чтении GPG-файла
+
+**Причина**: GPG-ключ не импортирован в текущий keyring или нет доступа к агенту.
+
+```bash
+# Проверьте доступные ключи
+gpg --list-keys
+
+# Если ключ на смонтированном носителе
+gpg --import /path/to/key.asc
+```
+
+### Ошибка: `keepassxc-cli` не найден
+
+**Причина**: KeePassXC CLI не установлен или не в PATH.
+
+```bash
+# Проверка установки
+keepassxc-cli --version
+
+# macOS
+brew install keepassxc
+
+# Debian/Ubuntu
+sudo apt install keepassxc
 ```
 
 ### Ошибка: `Vault password file not found`
@@ -445,189 +342,80 @@ test -f .vault_pass && echo "OK" || echo "NOT FOUND"
 test -r .vault_pass && echo "Readable" || echo "Not readable"
 ```
 
-### Ошибка: `Decryption failed`
+### Пароль виден в `/proc/*/fd/`
 
-**Причина**: неверный пароль или Vault ID не совпадает с меткой в заголовке файла.
-
-```bash
-# Проверьте Vault ID в заголовке зашифрованного файла
-head -1 group_vars/all/vault.yml
-# → $ANSIBLE_VAULT;1.2;AES256;prod
-
-# Убедитесь, что передаёте правильный Vault ID
-ansible-playbook site.yml --vault-id prod@.vault_pass_prod
-```
-
-### Ошибка: `Vault password file 'script.sh' is not executable`
-
-**Причина**: скрипт-прослойка не имеет права на выполнение.
+**Причина**: использование process substitution `<()` или передача пароля через pipe.
 
 ```bash
-chmod +x vault-pass.sh
+# Проверка
+ls -la /proc/$$/fd/
+
+# Решение: используйте файл с правами 600 вместо process substitution
 ```
 
-### Ошибка: `No vault secret found for id 'dev'`
+**Для Sysadmin:** На shared серверах запретите доступ к `/proc/*/fd/` для непривилегированных пользователей через `mount -o remount,hidepid=2 /proc`.
 
-**Причина**: Vault ID `dev` не найден в `vault_identity_list`.
+## Лучшие практики
 
-```bash
-# Проверьте конфигурацию
-grep vault_identity_list ansible.cfg
+### Для DevOps
 
-# Или передайте Vault ID явно
-ansible-playbook site.yml --vault-id dev@.vault_pass_dev
-```
+- **no_log**: Всегда используйте `no_log: true` в задачах, работающих с секретами (пароли, токены, ключи). Это исключает утечку значений в логи Ansible.
+- **Автоматизация**: В CI/CD передавайте пароль через `--vault-password-file` или `ANSIBLE_VAULT_PASSWORD_FILE`. Избегайте `--ask-vault-pass` — он блокирует выполнение.
+- **Гранулярность**: Шифруйте значения, а не целые файлы, когда это возможно. Это упрощает code review.
+- **Pre-commit**: Настройте `ansible-lint` и `pre-commit` hook для проверки наличия `no_log` и отсутствия открытых секретов.
+- **Гигиена Git**: Добавляйте `.vault_pass*`, `*.gpg` и файлы паролей в `.gitignore`. Никогда не коммитьте их в репозиторий.
 
-### Ошибка: скрипт не возвращает пароль
+### Для SRE
 
-**Причина**: скрипт выводит лишний текст (промпты, логи) в STDOUT.
+- **Политика ротации**: Настройте политику ротации мастер-паролей (раз в квартал) и следите за ней через `ansible-vault rekey`.
+- **Аудит**: Включите логирование Ansible через `ANSIBLE_LOG_PATH`. Регулярно проверяйте историю Git на утечки.
+- **Инцидент-респонс**: При компрометации пароля немедленно выполните массовую ротацию. Документируйте процедуру.
+- **Динамические секреты**: В Production используйте HashiCorp Vault или аналогичные on-prem системы для динамической выдачи секретов. Это исключает хранение статических паролей на диске.
+- **Строгий режим**: Включите `vault_id_match = True` в `ansible.cfg` для предотвращения случайного использования ключей не по назначению.
 
-```bash
-# Проверка вывода скрипта
-./vault-pass.sh
-# → Должен вывести ТОЛЬКО пароль без лишних символов
+### Для Sysadmin
 
-# Отладка
-bash -x ./vault-pass.sh  # Показать выполнение скрипта
-```
+- **Права доступа**: Устанавливайте `chmod 600` на все файлы паролей. Это ограничивает доступ только владельцу.
+- **Временные файлы**: На shared Control Node контролируйте `$TMPDIR` и права доступа. Установите `umask 0077`.
+- **Редакторы**: Некоторые редакторы (VS Code, JetBrains) создают резервные файлы. При использовании `ansible-vault edit` убедитесь, что резервные файлы не попадают в Git.
+- **no_log и debug**: `no_log: true` скрывает вывод задачи, но не скрывает переменные, используемые в `register` или `debug` без `no_log`.
+- **Просмотр секретов**: Используйте `ansible-vault view` вместо `decrypt` для чтения секретов на production-хостах.
+- **Конфигурация**: Используйте `ansible-config dump --defaults | grep vault` для аукта текущей конфигурации Vault.
+- **GPG ключи**: Храните резервные копии приватных GPG-ключей в защищенном хранилище. Без ключа расшифровать `.gpg` файл невозможно.
 
-### Ошибка: `Permission denied` при чтении GPG-файла
+## См. также
 
-**Причина**: GPG-ключ не导入 в текущий keyring или нет доступа к агенту.
-
-```bash
-# Проверьте доступные ключи
-gpg --list-keys
-
-# Если ключ на смонтированном носителе
-gpg --import /path/to/key.asc
-```
-
-## Граничные случаи и ограничения
-
-- **Пароль не передаётся через ENV**: Ansible **не поддерживает** прямую передачу пароля через переменную окружения `ANSIBLE_VAULT_PASSWORD` — только через `ANSIBLE_VAULT_PASSWORD_FILE` (путь к источнику). Это предотвращает утечку через `ps aux`.
-- **Кэширование фактов**: при использовании `cache_fact = True` расшифрованные значения могут попасть в кэш на диске.
-- **Длина пароля**: рекомендуется минимум 16 символов; потолок зависит от алгоритма (AES-256).
-- **Параллельные процессы**: при запуске нескольких плейбуков с общим скриптом убедитесь в потокобезопасности (lock файлы, уникальные ключи сессий).
-- **Временные файлы**: при использовании process substitution `<()` пароль живёт в RAM и исчезает при завершении, но виден в `/proc/*/fd/`.
-
-## Справочник переменных окружения
-
-| Переменная | Описание | Пример |
-|------------|----------|--------|
-| `ANSIBLE_VAULT_PASSWORD_FILE` | Путь к файлу или скрипту с паролем | `export ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass` |
-| `ANSIBLE_VAULT_IDentities` | Список Vault ID через запятую | `export ANSIBLE_VAULT_IDentities="dev@~/.vault_dev,prod@~/.vault_prod"` |
-| `VAULT_ADDR` | Адрес сервера HashiCorp Vault | `export VAULT_ADDR="https://vault.example.com:8200"` |
-| `VAULT_TOKEN` | Токен аутентификации HashiCorp Vault | `export VAULT_TOKEN="s.xxxx"` |
-| `VAULT_ROLE_ID` | Role ID для AppRole-аутентификации | `export VAULT_ROLE_ID="my-app-role"` |
-| `VAULT_SECRET_ID` | Secret ID для AppRole-аутентификации | `export VAULT_SECRET_ID="my-secret-id"` |
-| `VAULT_ID_TOKEN` | JWT-токен для OIDC-аутентификации | Автоматически в GitLab CI 17.0+ |
+- [Ansible Vault: Основы](./basics.md) — базовый синтаксис, создание и редактирование файлов.
+- [Ansible Vault: Практические примеры](./examples.md) — сценарии использования Vault в CI/CD, ролях и мультиокружениях.
+- [Лучшие практики по безопасности](./best_practices.md) — рекомендации по защите секретов в Git и логах.
+- [Использование нескольких хранилищ (Multi-Vault)](./multi_vault.md) — детальная работа с Vault ID и метками.
 
 ## Дополнительная информация
 
-### Углубленные темы
-- [Ansible Vault: Основы](./basics.md) — базовый синтаксис и версии заголовков.
-- [Использование нескольких хранилищ (Multi-Vault)](./multi_vault.md) — детальная работа с Vault ID и метками.
-- [Лучшие практики по безопасности](./best_practices.md) — директива `no_log`, OIDC и защита при выполнении.
+### Граничные случаи
 
-### Технические детали
-- [Практические примеры использования](./examples.md) — реальные сценарии применения в инфраструктуре.
-- [Алгоритмы шифрования](./algorithms.md) — подробности AES-256 (Advanced Encryption Standard) и криптографических схем.
+- **Смешанные файлы**: файл может содержать как обычные, так и зашифрованные переменные.
+- **Кэширование фактов**: обычный `set_fact` **не** попадает в кэш — Ansible сохраняет только факты, помеченные `cacheable: true`. Если секрет задан через `set_fact` с `cacheable: true`, его открытое значение попадёт в кэш на диске (JSON, pickle, redis) вместе со всем остальным. Секреты из vault не должны быть `cacheable`.
+- **Память**: секреты расшифровываются в память Control Node. Убедитесь, что у системы достаточно оперативной памяти для крупных инвентарей.
+- **Редакторы**: Некоторые редакторы создают резервные файлы в том же каталоге. При использовании `ansible-vault edit` убедитесь, что резервные файлы не попадают в Git.
+- **no_log и debug**: `no_log: true` скрывает вывод задачи, но не скрывает переменные, используемые в `register` или `debug` без `no_log`.
 
 ### Интеграция с HashiCorp Vault
 
-**Что такое HashiCorp Vault:** Централизованное управление секретами с динамической выдачей, ротацией и контролем доступа. Поддерживает多种 бэкендов: KV, PKI, Database, AWS, Transit.
+HashiCorp Vault — on-prem система централизованного управления секретами с динамической выдачей, ротацией и контролем доступа. Поддерживает различные бэкенды: KV, PKI, Database, Transit.
 
-#### Два подхода к интеграции с Ansible
+**Два подхода к интеграции с Ansible:**
+1. **Получение секретов из Vault в плейбуке** через lookup-плагин `community.hashi_vault.vault_kv2_get`.
+2. **Пароль vault-шифрования из Vault**: скрипт-источник получает пароль из Vault и передает его Ansible через STDOUT.
 
-**Подход 1:** Получение секретов из Vault прямо в плейбуке через lookup-плагин.
-**Подход 2:** Пароль vault-шифрования берётся из HashiCorp Vault ( vault_password_file → скрипт → Vault).
+Детальную настройку AppRole, policies и CI/CD-интеграцию см. в [Лучшие практики по безопасности](./best_practices.md#интеграция-с-внешними-менеджерами-секретов-hashicorp-vault).
 
-#### Lookup-плагин hashi_vault
+### Справочник переменных окружения
 
-Плагин `hashi_vault` позволяет получать секреты из Vault непосредственно в плейбуках.
-
-**Установка:**
-```bash
-pip install hvac  # Python-клиент HashiCorp Vault
-```
-
-**Пример: vault lookup с AppRole auth:**
-```yaml
----
-- name: Получение секретов из HashiCorp Vault
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  vars:
-    vault_addr: "https://vault.example.com:8200"
-
-  tasks:
-    - name: Получение пароля БД через AppRole
-      ansible.builtin.debug:
-        msg: "Пароль: {{ lookup('hashi_vault', 'secret=secret/data/production/db:password auth_method=approle role_id={{ vault_role_id }} secret_id={{ vault_secret_id }}:{{ vault_addr }}') }}"
-
-    - name: Получение API-токена
-      ansible.builtin.debug:
-        msg: "Токен: {{ lookup('hashi_vault', 'secret=secret/data/api:token auth_method=approle role_id={{ vault_role_id }} secret_id={{ vault_secret_id }}:{{ vault_addr }}') }}"
-```
-
-**Пример: vault lookup с Token auth:**
-```yaml
-    - name: Получение секрета через статический токен
-      ansible.builtin.debug:
-        msg: "{{ lookup('hashi_vault', 'secret=secret/data/ansible/vault_password token={{ vault_token }}:{{ vault_addr }}') }}"
-```
-
-**Пример: получение нескольких секретов:**
-```yaml
-    - name: Загрузка всех секретов для окружения
-      ansible.builtin.set_fact:
-        db_password: "{{ lookup('hashi_vault', 'secret=secret/data/prod/db:password token={{ vault_token }}:{{ vault_addr }}') }}"
-        api_key: "{{ lookup('hashi_vault', 'secret=secret/data/prod/api:key token={{ vault_token }}:{{ vault_addr }}') }}"
-        ssh_key: "{{ lookup('hashi_vault', 'secret=secret/data/prod/ssh:private_key token={{ vault_token }}:{{ vault_addr }}') }}"
-```
-
-#### Интеграция с CI/CD: получение vault-токена через OIDC/JWT
-
-```yaml
-# .gitlab-ci.yml
-deploy:
-  id_tokens:
-    VAULT_ID_TOKEN:
-      aud: https://vault.example.com
-  script:
-    - |
-      OIDC_TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-        "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://vault.example.com" | jq -r '.value')
-      VAULT_TOKEN=$(curl -s -X POST \
-        -H "X-Vault-JWT-Signature: $OIDC_TOKEN" \
-        "$VAULT_ADDR/v1/auth/jwt/login" | jq -r '.auth.client_token')
-      echo "VAULT_TOKEN=$VAULT_TOKEN" >> $GITHUB_ENV
-    - ansible-playbook site.yml --vault-password-file <(echo "$VAULT_TOKEN")
-```
-
-#### Безопасность
-
-- **AppRole:** Рекомендуемый метод для машин. Ограничьте `token_policies` минимально необходимыми правами (`read` к конкретным путям).
-- **TLS:** Всегда используйте HTTPS для подключения к Vault. Проверяйте сертификаты сервера.
-- **Namespace isolation:** Используйте namespaces для изоляции секретов между командами/окружениями.
-- **Audit logging:** Включите аудит Vault для отслеживания всех обращений к секретам.
-- **Token TTL:** Устанавливайте короткий `token_ttl` (15-60 минут) и `token_max_ttl` для автоматической ротации.
-
-**Пример ограничения policy:**
-```hcl
-# policy.hcl — только чтение секретов для Ansible
-path "secret/data/ansible/*" {
-  capabilities = ["read"]
-}
-
-path "auth/approle/login" {
-  capabilities = ["update"]
-}
-```
-
-### Интеграция с внешними системами
-- [Интеграция Vault с Docker](../Vault/guides/vault_docker_integration.md) — контейнеризация и безопасность секретов.
-- [HashiCorp Vault: Основы](../../Vault/overview.md) — архитектура и управление секретами.
+| Переменная | Описание | Пример |
+| :--- | :--- | :--- |
+| `ANSIBLE_VAULT_PASSWORD_FILE` | Путь к файлу пароля по умолчанию | `export ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass` |
+| `ANSIBLE_VAULT_IDENTITY_LIST` | Список Vault ID через запятую | `export ANSIBLE_VAULT_IDENTITY_LIST="dev@~/.vault_dev,prod@~/.vault_prod"` |
+| `VAULT_ADDR` | Адрес сервера HashiCorp Vault | `export VAULT_ADDR="https://vault.example.com:8200"` |
+| `VAULT_ROLE_ID` | Role ID для AppRole-аутентификации | `export VAULT_ROLE_ID="my-app-role"` |
+| `VAULT_SECRET_ID` | Secret ID для AppRole-аутентификации | `export VAULT_SECRET_ID="my-secret-id"` |

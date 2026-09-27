@@ -595,6 +595,58 @@ kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds
 - GPU Device Plugin не установлен или не готов
 - Узел не имеет GPU, но Pod требует его через `nodeSelector`
 
+### Container Runtime (containerd/CRI-O) и Pending
+
+Если Pod назначен на узел, но CRI не работает, Pod будет в Pending/ContainerCreating:
+```bash
+# Проверка CRI через crictl
+ssh <node> "crictl info"
+# → если ошибка — CRI не работает
+
+# Проверка статуса CRI
+ssh <node> "systemctl status containerd"
+# → Active: active (running) или failed
+
+# Проверка socket CRI
+ssh <node> "ls -la /run/containerd/containerd.sock"
+# → если socket отсутствует — containerd не запущен
+
+# Проверка версии CRI
+ssh <node> "crictl version"
+# → Version:  1.7.x
+# → RuntimeName:  containerd
+
+# Проверка sandbox на узле
+ssh <node> "crictl pods | grep <pod-name>"
+# → если Pod отсутствует в выводе — sandbox не создан
+```
+
+**Типичные ошибки CRI:**
+- `context deadline exceeded` — CRI не отвечает (containerd завис)
+- `rpc error: code = Unavailable` — socket CRI недоступен
+- `cannot find runtime endpoint` — kubelet не настроен на CRI socket
+
+**Важно:** Версия kubelet и CRI должны совпадать. Проверка: `ssh <node> "kubelet --version"` и `ssh <node> "crictl version"`.
+
+### kube-proxy и Pending
+
+kube-proxy напрямую не блокирует планирование, но может косвенно влиять:
+```bash
+# Проверка времени обновления правил kube-proxy
+ssh <node> "iptables -L -n | wc -l"
+# → > 10000 правил — возможны задержки
+
+# Проверка latency kube-proxy
+kubectl logs -n kube-system -l k8s-app=kube-proxy --tail=50
+# → если высокие задержки — kube-proxy перегружен
+
+# Проверка IPVS (если используется)
+ssh <node> "ipvsadm -L -n | wc -l"
+# → > 5000 записей — возможны задержки
+```
+
+**Связь с Pending:** При большом количестве сервисов (>5000) kube-proxy тормозит обновление iptables/ipvs. Pod может быть в Running, но readiness probe не работает (DNS не резолвится) → Pod не готов → создаёт видимость Pending.
+
 ### Network Policy и DNS
 
 Хотя Network Policy не блокирует планирование, они могут привести к тому, что Pod в Running не работает (看上去 как Pending из-за failing readiness probes).
@@ -734,9 +786,18 @@ kubectl exec <pod-name> -c debugger -- ip addr show
 
 ## Дополнительная информация
 
+### Дополнительные сценарии
+
+- **[ServiceAccount и монтирование токена](./common_cases_and_solutions.md#11-serviceaccount-и-монтирование-токена)** — ошибки SA при монтировании секретов.
+- **[Spot-инстансы и taints](./common_cases_and_solutions.md#12-spot-инстансы-и-taints)** — специфика планирования на spot-узлах.
+- **[DaemonSet Pending](./common_cases_and_solutions.md#13-daemonset-pending-на-отдельном-узле)** — диагностика DaemonSet на проблемных узлах.
+- **[StatefulSet Pending](./common_cases_and_solutions.md#14-statefulset-pending-из-за-unbound-pvc)** — PVC и zonal mismatch для StatefulSet.
+- **[Ephemeral Storage exhaustion](./common_cases_and_solutions.md#15-ephemeral-storage-exhaustion)** — нехватка временного хранилища.
+- **[Ресурсная фрагментация](./definitions_and_concepts.md#ресурсная-фрагментация-resource-fragmentation)** — granular requests и insufficient resources.
+
 ### Связанные ресурсы
 
-*   **[Определения и концепции](./definitions_and_concepts.md)** — теоретическая база фаз и состояний.
+*   **[Определения и концепции](./definitions_and_concepts.md)** — базовые термины и архитектура планирования.
 *   **[Распространенные случаи и решения](./common_cases_and_solutions.md)** — инструкции по исправлению типовых ошибок (CPU, RAM, Taints).
 *   **[Продвинутые темы](./advanced_topics.md)** — Topology Spread, Scheduling Framework и настройка профилей.
 *   **[Диагностика PVC](../../../Storage/pv_and_pvc_scenarios.md#диагностика-pending-pvc)** — детальный разбор проблем с хранилищем.
@@ -750,3 +811,9 @@ kubectl exec <pod-name> -c debugger -- ip addr show
 *   **[DNS в Kubernetes](../../../Networking/dns_troubleshooting.md)** — диагностика DNS-резолва.
 *   **[RuntimeClass](../../../Runtime/runtime_class.md)** — выбор контейнерного runtime и overhead.
 *   **[Ephemeral Containers](../../../Base/Pod/ephemeral_containers.md)** — отладка через кратковременные контейнеры.
+*   **[Container Runtime](../../../Concepts/container_runtime.md)** — containerd, CRI-O, crictl, диагностика CRI.
+*   **[Kubelet](../../../Concepts/kubelet.md)** — system-reserved, kube-reserved, Allocatable, eviction.
+*   **[Pod Security Context](../../../Security/pod_security_context.md)** — PSA и безопасность Pod.
+*   **[Admission Controllers](../../../Concepts/admission_controllers.md)** — вебхуки admission.
+*   **[Вопросы для собеседования](./interview_questions.md)** — типичные вопросы и ответы по Pending.
+*   **[Postmortem кейсы](./postmortem_cases.md)** — реальные сценарии из продакшена.

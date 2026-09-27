@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Мониторинг PostgreSQL** — комплексный процесс сбора, хранения и визуализации метрик производительности БД для обеспечения стабильности и быстродействия системы. Включает: доступность (`pg_up`), производительность запросов (`pg_stat_statements`), состояние соединений (`pg_stat_activity`), размер данных, replication lag и дисковый I/O.
+**Мониторинг PostgreSQL** — комплексный процесс сбора, хранения и визуализации метрик производительности СУБД для обеспечения стабильности и быстродействия системы. Включает: доступность (`pg_up`), производительность запросов (`pg_stat_statements`), состояние соединений (`pg_stat_activity`), размер данных, replication lag и дисковый I/O.
 
-**postgres_exporter** — специализированный сервис мониторинга PostgreSQL для Prometheus. В 2026 году актуальной является версия **v0.20.1**, поддерживающая PostgreSQL 17/18. Слушает на порту **9187/TCP**. Подробное описание и параметры порта приведены в **[Каталоге экспортеров](../../Prometheus/Exporters/other_exporters.md#1-базы-данных-databases)**.
+**postgres_exporter** — специализированный сервис мониторинга PostgreSQL для Prometheus. В 2026 году актуальной является версия **v0.20.1+**, поддерживающая PostgreSQL 16–18. Слушает на порту **9187/TCP**. Подробное описание и параметры порта приведены в **[Каталоге экспортеров](../../Prometheus/Exporters/other_exporters.md#1-базы-данных-databases)**.
 
 **Prometheus** — автономная система мониторинга (CNCF), собирающая метрики методом скрапинга (pull) по HTTP. Хранит данные во временны́х рядах (TSDB), позволяет выполнять запросы на PromQL и генерировать алерты через Alertmanager. Актуальная версия — **v3.x**. Подробнее: [Обзор Prometheus](../../Prometheus/overview.md).
 
@@ -22,7 +22,7 @@
 
 **pg_stat_statements** — расширение PostgreSQL (включается через `shared_preload_libraries`), отслеживающее статистику выполнения SQL-запросов: количество вызовов, общее время, время I/O, количество возвращенных строк. Обязательно для поиска "тяжелых" запросов. Подробнее: [Расширения PostgreSQL](../../Databases/PostgreSQL/Concepts/extensions_utility.md).
 
-**pg_monitor** — встроенная роль PostgreSQL, предоставляющая права на чтение системных представлений (`pg_stat_activity`, `pg_stat_replication`, `pg_stat_statements` и др.). Экспортер должен быть членом этой роли.
+**pg_monitor** — встроенная роль PostgreSQL, предоставляющая права на чтение системных представлений (`pg_stat_activity`, `pg_stat_replication`, `pg_stat_statements` и др.). Экспортер должен быть членом этой роли. Подробнее: [Наблюдаемость PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md).
 
 **pg_hba.conf** — файл конфигурации аутентификации PostgreSQL, определяющий, какие клиенты могут подключаться, откуда и каким методом аутентификации. Для экспортера необходимо разрешить подключение с адреса Prometheus/экспортера.
 
@@ -46,10 +46,10 @@ scrape_configs:
 | Компонент | Назначение | Основная ссылка |
 |---|---|---|
 | **PostgreSQL** | Объект мониторинга (источник метрик через `pg_stat_*`). | [PostgreSQL](../../Databases/PostgreSQL/overview.md) |
-| **postgres_exporter** | Агент сбора метрик, преобразующий `pg_stat_*` в формат Prometheus (порт 9187/TCP). | [Экспортеры](../../Prometheus/Exporters/overview.md) |
-| **Prometheus** | Сбор (scrape) и хранение метрик в TSDB, выполнение PromQL-запросов. | [Prometheus](../../Prometheus/overview.md) |
+| **postgres_exporter** | Агент сбора метрик, преобразующий `pg_stat_*` в формат Prometheus (порт 9187/TCP). | [Каталог экспортеров](../../Prometheus/Exporters/other_exporters.md#1-базы-данных-databases) |
+| **Prometheus** | Сбор (scrape) и хранение метрик в TSDB, выполнение PromQL-запросов. | [Обзор Prometheus](../../Prometheus/overview.md) |
 | **Alertmanager** | Обработка и доставка алертов (Email, Slack, Telegram, PagerDuty). | [Alertmanager](../../Prometheus/alertmanager.md) |
-| **Grafana** | Визуализация данных (дашборды, графики, таблицы). | [Grafana](../../Grafana/grafana_overview.md) |
+| **Grafana** | Визуализация данных (дашборды, графики, таблицы). | [Обзор Grafana](../../Grafana/grafana_overview.md) |
 
 ### Механизм скрапинга (Pull-модель)
 
@@ -79,13 +79,17 @@ scrape_configs:
 
 | Параметр | Описание | Рекомендация |
 |---|---|---|
-| `scrape_interval` | Интервал опроса целей | 10-15с для PostgreSQL |
-| `evaluation_interval` | Интервал вычисления alert rules | 15-30с |
+| `scrape_interval` | Интервал опроса целей | 10–15с для PostgreSQL |
+| `evaluation_interval` | Интервал вычисления alert rules | 15–30с |
 | `static_configs` | Статический список целей | Для небольших кластеров |
 | `file_sd_configs` | Цели из JSON/YAML-файлов | Динамические инфраструктуры |
 | `relabel_configs` | Трансформация меток | Фильтрация, добавление меток |
 
 ### Ключевые метрики PostgreSQL (postgres_exporter)
+
+Подробное описание метрик, нормальные значения и принципы сбора приведены в **[Наблюдаемость PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)**.
+
+Минимальный набор для дашборда:
 
 | Метрика | Назначение | Нормальное значение | Тип |
 |---|---|---|---|
@@ -96,10 +100,6 @@ scrape_configs:
 | `pg_database_size_bytes` | Размер БД на диске | Постепенный рост | Gauge |
 | `pg_stat_database_deadlocks` | Количество deadlock'ов за период | `0` | Counter |
 | `pg_stat_replication_lag` | Задержка репликации (сек) | `< 1с` для синхронной | Gauge |
-| `pg_stat_statements_calls` | Количество вызовов запроса | Зависит от нагрузки | Counter |
-| `pg_stat_statements_total_time` | Общее время выполнения запроса | Зависит от нагрузки | Counter |
-| `pg_locks_count` | Количество активных блокировок | Зависит от нагрузки | Gauge |
-| `pg_stat_bgwriter_buffers_checkpoint` | Буферы, сброшенные при checkpoint | Зависит от `shared_buffers` | Counter |
 
 ### Настройка pg_hba.conf для экспортера
 
@@ -121,26 +121,7 @@ sudo -u postgres psql -c "SELECT pg_reload_conf();"
 
 ### SSL/TLS для соединения экспортера с PostgreSQL
 
-В production-окружениях рекомендуется шифрование трафика:
-
-```yaml
-# DSN с SSL
-postgres_exporter_dsn: >-
-  postgresql://{{ exporter_user }}:{{ vault_db_pass }}@localhost:5432/postgres
-  ?sslmode=verify-full
-  &sslrootcert=/etc/ssl/certs/postgresql-ca.crt
-  &sslcert=/etc/ssl/certs/postgresql-client.crt
-  &sslkey=/etc/ssl/private/postgresql-client.key
-```
-
-| Режим SSL (`sslmode`) | Описание | Безопасность |
-|---|---|---|
-| `disable` | Шифрование отключено | Низкая |
-| `allow` | Шифрование по запросу сервера | Низкая |
-| `prefer` | Шифрование по запросу клиента | Средняя |
-| `require` | Шифрование обязательно, но без проверки сертификата | Средняя |
-| `verify-ca` | Проверка корневого сертификата | Высокая |
-| `verify-full` | Проверка корневого + клиентского сертификатов | Максимальная |
+В production-окружениях рекомендуется шифрование трафика. Полную конфигурацию SSL для PostgreSQL см. в **[Развертывание PostgreSQL через Ansible](./example_postgresql_setup.md#ssl-tls)**.
 
 ### Мониторинг репликации
 
@@ -168,49 +149,32 @@ postgres_exporter_dsn: >-
 Установка зависимостей на контрольном узле:
 
 ```bash
-# Установка актуальных коллекций
 ansible-galaxy collection install community.postgresql
 ansible-galaxy collection install prometheus.prometheus:>=0.30.2
 ansible-galaxy collection install community.grafana:>=2.0.0
+# → Starting galaxy collection install process
+# → Process install dependency map
 ```
 
 ### Безопасность и секреты
 
 Для подключения экспортера требуется специальный пользователь в PostgreSQL с правами `pg_monitor`. Пароли и строки подключения (DSN) необходимо шифровать с помощью **[Ansible Vault](../Vault/basics.md)**.
+
 В производственных средах обязательно использование **SSL** в DSN (`sslmode=verify-full`) с указанием корневого сертификата.
 
 Пример безопасного хранения DSN:
 
 ```yaml
 # group_vars/postgres_hosts/vault.yml (зашифровано через ansible-vault)
-vault_db_pass: "SuperSecretPassword123!"
+vault_db_pass: "{{ vault_db_pass }}"
 vault_exporter_dsn: "postgresql://postgres_exporter:{{ vault_db_pass }}@localhost:5432/postgres?sslmode=verify-full"
 ```
-
----
 
 ## Практические сценарии
 
 ### Сценарий 1: Подготовка базы данных (pg_stat_statements)
 
-Для полноценного мониторинга запросов **обязательно** включение расширения `pg_stat_statements`. Это позволит собирать метрики производительности запросов, а не только системную информацию.
-
-1. Добавление модуля в конфигурацию `postgresql.conf`:
-```ini
-shared_preload_libraries = 'pg_stat_statements'
-# Настройка глубины анализа
-pg_stat_statements.max = 10000
-pg_stat_statements.track = all
-# Требуется перезапуск PostgreSQL
-```
-2. Создание расширения в базе данных (через Ansible):
-```yaml
-- name: Установка расширения pg_stat_statements
-  community.postgresql.postgresql_ext:
-    name: pg_stat_statements
-    db: postgres
-  become_user: postgres
-```
+Для полноценного мониторинга запросов **обязательно** включение расширения `pg_stat_statements`. Подробные параметры конфигурации и нюансы работы приведены в **[Расширения PostgreSQL](../../Databases/PostgreSQL/Concepts/extensions_utility.md#pg_stat_statements-золотой-стандарт)**.
 
 ### Сценарий 2: Развертывание кластера мониторинга
 
@@ -239,8 +203,7 @@ monitoring-01 ansible_host=192.168.55.20
   become: true
   vars:
     exporter_user: "postgres_exporter"
-    # DSN с безопасными параметрами и шифрованием через Vault
-    postgres_exporter_dsn: "postgresql://{{ exporter_user }}:{{ vault_db_pass }}@localhost:5432/postgres?sslmode=disable"
+    postgres_exporter_dsn: "postgresql://{{ exporter_user }}:{{ vault_db_pass }}@localhost:5432/postgres?sslmode=verify-full"
 
   tasks:
     - name: Создание пользователя для мониторинга
@@ -248,18 +211,17 @@ monitoring-01 ansible_host=192.168.55.20
         name: "{{ exporter_user }}"
         password: "{{ vault_db_pass }}"
         role_attr_flags: "LOGIN"
-        groups: "pg_monitor" # Встроенная роль с правами на чтение системных таблиц
+        groups: "pg_monitor"
       become_user: postgres
+      no_log: true
 
   roles:
     - role: prometheus.prometheus.postgres_exporter
       vars:
         postgres_exporter_version: "0.20.1"
         postgres_exporter_dsn: "{{ postgres_exporter_dsn }}"
-        # Включаем автоматическое обнаружение всех БД и сбор метрик запросов
         postgres_exporter_config_flags:
           auto-discover-databases: true
-          # В 2026 году флаги коллекторов настраиваются так:
           collector.stat_statements: true
 
   post_tasks:
@@ -279,6 +241,7 @@ monitoring-01 ansible_host=192.168.55.20
 Если стандартных метрик недостаточно (например, нужно мониторить количество заказов в статусе `pending`), используется механизм `queries.yaml`.
 
 **1. Создание файла запросов `templates/postgres_queries.yaml.j2`:**
+
 ```yaml
 pg_orders_total:
   query: "SELECT status, count(*) as count FROM orders GROUP BY status"
@@ -292,6 +255,7 @@ pg_orders_total:
 ```
 
 **2. Подключение в Ansible:**
+
 ```yaml
 - role: prometheus.prometheus.postgres_exporter
   vars:
@@ -303,6 +267,7 @@ pg_orders_total:
 Для оперативного реагирования необходимо настроить правила в Prometheus.
 
 **Расширенный набор правил `templates/postgresql_alerts.yml.j2`:**
+
 ```yaml
 groups:
   - name: PostgreSQL_Alerts
@@ -366,6 +331,7 @@ groups:
 ```
 
 **Подключение правил в Prometheus (`templates/prometheus.yml.j2`):**
+
 ```yaml
 global:
   scrape_interval: 15s
@@ -449,7 +415,7 @@ exporter_user: "postgres_exporter"
 exporter_port: 9187
 
 # Prometheus
-prometheus_version: "2.53.0"
+prometheus_version: "3.0.0"
 prometheus_retention: "30d"
 prometheus_scrape_interval: "15s"
 
@@ -458,7 +424,7 @@ grafana_version: "11.0.0"
 grafana_admin_password: "{{ vault_grafana_admin_password }}"
 
 # Пути
-postgres_data_dir: "/var/lib/postgresql/{{ postgresgresql_version }}/main"
+postgres_data_dir: "/var/lib/postgresql/{{ postgresql_version }}/main"
 ```
 
 #### 4. Плейбук настройки экспортера на PostgreSQL-сервере (`playbooks/postgres_exporter.yml`)
@@ -470,7 +436,7 @@ postgres_data_dir: "/var/lib/postgresql/{{ postgresgresql_version }}/main"
   become: true
   vars:
     exporter_user: "postgres_exporter"
-    postgres_exporter_dsn: "postgresql://{{ exporter_user }}:{{ vault_db_pass }}@localhost:5432/postgres?sslmode=disable"
+    postgres_exporter_dsn: "postgresql://{{ exporter_user }}:{{ vault_db_pass }}@localhost:5432/postgres?sslmode=verify-full"
 
   tasks:
     - name: Ensure pg_stat_statements is in shared_preload_libraries
@@ -487,6 +453,7 @@ postgres_data_dir: "/var/lib/postgresql/{{ postgresgresql_version }}/main"
         role_attr_flags: "LOGIN"
         groups: "pg_monitor"
       become_user: postgres
+      no_log: true
 
     - name: Allow exporter connection from localhost
       ansible.builtin.lineinfile:
@@ -538,7 +505,7 @@ postgres_data_dir: "/var/lib/postgresql/{{ postgresgresql_version }}/main"
   hosts: monitoring_hosts
   become: true
   vars:
-    prometheus_version: "2.53.0"
+    prometheus_version: "3.0.0"
     prometheus_retention: "30d"
 
   tasks:
@@ -632,6 +599,7 @@ postgres_data_dir: "/var/lib/postgresql/{{ postgresgresql_version }}/main"
 ```
 
 **Шаблон Prometheus (`templates/prometheus.yml.j2`):**
+
 ```yaml
 global:
   scrape_interval: {{ prometheus_scrape_interval }}
@@ -662,6 +630,7 @@ scrape_configs:
 ```
 
 **Шаблон systemd (`templates/prometheus.service.j2`):**
+
 ```ini
 [Unit]
 Description=Prometheus
@@ -757,6 +726,7 @@ WantedBy=multi-user.target
 ```
 
 **Шаблон datasource (`templates/grafana_datasource.yml.j2`):**
+
 ```yaml
 apiVersion: 1
 datasources:
@@ -769,6 +739,7 @@ datasources:
 ```
 
 **Шаблон dashboard provider (`templates/grafana_dashboard.yml.j2`):**
+
 ```yaml
 apiVersion: 1
 providers:
@@ -816,15 +787,212 @@ curl -s http://192.168.55.20:3000/api/health
 # → {"commit":"xxx","database":"ok","version":"11.0.0"}
 
 # Проверка datasource в Grafana
-curl -s -u admin:password http://192.168.55.20:3000/api/datasources
+curl -s -u admin:{{ vault_grafana_admin_password }} http://192.168.55.20:3000/api/datasources
 # → [{"id":1,"name":"Prometheus","type":"prometheus","url":"http://localhost:9090",...}]
 ```
 
----
+## Операции и команды
 
-## Дополнительная информация
+### Основные команды управления плейбуками
 
-### Лучшие практики
+| Команда | Описание | Пример |
+|---|---|---|
+| `ansible-playbook` | Запуск плейбука | `ansible-playbook -i inventory/hosts.yml playbooks/site.yml` |
+| `--check --diff` | Dry-run с показом изменений | `ansible-playbook ... --check --diff` |
+| `--limit` | Ограничение хостов | `ansible-playbook ... --limit db-master` |
+| `--syntax-check` | Проверка синтаксиса | `ansible-playbook ... --syntax-check` |
+
+### Команды для управления экспортером
+
+| Команда | Описание | Ожидаемый результат |
+|---|---|---|
+| `systemctl status postgres_exporter` | Проверка статуса сервиса | `active (running)` |
+| `journalctl -u postgres_exporter -f` | Просмотр логов в реальном времени | Лог вывода с информацией о старте |
+| `curl -s http://localhost:9187/metrics` | Проверка эндпоинта метрик | `pg_up 1` и другие метрики |
+
+### Команды для управления PostgreSQL
+
+| Команда | Описание | Ожидаемый результат |
+|---|---|---|
+| `sudo -u postgres psql -c "SELECT pg_reload_conf();"` | Перезагрузка конфигурации | `Result: OK` |
+| `sudo -u postgres psql -c "SELECT * FROM pg_extension WHERE extname='pg_stat_statements';"` | Проверка расширения | Строка с `pg_stat_statements` |
+| `sudo -u postgres psql -c "SELECT rolname FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname='postgres_exporter');"` | Проверка членства в роли | Строка с `pg_monitor` |
+
+### Команды для управления Prometheus
+
+| Команда | Описание | Ожидаемый результат |
+|---|---|---|
+| `curl -s http://localhost:9090/api/v1/targets` | Проверка целей скрапинга | JSON с `activeTargets` |
+| `curl -s http://localhost:9090/api/v1/rules` | Проверка правил алертинга | JSON с именами правил |
+| `curl -s http://localhost:9090/-/reload` | Перезагрузка конфигурации | `OK` или `204` |
+
+### Команды для управления Grafana
+
+| Команда | Описание | Ожидаемый результат |
+|---|---|---|
+| `curl -s http://localhost:3000/api/health` | Проверка здоровья | `{"database":"ok","version":"11.0.0"}` |
+| `curl -s http://localhost:3000/api/datasources` | Проверка источников данных | JSON с списком datasources |
+| `curl -s http://localhost:3000/api/dashboards` | Проверка дашбордов | JSON со списком дашбордов |
+
+### Команды для валидации развертывания
+
+| Команда | Описание | Ожидаемый результат |
+|---|---|---|
+| `ansible-playbook ... --syntax-check` | Проверка синтаксиса плейбука | `playbook: Playbook Validation` |
+| `ansible-playbook ... --check --diff` | Dry-run | Изменения без применения |
+| `curl -s http://host:9187/metrics \| grep "^pg_"` | Проверка метрик PostgreSQL | `pg_up 1`, `pg_stat_database_xact_commit_total` |
+| `curl -s http://host:9090/api/v1/alerts` | Проверка активных алертов | JSON с `active_alerts` |
+
+## Устранение типичных неполадок
+
+### Проблема: `pg_up = 0` или экспортер недоступен
+
+**Причина:** PostgreSQL не запущен, DSN неверен, или postgres_exporter не запущен.
+
+**Диагностика:**
+```bash
+systemctl status postgresql
+systemctl status postgres_exporter
+curl -s http://localhost:9187/metrics | grep pg_up
+```
+
+**Решение:**
+- Проверить DSN (хост, порт, пароль, SSL-параметры)
+- Запустить PostgreSQL: `systemctl start postgresql`
+- Проверить логи: `journalctl -u postgres_exporter -f`
+
+### Проблема: `connection refused` (порт 9187)
+
+**Причина:** postgres_exporter не запущен или порт заблокирован firewall.
+
+**Диагностика:**
+```bash
+ss -tlnp | grep 9187
+systemctl status postgres_exporter
+```
+
+**Решение:**
+- Запустить экспортер: `systemctl start postgres_exporter`
+- Открыть порт в firewall
+- Проверить конфигурацию systemd
+
+### Проблема: `no pg_hba.conf entry for host`
+
+**Причина:** IP адрес Prometheus/экспортера не разрешен в `pg_hba.conf`.
+
+**Диагностика:**
+```bash
+grep postgres_exporter /etc/postgresql/*/main/pg_hba.conf
+```
+
+**Решение:**
+Добавить разрешающую строку в `pg_hba.conf`:
+```ini
+host all postgres_exporter 192.168.55.0/24 scram-sha-256
+```
+Выполнить перезагрузку:
+```bash
+sudo -u postgres psql -c "SELECT pg_reload_conf();"
+# → Результат: OK
+```
+
+### Проблема: `pg_stat_statements` пуст
+
+**Причина:** Расширение не создано в БД или `shared_preload_libraries` не содержит `pg_stat_statements`.
+
+**Диагностика:**
+```bash
+sudo -u postgres psql -c "SELECT * FROM pg_extension WHERE extname='pg_stat_statements';"
+sudo -u postgres psql -c "SHOW shared_preload_libraries;"
+```
+
+**Решение:**
+```bash
+# Добавить в postgresql.conf
+shared_preload_libraries = 'pg_stat_statements'
+# Перезапустить PostgreSQL
+sudo systemctl restart postgresql
+# Создать расширение в каждой БД
+sudo -u postgres psql -c "CREATE EXTENSION pg_stat_statements;"
+```
+
+### Проблема: `permission denied for table`
+
+**Причина:** Пользователь экспортера не добавлен в роль `pg_monitor`.
+
+**Диагностика:**
+```bash
+sudo -u postgres psql -c "SELECT rolname FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname='postgres_exporter');"
+```
+
+**Решение:**
+```bash
+sudo -u postgres psql -c "GRANT pg_monitor TO postgres_exporter;"
+```
+
+### Проблема: Prometheus target `DOWN`
+
+**Причина:** Экспортер недоступен по сети, порт заблокирован, или DSN неверен.
+
+**Диагностика:**
+```bash
+curl -s http://host:9187/metrics
+curl -s http://localhost:9090/api/v1/targets | python3 -m json.tool
+```
+
+**Решение:**
+- Проверить firewall и доступность порта 9187
+- Проверить DSN экспортера
+- Проверить статус PostgreSQL
+
+### Проблема: Высокий CPU от экспортера
+
+**Причина:** Слишком частый scrape или большое количество БД.
+
+**Диагностика:**
+```bash
+top -p $(pgrep postgres_exporter)
+```
+
+**Решение:**
+- Увеличить `scrape_interval` до 30s
+- Ограничить количество опрашиваемых БД через `--collectdatabases`
+- Настроить `--max-requests=1000`
+
+### Проблема: Дублирующиеся алерты в HA-кластере Prometheus
+
+**Причина:** Отсутствуют `external_labels` у реплик Prometheus.
+
+**Диагностика:**
+```bash
+curl -s http://localhost:9090/api/v1/alerts | python3 -m json.tool
+```
+
+**Решение:**
+Добавить в `prometheus.yml`:
+```yaml
+global:
+  external_labels:
+    replica: '{{ inventory_hostname }}'
+```
+
+### Проблема: Grafana `No data`
+
+**Причина:** Datasource неверен или Prometheus недоступен.
+
+**Диагностика:**
+```bash
+curl -s http://localhost:3000/api/datasources
+curl -s http://localhost:9090/api/v1/query?query=pg_up
+```
+
+**Решение:**
+- Исправить URL Prometheus в provisioning
+- Проверить доступность Prometheus из сети Grafana
+
+## Рекомендации
+
+### Best Practices
 
 1. **pg_stat_statements обязателен**: Всегда включайте расширение в `shared_preload_libraries` до начала сбора метрик. Без него экспортер не собирает метрики производительности запросов.
 2. **Изоляция пользователя мониторинга**: Создайте отдельного пользователя (`postgres_exporter`) с минимальными привилегиями (только `pg_monitor`). Не используйте `postgres` для экспортера.
@@ -837,30 +1005,59 @@ curl -s -u admin:password http://192.168.55.20:3000/api/datasources
 9. **Группировка алертов**: В Alertmanager настройте `group_by: ['alertname', 'instance']` для предотвращения спама.
 10. **Retention policy**: Настройте `--storage.tsdb.retention.time` в Prometheus в соответствии с потребностями (30 дней — стандарт).
 
+### Безопасность
+
+1. **no_log для чувствительных задач**: Используйте `no_log: true` для задач, работающих с паролями, DSN и секретами. Это предотвращает утечку данных в логи Ansible.
+2. **Минимизация прав пользователя экспортера**: Пользователь `postgres_exporter` должен иметь только роль `pg_monitor`. Запретите ему создание баз и изменение данных.
+3. **Сетевой доступ**: Разрешите подключение к порту 9187 только с адресов Prometheus-сервера через firewall.
+4. **Шифрование DSN**: Всегда используйте `sslmode=verify-full` в production. Никогда не используйте `sslmode=disable` на production-хостах.
+5. **Хранение секретов**: Используйте Ansible Vault с Vault ID для разделения секретов по средам (dev/staging/prod). Подробнее: [Рекомендации по безопасности Ansible](../ansible_security_best_practices.md).
+
+### Производительность и стабильность
+
+1. **Оптимизация scrape_interval**: 10s для PostgreSQL, 15s для стандартных метрик.
+2. **Ограничение кардинальности**: Используйте `pg_stat_statements.track = top` вместо `all` при высокой нагрузке.
+3. **Мониторинг самого экспортера**: Добавьте метрики процесса (CPU, RAM) через `process_exporter`.
+4. **WAL Management**: Убедитесь, что `pg_stat_replication` не растет бесконечно — настройте `wal_keep_size`.
+
 ### Граничные случаи и ограничения
 
 1. **PostgreSQL < 14**: `compute_query_id` отсутствует, `pg_stat_statements` может показывать неполные данные. Рекомендуется обновление до PG 14+.
-2. **Высокая кардинальность меток**: Если в `pg_stat_statements`undreds уникальных `queryid`, это может привести к высокому потреблению памяти Prometheus. Используйте `pg_stat_statements.track = top` вместо `all`.
+2. **Высокая кардинальность меток**: Если в `pg_stat_statements` hundreds уникальных `queryid`, это может привести к высокому потреблению памяти Prometheus. Используйте `pg_stat_statements.track = top` вместо `all`.
 3. **Реплики PostgreSQL**: На репликах `pg_stat_statements` может не собирать статистику (зависит от `pg_stat_statements.track`). Настройте `track = all` на репликах для полного набора данных.
-4. **Кластер Prometheus (HA)**: При использовании двух реплик Prometheus и одного Alertmanager необходим настройка `external_labels` для дедупликации алертов.
-5. **Высокая нагрузка экспортера**: При мониторении кластера с >100 БД экспортер может потреблять >1GB RAM. Ограничьте количество опрашиваемых БД.
+4. **Кластер Prometheus (HA)**: При использовании двух реплик Prometheus и одного Alertmanager необходима настройка `external_labels` для дедупликации алертов.
+5. **Высокая нагрузка экспортера**: При мониторинге кластера с >100 БД экспортер может потребовать >1GB RAM. Ограничьте количество опрашиваемых БД.
 6. **Firewall**: Убедитесь, что порт 9187 доступен для Prometheus, а порт 9090 — для Grafana. Фильтрация по IP в `pg_hba.conf` не заменяет firewall.
 7. **Windows-хосты**: postgres_exporter доступен для Windows, но Ansible-плейбуки в примерах используют Linux-специфичные модули.
 
-### Типичные ошибки и устранение неполадок
+### Тестирование конфигурации перед production
 
-| Проблема | Вероятная причина | Диагностика | Решение |
-|---|---|---|---|
-| `pg_up = 0` | PostgreSQL не запущен или DSN неверен | `systemctl status postgresql`, проверка DSN | Исправить DSN, запустить PostgreSQL |
-| `connection refused` (9187) | postgres_exporter не запущен | `systemctl status postgres_exporter` | Проверить логи: `journalctl -u postgres_exporter -f` |
-| `no pg_hba.conf entry` | IP экспортера не разрешен в pg_hba.conf | `grep exporter /etc/postgresql/*/main/pg_hba.conf` | Добавить разрешающую строку в pg_hba.conf |
-| `pg_stat_statements` пусты | Расширение не создано в БД | `SELECT * FROM pg_extension WHERE extname='pg_stat_statements';` | `CREATE EXTENSION pg_stat_statements;` в каждой БД |
-| `permission denied for table` | Пользователь экспортера не в `pg_monitor` | Проверить членство: `SELECT rolname FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname='postgres_exporter');` | `GRANT pg_monitor TO postgres_exporter;` |
-| Prometheus target `DOWN` | Экспортер недоступен по сети | `curl -s http://host:9187/metrics` | Проверить firewall, порт, status экспортера |
-| Высокий CPU от экспортера | Слишком частый scrape или много БД | `top -p $(pgrep postgres_exporter)` | Увеличить scrape_interval, ограничить БД |
-| `context deadline exceeded` | PostgreSQL перегружена, экспортер не отвечает | `pg_stat_activity` — проверить активные запросы | Оптимизировать запросы, увеличить timeout |
-| Дублирующиеся алерты в HA | Нет `external_labels` у Prometheus | Проверить конфигурацию Prometheus replicas | Добавить `external_labels: {replica: '{{ inventory_hostname }}'}` |
-| Grafana `No data` | Datasource неверен или Prometheus недоступен | Проверить Datasource URL в Grafana | Исправить URL Prometheus в provisioning |
+```bash
+# 1. Syntax check плейбука
+ansible-playbook playbooks/site.yml --syntax-check
+
+# 2. Dry run
+ansible-playbook playbooks/site.yml --check --diff
+
+# 3. Запуск на конкретном хосте
+ansible-playbook playbooks/site.yml --limit db-master
+
+# 4. Проверка метрик
+curl -s http://localhost:9187/metrics | grep "^pg_"
+# → pg_up 1
+# → pg_stat_database_xact_commit_total{datname="postgres"} 12345
+
+# 5. Проверка Prometheus targets
+curl -s http://localhost:9090/api/v1/targets | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['data']['activeTargets'], indent=2))"
+
+# 6. Проверка алертов
+curl -s http://localhost:9090/api/v1/alerts | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Active alerts: {len(d[\"data\"][\"alerts\"])}')"
+
+# 7. Проверка Grafana datasource
+curl -s -u admin:{{ vault_grafana_admin_password }} http://localhost:3000/api/datasources | python3 -m json.tool
+```
+
+## Дополнительная информация
 
 ### Расширенный набор PromQL-запросов для дашбордов
 
@@ -914,32 +1111,12 @@ pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) / 1048576
     overwrite: yes
     dashboard_id: 9628
     folder: "PostgreSQL"
+    no_log: true
     # → Импортирует готовый дашборд с Grafana.com
 ```
 
-### Testing and Validation
+### Смотрите также
 
-```bash
-# 1. Syntax check плейбука
-ansible-playbook playbooks/site.yml --syntax-check
-
-# 2. Dry run
-ansible-playbook playbooks/site.yml --check --diff
-
-# 3. Запуск на конкретном хосте
-ansible-playbook playbooks/site.yml --limit db-master
-
-# 4. Проверка метрик
-curl -s http://localhost:9187/metrics | grep "^pg_"
-# → pg_up 1
-# → pg_stat_database_xact_commit_total{datname="postgres"} 12345
-
-# 5. Проверка Prometheus targets
-curl -s http://localhost:9090/api/v1/targets | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['data']['activeTargets'], indent=2))"
-
-# 6. Проверка алертов
-curl -s http://localhost:9090/api/v1/alerts | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Active alerts: {len(d[\"data\"][\"alerts\"])}')"
-
-# 7. Проверка Grafana datasource
-curl -s -u admin:password http://localhost:3000/api/datasources | python3 -m json.tool
-```
+- **[Наблюдаемость PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)** — теория наблюдаемости, wait events, расширенные метрики.
+- **[Каталог экспортеров Prometheus](../../Prometheus/Exporters/other_exporters.md#1-базы-данных-databases)** — обзор postgres_exporter и паттернов развертывания.
+- **[Развертывание PostgreSQL через Ansible](./example_postgresql_setup.md)** — установка и настройка PostgreSQL, включая pg_stat_statements и SSL.

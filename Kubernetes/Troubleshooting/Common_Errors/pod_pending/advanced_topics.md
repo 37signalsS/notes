@@ -372,6 +372,28 @@ kubectl get pods -n kube-system -l component=kube-scheduler
 
 **Если под ссылается на несуществующий `schedulerName`:** планировщик не обработает его, и под останется в `Pending` без событий ошибок.
 
+#### Karpenter vs Cluster Autoscaler
+Karpenter (Beta v1.32+) — альтернатива CA, которая создает узлы "под" Pod напрямую, минуя группы узлов cloud-провайдера:
+
+| Параметр | Cluster Autoscaler | Karpenter |
+|----------|-------------------|-----------|
+| Триггер | Pod с `Unschedulable` | Pod с `Unschedulable` |
+| Логика | Добавляет узлы в существующие группы | Создает узлы "под" Pod |
+| Скорость | 3-10 минут | 30-60 секунд |
+| Spot | Через группы узлов | Динамический приоритет |
+| Consolidation | Нет | Да (перемещение Pod) |
+| NodeClass | Определяется cloud-провайдером | KarpenterNodeClass |
+
+```bash
+# Проверка Karpenter
+kubectl get nodes -l karpenter.sh/provisioner-name
+# → если Karpenter управляет узлами
+
+# Проверка Karpenter logs
+kubectl logs -n kube-system -l app.kubernetes.io/name=karpenter --tail=50
+# → I0115 ... Launching node: ... (создание узла для Pending Pod)
+```
+
 #### Scheduler Extender
 Кастомные планировщики могут быть реализованы через Scheduler Extender — HTTP-сервис, вызываемый стандартным `kube-scheduler` на этапах Filter, Prioritize, Bind:
 ```yaml
@@ -601,14 +623,18 @@ topologySpreadConstraints:
 
 ## Граничные случаи и известные ограничения
 
-1.  **Scheduling Gates + CA:** CA не учитывает gates при масштабировании. Под может остаться в Pending даже после добавления узла.
-2.  **DRA + CA:** CA учитывает DRA-ресурсы при симуляции, но не может выделить их без DRA-драйвера на новом узле.
-3.  **Gang Scheduling + PDB:** PDB может блокировать удаление жертв preemption, даже если все поды группы ждут.
-4.  **MatchLabelKeys + StatefulSet:** MatchLabelKeys не работает с StatefulSet (уникальные имена подов).
-5.  **Queuing Hints + Custom Scheduler:** Кастомные планировщики не поддерживают Queuing Hints.
-6.  **Asynchronous Preemption:** Включение `SchedulerAsyncPreemption` может увеличить использование памяти планировщика.
-7.  **Topology Spread + minDomains:** Если в кластере менее `minDomains` физических зон, под останется в Pending навсегда.
-8.  **DRA + KinD:** DRA-драйверы не работают в KinD (нет реального оборудования).
+1. **Scheduling Gates + CA:** CA не учитывает gates при масштабировании. Под может остаться в Pending даже после добавления узла.
+2. **DRA + CA:** CA учитывает DRA-ресурсы при симуляции, но не может выделить их без DRA-драйвера на новом узле.
+3. **Gang Scheduling + PDB:** PDB может блокировать удаление жертв preemption, даже если все поды группы ждут.
+4. **MatchLabelKeys + StatefulSet:** MatchLabelKeys не работает с StatefulSet (уникальные имена подов).
+5. **Queuing Hints + Custom Scheduler:** Кастомные планировщики не поддерживают Queuing Hints.
+6. **Asynchronous Preemption:** Включение `SchedulerAsyncPreemption` может увеличить использование памяти планировщика.
+7. **Topology Spread + minDomains:** Если в кластере менее `minDomains` физических зон, под останется в Pending навсегда.
+8. **DRA + KinD:** DRA-драйверы не работают в KinD (нет реального оборудования).
+9. **PSA + Pending:** Pod Security Admission может отклонять Pod без событий `FailedScheduling` — проверяйте `kubectl get events --field-selector reason=FailedCreate`.
+10. **ResourceQuota + Pending:** Если квота исчерпана, Pod не доходит до планировщика — события FailedScheduling отсутствуют.
+11. **Container Runtime + Pending:** Если CRI (containerd/CRI-O) не работает, Pod будет в Pending/ContainerCreating — проверяйте `crictl info` на узле.
+12. **Ephemeral Storage + Pending:** Pod требует больше `ephemeral-storage`, чем доступно — проверяйте `kubectl describe node | grep ephemeral`.
 
 ---
 
@@ -650,3 +676,10 @@ topologySpreadConstraints:
 *   **[PriorityClass — приоритеты подов](../../../Concepts/priorityclass.md)** — очереди и механизмы вытеснения.
 *   **[Cluster Autoscaler — детальный обзор](../../Autoscaling/cluster_autoscaler_detailed.md)** — логика Scale-Up/Down.
 *   **[Dynamic Resource Allocation (v1.32)](../../../Concepts/resource_management/dra_overview.md)** — управление GPU и ускорителями.
+*   **[Karpenter](../../Autoscaling/Karpenter/overview.md)** — альтернатива CA, динамическое масштабирование.
+*   **[Container Runtime](../../../Concepts/container_runtime.md)** — containerd, CRI-O, crictl.
+*   **[Pod Security Context](../../../Security/pod_security_context.md)** — PSA и безопасность Pod.
+*   **[Admission Controllers](../../../Concepts/admission_controllers.md)** — вебхуки admission.
+*   **[Kubelet](../../../Concepts/kubelet.md)** — system-reserved, kube-reserved, Allocatable.
+*   **[Вопросы для собеседования](./interview_questions.md)** — типичные вопросы по Pending.
+*   **[Postmortem кейсы](./postmortem_cases.md)** — реальные сценарии из продакшена.

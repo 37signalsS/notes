@@ -405,6 +405,16 @@ kubectl get pods -n my-namespace -l vcluster.loft.sh/managed-by
 - [Установка и развертывание](./vcluster_installation.md)
 - [Подключение и доступ](./vcluster_connectivity.md)
 - [Безопасность и синхронизация](./vcluster_security_and_sync.md)
+- [Мониторинг и Observability](./vcluster_monitoring.md)
+- [Troubleshooting и отладка](./vcluster_troubleshooting.md)
+- [Бэкап и восстановление](./vcluster_backup_restore.md)
+- [Высокая доступность и Production-ready](./vcluster_high_availability.md)
+- [Интеграция с CI/CD](./vcluster_cicd_integration.md)
+- [Интеграция с GitOps](./vcluster_gitops_integration.md)
+- [Производительность и масштабирование](./vcluster_performance.md)
+- [Сетевые особенности](./vcluster_networking_deep_dive.md)
+- [Безопасность на продакшне](./vcluster_security_production.md)
+- [Антипаттерны и ошибки](./vcluster_antipatterns.md)
 - [Мульти-тенантность в Kubernetes](../Concepts/multi-tenancy.md)
 
 ### См. также

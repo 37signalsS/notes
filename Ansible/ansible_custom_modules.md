@@ -2,124 +2,118 @@
 
 ## Определения
 
-- **Пользовательский модуль Ansible (Custom Module)** — это автономный сценарий (обычно на Python), расширяющий стандартную функциональность Ansible. Модули позволяют инкапсулировать сложную логику, обеспечивать идемпотентность и автоматизировать специфические задачи, для которых не подходят встроенные инструменты.
+- **Пользовательский модуль Ansible (Custom Module)** — автономный сценарий (обычно на Python), расширяющий стандартную функциональность Ansible. Модули инкапсулируют сложную логику, обеспечивают идемпотентность и автоматизируют специфические задачи, для которых не подходят встроенные инструменты.
 - **Module Utils** — общие Python-библиотеки (`plugins/module_utils/`), вынесенные из модулей для переиспользования. Содержат вспомогательные функции (клиенты API, парсеры, вспомогательные классы), которые используются несколькими модулями одновременно. Подробнее: [Использование module_utils](#использование-module_utils).
 - **Check Mode (Dry Run)** — режим проверки, при котором модуль анализирует необходимые изменения, но не применяет их. Реализуется через `supports_check_mode=True` в `AnsibleModule`. Позволяет безопасно тестировать плейбуки командой `ansible-playbook --check`.
-- **Diff Mode** — режим отображения разницы между текущим и желаемым состоянием. Реализуется через `supports_diff=True`. Выводит unified diff для текстовых файлов, что критично для audit--trейлов и review изменений.
+- **Diff Mode** — режим отображения разницы между текущим и желаемым состоянием. Реализуется через `supports_diff=True`. Выводит unified diff для текстовых файлов, что критично для audit-трейлов и review изменений.
 - **FQCN (Fully Qualified Collection Name)** — полное имя ресурса в формате `namespace.collection.module_name` (например, `community.general.docker_image`). Использование FQCN обязательно для модулей в коллекциях и предотвращает конфликты имен.
 - **AnsibleModule** — базовый класс из `ansible.module_utils.basic`, предоставляющий разработчику валидацию аргументов, обработку ошибок, поддержку check_mode/diff и формирование JSON-ответа. Все пользовательские модули создаются на его основе.
+- **Ansiballz** — современный фреймворк выполнения модулей в Ansible. Упаковывает модуль и его зависимости в zip-архив, передаёт на Managed Node через JSON-протокол и обеспечивает изоляцию выполнения.
+- **Action Plugin** — плагин на Control Node, который перехватывает вызов модуля и может модифицировать его поведение, добавлять логику или выполнять действия до/after вызова модуля. Используется для модулей, требующих сложной логики на стороне Control Node (например, `template`, `copy`).
 
 ## Основные концепции
 
+### Архитектура выполнения модуля (Ansiballz)
+
+Ansible использует фреймворк **Ansiballz** для выполнения модулей. Процесс состоит из пяти этапов:
+
+1. **Сборка**: На Control Node Ansible находит код модуля, извлекает зависимости из `module_utils` и упаковывает всё в один zip-архив. Модуль становится автономным — все зависимости включены внутрь.
+2. **Передача**: Архивированный модуль копируется на целевой узел во временную директорию (по умолчанию `~/.ansible/tmp/`).
+3. **Исполнение**: На Managed Node запускается Python-интерпретатор, распаковывается архив и выполняется код модуля.
+4. **Возврат**: Модуль возвращает JSON-структуру в stdout, которую перехватывает Control Node. JSON является строгим контрактом — любой мусор в stdout (print, логи) приведёт к ошибке `JSON decode error`.
+5. **Очистка**: Временные файлы удаляются (если не включен режим отладки `ANSIBLE_KEEP_REMOTE_FILES=1`).
+
+**Важно:** Аргументы передаются модулю через переменную окружения `_ANSIBLE_ARGS` в формате JSON. Модуль должен быть автономным и не полагаться на внешние файлы, кроме явно указанных путей.
+
 ### Модуль (Module) против Плагина (Plugin)
 
-*   **Модуль (Module):**
-    *   **Место исполнения:** выполняется на **удаленном узле (Managed Node)**.
-    *   **Назначение:** управление состоянием ресурса (установка пакета, конфигурация БД).
-*   **Плагин (Plugin):**
-    *   **Место исполнения:** выполняется на **узле управления (Control Node)**.
-    *   **Назначение:** расширение логики ядра Ansible (Inventory, Connection, Callback, Lookup).
-    *   **Разработка:** подробнее см. **[Разработка Action-плагинов](./ansible-action-plugins.md)** и **[Разработка Callback-плагинов](./ansible-callback-plugins.md)**.
+- **Модуль (Module):**
+  - Место исполнения: выполняется на **удаленном узле (Managed Node)**.
+  - Назначение: управление состоянием ресурса (установка пакета, конфигурация БД).
+- **Плагин (Plugin):**
+  - Место исполнения: выполняется на **узле управления (Control Node)**.
+  - Назначение: расширение логики ядра Ansible (Inventory, Connection, Callback, Lookup).
+  - Разработка: подробнее см. **[Разработка Action-плагинов](./ansible-action-plugins.md)** и **[Разработка Callback-плагинов](./ansible-callback-plugins.md)**.
 
-### Жизненный цикл выполнения модуля
+### Жизненный цикл модуля
 
-1.  **Сборка**: Ansible (на Control Node) находит код модуля, извлекает зависимости из `module_utils` и упаковывает всё в один zip-файл (модуль становится автономным).
-2.  **Передача**: Файл копируется на целевой узел во временную директорию (по умолчанию `~/.ansible/tmp/`).
-3.  **Исполнение**: Ansible запускает Python-интерпретатор на удаленном узле, распаковывает архив и выполняет код.
-4.  **Возврат**: Модуль возвращает JSON-структуру в stdout, которую перехватывает Control Node.
-5.  **Очистка**: Временные файлы удаляются (если не включен режим отладки).
+1. **Планирование**: Ansible парсит плейбук, определяет какие модули нужно выполнить и на каких хостах.
+2. **Сборка**: Модуль и зависимости упаковываются в zip (Ansiballz).
+3. **Передача**: Zip передаётся на Managed Node через connection plugin (SSH, WinRM, HTTP).
+4. **Исполнение**: Модуль запускается на Managed Node, получает аргументы через `_ANSIBLE_ARGS`.
+5. **Возврат**: Модуль возвращает JSON с результатом (`changed`, `msg`, пользовательские поля).
+6. **Обработка**: Control Node обрабатывает результат, применяет diff (если включен), обновляет факты.
+7. **Очистка**: Временные файлы удаляются.
 
 ### Системные требования и Python
 
-*   **Контрольный узел:** требует актуальную версию Python (3.9+ для последних версий Ansible).
-*   **Управляемый узел:**
-    *   Для **Ansible 2.17+** требуется минимум **Python 3.7**.
-    *   Если Python отсутствует или версия слишком старая, можно использовать модули на Bash или PowerShell (для Windows).
-*   **Универсальность:** Код модуля должен быть совместим с различными минорными версиями Python, если планируется поддержка старых дистрибутивов ОС.
+- **Контрольный узел (Control Node):**
+  - Минимум **Python 3.12** для ansible-core 2.20+.
+  - Python 3.14 добавлен в поддерживаемые версии.
+- **Управляемый узел (Managed Node):**
+  - Для **Ansible 2.20+** требуется минимум **Python 3.9**.
+  - Если Python отсутствует или версия слишком старая, можно использовать модули на Bash или PowerShell (для Windows).
+- **Универсальность:** Код модуля должен быть совместим с различными минорными версиями Python, если планируется поддержка старых дистрибутивов ОС.
 
 ### Современный стандарт: Коллекции
 
 Начиная с версии 2.10, предпочтительным способом разработки и распространения модулей являются **Коллекции**.
-*   **Путь размещения:** `plugins/modules/` внутри структуры коллекции.
-*   **FQCN:** использование полного имени `namespace.collection.module_name` предотвращает конфликты.
-*   **Общие библиотеки:** логика, общая для нескольких модулей, выносится в `plugins/module_utils/`.
+
+- **Путь размещения:** `plugins/modules/` внутри структуры коллекции.
+- **FQCN:** использование полного имени `namespace.collection.module_name` предотвращает конфликты.
+- **Общие библиотеки:** логика, общая для нескольких модулей, выносится в `plugins/module_utils/`.
+- **Структура коллекции:**
+  ```
+  ansible_collections/my_namespace/my_collection/
+  ├── galaxy.yml
+  ├── plugins/
+  │   ├── modules/
+  │   │   └── my_module.py
+  │   └── module_utils/
+  │       └── helpers.py
+  └── tests/
+      ├── sanity/
+      ├── unit/
+      └── integration/
+  ```
 
 ### Поиск модулей Ansible
 
 Ansible ищет модули в следующих местах (в порядке приоритета):
-1.  Директория `library/` в корне текущего плейбука.
-2.  Внутри роли: `roles/<role_name>/library/`.
-3.  В установленных коллекциях.
-4.  Пути из переменной `ANSIBLE_LIBRARY` или параметра `library` в `ansible.cfg`.
 
-### Использование AnsibleModule
+1. Директория `library/` в корне текущего плейбука.
+2. Внутри роли: `roles/<role_name>/library/`.
+3. В установленных коллекциях.
+4. Пути из переменной `ANSIBLE_LIBRARY` или параметра `library` в `ansible.cfg`.
 
-Класс `AnsibleModule` из `ansible.module_utils.basic` — это основной инструмент разработчика. Он автоматизирует валидацию входных данных и формирование ответа.
+### Принципы разработки модулей
 
-#### Валидация аргументов (`argument_spec`)
-
-Позволяет декларативно описать ожидаемые параметры:
-*   `type`: тип данных (`str`, `int`, `bool`, `list`, `dict`, `float`, `path`).
-*   `required`: обязательность параметра.
-*   `choices`: список допустимых значений.
-*   `default`: значение по умолчанию.
-*   `no_log`: маскировка чувствительных данных в логах.
-*   `elements`: тип элементов списка (для `type: list`).
-*   `options`: вложенные аргументы (для `type: dict`).
-
-#### Сложные ограничения
-
-Ansible позволяет настраивать зависимости между аргументами:
-*   `mutually_exclusive`: список параметров, которые нельзя использовать одновременно.
-*   `required_if`: параметр X обязателен, если параметр Y имеет значение Z.
-*   `required_one_of`: хотя бы один параметр из списка должен быть указан.
-*   `required_together`: параметры, которые должны указываться только парой/группой.
-
-#### Возврат результатов
-
-Два основных метода завершения модуля:
-*   `module.exit_json(**result)` — успешное завершение. Принимает любые ключи (обычно `changed`, `msg`, пользовательские данные).
-*   `module.fail_json(msg="...")` — аварийная остановка с описанием ошибки. Обязательно передавать `msg`.
-
-#### Принципы разработки (Best Practices)
-
-*   **Идемпотентность:** модуль должен проверять текущее состояние и вносить изменения только при необходимости.
-*   **Поддержка `check_mode`:** обязательная реализация `supports_check_mode=True` для безопасного тестирования (dry run).
-*   **Поддержка `diff`:** вывод разницы между текущим и желаемым состоянием (`supports_diff=True`). Критично для текстовых конфигураций.
-*   **Возвращаемые значения:** всегда возвращайте `changed` (boolean) и, при необходимости, детали изменений в JSON-формате.
-*   **Документация:** наличие блоков `DOCUMENTATION`, `EXAMPLES` и `RETURN` внутри Python-файла обязательно для работы `ansible-doc`.
-*   **Обработка ошибок:** используйте `module.fail_json(msg="...")` для аварийной остановки с понятным описанием причины.
-*   **Логирование:** не используйте `print()` — для вывода информации в консоль Ansible используйте `module.exit_json()` с ключом `msg` или пользовательскими ключами.
-
-### Переменные окружения для отладки
-
-| Переменная | Назначение |
-| :--- | :--- |
-| `ANSIBLE_KEEP_REMOTE_FILES=1` | Сохраняет временные файлы на Managed Node (не удаляет после выполнения) |
-| `ANSIBLE_DEBUG=1` | Включает расширенное логирование ядра Ansible |
-| `ANSIBLE_VERBOSITY=3` | Увеличивает детализацию вывода (`-vvv`) |
-| `PYTHONPATH=/path/to/modules` | Добавляет путь к пользовательским модулям |
+- **Идемпотентность:** модуль должен проверять текущее состояние и вносить изменения только при необходимости. Повторный запуск не должен ломать систему.
+- **Безопасность:** чувствительные данные маскируются через `no_log: true`. Внешние команды выполняются через `module.run_command`, а не `subprocess.run`.
+- **Надёжность:** модуль должен gracefully обрабатывать ошибки, возвращать понятные сообщения и поддерживать rollback где возможно.
+- **Тестируемость:** модуль должен поддерживать `check_mode`, возвращать детальную информацию для диагностики и иметь unit/integration тесты.
 
 ## Предварительные требования
 
 ### Для разработки модулей
 
-| Компонент | Минимальная версия | Рекомендуемая версия |
-| :--- | :--- | :--- |
-| Python | 3.7 | 3.11+ |
-| ansible-core | 2.14 | 2.17+ |
-| pytest | 7.0 | 8.0+ |
-| Docker / Podman | 20.0 | 24.0+ (для интеграционных тестов) |
-| ansible-lint | 6.0 | 24.0+ (проверка стиля) |
+| Компонент | Минимальная версия | Рекомендуемая версия | Примечание |
+| :--- | :--- | :--- | :--- |
+| Python (Control Node) | 3.12 | 3.12+ | Для ansible-core 2.20+ |
+| Python (Managed Node) | 3.9 | 3.11+ | Для ansible-core 2.20+ |
+| ansible-core | 2.20 | 2.21+ | Латистная стабильная версия |
+| pytest | 7.0 | 8.0+ | Unit-тестирование |
+| ansible-lint | 6.0 | 24.0+ | Проверка стиля и best practices |
+| Docker / Podman | 20.0 | 24.0+ | Для интеграционных тестов через ansible-test |
 
 ### Проверка окружения
 
 ```bash
 # Проверка версий
-python3 --version       # → Python 3.11.x
-ansible --version       # → ansible-core 2.17.x
+python3 --version       # → Python 3.12.x
+ansible --version       # → ansible-core 2.21.x
 pytest --version        # → pytest 8.x.x
-docker --version        # → Docker version 24.x
+ansible-lint --version  # → 24.x.x
 
 # Проверка доступных модулей
 ansible-doc -l | grep custom
@@ -128,7 +122,7 @@ ansible-doc -l | grep custom
 ### Структура директорий для модуля
 
 **Вариант 1: Локальный модуль (простой)**
-```text
+```
 my_project/
 ├── inventory.yml
 ├── site.yml
@@ -137,7 +131,7 @@ my_project/
 ```
 
 **Вариант 2: Модуль в роли**
-```text
+```
 my_role/
 ├── tasks/
 ├── library/              # Модули доступны только внутри роли
@@ -147,7 +141,7 @@ my_role/
 ```
 
 **Вариант 3: Модуль в коллекции (рекомендуется)**
-```text
+```
 ansible_collections/my_namespace/my_collection/
 ├── galaxy.yml
 ├── plugins/
@@ -217,7 +211,7 @@ system_info:
     description: Информация о системе.
     type: dict
     returned: always
-    sample: {"hostname": "web1.example.com", "python": "3.11.0"}
+    sample: {"hostname": "web1.example.com", "python": "3.12.0"}
 '''
 
 def main():
@@ -260,7 +254,7 @@ ansible-playbook -i "localhost," -c local site.yml
 #     "msg": "Hello, Ansible!",
 #     "system_info": {
 #         "hostname": "web1.example.com",
-#         "python": "3.11.0"
+#         "python": "3.12.0"
 #     }
 # }
 
@@ -396,7 +390,7 @@ from ansible.module_utils.basic import AnsibleModule
 DOCUMENTATION = r'''
 ---
 module: docker_image_info
-short_description: Получение информации об Docker-образе
+short_description: Получение информации о Docker-образе
 version_added: "1.0.0"
 description:
     - Возвращает размер и количество слоёв Docker-образа через docker inspect.
@@ -620,127 +614,7 @@ if __name__ == '__main__':
     main()
 ```
 
-### Пример 5: Unit-тест модуля (pytest)
-
-Для тестирования логики модуля без запуска Ansible используйте `pytest`:
-
-```python
-# tests/unit/test_hello_world.py
-import pytest
-import sys
-import os
-
-# Добавляем путь к модулю
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'library'))
-
-from hello_world import main as hello_main
-from ansible.module_utils import basic
-from ansible.module_utils.common.text.converters import to_bytes
-
-
-def setup_module(args):
-    """Хелпер для настройки модуля в тестах."""
-    if not hasattr(basic, '_original_exit_json'):
-        basic._original_exit_json = basic.AnsibleModule.exit_json
-    if not hasattr(basic, '_original_fail_json'):
-        basic._original_fail_json = basic.AnsibleModule.fail_json
-
-    basic.AnsibleModule.exit_json = lambda self, **kwargs: (_ for _ in ()).throw(SystemExit(0, kwargs))
-    basic.AnsibleModule.fail_json = lambda self, **kwargs: (_ for _ in ()).throw(SystemExit(1, kwargs))
-
-    return args
-
-
-def test_hello_world_default():
-    """Тест модуля с параметрами по умолчанию."""
-    args = {
-        'ANSIBLE_MODULE_ARGS': {
-            'name': {'type': 'str', 'default': 'World'},
-        }
-    }
-
-    with pytest.raises(SystemExit) as exc_info:
-        sys.argv = ['test_module']
-        basic.ANSIBLE_MODULE_ARGS = args
-        hello_main()
-
-    result = exc_info.value.args[1]
-    assert result['changed'] is False
-    assert result['msg'] == "Hello, World!"
-    assert 'system_info' in result
-    assert 'hostname' in result['system_info']
-
-
-def test_hello_world_custom_name():
-    """Тест модуля с кастомным именем."""
-    args = {
-        'ANSIBLE_MODULE_ARGS': {
-            'name': {'type': 'str', 'default': 'World'},
-        }
-    }
-
-    with pytest.raises(SystemExit) as exc_info:
-        basic.ANSIBLE_MODULE_ARGS = args
-        hello_main()
-
-    result = exc_info.value.args[1]
-    assert "Hello, World!" in result['msg']
-```
-
-**Запуск тестов:**
-
-```bash
-# Установка pytest
-pip install pytest
-
-# Запуск тестов
-pytest tests/unit/test_hello_world.py -v
-# → test_hello_world_default PASSED
-# → test_hello_world_custom_name PASSED
-# → 2 passed in 0.05s
-```
-
-### Пример 6: Интеграционный тест через ansible-test
-
-Для тестирования модуля в коллекции:
-
-```yaml
-# tests/integration/targets/my_module/tasks/main.yml
----
-- name: Тест модуля hello_world
-  block:
-    - name: Вызов модуля
-      my_namespace.my_collection.hello_world:
-        name: "TestUser"
-      register: result
-
-    - name: Проверка результата
-      ansible.builtin.assert:
-        that:
-          - result.changed == false
-          - result.msg == "Hello, TestUser!"
-          - result.system_info.hostname is defined
-
-    - name: Проверка без параметров
-      my_namespace.my_collection.hello_world:
-      register: result_default
-
-    - name: Проверка значения по умолчанию
-      ansible.builtin.assert:
-        that:
-          - result_default.msg == "Hello, World!"
-```
-
-**Запуск:**
-
-```bash
-# Из корня коллекции
-ansible-test integration my_module -v
-# → ██ Integration: my_namespace.my_collection.my_module
-# → Задачи выполнены: ok=3  changed=0  unreachable=0  failed=0
-```
-
-### Пример 7: Модуль с валидацией и `mutually_exclusive`
+### Пример 5: Модуль с валидацией и `mutually_exclusive`
 
 ```python
 #!/usr/bin/python3
@@ -857,9 +731,156 @@ if __name__ == '__main__':
     main()
 ```
 
-## Типичные ошибки и их решение (Troubleshooting)
+### Пример 6: Unit-тест модуля (pytest)
 
-### 1. «Module import error» — ошибка импорта модуля
+Для тестирования логики модуля без запуска Ansible используйте `pytest`:
+
+```python
+# tests/unit/test_hello_world.py
+import pytest
+import sys
+import os
+
+# Добавляем путь к модулю
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'library'))
+
+from hello_world import main as hello_main
+from ansible.module_utils import basic
+from ansible.module_utils.common.text.converters import to_bytes
+
+
+def setup_module(args):
+    """Хелпер для настройки модуля в тестах."""
+    if not hasattr(basic, '_original_exit_json'):
+        basic._original_exit_json = basic.AnsibleModule.exit_json
+    if not hasattr(basic, '_original_fail_json'):
+        basic._original_fail_json = basic.AnsibleModule.fail_json
+
+    basic.AnsibleModule.exit_json = lambda self, **kwargs: (_ for _ in ()).throw(SystemExit(0, kwargs))
+    basic.AnsibleModule.fail_json = lambda self, **kwargs: (_ for _ in ()).throw(SystemExit(1, kwargs))
+
+    return args
+
+
+def test_hello_world_default():
+    """Тест модуля с параметрами по умолчанию."""
+    args = {
+        'ANSIBLE_MODULE_ARGS': {
+            'name': {'type': 'str', 'default': 'World'},
+        }
+    }
+
+    with pytest.raises(SystemExit) as exc_info:
+        sys.argv = ['test_module']
+        basic.ANSIBLE_MODULE_ARGS = args
+        hello_main()
+
+    result = exc_info.value.args[1]
+    assert result['changed'] is False
+    assert result['msg'] == "Hello, World!"
+    assert 'system_info' in result
+    assert 'hostname' in result['system_info']
+
+
+def test_hello_world_custom_name():
+    """Тест модуля с кастомным именем."""
+    args = {
+        'ANSIBLE_MODULE_ARGS': {
+            'name': {'type': 'str', 'default': 'World'},
+        }
+    }
+
+    with pytest.raises(SystemExit) as exc_info:
+        basic.ANSIBLE_MODULE_ARGS = args
+        hello_main()
+
+    result = exc_info.value.args[1]
+    assert "Hello, World!" in result['msg']
+```
+
+**Запуск тестов:**
+
+```bash
+# Установка pytest
+pip install pytest
+
+# Запуск тестов
+pytest tests/unit/test_hello_world.py -v
+# → test_hello_world_default PASSED
+# → test_hello_world_custom_name PASSED
+# → 2 passed in 0.05s
+```
+
+### Пример 7: Интеграционный тест через ansible-test
+
+Для тестирования модуля в коллекции:
+
+```yaml
+# tests/integration/targets/my_module/tasks/main.yml
+---
+- name: Тест модуля hello_world
+  block:
+    - name: Вызов модуля
+      my_namespace.my_collection.hello_world:
+        name: "TestUser"
+      register: result
+
+    - name: Проверка результата
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.msg == "Hello, TestUser!"
+          - result.system_info.hostname is defined
+
+    - name: Проверка без параметров
+      my_namespace.my_collection.hello_world:
+      register: result_default
+
+    - name: Проверка значения по умолчанию
+      ansible.builtin.assert:
+        that:
+          - result_default.msg == "Hello, World!"
+```
+
+**Запуск:**
+
+```bash
+# Из корня коллекции
+ansible-test integration my_module -v
+# → ██ Integration: my_namespace.my_collection.my_module
+# → Задачи выполнены: ok=3  changed=0  unreachable=0  failed=0
+```
+
+## Операции и команды
+
+### Справочник команд
+
+| Команда | Назначение | Пример |
+|---------|------------|--------|
+| `ansible-doc -l` | Список всех доступных модулей | `ansible-doc -l \| grep custom` |
+| `ansible-doc <module>` | Документация модуля | `ansible-doc ansible.builtin.copy` |
+| `ansible-doc -s <module>` | Краткая справка по параметрам | `ansible-doc -s ansible.builtin.file` |
+| `ansible-test sanity` | Проверка стиля и корректности кода | `ansible-test sanity --docker default` |
+| `ansible-test units` | Unit-тесты | `ansible-test units --docker --python 3.12` |
+| `ansible-test integration` | Интеграционные тесты | `ansible-test integration my_target --docker default` |
+| `ansible-lint` | Линтинг плейбуков и модулей | `ansible-lint playbooks/` |
+| `ANSIBLE_KEEP_REMOTE_FILES=1` | Сохранять временные файлы на Managed Node | `ANSIBLE_KEEP_REMOTE_FILES=1 ansible-playbook site.yml` |
+| `ANSIBLE_DEBUG=1` | Включает расширенное логирование | `ANSIBLE_DEBUG=1 ansible-playbook site.yml -vvv` |
+
+### Переменные окружения для отладки
+
+| Переменная | Назначение |
+| :--- | :--- |
+| `ANSIBLE_KEEP_REMOTE_FILES=1` | Сохраняет временные файлы на Managed Node (не удаляет после выполнения) |
+| `ANSIBLE_DEBUG=1` | Включает расширенное логирование ядра Ansible |
+| `ANSIBLE_VERBOSITY=3` | Увеличивает детализацию вывода (`-vvv`) |
+| `PYTHONPATH=/path/to/modules` | Добавляет путь к пользовательским модулям |
+
+## Диагностика
+
+### Типичные ошибки
+
+#### 1. «Module import error» — ошибка импорта модуля
 
 **Симптом:** `Failed to import the required Python library`.
 
@@ -869,9 +890,9 @@ if __name__ == '__main__':
 ansible all -m command -a "python3 --version"
 ```
 
-**Решение:** Убедитесь, что Python 3.7+ установлен на Managed Node. Дляbootstrap используйте `ansible.builtin.raw`.
+**Решение:** Убедитесь, что Python 3.9+ установлен на Managed Node. Для bootstrap используйте `ansible.builtin.raw`.
 
-### 2. «Module failure» — падение модуля с невнятной ошибкой
+#### 2. «Module failure» — падение модуля с невнятной ошибкой
 
 **Симптом:** Модуль падает без понятного описания.
 
@@ -887,7 +908,7 @@ cd debug_dir
 python3 ansible_module_my_module.py args.json
 ```
 
-### 3. «Check mode не работает» — модуль применяет изменения в check_mode
+#### 3. «Check mode не работает» — модуль применяет изменения в check_mode
 
 **Симптом:** `ansible-playbook --check` применяет реальные изменения.
 
@@ -905,13 +926,13 @@ if not module.check_mode:
     do_something()
 ```
 
-### 4. «Argument validation error» — невалидные аргументы
+#### 4. «Argument validation error» — невалидные аргументы
 
 **Симптом:** `Unsupported parameters: (unknown)`.
 
 **Диагностика:** Проверьте `argument_spec` — все параметры, передаваемые в модуль, должны быть объявлены.
 
-### 5. «JSON decode error» — невалидный JSON в ответе
+#### 5. «JSON decode error» — невалидный JSON в ответе
 
 **Симптом:** Модуль завершается, но Ansible не может распарсить ответ.
 
@@ -919,11 +940,35 @@ if not module.check_mode:
 
 **Решение:** Убедитесь, что в модуле нет `print()`. Используйте `module.exit_json()` и `module.fail_json()`.
 
-### 6. «Permission denied» при записи файлов
+#### 6. «Permission denied» при записи файлов
 
 **Симптом:** Модуль не может записать файл на Managed Node.
 
 **Решение:** Добавьте `become: true` в задачу или используйте `module.run_command` с `sudo`.
+
+#### 7. «module_utils not found» — не найдена общая библиотека
+
+**Симптом:** `AnsibleError: module_utils not found`.
+
+**Диагностика:** Проверьте путь к `plugins/module_utils/` в коллекции. Для импорта используйте полный путь:
+
+```python
+from ansible_collections.my_ns.my_col.plugins.module_utils.helpers import helper_func
+```
+
+## Лучшие практики
+
+- **Идемпотентность:** модуль всегда должен возвращать корректный `changed` статус. Проверяйте текущее состояние перед применением изменений.
+- **Check Mode:** всегда реализуйте `supports_check_mode=True`. Тестируйте модуль через `ansible-playbook --check` перед использованием в production.
+- **Diff Mode:** для модулей, изменяющих файлы, реализуйте `supports_diff=True`. Это критично для audit и review изменений.
+- **Безопасность:** чувствительные параметры помечайте `no_log: true`. Никогда не логируйте пароли, ключи или токены. Используйте `module.run_command` вместо `subprocess.run` для безопасного выполнения внешних команд.
+- **Обработка ошибок:** используйте `module.fail_json(msg="...")` для аварийной остановки с понятным описанием. Не используйте `print()` — всё communicates через JSON-ответ.
+- **Документация:** заполняйте блоки `DOCUMENTATION`, `EXAMPLES`, `RETURN` в полном объёме. Это обязательно для работы `ansible-doc` и публикации в Galaxy.
+- **Зависимости:** проверяйте внешние библиотеки через try/except с флагом `HAS_*`. Документируйте зависимости в `DOCUMENTATION`.
+- **Тестирование:** пишите unit-тесты (`pytest`) для бизнес-логики и integration-тесты (`ansible-test integration`) для проверки работы на реальных системах.
+- **Совместимость:** тестируйте модуль на целевых ОС и версиях Python. Используйте `ansible-test sanity` для проверки стиля.
+- **Производительность:** избегайте лишних вызовов `module.run_command`. Кэшируйте результаты где возможно. Для Fact-модулей возвращайте данные в `ansible_facts`.
+- **Логирование:** не используйте `print()`. Для отладочной информации используйте `module.exit_json()` с пользовательскими ключами или `ANSIBLE_DEBUG=1`.
 
 ## Дополнительная информация
 
@@ -934,25 +979,26 @@ if not module.check_mode:
 #### Стандартные библиотеки Ansible
 
 Ansible предоставляет богатый набор готовых утилит в `ansible.module_utils`:
-*   `urls`: Безопасная работа с HTTP/HTTPS запросами (обертка над `urllib`), поддержка прокси и сертификатов.
-*   `common.text.converters`: Преобразование типов данных (например, `to_bytes`, `to_text`, `to_native`).
-*   `json`: Работа с JSON с учетом особенностей Python 2/3.
-*   `basic.AnsibleModule`: Базовый класс для всех модулей.
-*   `six`: Совместимость Python 2/3 (используйте только при необходимости поддержки legacy-систем).
+
+- `urls`: Безопасная работа с HTTP/HTTPS запросами (обертка над `urllib`), поддержка прокси и сертификатов.
+- `common.text.converters`: Преобразование типов данных (например, `to_bytes`, `to_text`, `to_native`).
+- `json`: Работа с JSON с учетом особенностей Python 2/3.
+- `basic.AnsibleModule`: Базовый класс для всех модулей.
+- `six`: Совместимость Python 2/3 (используйте только при необходимости поддержки legacy-систем).
 
 #### Пример выноса логики в коллекции
 
-1.  **Создание библиотеки** (`plugins/module_utils/api_client.py`):
-    ```python
-    def get_api_status(url):
-        # Логика запроса
-        return {"status": "ok"}
-    ```
+1. **Создание библиотеки** (`plugins/module_utils/api_client.py`):
+   ```python
+   def get_api_status(url):
+       # Логика запроса
+       return {"status": "ok"}
+   ```
 
-2.  **Импорт в модуле** (`plugins/modules/my_module.py`):
-    ```python
-    from ansible_collections.my_ns.my_col.plugins.module_utils.api_client import get_api_status
-    ```
+2. **Импорт в модуле** (`plugins/modules/my_module.py`):
+   ```python
+   from ansible_collections.my_ns.my_col.plugins.module_utils.api_client import get_api_status
+   ```
 
 #### Запуск внешних команд (`run_command`)
 
@@ -982,3 +1028,4 @@ if rc != 0:
 - [Тестирование через ansible-test](./ansible-test.md) — полное руководство по тестированию модулей и плагинов.
 - [Разработка Action-плагинов](./ansible-action-plugins.md) — расширение логики выполнения на Control Node.
 - [Разработка Callback-плагинов](./ansible-callback-plugins.md) — перехват событий и интеграция с внешними системами.
+- [Антипаттерны Ansible](./ansible_bad_practices.md) — распространённые ошибки и как их избежать.

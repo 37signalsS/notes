@@ -11,7 +11,8 @@
 **ansible-core** — минимальный пакет, содержащий движок Ansible, основные CLI-утилиты и набор базовых модулей (`ansible.builtin`). Дополнительные возможности расширяются через **Коллекции** (Collections).
 
 ### Требования к окружению
-Начиная с **Ansible 2.17**, поддержка Python 2.7 и 3.6 на управляемых узлах прекращена. Для работы современных модулей требуется **Python 3.7+**. Для Windows-хостов требуются соответствующие версии PowerShell и .NET.
+
+Начиная с **ansible-core 2.17**, поддержка Python 2.7 и 3.6 на управляемых узлах прекращена. Для работы современных модулей требуется **Python 3.7+** (ansible-core 2.18+ требует Python 3.8+). Для Windows-хостов требуются соответствующие версии PowerShell и .NET.
 
 ## Основные концепции
 
@@ -130,8 +131,25 @@
 4.  **[Управление службами и системой](ansible_service_and_system_config_modules.md)**: `systemd`, `service`, `hostname`, `cron`, `reboot`.
 5.  **[Пользователи и безопасность](ansible_security_and_user_management_modules.md)**: `user`, `group`, `authorized_key`, `iptables`.
 6.  **[Выполнение команд](ansible_command_execution_modules.md)**: `command`, `shell`, `raw`, `script`.
+7.  **[PKI и сертификаты](ansible_pki_certificates_modules.md)**: `community.crypto.openssl_privatekey`, `openssl_csr`, `x509_certificate`, `x509_certificate_info`, `openssl_pkcs12`, `certificate_complete_chain`.
+8.  **[Управление контейнерами](ansible_container_modules.md)**: `community.docker.docker_container`, `docker_image`, `docker_network`, `docker_volume`, `containers.podman.podman_container`, `podman_image`, `podman_generate_systemd`.
+9.  **[Управление базами данных и кэшем](ansible_database_modules.md)**: `community.redis.redis`, `community.postgresql.postgresql_db`, `ansible.mysql.mysql_db`, `community.mongodb.mongodb_user`.
+10. **[Управление секретами](ansible_vault_modules.md)**: `community.hashi_vault.hashi_vault`, `hashi_vault_login`, `hashi_vault_secret`.
+11. **[Управление сетевым оборудованием](ansible_network_device_modules.md)**: `cisco.ios.ios_vlans`, `juniperdevices.junos.junos_interfaces`, `arista.eos.eos_interfaces`.
+12. **[Управление сетевой конфигурацией Linux](ansible_network_configuration_modules.md)**: `community.general.nmcli`, `ansible.posix.sysctl`, Netplan, bonding, VLAN, маршрутизация.
+13. **[Управление мониторингом](ansible_monitoring_modules.md)**: `community.zabbix.zabbix_host`, `datadog.dd.datadog_monitor`, `netways.icinga.icinga_host`.
+14. **[Управление DNS](ansible_dns_modules.md)**: `community.general.nsupdate`, управление зонами через `template`, PowerDNS API через `uri`.
+15. **[Управление выполнением и контролем потока](ansible_control_flow_modules.md)**: `include_tasks`, `import_role`, `add_host`, `group_by`, `meta`, `loop_control`, `until`/`retries`/`delay`.
+16. **[Плагины подключения](ansible_connection_plugins.md)**: `ssh`, `winrm`, `network_cli`, `httpapi`, `netconf`, `docker`, `podman`.
 
-### Работа с документацией через CLI (ansible-doc)
+### Порядок поиска модулей
+Ansible ищет модули в следующих местах (в порядке приоритета):
+1.  Директория `library/` в корне текущего плейбука.
+2.  Внутри роли: `roles/<role_name>/library/`.
+3.  В установленных коллекциях.
+4.  Пути из переменной `ANSIBLE_LIBRARY` или параметра `library` в `ansible.cfg`.
+
+## Операции и команды
 Утилита `ansible-doc` позволяет получать справку без доступа к интернету.
 
 ```bash
@@ -141,16 +159,75 @@ ansible-doc ansible.builtin.copy
 # Вывод краткого шаблона (snippet) для вставки в плейбук
 ansible-doc -s ansible.builtin.file
 
-# Список всех доступных плагинов конкретного типа (например, модулей)
+# Список всех доступных модулей
 ansible-doc -l
 ```
 
-### Порядок поиска модулей
-Ansible ищет модули в следующих местах (в порядке приоритета):
-1.  Директория `library/` в корне текущего плейбука.
-2.  Внутри роли: `roles/<role_name>/library/`.
-3.  В установленных коллекциях.
-4.  Пути из переменной `ANSIBLE_LIBRARY` или параметра `library` в `ansible.cfg`.
+### Управление коллекциями (ansible-galaxy)
+```bash
+# Установка коллекции
+ansible-galaxy collection install community.general
+
+# Просмотр установленных коллекций
+ansible-galaxy collection list
+
+# Поиск модуля в установленных коллекциях
+ansible-galaxy collection list | grep <module_name>
+```
+
+### Общие параметры CLI для выполнения плейбуков
+```bash
+# Проверка без применения изменений
+ansible-playbook site.yml --check
+
+# Просмотр различий
+ansible-playbook site.yml --diff
+
+# Ограничение выполнения конкретными хостами
+ansible-playbook site.yml --limit webservers
+
+# Продолжение выполнения с определенной задачи
+ansible-playbook site.yml --start-at-task "Install packages"
+```
+
+## Устранение неполадок
+
+### Типичные ошибки модулей
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `MODULE NOT FOUND` | Модуль не найден или коллекция не установлена | Проверьте FQCN, установите нужную коллекцию через `ansible-galaxy collection install` |
+| `Permission denied` | Недостаточно прав на управляемом узле | Используйте `become: yes` или настройте sudo |
+| `No such file or directory` | Указанный путь не существует | Проверьте путь или используйте параметр `creates` для идемпотентности |
+| `Unexpected failure` | Внутренняя ошибка модуля | Обновите ansible-core и коллекции, проверьте совместимость версий |
+| `Timeout` | Операция превысила лимит времени | Увеличьте `timeout` или используйте `async`/`poll` |
+| `Python version mismatch` | Неподдерживаемая версия Python | Установите Python 3.7+ (3.8+ для ansible-core 2.18+) |
+| `Connection closed` | Разрыв SSH-соединения | Проверьте стабильность сети, увеличьте `timeout` в `ansible.cfg` |
+| `Failed to parse module arguments` | Ошибка в синтаксисе параметров | Проверьте YAML-синтаксис и типы данных параметров |
+
+### Диагностика модулей
+```bash
+# Проверка доступности модуля
+ansible-doc ansible.builtin.copy
+
+# Тестирование подключения к хосту
+ansible all -m ping
+
+# Проверка фактов хоста
+ansible all -m setup -a "filter=ansible_os*"
+```
+
+### Режим отладки
+```bash
+# Максимальная вербальность
+ansible-playbook site.yml -vvvv
+
+# Сохранение временных файлов на удаленном узле
+export ANSIBLE_KEEP_REMOTE_FILES=1
+ansible-playbook site.yml -vvv
+```
+
+## Рекомендации
 
 ### Выбор правильного модуля
 При выборе модуля следуйте принципу «декларативность вместо императивности»:
@@ -196,6 +273,12 @@ Ansible ищет модули в следующих местах (в поряд�
 - **Факты**: Отключайте сбор фактов (`gather_facts: false`) если они не нужны.
 - **Стратегии**: Используйте `strategy: free` для независимого выполнения хостов.
 - **Сборщики**: Используйте `ansible.builtin.package_facts` и `service_facts` вместо многократного вызова `setup`.
+
+### Общие принципы
+- Всегда используйте FQCN для модулей.
+- Проверяйте идемпотентность модулей перед использованием в production.
+- Документируйте нестандартные параметры и assumptions в плейбуках.
+- Используйте `no_log: true` для задач с чувствительными данными.
 
 ## Дополнительная информация
 

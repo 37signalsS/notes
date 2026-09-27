@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Werf** — это Open Source инструмент (CNCF Sandbox) для автоматизации сборки Docker-образов и развёртывания приложений в Kubernetes. Реализует концепцию Giterminism, объединяя процессы сборки, публикации и деплоя в единый, воспроизводимый конвейер.
+**Werf** — это Open Source инструмент (CNCF Sandbox) для автоматизации сборки Docker-образов и развёртывания приложений в Kubernetes. Реализует концепцию Giterminism, объединяя процессы сборки, публикации и деплоя в единый, воспроизводимый конвейер. Актуальная стабильная версия — **2.77.x** (сентябрь 2026).
 
 **Nelm** — современный движок развёртывания werf, пришедший на смену форку Helm. Обеспечивает нативную поддержку Kubernetes Server-Side Apply и улучшенное отслеживание ресурсов. Nelm позволяет обрабатывать сложные сценарии слияния манифестов и предоставляет глубокую диагностику состояния ресурсов в реальном времени.
 
@@ -27,7 +27,7 @@
 
 | Компонент | Версия | Назначение |
 | :--- | :--- | :--- |
-| **Werf** | 2.x (Stable) | Основной инструмент сборки и деплоя |
+| **Werf** | 2.77.x (Stable) | Основной инструмент сборки и деплоя |
 | **Docker** или **Buildah** | Любая стабильная | Движок сборки образов (Docker Desktop или Podman) |
 | **Git** | 2.30+ | Управление версиями (обязательно для Giterminism) |
 | **kubectl** | Совпадающая с кластером | Управление Kubernetes-кластером |
@@ -38,7 +38,7 @@
 
 ```bash
 # Проверка версий всех компонентов
-werf version       # → 2.x.x
+werf version       # → v2.77.x
 docker version     # → Docker version 24.x+
 git --version      # → git version 2.30+
 kubectl version --client  # → Client Version: v1.28+
@@ -109,17 +109,17 @@ kubectl version --client  # → Client Version: v1.28+
 
 ### Сценарий 0: Установка werf
 
-**Установка (macOS/Linux):**
+**Установка (Linux/macOS):**
 
 ```bash
-curl -sL https://werf.io/install.sh | bash
+curl -sSL https://werf.io/install.sh | bash -s -- --version 2 --channel stable
 ```
 
 **Проверка установки:**
 
 ```bash
 werf version
-# Вывод: 2.x.x (Stable/Rock-Solid)
+# Вывод: v2.77.2 (Stable)
 ```
 
 **Настройка для локальной разработки:**
@@ -296,7 +296,7 @@ metadata:
     werf.io/weight: "10" # Очередность деплоя (аналог Helm hooks)
 ```
 
-### Сценарий 11: Интеграция с GitLab CI/CD (Новый)
+### Сценарий 11: Интеграция с GitLab CI/CD
 
 Для автоматизации в GitLab создается файл `.gitlab-ci.yml`:
 
@@ -335,7 +335,7 @@ on:
     branches: [main]
 
 env:
-  WERF_VERSION: "2.24"
+  WERF_VERSION: "2.77"
   GHCR_IMAGE: "ghcr.io/${{ github.repository }}"
 
 jobs:
@@ -349,7 +349,7 @@ jobs:
 
       - name: Install werf
         run: |
-          curl -s https://raw.githubusercontent.com/werf/werf/main/scripts/werf-install.sh | bash
+          curl -sSL https://werf.io/install.sh | bash -s -- --version ${{ env.WERF_VERSION }} --channel stable
           echo "$HOME/.werf/bin" >> $GITHUB_PATH
 
       - name: Login to GHCR
@@ -360,7 +360,7 @@ jobs:
           KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
         run: |
           echo "$KUBE_CONFIG" | base64 -d > $HOME/.kube/config
-          werf converge --repo ${{ env.WERF_IMAGE }} --env production
+          werf converge --repo ${{ env.GHCR_IMAGE }} --env production
 ```
 
 *Примечание: Установите `fetch-depth: 0` для полной истории коммитов (требуется Giterminism).*
@@ -411,7 +411,7 @@ import:
 # Явное указание переменных
 werf converge --env CI_COMMIT_SHA=abc123
 
-# Использование переменных окружения.shell
+# Использование переменных окружения
 export CI_COMMIT_SHA=$(git rev-parse --short HEAD)
 werf converge
 ```
@@ -431,6 +431,105 @@ env:
         name: app-secrets
         key: DB_PASSWORD
 ```
+
+### Сценарий 15: Мониторинг и наблюдаемость deployments (SRE)
+
+**Проблема:** Необходимость отслеживания статуса деплоя и получать алерты при сбоях.
+
+**Решение:**
+
+1. **Использование `kubedog` (встроенный в werf):**
+
+   ```bash
+   # Отслеживание rollout с выводом событий в реальном времени
+   werf converge --env production 2>&1 | tee deploy.log
+   ```
+
+   Werf через библиотеку `kubedog` отслеживает события Kubernetes (Pod creation, readiness probes, container exits) и возвращает детальный отчёт о результате деплоя.
+
+2. **Интеграция с Prometheus:**
+
+   - Добавьте в Deployment аннотации для сбора метрик:
+     ```yaml
+     metadata:
+       annotations:
+         werf.io/track: "true"
+     ```
+   - Используйте `werf bundle render` для получения манифестов и их парсинга в системе мониторинга.
+
+3. **Алерты на ошибки деплоя:**
+   - Настройка алертов в Prometheus/Loki на события типа `werf_deploy_failed_total` (если используется кастомный exporter) или на основе анализа логов CI.
+   - Проверка статуса deployment'а после `werf converge`:
+     ```bash
+     kubectl rollout status deployment/<name> -n <namespace> --timeout=5m
+     ```
+
+### Сценарий 16: Аварийное восстановление (Sysadmin)
+
+**Проблема:** Необходимость быстрого отката при деструктивном деплое или инциденте.
+
+**Решение:**
+
+1. **Откат через werf:**
+
+   ```bash
+   # Откат к предыдущей версии
+   werf rollback --env production
+   ```
+
+2. **Полное удаление релиза (dismiss):**
+
+   ```bash
+   werf dismiss --env production
+   ```
+
+3. **Бэкап манифестов:**
+   - Сохраняйте вывод `werf bundle render --repo <registry>` в объектное хранилище или Git.
+   - Для air-gap сред используйте `werf bundle copy` для переноса артефактов.
+
+4. **Восстановление registry:**
+   - При проблемах с registry переключитесь на зеркало, указав `--repo` в другой registry.
+   - Восстановление кэша из бэкапа registry недоступно; требуется повторная сборка.
+
+### Сценарий 17: Обновление версии werf (Sysadmin)
+
+**Проблема:** Обновление werf без нарушения текущих деплоев.
+
+**Решение:**
+
+1. **Обновление бинарника:**
+
+   ```bash
+   # Скачать и установить новую версию
+   curl -sSL https://werf.io/install.sh | bash -s -- --version 2.77 --channel stable
+   ```
+
+2. **Проверка совместимости:**
+   - Проверьте changelog на наличие breaking changes.
+   - Выполните `werf version` и сравните с версией в CI.
+
+3. **Поэтапное обновление:**
+   - Обновите раннер/агент в CI.
+   - Протестируйте `werf plan` в staging.
+   - Обновите версию в production.
+
+### Сценарий 18: Настройка производительности (Sysadmin)
+
+**Проблема:** Медленная сборка или деплой в больших кодовых базах и монорепозиториях.
+
+**Решение:**
+
+1. **Кэширование в CI:**
+   - Используйте общий registry для кэша стадий Stapel.
+   - Настройте `host-cleanup` для автоматической очистки неиспользуемых образов.
+
+2. **Параллелизм:**
+   - werf автоматически параллелит сборку независимых стадий.
+   - Для монорепозиториев используйте `werf build <image_name>` для сборки только изменённых компонентов.
+
+3. **Ресурсы Runner'а:**
+   - Выделяйте не менее 4 CPU и 8 ГБ RAM для сборки образов.
+   - Используйте `--repo-cache` для ускорения повторных сборок.
 
 ## Валидация и ожидаемые результаты
 
@@ -529,7 +628,7 @@ kubectl delete pod <pod-name> -n <namespace>
 # Полное удаление приложения
 werf dismiss --env production
 
-# Удаление_namespace и всех ресурсов в нём
+# Удаление namespace и всех ресурсов в нём
 kubectl delete namespace <namespace>
 ```
 
@@ -552,6 +651,155 @@ werf cleanup --repo <registry_url>
 5. **Тестирование:** Используйте `werf render` для проверки манифестов без фактического деплоя.
 6. **Очистка:** Настройте политики очистки registry для предотвращения переполнения диска.
 7. **Документация:** Опишите процедуру отката и связи с ответственными в случае инцидентов.
+8. **Семантическое версионирование:** Используйте Git-теги для релизов и связывайте их с образами в registry.
+9. **Эфемерные окружения:** Для Review Apps используйте `werf dismiss --with-namespace` для автоматической очистки.
+10. **Изоляция окружений:** Используйте отдельные registry и namespace для staging/production.
+
+## Мониторинг и диагностика (SRE)
+
+### Встроенные механизмы отслеживания
+
+Werf использует библиотеку `kubedog` для отслеживания состояния ресурсов Kubernetes во время деплоя. После выполнения `werf converge` инструмент возвращает:
+
+- Статус каждого пода (Pending, Running, Failed, CrashLoopBackOff).
+- Результаты readiness/liveness probes.
+- Логи контейнеров при падении.
+- События Kubernetes, связанные с rollout.
+
+### Практики SRE
+
+1. **Сбор отчёта о деплое:**
+   ```bash
+   # Сохранение отчёта в CI-артефакты
+   werf converge --env production 2>&1 | tee deploy-report.txt
+   ```
+
+2. **Валидация readiness:**
+   ```bash
+   # Ожидание готовности всех подов
+   kubectl wait --for=condition=ready pod -l app=myapp -n <namespace> --timeout=300s
+   ```
+
+3. **Интеграция с Loki/ELK:**
+   - Собирайте логи werf из CI-раннеров.
+   - Индексируйте события `kubedog` для пост-анализа инцидентов.
+
+4. **SLO для деплоев:**
+   - Время деплоя (rollout duration) — целевое значение < 5 минут.
+   - Процент успешных деплоев — целевое значение > 99%.
+   - Время отката (rollback duration) — целевое значение < 2 минут.
+
+## Аварийное восстановление (Sysadmin)
+
+### Резервное копирование конфигурации
+
+- Храните `werf.yaml`, `.helm/`, `werf-giterminism.yaml` в Git.
+- Регулярно экспортируйте текущие значения Releases:
+  ```bash
+  helm get values <release-name> -n <namespace> > values-backup-$(date +%F).yaml
+  ```
+
+### Процедура аварийного отката
+
+1. **Быстрый откат (если предыдущий релиз существует):**
+   ```bash
+   werf rollback --env production
+   ```
+
+2. **Полное удаление (если конфигурация повреждена):**
+   ```bash
+   werf dismiss --env production
+   kubectl delete namespace <namespace> --wait=true
+   ```
+
+3. **Восстановление из Git:**
+   - Откатите коммит с изменениями конфигурации.
+   - Выполните `werf converge` на предыдущем коммите.
+
+### Восстановление registry
+
+- При утере registry требуется повторная сборка всех образов (кэш не восстанавливается).
+- Для критических сред используйте зеркалирование registry.
+
+## Обновление werf
+
+### Процедура обновления
+
+1. **Проверка changelog:**
+   - Ознакомьтесь с [release notes](https://github.com/werf/werf/releases).
+   - Обратите внимание на breaking changes и миграционные пути.
+
+2. **Обновление в CI:**
+   - Измените версию в переменной окружения (например, `WERF_VERSION`).
+   - Запустите pipeline в staging.
+
+3. **Валидация:**
+   ```bash
+   werf version
+   werf plan --env staging
+   ```
+
+4. **Обновление в production:**
+   - После успешного деплоя в staging обновите версию в production.
+
+### Откат обновления
+
+- Если новая версия вызывает проблемы, вернитесь к предыдущей версии:
+  ```bash
+  curl -sSL https://werf.io/install.sh | bash -s -- --version 2.76 --channel stable
+  ```
+
+## Настройка производительности
+
+### Оптимизация сборки
+
+1. **Использование Buildah:**
+   - Buildah работает без root-прав и быстрее Docker в некоторых сценариях.
+   - Установка: `curl -sSL https://werf.io/install.sh | bash -s -- --setup-buildah`
+
+2. **Кэширование стадий:**
+   - Настройте `stageDependencies` в `werf.yaml` для правильного кэширования.
+   - Используйте общий registry для кэша между CI-раннерами.
+
+3. **Параллелизм:**
+   - Werf автоматически определяет параллельные стадии.
+   - Для монорепозиториев указывайте зависимости явно через `stageDependencies`.
+
+### Оптимизация деплоя
+
+1. **Инкрементальный deploy:**
+   - Werf автоматически обновляет только изменённые компоненты.
+   - Используйте `werf plan` для оценки объёма изменений.
+
+2. **Сетевые оптимизации:**
+   - Разместите registry в той же сети, что и раннеры.
+   - Используйте CDN для registry с глобальной инфраструктурой.
+
+## Управление секретами и безопасность
+
+### Хранение секретов
+
+1. **Kubernetes Secrets:**
+   - Создавайте secrets через `kubectl create secret` или Helm-чарт.
+   - Используйте `werf-giterminism.yaml` для явного разрешения чтения секретов.
+
+2. **Внешние секреты:**
+   - Интеграция с HashiCorp Vault, AWS Secrets Manager, GitLab CI Variables.
+   - Используйте `env` в `werf.yaml` для передачи переменных.
+
+### Минимизация поверхности атаки
+
+1. **Сборка без root:**
+   - Используйте Buildah вместо Docker для сборки без root-прав.
+   - Настройте SELinux/AppArmor для контейнеров сборки.
+
+2. **RBAC:**
+   - ServiceAccount для werf в Kubernetes с минимальными правами.
+   - Ограничьте доступ к registry токенами с коротким TTL.
+
+3. **Аудит:**
+   - Включите аудит в Kubernetes для отслеживания изменений, сделанных werf.
+   - Сохраняйте логи `werf converge` в централизованную систему логирования.
 
 ## Справочник по конфигурации werf.yaml
 
@@ -563,7 +811,7 @@ configVersion: "1"                # Версия формата конфига
 
 # Сборка образов
 build:
-  - image: app                    # Имя образа (для подстановки в шаблонах)
+  - image: app                    # Имя образа (для подстановки в шаблоны)
     from: alpine:3.18             # Базовый образ
     dockerfile: Dockerfile        # Альтернатива: использование Dockerfile
     context: .                    # Контекст сборки (по умолчанию .)
@@ -720,8 +968,9 @@ project/
 ### Ограничения и нюансы
 
 - **Зависимость от Git:** Werf теряет свои преимущества вне Git-репозитория.
-- **Хранилище стадий:** Для работы кэша требуется внешний Registry, поддерживающий хранение слоев.
+- **Хранилище стадий:** Для работы кэша требуется внешний Registry, поддерживающий хранение слоёв.
 - **Порог вхождения:** Понимание разницы между Dockerfile и Stapel, а также механизмов Nelm требует времени.
+- **Content-based tagging:** Теги образов не являются семантическими версиями; для отслеживания связывайте коммит/ветку с release в Git.
 
 ### Связанные темы
 
@@ -736,4 +985,4 @@ project/
 - [Giterminism Deep Dive](https://werf.io/documentation/advanced/giterminism.html)
 - [CNCF Sandbox: werf](https://www.cncf.io/projects/werf/)
 - [GitHub: werf/werf](https://github.com/werf/werf)
-- [ werf vs Helm vs Argo CD](https://werf.io/documentation/comparisons/werf-vs-helm.html)
+- [Werf vs Helm vs Argo CD](https://werf.io/documentation/comparisons/werf-vs-helm.html)

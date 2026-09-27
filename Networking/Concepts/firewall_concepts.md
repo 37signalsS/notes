@@ -469,88 +469,11 @@ cat /proc/sys/net/netfilter/nf_conntrack_count
 
 ---
 
-### Сценарий 5: Миграция с iptables на nftables
+### Миграция с iptables на nftables
 
-**Предварительные требования:**
-- Система с работающими правилами iptables
-- Установленный nftables
-- Резервная копия текущих правил
+Подробное руководство по миграции, включая предмиграционный аудит, стратегии перехода, замену модулей iptables, dual-stack миграцию, сосуществование с Docker, валидацию и откат, описано в отдельном файле:
 
-**Шаг 1: Экспорт текущих правил iptables**
-
-```bash
-# Сохранение правил
-sudo iptables-save > /tmp/iptables-backup.rules
-sudo ip6tables-save > /tmp/ip6tables-backup.rules
-
-# Просмотр для анализа
-cat /tmp/iptables-backup.rules
-```
-
-**Шаг 2: Конвертация в nftables**
-
-```bash
-# Конвертация через iptables-restore-translate
-sudo iptables-restore-translate -f /tmp/iptables-backup.rules > /tmp/nftables-translated.nft
-
-# Просмотр результата
-cat /tmp/nftables-translated.nft
-```
-
-**Шаг 3: Ручная оптимизация**
-
-```bash
-# Объединение IPv4 и IPv6 в таблицу inet
-# Замена модулей iptables на нативные nftables:
-# -m state → ct state
-# -m multiport → { port1, port2 }
-# -m recent → meter/set с timeout
-
-# Пример оптимизированной конфигурации:
-sudo tee /etc/nftables.conf << 'EOF'
-#!/usr/sbin/nft -f
-flush ruleset
-
-table inet filter {
-    chain input {
-        type filter hook input priority 0; policy drop;
-        iif lo accept
-        ct state established,related accept
-        ct state invalid drop
-        tcp dport { 22, 80, 443 } accept
-    }
-}
-EOF
-```
-
-**Шаг 4: Применение и валидация**
-
-```bash
-# Проверка синтаксиса
-sudo nft -c -f /etc/nftables.conf
-
-# Применение
-sudo nft -f /etc/nftables.conf
-
-# Проверка работоспособности
-sudo nft list ruleset
-ping -c 3 server_ip
-ssh user@server_ip
-
-# Включение автозагрузки
-sudo systemctl enable --now nftables
-```
-
-**Шаг 5: Откат (если необходимо)**
-
-```bash
-# Очистка nftables
-sudo nft flush ruleset
-
-# Восстановление iptables
-sudo iptables-restore < /tmp/iptables-backup.rules
-sudo ip6tables-restore < /tmp/ip6tables-backup.rules
-```
+-   **[nftables — миграция и справочник синтаксиса](../../Linux/Networking/Settings/tools/nftables/migration_and_reference.md)** — полное руководство по переходу с iptables на nftables.
 
 ---
 

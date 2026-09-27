@@ -145,7 +145,7 @@ glab ci lint --show-expanded | grep -c "include:"
 # 1. Создаем единый файл-словарь
 cat > templates/all-stages.yml << 'EOF'
 .build_template:
-  image: docker:27.0
+  image: docker:29.8
   before_script:
     - echo "Build started"
 
@@ -423,7 +423,7 @@ fi
 | **Lead Time for Changes** | Увеличение времени компиляции пайплайна при приближении к лимитам | < 15 минут |
 | **Deployment Frequency** | Задержки при превышении лимита блокируют частые деплои | > 10 в день |
 | **Change Failure Rate** | Ошибки при превышении лимита увеличивают долю сбоев | < 5% |
-| **Time to Restore Service** | Сложность отладки при лимитах увеличивает MTTR | < 30 минут |
+| **Failed Deployment Recovery Time** | Сложность отладки при лимитах увеличивает MTTR | < 30 минут |
 
 **Формула расчета влияния на SLA:**
 

@@ -512,6 +512,7 @@ Pod Scheduled → Node Assigned
 - [Проблемы с Secret](./secret_issues.md)
 - [Проблемы с PVC](./pvc_issues.md)
 - [Проблемы с RBAC](./rbac_issues.md)
+- [CRI и containerd](./cri_and_runtime.md) — Container Runtime Interface, взаимодействие kubelet с рантаймом
 - [Projected Volumes — детальный обзор](../../../Base/Pod/volume_types/projected_volumes.md)
 - [Типы томов в Kubernetes](../../../Base/Pod/volume_types/volume_types.md)
 - [Диагностика эвикции (DiskPressure)](../../PodEvicted/disk_eviction.md)

@@ -8,6 +8,74 @@
 
 ## Базовые концепции
 
+### Архитектура управления конфигурацией AlertmanagerConfig
+
+AlertmanagerConfig CRD является декларативным описанием желаемого состояния маршрутизации и получателей алертов. Оператор отслеживает изменения ресурсов и автоматически агрегирует их в единую конфигурацию Alertmanager:
+
+1.  **Наблюдение (Watch):** Prometheus Operator отслеживает создание и изменение объектов `AlertmanagerConfig` в кластере через Kubernetes API Watch.
+2.  **Выборка (Selection):** Ресурс `Alertmanager` через `alertmanagerConfigSelector` и `alertmanagerConfigNamespaceSelector` определяет, какие конфигурации должны быть включены в конкретный инстанс.
+3.  **Агрегация (Aggregation):** Оператор собирает все выбранные `AlertmanagerConfig`, объединяя их `route`-деревья, `receivers`, `inhibitRules` и `timeIntervals` в единый `alertmanager.yaml`.
+4.  **Генерация (Generation):** Агрегированная конфигурация записывается в Kubernetes Secret (по умолчанию `<alertmanager-name>-generated`).
+5.  **Синхронизация (Sync):** Sidecar-контейнер `config-reloader` в поде Alertmanager обнаруживает изменения в Secret и инициирует HTTP-запрос `/-/reload` к API Alertmanager для горячей перезагрузки без рестарта пода.
+6.  **Верификация (Status):** Через подресурс `status` можно проверить, был ли ресурс успешно принят оператором и применен к целевому инстансу Alertmanager.
+
+### Селекторы и изоляция конфигурации
+
+Для того чтобы Alertmanager загрузил `AlertmanagerConfig`, в спецификации ресурса `Alertmanager` должны быть настроены селекторы:
+
+| Селектор | Тип ресурса | Назначение |
+| :--- | :--- | :--- |
+| **`alertmanagerConfigSelector`** | `AlertmanagerConfig` | Фильтрует конфигурации по меткам (labels). |
+| **`alertmanagerConfigNamespaceSelector`** | `AlertmanagerConfig` | Определяет, в каких namespace искать конфигурации. |
+| **`alertmanagerConfigMatcherStrategy`** | `AlertmanagerConfig` | Стратегия применения matcher'ов (опционально). |
+
+> **Ловушка «Пустого селектора»:** В Helm-чарте `kube-prometheus-stack` параметр `alertmanagerConfigSelector` по умолчанию часто пуст `{}`. Это означает, что Alertmanager **не будет подхватывать** никакие `AlertmanagerConfig`. Для активации необходимо обновить `values.yaml`:
+> ```yaml
+> alertmanager:
+>   alertmanagerSpec:
+>     alertmanagerConfigSelector:
+>       matchLabels:
+>         resource: prometheus # Любая метка на ваш выбор
+> ```
+
+В глобальном режиме (когда `AlertmanagerConfig` используется как корневая конфигурация инстанса) оператор **не добавляет** автоматический матчер по namespace, что позволяет создавать общекластерные маршруты.
+
+### Взаимосвязь ресурсов
+
+| Ресурс | Роль | Описание |
+| :--- | :--- | :--- |
+| **AlertmanagerConfig** | Маршрутизация | Декларативное описание того, "кому" и "как" отправлять алерты (receivers, routes, inhibit rules). |
+| **Alertmanager** | Агрегатор и доставка | Выбирает `AlertmanagerConfig` через селекторы, агрегирует конфигурацию и доставляет алерты. |
+| **Prometheus** | Генератор алертов | Отправляет алерты в инстанс Alertmanager согласно `spec.alertmanager` в Prometheus CRD. |
+| **PrometheusRule** | Правила | Генерирует алерты на основе метрик Prometheus. |
+| **Secret** | Конфигурация | Сгенерированный Operator файл `alertmanager.yaml` с агрегированной конфигурацией. |
+
+### Подресурс `status` и `conditions`
+
+Начиная с API версии `v1beta1`, ресурс `AlertmanagerConfig` предоставляет подресурс `status`, который позволяет отслеживать состояние применения конфигурации:
+
+```yaml
+status:
+  conditions:
+    - type: Reconciled
+      status: "True"
+      lastTransitionTime: "2025-09-15T10:00:00Z"
+      reason: ReconciliationSucceeded
+      message: "Successfully applied AlertmanagerConfig to cluster main"
+```
+
+| Поле | Описание |
+| :--- | :--- |
+| **`type: Reconciled`** | Тип условия. `True` означает успешное применение. |
+| **`status`** | Статус условия: `True`, `False` или `Unknown`. |
+| **`reason`** | Краткая причина: `ReconciliationSucceeded`, `ReconciliationFailed`. |
+| **`message`** | Подробное сообщение об ошибке или успехе. |
+
+> **Диагностика отсутствия подтверждения:** Если условие `Reconciled` отсутствует или имеет статус `False`, проверьте:
+> 1. Селекторы `alertmanagerConfigSelector` в ресурсе `Alertmanager`.
+> 2. Наличие меток на `AlertmanagerConfig`.
+> 3. Логи оператора: `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator -c operator | grep alertmanagerconfig`.
+
 ### Назначение
 
 AlertmanagerConfig решает задачу **разделенного управления** конфигурацией: разные команды могут создавать свои маршруты и получатели в своих namespace, не затрагивая глобальную конфигурацию Alertmanager. Prometheus Operator автоматически агрегирует все AlertmanagerConfig, отобранные селекторами в [Alertmanager CRD](./alertmanager.md).
@@ -380,6 +448,95 @@ apiURL:
   key: webhook-url    # ключ в Secret
 ```
 
+### Тестирование маршрутизации через amtool
+
+Перед применением конфигурации в Production протестируйте маршрутизацию локально:
+
+```bash
+# Загрузите тестовый alertmanager.yml
+amtool config routes test --config.file=alertmanager.yml \
+  --alert.label.test="severity=critical"
+```
+
+Или через API Alertmanager:
+
+```bash
+# Отправка тестового алерта
+curl -X POST http://localhost:9093/api/v2/alerts \
+  -H "Content-Type: application/json" \
+  -d '[{
+    "labels": {"alertname": "TestAlert", "severity": "critical"},
+    "annotations": {"summary": "Test alert"},
+    "generatorURL": "http://prometheus:9090"
+  }]'
+
+# Проверка получателей
+amtool alert --alert.label.test="severity=critical" receiver
+```
+
+### Миграция с alertmanager.yml на AlertmanagerConfig
+
+Поэтапный перенос конфигурации из единого файла в декларативные ресурсы:
+
+1.  **Аудит:** Получите текущий `alertmanager.yml` из Secret и decomposing его на логические блоки (routes, receivers, inhibit rules).
+2.  **Создание ресурсов:** Для каждого блока создайте отдельный `AlertmanagerConfig` в соответствующем namespace.
+3.  **Назначение меток:** Добавьте метки, соответствующие `alertmanagerConfigSelector` в Alertmanager CRD.
+4.  **Валидация:** Проверьте статус `Reconciled` и сгенерированный Secret.
+5.  **Удаление старого:** После подтверждения корректной работы удалите поле `configSecret` из Alertmanager CRD.
+
+```bash
+# Получение текущей конфигурации
+kubectl get secret alertmanager-main-generated -n monitoring \
+  -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d > current-config.yaml
+
+# Проверка селекторов
+kubectl get alertmanagerconfig -A --show-labels
+```
+
+### Глобальная конфигурация AlertmanagerConfig
+
+Начиная с 2025 года, `AlertmanagerConfig` может использоваться как корневая конфигурация инстанса Alertmanager. Для этого в ресурсе `Alertmanager` указывается ссылка на конфиг:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Alertmanager
+metadata:
+  name: main
+  namespace: monitoring
+spec:
+  replicas: 3
+  alertmanagerConfiguration:
+    name: global-config
+    global:
+      smtp_smarthost: 'smtp.corp.local:587'
+      smtp_from: 'alertmanager@corp.local'
+      resolveTimeout: 5m
+```
+
+При использовании глобального режима оператор **не добавляет** автоматический матчер по namespace к маршрутам, что позволяет создавать общекластерные маршруты.
+
+> **Важно:** Глобальная конфигурация через `alertmanagerConfiguration` экспериментальна. Для Production рекомендуется использовать отдельные `AlertmanagerConfig` ресурсы с селекторами до стабилизации функции.
+
+### Проверка агрегации конфигурации
+
+После применения `AlertmanagerConfig` убедитесь, что Operator корректно агрегировал конфигурацию:
+
+```bash
+# Получение сгенерированного alertmanager.yaml
+kubectl get secret alertmanager-main-generated -n monitoring \
+  -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d | grep -A 5 "route:"
+
+# Проверкаreceivers
+kubectl get secret alertmanager-main-generated -n monitoring \
+  -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d | grep -A 2 "receivers:"
+
+# Проверка inhibit rules
+kubectl get secret alertmanager-main-generated -n monitoring \
+  -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d | grep -A 5 "inhibit_rules:"
+```
+
+Убедитесь, что в выводе присутствуют маршруты и receivers из ваших `AlertmanagerConfig` ресурсов.
+
 ## Дополнительная информация
 
 ### Диагностика
@@ -394,6 +551,214 @@ apiURL:
 - **Уникальность имен:** Имена `receivers` и `timeIntervals` должны быть уникальны в рамках одного Alertmanager.
 - **Изоляция Namespace:** В обычном режиме оператор принудительно добавляет матчер по namespace к каждому маршруту.
 - **Порядок:** Маршруты из разных ресурсов добавляются в дерево в алфавитном порядке имен ресурсов.
+
+### Требования RBAC
+
+Для применения `AlertmanagerConfig` ресурсов необходимы следующие права:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager-config-editor
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alertmanagerconfig-editor
+  namespace: monitoring
+rules:
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["alertmanagerconfigs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alertmanagerconfig-editor-binding
+  namespace: monitoring
+subjects:
+  - kind: ServiceAccount
+    name: alertmanager-config-editor
+    namespace: monitoring
+roleRef:
+  kind: Role
+  name: alertmanagerconfig-editor
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Для применения `AlertmanagerConfig` во всех namespace кластера используйте `ClusterRole` и `ClusterRoleBinding`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alertmanagerconfig-cluster-editor
+rules:
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["alertmanagerconfigs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alertmanagerconfig-cluster-editor-binding
+subjects:
+  - kind: ServiceAccount
+    name: alertmanager-config-editor
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: alertmanagerconfig-cluster-editor
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### Валидация работоспособности
+
+После применения `AlertmanagerConfig` проверьте следующие группы:
+
+1.  **Статус ресурса:**
+    ```bash
+    kubectl get alertmanagerconfig -n monitoring
+    # Проверьте наличие столбца AGE и отсутствие ошибок
+    ```
+2.  **Условия (Conditions):**
+    ```bash
+    kubectl get alertmanagerconfig slack-config -n monitoring -o yaml
+    # Ищите status.conditions с type: Reconciled и status: "True"
+    ```
+3.  **Генерация конфигурации:**
+    ```bash
+    kubectl get secret alertmanager-main-generated -n monitoring \
+      -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d | grep -A 5 "receivers:"
+    # Проверьте наличие receivers из AlertmanagerConfig
+    ```
+4.  **Логи Alertmanager:**
+    ```bash
+    kubectl logs -n monitoring alertmanager-main-0 -c alertmanager | grep -i "loading configuration"
+    # Должно отображаться "Loading configuration file"
+    ```
+5.  **Логи config-reloader:**
+    ```bash
+    kubectl logs -n monitoring alertmanager-main-0 -c config-reloader | grep -i "reload"
+    # Должно отображаться "Reloading configuration"
+    ```
+6.  **Проверка через API Prometheus:**
+    ```bash
+    # Отправка тестового алерта
+    curl -X POST http://prometheus:9090/api/v1/alerts \
+      -H "Content-Type: application/json" \
+      -d '[{
+        "labels": {"alertname": "TestAlert", "severity": "critical"},
+        "annotations": {"summary": "Test"},
+        "generatorURL": "http://prometheus:9090"
+      }]'
+
+    # Проверка получения в Alertmanager
+    curl http://alertmanager-operated.monitoring:9093/api/v2/alerts | jq .
+    ```
+
+### Ограничения и крайние случаи
+
+1.  **Лимит размера Secret (1MB):** Общая конфигурация Alertmanager, включающая все `AlertmanagerConfig`, не должна превышать 1MB. При превышении Оператор не сможет создать/обновить Secret.
+2.  **Пустой селектор:** Если `alertmanagerConfigSelector` не указан или пуст, Alertmanager игнорирует все `AlertmanagerConfig`.
+3.  **Уникальность имен:** Имена `receivers` и `timeIntervals` должны быть уникальны в рамках одного Alertmanager. Конфликты имен приведут к ошибкам валидации.
+4.  **CEL-валидация:** Некорректные `AlertmanagerConfig` (например, несколько типов авторизации одновременно) отклоняются на уровне API-сервера с понятным сообщением.
+5.  **Глобальная конфигурация:** При использовании `spec.alertmanagerConfiguration` в Alertmanager CRD ресурсы `AlertmanagerConfig` игнорируются.
+6.  **Совместимость версий:** API версия `v1beta1` требует Prometheus Operator v0.57.0+. Использование `v1alpha1` не поддерживает CEL-валидацию и подресурс status.
+7.  **Задержка обновления эндпоинтов:** При изменении `AlertmanagerConfig` Operator должен обнаружить изменение, агрегировать конфигурацию, обновить Secret и дождаться перезагрузки Alertmanager. Полный цикл может занять до 1-2 минут.
+8.  **Горячая перезагрузка:** При ошибках в конфигурации Alertmanager может отказаться от reload и продолжить работать со старой конфигурацией. Проверяйте логи при отсутствии новых алертов в получателях.
+
+### Типичные проблемы и диагностика
+
+#### Проблема 1: AlertmanagerConfig не подхватывается Alertmanager
+
+**Симптом:** В сгенерированном Secret отсутствуют маршруты и receivers из AlertmanagerConfig.
+
+**Диагностика:**
+```bash
+# Проверьте селекторы в Alertmanager CRD
+kubectl get alertmanager main -n monitoring -o yaml | grep -A 5 alertmanagerConfigSelector
+
+# Проверьте метки на AlertmanagerConfig
+kubectl get alertmanagerconfig -A --show-labels
+
+# Проверьте namespace selector
+kubectl get alertmanager main -n monitoring -o yaml | grep -A 5 alertmanagerConfigNamespaceSelector
+```
+
+**Решение:** Убедитесь, что `AlertmanagerConfig` имеет метки, соответствующие `alertmanagerConfigSelector`, и находится в namespace, разрешенном `alertmanagerConfigNamespaceSelector`. Проверьте, что селектор не пуст.
+
+#### Проблема 2: Ошибка «Secret is invalid: data: Too long»
+
+**Симптом:** Оператор не применяет изменения, в событиях Alertmanager отображается ошибка размера Secret.
+
+**Диагностика:**
+```bash
+kubectl get events -n monitoring --field-selector reason=SyncError
+```
+
+**Решение:** Уменьшите размер конфигурации (удалите избыточные receivers/inhibit rules) или используйте несколько Alertmanager инстансов с разными селекторами.
+
+#### Проблема 3: Ресивер не получает алерты
+
+**Симптом:** Алерты поступают в Alertmanager, но не доставляются в Slack/Email/PagerDuty.
+
+**Диагностика:**
+```bash
+# Проверка статуса алертов в Alertmanager
+curl http://alertmanager-operated.monitoring:9093/api/v2/alerts | jq .
+
+# Проверка получателей
+curl http://alertmanager-operated.monitoring:9093/api/v2/receiver?receiver=slack | jq .
+
+# Проверка логов Alertmanager
+kubectl logs -n monitoring alertmanager-main-0 -c alertmanager | grep -i "error\|failed"
+```
+
+**Решение:** Убедитесь, что receiver правильно сконфигурирован (URL, токен), секрет существует, и сетевые политики не блокируют исходящие соединения.
+
+#### Проблема 4: Inhibit rules не работают
+
+**Сиymptom:** Менее критичные алерты не подавляются при наличии критичных.
+
+**Диагностика:**
+```bash
+# Проверка сгенерированной конфигурации
+kubectl get secret alertmanager-main-generated -n monitoring \
+  -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d | grep -A 10 "inhibit_rules:"
+```
+
+**Решение:** Убедитесь, что `sourceMatchers` и `targetMatchers` корректно сопоставляются, и поля `equal` содержат общие метки (например, `alertname`, `namespace`).
+
+#### Проблема 5: Time intervals не применяются
+
+**Симптом:** Уведомления не заглушаются в указанные временные окна.
+
+**Диагностика:**
+```bash
+# Проверка time intervals в сгенерированной конфигурации
+kubectl get secret alertmanager-main-generated -n monitoring \
+  -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d | grep -A 10 "time_intervals:"
+```
+
+**Решение:** Убедитесь, что имена `timeIntervals` в `muteTimeIntervals` точно совпадают с именами в блоке `timeIntervals`, и формат временных интервалов корректен.
+
+### Лучшие практики
+
+1.  **API версия:** Используйте `v1beta1` для всех новых ресурсов. Версия `v1alpha1` устарела и не поддерживает CEL-валидацию.
+2.  **Изоляция:** Для мультитенантности создавайте отдельные `AlertmanagerConfig` в namespace команд с соответствующими селекторами.
+3.  **Имена receivers:** Используйте осмысленные имена receivers, отражающие канал доставки и критичность (например, `slack-critical`, `pagerduty-dba`).
+4.  **Тестирование:** Перед применением в Production тестируйте конфигурацию с помощью `amtool config routes test`.
+5.  **Секреты:** Храните токены и пароли в Kubernetes Secrets, никогда не в ConfigMap.
+6.  **Размер конфигурации:** Держите общий размер конфигурации ниже 1MB. При приближении к лимиту разбейте конфигурацию на несколько Alertmanager инстансов.
+7.  **Матчеры:** Используйте явные `matchType` для regex-совпадений (`=~`, `!~`) вместо неявного поведения.
+8.  **Глобальная конфигурация:** Используйте `AlertmanagerConfig` для глобальных настроек только после стабилизации функции `alertmanagerConfiguration` в Alertmanager CRD.
+9.  **Мониторинг:** Добавьте алерт на корректность применения `AlertmanagerConfig` (проверка условия `Reconciled`).
+10. **Документирование:** Добавляйте комментарии в YAML с указанием команды-владельца и purpose каждого receiver/route.
+11. **Inhibit rules:** Используйте подавление алертов осторожно — слишком агрессивные правила могут заглушить важные уведомления.
+12. **Версионирование:** Храните манифесты `AlertmanagerConfig` в Git с четким владельцем и процессом ревью.
 
 ### Связанные темы
 

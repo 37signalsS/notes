@@ -502,6 +502,7 @@ curl -sI http://localhost/api/recommendations | grep X-Fallback
 
 ## Связанные концепции
 
+- **[Паттерны микросервисной архитектуры](../../Concepts/microservice_patterns.md)** — отказоустойчивость и масштабируемость.
 - **[Load Shedding](../../CI-CD/Core_Concepts/load_shedding.md)** — паттерн сброса нагрузки при исчерпании пропускной способности.
 - **[Reliability Patterns](../../CI-CD/Core_Concepts/reliability_patterns.md)** — обзор паттернов надежности: Circuit Breaker, Retry Budget, Timeout.
 - **[Диагностика Tail Latency](../../Linux/Diagnostics/Performance/diagnosing_tail_latency.md)** — поиск причин на уровне ОС (CFS Throttling, Lock Contention).
